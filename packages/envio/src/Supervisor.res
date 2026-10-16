@@ -251,7 +251,7 @@ let syncCache = {
 // `envio dev` asks for a dump, and the alternative is pausing the indexing to
 // free one.
 let dumpCache = (~config) => {
-  let storage = PgStorage.makeStorageFromEnv(~config, ~maxConnections=1)
+  let storage = Storage.makeStorageFromEnv(~config, ~maxConnections=1)
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
 }
 
@@ -444,7 +444,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // chains and leave the chains it skipped with nothing to resume. It is the
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = Storage.makePersistenceFromConfig(~config)
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
   let _ = await Promise.all2((

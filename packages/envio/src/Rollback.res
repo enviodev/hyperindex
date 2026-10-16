@@ -121,6 +121,7 @@ and executeRollback = async (
     switch await (state->IndexerState.persistence).storage.getRollbackTargetCheckpoint(
       ~reorgChainId=reorgChain,
       ~lastKnownValidBlockNumber=rollbackTargetBlockNumber,
+      ~sequence=(state->IndexerState.config).checkpointSequence,
     ) {
     | Some(checkpointId) => checkpointId
     | None => 0n

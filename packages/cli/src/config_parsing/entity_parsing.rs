@@ -3564,7 +3564,7 @@ type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
 
     // --- @storage(clickhouse: {...}) table options ---
     // The full partitionBy/orderBy/ttl options object is exercised end-to-end
-    // (YAML + schema -> parser -> Config.res -> DDL) in `ClickHouse_test.res`.
+    // (YAML + schema -> parser -> Config.res) in `UserApiValidation_test.res`.
 
     #[test]
     fn storage_directive_clickhouse_options_are_each_optional() {

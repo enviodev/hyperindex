@@ -5,18 +5,13 @@ use bytes::Bytes;
 
 use super::ch_type::ChType;
 use crate::columnar::{self, ColumnKind};
+use crate::storage::rows::{Cell, ReadKind};
 
 /// One staged column, read straight out of the arena JavaScript filled.
 pub struct Column<'a> {
-    pub name: Cow<'a, str>,
-    pub ch_type: Cow<'a, ChType>,
+    pub name: &'a str,
+    pub ch_type: &'a ChType,
     pub values: &'a columnar::Column,
-}
-
-impl Column<'_> {
-    fn is_null(&self, row: usize) -> bool {
-        self.values.is_null(row)
-    }
 }
 
 fn put_varint(out: &mut Vec<u8>, mut value: u64) {
@@ -33,29 +28,19 @@ fn put_varint(out: &mut Vec<u8>, mut value: u64) {
     }
 }
 
-#[cfg(test)]
-pub fn read_varint(bytes: &[u8]) -> Result<(u64, usize)> {
-    let mut value = 0u64;
-    let mut shift = 0u32;
-    for (read, &byte) in bytes.iter().enumerate() {
-        value |= u64::from(byte & 0x7F)
-            .checked_shl(shift)
-            .context("varint is wider than 64 bits")?;
-        if byte & 0x80 == 0 {
-            return Ok((value, read + 1));
-        }
-        shift += 7;
-    }
-    bail!("varint runs past the end of the buffer")
-}
-
 fn put_bytes(out: &mut Vec<u8>, value: &[u8]) {
     put_varint(out, value.len() as u64);
     out.extend_from_slice(value);
 }
 
-fn put_string(out: &mut Vec<u8>, value: &str) {
-    put_bytes(out, value.as_bytes());
+/// Without its NUL bytes: Postgres keeps none in text, and both stores have to
+/// hold the same value for one entity.
+pub(super) fn put_string(out: &mut Vec<u8>, value: &str) {
+    if value.contains('\0') {
+        put_bytes(out, value.replace('\0', "").as_bytes());
+    } else {
+        put_bytes(out, value.as_bytes());
+    }
 }
 
 fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
@@ -361,9 +346,9 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
 }
 
 fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
-    let (ch_type, is_nullable) = match column.ch_type.as_ref() {
+    let (ch_type, is_nullable) = match column.ch_type {
         ChType::Nullable(inner) => {
-            if column.is_null(row) {
+            if column.values.is_null(row) {
                 out.push(1);
                 return Ok(());
             }
@@ -372,15 +357,14 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         }
         other => (other, false),
     };
-    if !is_nullable && column.is_null(row) {
+    if !is_nullable && column.values.is_null(row) {
         return put_default(out, ch_type);
     }
 
     let values = column.values;
     match (values.kind(), ch_type) {
-        // Nothing registers one: a ClickHouse array is still staged as the JSON
-        // text of its elements, so the list slot only reaches here once the two
-        // sinks share it.
+        // Nothing registers one: a ClickHouse array is staged as the JSON text
+        // of its elements.
         (ColumnKind::List, _) => bail!("a list column is not one this encoder writes yet"),
         (ColumnKind::F64, ChType::Float64) => {
             let value = values.f64_at(row);
@@ -445,7 +429,257 @@ impl EncodedRows {
     }
 }
 
-pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
+/// A value of one of the indexer's own tables, which Rust writes itself rather
+/// than having JavaScript stage it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Null,
+    Int(i128),
+    Text(String),
+    #[cfg(test)]
+    Bool(bool),
+    #[cfg(test)]
+    Bytes(Vec<u8>),
+    #[cfg(test)]
+    Float(f64),
+    #[cfg(test)]
+    List(Vec<Value>),
+}
+
+fn encode_value(out: &mut Vec<u8>, ch_type: &ChType, value: &Value) -> Result<()> {
+    match (ch_type, value) {
+        (ChType::Nullable(_), Value::Null) => out.push(1),
+        (ChType::Nullable(inner), value) => {
+            out.push(0);
+            encode_value(out, inner, value)?;
+        }
+        (_, Value::Null) => bail!("null is not a value a {ch_type:?} column can hold"),
+        #[cfg(test)]
+        (ChType::Array(inner), Value::List(items)) => {
+            put_varint(out, items.len() as u64);
+            for item in items {
+                encode_value(out, inner, item)?;
+            }
+        }
+        #[cfg(test)]
+        (ChType::Float64, Value::Float(float)) => out.extend_from_slice(&float.to_le_bytes()),
+        #[cfg(test)]
+        (ChType::Bool, Value::Bool(bit)) => out.push(u8::from(*bit)),
+        (ChType::String, Value::Text(text)) => put_string(out, text),
+        #[cfg(test)]
+        (ChType::Bytes | ChType::String, Value::Bytes(bytes)) => put_bytes(out, bytes),
+        (ChType::Enum { .. } | ChType::Decimal { .. }, Value::Text(text)) => {
+            encode_text_scalar(out, ch_type, text)?
+        }
+        (_, Value::Int(int)) => put_int(out, *int, ch_type)?,
+        (_, value) => bail!("{value:?} is not a value a {ch_type:?} column can hold"),
+    }
+    Ok(())
+}
+
+pub fn encode_values(types: &[ChType], rows: &[Vec<Value>]) -> Result<EncodedRows> {
+    let mut body = Vec::with_capacity(rows.len() * types.len() * 8);
+    let mut row_offsets = Vec::with_capacity(rows.len());
+    for (index, row) in rows.iter().enumerate() {
+        if row.len() != types.len() {
+            bail!(
+                "row {index} has {} values for {} columns",
+                row.len(),
+                types.len()
+            );
+        }
+        row_offsets.push(body.len());
+        for (column, (ch_type, value)) in types.iter().zip(row).enumerate() {
+            encode_value(&mut body, ch_type, value)
+                .with_context(|| format!("encoding column {column} row {index}"))?;
+        }
+    }
+    Ok(EncodedRows {
+        body: body.into(),
+        row_offsets,
+    })
+}
+
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, length: usize) -> Result<&'a [u8]> {
+        let end = self
+            .at
+            .checked_add(length)
+            .filter(|end| *end <= self.bytes.len())
+            .with_context(|| {
+                format!(
+                    "the answer ended {} bytes into a value that needs {length}",
+                    self.bytes.len().saturating_sub(self.at)
+                )
+            })?;
+        let taken = &self.bytes[self.at..end];
+        self.at = end;
+        Ok(taken)
+    }
+
+    fn byte(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn varint(&mut self) -> Result<u64> {
+        let mut value = 0u64;
+        let mut shift = 0u32;
+        loop {
+            let byte = self.byte()?;
+            value |= u64::from(byte & 0x7F)
+                .checked_shl(shift)
+                .context("varint is wider than 64 bits")?;
+            if byte & 0x80 == 0 {
+                return Ok(value);
+            }
+            shift += 7;
+        }
+    }
+
+    fn signed(&mut self, width: usize) -> Result<i128> {
+        let bytes = self.take(width)?;
+        let mut padded = [0u8; 16];
+        padded[..width].copy_from_slice(bytes);
+        // Sign-extended from the width's own top bit.
+        if bytes[width - 1] & 0x80 != 0 {
+            padded[width..].fill(0xFF);
+        }
+        Ok(i128::from_le_bytes(padded))
+    }
+
+    fn unsigned(&mut self, width: usize) -> Result<u128> {
+        let bytes = self.take(width)?;
+        let mut padded = [0u8; 16];
+        padded[..width].copy_from_slice(bytes);
+        Ok(u128::from_le_bytes(padded))
+    }
+
+    fn is_done(&self) -> bool {
+        self.at == self.bytes.len()
+    }
+}
+
+/// A Decimal's integer at its scale, rendered the way Postgres renders a
+/// `numeric(P, S)`: every one of its `scale` places written out.
+fn decimal_text(value: i128, scale: u32) -> String {
+    let negative = value < 0;
+    let digits = value.unsigned_abs().to_string();
+    let scale = scale as usize;
+    let mut rendered = String::with_capacity(digits.len() + scale + 2);
+    if negative {
+        rendered.push('-');
+    }
+    if scale == 0 {
+        rendered.push_str(&digits);
+        return rendered;
+    }
+    let padded = format!("{digits:0>width$}", width = scale + 1);
+    let (whole, fraction) = padded.split_at(padded.len() - scale);
+    rendered.push_str(whole);
+    rendered.push('.');
+    rendered.push_str(fraction);
+    rendered
+}
+
+/// An integer as what it reads as: text where the column is wider than a
+/// JavaScript number keeps exactly, a number otherwise.
+fn integer_cell(value: i128, kind: ReadKind) -> Cell<'static> {
+    match kind {
+        ReadKind::Text => Cell::Str(Cow::Owned(value.to_string())),
+        ReadKind::Bool => Cell::Bool(value != 0),
+        _ => Cell::Num(value as f64),
+    }
+}
+
+fn decode_value(
+    reader: &mut Reader<'_>,
+    ch_type: &ChType,
+    kind: ReadKind,
+) -> Result<Cell<'static>> {
+    Ok(match ch_type {
+        ChType::Nullable(inner) => {
+            if reader.byte()? != 0 {
+                Cell::Null
+            } else {
+                decode_value(reader, inner, kind)?
+            }
+        }
+        ChType::Array(inner) => {
+            let length = reader.varint()? as usize;
+            let mut items = Vec::with_capacity(length.min(4096));
+            for _ in 0..length {
+                items.push(decode_value(reader, inner, kind)?);
+            }
+            Cell::Arr(items)
+        }
+        ChType::Bool => Cell::Bool(reader.byte()? != 0),
+        ChType::Int32 => integer_cell(reader.signed(4)?, kind),
+        ChType::Int64 => integer_cell(reader.signed(8)?, kind),
+        ChType::UInt32 => integer_cell(reader.unsigned(4)? as i128, kind),
+        ChType::UInt64 => integer_cell(reader.unsigned(8)? as i128, kind),
+        ChType::Float64 => Cell::Num(f64::from_le_bytes(
+            reader.take(8)?.try_into().expect("took eight bytes"),
+        )),
+        ChType::DateTime64 => Cell::Timestamp(reader.signed(8)? as f64),
+        ChType::Decimal { precision, scale } => Cell::Str(Cow::Owned(decimal_text(
+            reader.signed(super::ch_type::decimal_bytes(*precision)?)?,
+            *scale,
+        ))),
+        ChType::Enum { variants } => {
+            let number = reader.signed(ChType::enum_bytes(variants))?;
+            let variant = usize::try_from(number - 1)
+                .ok()
+                .and_then(|index| variants.get(index))
+                .with_context(|| format!("{number} numbers no variant of {ch_type:?}"))?;
+            Cell::Str(Cow::Owned(variant.clone()))
+        }
+        ChType::String | ChType::Bytes => {
+            let length = reader.varint()? as usize;
+            let bytes = reader.take(length)?;
+            match kind {
+                ReadKind::Bytes => Cell::Bytes(Cow::Owned(bytes.to_vec())),
+                _ => Cell::Str(Cow::Owned(
+                    std::str::from_utf8(bytes)
+                        .context("a text column holds bytes that are not UTF-8")?
+                        .to_string(),
+                )),
+            }
+        }
+    })
+}
+
+/// Reads a RowBinary answer whose columns are `columns`: each a type and what
+/// its values read as — a list's elements, for an `Array`. Returns every row's
+/// cells in turn.
+pub fn decode(body: &[u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<Cell<'static>>> {
+    let mut reader = Reader { bytes: body, at: 0 };
+    let mut cells = Vec::new();
+    let mut row = 0usize;
+    while !reader.is_done() {
+        for (index, (ch_type, kind)) in columns.iter().enumerate() {
+            cells.push(
+                decode_value(&mut reader, ch_type, *kind)
+                    .with_context(|| format!("reading column {index} of row {row}"))?,
+            );
+        }
+        row += 1;
+    }
+    Ok(cells)
+}
+
+/// Appends the rows to what `body` already holds, so several stagings of one
+/// table go in one insert.
+pub fn encode_into(
+    body: &mut Vec<u8>,
+    row_offsets: &mut Vec<usize>,
+    columns: &[Column],
+    rows: usize,
+) -> Result<()> {
     for column in columns {
         if column.values.len() != rows {
             bail!(
@@ -455,19 +689,14 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
             );
         }
     }
-    let mut body = Vec::with_capacity(rows * columns.len() * 12);
-    let mut row_offsets = Vec::with_capacity(rows);
     for row in 0..rows {
         row_offsets.push(body.len());
         for column in columns {
-            encode_cell(&mut body, column, row)
+            encode_cell(body, column, row)
                 .with_context(|| format!("encoding column `{}` row {row}", column.name))?;
         }
     }
-    Ok(EncodedRows {
-        body: body.into(),
-        row_offsets,
-    })
+    Ok(())
 }
 
 #[cfg(test)]
@@ -502,18 +731,21 @@ mod tests {
         }
     }
 
-    /// Shadows [`super::encode`] so every case below reads as it did when
-    /// columns owned their values.
     fn encode(columns: &[TestColumn], rows: usize) -> Result<EncodedRows> {
         let borrowed: Vec<Column> = columns
             .iter()
             .map(|column| Column {
-                name: Cow::Borrowed(&column.name),
-                ch_type: Cow::Borrowed(&column.ch_type),
+                name: &column.name,
+                ch_type: &column.ch_type,
                 values: &column.arena.columns()[0],
             })
             .collect();
-        super::encode(&borrowed, rows)
+        let (mut body, mut row_offsets) = (Vec::new(), Vec::new());
+        encode_into(&mut body, &mut row_offsets, &borrowed, rows)?;
+        Ok(EncodedRows {
+            body: body.into(),
+            row_offsets,
+        })
     }
 
     fn text_column(name: &str, ty: &str, values: &[&str]) -> TestColumn {
@@ -620,22 +852,12 @@ mod tests {
         for value in [0u64, 1, 127, 128, 300, u64::MAX] {
             put_varint(&mut out, value);
         }
+        let mut reader = Reader { bytes: &out, at: 0 };
         let mut decoded = Vec::new();
-        let mut offset = 0;
-        while offset < out.len() {
-            let (value, read) = read_varint(&out[offset..]).unwrap();
-            decoded.push(value);
-            offset += read;
+        while !reader.is_done() {
+            decoded.push(reader.varint().unwrap());
         }
         assert_eq!(decoded, vec![0, 1, 127, 128, 300, u64::MAX]);
-    }
-
-    #[test]
-    fn a_truncated_varint_is_an_error_not_a_panic() {
-        assert_eq!(
-            read_varint(&[0x80]).unwrap_err().to_string(),
-            "varint runs past the end of the buffer"
-        );
     }
 
     #[test]
@@ -1192,5 +1414,126 @@ mod tests {
     fn rejects_a_column_shorter_than_the_batch() {
         let err = encode(&[text_column("id", "String", &["a"])], 2).unwrap_err();
         assert!(format!("{err:#}").contains("has 1 values"));
+    }
+
+    /// Each value is read as what Postgres hands back for the same field: an
+    /// integer wider than a JavaScript number as its digits, a Decimal at its
+    /// scale, an enum by name.
+    #[test]
+    fn reads_back_every_type_the_encoder_writes() {
+        let columns = [
+            ("Int32", ReadKind::Float, Value::Int(-7)),
+            ("UInt32", ReadKind::Text, Value::Int(4_000_000_000)),
+            ("UInt64", ReadKind::Text, Value::Int(9_007_199_254_740_993)),
+            ("Int64", ReadKind::Text, Value::Int(-3)),
+            ("Float64", ReadKind::Float, Value::Float(1.5)),
+            ("Bool", ReadKind::Bool, Value::Bool(true)),
+            (
+                "DateTime64(3, 'UTC')",
+                ReadKind::Timestamp,
+                Value::Int(1_700_000_000_123),
+            ),
+            (
+                "Decimal(18, 2)",
+                ReadKind::Text,
+                Value::Text("-12.5".to_string()),
+            ),
+            (
+                "Decimal(38, 0)",
+                ReadKind::Text,
+                Value::Text("123456789012345678901234567890".to_string()),
+            ),
+            ("Nullable(String)", ReadKind::Text, Value::Null),
+            (
+                "Array(Int32)",
+                ReadKind::Float,
+                Value::List(vec![Value::Int(1), Value::Int(-1)]),
+            ),
+            (
+                "Enum8('SET' = 1, 'DELETE' = 2)",
+                ReadKind::Text,
+                Value::Text("DELETE".to_string()),
+            ),
+        ]
+        .map(|(ty, kind, value)| (parse_type(ty), kind, value));
+        let types = columns
+            .iter()
+            .map(|(ty, _, _)| ty.clone())
+            .collect::<Vec<_>>();
+        let encoded = encode_values(
+            &types,
+            &[columns.iter().map(|(_, _, value)| value.clone()).collect()],
+        )
+        .unwrap();
+        let reads = columns
+            .iter()
+            .map(|(ty, kind, _)| (ty.clone(), *kind))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            decode(&encoded.body, &reads).unwrap(),
+            vec![
+                Cell::Num(-7.0),
+                Cell::Str("4000000000".into()),
+                Cell::Str("9007199254740993".into()),
+                Cell::Str("-3".into()),
+                Cell::Num(1.5),
+                Cell::Bool(true),
+                Cell::Timestamp(1_700_000_000_123.0),
+                Cell::Str("-12.50".into()),
+                Cell::Str("123456789012345678901234567890".into()),
+                Cell::Null,
+                Cell::Arr(vec![Cell::Num(1.0), Cell::Num(-1.0)]),
+                Cell::Str("DELETE".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_decimal_reads_with_every_place_its_scale_declares() {
+        assert_eq!(
+            [
+                decimal_text(0, 2),
+                decimal_text(5, 2),
+                decimal_text(-5, 2),
+                decimal_text(150, 2),
+                decimal_text(-12345, 0),
+            ],
+            ["0.00", "0.05", "-0.05", "1.50", "-12345"].map(str::to_string)
+        );
+    }
+
+    #[test]
+    fn bytes_read_back_as_bytes_and_text_as_text() {
+        let encoded = encode_values(
+            &[ChType::Bytes, ChType::String],
+            &[vec![
+                Value::Bytes(vec![0, 255]),
+                Value::Text("é".to_string()),
+            ]],
+        )
+        .unwrap();
+        assert_eq!(
+            decode(
+                &encoded.body,
+                &[
+                    (ChType::Bytes, ReadKind::Bytes),
+                    (ChType::String, ReadKind::Json)
+                ]
+            )
+            .unwrap(),
+            vec![Cell::Bytes(vec![0, 255].into()), Cell::Str("é".into())]
+        );
+    }
+
+    #[test]
+    fn an_answer_that_ends_inside_a_value_is_an_error_not_a_panic() {
+        assert_eq!(
+            format!(
+                "{:#}",
+                decode(&[5, b'a'], &[(ChType::String, ReadKind::Text)]).unwrap_err()
+            ),
+            "reading column 0 of row 0: the answer ended 1 bytes into a value that needs 5"
+        );
     }
 }

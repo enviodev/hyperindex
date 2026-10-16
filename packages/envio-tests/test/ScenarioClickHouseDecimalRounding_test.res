@@ -8,6 +8,11 @@ open Vitest
 let scenario = Scenario.make(
   ~configYaml=`
 name: clickhouse-decimal-rounding
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    default: true
 chains:
   - id: 1
     rpc:
@@ -26,7 +31,7 @@ type Price {
   amount: BigDecimal! @config(precision: 10, scale: 2)
 }
 `,
-  ~unsupported=[{backend: #postgres, reason: "compares the two stores"}],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type price = {id: string, amount: BigDecimal.t}

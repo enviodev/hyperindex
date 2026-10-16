@@ -90,9 +90,9 @@ type Total @crossChain {
   ~configYaml=makeConfigYaml(~name="isolated-rollback-cross-chain"),
 )
 
-// The sink is append-only: an isolated rollback reaches it as the diff rows the
-// next batch carries, and its current-state view has to resolve to the same
-// thing Postgres holds.
+// ClickHouse is append-only: an isolated rollback reaches it as the diff rows the
+// next batch carries, and its current-state view has to resolve to the rows the
+// rollback restored.
 let clickHouseScenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
@@ -157,7 +157,12 @@ let metricByChain = async (indexer: IndexerRunner.t, name) => {
 let progressByChain = indexer => indexer->metricByChain("envio_progress_block")
 let eventsByChain = indexer => indexer->metricByChain("envio_progress_events")
 
-let counters = (indexer: IndexerRunner.t): promise<array<counter>> => indexer.query("Counter")
+// A read has no order of its own, and each store hands rows back in a different
+// one.
+let counters = async (indexer: IndexerRunner.t): array<counter> =>
+  (await indexer.query("Counter"))->Array.toSorted((a: counter, b) =>
+    Int.compare(a.chainId, b.chainId)
+  )
 let counterHistory = (indexer: IndexerRunner.t): promise<array<Change.t<counter>>> =>
   indexer.queryHistory("Counter")
 
@@ -463,6 +468,7 @@ describe("Isolated multichain rollback", () => {
 
   scenario->Scenario.it(
     "Rolls back the reorg chain alone and leaves its sibling untouched",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -483,8 +489,8 @@ describe("Isolated multichain rollback", () => {
         [
           checkpoint(~id=2n, ~chain=100, ~block=101, ~events=1),
           checkpoint(~id=2n, ~chain=1337, ~block=101, ~events=1),
-          checkpoint(~id=3n, ~chain=1337, ~block=102, ~events=1),
           checkpoint(~id=3n, ~chain=100, ~block=102, ~events=1),
+          checkpoint(~id=3n, ~chain=1337, ~block=102, ~events=1),
         ],
         [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 13372n, chainId: 1337}],
         [
@@ -605,6 +611,7 @@ describe("Isolated multichain rollback", () => {
   // it; only the reorg chain's rows may go.
   scenario->Scenario.it(
     "Keeps a sibling's re-indexed rows when a later reorg targets a lower checkpoint",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -630,8 +637,8 @@ describe("Isolated multichain rollback", () => {
         [
           checkpoint(~id=2n, ~chain=100, ~block=101, ~events=1),
           checkpoint(~id=2n, ~chain=1337, ~block=101, ~events=1),
-          checkpoint(~id=5n, ~chain=1337, ~block=102, ~events=1),
           checkpoint(~id=5n, ~chain=100, ~block=102, ~events=1),
+          checkpoint(~id=5n, ~chain=1337, ~block=102, ~events=1),
         ],
         [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
         [
@@ -649,6 +656,7 @@ describe("Isolated multichain rollback", () => {
   // merge is a pointwise minimum, which can't lose the earlier floor.
   scenario->Scenario.it(
     "Keeps each chain at its own floor when a second reorg lands before the first is written",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -950,6 +958,7 @@ describe("Isolated multichain rollback", () => {
   )
   fullHistoryScenario->Scenario.it(
     "Keeps the sibling's full history when save_full_history is on",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -989,10 +998,10 @@ describe("Isolated multichain rollback", () => {
   // A resume trims each chain back to its own frontier. After an isolated
   // rollback the two frontiers differ: the rollback's diff moved chain 1337 to
   // an id of its own, while chain 100 kept indexing past it. A row of chain
-  // 1337's that reached the sink but never Postgres sits at an id chain 100 has
+  // 1337's that reached ClickHouse but never Postgres sits at an id chain 100 has
   // committed — and only chain 1337's copy goes.
   clickHouseScenario->Scenario.it(
-    "Trims the sink to each chain's own frontier on a resume after an isolated rollback",
+    "Trims ClickHouse to each chain's own frontier on a resume after an isolated rollback",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1045,7 +1054,7 @@ describe("Isolated multichain rollback", () => {
         )->Promise.thenResolve(String.trim)
       let committed = await queryHistory()
 
-      // A batch of chain 1337's that the sink took and Postgres never did, at
+      // A batch of chain 1337's that ClickHouse took and Postgres never did, at
       // an id chain 100 holds a committed row for.
       let torn = chain100Highest->BigInt.toString
       let _ = await TestClickHouse.query(
@@ -1067,7 +1076,7 @@ describe("Isolated multichain rollback", () => {
     },
   )
 
-  // The sink is append-only, so a rollback reaches it as a diff row stamped with
+  // ClickHouse is append-only, so a rollback reaches it as a diff row stamped with
   // the first checkpoint id after what the chain had committed — above the rows
   // it replaces, so it outranks them. Only the chain's own next batch lifts the
   // frontier past that id, though, and the view reads nothing above it: while a
@@ -1142,7 +1151,7 @@ describe("Isolated multichain rollback", () => {
   )
 
   clickHouseScenario->Scenario.it(
-    "Mirrors the isolated rollback into the ClickHouse sink",
+    "Rolls back the reorg chain alone in ClickHouse",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1169,6 +1178,7 @@ describe("Isolated multichain rollback", () => {
 
   singleChainScenario->Scenario.it(
     "Rolls back a lone chain that counts its own checkpoint ids",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

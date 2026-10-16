@@ -44,6 +44,7 @@ let stallWriteBatch: ref<option<promise<unit>>> = ref(None)
 describe("Concurrent batch write and processing", () => {
   scenario->Scenario.it(
     "Should not rewrite a history change already persisted by an in-flight write",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     ~mapStorage=storage => {
       ...storage,

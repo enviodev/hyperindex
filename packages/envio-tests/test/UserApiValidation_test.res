@@ -394,6 +394,25 @@ chains:
     ))
   })
 
+  it("keeps every entity in ClickHouse alone when it is the default", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~schema=`type User { id: ID! }`,
+      ~configYaml=`
+name: clickhouse-entities
+storage:
+  clickhouse:
+    default: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+    )
+    t.expect((
+      (config.storage.postgres, config.storage.clickhouse),
+      (config.userEntitiesByName->Dict.getUnsafe("User")).storage,
+    )).toEqual(((true, true), {Internal.postgres: false, clickhouse: true}))
+  })
+
   it("preserves per-backend column names across the public config boundary", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~schema=`
@@ -734,29 +753,17 @@ chains:
 
   [
     (
-      "rejects ClickHouse without Postgres",
+      "rejects disabling Postgres",
       `
-name: clickhouse-only
+name: clickhouse-without-postgres
 storage:
+  postgres: false
   clickhouse: true
 chains:
   - id: 1
     start_block: 0
 `,
-      "ClickHouse is not supported as a single storage yet. Please enable Postgres alongside ClickHouse in the \`storage\` config.",
-    ),
-    (
-      "rejects a config with every storage disabled",
-      `
-name: no-storage
-storage:
-  postgres: false
-  clickhouse: false
-chains:
-  - id: 1
-    start_block: 0
-`,
-      "At least one storage backend must be enabled. Please set \`postgres: true\` in the \`storage\` config (or omit the \`storage\` section entirely to use the default).",
+      "Postgres can't be disabled: it keeps the indexer's own state. To keep the entities in ClickHouse alone, set \`clickhouse: {default: true}\` in the \`storage\` config.",
     ),
     (
       "rejects end_block before start_block",
@@ -1889,7 +1896,7 @@ type enum { id: ID! }
     it(name, t => expectParseError(t, ~schema, baseYaml, message))
   })
 
-  it("rejects entities without a storage route when multiple backends have no default", t => {
+  it("rejects entities without a storage route when no backend is a default", t => {
     expectParseError(
       t,
       ~schema=`
@@ -1900,7 +1907,8 @@ type Mango { id: ID! }
       `
 name: missing-storage-route
 storage:
-  postgres: true
+  postgres:
+    default: false
   clickhouse: true
 chains:
   - id: 1

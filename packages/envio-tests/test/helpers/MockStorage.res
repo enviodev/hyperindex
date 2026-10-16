@@ -1,5 +1,5 @@
 type method = [
-  | #isInitialized
+  | #holding
   | #initialize
   | #readStoredConfig
   | #resumeInitialState
@@ -8,8 +8,8 @@ type method = [
 ]
 
 type t = {
-  isInitializedCalls: array<bool>,
-  resolveIsInitialized: bool => unit,
+  holdingCalls: array<bool>,
+  resolveHolding: Persistence.holding => unit,
   initializeCalls: array<{
     "entities": array<Internal.entityConfig>,
     "chainConfigs": array<Config.chain>,
@@ -48,9 +48,9 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
     }
   }
 
-  let isInitializedCalls = []
+  let holdingCalls = []
   let initializeCalls = []
-  let isInitializedResolveFns = []
+  let holdingResolveFns = []
   let initializeResolveFns = []
   let loadOrThrowCalls = []
   let dumpEffectCacheCalls = ref(0)
@@ -58,7 +58,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
   let resumeInitialStateResolveFns = []
 
   {
-    isInitializedCalls,
+    holdingCalls,
     initializeCalls,
     loadOrThrowCalls,
     dumpEffectCacheCalls,
@@ -66,18 +66,19 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
     resolveLoadInitialState: (initialState: Persistence.initialState) => {
       resumeInitialStateResolveFns->Array.forEach(resolve => resolve(initialState))
     },
-    resolveIsInitialized: bool => {
-      isInitializedResolveFns->Array.forEach(resolve => resolve(bool))
+    resolveHolding: holding => {
+      holdingResolveFns->Array.forEach(resolve => resolve(holding))
     },
     resolveInitialize: (initialState: Persistence.initialState) => {
       initializeResolveFns->Array.forEach(resolve => resolve(initialState))
     },
     storage: {
       name: "mock",
-      isInitialized: implement(#isInitialized, () => {
-        isInitializedCalls->Array.push(true)->ignore
+      entityStoreName: _ => "mock",
+      holding: implement(#holding, () => {
+        holdingCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
-          isInitializedResolveFns->Array.push(resolve)->ignore
+          holdingResolveFns->Array.push(resolve)->ignore
         })
       }),
       initialize: implement(#initialize, (
@@ -142,8 +143,11 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
       pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
-      getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
-        JsError.throwWithMessage("Not implemented"),
+      getRollbackTargetCheckpoint: (
+        ~reorgChainId as _,
+        ~lastKnownValidBlockNumber as _,
+        ~sequence as _,
+      ) => JsError.throwWithMessage("Not implemented"),
       getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
       getRollbackData: (~entityConfig as _, ~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
@@ -165,7 +169,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
 
 let toPersistence = (storageMock: t, ~config: Config.t) => {
   {
-    ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
+    ...Storage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
     storageStatus: Ready({
       cleanRun: false,
       contractMapping: config.contractMapping,

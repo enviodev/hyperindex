@@ -150,7 +150,7 @@ ORDER BY ty.typname COLLATE "C";`,
           "r envio_contracts(id smallint NOT NULL, name text NOT NULL)",
           "r envio_history_Asset(id text NOT NULL, owner_id text, name text, amount numeric, price numeric(10,8), ratio double precision, count integer, flag boolean, at timestamp with time zone, data text, doc jsonb, kind kind, tags text[], amounts numeric[], envio_checkpoint_id bigint NOT NULL, envio_change envio_history_change NOT NULL)",
           "r envio_history_Owner(id text NOT NULL, envio_checkpoint_id bigint NOT NULL, envio_change envio_history_change NOT NULL)",
-          "r envio_info(id integer NOT NULL DEFAULT 1, config text NOT NULL)",
+          "r envio_info(id integer NOT NULL DEFAULT 1, config text NOT NULL, instance text NOT NULL)",
           "r raw_events(chain_id integer NOT NULL, event_id bigint NOT NULL, event_name text NOT NULL, contract_name text NOT NULL, block_number integer NOT NULL, log_index integer NOT NULL, src_address text NOT NULL, block_hash text NOT NULL, block_timestamp integer NOT NULL, block_fields jsonb NOT NULL, transaction_fields jsonb NOT NULL, params jsonb NOT NULL, serial bigint NOT NULL DEFAULT nextval('raw_events_serial_seq'::regclass))",
         ],
         [

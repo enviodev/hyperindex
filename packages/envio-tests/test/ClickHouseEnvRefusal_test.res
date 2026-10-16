@@ -30,44 +30,26 @@ type Tally {
 `,
 )
 
-let names = [
-  "ENVIO_CLICKHOUSE_HOST",
-  "ENVIO_CLICKHOUSE_USERNAME",
-  "ENVIO_CLICKHOUSE_PASSWORD",
-  "ENVIO_CLICKHOUSE_DATABASE",
-]
-
 describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
-  let name = "refuses, naming every missing variable"
-  switch IndexerRunner.selectedBackend {
-  // That leg sets the variables for every run.
-  | #clickhouse => Async.it_skip(`${name} [no clickhouse: the leg provides them]`, async _ => ())
-  | #postgres =>
-    Async.it(name, async t => {
-      // A developer's shell or an earlier file in the same worker may have set
-      // them, and the refusal is only reachable with all four gone.
-      let env = NodeJs.Process.process.env
-      let saved = names->Array.map(name => (name, env->Dict.get(name)))
-      names->Array.forEach(name => env->Dict.delete(name))
-      let message = switch await scenario->Scenario.run(
-        ~sources=[{chain: 1}],
-        async (~indexer as _, ~source as _) => (),
-      ) {
-      | () => "the start to fail, but it succeeded"
-      | exception JsExn(error) => error->JsExn.message->Option.getOr("")
-      | exception error => `an unexpected failure: ${error->JSON.stringifyAny->Option.getOr("")}`
-      }
-      saved->Array.forEach(
-        ((name, value)) =>
-          switch value {
-          | Some(value) => env->Dict.set(name, value)
-          | None => ()
-          },
-      )
+  Async.it("refuses, naming every missing variable", async t => {
+    // A developer's shell or an earlier run in the same worker may have set
+    // them, and the refusal is only reachable with all four gone.
+    let env = NodeJs.Process.process.env
+    let restore = TestClickHouse.savedEnv()
+    TestClickHouse.envNames->Array.forEach(name => env->Dict.delete(name))
+    let message = switch await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      ~provideClickHouse=false,
+      async (~indexer as _, ~source as _) => (),
+    ) {
+    | () => "the start to fail, but it succeeded"
+    | exception JsExn(error) => error->JsExn.message->Option.getOr("")
+    | exception error => `an unexpected failure: ${error->JSON.stringifyAny->Option.getOr("")}`
+    }
+    restore()
 
-      t.expect(message).toBe(
-        "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD, ENVIO_CLICKHOUSE_DATABASE. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",
-      )
-    })
-  }
+    t.expect(message).toBe(
+      "ClickHouse storage is enabled but required env vars are not set: ENVIO_CLICKHOUSE_HOST, ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD, ENVIO_CLICKHOUSE_DATABASE. Please set them, disable clickhouse in the `storage` config, or run `envio dev` for a pre-configured local ClickHouse.",
+    )
+  })
 })

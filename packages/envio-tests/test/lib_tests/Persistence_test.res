@@ -5,7 +5,7 @@ let runCmd = Some("envio dev")
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
-    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState, #initialize])
+    let storageMock = MockStorage.make([#holding, #resumeInitialState, #initialize])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -18,10 +18,9 @@ describe("Test Persistence layer init", () => {
     )
 
     t.expect(
-      storageMock.isInitializedCalls,
+      (storageMock.holdingCalls, storageMock.initializeCalls),
       ~message=`Storage should not be initialized`,
-    ).toEqual([])
-    t.expect(storageMock.initializeCalls, ~message=`Storage should not be initialized`).toEqual([])
+    ).toEqual(([], []))
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
@@ -34,15 +33,11 @@ describe("Test Persistence layer init", () => {
       )
 
     t.expect(
-      storageMock.isInitializedCalls,
-      ~message=`Should check whether storage is initialized`,
-    ).toEqual([true])
-    t.expect(
-      storageMock.initializeCalls,
-      ~message=`Shouldn't call initialize before init check`,
-    ).toEqual([])
+      (storageMock.holdingCalls, storageMock.initializeCalls),
+      ~message=`Should check whether storage is initialized, without calling initialize before that check`,
+    ).toEqual(([true], []))
 
-    storageMock.resolveIsInitialized(false)
+    storageMock.resolveHolding(Nothing)
     let _ = await Promise.resolve()
 
     t.expect(
@@ -54,13 +49,13 @@ describe("Test Persistence layer init", () => {
     ).toEqual(true)
 
     // Resolving "latest" start blocks (a no-op here, chainConfigs is empty)
-    // runs between the isInitialized check and the storage.initialize call;
+    // runs between the holding check and the storage.initialize call;
     // drain the microtask queue rather than counting its awaits.
     await Utils.delay(0)
 
     t.expect(
       (
-        storageMock.isInitializedCalls->Array.length,
+        storageMock.holdingCalls->Array.length,
         storageMock.initializeCalls,
         storageMock.resumeInitialStateCalls->Array.length,
       ),
@@ -107,7 +102,7 @@ describe("Test Persistence layer init", () => {
     )
     t.expect(
       (
-        storageMock.isInitializedCalls->Array.length,
+        storageMock.holdingCalls->Array.length,
         storageMock.initializeCalls->Array.length,
         storageMock.resumeInitialStateCalls->Array.length,
       ),
@@ -129,7 +124,7 @@ describe("Test Persistence layer init", () => {
     await Utils.delay(0)
     t.expect(
       (
-        storageMock.isInitializedCalls->Array.length,
+        storageMock.holdingCalls->Array.length,
         storageMock.initializeCalls->Array.length,
         storageMock.initializeCalls->Array.getUnsafe(1),
       ),
@@ -147,10 +142,59 @@ describe("Test Persistence layer init", () => {
     ))
   })
 
+  // Resolving a `latest` start block waits on the chain's RPC for as long as it
+  // takes to answer, and another indexer can set the storage up meanwhile.
+  Async.it("Refuses storage another indexer set up while a start block resolved", async t => {
+    let storageMock = MockStorage.make([#holding, #initialize])
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
+    let config = Scenario.make(
+      ~configYaml=`
+name: set-up-meanwhile
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: latest
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer(address indexed from, address indexed to, uint256 value)
+`,
+    ).config->Scenario.withMockSources(
+      ~sources=[(1, MockSource.make(Scenario.defaultMethods, ~chainId=1, ~autoHeight=500))],
+    )
+
+    let initialized =
+      persistence->Persistence.init(
+        ~chainConfigs=config.chainMap->ChainMap.values,
+        ~contractMapping=ContractMapping.empty,
+        ~envioInfo=JSON.Encode.object(Dict.make()),
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
+      )
+    storageMock.resolveHolding(Nothing)
+    await Scenario.waitUntil(
+      () => storageMock.holdingCalls->Array.length === 2,
+      ~message="the storage to be checked again",
+    )
+    storageMock.resolveHolding(Stranded)
+    let refusal = switch await initialized {
+    | () => None
+    | exception JsExn(error) => error->JsExn.message
+    }
+
+    t.expect((refusal, storageMock.initializeCalls->Array.length)).toEqual((
+      Some(Config.setUpMeanwhileMessage),
+      0,
+    ))
+  })
+
   Async.it("Should skip initialization when storage is already initialized", async t => {
     let envioInfo = JSON.Encode.object(Dict.make())
     // The stored snapshot matches the running one, so the compat gate no-ops.
-    let storageMock = MockStorage.make([#isInitialized, #readStoredConfig, #resumeInitialState])
+    let storageMock = MockStorage.make([#holding, #readStoredConfig, #resumeInitialState])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -180,7 +224,7 @@ describe("Test Persistence layer init", () => {
         ~runCommand=runCmd,
       )
 
-    storageMock.resolveIsInitialized(true)
+    storageMock.resolveHolding(Initialized)
     // Let resumeInitialState register its resolver.
     await Utils.delay(0)
 
@@ -200,7 +244,7 @@ describe("Test Persistence layer init", () => {
     )
     t.expect(
       (
-        storageMock.isInitializedCalls->Array.length,
+        storageMock.holdingCalls->Array.length,
         storageMock.initializeCalls->Array.length,
         storageMock.resumeInitialStateCalls->Array.length,
       ),
@@ -218,7 +262,7 @@ Although it should load effect caches metadata.`,
     ~runCommand=runCmd,
   ) => {
     let storageMock = MockStorage.make(
-      [#isInitialized, #readStoredConfig, #resumeInitialState],
+      [#holding, #readStoredConfig, #resumeInitialState],
       ~stored={envioInfo: storedEnvioInfo, chains: [], contractMapping: ContractMapping.empty},
     )
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
@@ -237,7 +281,7 @@ Although it should load effect caches metadata.`,
         | exception exn => Some(exn)
         }
     )()
-    storageMock.resolveIsInitialized(true)
+    storageMock.resolveHolding(Initialized)
     await Utils.delay(0)
     let initialState: Persistence.initialState = {
       cleanRun: false,

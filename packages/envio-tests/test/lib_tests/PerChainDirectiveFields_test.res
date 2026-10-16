@@ -48,7 +48,7 @@ type Transfer @storage(clickhouse: {orderBy: ["chainId", "timestamp"]}) {
 `,
     )
 
-    let spec = ClickHouse.entitySpec(~entityConfig=config->entityConfig("Transfer"))
+    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
 
     t.expect(
       (spec.chainIdColumn, spec.orderBy),
@@ -68,7 +68,7 @@ type Transfer @storage(clickhouse: {orderBy: ["chainId"]}) {
 `,
     )
 
-    let spec = ClickHouse.entitySpec(~entityConfig=config->entityConfig("Transfer"))
+    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
 
     t.expect(
       (spec.chainIdColumn, spec.orderBy),
@@ -88,7 +88,7 @@ type Transfer @storage(clickhouse: {orderBy: ["timestamp", "chainId"]}) {
 `,
     )
 
-    let spec = ClickHouse.entitySpec(~entityConfig=config->entityConfig("Transfer"))
+    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
 
     t.expect(
       (spec.chainIdColumn, spec.orderBy),
@@ -170,7 +170,7 @@ type Transfer @crossChain @storage(clickhouse: {orderBy: ["chainId", "timestamp"
 `,
     )
 
-    let spec = ClickHouse.entitySpec(~entityConfig=config->entityConfig("Transfer"))
+    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
 
     t.expect(
       (spec.columns->Array.map(({name}) => name), spec.chainIdColumn, spec.orderBy),

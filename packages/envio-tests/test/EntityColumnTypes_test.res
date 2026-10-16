@@ -29,9 +29,7 @@ type PostgresNumericPrecisionEntityTester {
   exampleBigDecimalOtherOrder: BigDecimal! @config(scale: 6, precision: 84)
 }
 `,
-  ~unsupported=[
-    {backend: #clickhouse, reason: "the schema's nullable arrays have no ClickHouse equivalent"},
-  ],
+  ~unsupported=Scenario.noClickHouse("the schema's nullable arrays have no ClickHouse equivalent"),
 )
 
 describe("Postgres Numeric Precision Entity Tester Migrations", () => {

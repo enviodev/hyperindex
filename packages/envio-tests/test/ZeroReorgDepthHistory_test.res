@@ -86,6 +86,7 @@ let checkpointChains = async (indexer: IndexerRunner.t) =>
 describe("A chain with no reorg depth keeps no history", () => {
   singleChainScenario->Scenario.it(
     "Writes neither history nor checkpoints for the only chain, past the threshold",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

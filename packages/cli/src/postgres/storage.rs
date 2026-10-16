@@ -1,37 +1,41 @@
 //! The indexer's Postgres storage: every statement it runs, and the
 //! transactions they run in.
-//!
-//! JavaScript keeps what only it can do — reading entity values out of its own
-//! objects into staged arenas, and decoding rows back into them — and hands
-//! each storage operation over in one call. Everything between, from the SQL to
-//! which failure in a batch is the one worth reporting, happens here.
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::join_all;
 use tokio_postgres::Row;
 
-use crate::columnar::{Arena, ColumnKind};
+use crate::columnar::ColumnKind;
 
-use super::client::{Column, PgClient, Transaction};
+use super::client::{PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
 use super::error::sql_state;
-use super::history::{
-    History, Sequence, CHANGE_COLUMN, CHANGE_TYPE, CHECKPOINT_COLUMN, DELETE, SET,
-};
+use super::history::{History, CHANGE_TYPE};
 use super::index_definition::IndexDefinition;
 use super::index_row;
 use super::indexes::{IndexEvent, Indexes, Report};
 use super::insert::{self, Constant};
-use super::internal::{self, ChainConfig};
+use super::internal;
 use super::param::Param;
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use super::rows::into_result;
 use super::select;
 use super::write;
 use crate::entity_filter::Condition;
+use crate::storage::rows::ResultSet;
+use crate::storage::types::{
+    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress,
+    ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE,
+    CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, DELETE, SET,
+};
+use crate::storage::{
+    self as composite, AddChain, Batch, CacheDump, CacheFile, EntityWrite, Failure, Handoff,
+    Initialize, PgEntityWrite, Resumed, RollbackWrite, Rows, StoredConfigRead, WriteError,
+};
 
 pub struct Settings {
     pub pg_schema: String,
@@ -164,7 +168,7 @@ impl Entity {
             ..column.clone()
         };
         let checkpoint = ColumnSpec {
-            name: CHECKPOINT_COLUMN.to_string(),
+            name: CHECKPOINT_ID_COLUMN.to_string(),
             field_type: FieldType::UInt64,
             is_array: false,
             is_nullable: false,
@@ -226,282 +230,57 @@ impl Entity {
     }
 }
 
-/// Rows of a batch, as JavaScript handed them over: laid out in an arena, or
-/// one rendered parameter per cell, column by column.
-pub enum Rows {
-    Staged(Arena),
-    Cells { cells: Vec<Param>, rows: usize },
-}
-
-impl Rows {
-    fn len(&self) -> usize {
-        match self {
-            Rows::Staged(arena) => arena.rows(),
-            Rows::Cells { rows, .. } => *rows,
-        }
+/// Under one shared sequence the single id is bound as `$1`; per chain, the
+/// chains and their ids are the two arrays the joined relation unnests.
+fn bound_params(bounds: &Bounds) -> Vec<Param> {
+    match bounds.sequence {
+        Sequence::SharedAcrossChains => vec![Param::Text(bounds.shared_id().to_string())],
+        Sequence::PerChain => vec![
+            array_literal(bounds.chain_ids.iter().map(|id| Some(id.to_string()))),
+            array_literal(bounds.checkpoint_ids.iter().map(|id| Some(id.to_string()))),
+        ],
     }
 }
 
-/// Which rows a bounded statement reaches, chain by chain.
-pub struct Bounds {
-    pub sequence: Sequence,
-    pub chain_ids: Vec<i64>,
-    pub checkpoint_ids: Vec<i64>,
-}
-
-impl Bounds {
-    /// Under one shared sequence every chain is held to the lowest of the ids,
-    /// bound as `$1`; per chain, the chains and their ids are the two arrays
-    /// the joined relation unnests.
-    fn params(&self) -> Vec<Param> {
-        match self.sequence {
-            Sequence::SharedAcrossChains => vec![Param::Text(
-                self.checkpoint_ids
-                    .iter()
-                    .min()
-                    .copied()
-                    .unwrap_or(0)
-                    .to_string(),
-            )],
-            Sequence::PerChain => vec![
-                array_literal(self.chain_ids.iter().map(|id| Some(id.to_string()))),
-                array_literal(self.checkpoint_ids.iter().map(|id| Some(id.to_string()))),
-            ],
-        }
+fn address_params(addresses: &Addresses, with_registration_blocks: bool) -> Vec<Param> {
+    let mut params = vec![
+        array_literal(addresses.chain_ids.iter().map(|id| Some(id.to_string()))),
+        array_literal(addresses.addresses.iter().map(|bytes| Some(bytea(bytes)))),
+        array_literal(addresses.contract_ids.iter().map(|id| Some(id.to_string()))),
+    ];
+    if with_registration_blocks {
+        params.push(array_literal(
+            addresses
+                .registration_blocks
+                .iter()
+                .map(|block| Some(block.to_string())),
+        ));
     }
+    params
 }
-
-pub struct Progress {
-    pub chain_id: i64,
-    pub progress_block: i32,
-    /// Unix seconds, as a block header carries them.
-    pub progress_block_time: Option<f64>,
-    pub events_processed: f64,
-    pub source_block: i32,
-}
-
-pub struct ChainMeta {
-    pub chain_id: i64,
-    pub first_event_block: Option<i32>,
-    pub buffer_block: i32,
-    /// Unix milliseconds.
-    pub ready_at: Option<f64>,
-    pub is_hyper_sync: bool,
-}
-
-/// Address rows, column by column. A key leaves the registration blocks out.
-pub struct Addresses {
-    pub chain_ids: Vec<i64>,
-    pub addresses: Vec<Vec<u8>>,
-    pub contract_ids: Vec<i32>,
-    pub registration_blocks: Vec<i32>,
-}
-
-impl Addresses {
-    fn params(&self, with_registration_blocks: bool) -> Vec<Param> {
-        let mut params = vec![
-            array_literal(self.chain_ids.iter().map(|id| Some(id.to_string()))),
-            array_literal(self.addresses.iter().map(|bytes| Some(bytea(bytes)))),
-            array_literal(self.contract_ids.iter().map(|id| Some(id.to_string()))),
-        ];
-        if with_registration_blocks {
-            params.push(array_literal(
-                self.registration_blocks
-                    .iter()
-                    .map(|block| Some(block.to_string())),
-            ));
-        }
-        params
-    }
-}
-
-pub struct Checkpoints {
-    pub ids: Vec<String>,
-    pub chain_ids: Vec<i64>,
-    pub block_numbers: Vec<i32>,
-    pub block_hashes: Vec<Option<String>>,
-    pub events_processed: Vec<i64>,
-}
-
-pub struct Frontier {
-    pub chain_ids: Vec<i64>,
-    pub checkpoint_ids: Vec<String>,
-}
-
-/// One entity's changes within one chain scope.
-pub struct EntityWrite {
-    pub table: Arc<Table>,
-    /// The scope's chain, for a per-chain entity.
-    pub chain_id: Option<i64>,
-    /// The latest value of each id the batch set.
-    pub sets: Option<Rows>,
-    /// The ids whose latest change is a delete.
-    pub deletes: Vec<String>,
-    pub history: Option<HistoryWrite>,
-}
-
-pub struct HistoryWrite {
-    /// Ids whose history has to start from their current row first.
-    pub backfill: Vec<String>,
-    /// Every set the batch made, with the checkpoint of each.
-    pub sets: Option<(Rows, Vec<String>)>,
-    pub delete_ids: Vec<String>,
-    pub delete_checkpoint_ids: Vec<String>,
-}
-
-pub struct RollbackWrite {
-    pub bounds: Bounds,
-    pub histories: Vec<Arc<Table>>,
-    /// Where the rollback left each chain it moved.
-    pub progress: Vec<Progress>,
-    /// Registrations the rollback dropped. Addresses are insert-only, so
-    /// undoing one is a delete rather than a history replay.
-    pub removed_addresses: Addresses,
-}
-
-pub struct EffectCacheWrite {
-    pub table: Arc<Table>,
-    /// The first write to a cache creates its table.
-    pub create: bool,
-    pub rows: Rows,
-}
-
-/// What a batch writes. An empty list is nothing to write.
-pub struct Batch {
-    pub rollback: Option<RollbackWrite>,
-    pub progress: Vec<Progress>,
-    pub raw_events: Option<(Arc<Table>, Rows)>,
-    pub entities: Vec<EntityWrite>,
-    pub chain_meta: Vec<ChainMeta>,
-    pub addresses: Addresses,
-    pub frontier: Frontier,
-    pub checkpoints: Checkpoints,
-    pub effect_caches: Vec<EffectCacheWrite>,
-}
-
-/// A statement that failed, and what it was doing.
-#[derive(Debug)]
-pub struct Failure {
-    pub context: String,
-    pub error: anyhow::Error,
-}
-
-impl Failure {
-    fn new(context: impl Into<String>, error: anyhow::Error) -> Self {
-        Self {
-            context: context.into(),
-            error,
-        }
-    }
-}
-
-pub enum BatchError {
-    Failed(Failure),
-    /// The sink refused its half, so nothing here was committed. JavaScript
-    /// holds the sink's own error.
-    SinkFailed,
-}
-
-impl From<Failure> for BatchError {
-    fn from(failure: Failure) -> Self {
-        BatchError::Failed(failure)
-    }
-}
-
-pub type Sink = Pin<Box<dyn Future<Output = bool> + Send>>;
 
 /// One statement of a batch, pending, and what it reports if it fails.
 type Statement<'a> = Pin<Box<dyn Future<Output = std::result::Result<(), Failure>> + Send + 'a>>;
 
-pub struct Partition {
-    pub table: Arc<Table>,
-    pub chain_id: i64,
-    pub name: String,
+fn execute<'a>(
+    transaction: &'a Transaction,
+    context: impl Into<String>,
+    sql: String,
+    params: Vec<Param>,
+) -> Statement<'a> {
+    let context = context.into();
+    Box::pin(async move {
+        transaction
+            .execute(&sql, &params)
+            .await
+            .map(|_| ())
+            .map_err(|error| Failure::new(context, error))
+    })
 }
-
-pub struct Enum {
-    pub name: String,
-    pub variants: Vec<String>,
-}
-
-pub struct Initialize {
-    pub sequence: Sequence,
-    pub is_empty_schema: bool,
-    pub tables: Vec<Arc<Table>>,
-    pub partitions: Vec<Partition>,
-    pub enums: Vec<Enum>,
-    pub chains: Vec<ChainConfig>,
-    pub envio_info: String,
-    pub contract_names: Vec<String>,
-    pub addresses: Addresses,
-}
-
-pub struct AddChain {
-    pub chain: ChainConfig,
-    pub partitions: Vec<Partition>,
-    pub addresses: Addresses,
-}
-
-pub struct StoredChain {
-    pub id: f64,
-    pub ecosystem: String,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
-}
-
-pub struct StoredConfig {
-    /// None for a schema an older envio wrote, without the record.
-    pub envio_info: Option<String>,
-    pub contract_names: Option<Vec<String>>,
-    pub chains: Vec<StoredChain>,
-}
-
-pub struct ResumedChain {
-    pub id: f64,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
-    pub first_event_block: Option<i32>,
-    /// Unix milliseconds.
-    pub ready_at: Option<f64>,
-    pub events_processed: f64,
-    pub progress_block: i32,
-    /// Unix seconds.
-    pub progress_block_time: Option<f64>,
-    pub source_block: i32,
-    pub checkpoint_id: String,
-}
-
-pub struct ReorgCheckpoint {
-    pub id: String,
-    pub chain_id: f64,
-    pub block_number: i32,
-    pub block_hash: String,
-}
-
-pub struct ProgressDiff {
-    pub chain_id: f64,
-    pub events_processed: String,
-    pub progress_block: i32,
-}
-
-pub struct CacheTable {
-    pub table_name: String,
-    pub rows: i32,
-}
-
-pub struct CacheFile {
-    pub table: Arc<Table>,
-    pub path: String,
-}
-
-pub type QueryRows = (Vec<Row>, Vec<Column>);
 
 pub struct Storage {
     pub client: PgClient,
     settings: Settings,
-    tables: RwLock<Vec<Arc<Table>>>,
     pub indexes: Arc<Indexes<PgClient>>,
 }
 
@@ -546,7 +325,6 @@ impl Storage {
             )),
             client,
             settings,
-            tables: RwLock::new(Vec::new()),
         }
     }
 
@@ -554,20 +332,8 @@ impl Storage {
         &self.settings.pg_schema
     }
 
-    pub fn register(&self, registration: TableRegistration) -> Result<(u32, Arc<Table>)> {
-        let table = Arc::new(Table::new(registration, &self.settings)?);
-        let mut tables = self.tables.write().unwrap();
-        tables.push(table.clone());
-        Ok(((tables.len() - 1) as u32, table))
-    }
-
-    pub fn table(&self, handle: u32) -> Result<Arc<Table>> {
-        self.tables
-            .read()
-            .unwrap()
-            .get(handle as usize)
-            .cloned()
-            .ok_or_else(|| anyhow!("Unknown table {handle}"))
+    pub fn register(&self, registration: TableRegistration) -> Result<Table> {
+        Table::new(registration, &self.settings)
     }
 
     fn create_table(&self, spec: &TableSpec) -> Result<String> {
@@ -579,13 +345,13 @@ impl Storage {
         )
     }
 
-    fn create_partition(&self, partition: &Partition) -> String {
-        create_partition_query(
+    fn create_partition(&self, partition: &composite::Partition) -> Option<String> {
+        Some(create_partition_query(
             self.schema(),
-            partition.table.name(),
+            partition.table.postgres.as_ref()?.name(),
             &partition.name,
             partition.chain_id,
-        )
+        ))
     }
 
     pub async fn is_initialized(&self) -> Result<bool> {
@@ -597,7 +363,7 @@ impl Storage {
                  (table_name = 'event_sync_state' OR table_name = $2);",
                 &[
                     Param::Text(self.schema().to_string()),
-                    Param::Text(internal::CHAINS.to_string()),
+                    Param::Text(CHAINS_TABLE.to_string()),
                 ],
             )
             .await?;
@@ -621,7 +387,7 @@ impl Storage {
         if !names.is_empty()
             && !names
                 .iter()
-                .any(|name| name == internal::CHAINS || name == "event_sync_state")
+                .any(|name| name == CHAINS_TABLE || name == "event_sync_state")
         {
             bail!(
                 "Cannot run Envio migrations on PostgreSQL schema \"{schema}\" because it contains \
@@ -644,13 +410,18 @@ impl Storage {
     /// Only tables, keys, views and chain rows. The schema's read indexes make
     /// backfill writes far dearer, so they come later, from
     /// `finalizeBackfill`.
-    pub async fn initialize(&self, input: Initialize) -> Result<()> {
+    pub async fn initialize(&self, input: &Initialize, is_empty_schema: bool) -> Result<()> {
         let schema = self.schema();
+        let tables = input
+            .tables
+            .iter()
+            .filter_map(|table| table.postgres.as_deref())
+            .collect::<Vec<_>>();
         let mut ddl = Vec::new();
         // A hosted database already has a `public` schema it won't let us
         // drop, so an empty one is reused. `IF NOT EXISTS` covers one that was
         // dropped before.
-        if input.is_empty_schema && schema == "public" {
+        if is_empty_schema && schema == "public" {
             ddl.push(format!("CREATE SCHEMA IF NOT EXISTS \"{schema}\";"));
         } else {
             ddl.push(format!(
@@ -680,16 +451,19 @@ impl Storage {
         for spec in internal::tables(input.sequence) {
             ddl.push(self.create_table(&spec)?);
         }
-        for table in &input.tables {
+        for table in &tables {
             ddl.push(self.create_table(&table.spec)?);
         }
-        for partition in &input.partitions {
-            ddl.push(self.create_partition(partition));
-        }
+        ddl.extend(
+            input
+                .partitions
+                .iter()
+                .filter_map(|partition| self.create_partition(partition)),
+        );
         // History stays unpartitioned: it is only ever read by checkpoint,
         // never by chain, so partitioning it would route every write and prune
         // nothing.
-        for table in &input.tables {
+        for table in &tables {
             if let Some(entity) = &table.entity {
                 ddl.push(self.create_table(&entity.history_spec)?);
             }
@@ -703,7 +477,10 @@ impl Storage {
             transaction
                 .execute(
                     &internal::write_info(schema),
-                    &[Param::Text(input.envio_info.clone())],
+                    &[
+                        Param::Text(input.envio_info.clone()),
+                        Param::Text(input.instance.clone()),
+                    ],
                 )
                 .await?;
             transaction
@@ -737,7 +514,7 @@ impl Storage {
         transaction
             .execute(
                 &internal::insert_addresses(self.schema(), self.settings.chain_id_mode),
-                &addresses.params(true),
+                &address_params(addresses, true),
             )
             .await?;
         Ok(())
@@ -745,11 +522,15 @@ impl Storage {
 
     /// Brings a chain the schema doesn't have yet: its partitions, its config
     /// addresses and its row. Only one process ever adds a given chain.
-    pub async fn add_chain(&self, input: AddChain) -> Result<()> {
+    pub async fn add_chain(&self, input: &AddChain) -> Result<()> {
         let transaction = self.client.begin().await?;
         let outcome = async {
-            for partition in &input.partitions {
-                transaction.batch(&self.create_partition(partition)).await?;
+            for partition in input
+                .partitions
+                .iter()
+                .filter_map(|partition| self.create_partition(partition))
+            {
+                transaction.batch(&partition).await?;
             }
             self.insert_addresses(&transaction, &input.addresses)
                 .await?;
@@ -764,9 +545,23 @@ impl Storage {
         finish(transaction, outcome).await
     }
 
+    /// None for a schema an older envio built, which keeps none.
+    pub async fn instance(&self) -> Result<Option<String>> {
+        match self
+            .client
+            .query(&internal::read_instance(self.schema()), &[])
+            .await
+        {
+            Ok((rows, _)) => rows.first().map(|row| cell(row, 0)).transpose(),
+            // The table, or the column, an older envio didn't create.
+            Err(error) if matches!(sql_state(&error), Some("42P01" | "42703")) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// The record a resume is checked against, and the config addresses it was
     /// written with.
-    pub async fn read_stored_config(&self) -> Result<(StoredConfig, QueryRows)> {
+    pub async fn read_stored_config(&self) -> Result<StoredConfigRead> {
         let schema = self.schema();
         let (read_info, read_contracts) = (
             internal::read_info(schema),
@@ -785,31 +580,31 @@ impl Storage {
         // Both join the schema in one transaction. Without either, an older
         // envio wrote it, and the address rows are shaped differently.
         if envio_info.is_none() || contract_names.is_none() {
-            return Ok((
-                StoredConfig {
+            return Ok(StoredConfigRead {
+                config: StoredConfig {
                     envio_info: None,
                     contract_names: None,
                     chains: vec![],
                 },
-                (vec![], vec![]),
-            ));
+                config_addresses: into_result(&[], &[])?,
+            });
         }
         let (read_chains, read_addresses) = (
             internal::read_stored_chains(schema),
             internal::read_addresses(schema, true),
         );
-        let ((chains, _), addresses) = futures_util::try_join!(
+        let ((chains, _), (addresses, address_columns)) = futures_util::try_join!(
             self.client.query(&read_chains, &[]),
             self.client.query(&read_addresses, &[]),
         )?;
-        Ok((
-            StoredConfig {
+        Ok(StoredConfigRead {
+            config: StoredConfig {
                 envio_info,
                 contract_names,
                 chains: chains
                     .iter()
                     .map(|row| {
-                        Ok(StoredChain {
+                        Ok(ChainConfig {
                             id: cell(row, 0)?,
                             ecosystem: cell(row, 1)?,
                             start_block: cell(row, 2)?,
@@ -819,25 +614,25 @@ impl Storage {
                     })
                     .collect::<Result<_>>()?,
             },
-            addresses,
-        ))
+            config_addresses: into_result(&addresses, &address_columns)?,
+        })
     }
 
-    pub async fn resume(&self) -> Result<(Vec<ResumedChain>, QueryRows, Vec<ReorgCheckpoint>)> {
+    pub async fn resume(&self) -> Result<Resumed> {
         let schema = self.schema();
         let (read_chains, read_addresses, read_checkpoints) = (
             internal::read_resumed_chains(schema),
             internal::read_addresses(schema, false),
             internal::read_reorg_checkpoints(schema),
         );
-        let ((chains, _), addresses, (checkpoints, _), ()) = futures_util::try_join!(
+        let ((chains, _), (addresses, address_columns), (checkpoints, _), ()) = futures_util::try_join!(
             self.client.query(&read_chains, &[]),
             self.client.query(&read_addresses, &[]),
             self.client.query(&read_checkpoints, &[]),
             self.indexes.reload(),
         )?;
-        Ok((
-            chains
+        Ok(Resumed {
+            chains: chains
                 .iter()
                 .map(|row| {
                     Ok(ResumedChain {
@@ -855,8 +650,8 @@ impl Storage {
                     })
                 })
                 .collect::<Result<_>>()?,
-            addresses,
-            checkpoints
+            addresses: into_result(&addresses, &address_columns)?,
+            reorg_checkpoints: checkpoints
                 .iter()
                 .map(|row| {
                     Ok(ReorgCheckpoint {
@@ -867,7 +662,7 @@ impl Storage {
                     })
                 })
                 .collect::<Result<_>>()?,
-        ))
+        })
     }
 
     pub async fn set_chain_meta(&self, chains: &[ChainMeta]) -> Result<()> {
@@ -884,7 +679,7 @@ impl Storage {
 
     /// One transaction for every chain: they caught up together, and a crash
     /// part way through would leave some stamped and some not.
-    pub async fn set_ready_at(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
+    async fn set_ready_at(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
         let sql = internal::set_ready_at(self.schema());
         let transaction = self.client.begin().await?;
         let outcome = async {
@@ -935,7 +730,7 @@ impl Storage {
         self.client
             .execute(
                 &internal::prune_checkpoints(self.schema(), bounds.sequence)?,
-                &bounds.params(),
+                &bound_params(bounds),
             )
             .await?;
         Ok(())
@@ -946,7 +741,7 @@ impl Storage {
         self.client
             .execute(
                 &entity.history.prune(self.schema(), bounds.sequence)?,
-                &bounds.params(),
+                &bound_params(bounds),
             )
             .await?;
         Ok(())
@@ -956,7 +751,7 @@ impl Storage {
         &self,
         chain_id: i64,
         block_number: i32,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<i64>> {
         let (rows, _) = self
             .client
             .query(
@@ -970,12 +765,27 @@ impl Storage {
         rows.first().map(|row| cell(row, 0)).transpose()
     }
 
+    pub async fn lowest_checkpoint(&self, chain_id: Option<i64>) -> Result<Option<i64>> {
+        let params = chain_id
+            .map(|chain_id| Param::Text(chain_id.to_string()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        let (rows, _) = self
+            .client
+            .query(
+                &internal::lowest_checkpoint(self.schema(), chain_id.is_some()),
+                &params,
+            )
+            .await?;
+        rows.first().map(|row| cell(row, 0)).transpose()
+    }
+
     pub async fn rollback_progress_diff(&self, bounds: &Bounds) -> Result<Vec<ProgressDiff>> {
         let (rows, _) = self
             .client
             .query(
                 &internal::rollback_progress_diff(self.schema(), bounds.sequence)?,
-                &bounds.params(),
+                &bound_params(bounds),
             )
             .await?;
         rows.iter()
@@ -994,15 +804,19 @@ impl Storage {
         &self,
         table: &Table,
         bounds: &Bounds,
-    ) -> Result<(QueryRows, QueryRows)> {
+    ) -> Result<(ResultSet, ResultSet)> {
         let history = &table.entity()?.history;
-        let params = bounds.params();
+        let params = bound_params(bounds);
         let removed = history.removed_ids(self.schema(), bounds.sequence)?;
         let restored = history.pre_target_rows(self.schema(), bounds.sequence)?;
-        Ok(futures_util::try_join!(
+        let ((removed, removed_columns), (restored, restored_columns)) = futures_util::try_join!(
             self.client.query(&removed, &params),
             self.client.query(&restored, &params),
-        )?)
+        )?;
+        Ok((
+            into_result(&removed, &removed_columns)?,
+            into_result(&restored, &restored_columns)?,
+        ))
     }
 
     pub async fn effect_cache_tables(&self) -> Result<Vec<CacheTable>> {
@@ -1036,14 +850,13 @@ impl Storage {
     pub async fn upload_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
         let schema = self.schema();
         let uploads = files.iter().map(|file| async move {
-            self.client
-                .batch(&self.create_table(&file.table.spec)?)
-                .await?;
+            let table = file.table.postgres()?;
+            self.client.batch(&self.create_table(&table.spec)?).await?;
             self.client
                 .copy_in(
                     &format!(
                         "COPY \"{schema}\".\"{}\" FROM STDIN WITH (FORMAT text, HEADER)",
-                        file.table.name()
+                        table.name()
                     ),
                     &file.path,
                 )
@@ -1056,26 +869,18 @@ impl Storage {
         Ok(())
     }
 
-    /// Each table to its file, the directories a chain's caches go in created
-    /// as needed.
-    pub async fn dump_effect_cache(&self, files: &[(String, String)]) -> Result<()> {
+    pub async fn dump_effect_cache(&self, files: &[CacheDump]) -> Result<()> {
         let schema = self.schema();
-        let dumps = files.iter().map(|(table_name, path)| async move {
-            if let Some(directory) = std::path::Path::new(path).parent() {
-                tokio::fs::create_dir_all(directory)
+        let dumps = files.iter().map(|dump| {
+            let sql = format!(
+                "COPY {}.{} TO STDOUT WITH (FORMAT text, HEADER)",
+                internal::quote_ident(schema),
+                internal::quote_ident(&dump.table_name)
+            );
+            async move {
+                dump.replace_with(async |file| self.client.copy_out(&sql, file).await)
                     .await
-                    .with_context(|| format!("Failed creating {}", directory.display()))?;
             }
-            self.client
-                .copy_out(
-                    &format!(
-                        "COPY {}.{} TO STDOUT WITH (FORMAT text, HEADER)",
-                        internal::quote_ident(schema),
-                        internal::quote_ident(table_name)
-                    ),
-                    path,
-                )
-                .await
         });
         for outcome in join_all(dumps).await {
             outcome?;
@@ -1087,9 +892,10 @@ impl Storage {
         &self,
         table_name: &str,
         conditions: Vec<Condition>,
-    ) -> Result<QueryRows> {
+    ) -> Result<ResultSet> {
         let (sql, params) = select::load_query(self.schema(), table_name, conditions)?;
-        self.client.query(&sql, &params).await
+        let (rows, columns) = self.client.query(&sql, &params).await?;
+        into_result(&rows, &columns)
     }
 
     pub async fn reset(&self) -> Result<()> {
@@ -1110,13 +916,13 @@ impl Storage {
     /// The caches stay outside: they are never rolled back, and keeping them
     /// out keeps their writes off the connection the batch holds.
     ///
-    /// Nothing commits unless every statement succeeded and the sink, if there
-    /// is one, finished its half.
+    /// Nothing commits unless every statement succeeded and the handoff says
+    /// to.
     pub async fn write_batch(
         &self,
         batch: Batch,
-        sink: Option<Sink>,
-    ) -> std::result::Result<(), BatchError> {
+        mut handoff: Handoff,
+    ) -> std::result::Result<(), WriteError> {
         let Batch {
             rollback,
             progress,
@@ -1128,7 +934,9 @@ impl Storage {
             checkpoints,
             effect_caches,
         } = batch;
-        let transactional = async {
+        // Moved in, so the handoff goes as soon as the transaction is done and a
+        // store waiting on its word never waits on the caches too.
+        let transactional = async move {
             let transaction =
                 self.client.begin().await.map_err(|error| {
                     Failure::new("Failed opening the batch's transaction", error)
@@ -1148,19 +956,19 @@ impl Storage {
                     &checkpoints,
                 )
                 .await?;
-                if let Some(sink) = sink {
-                    if !sink.await {
-                        return Err(BatchError::SinkFailed);
-                    }
+                if !handoff.ready_to_commit().await {
+                    return Err(WriteError::Gated);
                 }
                 Ok(())
             }
             .await;
             match outcome {
-                Ok(()) => transaction
-                    .commit()
-                    .await
-                    .map_err(|error| Failure::new("Failed committing the batch", error).into()),
+                Ok(()) => {
+                    let committed = transaction.commit().await;
+                    handoff.report_commit(committed.is_ok());
+                    committed
+                        .map_err(|error| Failure::new("Failed committing the batch", error).into())
+                }
                 Err(error) => {
                     // The statement that failed is what to report; a rollback
                     // failing after it would only say the connection is gone.
@@ -1171,16 +979,13 @@ impl Storage {
         };
         let caches = async {
             let writes = effect_caches.iter().map(|write| async move {
+                let table = postgres_table(&write.table)?;
                 if write.create {
-                    let create = self
-                        .create_table(&write.table.spec)
-                        .map_err(|error| Failure::new(insert_context(write.table.name()), error))?;
-                    self.client
-                        .batch(&create)
-                        .await
-                        .map_err(|error| Failure::new(insert_context(write.table.name()), error))?;
+                    let fail = |error| Failure::new(insert_context(table.name()), error);
+                    let create = self.create_table(&table.spec).map_err(fail)?;
+                    self.client.batch(&create).await.map_err(fail)?;
                 }
-                self.insert(None, &write.table, &write.rows).await
+                self.insert(None, table, &write.rows).await
             });
             settle(join_all(writes).await)
         };
@@ -1195,31 +1000,38 @@ impl Storage {
         rollback: &RollbackWrite,
     ) -> std::result::Result<(), Failure> {
         let schema = self.schema();
-        let params = rollback.bounds.params();
+        let params = bound_params(&rollback.bounds);
         let mut statements = Vec::new();
-        for table in &rollback.histories {
+        for table in rollback
+            .tables
+            .iter()
+            .filter_map(|table| table.postgres.as_ref())
+        {
             let sql = table
                 .entity()
                 .and_then(|entity| entity.history.rollback(schema, rollback.bounds.sequence))
                 .map_err(|error| Failure::new("Failed rolling back the history", error))?;
-            statements.push((
+            statements.push(execute(
+                transaction,
                 format!("Failed rolling back the history of \"{}\"", table.name()),
                 sql,
                 params.clone(),
             ));
         }
-        statements.push((
-            "Failed rolling back the checkpoints".to_string(),
+        statements.push(execute(
+            transaction,
+            "Failed rolling back the checkpoints",
             internal::rollback_checkpoints(schema, rollback.bounds.sequence)
                 .map_err(|error| Failure::new("Failed rolling back the checkpoints", error))?,
-            params.clone(),
+            params,
         ));
         // Before the batch's own progress write, so a chain the batch also
         // progressed keeps the batch's later value.
         let progress_sql = internal::set_progress(schema);
         for progress in &rollback.progress {
-            statements.push((
-                "Failed rolling back the chains' progress".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed rolling back the chains' progress",
                 progress_sql.clone(),
                 progress_params(progress),
             ));
@@ -1227,21 +1039,14 @@ impl Storage {
         // Before the batch's own inserts, so an address registered again lands
         // after its old row is gone.
         if !rollback.removed_addresses.chain_ids.is_empty() {
-            statements.push((
-                "Failed rolling back the registered addresses".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed rolling back the registered addresses",
                 internal::delete_addresses(schema, self.settings.chain_id_mode),
-                rollback.removed_addresses.params(false),
+                address_params(&rollback.removed_addresses, false),
             ));
         }
-        settle(
-            join_all(statements.iter().map(|(context, sql, params)| async move {
-                transaction
-                    .execute(sql, params)
-                    .await
-                    .map_err(|error| Failure::new(context.clone(), error))
-            }))
-            .await,
-        )
+        settle(join_all(statements).await)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1249,7 +1054,7 @@ impl Storage {
         &self,
         transaction: &Transaction,
         progress: &[Progress],
-        raw_events: Option<&(Arc<Table>, Rows)>,
+        raw_events: Option<&composite::TableWrite>,
         entities: &[EntityWrite],
         chain_meta: &[ChainMeta],
         addresses: &Addresses,
@@ -1259,61 +1064,74 @@ impl Storage {
         let schema = self.schema();
         let chain_id_mode = self.settings.chain_id_mode;
         let mut statements: Vec<Statement<'_>> = Vec::new();
-        let run = |context: String, sql: String, params: Vec<Param>| {
-            Box::pin(async move {
-                transaction
-                    .execute(&sql, &params)
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| Failure::new(context, error))
-            }) as Statement<'_>
-        };
 
         let progress_sql = internal::set_progress(schema);
         for progress in progress {
-            statements.push(run(
-                "Failed writing the chains' progress".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the chains' progress",
                 progress_sql.clone(),
                 progress_params(progress),
             ));
         }
-        if let Some((table, rows)) = raw_events {
-            statements.push(Box::pin(self.insert(Some(transaction), table, rows)));
+        if let Some(write) = raw_events {
+            let table = postgres_table(&write.table)?;
+            statements.push(Box::pin(self.insert(Some(transaction), table, &write.rows)));
         }
         for write in entities {
-            statements.push(Box::pin(self.write_entity(transaction, write)));
+            if let Some(rows) = &write.postgres {
+                let table = postgres_table(&write.table)?;
+                statements.push(Box::pin(self.write_entity(
+                    transaction,
+                    table,
+                    write.chain_id,
+                    rows,
+                )));
+            }
         }
         let meta_sql = internal::set_meta(schema);
         for meta in chain_meta {
-            statements.push(run(
-                "Failed writing the chains' metadata".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the chains' metadata",
                 meta_sql.clone(),
                 meta_params(meta),
             ));
         }
         if !addresses.chain_ids.is_empty() {
-            statements.push(run(
-                "Failed writing the registered addresses".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the registered addresses",
                 internal::insert_addresses(schema, chain_id_mode),
-                addresses.params(true),
+                address_params(addresses, true),
             ));
         }
         if !frontier.chain_ids.is_empty() {
-            statements.push(run(
-                "Failed writing the chains' checkpoint".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the chains' checkpoint",
                 internal::set_frontier(schema, chain_id_mode),
                 vec![
                     array_literal(frontier.chain_ids.iter().map(|id| Some(id.to_string()))),
-                    array_literal(frontier.checkpoint_ids.iter().map(Some)),
+                    array_literal(
+                        frontier
+                            .checkpoint_ids
+                            .iter()
+                            .map(|id| Some(id.to_string())),
+                    ),
                 ],
             ));
         }
+        // Only the checkpoints a rollback can reach back to: those anchoring
+        // history a chain keeps.
+        let checkpoints = checkpoints.keeping_history();
         if !checkpoints.ids.is_empty() {
-            statements.push(run(
-                "Failed writing the checkpoints".to_string(),
+            statements.push(execute(
+                transaction,
+                "Failed writing the checkpoints",
                 internal::insert_checkpoints(schema, chain_id_mode),
                 vec![
-                    array_literal(checkpoints.ids.iter().map(Some)),
+                    array_literal(checkpoints.ids.iter().map(|id| Some(id.to_string()))),
                     array_literal(checkpoints.chain_ids.iter().map(|id| Some(id.to_string()))),
                     array_literal(
                         checkpoints
@@ -1340,10 +1158,11 @@ impl Storage {
     async fn write_entity(
         &self,
         transaction: &Transaction,
-        write: &EntityWrite,
+        table: &Table,
+        chain_id: Option<i64>,
+        write: &PgEntityWrite,
     ) -> std::result::Result<(), Failure> {
         let schema = self.schema();
-        let table = &write.table;
         let entity = table
             .entity()
             .map_err(|error| Failure::new(insert_context(table.name()), error))?;
@@ -1354,7 +1173,7 @@ impl Storage {
             if !history.backfill.is_empty() {
                 transaction
                     .execute(
-                        &entity.history.backfill(schema, write.chain_id),
+                        &entity.history.backfill(schema, chain_id),
                         &[array_literal(history.backfill.iter().map(Some))],
                     )
                     .await
@@ -1365,22 +1184,18 @@ impl Storage {
                     array_literal(history.delete_ids.iter().map(Some)),
                     array_literal(history.delete_checkpoint_ids.iter().map(Some)),
                 ];
-                let chain_id = write
-                    .chain_id
-                    .filter(|_| entity.history.chain_id_column.is_some());
+                let chain_id = chain_id.filter(|_| entity.history.chain_id_column.is_some());
                 if let Some(chain_id) = chain_id {
                     params.push(Param::Text(chain_id.to_string()));
                 }
-                let sql = entity
-                    .history
-                    .insert_delete_rows(schema, chain_id.is_some());
-                statements.push(Box::pin(async move {
-                    transaction
-                        .execute(&sql, &params)
-                        .await
-                        .map(|_| ())
-                        .map_err(|error| Failure::new(history_context(), error))
-                }));
+                statements.push(execute(
+                    transaction,
+                    history_context(),
+                    entity
+                        .history
+                        .insert_delete_rows(schema, chain_id.is_some()),
+                    params,
+                ));
             }
             if let Some((rows, checkpoint_ids)) = &history.sets {
                 statements.push(Box::pin(self.insert_history(
@@ -1396,20 +1211,12 @@ impl Storage {
             statements.push(Box::pin(self.insert(Some(transaction), table, rows)));
         }
         if !write.deletes.is_empty() {
-            let sql = entity.history.delete_entities(schema, write.chain_id);
-            let params = vec![array_literal(write.deletes.iter().map(Some))];
-            statements.push(Box::pin(async move {
-                transaction
-                    .execute(&sql, &params)
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| {
-                        Failure::new(
-                            format!("Failed deleting \"{}\" from storage by ids", table.name()),
-                            error,
-                        )
-                    })
-            }));
+            statements.push(execute(
+                transaction,
+                format!("Failed deleting \"{}\" from storage by ids", table.name()),
+                entity.history.delete_entities(schema, chain_id),
+                vec![array_literal(write.deletes.iter().map(Some))],
+            ));
         }
         settle(join_all(statements).await)
     }
@@ -1494,13 +1301,6 @@ impl Storage {
         checkpoint_ids: &[String],
     ) -> std::result::Result<(), Failure> {
         let fail = |error| Failure::new(insert_context(&entity.history.history_table), error);
-        if checkpoint_ids.len() != rows.len() {
-            return Err(fail(anyhow!(
-                "{} history rows came with {} checkpoints",
-                rows.len(),
-                checkpoint_ids.len()
-            )));
-        }
         let statements = match rows {
             Rows::Staged(arena) => {
                 let mut params = write::unnest_params(arena).map_err(fail)?;
@@ -1580,6 +1380,12 @@ pub(super) fn cell<'a, T: tokio_postgres::types::FromSql<'a>>(
 
 fn insert_context(table_name: &str) -> String {
     format!("Failed to insert items into table \"{table_name}\"")
+}
+
+fn postgres_table(table: &composite::Table) -> std::result::Result<&Arc<Table>, Failure> {
+    table
+        .postgres()
+        .map_err(|error| Failure::new(insert_context(&table.name), error))
 }
 
 /// Whether a statement's text recurs. One that does is kept prepared on its
@@ -1853,7 +1659,7 @@ mod tests {
     #[test]
     fn per_chain_bounds_pair_each_chain_with_its_own_id() {
         assert_eq!(
-            bounds(Sequence::PerChain).params(),
+            bound_params(&bounds(Sequence::PerChain)),
             vec![
                 Param::Text("{\"1\",\"137\"}".to_string()),
                 Param::Text("{\"9\",\"2\"}".to_string()),
@@ -1867,7 +1673,7 @@ mod tests {
     #[test]
     fn shared_bounds_collapse_to_the_lowest_id() {
         assert_eq!(
-            bounds(Sequence::SharedAcrossChains).params(),
+            bound_params(&bounds(Sequence::SharedAcrossChains)),
             vec![Param::Text("2".to_string())]
         );
     }

@@ -44,25 +44,16 @@ let setTally = (~block, ~logIndex=0, ~id, ~count): MockSource.itemMock => {
 // the refusal comes from the server.
 let tooLarge = 2147483648.->(Utils.magic: float => int)
 
-type stored = {tallies: array<tally>, history: int, checkpoints: string, progress: array<int>}
+type stored = {tallies: array<tally>, history: int, checkpoints: int, progress: array<int>}
 
 let read = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
   let tallies: array<tally> = await indexer.query("Tally")
   let history: array<Change.t<tally>> = await indexer.queryHistory("Tally")
-  let checkpoints: array<{
-    "count": string,
-  }> = await sql->Sql.queryForTests(
-    `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_checkpoints";`,
-  )
-  let progress: array<{
-    "progress_block": int,
-  }> = await sql->Sql.queryForTests(`SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`)
   {
     tallies: tallies->Array.toSorted((a, b) => String.compare(a.id, b.id)),
     history: history->Array.length,
-    checkpoints: (checkpoints->Array.getUnsafe(0))["count"],
-    progress: progress->Array.map(row => row["progress_block"]),
+    checkpoints: (await indexer.queryCheckpoints())->Array.length,
+    progress: (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
   }
 }
 
@@ -71,6 +62,7 @@ describe("A batch the server refuses", () => {
 
   scenario->Scenario.it(
     "commits nothing from it, and a restart resumes after the last good batch",
+    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~onError=refusal.onError,
     async (~t, ~indexer, ~source) => {
@@ -125,7 +117,7 @@ describe("A batch the server refuses", () => {
       )).toEqual((
         Some(true),
         committed,
-        {tallies: [{id: "kept", count: 2}], history: 2, checkpoints: "2", progress: [2]},
+        {tallies: [{id: "kept", count: 2}], history: 2, checkpoints: 2, progress: [2]},
       ))
     },
   )

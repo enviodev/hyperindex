@@ -26,6 +26,7 @@ type Domain {
   name: String @index
 }
 `,
+  ~unsupported=Scenario.assertsPostgresIndexes,
 )
 
 type domain = {id: string, name: string}

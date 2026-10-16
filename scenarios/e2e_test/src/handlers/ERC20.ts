@@ -13,24 +13,11 @@ if (actual !== expected) {
   );
 }
 
-// Asserts that an error thrown by a context.<entity>.<op>() call matches
-// the friendly ClickHouse write-only message we install in UserContext.res
-// verbatim. If the call did not throw, or the message is wrong, this
-// re-throws and the indexer crashes the e2e test loudly.
-const expectClickHouseReadOnlyError = (op: string, err: unknown) => {
-  if (!(err instanceof Error)) {
-    throw new Error(`Expected Error from TransferChOnly.${op}, got ${typeof err}: ${err}`);
-  }
-  const expected =
-    `context.TransferChOnly.${op}() is unavailable: ` +
-    `ClickHouse storage is currently write-only. ` +
-    `Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`;
-  if (err.message !== expected) {
-    throw new Error(
-      `Expected TransferChOnly.${op} error:\n  ${expected}\nGot:\n  ${err.message}`,
-    );
-  }
-};
+const idsOf = (transfers: { id: string }[]) =>
+  transfers
+    .map((transfer) => transfer.id)
+    .sort()
+    .join(",");
 
 // Asserted by the ClickHouse parity suite, which needs an id it knows was
 // deleted rather than one that happens to be.
@@ -48,30 +35,31 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     transactionHash: event.transaction.hash,
   });
 
-  // Per-entity storage override: only Postgres receives this row
-  // (declared in schema.graphql via @storage(postgres: true)).
+  // TransferPgOnly and TransferChOnly are written alike, each to the one store
+  // its @storage names, so reads of the two have to agree — and find nothing
+  // yet under this event's own id.
+  const [pgExisting, chExisting, pgSent, chSent] = await Promise.all([
+    context.TransferPgOnly.get(id),
+    context.TransferChOnly.get(id),
+    context.TransferPgOnly.getWhere({ from: { _eq: event.params.from } }),
+    context.TransferChOnly.getWhere({ from: { _eq: event.params.from } }),
+  ]);
+  if (pgExisting !== undefined || chExisting !== undefined) {
+    throw new Error(`A transfer under ${id} exists before the event that sets it`);
+  }
+  if (idsOf(pgSent) !== idsOf(chSent)) {
+    throw new Error(
+      `The stores disagree on ${event.params.from}'s transfers:\n  Postgres: ${idsOf(pgSent)}\n  ClickHouse: ${idsOf(chSent)}`,
+    );
+  }
+
+  // Per-entity storage override: only Postgres receives this row (declared in
+  // schema.graphql via @storage(postgres: true)).
   context.TransferPgOnly.set({
     id,
     from: event.params.from,
     value: event.params.value,
   });
-
-  // Verify the runtime blocks reads against ClickHouse-only entities with
-  // a friendly message. Each call is in its own try/catch so a regression
-  // surfaces against the offending operation, not as a single shared throw.
-  try {
-    await context.TransferChOnly.get(id);
-    throw new Error("Expected context.TransferChOnly.get to throw");
-  } catch (err) {
-    expectClickHouseReadOnlyError("get", err);
-  }
-
-  try {
-    await context.TransferChOnly.getWhere({ from: { _eq: event.params.from } });
-    throw new Error("Expected context.TransferChOnly.getWhere to throw");
-  } catch (err) {
-    expectClickHouseReadOnlyError("getWhere", err);
-  }
 
   // @internal entity: written like any other, but invisible to Hasura.
   context.TransferInternal.set({
@@ -80,7 +68,7 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     value: event.params.value,
   });
 
-  // Mirror override: only ClickHouse receives this row.
+  // Per-entity storage override: only ClickHouse receives this row.
   context.TransferChOnly.set({
     id,
     from: event.params.from,

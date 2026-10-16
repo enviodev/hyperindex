@@ -10,8 +10,7 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
-type clickHouseSinkCtor
-type pgStorageCtor
+type storageCtor
 type addressStoreCtor
 type tuiCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
@@ -46,7 +45,6 @@ type pgColumnInput = {
 }
 
 type pgTableInput = {
-  tableName: string,
   // In the order the table declares them.
   columns: array<pgColumnInput>,
   // The columns a batch's rows carry, in the order they are laid out.
@@ -94,10 +92,8 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
-  @as("ClickHouseSink")
-  clickHouseSink: clickHouseSinkCtor,
-  @as("PgStorage")
-  pgStorage: pgStorageCtor,
+  @as("Storage")
+  storage: storageCtor,
   @as("Tui")
   tui: tuiCtor,
   @as("MockHyperSyncServer")

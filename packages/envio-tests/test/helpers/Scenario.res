@@ -7,6 +7,42 @@ type backend = IndexerRunner.backend
 // skip message — an opt-out nobody can explain is an opt-out nobody revisits.
 type unsupported = {backend: backend, reason: string}
 
+// What Postgres keeps of an entity it stores, which an entity kept in
+// ClickHouse alone has no counterpart of.
+let assertsPostgresHistory = [
+  {backend: #clickhouse, reason: "asserts the history Postgres keeps of an entity"},
+]
+// On the ClickHouse leg an entity is kept in ClickHouse alone, with no
+// Postgres history: both sides read `None` there, so a case asserting state
+// and history together still checks the state on every leg.
+let postgresHistory = (indexer: IndexerRunner.t, name): promise<option<array<Change.t<'entity>>>> =>
+  switch IndexerRunner.selectedBackend {
+  | #postgres | #both => indexer.queryHistory(name)->Promise.thenResolve(history => Some(history))
+  | #clickhouse => Promise.resolve(None)
+  }
+// What Postgres holds for the scenario's entities on this leg: `expected`
+// where it keeps them, `absent` where they live in ClickHouse alone.
+let expectedInPostgres = (expected, ~absent) =>
+  switch IndexerRunner.selectedBackend {
+  | #postgres | #both => expected
+  | #clickhouse => absent
+  }
+let expectedPostgresHistory = (history: array<Change.t<'entity>>) =>
+  Some(history)->expectedInPostgres(~absent=None)
+
+let assertsPostgresIndexes = [
+  {backend: #clickhouse, reason: "asserts the indexes Postgres builds on an entity"},
+]
+let assertsPostgresPartitions = [
+  {backend: #clickhouse, reason: "asserts the partitions Postgres keeps an entity in"},
+]
+let configuresOwnStorage = [#postgres, #both]->Array.map((backend): unsupported => {
+  backend,
+  reason: "configures its own storage, so it runs the same on the ClickHouse leg",
+})
+let noClickHouse = (reason): array<unsupported> =>
+  [#clickhouse, #both]->Array.map(backend => {backend, reason})
+
 type t = {
   config: Config.t,
   publicConfigJson: JSON.t,
@@ -39,16 +75,23 @@ type sourceMock = {
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
-// The ClickHouse leg indexes the same scenario with the sink switched on. It's
-// a config choice a user makes in YAML, so it's made there rather than by
-// patching the parsed config — that way the entities pick up their ClickHouse
-// storage flags through the same parse a user's would.
-let withClickHouseStorage = configYaml =>
+// The ClickHouse leg indexes the same scenario with every entity kept in
+// ClickHouse alone, so every handler read, getWhere and rollback reads it there.
+// The both leg keeps every entity in Postgres and ClickHouse, so every batch
+// writes the two together. It's a config choice a user makes in YAML, so it's
+// made there rather than by patching the parsed config — that way the entities
+// pick up their storage flags through the same parse a user's would.
+let withLegStorage = configYaml =>
   if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
-    configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    switch IndexerRunner.selectedBackend {
+    | #postgres => configYaml
+    | #clickhouse => configYaml ++ "\nstorage:\n  clickhouse:\n    default: true\n"
+    | #both =>
+      configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    }
   }
 
 let make = (
@@ -63,14 +106,11 @@ let make = (
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
 
-  // A scenario that can't run on ClickHouse doesn't get shaped for it: some
-  // schemas the other backends accept (an unbounded BigInt id, say) fail the
-  // parse outright once ClickHouse storage is on, which would take the whole
-  // file down before the skip could apply.
-  let configYaml = switch IndexerRunner.selectedBackend {
-  | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #postgres => configYaml
-  }
+  // A scenario that can't run on a leg doesn't get shaped for it: some
+  // schemas Postgres accepts (an unbounded BigInt id, say) fail the parse
+  // outright once ClickHouse storage is on, which would take the whole file
+  // down before the skip could apply.
+  let configYaml = isUnsupported ? configYaml : configYaml->withLegStorage
 
   let withIndexerTypes = handlers->Option.isSome
   let {config: configJson, indexerTypes} = Core.fromUserApi(
@@ -192,6 +232,8 @@ let run = async (
   ~onExit=?,
   ~mapStorage=?,
   ~captureLogs=?,
+  ~provideClickHouse=?,
+  ~chains=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
@@ -265,6 +307,8 @@ let run = async (
     ~onExit?,
     ~mapStorage?,
     ~captureLogs?,
+    ~provideClickHouse?,
+    ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
       switch await body(~indexer, ~source) {
@@ -293,17 +337,19 @@ let run = async (
   )
 }
 
-let skipReason = (scenario: t) =>
-  scenario.unsupported
+let skipReason = (unsupported: array<unsupported>) =>
+  unsupported
   ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
   ->Option.map(({reason}) => reason)
 
 // Registers a vitest test that runs `body` against this scenario. A backend the
-// scenario declares unsupported is skipped by name and reason, so the reporter
-// says which coverage the run is missing instead of quietly passing.
+// scenario, or this one case of it, declares unsupported is skipped by name and
+// reason, so the reporter says which coverage the run is missing instead of
+// quietly passing.
 let it = (
   scenario: t,
   name,
+  ~unsupported=[],
   ~sources: array<sourceMock>=[],
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
@@ -328,7 +374,7 @@ let it = (
     ~source: (int, ~index: int=?) => MockSource.t,
   ) => promise<unit>,
 ) => {
-  switch scenario->skipReason {
+  switch scenario.unsupported->Array.concat(unsupported)->skipReason {
   | Some(reason) =>
     Vitest.Async.it_skip(
       `${name} [no ${IndexerRunner.selectedBackend->IndexerRunner.backendName}: ${reason}]`,

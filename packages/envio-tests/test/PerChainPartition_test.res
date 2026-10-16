@@ -59,7 +59,7 @@ let chainIds = [1->ChainId.fromInt, 137->ChainId.fromInt]
 describe("Per-chain entity partitions", () => {
   it("Names one partition per chain, and only for a per-chain entity", t => {
     t.expect(
-      chainIds->Array.map(chainId => PgStorage.partitionTableName(~entityConfig=counter, ~chainId)),
+      chainIds->Array.map(chainId => Storage.partitionTableName(~entityConfig=counter, ~chainId)),
     ).toEqual(["Counter$1", "Counter$137"])
   })
 
@@ -72,7 +72,7 @@ describe("Per-chain entity partitions", () => {
     let suffix = `$${longCounter.index->Int.toString}$137`
     let names =
       chainIds->Array.map(
-        chainId => PgStorage.partitionTableName(~entityConfig=longCounter, ~chainId),
+        chainId => Storage.partitionTableName(~entityConfig=longCounter, ~chainId),
       )
     // Chain 1 leaves the name whole under the limit; chain 137 pushes it over,
     // and the result sits exactly on the limit rather than past it.
@@ -97,7 +97,7 @@ type counterRow = {
 type counterOps = {set: {"id": string, "count": bigint, "owner": string} => unit}
 type handlerContext = {@as("Counter") counter: counterOps}
 
-let scenario = Scenario.make(~schema, ~configYaml)
+let scenario = Scenario.make(~schema, ~configYaml, ~unsupported=Scenario.assertsPostgresPartitions)
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
@@ -236,8 +236,8 @@ describe("A chain-scoped load", () => {
         dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
         ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)
         ->EntityFilter.scoped(~table=counter.table, ~scope=Chain(137->ChainId.fromInt))
-      let client = PgStorage.makeClient(~pgSchema, ~maxConnections=1)
-      let storage = PgStorage.make(~pgSchema, ~sql=client, ~ecosystem=Evm)
+      let client = TestPgSchema.client(~pgSchema, ~maxConnections=1)
+      let storage = Storage.make(~client, ~entities=[counter], ~ecosystem=Evm)
       let _ = await storage.loadOrThrow(~filter, ~table=counter.table)
       let prepared: array<{
         "statement": string,

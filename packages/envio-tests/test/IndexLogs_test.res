@@ -73,6 +73,7 @@ describe("Index logs", () => {
   // fails on the server.
   indexed->Scenario.it(
     "carry the server's code when a build fails",
+    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1337}],
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {

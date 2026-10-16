@@ -136,9 +136,6 @@ module Db = {
   let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
 }
 
-// Required env vars are validated lazily in PgStorage when the user
-// opts into ClickHouse via `storage.clickhouse: true` in config.yaml.
-//
 // Reads run at call time instead of module load. `envio dev` injects these
 // vars into `process.env` after booting its ClickHouse container, and that
 // happens strictly after this module has already been evaluated — caching

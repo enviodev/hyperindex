@@ -6,13 +6,16 @@ type metric = {
 // The schema this indexer's tables live in, and the run's own client — closed
 // with it. A test needing raw SQL should reach for these rather than opening a
 // client the run won't clean up.
-type pg = {sql: Sql.t, pgSchema: string}
+type pg = {sql: StorageClient.t, pgSchema: string}
 
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
-// Which persistence a run is exercised against. Both are Postgres-backed; the
-// ClickHouse one adds the sink on top. CI runs the suite once per backend.
-type backend = [#postgres | #clickhouse]
+// Which persistence a run is exercised against: Postgres alone, every entity
+// kept in ClickHouse alone instead, or every entity kept in both, where a batch
+// writes each store and a read checks the two copies agree. A scenario whose
+// config sets its own storage keeps it on every leg. CI runs the suite once per
+// backend.
+type backend = [#postgres | #clickhouse | #both]
 
 @module("node:os") external tmpdir: unit => string = "tmpdir"
 @module("node:fs") external rmSync: (string, {"recursive": bool, "force": bool}) => unit = "rmSync"
@@ -21,14 +24,16 @@ let backendName = (backend: backend) =>
   switch backend {
   | #postgres => "postgres"
   | #clickhouse => "clickhouse"
+  | #both => "both"
   }
 
 let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
 | None | Some("") | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
+| Some("both") => #both
 | Some(other) =>
   JsError.throwWithMessage(
-    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres or clickhouse.`,
+    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres, clickhouse or both.`,
   )
 }
 
@@ -38,6 +43,15 @@ type addressRow = {
   address: Address.t,
   contractName: string,
   registrationBlock: int,
+}
+
+// A chain's `envio_chains` row, as Postgres keeps it.
+type chainRow = {
+  id: ChainId.t,
+  startBlock: int,
+  progressBlock: int,
+  firstEventBlock: option<int>,
+  readyAt: option<Date.t>,
 }
 
 // A logged line as a test reads it: what was said, and the fields said with it
@@ -56,6 +70,8 @@ type rec t = {
   // stored key is rendered back here, the only place a test needs a string.
   queryAddresses: unit => promise<array<addressRow>>,
   queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
+  // Ordered by chain id.
+  queryChains: unit => promise<array<chainRow>>,
   queryEffectCache: 'input 'output. (
     Envio.effect<'input, 'output>,
     ~scope: Internal.chainScope,
@@ -146,7 +162,6 @@ let makeLogCapture = () => {
 let run = async (
   ~config: Config.t,
   ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
-  ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
@@ -170,6 +185,13 @@ let run = async (
   // installed when its chain state was built, so this has to be in place
   // before the indexer starts rather than set from the body.
   ~captureLogs=false,
+  // Leaves the `ENVIO_CLICKHOUSE_*` settings to the environment rather than
+  // pointing them at a database of the run's own, for a test about a run that
+  // has none.
+  ~provideClickHouse=true,
+  // Starts the first process the way `envio start --chain` does, on storage
+  // nothing has set up yet.
+  ~chains=?,
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
@@ -206,12 +228,12 @@ let run = async (
       JsError.throwWithMessage("Can't start an indexer once the run is tearing down.")
     }
 
-  // The ClickHouse leg writes through the sink Postgres storage attaches, into
-  // a database of this run's own.
-  let clickHouseDatabase = switch backend {
-  | #clickhouse => Some(TestClickHouse.make())
-  | #postgres => None
-  }
+  // ClickHouse writes into a database of this run's own, whenever the config it
+  // runs under enables it — a restart's included. Only a run that pointed an
+  // indexer at it drops it, so a run that never does needs no server.
+  let clickHouseDatabase = provideClickHouse ? Some(TestClickHouse.make()) : None
+  let usedClickHouse = ref(false)
+  let restoreClickHouseEnv = TestClickHouse.savedEnv()
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
@@ -232,17 +254,20 @@ let run = async (
     }
 
     switch clickHouseDatabase {
-    | Some(database) => TestClickHouse.use(~database)
-    | None => ()
+    | Some(database) if config.storage.clickhouse =>
+      TestClickHouse.use(~database)
+      usedClickHouse := true
+    | _ => ()
     }
-    let sql = PgStorage.makeClient()
+    let sql = TestPgSchema.client()
     clients->Array.push(sql)->ignore
+    // Tracking tables in Hasura costs ~1.9 seconds per indexer.
+    let client = Storage.clientFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false)
     let storage = mapStorage(
-      // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
+      Storage.makeStorageFromEnv(~config, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir, ~client),
     )
     storages->Array.push(storage)
-    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    let persistence = Storage.makePersistenceFromConfig(~config, ~storage)
     // `Main.start` does this before handler modules load, so the exported
     // indexer can expose persisted state. Without it every `indexer.chains[N]`
     // getter silently falls back to static config.
@@ -337,11 +362,86 @@ let run = async (
       }
     stops->Array.push(stop)->ignore
 
-    // Rows come back decoded: postgres parses them with the table's field schemas.
-    let queryEntity = (entityConfig: Internal.entityConfig) =>
-      sql
-      ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
-      ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
+    // An entity's ClickHouse copy is read through the run's own client, which
+    // sees what the indexer has committed. A read goes to Postgres whenever it
+    // keeps the entity, so the table is registered as ClickHouse's alone.
+    // Registered once per client: the handle is what a read names the table by.
+    let clickHouseTables = Dict.make()
+    let clickHouseRows = (entityConfig: Internal.entityConfig) => {
+      let handle = switch clickHouseTables->Dict.get(entityConfig.name) {
+      | Some(handle) => handle
+      | None =>
+        let handle = (
+          client->Storage.registerEntity({
+            ...entityConfig,
+            storage: {...entityConfig.storage, postgres: false},
+          })
+        ).handle
+        clickHouseTables->Dict.set(entityConfig.name, handle)
+        handle
+      }
+      client
+      ->StorageClient.loadWhere(~table=handle, ~conditions=[])
+      ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<unknown>>)
+    }
+    let postgresRows = (entityConfig: Internal.entityConfig) =>
+      sql->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
+
+    // Rows come back decoded: both stores' rows parse with the table's field
+    // schemas.
+    let parseRows = (entityConfig: Internal.entityConfig, rows): array<unknown> =>
+      rows->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+
+    // Two chains can keep an entity under the same id, so the chain is part of
+    // what orders the rows.
+    let sortedRows = (entityConfig: Internal.entityConfig, rows: array<unknown>) => {
+      let chainField =
+        entityConfig.table->Table.getChainIdField->Option.map(field => field.fieldName)
+      let keyOf = row => {
+        let row = row->(Utils.magic: unknown => dict<unknown>)
+        let id = row->Dict.getUnsafe("id")->Utils.Hash.makeOrThrow
+        switch chainField {
+        | Some(field) => `${id}|${row->Dict.getUnsafe(field)->Utils.Hash.makeOrThrow}`
+        | None => id
+        }
+      }
+      rows->Array.toSorted((a, b) => String.compare(keyOf(a), keyOf(b)))
+    }
+
+    // An entity kept in both stores is read from Postgres, and its ClickHouse
+    // copy is held to the same rows: each store is written apart, and this is
+    // where a copy that drifted shows up. ClickHouse publishes a batch just
+    // after Postgres commits it, so a read right behind a commit can find the
+    // copy a batch short for a moment.
+    let rec clickHouseAgrees = async (entityConfig, ~expected, ~attempts) => {
+      let copy = sortedRows(
+        entityConfig,
+        parseRows(entityConfig, await clickHouseRows(entityConfig)),
+      )
+      let agrees = try {
+        Vitest.expect(
+          copy,
+          ~message=`ClickHouse's copy of ${entityConfig.name} holds what Postgres does`,
+        ).toEqual(expected)
+        true
+      } catch {
+      | _ if attempts > 1 => false
+      }
+      if !agrees {
+        await Utils.delay(50)
+        await clickHouseAgrees(entityConfig, ~expected, ~attempts=attempts - 1)
+      }
+    }
+
+    let queryEntity = async (entityConfig: Internal.entityConfig) =>
+      switch entityConfig.storage {
+      | {postgres: false} => parseRows(entityConfig, await clickHouseRows(entityConfig))
+      | {clickhouse: false} => parseRows(entityConfig, await postgresRows(entityConfig))
+      | _ =>
+        let rows = parseRows(entityConfig, await postgresRows(entityConfig))
+        await clickHouseAgrees(entityConfig, ~expected=sortedRows(entityConfig, rows), ~attempts=40)
+        rows
+      }
 
     // Which chain a stored row belongs to, for a table that has chains at all.
     // Read off the row rather than the change decoded from it: a delete keeps
@@ -382,7 +482,7 @@ let run = async (
             S.union([
               EntityHistory.makeSetUpdateSchema(
                 ~idSchema=entityConfig.table->Table.getIdSchema,
-                entityConfig->PgStorage.getRowSchema,
+                entityConfig->Storage.getRowSchema,
               ),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
@@ -560,11 +660,29 @@ let run = async (
       queryCheckpoints: () =>
         sql
         ->Sql.queryForTests(
-          loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
+          `SELECT * FROM "${pgSchema}"."${InternalTable.Checkpoints.tableName}" ORDER BY "id", "chain_id";`,
         )
         ->Promise.thenResolve(rows =>
           rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         ),
+      queryChains: async () => {
+        let rows: array<{
+          "id": unknown,
+          "startBlock": int,
+          "progressBlock": int,
+          "firstEventBlock": Null.t<int>,
+          "readyAt": Null.t<Date.t>,
+        }> = await sql->Sql.queryForTests(
+          `SELECT "id", "start_block" AS "startBlock", "progress_block" AS "progressBlock", "first_event_block" AS "firstEventBlock", "ready_at" AS "readyAt" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
+        )
+        rows->Array.map(row => {
+          id: row["id"]->ChainId.normalizeOrThrow,
+          startBlock: row["startBlock"],
+          progressBlock: row["progressBlock"],
+          firstEventBlock: row["firstEventBlock"]->Null.toOption,
+          readyAt: row["readyAt"]->Null.toOption,
+        })
+      },
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
@@ -638,7 +756,7 @@ let run = async (
   }
 
   let outcome = try {
-    let indexer = await make(~reset=true, ~config)
+    let indexer = await make(~reset=chains->Option.isNone, ~config, ~chains?)
     // A body waiting on progress the failed indexer will never make would
     // otherwise sit until the test times out.
     await Promise.race([
@@ -693,15 +811,16 @@ let run = async (
   | None => ()
   }
   switch clickHouseDatabase {
-  | Some(database) => await attempt(() => TestClickHouse.drop(~database))
-  | None => ()
+  | Some(database) if usedClickHouse.contents => await attempt(() => TestClickHouse.drop(~database))
+  | _ => ()
   }
+  restoreClickHouseEnv()
   await attempt(async () =>
     rmSync(cacheDir->NodeJs.Path.toString, {"recursive": true, "force": true})
   )
   for i in 0 to clients->Array.length - 1 {
     switch clients->Array.get(i) {
-    | Some(sql) => await attempt(() => sql->Sql.close)
+    | Some(sql) => await attempt(() => sql->StorageClient.close)
     | None => ()
     }
   }

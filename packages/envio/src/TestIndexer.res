@@ -563,7 +563,8 @@ type entityOperations = {
 // JSON serialization round-trip.
 let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   name: "test-inmemory",
-  isInitialized: async () => true,
+  entityStoreName: _ => "test-inmemory",
+  holding: async () => Persistence.Initialized,
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
   // so none of these is reached.
@@ -622,7 +623,11 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
-  getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+  getRollbackTargetCheckpoint: async (
+    ~reorgChainId as _,
+    ~lastKnownValidBlockNumber as _,
+    ~sequence as _,
+  ) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),

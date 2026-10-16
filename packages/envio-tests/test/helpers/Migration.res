@@ -22,13 +22,8 @@ let outcomeOfRefusal = message =>
     Failed(message)
   }
 
-let storedChainIds = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "id": ChainId.t,
-  }> = await sql->Sql.queryForTests(`SELECT "id" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
-  rows->Array.map(row => row["id"]->ChainId.normalizeOrThrow->ChainId.toInt)
-}
+let storedChainIds = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => row.id->ChainId.toInt)
 
 // `~chains` restarts as `envio start --chain` naming those chains; without it,
 // as a plain `envio start`.
