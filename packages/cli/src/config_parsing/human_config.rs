@@ -165,17 +165,11 @@ pub struct BaseConfig {
     pub full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Storage backends the indexer keeps entities in. Postgres is always \
-                       enabled: it keeps the indexer's own state, and the entities by default. \
-                       Set `clickhouse: true` to keep in ClickHouse the entities whose @storage \
-                       directive in the schema names it, e.g. `@storage(clickhouse: true)`; \
-                       handlers read and write them there. `clickhouse: {default: true}` keeps \
-                       every entity without a directive in ClickHouse alone, and `postgres: \
-                       {default: true}` beside it keeps them in both. ClickHouse is reached \
-                       through ENVIO_CLICKHOUSE_HOST (one node, not a load balancer), \
-                       ENVIO_CLICKHOUSE_USERNAME, ENVIO_CLICKHOUSE_PASSWORD and \
-                       ENVIO_CLICKHOUSE_DATABASE. Entities kept in ClickHouse alone aren't \
-                       served over GraphQL, and handlers can't read one with a `ttl`."
+        description = "Where the indexer keeps entities. Postgres is always enabled and keeps \
+                       them by default. Set `clickhouse: true` and mark an entity \
+                       `@storage(clickhouse: true)` in the schema to keep it in ClickHouse, or \
+                       set `clickhouse: {default: true}` to keep every unmarked entity there. \
+                       Entities kept only in ClickHouse aren't served over GraphQL."
     )]
     pub storage: Option<StorageConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -347,18 +341,16 @@ impl JsonSchema for StorageConfig {
             "type": "object",
             "properties": {
                 "postgres": (backend(
-                    "Postgres keeps the indexer's own state, so it is always enabled; `false` is \
-                     refused. Accepts `true` or an options object.",
-                    "Whether entities without an @storage directive are stored in this backend \
-                     (default: true, unless ClickHouse is set as the default with \
-                     `clickhouse: {default: true}`)."
+                    "Always enabled. Accepts `true` or an options object.",
+                    "Whether entities without an @storage directive are kept here (default: \
+                     true, unless `clickhouse: {default: true}` is set)."
                 )),
                 "clickhouse": (backend(
-                    "Whether to keep entities in ClickHouse as well (default: false). Accepts a \
-                     boolean or an options object (the object form implies the backend is \
-                     enabled).",
-                    "Whether entities without an @storage directive are stored in this backend \
-                     (default: false)."
+                    "Whether to enable ClickHouse (default: false). Accepts a boolean or an \
+                     options object.",
+                    "Whether entities without an @storage directive are kept here (default: \
+                     false). Set it together with `postgres: {default: true}` to keep them in \
+                     both."
                 ))
             },
             "additionalProperties": false,
