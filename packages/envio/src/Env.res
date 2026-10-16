@@ -14,9 +14,15 @@ let maxChainConcurrency = 100
 // once its registered address count crosses this threshold. Keeping addresses
 // server-side spreads the contract across ceil(count / maxAddrInPartition)
 // partitions, each holding an in-flight query slot and sending its whole
-// address list with every query.
+// address list with every query. Capping a contract at a fifth of the chain's
+// concurrency budget keeps one busy contract from monopolising the slots
+// whatever the partition size.
 let clientFilterAddressThreshold =
-  envSafe->EnvSafe.get("ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD", S.int, ~fallback=100_000)
+  envSafe->EnvSafe.get(
+    "ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD",
+    S.int,
+    ~fallback=maxAddrInPartition * maxChainConcurrency / 5,
+  )
 
 // Target number of in-memory objects (uncommitted entity/effect changes plus
 // unwritten batch items) the store holds before processing waits for the write
