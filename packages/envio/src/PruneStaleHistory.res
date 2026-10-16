@@ -65,15 +65,14 @@ let selectFrom = (
 ) => {
   let byOldestPrune = ((a, _), (b, _)) => a -. b
   let toEntities = candidates => candidates->Array.map(((_, entityConfig)) => entityConfig)
+  let lastPrunedAtOf = key =>
+    lastPrunedAtMillis->Utils.Dict.dangerouslyGetNonOption(key)->Option.getOr(0.)
 
   let concurrentCandidates = []
   let forcedCandidates = []
   allEntities->Array.forEach(entityConfig => {
     if entityConfig.storage.postgres {
-      let lastPrunedAt =
-        lastPrunedAtMillis
-        ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
-        ->Option.getOr(0.)
+      let lastPrunedAt = lastPrunedAtOf(entityConfig.name)
       if (
         !isRollback &&
         !(writtenEntityNames->Utils.Set.has(entityConfig.name)) &&
@@ -103,9 +102,7 @@ let selectFrom = (
     ->Array.toSorted(byOldestPrune)
     ->Array.slice(~start=0, ~end=maxEntitiesPerWrite)
     ->toEntities,
-    checkpoints: nowMillis -.
-    lastPrunedAtMillis->Utils.Dict.dangerouslyGetNonOption(checkpointsKey)->Option.getOr(0.) >=
-      intervalMillis,
+    checkpoints: nowMillis -. lastPrunedAtOf(checkpointsKey) >= intervalMillis,
     isRollback,
   }
 }

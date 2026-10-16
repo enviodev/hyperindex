@@ -605,9 +605,9 @@ let rollbackChainIdSchema: Table.table => option<S.t<ChainId.t>> = Utils.WeakMap
   ->Option.map(field => S.object(s => s.field(field->Table.getPgDbFieldName, ChainId.schema)))
 )
 
-// Same reason as above for the id-only rows: both rollback queries must yield
-// ids in the entity's own representation, or the two halves of the diff would
-// disagree (Postgres hands back a NUMERIC id as a string, not a bigint).
+// Both rollback queries must yield ids in the entity's own representation, or
+// the two halves of the diff would disagree (Postgres hands back a NUMERIC id
+// as a string, not a bigint).
 let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memoize(table =>
   S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema))
 )

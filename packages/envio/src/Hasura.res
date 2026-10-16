@@ -296,7 +296,7 @@ let makeColumnMapping = (~relationalKey, ~isDerivedFrom, ~chainIdColumn) => {
 
 type relationship = {
   tableName: string,
-  relationshipType: string,
+  // An array relationship when true, an object one otherwise.
   isDerivedFrom: bool,
   objectName: string,
   relationalKey: string,
@@ -311,7 +311,6 @@ let createEntityRelationship = async (
   ~pgSchema,
   {
     tableName,
-    relationshipType,
     relationalKey,
     objectName,
     mappedEntity,
@@ -351,7 +350,7 @@ let createEntityRelationship = async (
     ~endpoint,
     ~auth,
     ~operation={
-      "type": `pg_create_${relationshipType}_relationship`,
+      "type": `pg_create_${isDerivedFrom ? "array" : "object"}_relationship`,
       "args": args,
     }->(Utils.magic: 'a => JSON.t),
   )
@@ -419,7 +418,6 @@ let makeRelationships = (~userEntities: array<Internal.entityConfig>, ~schema) =
       ->Table.getDerivedFromFields
       ->Array.map(derivedFromField => {
         tableName,
-        relationshipType: "array",
         isDerivedFrom: true,
         objectName: derivedFromField.fieldName,
         //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
@@ -437,7 +435,6 @@ let makeRelationships = (~userEntities: array<Internal.entityConfig>, ~schema) =
       ->Array.filter(((_, linkedEntityName)) => tracked(linkedEntityName)->Option.isSome)
       ->Array.map(((field, linkedEntityName)) => {
         tableName,
-        relationshipType: "object",
         isDerivedFrom: false,
         objectName: field.fieldName,
         relationalKey: field->Table.getPgDbFieldName,

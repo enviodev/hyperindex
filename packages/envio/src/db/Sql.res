@@ -62,8 +62,8 @@ let stringifyDocument = (value: unknown): string => value->stringify->storable
 // A document's text, spelled one way whatever order its keys were set in.
 let sortedDocument = (value: unknown): string => value->stringifyWith(withSortedKeys)
 
-// A document as ClickHouse stores and filters it: compared as its text, so
-// spelled one way whatever order its keys were set in.
+// A document as ClickHouse stores and filters it, which compares documents as
+// their text.
 let canonicalDocument = (value: unknown): string => value->sortedDocument->storable
 
 // Every parameter reaches the server as text — the statement's own casts say

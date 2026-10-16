@@ -148,18 +148,16 @@ let expiresUnread = (entityConfig: Internal.entityConfig) =>
   ->Option.flatMap(options => options.ttl)
   ->Option.isSome
 
-let throwExpiringRead = (entityConfig: Internal.entityConfig, op: string) =>
-  JsError.throwWithMessage(
-    `context.${entityConfig.name}.${op}() is unavailable: ${entityConfig.name} is kept in ClickHouse alone with a ttl, which drops its rows whenever ClickHouse merges them, so a handler would read it differently from one run to the next. Keep it in Postgres too, with @storage(postgres: true, clickhouse: {...}), or drop the ttl.`,
-  )
-
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
 
     switch prop {
     | "get" | "getWhere" | "getOrThrow" | "getOrCreate" if params.entityConfig->expiresUnread =>
-      throwExpiringRead(params.entityConfig, prop)
+      let {name} = params.entityConfig
+      JsError.throwWithMessage(
+        `context.${name}.${prop}() is unavailable: ${name} is kept in ClickHouse alone with a ttl, which drops its rows whenever ClickHouse merges them, so a handler would read it differently from one run to the next. Keep it in Postgres too, with @storage(postgres: true, clickhouse: {...}), or drop the ttl.`,
+      )
     | _ => ()
     }
 
@@ -181,22 +179,21 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           )
         }
 
+    let loadById = entityId =>
+      LoadLayer.loadById(
+        ~loadManager=params.loadManager,
+        ~persistence=params.persistence,
+        ~entityConfig=params.entityConfig,
+        ~scope,
+        ~indexerState=params.indexerState,
+        ~shouldGroup=params.isPreload,
+        ~item=params.item,
+        ~ecosystem=params.config.ecosystem,
+        ~entityId,
+      )
+
     switch prop {
-    | "get" =>
-      (
-        entityId =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~scope=params->entityScope,
-            ~indexerState=params.indexerState,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~ecosystem=params.config.ecosystem,
-            ~entityId,
-          )
-      )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
+    | "get" => loadById->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
     | "getWhere" =>
       (filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>)))->(
         Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
@@ -205,17 +202,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     | "getOrThrow" =>
       (
         (entityId, ~message=?) =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~scope=params->entityScope,
-            ~indexerState=params.indexerState,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~ecosystem=params.config.ecosystem,
-            ~entityId,
-          )->Promise.thenResolve(entity => {
+          loadById(entityId)->Promise.thenResolve(entity => {
             switch entity {
             | Some(entity) => entity
             | None =>
@@ -230,17 +217,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     | "getOrCreate" =>
       (
         (entity: Internal.entity) =>
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~scope=params->entityScope,
-            ~indexerState=params.indexerState,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~ecosystem=params.config.ecosystem,
-            ~entityId=entity.id,
-          )->Promise.thenResolve(storageEntity => {
+          loadById(entity.id)->Promise.thenResolve(storageEntity => {
             switch storageEntity {
             | Some(entity) => entity
             | None => {

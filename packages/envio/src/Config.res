@@ -1417,19 +1417,21 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   acc
 }
 
-let resume = "resume indexing where it left off"
-let startOver = "delete all indexed data and start over"
+%%private(let resume = "resume indexing where it left off")
+%%private(let startOver = "delete all indexed data and start over")
 
-let pickOne = (ways: array<(string, string)>) => {
-  let col = ways->Array.reduce(0, (col, (way, _)) => Math.Int.max(col, way->String.length)) + 2
-  ways
-  ->Array.mapWithIndex(((way, effect), index) =>
-    `  ${(index + 1)->Int.toString}. ${way}${" "->String.repeat(
-        col - way->String.length,
-      )}# ${effect}`
-  )
-  ->Array.join("\n")
-}
+%%private(
+  let pickOne = (ways: array<(string, string)>) => {
+    let col = ways->Array.reduce(0, (col, (way, _)) => Math.Int.max(col, way->String.length)) + 2
+    ways
+    ->Array.mapWithIndex(((way, effect), index) =>
+      `  ${(index + 1)->Int.toString}. ${way}${" "->String.repeat(
+          col - way->String.length,
+        )}# ${effect}`
+    )
+    ->Array.join("\n")
+  }
+)
 
 // `~runCommand` controls option 3 (parallel indexer recipe): when `None`,
 // option 3 is omitted — the migrate flow uses this because running a second
