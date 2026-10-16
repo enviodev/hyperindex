@@ -87,6 +87,20 @@ let waitNewHeightPoll = async (sourceMock: MockSource.t, ~after) => {
   }
 }
 
+let waitKnownHeight = async (indexer: IndexerRunner.t, ~chainId, ~height) => {
+  let deadline = Date.now() +. 2000.
+  let isKnown = async () =>
+    (await indexer.metric("envio_indexing_known_height"))->Array.some(sample =>
+      sample.labels->Dict.get("chainId") === Some(chainId) && sample.value === height
+    )
+  while !(await isKnown()) {
+    if Date.now() > deadline {
+      JsError.throwWithMessage(`Timed out waiting for chain ${chainId} to know height ${height}`)
+    }
+    await Utils.delay(1)
+  }
+}
+
 describe("PIN: multichain indexer enters the reorg threshold", () => {
   multichain->Scenario.it(
     "a chain whose head advances after reaching its lagged head still lets the indexer enter the threshold",
@@ -104,16 +118,9 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       let initialHeightPolls = chainA.getHeightOrThrowCalls->Array.length
       chainA.resolveGetHeightOrThrow(1000)
       chainB.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Chain A wins the initial priority tie and fetches to its pre-threshold
       // head (block 800), seeding a density signal from its events.
-      await MockSource.waitItemsQuery(chainA)
-      t.expect(
-        chainA.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="chain A first fetches from its start block",
-      ).toEqual([1])
       let densitySeed: array<MockSource.itemMock> = Array.fromInitializer(
         ~length=100,
         i => {
@@ -121,7 +128,12 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
           logIndex: 0,
         },
       )
-      chainA.resolveGetItemsOrThrow(densitySeed, ~latestFetchedBlockNumber=800, ~knownHeight=1000)
+      await chainA.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({items: densitySeed, latestFetchedBlockNumber: 800, knownHeight: 1000}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Chain A is now at its lagged head with an empty buffer — momentarily
@@ -137,21 +149,20 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       // (Chain A cannot re-query 801 yet — chain B holds the shared fetch budget.)
       await waitNewHeightPoll(chainA, ~after=initialHeightPolls)
       chainA.resolveGetHeightOrThrow(1001)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await waitKnownHeight(indexer, ~chainId="100", ~height="1001")
 
       // Chain B now reaches its own pre-threshold head and produces a batch,
       // triggering the whole-indexer entry check.
-      await MockSource.waitItemsQuery(chainB)
-      t.expect(
-        chainB.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="chain B first fetches from its start block",
-      ).toEqual([1])
-      chainB.resolveGetItemsOrThrow(
-        [{MockSource.blockNumber: 800, logIndex: 0}],
-        ~latestFetchedBlockNumber=800,
-        ~knownHeight=1000,
-      )
+      await chainB.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{MockSource.blockNumber: 800, logIndex: 0}],
+            latestFetchedBlockNumber: 800,
+            knownHeight: 1000,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Both chains are within the tolerance of their lagged heads, so the indexer
@@ -174,21 +185,20 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       let source = source(1337)
 
       source.resolveGetHeightOrThrow(1000)
-      await MockSource.waitItemsQuery(source)
       // max_reorg_depth holds the chain 200 blocks below head before the
-      // threshold, so it queries up to block 800.
-      t.expect(
-        source.getItemsOrThrowCalls->Array.map(call => call.payload["toBlock"]),
-        ~message="pre-threshold query stops at the lagged head",
-      ).toEqual([Some(800)])
-
-      // Respond 50 blocks short of the lagged head (750 < 800) — within the
-      // 100-block tolerance, so the chain enters despite not reaching 800 exactly.
-      source.resolveGetItemsOrThrow(
-        [{MockSource.blockNumber: 750, logIndex: 0}],
-        ~latestFetchedBlockNumber=750,
-        ~knownHeight=1000,
-      )
+      // threshold, so it queries up to block 800. Respond 50 blocks short of the
+      // lagged head (750 < 800) — within the 100-block tolerance, so the chain
+      // enters despite not reaching 800 exactly.
+      await source.expectItemsQueries([
+        {
+          toBlock: Bounded(800),
+          reply: Respond({
+            items: [{MockSource.blockNumber: 750, logIndex: 0}],
+            latestFetchedBlockNumber: 750,
+            knownHeight: 1000,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(

@@ -182,22 +182,32 @@ let driveChain100Ahead = async (~t, ~indexer: IndexerRunner.t, ~source100, ~lagg
     Scenario.resolveInitialHeight(~t, ~source=lagging, ~head=110),
   ))
 
-  source100.MockSource.resolveGetItemsOrThrow(
-    [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
-    ~latestFetchedBlockNumber=112,
-  )
-  lagging.MockSource.resolveGetItemsOrThrow(
-    [setCounter(~block=5, ~count=20n)],
-    ~latestFetchedBlockNumber=110,
-  )
+  let _ = await Promise.all2((
+    source100.MockSource.expectItemsQueries([
+      {
+        fromBlock: 110,
+        reply: Respond({
+          items: [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
+          latestFetchedBlockNumber: 112,
+        }),
+      },
+    ]),
+    lagging.MockSource.expectItemsQueries([
+      {
+        fromBlock: 1,
+        reply: Respond({items: [setCounter(~block=5, ~count=20n)], latestFetchedBlockNumber: 110}),
+      },
+    ]),
+  ))
   await indexer.getBatchWritePromise()
 
   source100.setAutoHeight(130)
-  source100.resolveGetItemsOrThrow(
-    [setCounter(~block=120, ~count=3n)],
-    ~filter=MockSource.coveringBlock(113),
-    ~latestFetchedBlockNumber=130,
-  )
+  await source100.expectItemsQueries([
+    {
+      coversBlock: 113,
+      reply: Respond({items: [setCounter(~block=120, ~count=3n)], latestFetchedBlockNumber: 130}),
+    },
+  ])
   await indexer.getBatchWritePromise()
   await indexer.waitUntilIdle()
 }
@@ -305,25 +315,38 @@ describe("Per-chain history pruning", () => {
       let lastBackfillBlock = backfill =>
         backfill->Array.reduce(0, (highest, (block, _)) => Pervasives.max(highest, block))
 
-      chains->Array.forEach(
+      let _ = await chains
+      ->Array.map(
         ((chain, backfill, _)) =>
-          source(chain).resolveGetItemsOrThrow(
-            backfill->Array.map(((block, count)) => setCounter(~block, ~count)),
-            ~latestFetchedBlockNumber=lastBackfillBlock(backfill),
-          ),
+          source(chain).expectItemsQueries([
+            {
+              fromBlock: chain + 10,
+              reply: Respond({
+                items: backfill->Array.map(((block, count)) => setCounter(~block, ~count)),
+                latestFetchedBlockNumber: lastBackfillBlock(backfill),
+              }),
+            },
+          ]),
       )
+      ->Promise.all
       await indexer.getBatchWritePromise()
 
-      chains->Array.forEach(
+      let _ = await chains
+      ->Array.map(
         ((chain, backfill, (block, count))) => {
           source(chain).setAutoHeight(chain + 30)
-          source(chain).resolveGetItemsOrThrow(
-            [setCounter(~block, ~count)],
-            ~filter=MockSource.coveringBlock(lastBackfillBlock(backfill) + 1),
-            ~latestFetchedBlockNumber=chain + 30,
-          )
+          source(chain).expectItemsQueries([
+            {
+              coversBlock: lastBackfillBlock(backfill) + 1,
+              reply: Respond({
+                items: [setCounter(~block, ~count)],
+                latestFetchedBlockNumber: chain + 30,
+              }),
+            },
+          ])
         },
       )
+      ->Promise.all
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
@@ -368,22 +391,30 @@ describe("Per-chain history pruning", () => {
       await driveChain100Ahead(~t, ~indexer, ~source100, ~lagging=source1337)
 
       source1337.setAutoHeight(115)
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=113, ~count=21n)],
-        ~filter=MockSource.coveringBlock(111),
-        ~latestFetchedBlockNumber=115,
-      )
+      await source1337.expectItemsQueries([
+        {
+          coversBlock: 111,
+          reply: Respond({
+            items: [setCounter(~block=113, ~count=21n)],
+            latestFetchedBlockNumber: 115,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
       source100.setAutoHeight(140)
       let restarted = await indexer.restart()
 
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=135, ~count=4n)],
-        ~filter=MockSource.coveringBlock(131),
-        ~latestFetchedBlockNumber=140,
-      )
+      await source100.expectItemsQueries([
+        {
+          coversBlock: 131,
+          reply: Respond({
+            items: [setCounter(~block=135, ~count=4n)],
+            latestFetchedBlockNumber: 140,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
       await restarted.waitUntilIdle()
 
