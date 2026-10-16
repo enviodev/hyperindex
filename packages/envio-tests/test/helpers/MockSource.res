@@ -938,22 +938,25 @@ let make = (
           {where: query => query.fromBlock <= blockNumber, reply: LeavePending},
         ])
         // Every partition answered in this wave has to get there, not just one:
-        // a partition behind the others asks again from where it was left.
-        let allReached =
-          pendingItemsQueries
-          ->Array.copy
-          ->Array.reduce(true, (allReached, query) =>
-            if query.fromBlock <= blockNumber {
-              let latest = switch query.toBlock {
-              | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
-              | Unbounded => blockNumber
-              }
-              (query->control).respond({items: [], latestFetchedBlockNumber: latest})
-              allReached && latest === blockNumber
-            } else {
-              allReached
+        // a partition behind the others asks again from where it was left. A
+        // chunked partition gets there through its last chunk, so it is judged
+        // by the furthest of its queries, not by each one.
+        let furthestByPartition = Dict.make()
+        pendingItemsQueries
+        ->Array.copy
+        ->Array.forEach(query =>
+          if query.fromBlock <= blockNumber {
+            let latest = switch query.toBlock {
+            | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
+            | Unbounded => blockNumber
             }
-          )
+            (query->control).respond({items: [], latestFetchedBlockNumber: latest})
+            let furthest = furthestByPartition->Dict.get(query.partitionId)->Option.getOr(0)
+            furthestByPartition->Dict.set(query.partitionId, Math.Int.max(furthest, latest))
+          }
+        )
+        let allReached =
+          furthestByPartition->Dict.valuesToArray->Array.every(latest => latest === blockNumber)
         if !allReached {
           await wave(~count=count + 1)
         }
