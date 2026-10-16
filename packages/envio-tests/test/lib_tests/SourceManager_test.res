@@ -1461,6 +1461,39 @@ Give each query its own entry, told apart by partitionId:
     mock.drainPendingItemsQueries()
   })
 
+  Async.it("Counts height calls only once a burst of them has fully arrived", async t => {
+    let mock = MockSource.make([#getHeightOrThrow])
+    let _ = mock.source.getHeightOrThrow()
+    let expectation = mock.expectHeightCalls(1)
+    let _ = mock.source.getHeightOrThrow()
+    let failure = switch await expectation {
+    | () => None
+    | exception JsExn(exn) => exn->JsExn.message
+    }
+    t.expect(failure).toEqual(
+      Some("expectHeightCalls expected 1 height calls, but the source has taken 2"),
+    )
+  })
+
+  Async.it("Answers a block-hash lookup only once a burst of them has fully arrived", async t => {
+    let mock = MockSource.make([#getBlockHashes])
+    let lookUp = blockNumbers =>
+      mock.source.getBlockHashes(
+        ~blockNumbers,
+        ~logger=Logging.createChild(~params={"test": "block hashes"}),
+      )->ignore
+    lookUp([10])
+    let expectation = mock.expectBlockHashLookup({blockNumbers: [10], reply: []})
+    lookUp([20])
+    let failure = switch await expectation {
+    | () => None
+    | exception JsExn(exn) => exn->JsExn.message
+    }
+    t.expect(failure).toEqual(
+      Some("expectBlockHashLookup can't tell which of 2 pending lookups to answer: [10], [20]"),
+    )
+  })
+
   // Fake time only moves when the test moves it, and `expectItemsQueries` can't
   // wait out a backoff on a fake clock, so step the clock until the manager's
   // next attempt reaches the source.

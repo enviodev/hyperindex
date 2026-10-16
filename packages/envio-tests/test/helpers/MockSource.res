@@ -907,6 +907,10 @@ let make = (
     expectHeightCalls: async count => {
       let deadline = realNow() +. 2000.
       let rec awaitCount = async () => {
+        // A burst still landing would be counted short of its excess call.
+        if settling.contents {
+          let _ = await nextArrival(~deadline)
+        }
         let taken = getHeightOrThrowCalls->Array.length
         if taken > count {
           JsError.throwWithMessage(
@@ -992,7 +996,11 @@ let make = (
     },
     expectBlockHashLookup: async ({blockNumbers, reply}) => {
       let deadline = realNow() +. 2000.
-      let rec awaitLookup = async () =>
+      let rec awaitLookup = async () => {
+        // A burst still landing would have its first lookup answered alone.
+        if settling.contents {
+          let _ = await nextArrival(~deadline)
+        }
         switch pendingBlockHashLookups {
         | [] =>
           if await nextArrival(~deadline) {
@@ -1016,6 +1024,7 @@ let make = (
               ->Array.join(", ")}`,
           )
         }
+      }
       let lookup = await awaitLookup()
       pendingBlockHashLookups
       ->Array.splice(~start=pendingBlockHashLookups->Array.indexOf(lookup), ~remove=1, ~insert=[])
