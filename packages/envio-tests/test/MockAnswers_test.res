@@ -250,6 +250,82 @@ Pending:
     await indexer.getBatchWritePromise()
   })
 
+  // A partition asks for its next range only once its last one is answered, so a
+  // list naming both waits for a query that can't come yet.
+  scenario->Scenario.it(
+    "times out naming a query that may only follow an earlier reply",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      t.expect(
+        await failureOf(
+          mock.expectItemsQueries([
+            {partitionId: "0", fromBlock: 1, reply: Respond({items: []})},
+            {partitionId: "1", reply: LeavePending},
+            {partitionId: "0", fromBlock: 101, reply: Respond({items: []})},
+          ]),
+        ),
+      ).toEqual(
+        Some(`expectItemsQueries timed out. Expected:
+  #0 {partitionId: "0", fromBlock: 1, reply: Respond(…)}
+  #1 {partitionId: "1", reply: LeavePending}
+  #2 {partitionId: "0", fromBlock: 101, reply: Respond(…)} (matches no pending query)
+Pending:
+  {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
+  {partitionId: "1", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
+The list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call.`),
+      )
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+    },
+  )
+
+  scenario->Scenario.it(
+    "keeps the queries it replied to, in entry order",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {partitionId: "1", reply: Respond({items: []})},
+        {partitionId: "0", reply: LeavePending},
+      ])
+      await mock.expectItemsQueries([{partitionId: "0", reply: Respond({items: []})}])
+      t.expect(mock.repliedItemsQueries).toEqual([
+        {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0},
+      ])
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+    },
+  )
+
+  scenario->Scenario.it(
+    "says how far to reply when an unbounded query can't take an item",
+    ~sources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([{fromBlock: 1, reply: Respond({items: []})}])
+      await indexer.getBatchWritePromise()
+      t.expect(
+        await failureOf(
+          mock.expectItemsQueries([
+            {fromBlock: 101, reply: Respond({items: [{blockNumber: 150, logIndex: 0}]})},
+          ]),
+        ),
+      ).toEqual(
+        Some(`expectItemsQueries can't reply an item at block 150 to {partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101). The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: 300`),
+      )
+      await mock.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await indexer.getBatchWritePromise()
+    },
+  )
+
   // A real source never reports having fetched past the range it was asked for,
   // so a reply that does describes a source that doesn't exist.
   scenario->Scenario.it("refuses a reply past the query's toBlock", ~sources, async (

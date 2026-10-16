@@ -195,6 +195,7 @@ type pendingItemsQuery = {
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
 @get external includeAllBlocks: pendingItemsQuery => bool = "includeAllBlocks"
+@get external knownHeightAtQuery: pendingItemsQuery => int = "knownHeight"
 
 type itemsResponse = {
   items: array<itemMock>,
@@ -275,6 +276,9 @@ type t = {
   // `LeavePending` accounts for every remaining query it matches. A pending
   // query no entry accounts for, and no earlier list left pending, fails it.
   expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
+  // The queries the last `expectItemsQueries` replied to, in entry order, for an
+  // assert on what the indexer asked.
+  repliedItemsQueries: array<pendingItemsQuery>,
   // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
   // queries and answers every one up to its own toBlock, never past
   // `blockNumber`, until every partition it answers gets there. A query starting
@@ -505,9 +509,15 @@ let timeoutMessage = (
   expected
   ->Array.mapWithIndex((entry, index) => {
     let matching = pending->Array.filter(query => entry->expectedMatches(query))
+    let everyReplyMatches =
+      expected->Array.every(entry =>
+        !isReplying(entry) || pending->Array.some(query => entry->expectedMatches(query))
+      )
     let reason = switch (matching, replied) {
     | ([], _) => " (matches no pending query)"
-    | (_, None) if entry->isReplying => " (no query left for it once the other replies pick)"
+    | (_, None)
+      if entry->isReplying &&
+        everyReplyMatches => " (no query left for it once the other replies pick)"
     | (_, Some(replied))
       if !isReplying(entry) &&
       matching->Array.every(query =>
@@ -519,7 +529,15 @@ let timeoutMessage = (
   })
   ->Array.join("\n") ++
   "\nPending:\n" ++
-  pending->describeQueries
+  pending->describeQueries ++ {
+    let (unmatched, matched) =
+      expected->Array.partition(entry =>
+        !(pending->Array.some(query => entry->expectedMatches(query)))
+      )
+    unmatched->Utils.Array.isEmpty || matched->Utils.Array.isEmpty
+      ? ""
+      : "\nThe list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call."
+  }
 
 let make = (
   methods: array<method>,
@@ -597,6 +615,7 @@ let make = (
   // Queries an earlier `expectItemsQueries` left pending. A later list doesn't
   // have to name them again to account for them.
   let keptPendingQueries: array<pendingItemsQuery> = []
+  let repliedItemsQueries: array<pendingItemsQuery> = []
   let arrivalListeners: array<unit => unit> = []
   // A chain fans out one query per partition, and each await on the way to the
   // source spreads the fan-out over one more microtask. Listeners are told once
@@ -856,20 +875,29 @@ let make = (
           item.blockNumber < query.fromBlock || item.blockNumber > latest
         ) {
         | Some(item) =>
+          let hint = switch (query.toBlock, response.latestFetchedBlockNumber) {
+          | (Unbounded, None) =>
+            `. The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: ${query
+              ->knownHeightAtQuery
+              ->Int.toString}`
+          | _ => ""
+          }
           JsError.throwWithMessage(
-            `expectItemsQueries can't reply an item at block ${item.blockNumber->Int.toString} to ${query->describeQuery}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (${latest->Int.toString})`,
+            `expectItemsQueries can't reply an item at block ${item.blockNumber->Int.toString} to ${query->describeQuery}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (${latest->Int.toString})${hint}`,
           )
         | None => ()
         }
       | _ => ()
       }
     )
-    replies->Array.forEach(((query, reply, _)) =>
+    repliedItemsQueries->Utils.Array.clearInPlace
+    replies->Array.forEach(((query, reply, _)) => {
+      repliedItemsQueries->Array.push(query)->ignore
       switch reply {
       | Ok(response) => (query->control).respond(response)
       | Error(exn) => (query->control).fail(exn)
       }
-    )
+    })
   }
 
   {
@@ -931,6 +959,7 @@ let make = (
     reorgCallCount: () => reorgCalls.contents,
     pendingItemsQueries,
     expectItemsQueries,
+    repliedItemsQueries,
     respondEmptyUpTo: async blockNumber => {
       let rec wave = async (~count) => {
         if count > 1000 {
@@ -1168,6 +1197,10 @@ let make = (
             ->Utils.Object.definePropertyWithValue(
               "includeAllBlocks",
               {enumerable: false, value: includeAllBlocks},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "knownHeight",
+              {enumerable: false, value: knownHeight},
             )
             ->Utils.Object.definePropertyWithValue(
               "__control",
