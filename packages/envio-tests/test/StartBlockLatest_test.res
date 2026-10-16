@@ -107,7 +107,9 @@ describe("start_block: latest", () => {
       let source = source(1337)
       let {sql, pgSchema} = indexer.pg
 
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
+      await source.expectItemsQueries([
+        {fromBlock: 1000, reply: Respond({items: [], latestFetchedBlockNumber: 1000})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -138,7 +140,9 @@ describe("start_block: latest", () => {
     ~sources=[{chain: 1337, methods, autoHeight: 1000}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
+      await source.expectItemsQueries([
+        {fromBlock: 1000, reply: Respond({items: [], latestFetchedBlockNumber: 1000})},
+      ])
       await indexer.getBatchWritePromise()
 
       let {sql, pgSchema} = indexer.pg
@@ -158,8 +162,12 @@ describe("start_block: latest", () => {
       let source1337 = source(1337)
       let {sql, pgSchema} = indexer.pg
 
-      source1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=10)
-      source1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=2000)
+      await source1.expectItemsQueries([
+        {fromBlock: 5, reply: Respond({items: [], latestFetchedBlockNumber: 10})},
+      ])
+      await source1337.expectItemsQueries([
+        {fromBlock: 2000, reply: Respond({items: [], latestFetchedBlockNumber: 2000})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(

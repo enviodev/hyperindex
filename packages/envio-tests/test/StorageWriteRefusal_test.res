@@ -78,31 +78,44 @@ describe("A batch the server refuses", () => {
       await Utils.delay(0)
       await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [setTally(~block=1, ~id="kept", ~count=1)],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [setTally(~block=1, ~id="kept", ~count=1)],
+            latestFetchedBlockNumber: 1,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       let committed = await read(indexer)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          setTally(~block=2, ~id="kept", ~count=2),
-          setTally(~block=2, ~logIndex=1, ~id="refused", ~count=tooLarge),
-        ],
-        ~filter=MockSource.coveringBlock(2),
-        ~latestFetchedBlockNumber=2,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 2,
+          reply: Respond({
+            items: [
+              setTally(~block=2, ~id="kept", ~count=2),
+              setTally(~block=2, ~logIndex=1, ~id="refused", ~count=tooLarge),
+            ],
+            latestFetchedBlockNumber: 2,
+          }),
+        },
+      ])
       let reason = await refusal.awaitRefusalReason()
       let afterRefusal = await read(indexer)
 
       sourceMock.setAutoHeight(100)
       let restarted = await indexer.restart()
-      sourceMock.resolveGetItemsOrThrow(
-        [setTally(~block=2, ~id="kept", ~count=2)],
-        ~filter=MockSource.coveringBlock(2),
-        ~latestFetchedBlockNumber=2,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 2,
+          reply: Respond({
+            items: [setTally(~block=2, ~id="kept", ~count=2)],
+            latestFetchedBlockNumber: 2,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
       let resumed = await read(restarted)
 

@@ -64,41 +64,35 @@ describe("Wildcard contract with a far-ahead start block", () => {
           Utils.magic: (Internal.handlerArgs => promise<unit>) => MockSource.mockSourceHandler
         )
 
-      let queries = () =>
-        sourceMock.getItemsOrThrowCalls
-        ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
-        ->Array.toSorted(((pA, _, _), (pB, _, _)) => String.compare(pA, pB))
-
       await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100_000)
 
       // Partition "0" is the wildcard, "1" holds Ledger from the chain start and
       // "2" holds Router from 50,000. Only "1" is within the cold target range;
       // it queries up to the block before "2" starts, where the two merge.
-      t.expect(queries(), ~message="the first tick queries the chain-start partition").toEqual([
-        ("1", 1, Some(49_999)),
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          toBlock: Bounded(49_999),
+          reply: Respond({
+            items: [
+              {blockNumber: 5, logIndex: 0, handler: record("ledger-5")},
+              {blockNumber: 10, logIndex: 0, handler: record("ledger-10")},
+            ],
+            latestFetchedBlockNumber: 30_000,
+          }),
+        },
       ])
-
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {blockNumber: 5, logIndex: 0, handler: record("ledger-5")},
-          {blockNumber: 10, logIndex: 0, handler: record("ledger-10")},
-        ],
-        ~latestFetchedBlockNumber=30_000,
-      )
 
       // The response moved the frontier to 30,000 and gave the chain a density,
       // so its target reaches the head and every partition is in range: "1"
       // continues where its response ended, "0" and "2" start at their start
       // block.
-      await Scenario.waitUntil(
-        () => sourceMock.getItemsOrThrowCalls->Array.length === 3,
-        ~message="every partition to query after the first response",
-        ~timeoutMs=2000.,
-      )
-      t.expect(
-        queries(),
-        ~message="every partition keeps fetching after the first response",
-      ).toEqual([("0", 50_000, Some(99_800)), ("1", 30_001, Some(49_999)), ("2", 50_000, Some(99_800))])
+      await sourceMock.expectItemsQueries([
+        {partitionId: "0", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+        {partitionId: "1", fromBlock: 30_001, toBlock: Bounded(49_999), reply: LeavePending},
+        {partitionId: "2", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+      ])
 
       await indexer.getBatchWritePromise()
       t.expect(processed, ~message="events below the fetched frontier are processed").toEqual([
@@ -114,47 +108,36 @@ describe("Wildcard contract with a far-ahead start block", () => {
     ~targetBufferSize=100,
     async (~t, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
-      let queries = () =>
-        sourceMock.getItemsOrThrowCalls
-        ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
-        ->Array.toSorted(((pA, _, _), (pB, _, _)) => String.compare(pA, pB))
-
       await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=30_000)
 
-      // Only the chain-start partition has anything below the head.
-      t.expect(
-        queries(),
-        ~message="the partitions starting past the head do not query",
-      ).toEqual([("1", 1, Some(29_800))])
-
-      // The response also carries a head past the later start blocks.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=29_800,
-        ~knownHeight=100_000,
-      )
+      // Only the chain-start partition has anything below the head. Its
+      // response also carries a head past the later start blocks.
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          toBlock: Bounded(29_800),
+          reply: Respond({items: [], knownHeight: 100_000}),
+        },
+      ])
 
       // Still cold: nothing fetched yet gives the chain a density, so its target
       // stays within the cold range of the frontier and only the chain-start
-      // partition is in range.
-      await MockSource.waitItemsQuery(sourceMock)
-      t.expect(
-        queries(),
-        ~message="the chain-start partition continues up to where the later ones start",
-      ).toEqual([("1", 29_801, Some(49_999))])
+      // partition is in range. It continues up to where the later ones start.
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 29_801,
+          toBlock: Bounded(49_999),
+          reply: Respond({items: []}),
+        },
+      ])
 
-      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=49_999)
-
-      await Scenario.waitUntil(
-        () => sourceMock.getItemsOrThrowCalls->Array.length === 2,
-        ~message="the later partitions to query once the frontier reaches their start block",
-        ~timeoutMs=2000.,
-      )
-      t.expect(
-        queries(),
-        ~message="the later partitions start at their start block, not at the chain start",
-      ).toEqual([("0", 50_000, Some(99_800)), ("2", 50_000, Some(99_800))])
+      // The later partitions start at their start block, not at the chain start.
+      await sourceMock.expectItemsQueries([
+        {partitionId: "0", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+        {partitionId: "2", fromBlock: 50_000, toBlock: Bounded(99_800), reply: LeavePending},
+      ])
     },
   )
 })
-

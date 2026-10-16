@@ -136,10 +136,16 @@ describe("A batch keeps the history decision it was created with", () => {
       // Stall the first write so the batches behind it stay queued.
       let resolveStall = ref(() => ())
       stallWriteBatch := Some(Promise.make((resolve, _reject) => resolveStall := (() => resolve())))
-      sourceMock.resolveGetItemsOrThrow(
-        [setEntity(~block=10, ~value="first")],
-        ~latestFetchedBlockNumber=10,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [setEntity(~block=10, ~value="first")],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await Scenario.waitUntil(
         () => writes->Utils.Array.notEmpty,
         ~message="the first batch's write to start",
@@ -147,11 +153,17 @@ describe("A batch keeps the history decision it was created with", () => {
 
       // Queued behind the stalled write, and still created below the threshold.
       let queuedProcessed = ref(false)
-      sourceMock.resolveGetItemsOrThrow(
-        [setEntity(~block=50, ~value="queued", ~onHandled=() => queuedProcessed := true)],
-        ~filter=MockSource.coveringBlock(11),
-        ~latestFetchedBlockNumber=50,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 11,
+          reply: Respond({
+            items: [
+              setEntity(~block=50, ~value="queued", ~onHandled=() => queuedProcessed := true),
+            ],
+            latestFetchedBlockNumber: 50,
+          }),
+        },
+      ])
       await Scenario.waitUntil(
         () => queuedProcessed.contents,
         ~message="the queued batch's handler to run",
@@ -159,11 +171,11 @@ describe("A batch keeps the history decision it was created with", () => {
 
       // Reaching the pre-threshold head is what makes the indexer enter the
       // threshold — while the batches below it are still unwritten.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(51),
-        ~latestFetchedBlockNumber=100,
-      )
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 51, toBlock: Bounded(68), reply: Respond({items: []})},
+        {fromBlock: 69, toBlock: Bounded(86), reply: Respond({items: []})},
+        {fromBlock: 87, toBlock: Bounded(100), reply: Respond({items: []})},
+      ])
       await waitForThreshold(indexer)
 
       stallWriteBatch := None
