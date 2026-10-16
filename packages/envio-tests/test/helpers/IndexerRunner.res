@@ -672,9 +672,23 @@ let run = async (
 
   // Stop before dropping: a still-running loop would fail its next query
   // against the vanished schema and report that instead of the real failure.
+  // After a failed body, a stop can wait on a write the body stalled and was
+  // never going to release, which would bury the failure under a suite timeout.
+  let boundedStop = stop =>
+    switch outcome {
+    | Some(_) =>
+      () =>
+        Promise.race([
+          stop(),
+          Promise.make((resolve, _reject) =>
+            MockSource.realSetTimeout(() => resolve(), 5000)->ignore
+          ),
+        ])
+    | None => stop
+    }
   for i in 0 to stops->Array.length - 1 {
     switch stops->Array.get(i) {
-    | Some(stop) => await attempt(stop)
+    | Some(stop) => await attempt(stop->boundedStop)
     | None => ()
     }
   }
