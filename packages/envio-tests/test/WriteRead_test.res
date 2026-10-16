@@ -415,7 +415,7 @@ describe("Write/read tests", () => {
           reply: Respond({
             items: [
               {
-                blockNumber: 51,
+                blockNumber: 101,
                 logIndex: 1,
                 handler: async args => {
                   let context =
@@ -619,7 +619,7 @@ describe("Write/read tests", () => {
           reply: Respond({
             items: [
               {
-                blockNumber: 51,
+                blockNumber: 101,
                 logIndex: 1,
                 handler: async args => {
                   let context = args.context->(Utils.magic: Internal.handlerContext => tokenContext)

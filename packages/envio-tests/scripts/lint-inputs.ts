@@ -17,7 +17,7 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
 const mockStep =
-  /^\s*(?:await\s+)?(?:let\s+\S+\s*=\s*)?\S*\b(expectItemsQueries|drainPendingItemsQueries|pendingItemsQueries|resolveGetHeightOrThrow)\b/;
+  /^\s*(?:await\s+)?(?:let\s+\S+\s*=\s*)?\S*\b(expectItemsQueries|expectBlockHashLookup|respondEmptyUpTo|drainPendingItemsQueries|pendingItemsQueries|resolveGetHeightOrThrow)\b/;
 const pollStart = /\b(while\b|waitUntil\()/;
 
 // The scan has to reach the next statement past whatever sits between it and
@@ -80,7 +80,7 @@ for (const path of resFiles(testRoot)) {
           fix:
             step === "resolveGetHeightOrThrow"
               ? "Delete the delay: a height answer with no call pending is held for the next call."
-              : "Delete the delay: `expectItemsQueries` waits for the queries it names.",
+              : `Delete the delay: \`${step}\` waits for what it answers, or answers only what is already pending.`,
         });
       }
     }

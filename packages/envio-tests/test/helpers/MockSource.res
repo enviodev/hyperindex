@@ -209,6 +209,10 @@ type reply =
   | Respond(itemsResponse)
   // For a response that depends on the query it matched, e.g. items at its fromBlock.
   | RespondWith(pendingItemsQuery => itemsResponse)
+  // A reply no real source gives: past the query's toBlock, or with items
+  // outside the range it reports. Only for testing the indexer's defence
+  // against one; `Respond` refuses it.
+  | RespondUnchecked(itemsResponse)
   | Fail(exn)
   | LeavePending
 
@@ -345,7 +349,7 @@ let expectedMatches = (expected: expectedItemsQuery, query: pendingItemsQuery) =
 
 let isReplying = (expected: expectedItemsQuery) =>
   switch expected.reply {
-  | Respond(_) | RespondWith(_) | Fail(_) => true
+  | Respond(_) | RespondWith(_) | RespondUnchecked(_) | Fail(_) => true
   | LeavePending => false
   }
 
@@ -415,6 +419,7 @@ let describeExpected = (expected: expectedItemsQuery) =>
           `reply: ${switch expected.reply {
             | Respond(_) => "Respond(…)"
             | RespondWith(_) => "RespondWith(…)"
+            | RespondUnchecked(_) => "RespondUnchecked(…)"
             | Fail(_) => "Fail(…)"
             | LeavePending => "LeavePending"
             }}`,
@@ -799,22 +804,40 @@ let make = (
     )
     let replies = assignment->Array.mapWithIndex((query, position) =>
       switch (expected->Array.getUnsafe(replyingIndices->Array.getUnsafe(position))).reply {
-      | Respond(response) => (query, Ok(response))
-      | RespondWith(respond) => (query, Ok(respond(query)))
-      | Fail(exn) => (query, Error(exn))
+      | Respond(response) => (query, Ok(response), true)
+      | RespondWith(respond) => (query, Ok(respond(query)), true)
+      | RespondUnchecked(response) => (query, Ok(response), false)
+      | Fail(exn) => (query, Error(exn), true)
       | LeavePending => JsError.throwWithMessage("A LeavePending entry never takes a reply")
       }
     )
-    replies->Array.forEach(((query, reply)) =>
+    replies->Array.forEach(((query, reply, checked)) =>
       switch (reply, query.toBlock) {
+      | _ if !checked => ()
       | (Ok({latestFetchedBlockNumber}), Bounded(toBlock)) if latestFetchedBlockNumber > toBlock =>
         JsError.throwWithMessage(
           `expectItemsQueries can't reply latestFetchedBlockNumber ${latestFetchedBlockNumber->Int.toString} to ${query->describeQuery}: a source never fetches past the toBlock it was asked for`,
         )
+      | (Ok(response), _) =>
+        let latest = response.latestFetchedBlockNumber->Option.getOr(
+          switch query.toBlock {
+          | Bounded(toBlock) => toBlock
+          | Unbounded => query.fromBlock
+          },
+        )
+        switch response.items->Array.find(item =>
+          item.blockNumber < query.fromBlock || item.blockNumber > latest
+        ) {
+        | Some(item) =>
+          JsError.throwWithMessage(
+            `expectItemsQueries can't reply an item at block ${item.blockNumber->Int.toString} to ${query->describeQuery}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (${latest->Int.toString})`,
+          )
+        | None => ()
+        }
       | _ => ()
       }
     )
-    replies->Array.forEach(((query, reply)) =>
+    replies->Array.forEach(((query, reply, _)) =>
       switch reply {
       | Ok(response) => (query->control).respond(response)
       | Error(exn) => (query->control).fail(exn)

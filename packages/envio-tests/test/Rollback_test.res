@@ -133,7 +133,9 @@ describe("E2E rollback tests", () => {
         fromBlock: 101,
         toBlock: Unbounded,
         retryCount: 0,
-        reply: Respond({
+        // Carries an event past its latestFetchedBlockNumber, which the indexer
+        // has to ignore.
+        reply: RespondUnchecked({
           items: [
             {
               blockNumber: 101,

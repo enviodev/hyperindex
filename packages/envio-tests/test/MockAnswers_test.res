@@ -272,6 +272,26 @@ Pending:
     await indexer.getBatchWritePromise()
   })
 
+  scenario->Scenario.it("refuses an item outside the range the reply covers", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    mock.resolveGetHeightOrThrow(300)
+    t.expect(
+      await failureOf(
+        mock.expectItemsQueries([
+          {fromBlock: 1, reply: Respond({items: [{blockNumber: 250, logIndex: 0}]})},
+        ]),
+      ),
+    ).toEqual(
+      Some(`expectItemsQueries can't reply an item at block 250 to {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (100)`),
+    )
+    await mock.respondEmptyUpTo(300)
+    await indexer.getBatchWritePromise()
+  })
+
   scenario->Scenario.it(
     "fetches empty ranges up to a block, one realistic wave at a time",
     ~sources,
