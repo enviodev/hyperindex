@@ -222,6 +222,13 @@ type expectedItemsQuery = {
   reply: reply,
 }
 
+type expectedBlockHashLookup = {
+  blockNumbers: array<int>,
+  // Short hashes (`"0x200"`) are widened like a mocked items response's, so the
+  // block's stored hash is `0x<blockNumber>` and anything else reads as re-orged.
+  reply: array<BlockStore.inputBlock>,
+}
+
 type pendingItemsQueryControl = {
   respond: itemsResponse => unit,
   fail: exn => unit,
@@ -264,10 +271,12 @@ type t = {
   drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
-  // Alone among the resolvers it never waits for its call: the rollback depth
-  // search issues several lookups over different block numbers, so an answer
-  // registered in advance would land on whichever asked first.
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
+  // Waits for the rollback's block-hash lookup of exactly `blockNumbers`, then
+  // replies with `reply`. A lookup of other blocks, or more than one pending,
+  // fails at once naming what was asked. A rollback only looks up hashes when
+  // the chain has a stored block between its threshold and the reorged block.
+  expectBlockHashLookup: expectedBlockHashLookup => promise<unit>,
   // Throws if a height answer given before its call arrived is still waiting
   // for one, naming the call sites. Run at the end of a passing scenario.
   validateAnswersClaimed: unit => unit,
@@ -286,6 +295,22 @@ type t = {
 }
 
 @val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
+
+let describeBlockNumbers = blockNumbers =>
+  `[${blockNumbers->Array.map(blockNumber => blockNumber->Int.toString)->Array.join(", ")}]`
+
+let blockHashesResponse = (blocks: array<BlockStore.inputBlock>) => {
+  Source.result: Ok(
+    BlockStore.fromJs(
+      blocks->Array.map((block): BlockStore.inputBlock => {
+        ...block,
+        blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
+      }),
+      ~ecosystem=Evm,
+    ),
+  ),
+  requestStats: [],
+}
 
 // Taken at module load, before a test can fake the clock: a deadline on faked
 // timers never fires, and a mismatched expectation would hang the suite instead
@@ -528,7 +553,7 @@ let make = (
     })
   let reorgCalls = ref(0)
   let getBlockHashesCalls = []
-  let getBlockHashesResolveFns = []
+  let pendingBlockHashLookups = []
   // Height subscription state
   let heightSubscriptionCalls = []
   let heightSubscriptionCloseCalls = []
@@ -819,19 +844,45 @@ let make = (
       },
     getBlockHashesCalls,
     resolveGetBlockHashes: blockHashes => {
-      let blockStore = BlockStore.fromJs(
-        blockHashes->Array.map((block): BlockStore.inputBlock => {
-          ...block,
-          blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
-        }),
-        ~ecosystem=Evm,
-      )
-      if getBlockHashesResolveFns->Utils.Array.isEmpty {
-        JsError.throwWithMessage("getBlockHashesResolveFns is empty")
+      if pendingBlockHashLookups->Utils.Array.isEmpty {
+        JsError.throwWithMessage("resolveGetBlockHashes has no pending lookup to answer")
       }
-      let response = {Source.result: Ok(blockStore), requestStats: []}
-      getBlockHashesResolveFns->Array.forEach(resolve => resolve(response))
-      getBlockHashesResolveFns->Utils.Array.clearInPlace
+      let response = blockHashes->blockHashesResponse
+      let lookups = pendingBlockHashLookups->Array.copy
+      pendingBlockHashLookups->Utils.Array.clearInPlace
+      lookups->Array.forEach(lookup => lookup["resolve"](response))
+    },
+    expectBlockHashLookup: async ({blockNumbers, reply}) => {
+      let deadline = realNow() +. 2000.
+      let rec awaitLookup = async () =>
+        switch pendingBlockHashLookups {
+        | [] =>
+          if await nextArrival(~deadline) {
+            await awaitLookup()
+          } else {
+            JsError.throwWithMessage(
+              `expectBlockHashLookup timed out waiting for a lookup of ${blockNumbers->describeBlockNumbers}. No lookup is pending.`,
+            )
+          }
+        | [lookup] if lookup["blockNumbers"] == blockNumbers => lookup
+        | [lookup] =>
+          JsError.throwWithMessage(
+            `expectBlockHashLookup expected a lookup of ${blockNumbers->describeBlockNumbers}, but the pending lookup asks for ${lookup["blockNumbers"]->describeBlockNumbers}`,
+          )
+        | lookups =>
+          JsError.throwWithMessage(
+            `expectBlockHashLookup can't tell which of ${lookups
+              ->Array.length
+              ->Int.toString} pending lookups to answer: ${lookups
+              ->Array.map(lookup => lookup["blockNumbers"]->describeBlockNumbers)
+              ->Array.join(", ")}`,
+          )
+        }
+      let lookup = await awaitLookup()
+      pendingBlockHashLookups
+      ->Array.splice(~start=pendingBlockHashLookups->Array.indexOf(lookup), ~remove=1, ~insert=[])
+      ->ignore
+      lookup["resolve"](reply->blockHashesResponse)
     },
     validateAnswersClaimed: () =>
       switch deferredHeightAnswers->Array.map(answer =>
@@ -851,7 +902,7 @@ let make = (
       pendingHeightCallIndices()->Array.forEach(index =>
         getHeightOrThrowPending->Array.set(index, None)
       )
-      getBlockHashesResolveFns->Utils.Array.clearInPlace
+      pendingBlockHashLookups->Utils.Array.clearInPlace
     },
     heightSubscriptionCalls,
     heightSubscriptionCloseCalls,
@@ -875,9 +926,13 @@ let make = (
         pollingInterval,
         getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
           getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          Promise.make((resolve, _reject) => {
-            getBlockHashesResolveFns->Array.push(resolve)->ignore
+          let promise = Promise.make((resolve, _reject) => {
+            pendingBlockHashLookups
+            ->Array.push({"blockNumbers": blockNumbers, "resolve": resolve})
+            ->ignore
           })
+          notifyArrival()
+          promise
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore

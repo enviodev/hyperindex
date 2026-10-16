@@ -35,6 +35,64 @@ let sources: array<Scenario.sourceMock> = [
   {chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow]},
 ]
 
+let reorgScenario = Scenario.make(
+  ~configYaml=`
+name: mock-answers-reorg
+rollback_on_reorg: true
+contracts:
+  - name: Token
+    events:
+      - event: Transfer()
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+`,
+  ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+`,
+)
+
+let reorgSources: array<Scenario.sourceMock> = [
+  {chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
+]
+
+// Stops at block 200 on the way to the head, so the rollback has a stored block
+// inside the reorg threshold to look up, then reports block 300 re-orged.
+let reorgAtHead = async (~indexer: IndexerRunner.t, ~mock: MockSource.t) => {
+  mock.resolveGetHeightOrThrow(300)
+  await mock.expectItemsQueries([
+    {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+  ])
+  await indexer.getBatchWritePromise()
+  await mock.expectItemsQueries([
+    {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 200})},
+  ])
+  await mock.expectItemsQueries([
+    {fromBlock: 201, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+  ])
+  await indexer.getBatchWritePromise()
+  mock.resolveGetHeightOrThrow(301)
+  await mock.expectItemsQueries([
+    {
+      fromBlock: 301,
+      reply: Respond({
+        items: [],
+        latestFetchedBlockNumber: 301,
+        prevRangeLastBlock: {blockNumber: 300, blockHash: "0x300a"},
+      }),
+    },
+  ])
+}
+
 let failureOf = async promise =>
   try {
     await promise
@@ -268,4 +326,78 @@ Pending:
       ~message="the stopped indexer's query is gone",
     ).toBe(false)
   })
+})
+
+describe("MockSource.expectBlockHashLookup", () => {
+  reorgScenario->Scenario.it(
+    "waits for the rollback's lookup and replies with the hashes it gives",
+    ~sources=reorgSources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      await reorgAtHead(~indexer, ~mock)
+      await mock.expectBlockHashLookup({
+        blockNumbers: [200],
+        reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
+      })
+      await mock.expectItemsQueries([
+        {
+          fromBlock: 201,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 301}),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      t.expect(await indexer.metric("envio_progress_block")).toEqual([
+        {value: "301", labels: dict{"chainId": "1"}},
+      ])
+    },
+  )
+
+  reorgScenario->Scenario.it(
+    "refuses to reply to a lookup of other blocks, naming the one asked",
+    ~sources=reorgSources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      await reorgAtHead(~indexer, ~mock)
+      t.expect(
+        await failureOf(
+          mock.expectBlockHashLookup({
+            blockNumbers: [100],
+            reply: [{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}],
+          }),
+        ),
+      ).toEqual(
+        Some(`expectBlockHashLookup expected a lookup of [100], but the pending lookup asks for [200]`),
+      )
+      await mock.expectBlockHashLookup({
+        blockNumbers: [200],
+        reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
+      })
+      await mock.expectItemsQueries([
+        {fromBlock: 201, reply: Respond({items: [], latestFetchedBlockNumber: 301})},
+      ])
+      await indexer.getBatchWritePromise()
+    },
+  )
+
+  reorgScenario->Scenario.it(
+    "times out naming the lookup it waited for",
+    ~sources=reorgSources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      t.expect(
+        await failureOf(
+          mock.expectBlockHashLookup({
+            blockNumbers: [200],
+            reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
+          }),
+        ),
+      ).toEqual(
+        Some(`expectBlockHashLookup timed out waiting for a lookup of [200]. No lookup is pending.`),
+      )
+      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=300)
+      await indexer.getBatchWritePromise()
+    },
+  )
 })
