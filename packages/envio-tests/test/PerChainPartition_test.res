@@ -29,7 +29,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:
   - id: 1
     rpc:
@@ -94,20 +94,27 @@ type counterRow = {
   @as("chainId") chainId: int,
 }
 
-type counterOps = {set: {"id": string, "count": bigint, "owner": string} => unit}
-type handlerContext = {@as("Counter") counter: counterOps}
+let scenario = Scenario.make(
+  ~schema,
+  ~configYaml,
+  ~handlers=`
+import { indexer } from "envio";
 
-let scenario = Scenario.make(~schema, ~configYaml)
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count, owner: "alice" });
+});
+`,
+)
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
+external toUnknown: bigint => unknown = "%identity"
+
 let bump = (count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: 5,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-    context.counter.set({"id": "total", "count": count, "owner": "alice"})
-  },
+  params: dict{"count": count->toUnknown},
 }
 
 type relation = {

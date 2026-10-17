@@ -29,6 +29,14 @@ type B {
   a: [A!]! @derivedFrom(field: "b")
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  await context.A.getWhere({ b_id: { _eq: "b" } });
+  context.A.set({ id: "1", b_id: "b" });
+});
+`,
 )
 
 // Entity names are capped at 63 characters by codegen, so nothing the indexer
@@ -107,10 +115,6 @@ let readyAt = async (indexer: IndexerRunner.t) => {
   }> = await sql->Sql.queryForTests(`SELECT "ready_at" FROM "${pgSchema}"."envio_chains";`)
   rows->Array.map(row => row["ready_at"]->Null.toOption->Option.isSome)
 }
-
-type a = {id: string, b_id: string}
-type aOps = {set: a => unit, getWhere: {"b_id": {"_eq": string}} => promise<array<a>>}
-type handlerContext = {@as("A") a: aOps}
 
 describe("Indexes on a database that already holds some", () => {
   // A WHERE clause covers only the rows inside its predicate, so it can't
@@ -226,18 +230,7 @@ describe("Indexes on a database that already holds some", () => {
           partitionId: "0",
           fromBlock: 1,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 10,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  let _ = await context.a.getWhere({"b_id": {"_eq": "b"}})
-                  context.a.set({id: "1", b_id: "b"})
-                },
-              },
-            ],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 10, logIndex: 0}],
             latestFetchedBlockNumber: 10,
           }),
         },

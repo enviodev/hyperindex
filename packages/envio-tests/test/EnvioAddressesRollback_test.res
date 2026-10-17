@@ -20,11 +20,11 @@ chains:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
-          - event: "TestEvent()"
+          - event: "TestEvent(address[] addresses)"
       - name: NftFactory
         address: "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c4"
         events:
-          - event: "SimpleNftCreated(string name, string symbol, uint256 maxSupply, address contractAddress)"
+          - event: "SimpleNftCreated(address[] addresses)"
 `,
   ~schema=`
 type Gravatar {
@@ -37,21 +37,31 @@ import { indexer } from "envio";
 
 indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
 indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async () => {});
+
+indexer.contractRegister({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  for (const address of event.params.addresses) {
+    context.chain.Gravatar.add(address);
+  }
+});
+indexer.contractRegister(
+  { contract: "NftFactory", event: "SimpleNftCreated" },
+  async ({ event, context }) => {
+    for (const address of event.params.addresses) {
+      context.chain.NftFactory.add(address);
+    }
+  },
+);
 `,
 )
 
 let shared = "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow
 let late = "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow
 
-type contractOps = {add: Address.t => unit}
-type registerContext = {chain: {"Gravatar": contractOps, "NftFactory": contractOps}}
-
-let registering = (~blockNumber, ~register): MockSource.itemMock => {
+let registering = (~blockNumber, ~event, addresses: array<Address.t>): MockSource.itemMock => {
+  event,
   blockNumber,
   logIndex: 0,
-  handler: async _ => (),
-  contractRegister: async args =>
-    register(args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)),
+  params: dict{"addresses": addresses->(Utils.magic: array<Address.t> => unknown)},
 }
 
 let registered = (indexer: IndexerRunner.t) =>
@@ -79,12 +89,7 @@ describe("A rollback of an address registration", () => {
           fromBlock: 1,
           toBlock: Bounded(100),
           reply: Respond({
-            items: [
-              registering(
-                ~blockNumber=50,
-                ~register=context => context.chain["Gravatar"].add(shared),
-              ),
-            ],
+            items: [registering(~blockNumber=50, ~event="Gravatar.TestEvent", [shared])],
           }),
         },
       ])
@@ -102,13 +107,7 @@ describe("A rollback of an address registration", () => {
           fromBlock: 101,
           reply: Respond({
             items: [
-              registering(
-                ~blockNumber=200,
-                ~register=context => {
-                  context.chain["NftFactory"].add(shared)
-                  context.chain["NftFactory"].add(late)
-                },
-              ),
+              registering(~blockNumber=200, ~event="NftFactory.SimpleNftCreated", [shared, late]),
             ],
             latestFetchedBlockNumber: 300,
           }),
@@ -153,15 +152,7 @@ describe("An address registered again for the same contract", () => {
           fromBlock: 1,
           toBlock: Bounded(100),
           reply: Respond({
-            items: [
-              registering(
-                ~blockNumber=50,
-                ~register=context => {
-                  context.chain["Gravatar"].add(shared)
-                  context.chain["Gravatar"].add(shared)
-                },
-              ),
-            ],
+            items: [registering(~blockNumber=50, ~event="Gravatar.TestEvent", [shared, shared])],
           }),
         },
       ])
@@ -176,12 +167,7 @@ describe("An address registered again for the same contract", () => {
           partitionId: "0",
           fromBlock: 101,
           reply: Respond({
-            items: [
-              registering(
-                ~blockNumber=200,
-                ~register=context => context.chain["Gravatar"].add(shared),
-              ),
-            ],
+            items: [registering(~blockNumber=200, ~event="Gravatar.TestEvent", [shared])],
             latestFetchedBlockNumber: 300,
           }),
         },

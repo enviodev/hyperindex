@@ -39,14 +39,17 @@ type Bounded @storage(clickhouse: {}) {
   amount: BigInt! @config(precision: 20)
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.Bounded.set({ id: "over", amount: 100000000000000000000n });
+});
+`,
   ~unsupported=[
     {backend: #postgres, reason: "the ClickHouse-only entity needs a ClickHouse database"},
   ],
 )
-
-type bounded = {id: string, amount: bigint}
-type boundedOps = {set: bounded => unit}
-type handlerContext = {@as("Bounded") bounded: boundedOps}
 
 describe("ClickHouse refuses a value its column cannot hold", () => {
   // Swallowed so it doesn't take the test worker down, and kept so the test can
@@ -65,17 +68,7 @@ describe("ClickHouse refuses a value its column cannot hold", () => {
           fromBlock: 0,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.bounded.set({id: "over", amount: 100000000000000000000n})
-                },
-              },
-            ],
+            items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
             latestFetchedBlockNumber: 10,
           }),
         },

@@ -35,14 +35,17 @@ type Expiry @storage(clickhouse: {}) {
   at: Timestamp!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.Expiry.set({ id: "never", at: new Date("9999-12-31T00:00:00.000Z") });
+});
+`,
   ~unsupported=[
     {backend: #postgres, reason: "the ClickHouse-only entity needs a ClickHouse database"},
   ],
 )
-
-type expiry = {id: string, at: Date.t}
-type expiryOps = {set: expiry => unit}
-type handlerContext = {@as("Expiry") expiry: expiryOps}
 
 let storedExpiries = async () => {
   let database = TestClickHouse.currentDatabase()
@@ -67,17 +70,7 @@ describe("ClickHouse refuses a date DateTime64 cannot represent", () => {
           fromBlock: 0,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.expiry.set({id: "never", at: Date.fromString("9999-12-31T00:00:00.000Z")})
-                },
-              },
-            ],
+            items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
             latestFetchedBlockNumber: 10,
           }),
         },
