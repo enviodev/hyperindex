@@ -30,12 +30,15 @@ type Visit @storage(clickhouse: {ttl: "createdAt + INTERVAL 30 day"}) {
   createdAt: Timestamp!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.Visit.set({ id: "v1", day: 3, createdAt: new Date() });
+});
+`,
   ~unsupported=[{backend: #postgres, reason: "the table option is ClickHouse DDL"}],
 )
-
-type visit = {id: string, day: int, createdAt: Date.t}
-type visitOps = {set: visit => unit}
-type handlerContext = {@as("Visit") visit: visitOps}
 
 describe("ClickHouse table options with a field named like a keyword", () => {
   scenario->Scenario.it(
@@ -50,17 +53,7 @@ describe("ClickHouse table options with a field named like a keyword", () => {
           fromBlock: 0,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.visit.set({id: "v1", day: 3, createdAt: Date.fromTime(Date.now())})
-                },
-              },
-            ],
+            items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
             latestFetchedBlockNumber: 10,
           }),
         },

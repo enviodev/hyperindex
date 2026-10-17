@@ -18,7 +18,7 @@ chains:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
-          - event: "TestEvent()"
+          - event: "TestEvent(string status)"
 `,
   ~schema=`
 enum Status {
@@ -32,31 +32,31 @@ type Counter {
   seen: Int!
 }
 `,
+  // Bumps the counter it finds, by id and by status, so a read that came back
+  // wrong shows in what is written.
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  const status = event.params.status as "PENDING" | "ACTIVE";
+  const byId = await context.Counter.get("1");
+  const byStatus = await context.Counter.getWhere({ status: { _eq: status } });
+  context.Counter.set({
+    id: "1",
+    status,
+    seen: (byId?.seen ?? 0) + byStatus.length + 1,
+  });
+});
+`,
 )
 
 type counter = {id: string, status: string, seen: int}
-type counterOps = {
-  set: counter => unit,
-  get: string => promise<option<counter>>,
-  getWhere: {"status": {"_eq": string}} => promise<array<counter>>,
-}
-type handlerContext = {@as("Counter") counter: counterOps}
 
-// Bumps the counter it finds, by id and by status, so a read that came back
-// wrong shows in what is written.
 let bump = (~block, ~status): MockSource.itemMock => {
+  event: "Gravatar.TestEvent",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-    let byId = await context.counter.get("1")
-    let byStatus = await context.counter.getWhere({"status": {"_eq": status}})
-    context.counter.set({
-      id: "1",
-      status,
-      seen: byId->Option.mapOr(0, counter => counter.seen) + byStatus->Array.length + 1,
-    })
-  },
+  params: dict{"status": status->(Utils.magic: string => unknown)},
 }
 
 describe("A reset run", () => {

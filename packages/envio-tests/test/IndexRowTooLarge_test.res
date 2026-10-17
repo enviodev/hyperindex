@@ -5,6 +5,26 @@ open Vitest
 // such value: nothing bounds a label's length, and a spam registration carrying
 // a long one stopped an indexer at the head.
 
+@scope("Math") @val external imul: (int, int) => int = "imul"
+
+// Hex digits from a linear congruential generator. A repeated character would
+// compress below the limit and be indexed after all.
+let incompressible = length => {
+  let state = ref(1)
+  let digits = []
+  for _ in 1 to length {
+    state := imul(state.contents, 1103515245) + 12345
+    digits
+    ->Array.push(
+      state.contents->Int.shiftRightUnsigned(16)->Int.bitwiseAnd(15)->Int.toString(~radix=16),
+    )
+    ->ignore
+  }
+  digits->Array.join("")
+}
+
+let longName = incompressible(24000)
+
 let scenario = Scenario.make(
   ~configYaml=`
 name: index-row-too-large
@@ -26,36 +46,14 @@ type Domain {
   name: String @index
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  context.Domain.set({ id: "spam", name: "${longName}" });
+});
+`,
 )
-
-type domain = {id: string, name: string}
-type domainOps = {set: domain => unit}
-type handlerContext = {@as("Domain") domain: domainOps}
-
-let contextOf = (args: Internal.handlerArgs) =>
-  args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-
-@scope("Math") @val external imul: (int, int) => int = "imul"
-
-// Hex digits from a linear congruential generator. A repeated character would
-// compress below the limit and be indexed after all.
-let incompressible = length => {
-  let state = ref(1)
-  let digits = []
-  for _ in 1 to length {
-    state := imul(state.contents, 1103515245) + 12345
-    digits
-    ->Array.push(
-      state.contents->Int.shiftRightUnsigned(16)->Int.bitwiseAnd(15)->Int.toString(~radix=16),
-    )
-    ->ignore
-  }
-  digits->Array.join("")
-}
-
-let longName = incompressible(24000)
-
-let setLongName = async args => (args->contextOf).domain.set({id: "spam", name: longName})
 
 describe("An indexed String field given a value too large to index", () => {
   let refusal = Scenario.captureRefusal()
@@ -76,7 +74,7 @@ describe("An indexed String field given a value too large to index", () => {
         {
           fromBlock: 101,
           reply: Respond({
-            items: [{blockNumber: 105, logIndex: 0, handler: setLongName}],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 105, logIndex: 0}],
             latestFetchedBlockNumber: 110,
           }),
         },
@@ -105,7 +103,7 @@ describe("An indexed String field given a value too large to index", () => {
         {
           fromBlock: 1,
           reply: Respond({
-            items: [{blockNumber: 50, logIndex: 0, handler: setLongName}],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 50, logIndex: 0}],
             latestFetchedBlockNumber: 100,
           }),
         },

@@ -80,15 +80,6 @@ describe("Non-string entity id support", () => {
 type chainEntity = {id: int}
 type vaultEntity = {id: string, @as("chain_id") chainId: int, @as("big_id") bigId: bigint}
 
-type chainOps = {set: chainEntity => unit, deleteUnsafe: int => unit}
-type bigThingOps = {set: {"id": bigint} => unit}
-type vaultOps = {set: vaultEntity => unit}
-type handlerContext = {
-  @as("Chain") chain: chainOps,
-  @as("BigThing") bigThing: bigThingOps,
-  @as("Vault") vault: vaultOps,
-}
-
 let scenario = Scenario.make(
   ~schema=`
 type Chain {
@@ -119,6 +110,19 @@ chains:
         events:
           - event: Transfer()
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.Chain.set({ id: 137 });
+  // Deleted below by its numeric id, exercising delete-by-id with an
+  // integer column instead of text.
+  context.Chain.set({ id: 10 });
+  context.BigThing.set({ id: 999n });
+  context.Vault.set({ id: "v1", chain_id: 137, big_id: 999n });
+  context.Chain.deleteUnsafe(10);
+});
+`,
   ~unsupported=[
     {
       backend: #clickhouse,
@@ -141,23 +145,7 @@ describe("Non-string entity id — end-to-end via the in-process indexer", () =>
           fromBlock: 1,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.chain.set({id: 137})
-                  // Deleted below by its numeric id, exercising delete-by-id with an
-                  // integer column instead of text.
-                  context.chain.set({id: 10})
-                  context.bigThing.set({"id": 999n})
-                  context.vault.set({id: "v1", chainId: 137, bigId: 999n})
-                  context.chain.deleteUnsafe(10)
-                },
-              },
-            ],
+            items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
             latestFetchedBlockNumber: 300,
           }),
         },

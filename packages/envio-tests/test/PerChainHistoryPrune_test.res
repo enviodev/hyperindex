@@ -12,11 +12,13 @@ type counter = {
   @as("chainId") chainId: int,
 }
 
-type counterOps = {set: {"id": string, "count": bigint} => unit}
-type handlerContext = {@as("Counter") counter: counterOps}
+let handlers = `
+import { indexer } from "envio";
 
-let asContext = (context: Internal.handlerContext) =>
-  context->(Utils.magic: Internal.handlerContext => handlerContext)
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count });
+});
+`
 
 let chainYaml = (chainId, ~startBlock, ~maxReorgDepth) =>
   `
@@ -48,7 +50,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
       laggingChainId,
       ~startBlock=1,
@@ -58,6 +60,7 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 
 let scenario = Scenario.make(
   ~supervised=false,
+  ~handlers,
   ~schema,
   ~configYaml=makeConfigYaml("per-chain-prune", ~laggingChainId=1337),
 )
@@ -74,6 +77,7 @@ type Total @crossChain {
 // behind can reach a row any chain wrote, so none may prune past its safe point.
 let crossChainScenario = Scenario.make(
   ~supervised=false,
+  ~handlers,
   ~schema=crossChainSchema,
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain", ~laggingChainId=1337),
 )
@@ -81,6 +85,7 @@ let crossChainScenario = Scenario.make(
 // The same, with the lagging chain visited first.
 let crossChainLaggingFirstScenario = Scenario.make(
   ~supervised=false,
+  ~handlers,
   ~schema=crossChainSchema,
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain-lagging-first", ~laggingChainId=5),
 )
@@ -91,6 +96,7 @@ let crossChainLaggingFirstScenario = Scenario.make(
 // back for as long as it stays idle.
 let crossChainZeroDepthScenario = Scenario.make(
   ~supervised=false,
+  ~handlers,
   ~schema=crossChainSchema,
   ~configYaml=`
 name: per-chain-prune-cross-chain-zero-depth
@@ -99,7 +105,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
       1337,
       ~startBlock=1,
@@ -113,6 +119,7 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 // still look right, while three cannot.
 let manyBoundsScenario = Scenario.make(
   ~supervised=false,
+  ~handlers,
   ~schema,
   ~configYaml=`
 name: per-chain-prune-many-bounds
@@ -121,7 +128,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
       200,
       ~startBlock=210,
@@ -135,6 +142,7 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 // and everything it has committed is safe to prune.
 let zeroDepthScenario = Scenario.make(
   ~supervised=false,
+  ~handlers,
   ~schema,
   ~configYaml=`
 name: per-chain-prune-zero-depth
@@ -143,7 +151,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
       1337,
       ~startBlock=1,
@@ -154,13 +162,13 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
+external toUnknown: bigint => unknown = "%identity"
+
 let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->asContext
-    context.counter.set({"id": "total", "count": count})
-  },
+  params: dict{"count": count->toUnknown},
 }
 
 let counterHistory = (indexer: IndexerRunner.t): promise<array<Change.t<counter>>> =>

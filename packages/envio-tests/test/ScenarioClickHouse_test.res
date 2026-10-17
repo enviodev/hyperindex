@@ -26,12 +26,15 @@ type Counter {
   count: BigInt!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.Counter.set({ id: "total", count: 42n });
+});
+`,
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
-
-type counter = {id: string, count: bigint}
-type counterOps = {set: counter => unit}
-type counterContext = {@as("Counter") counter: counterOps}
 
 describe("Scenario ClickHouse sink", () => {
   scenario->Scenario.it("mirrors an indexed entity into ClickHouse", ~sources=[{chain: 1}], async (
@@ -47,16 +50,7 @@ describe("Scenario ClickHouse sink", () => {
         fromBlock: 0,
         toBlock: Unbounded,
         reply: Respond({
-          items: [
-            {
-              blockNumber: 5,
-              logIndex: 0,
-              handler: async args => {
-                let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-                context.counter.set({id: "total", count: 42n})
-              },
-            },
-          ],
+          items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
           latestFetchedBlockNumber: 10,
         }),
       },

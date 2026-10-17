@@ -19,7 +19,7 @@ chains:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
-          - event: "TestEvent()"
+          - event: "TestEvent(string id, uint256 count)"
 `,
   ~schema=`
 type Tally {
@@ -27,22 +27,30 @@ type Tally {
   count: Int!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  context.Tally.set({ id: event.params.id, count: Number(event.params.count) });
+});
+`,
 )
 
 type tally = {id: string, count: int}
-type tallyOps = {set: tally => unit}
-type handlerContext = {@as("Tally") tally: tallyOps}
 
-let setTally = (~block, ~logIndex=0, ~id, ~count): MockSource.itemMock => {
+let setTally = (~block, ~logIndex=0, ~id: string, ~count: bigint): MockSource.itemMock => {
+  event: "Gravatar.TestEvent",
   blockNumber: block,
   logIndex,
-  handler: async args =>
-    (args.context->(Utils.magic: Internal.handlerContext => handlerContext)).tally.set({id, count}),
+  params: dict{
+    "id": id->(Utils.magic: string => unknown),
+    "count": count->(Utils.magic: bigint => unknown),
+  },
 }
 
 // Past what an `integer` column holds. JavaScript has no trouble with it, so
 // the refusal comes from the server.
-let tooLarge = 2147483648.->(Utils.magic: float => int)
+let tooLarge = 2147483648n
 
 type stored = {tallies: array<tally>, history: int, checkpoints: string, progress: array<int>}
 
@@ -81,7 +89,7 @@ describe("A batch the server refuses", () => {
         {
           fromBlock: 1,
           reply: Respond({
-            items: [setTally(~block=1, ~id="kept", ~count=1)],
+            items: [setTally(~block=1, ~id="kept", ~count=1n)],
             latestFetchedBlockNumber: 1,
           }),
         },
@@ -94,7 +102,7 @@ describe("A batch the server refuses", () => {
           coversBlock: 2,
           reply: Respond({
             items: [
-              setTally(~block=2, ~id="kept", ~count=2),
+              setTally(~block=2, ~id="kept", ~count=2n),
               setTally(~block=2, ~logIndex=1, ~id="refused", ~count=tooLarge),
             ],
             latestFetchedBlockNumber: 2,
@@ -110,7 +118,7 @@ describe("A batch the server refuses", () => {
         {
           coversBlock: 2,
           reply: Respond({
-            items: [setTally(~block=2, ~id="kept", ~count=2)],
+            items: [setTally(~block=2, ~id="kept", ~count=2n)],
             latestFetchedBlockNumber: 2,
           }),
         },

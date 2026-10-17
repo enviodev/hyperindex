@@ -6,8 +6,9 @@ open Vitest
 // a cell at a time rather than staged (LocalWriteFailure_test), and has to
 // refuse it the same way.
 
-let scenario = Scenario.make(
-  ~configYaml=`
+let scenario = (~sample) =>
+  Scenario.make(
+    ~configYaml=`
 name: non-finite-float
 chains:
   - id: 1337
@@ -21,26 +22,27 @@ chains:
         events:
           - event: "TestEvent()"
 `,
-  ~schema=`
+    ~schema=`
 type Sample {
   id: ID!
   value: Float!
   history: [Float!]!
 }
 `,
-)
+    ~handlers=`
+import { indexer } from "envio";
 
-type sample = {id: string, value: float, history: array<float>}
-type handlerContext = {@as("Sample") sample: {"set": sample => unit}}
-
-let contextOf = (args: Internal.handlerArgs) =>
-  args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  context.Sample.set(${sample});
+});
+`,
+  )
 
 let refusesWith = (~name, ~sample, ~reason) =>
   describe(name, () => {
     let refusal = Scenario.captureRefusal()
 
-    scenario->Scenario.it(
+    scenario(~sample)->Scenario.it(
       "is refused, naming the value and its column",
       ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
       ~onError=refusal.onError,
@@ -52,15 +54,7 @@ let refusesWith = (~name, ~sample, ~reason) =>
           {
             fromBlock: 1,
             toBlock: Unbounded,
-            reply: Respond({
-              items: [
-                {
-                  blockNumber: 1,
-                  logIndex: 0,
-                  handler: async args => (args->contextOf).sample["set"](sample),
-                },
-              ],
-            }),
+            reply: Respond({items: [{event: "Gravatar.TestEvent", blockNumber: 1, logIndex: 0}]}),
           },
         ])
         let failure = await refusal.awaitRefusalReason()
@@ -79,12 +73,12 @@ let refusesWith = (~name, ~sample, ~reason) =>
 
 refusesWith(
   ~name="A NaN in a float field of an entity with a list field",
-  ~sample={id: "1", value: Float.Constants.nan, history: []},
+  ~sample=`{ id: "1", value: NaN, history: [] }`,
   ~reason="NaN is not a finite number, so it cannot be stored in the `value` column. Store a finite number, or keep it out of the entity.",
 )
 
 refusesWith(
   ~name="An Infinity in a float list",
-  ~sample={id: "1", value: 1.5, history: [2.5, Float.Constants.positiveInfinity]},
+  ~sample=`{ id: "1", value: 1.5, history: [2.5, Infinity] }`,
   ~reason="Infinity is not a finite number, so it cannot be stored in the `history` column. Store a finite number, or keep it out of the entity.",
 )

@@ -114,7 +114,12 @@ type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 // `isWildcard` decides whether the chain's mock registration depends on
 // addresses, and so whether its partition is an address partition or a wildcard
 // one — the two take different paths through a rollback.
-type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef, isWildcard: bool}
+type mockSourceState = {
+  onEventRegistrationRef: mockSourceRegistrationRef,
+  // The chain's own registrations, for items that name the event they are.
+  chainRegistrationsRef: ref<array<Internal.onEventRegistration>>,
+  isWildcard: bool,
+}
 
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
 
@@ -158,8 +163,12 @@ let installMockSourceRegistrations = (
         | None => "MockContract"
         },
       )
+      let chainRegistrations = registrations.onEventRegistrations->Array.copy
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
-      sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
+      sourceStates->Array.forEach(state => {
+        state.onEventRegistrationRef := Some(mockRegistration)
+        state.chainRegistrationsRef := chainRegistrations
+      })
     }
   })
 
@@ -175,6 +184,13 @@ type itemMock = {
   logIndex: int,
   handler?: mockSourceHandler,
   contractRegister?: mockSourceContractRegister,
+  // "Contract.Event": the item runs the handler and contract register the
+  // scenario's own handlers registered for it, with `params` as its params,
+  // instead of `handler` and `contractRegister`.
+  event?: string,
+  params?: dict<unknown>,
+  // The emitting contract's address handlers see. Defaults to the zero address.
+  srcAddress?: string,
   // Laid over the number, timestamp and hash every item's block carries.
   blockFields?: dict<unknown>,
   transactionFields?: dict<unknown>,
@@ -195,6 +211,7 @@ type pendingItemsQuery = {
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
 @get external includeAllBlocks: pendingItemsQuery => bool = "includeAllBlocks"
+@get external knownHeightAtQuery: pendingItemsQuery => int = "knownHeight"
 
 type itemsResponse = {
   items: array<itemMock>,
@@ -223,6 +240,9 @@ type expectedItemsQuery = {
   toBlock?: toBlock,
   retryCount?: int,
   coversBlock?: int,
+  // An address the query fetches for, in any letter case: queries carry the
+  // lowercase spelling, so a checksummed one would otherwise never match.
+  address?: string,
   where?: pendingItemsQuery => bool,
   reply: reply,
 }
@@ -275,6 +295,9 @@ type t = {
   // `LeavePending` accounts for every remaining query it matches. A pending
   // query no entry accounts for, and no earlier list left pending, fails it.
   expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
+  // The queries the last `expectItemsQueries` replied to, in entry order, for an
+  // assert on what the indexer asked.
+  repliedItemsQueries: array<pendingItemsQuery>,
   // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
   // queries and answers every one up to its own toBlock, never past
   // `blockNumber`, until every partition it answers gets there. A query starting
@@ -352,6 +375,13 @@ let expectedMatches = (expected: expectedItemsQuery, query: pendingItemsQuery) =
   expected.toBlock->Option.mapOr(true, toBlock => toBlock == query.toBlock) &&
   expected.retryCount->Option.mapOr(true, retryCount => retryCount === query.retryCount) &&
   expected.coversBlock->Option.mapOr(true, blockNumber => query->queryCoversBlock(blockNumber)) &&
+  expected.address->Option.mapOr(true, address =>
+    query
+    ->addresses
+    ->Array.some(queryAddress =>
+      queryAddress->Address.toString->String.toLowerCase === address->String.toLowerCase
+    )
+  ) &&
   expected.where->Option.mapOr(true, where => where(query))
 
 let isReplying = (expected: expectedItemsQuery) =>
@@ -421,6 +451,7 @@ let describeExpected = (expected: expectedItemsQuery) =>
         expected.coversBlock->Option.map(blockNumber =>
           `coversBlock: ${blockNumber->Int.toString}`
         ),
+        expected.address->Option.map(address => `address: "${address}"`),
         expected.where->Option.map(_ => "where: <fn>"),
         Some(
           `reply: ${switch expected.reply {
@@ -505,9 +536,15 @@ let timeoutMessage = (
   expected
   ->Array.mapWithIndex((entry, index) => {
     let matching = pending->Array.filter(query => entry->expectedMatches(query))
+    let everyReplyMatches =
+      expected->Array.every(entry =>
+        !isReplying(entry) || pending->Array.some(query => entry->expectedMatches(query))
+      )
     let reason = switch (matching, replied) {
     | ([], _) => " (matches no pending query)"
-    | (_, None) if entry->isReplying => " (no query left for it once the other replies pick)"
+    | (_, None)
+      if entry->isReplying &&
+        everyReplyMatches => " (no query left for it once the other replies pick)"
     | (_, Some(replied))
       if !isReplying(entry) &&
       matching->Array.every(query =>
@@ -519,7 +556,15 @@ let timeoutMessage = (
   })
   ->Array.join("\n") ++
   "\nPending:\n" ++
-  pending->describeQueries
+  pending->describeQueries ++ {
+    let (unmatched, matched) =
+      expected->Array.partition(entry =>
+        !(pending->Array.some(query => entry->expectedMatches(query)))
+      )
+    unmatched->Utils.Array.isEmpty || matched->Utils.Array.isEmpty
+      ? ""
+      : "\nThe list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call."
+  }
 
 let make = (
   methods: array<method>,
@@ -587,7 +632,11 @@ let make = (
     heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
   }
   let autoHeight = ref(autoHeight)
-  let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
+  let state: mockSourceState = {
+    onEventRegistrationRef: ref(None),
+    chainRegistrationsRef: ref([]),
+    isWildcard,
+  }
 
   // Height answers registered before their call arrived, consumed in order by
   // `getHeightOrThrow`. `site` is only carried for the end-of-run report.
@@ -597,6 +646,7 @@ let make = (
   // Queries an earlier `expectItemsQueries` left pending. A later list doesn't
   // have to name them again to account for them.
   let keptPendingQueries: array<pendingItemsQuery> = []
+  let repliedItemsQueries: array<pendingItemsQuery> = []
   let arrivalListeners: array<unit => unit> = []
   // A chain fans out one query per partition, and each await on the way to the
   // source spreads the fan-out over one more microtask. Listeners are told once
@@ -682,6 +732,45 @@ let make = (
     }
   }
 
+  let makeEventItem = (item: itemMock, onEventRegistration: Internal.onEventRegistration) => {
+    let payload: Evm.payload = {
+      contractName: onEventRegistration.eventConfig.contractName,
+      eventName: onEventRegistration.eventConfig.name,
+      params: item.params
+      ->Option.getOr(Dict.make())
+      ->(Utils.magic: dict<unknown> => Internal.eventParams),
+      chainId,
+      srcAddress: item.srcAddress
+      ->Option.getOr("0x0000000000000000000000000000000000000000")
+      ->Address.unsafeFromString,
+      logIndex: item.logIndex,
+      block: Dict.fromArray([
+        ("number", item.blockNumber->(Utils.magic: int => unknown)),
+        ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
+        ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
+      ])
+      ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
+      ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+      transaction: ?(
+        item.transactionFields->Option.map(fields =>
+          fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+        )
+      ),
+    }
+    let _ = %raw(`Object.defineProperties(payload, {
+      __mockHandler: {value: item.handler},
+      __mockContractRegister: {value: item.contractRegister},
+    })`)
+    Internal.Event({
+      onEventRegistration,
+      chainId,
+      blockNumber: item.blockNumber,
+      logIndex: item.logIndex,
+      transactionIndex: 0,
+      payload: payload->Evm.fromPayload,
+    })
+  }
+
   let makeItemsResponse = (
     response: itemsResponse,
     ~fromBlock,
@@ -755,43 +844,32 @@ let make = (
     })
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
-      parsedQueueItems: items->Array.map(item => {
-        let onEventRegistration =
-          state.onEventRegistrationRef.contents->Option.getOrThrow(
-            ~message="MockSource on-event registration was not installed before resolving items",
-          )
-        let payload: Evm.payload = {
-          contractName: onEventRegistration.eventConfig.contractName,
-          eventName: onEventRegistration.eventConfig.name,
-          params: %raw(`{}`),
-          chainId,
-          srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-          logIndex: item.logIndex,
-          block: Dict.fromArray([
-            ("number", item.blockNumber->(Utils.magic: int => unknown)),
-            ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
-            ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
-          ])
-          ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
-          ->(Utils.magic: dict<unknown> => Internal.eventBlock),
-          transaction: ?(
-            item.transactionFields->Option.map(fields =>
-              fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+      parsedQueueItems: items->Array.flatMap(item => {
+        let registrations = switch item.event {
+        | None => [
+            state.onEventRegistrationRef.contents->Option.getOrThrow(
+              ~message="MockSource on-event registration was not installed before resolving items",
+            ),
+          ]
+        | Some(event) =>
+          let name = (registration: Internal.onEventRegistration) =>
+            `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
+          // Like a real source, one item per handler registered for the event.
+          switch state.chainRegistrationsRef.contents->Array.filter(registration =>
+            registration->name === event
+          ) {
+          | [] =>
+            JsError.throwWithMessage(
+              `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
+                ->Array.map(registration => `"${registration->name}"`)
+                ->Utils.Set.fromArray
+                ->Utils.Set.toArray
+                ->Array.join(", ")}`,
             )
-          ),
+          | registrations => registrations
+          }
         }
-        let _ = %raw(`Object.defineProperties(payload, {
-          __mockHandler: {value: item.handler},
-          __mockContractRegister: {value: item.contractRegister},
-        })`)
-        Internal.Event({
-          onEventRegistration,
-          chainId,
-          blockNumber: item.blockNumber,
-          logIndex: item.logIndex,
-          transactionIndex: 0,
-          payload: payload->Evm.fromPayload,
-        })
+        registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
       }),
       transactionStore: None,
       blockStore: responseBlockStore,
@@ -804,6 +882,7 @@ let make = (
   }
 
   let expectItemsQueries = async expected => {
+    repliedItemsQueries->Utils.Array.clearInPlace
     let replyingIndices = expected->Array.reduceWithIndex([], (indices, entry, index) => {
       if entry->isReplying {
         indices->Array.push(index)->ignore
@@ -856,20 +935,28 @@ let make = (
           item.blockNumber < query.fromBlock || item.blockNumber > latest
         ) {
         | Some(item) =>
+          let hint = switch (query.toBlock, response.latestFetchedBlockNumber) {
+          | (Unbounded, None) if item.blockNumber > latest =>
+            `. The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: ${query
+              ->knownHeightAtQuery
+              ->Int.toString}`
+          | _ => ""
+          }
           JsError.throwWithMessage(
-            `expectItemsQueries can't reply an item at block ${item.blockNumber->Int.toString} to ${query->describeQuery}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (${latest->Int.toString})`,
+            `expectItemsQueries can't reply an item at block ${item.blockNumber->Int.toString} to ${query->describeQuery}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (${latest->Int.toString})${hint}`,
           )
         | None => ()
         }
       | _ => ()
       }
     )
-    replies->Array.forEach(((query, reply, _)) =>
+    replies->Array.forEach(((query, reply, _)) => {
       switch reply {
       | Ok(response) => (query->control).respond(response)
       | Error(exn) => (query->control).fail(exn)
       }
-    )
+      repliedItemsQueries->Array.push(query)->ignore
+    })
   }
 
   {
@@ -931,6 +1018,7 @@ let make = (
     reorgCallCount: () => reorgCalls.contents,
     pendingItemsQueries,
     expectItemsQueries,
+    repliedItemsQueries,
     respondEmptyUpTo: async blockNumber => {
       let rec wave = async (~count) => {
         if count > 1000 {
@@ -1151,8 +1239,10 @@ let make = (
             }
             let queryControl = {
               respond: response => {
+                // Built first, so a reply that can't be built leaves the query pending.
+                let built = makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight)
                 settle()
-                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight))
+                resolve(built)
               },
               fail: exn => {
                 settle()
@@ -1168,6 +1258,10 @@ let make = (
             ->Utils.Object.definePropertyWithValue(
               "includeAllBlocks",
               {enumerable: false, value: includeAllBlocks},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "knownHeight",
+              {enumerable: false, value: knownHeight},
             )
             ->Utils.Object.definePropertyWithValue(
               "__control",
