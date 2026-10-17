@@ -65,7 +65,72 @@ pub struct SchemaTranslation {
     /// type, and guessing from the stored value can't tell `Bytes` from
     /// `String` or `Int8` from `Int`.
     pub entity_field_types: BTreeMap<String, BTreeMap<String, FieldType>>,
+    /// `@entity(timeseries: true)` types. The runtime stamps each save with the
+    /// block's timestamp and an auto-generated, increasing `Int8` id.
+    pub timeseries_entities: BTreeSet<String>,
+    /// `@aggregation` types, rolled up by the runtime into one entity per
+    /// interval, named `<Aggregation>_<interval>`.
+    pub aggregations: Vec<Aggregation>,
+    /// Derived fields that list an aggregation's rows (`stats: [Stat!]
+    /// @derivedFrom(field: "pool")`), by owning entity. envio has no table for
+    /// the aggregation under that name, so they are not part of the entity;
+    /// a query answers them from the `<Aggregation>_<interval>` tables.
+    pub aggregation_derived_fields: BTreeMap<String, Vec<AggregationDerivedField>>,
+    #[serde(skip)]
+    aggregation_names: BTreeSet<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregationDerivedField {
+    pub field: String,
+    pub aggregation: String,
+    /// The dimension of the aggregation that points back at the owner.
+    pub via: String,
+}
+
+/// An `@aggregation(intervals: [...], source: "...")` type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Aggregation {
+    pub name: String,
+    /// The timeseries entity the aggregates are computed over.
+    pub source: String,
+    /// `hour` and/or `day`.
+    pub intervals: Vec<String>,
+    /// Fields without `@aggregate`: the group key, copied from the source row.
+    pub dimensions: Vec<AggregationDimension>,
+    pub aggregates: Vec<Aggregate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregationDimension {
+    pub field: String,
+    /// The column holding it: `<field>_id` for a relation, else the field.
+    pub column: String,
+}
+
+/// One `@aggregate(fn: ..., arg: ..., cumulative: ...)` field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Aggregate {
+    pub field: String,
+    /// `sum`, `count`, `min`, `max`, `first` or `last`.
+    pub func: String,
+    /// A source field or a SQL expression over source fields. `count` needs none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arg: Option<String>,
+    pub cumulative: bool,
+    /// The declared scalar: `Int`, `Int8`, `BigInt` or `BigDecimal`.
+    pub kind: String,
+}
+
+/// The interval names `@aggregation` accepts.
+pub const AGGREGATION_INTERVALS: &[&str] = &["hour", "day"];
+const AGGREGATE_FUNCTIONS: &[&str] = &["sum", "count", "min", "max", "first", "last"];
+/// The envio entity that holds the rollup bookkeeping (see the runtime).
+pub const ROLLUP_STATE_ENTITY: &str = "EnvioSubgraphRollup";
 
 /// A field as the subgraph schema declares it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -99,6 +164,16 @@ fn bool_arg(directive: &Directive<'_, String>, name: &str) -> Option<bool> {
             None
         }
     })
+}
+
+fn string_arg(directive: &Directive<'_, String>, name: &str) -> Option<String> {
+    directive
+        .arguments
+        .iter()
+        .find_map(|(key, value)| match value {
+            Value::String(s) if key == name => Some(s.clone()),
+            _ => None,
+        })
 }
 
 /// Strips wrappers down to the innermost named type, remembering how to put
@@ -222,6 +297,18 @@ fn render_fields(
             );
 
         if let Some(derived_field) = derived_from {
+            if translation.aggregation_names.contains(&base) {
+                translation
+                    .aggregation_derived_fields
+                    .entry(owner.to_string())
+                    .or_default()
+                    .push(AggregationDerivedField {
+                        field: field.name.clone(),
+                        aggregation: base,
+                        via: derived_field,
+                    });
+                continue;
+            }
             // Rendered as a list whatever the subgraph wrote. The Graph accepts
             // the one-to-one `Registration @derivedFrom(...)` and answers it
             // with the same lookup; envio only spells a derived field as a
@@ -349,6 +436,13 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
         match definition {
             Definition::TypeDefinition(TypeDefinition::Object(object)) => {
                 entity_names.insert(object.name.clone());
+                if object
+                    .directives
+                    .iter()
+                    .any(|d| directive_name(d) == "aggregation")
+                {
+                    translation.aggregation_names.insert(object.name.clone());
+                }
             }
             // An interface names a shape shared by entities, so a field may
             // point at it the same way it points at an entity.
@@ -364,6 +458,10 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
 
     let mut out = String::new();
     let mut implementors: Vec<(String, Vec<String>)> = Vec::new();
+    let mut aggregation_defs: Vec<(
+        &graphql_parser::schema::ObjectType<'_, String>,
+        &Directive<'_, String>,
+    )> = Vec::new();
 
     for definition in &document.definitions {
         match definition {
@@ -404,14 +502,13 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     continue;
                 }
 
-                for directive in &object.directives {
-                    let name = directive_name(directive);
-                    if name == "aggregation" {
-                        report.unsupported(
-                            "timeseries and aggregations",
-                            format!("schema.graphql → type {} @aggregation", object.name),
-                        );
-                    }
+                if let Some(aggregation) = object
+                    .directives
+                    .iter()
+                    .find(|d| directive_name(d) == "aggregation")
+                {
+                    aggregation_defs.push((object, aggregation));
+                    continue;
                 }
 
                 let Some(entity) = object
@@ -434,20 +531,16 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                         );
                     }
                 }
-                if bool_arg(entity, "timeseries") == Some(true) {
-                    report.unsupported(
-                        "timeseries and aggregations",
-                        format!(
-                            "schema.graphql → type {} @entity(timeseries: true)",
-                            object.name
-                        ),
-                    );
+                let timeseries = bool_arg(entity, "timeseries") == Some(true);
+                if timeseries {
+                    check_timeseries(object, report);
+                    translation.timeseries_entities.insert(object.name.clone());
                 }
                 // `immutable: true` is validated and dropped: graph-node's
                 // write-once check only ever fires for mappings that are
                 // already broken, so a working subgraph loses nothing.
 
-                let fields = render_fields(
+                let mut fields = render_fields(
                     &object.name,
                     &object.fields,
                     &entity_names,
@@ -455,6 +548,9 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     &mut translation,
                     report,
                 );
+                if timeseries {
+                    index_timestamp(&mut fields);
+                }
 
                 implementors.push((object.name.clone(), object.implements_interfaces.clone()));
 
@@ -507,8 +603,218 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
         }
     }
 
+    for (object, directive) in aggregation_defs {
+        translate_aggregation(
+            object,
+            directive,
+            &entity_names,
+            &enum_names,
+            &mut translation,
+            &mut out,
+            report,
+        );
+    }
+    if !translation.aggregations.is_empty() {
+        out.push_str(&format!(
+            "type {ROLLUP_STATE_ENTITY} {{\n  id: ID!\n  payload: String!\n}}\n\n"
+        ));
+    }
+
     translation.text = out.trim_end().to_string();
     translation
+}
+
+/// graph-node's timeseries rules: an `Int8` id and a `Timestamp`.
+fn check_timeseries(object: &graphql_parser::schema::ObjectType<'_, String>, report: &mut Report) {
+    let location = format!("schema.graphql → type {}", object.name);
+    let declared = |name: &str| {
+        object
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .map(|f| unwrap_type(&f.field_type).0)
+    };
+    match declared("id").as_deref() {
+        Some("Int8") => {}
+        Some(other) => report.unsupported(
+            format!("a timeseries with an {other} id (graph-node generates Int8 ids)"),
+            location.clone(),
+        ),
+        None => report.unknown(
+            format!("the timeseries {} without an id", object.name),
+            location.clone(),
+        ),
+    }
+    if declared("timestamp").as_deref() != Some("Timestamp") {
+        report.unknown(
+            format!(
+                "the timeseries {} without a Timestamp `timestamp` field",
+                object.name
+            ),
+            location,
+        );
+    }
+}
+
+/// The rollup and `@aggregation` queries both range-scan by `timestamp`.
+fn index_timestamp(fields: &mut [String]) {
+    for field in fields.iter_mut() {
+        if field.starts_with("  timestamp: ") && !field.contains("@index") {
+            field.push_str(" @index");
+        }
+    }
+}
+
+fn translate_aggregation(
+    object: &graphql_parser::schema::ObjectType<'_, String>,
+    directive: &Directive<'_, String>,
+    entity_names: &BTreeSet<String>,
+    enum_names: &BTreeSet<String>,
+    translation: &mut SchemaTranslation,
+    out: &mut String,
+    report: &mut Report,
+) {
+    let location = format!("schema.graphql → type {} @aggregation", object.name);
+    let source = string_arg(directive, "source");
+    let mut intervals = Vec::new();
+    for (key, value) in &directive.arguments {
+        match (key.as_str(), value) {
+            ("source", _) => {}
+            ("intervals", Value::List(items)) => {
+                for item in items {
+                    match item {
+                        Value::String(name) if AGGREGATION_INTERVALS.contains(&name.as_str()) => {
+                            if !intervals.contains(name) {
+                                intervals.push(name.clone());
+                            }
+                        }
+                        Value::String(name) => report.unknown(
+                            format!("the aggregation interval \"{name}\""),
+                            location.clone(),
+                        ),
+                        _ => report.unknown("an aggregation interval", location.clone()),
+                    }
+                }
+            }
+            (other, _) => report.unknown(
+                format!("the @aggregation argument \"{other}\""),
+                location.clone(),
+            ),
+        }
+    }
+    let Some(source) = source else {
+        report.unknown(
+            format!("the aggregation {} without a source", object.name),
+            location,
+        );
+        return;
+    };
+    if intervals.is_empty() {
+        report.unknown(
+            format!("the aggregation {} without intervals", object.name),
+            location,
+        );
+        return;
+    }
+    if !translation.timeseries_entities.contains(&source) {
+        report.unknown(
+            format!(
+                "the aggregation source {source} (it must be an @entity(timeseries: true) type)"
+            ),
+            location,
+        );
+        return;
+    }
+
+    let mut dimensions = Vec::new();
+    let mut aggregates = Vec::new();
+    for field in &object.fields {
+        if field.name == "id" || field.name == "timestamp" {
+            continue;
+        }
+        let field_location = format!("schema.graphql → {}.{}", object.name, field.name);
+        let (base, wrappers) = unwrap_type(&field.field_type);
+        let Some(aggregate) = field
+            .directives
+            .iter()
+            .find(|d| directive_name(d) == "aggregate")
+        else {
+            let is_ref = entity_names.contains(&base) && !is_list(&wrappers);
+            dimensions.push(AggregationDimension {
+                field: field.name.clone(),
+                column: if is_ref {
+                    format!("{}_id", field.name)
+                } else {
+                    field.name.clone()
+                },
+            });
+            continue;
+        };
+        if !["Int", "Int8", "BigInt", "BigDecimal"].contains(&base.as_str()) || is_list(&wrappers) {
+            report.unknown(
+                format!("an aggregate of type {base} (graph-node takes Int, Int8, BigInt or BigDecimal)"),
+                field_location.clone(),
+            );
+            continue;
+        }
+        let func = string_arg(aggregate, "fn").unwrap_or_default();
+        if !AGGREGATE_FUNCTIONS.contains(&func.as_str()) {
+            report.unknown(
+                format!("the aggregate function \"{func}\""),
+                field_location.clone(),
+            );
+            continue;
+        }
+        let arg = string_arg(aggregate, "arg");
+        if func != "count" && arg.is_none() {
+            report.unknown(
+                format!("the {func} aggregate without an arg"),
+                field_location.clone(),
+            );
+            continue;
+        }
+        aggregates.push(Aggregate {
+            field: field.name.clone(),
+            func,
+            arg,
+            cumulative: bool_arg(aggregate, "cumulative").unwrap_or(false),
+            kind: base,
+        });
+    }
+    if aggregates.is_empty() {
+        report.unknown(
+            format!(
+                "the aggregation {} without an @aggregate field",
+                object.name
+            ),
+            location,
+        );
+        return;
+    }
+
+    // One entity per interval, like graph-node's `<aggregation>_<interval>`
+    // tables. Dimensions keep their declared types; the aggregates lose the
+    // directive and keep theirs.
+    for interval in &intervals {
+        let owner = format!("{}_{interval}", object.name);
+        let mut fields = render_fields(
+            &owner,
+            &object.fields,
+            entity_names,
+            enum_names,
+            translation,
+            report,
+        );
+        index_timestamp(&mut fields);
+        out.push_str(&format!("type {owner} {{\n{}\n}}\n\n", fields.join("\n")));
+    }
+    translation.aggregations.push(Aggregation {
+        name: object.name.clone(),
+        source,
+        intervals,
+        dimensions,
+        aggregates,
+    });
 }
 
 #[cfg(test)]
@@ -710,14 +1016,9 @@ type Token @entity @regularPolling {
     }
 
     #[test]
-    fn refuses_timeseries_and_unknowns() {
+    fn refuses_unknowns() {
         let (_, report) = translate_ok(
             r#"
-type Stats @entity(timeseries: true) {
-  id: Int8!
-  amount: BigInt!
-}
-
 type Loose {
   id: ID!
 }
@@ -731,11 +1032,130 @@ type Odd @entity {
         let rendered = report.to_string();
         assert_eq!(
             (
-                rendered.contains("doesn't support timeseries and aggregations"),
                 rendered.contains("doesn't know the object type Loose without @entity"),
                 rendered.contains("doesn't know the type NotAType"),
             ),
-            (true, true, true)
+            (true, true)
+        );
+    }
+
+    const TRADES: &str = r#"
+type Token @entity {
+  id: ID!
+}
+
+type Trade @entity(timeseries: true) {
+  id: Int8!
+  timestamp: Timestamp!
+  token: Token!
+  amount: BigDecimal!
+  price: BigDecimal!
+}
+
+type TradeStats @aggregation(intervals: ["hour", "day"], source: "Trade") {
+  id: Int8!
+  timestamp: Timestamp!
+  token: Token!
+  volume: BigDecimal! @aggregate(fn: "sum", arg: "amount")
+  open: BigDecimal! @aggregate(fn: "first", arg: "price")
+  trades: Int8! @aggregate(fn: "count", cumulative: true)
+}
+"#;
+
+    #[test]
+    fn translates_a_timeseries_and_its_aggregation_into_one_entity_per_interval() {
+        let (translation, report) = translate_ok(TRADES);
+        assert!(report.is_empty(), "{report}");
+        let aggregation = translation.aggregations.first().cloned();
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation.timeseries_entities.iter().cloned().collect::<Vec<_>>(),
+                aggregation.as_ref().map(|a| a.intervals.clone()),
+                aggregation.as_ref().map(|a| a
+                    .dimensions
+                    .iter()
+                    .map(|d| d.column.clone())
+                    .collect::<Vec<_>>()),
+                aggregation.as_ref().map(|a| a
+                    .aggregates
+                    .iter()
+                    .map(|g| (g.field.clone(), g.func.clone(), g.arg.clone(), g.cumulative))
+                    .collect::<Vec<_>>()),
+            ),
+            (
+                "type Token {\n  id: ID!\n}\n\n\
+                 type Trade {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token!\n  \
+                   amount: BigDecimal!\n  price: BigDecimal!\n}\n\n\
+                 type TradeStats_hour {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token!\n  \
+                   volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
+                 type TradeStats_day {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token!\n  \
+                   volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
+                 type EnvioSubgraphRollup {\n  id: ID!\n  payload: String!\n}",
+                vec!["Trade".to_string()],
+                Some(vec!["hour".to_string(), "day".to_string()]),
+                Some(vec!["token_id".to_string()]),
+                Some(vec![
+                    ("volume".to_string(), "sum".to_string(), Some("amount".to_string()), false),
+                    ("open".to_string(), "first".to_string(), Some("price".to_string()), false),
+                    ("trades".to_string(), "count".to_string(), None, true),
+                ]),
+            )
+        );
+    }
+
+    #[test]
+    fn leaves_a_derived_list_of_aggregation_rows_out_of_the_entity() {
+        let schema = TRADES.replace(
+            "type Token @entity {\n  id: ID!\n}",
+            "type Token @entity {\n  id: ID!\n  stats: [TradeStats!]! @derivedFrom(field: \"token\")\n}",
+        );
+        let (translation, report) = translate_ok(&schema);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            (
+                translation
+                    .text
+                    .starts_with("type Token {\n  id: ID!\n}\n\n"),
+                translation.aggregation_derived_fields.get("Token").cloned(),
+            ),
+            (
+                true,
+                Some(vec![AggregationDerivedField {
+                    field: "stats".to_string(),
+                    aggregation: "TradeStats".to_string(),
+                    via: "token".to_string(),
+                }])
+            )
+        );
+    }
+
+    #[test]
+    fn refuses_malformed_timeseries_and_aggregations() {
+        let (_, report) = translate_ok(
+            r#"
+type NoTime @entity(timeseries: true) {
+  id: Int8!
+}
+
+type Plain @entity {
+  id: ID!
+}
+
+type Bad @aggregation(intervals: ["week"], source: "Plain") {
+  id: Int8!
+  timestamp: Timestamp!
+  n: Int! @aggregate(fn: "median", arg: "x")
+}
+"#,
+        );
+        let rendered = report.to_string();
+        assert_eq!(
+            (
+                rendered.contains("without a Timestamp `timestamp` field"),
+                rendered.contains("the aggregation interval \"week\""),
+            ),
+            (true, true)
         );
     }
 

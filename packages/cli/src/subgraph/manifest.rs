@@ -315,6 +315,15 @@ pub struct ContextValue {
     pub data: String,
 }
 
+/// The manifest's `graft:` block: graph-node would start from a copy of the
+/// `base` deployment's data up to `block`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Graft {
+    pub base: String,
+    pub block: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -325,6 +334,46 @@ pub struct Manifest {
     /// Set by the declared-eth_calls feature or any `calls:` block: makes the
     /// RPC requirement statically known, so a missing one fails at startup.
     pub declares_eth_calls: bool,
+    /// The `graft:` block, ignored by the indexer (it re-indexes from the
+    /// data sources' start blocks) and reported once at startup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graft: Option<Graft>,
+    /// The warning that goes with `graft`, worded once here so the CLI and the
+    /// runtime say the same thing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graft_notice: Option<String>,
+}
+
+/// What ignoring a `graft:` means for this manifest. The base text is always
+/// shown; the loud part names data sources that start after the graft block.
+pub fn graft_notice(graft: &Graft, sources: &[DataSource]) -> String {
+    let mut text = format!(
+        "WARNING: this subgraph grafts onto deployment {} at block {}. Envio cannot copy another \
+         deployment's data, so the graft is IGNORED and the subgraph is indexed from its data \
+         sources' own startBlocks, as a full re-index. The result equals the grafted deployment \
+         only if the base deployment's mappings produced the same data as these mappings do \
+         for blocks up to {}.",
+        graft.base, graft.block, graft.block
+    );
+    let late: Vec<String> = sources
+        .iter()
+        .filter(|s| !s.is_template)
+        .filter_map(|s| match s.start_block {
+            Some(b) if b > graft.block => Some(format!("{} (startBlock {b})", s.name)),
+            _ => None,
+        })
+        .collect();
+    if !late.is_empty() {
+        text.push_str(&format!(
+            "\nWARNING, DATA MAY BE MISSING: {} start after the graft block {}. The base \
+             deployment may hold data from before those start blocks (it was indexed under its own \
+             manifest) that a re-index from the start blocks cannot reproduce. Lower the \
+             startBlock to the base deployment's start block to rebuild that history.",
+            late.join(", "),
+            graft.block
+        ));
+    }
+    text
 }
 
 impl Manifest {
@@ -390,9 +439,18 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
         }
     }
 
-    if root.get("graft").is_some() {
-        report.unsupported("grafting", "graft");
-    }
+    // Envio can't copy another deployment's data, so a graft is ignored and the
+    // subgraph indexes from its own start blocks (see `graft_notice`).
+    let graft = root.get("graft").and_then(|raw| {
+        let mut obj = Obj::new(raw, "graft", report)?;
+        let base = obj.string("base");
+        let block = obj.u64("block");
+        obj.finish(report);
+        Some(Graft {
+            base: base.unwrap_or_default(),
+            block: block.unwrap_or(0),
+        })
+    });
 
     // `indexerHints.prune` only tunes how much history graph-node keeps; envio
     // prunes on its own schedule, so the hint is accepted and ignored.
@@ -432,12 +490,17 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
 
     root.finish(report);
 
+    let graft_notice = graft
+        .as_ref()
+        .map(|graft| graft_notice(graft, &data_sources));
     Some(Manifest {
         spec_version,
         schema_file,
         data_sources,
         templates,
         declares_eth_calls,
+        graft,
+        graft_notice,
     })
 }
 
@@ -1029,8 +1092,73 @@ dataSources:
                 rendered.contains("doesn't support block handlers with `filter: call`"),
                 rendered.contains("data source \"Token\" → callHandlers → \"handleApprove\""),
             ),
-            (3, true, true, true, true)
+            (2, false, true, true, true)
         );
+    }
+
+    fn graft_manifest(start_block: u64) -> String {
+        format!(
+            r#"
+specVersion: 1.3.0
+schema:
+  file: ./schema.graphql
+graft:
+  base: QmBase
+  block: 100
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "0x1"
+      abi: Token
+      startBlock: {start_block}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      file: ./src/token.ts
+"#
+        )
+    }
+
+    #[test]
+    fn a_graft_is_ignored_with_a_full_reindex_notice() {
+        let (manifest, report) = parse_ok(&graft_manifest(10));
+        let manifest = manifest.unwrap();
+        let notice = manifest.graft_notice.clone().unwrap_or_default();
+        assert_eq!(
+            (
+                report.findings().len(),
+                manifest.graft,
+                notice.contains("IGNORED"),
+                notice.contains("full re-index"),
+                notice.contains("QmBase"),
+                notice.contains("DATA MAY BE MISSING"),
+            ),
+            (
+                0,
+                Some(Graft {
+                    base: "QmBase".into(),
+                    block: 100
+                }),
+                true,
+                true,
+                true,
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn a_graft_with_a_source_starting_after_the_graft_block_warns_loudly() {
+        let (manifest, _) = parse_ok(&graft_manifest(500));
+        let manifest = manifest.unwrap();
+        let notice = manifest.graft_notice.unwrap_or_default();
+        assert!(notice.contains("DATA MAY BE MISSING"), "{notice}");
+        assert!(notice.contains("Token (startBlock 500)"), "{notice}");
     }
 
     #[test]

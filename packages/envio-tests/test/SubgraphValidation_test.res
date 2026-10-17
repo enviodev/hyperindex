@@ -141,16 +141,16 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  it("refuses grafting", t => {
+  it("refuses an unknown field in a graft block", t => {
     let manifest =
       manifestWith(plainEventHandler)->String.replace(
         "dataSources:",
-        "graft:\n  base: QmBase\n  block: 100\ndataSources:",
+        "graft:\n  base: QmBase\n  block: 100\n  extra: 1\ndataSources:",
       )
     translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support grafting yet.",
-      ~location="graft",
+      ~headline=`Envio Subgraph doesn't know the manifest field "extra".`,
+      ~location="graft.extra",
     )
   })
 
@@ -280,7 +280,7 @@ type Pool @entity {
     ).toEqual((true, true))
   })
 
-  it("refuses timeseries entities", t => {
+  it("refuses a timeseries without a timestamp", t => {
     translate(
       ~manifest=manifestWith(plainEventHandler),
       ~schema=`
@@ -291,8 +291,8 @@ type Token @entity(timeseries: true) {
 `,
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support timeseries and aggregations yet.",
-      ~location="schema.graphql → type Token @entity(timeseries: true)",
+      ~headline="Envio Subgraph doesn't know the timeseries Token without a Timestamp `timestamp` field.",
+      ~location="schema.graphql → type Token",
     )
   })
 })
