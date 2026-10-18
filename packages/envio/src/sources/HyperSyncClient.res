@@ -282,9 +282,7 @@ module EventItems = {
 type t = {
   // Block-hash query construction and pagination live in Rust; only the
   // aggregate response store crosses the boundary.
-  getBlockHashes: (
-    ~blockNumbers: array<int>,
-  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
   getEventItems: (
@@ -332,7 +330,6 @@ let make = (
   ~logLevel=#info,
   ~addressStore,
 ) => {
-  let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
     {
       url,
@@ -346,7 +343,7 @@ let make = (
       ?retryCeilingMs,
       logLevel: logLevelToString(logLevel),
     },
-    ~userAgent=`hyperindex/${envioVersion}`,
+    ~userAgent=UserAgent.get(),
     ~eventRegistrations,
     ~addressStore,
   )
