@@ -4832,6 +4832,99 @@ describe("mergeIntoBuffer", () => {
       ([]->FetchState.mergeIntoBuffer([nextOuter, inner, outer, inner])),
     ).toEqual(([outer, inner, nextOuter]))
   })
+
+  it("keeps the buffer's item when the first new item repeats it", t => {
+    let buffered = mockEvent(~blockNumber=3, ~logIndex=1)
+    let buffer = [
+      mockEvent(~blockNumber=1),
+      mockEvent(~blockNumber=3, ~logIndex=0),
+      buffered,
+      mockEvent(~blockNumber=5),
+    ]
+    let merged =
+      buffer->FetchState.mergeIntoBuffer([
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=3, ~logIndex=1),
+      ])
+    t.expect((merged, merged->Array.getUnsafe(2) === buffered)).toEqual((
+      [
+        mockEvent(~blockNumber=1),
+        mockEvent(~blockNumber=3, ~logIndex=0),
+        mockEvent(~blockNumber=3, ~logIndex=1),
+        mockEvent(~blockNumber=4),
+        mockEvent(~blockNumber=5),
+      ],
+      true,
+    ))
+  })
+
+  it("merges a response that starts inside a longer buffer", t => {
+    let buffer = [
+      mockEvent(~blockNumber=10, ~logIndex=0),
+      mockEvent(~blockNumber=10, ~logIndex=2),
+      mockBlockItem(~blockNumber=10),
+      mockEvent(~blockNumber=11, ~logIndex=0),
+      mockEvent(~blockNumber=11, ~logIndex=2),
+      mockBlockItem(~blockNumber=11),
+      mockEvent(~blockNumber=12, ~logIndex=0),
+      mockEvent(~blockNumber=12, ~logIndex=2),
+      mockBlockItem(~blockNumber=12),
+      mockEvent(~blockNumber=13, ~logIndex=0),
+      mockBlockItem(~blockNumber=13),
+    ]
+    let newItems = [
+      mockEvent(~blockNumber=14, ~logIndex=0),
+      mockEvent(~blockNumber=12, ~logIndex=1),
+      mockEvent(~blockNumber=11, ~logIndex=2, ~registrationIndex=1),
+      mockEvent(~blockNumber=12, ~logIndex=2), // duplicate of a buffered item
+      mockEvent(~blockNumber=11, ~logIndex=1),
+    ]
+    t.expect(buffer->FetchState.mergeIntoBuffer(newItems)).toEqual([
+      mockEvent(~blockNumber=10, ~logIndex=0),
+      mockEvent(~blockNumber=10, ~logIndex=2),
+      mockBlockItem(~blockNumber=10),
+      mockEvent(~blockNumber=11, ~logIndex=0),
+      mockEvent(~blockNumber=11, ~logIndex=1),
+      mockEvent(~blockNumber=11, ~logIndex=2),
+      mockEvent(~blockNumber=11, ~logIndex=2, ~registrationIndex=1),
+      mockBlockItem(~blockNumber=11),
+      mockEvent(~blockNumber=12, ~logIndex=0),
+      mockEvent(~blockNumber=12, ~logIndex=1),
+      mockEvent(~blockNumber=12, ~logIndex=2),
+      mockBlockItem(~blockNumber=12),
+      mockEvent(~blockNumber=13, ~logIndex=0),
+      mockBlockItem(~blockNumber=13),
+      mockEvent(~blockNumber=14, ~logIndex=0),
+    ])
+  })
+
+  it("merges a response past the tail, before the head, or empty", t => {
+    t.expect({
+      "pastTail": [
+        mockEvent(~blockNumber=1),
+        mockEvent(~blockNumber=2),
+      ]->FetchState.mergeIntoBuffer([mockEvent(~blockNumber=4), mockEvent(~blockNumber=3)]),
+      "beforeHead": [
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=6),
+      ]->FetchState.mergeIntoBuffer([mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)]),
+      "empty": [mockEvent(~blockNumber=1)]->FetchState.mergeIntoBuffer([]),
+    }).toEqual({
+      "pastTail": [
+        mockEvent(~blockNumber=1),
+        mockEvent(~blockNumber=2),
+        mockEvent(~blockNumber=3),
+        mockEvent(~blockNumber=4),
+      ],
+      "beforeHead": [
+        mockEvent(~blockNumber=1),
+        mockEvent(~blockNumber=2),
+        mockEvent(~blockNumber=5),
+        mockEvent(~blockNumber=6),
+      ],
+      "empty": [mockEvent(~blockNumber=1)],
+    })
+  })
 })
 
 describe("FetchState.getNextQuery caps per-chain concurrency", () => {
