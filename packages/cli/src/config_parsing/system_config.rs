@@ -230,7 +230,7 @@ impl ConfigSource for MemoryConfigSource<'_> {
 //Validates version name (3 digits separated by period ".")
 //Returns false if there are any additional chars as this should imply
 //it is a dev release version or an unstable release
-fn is_valid_release_version_number(version: &str) -> bool {
+pub(crate) fn is_valid_release_version_number(version: &str) -> bool {
     let re_version_pattern = Regex::new(r"^\d+\.\d+\.\d+(-(rc|alpha)\.\d+)?$")
         .expect("version regex pattern should be valid regex");
     re_version_pattern.is_match(version) || version.contains("-main-")

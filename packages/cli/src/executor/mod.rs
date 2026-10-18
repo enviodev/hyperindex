@@ -16,6 +16,7 @@ pub mod init;
 mod local;
 mod metrics;
 mod skills;
+mod telemetry;
 mod tools;
 
 use anyhow::{Context, Result};
@@ -137,6 +138,11 @@ async fn execute_command(
             Ok(None)
         }
 
+        CommandType::Telemetry(telemetry_subcommand) => {
+            telemetry::run(telemetry_subcommand, &parsed_project_paths)?;
+            Ok(None)
+        }
+
         CommandType::Start(start_args) => {
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
@@ -241,6 +247,7 @@ pub fn build_start_command(
     if !chains.is_empty() {
         public_config["isolatedChains"] = chains.iter().copied().collect();
     }
+    crate::telemetry::set_profile(config);
 
     Ok(Command::Start {
         reset,

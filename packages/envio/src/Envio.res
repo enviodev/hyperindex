@@ -214,6 +214,7 @@ let createEffect = (
     id: s.matches(S.string),
     output: s.matches(outputSchema),
   })
+  EnvioGlobal.value.effectsCreated = EnvioGlobal.value.effectsCreated + 1
   {
     name: options.name,
     handler: handler->(

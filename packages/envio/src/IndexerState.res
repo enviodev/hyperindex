@@ -942,7 +942,9 @@ let beginRollbackDiff = (
 // Stop the write loop and surface the failure; the error itself goes to onError.
 let recordWriteFailure = (state: t, exn) => {
   state.hasFailedWrite = true
-  state.onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database"))
+  state.onError(
+    exn->ErrorHandling.make(~msg="Failed writing batch to the database", ~kind=Database),
+  )
 }
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)
