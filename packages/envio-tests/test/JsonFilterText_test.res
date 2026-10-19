@@ -66,36 +66,43 @@ describe("A getWhere by a document holding text Postgres can't", () => {
       ->ignore,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
 
-      source.resolveGetItemsOrThrow(
-        [inHandler(~block=1, async context => context.doc.set({id: "1", payload}))],
-        ~filter=MockSource.coveringBlock(1),
-        ~latestFetchedBlockNumber=1,
-      )
+      await source.expectItemsQueries([
+        {
+          coversBlock: 1,
+          reply: Respond({
+            items: [inHandler(~block=1, async context => context.doc.set({id: "1", payload}))],
+            latestFetchedBlockNumber: 1,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Restarted, so the getWhere is answered by Postgres rather than memory.
       source.setAutoHeight(100)
       let indexer = await indexer.restart()
       let found = []
-      source.resolveGetItemsOrThrow(
-        [
-          inHandler(~block=2, async context =>
-            for at in 0 to 1 {
-              let filter = [payload, stored]->Array.getUnsafe(at)
-              let ids =
-                (await context.doc.getWhere(dict{"payload": dict{"_eq": filter}}))->Array.map(
-                  doc => doc.id,
-                )
-              found->Array.push(ids)->ignore
-            }
-          ),
-        ],
-        ~filter=MockSource.coveringBlock(2),
-        ~latestFetchedBlockNumber=2,
-      )
+      await source.expectItemsQueries([
+        {
+          coversBlock: 2,
+          reply: Respond({
+            items: [
+              inHandler(~block=2, async context =>
+                for at in 0 to 1 {
+                  let filter = [payload, stored]->Array.getUnsafe(at)
+                  let ids =
+                    (await context.doc.getWhere(dict{"payload": dict{"_eq": filter}}))->Array.map(
+                      doc => doc.id,
+                    )
+                  found->Array.push(ids)->ignore
+                }
+              ),
+            ],
+            latestFetchedBlockNumber: 2,
+          }),
+        },
+      ])
       let written = ref(false)
       indexer.getBatchWritePromise()->Promise.thenResolve(() => written := true)->ignore
       await Scenario.waitUntil(

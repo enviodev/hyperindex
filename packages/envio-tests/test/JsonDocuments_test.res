@@ -61,7 +61,13 @@ describe("Json documents of every shape", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow([setEvery], ~latestFetchedBlockNumber=10)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({items: [setEvery], latestFetchedBlockNumber: 10}),
+        },
+      ])
       let written = ref(false)
       indexer.getBatchWritePromise()->Promise.thenResolve(() => written := true)->ignore
       await Scenario.waitUntil(
@@ -111,29 +117,40 @@ describe("Json documents of every shape", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
-      source.resolveGetItemsOrThrow([setEvery], ~latestFetchedBlockNumber=10)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({items: [setEvery], latestFetchedBlockNumber: 10}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Restarted, so the documents come from storage rather than memory.
       source.setAutoHeight(20)
       let restarted = await indexer.restart()
       let loaded = []
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 11,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              for index in 0 to every->Array.length - 1 {
-                loaded->Array.push(await context.doc.get(index->Int.toString))
-              }
-            },
-          },
-        ],
-        ~filter=MockSource.coveringBlock(11),
-        ~latestFetchedBlockNumber=11,
-      )
+      await source.expectItemsQueries([
+        {
+          coversBlock: 11,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 11,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  for index in 0 to every->Array.length - 1 {
+                    loaded->Array.push(await context.doc.get(index->Int.toString))
+                  }
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 11,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
 
       t.expect(loaded).toEqual(

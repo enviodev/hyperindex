@@ -243,8 +243,7 @@ describe("A getWhere over committed rows", () => {
     ~timeout=60_000,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
       let running = ref(indexer)
       let mismatches = []
       let overLoads = []
@@ -260,37 +259,45 @@ describe("A getWhere over committed rows", () => {
         let writeBlock = seed * 2 - 1
 
         // Ids repeat across seeds, so each seed's rows replace the previous ones.
-        source.resolveGetItemsOrThrow(
-          [
-            inHandler(
-              ~block=writeBlock,
-              async context => rows->Array.forEach(row => context.row.set(row)),
-            ),
-          ],
-          ~filter=MockSource.coveringBlock(writeBlock),
-          ~latestFetchedBlockNumber=writeBlock,
-        )
+        await source.expectItemsQueries([
+          {
+            coversBlock: writeBlock,
+            reply: Respond({
+              items: [
+                inHandler(
+                  ~block=writeBlock,
+                  async context => rows->Array.forEach(row => context.row.set(row)),
+                ),
+              ],
+              latestFetchedBlockNumber: writeBlock,
+            }),
+          },
+        ])
         await running.contents.getBatchWritePromise()
 
         // Restarted, so nothing the writes left in memory can answer a getWhere.
         source.setAutoHeight(100)
         running := (await running.contents.restart())
         let results = []
-        source.resolveGetItemsOrThrow(
-          [
-            inHandler(
-              ~block=writeBlock + 1,
-              async context =>
-                for idx in 0 to filters->Array.length - 1 {
-                  results
-                  ->Array.push((await context.row.getWhere(filters->Array.getUnsafe(idx)))->ids)
-                  ->ignore
-                },
-            ),
-          ],
-          ~filter=MockSource.coveringBlock(writeBlock + 1),
-          ~latestFetchedBlockNumber=writeBlock + 1,
-        )
+        await source.expectItemsQueries([
+          {
+            coversBlock: writeBlock + 1,
+            reply: Respond({
+              items: [
+                inHandler(
+                  ~block=writeBlock + 1,
+                  async context =>
+                    for idx in 0 to filters->Array.length - 1 {
+                      results
+                      ->Array.push((await context.row.getWhere(filters->Array.getUnsafe(idx)))->ids)
+                      ->ignore
+                    },
+                ),
+              ],
+              latestFetchedBlockNumber: writeBlock + 1,
+            }),
+          },
+        ])
         await running.contents.getBatchWritePromise()
         // Restarted, so these are the reads above and nothing else.
         let loaded =

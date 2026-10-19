@@ -561,13 +561,6 @@ let run = async (
             }
           }
           await wait()
-          // Skip extra microtasks for indexer to fire follow-up actions
-          // (e.g. the NextQuery dispatch that schedules the next
-          // getItemsOrThrow call). Without this, callers that immediately
-          // call resolveGetItemsOrThrow can race the dispatch and observe
-          // an empty calls array.
-          await Utils.delay(0)
-          await Utils.delay(0)
           resolve()
         })
       },
@@ -848,9 +841,23 @@ let run = async (
 
   // Stop before dropping: a still-running loop would fail its next query
   // against the vanished schema and report that instead of the real failure.
+  // After a failed body, a stop can wait on a write the body stalled and was
+  // never going to release, which would bury the failure under a suite timeout.
+  let boundedStop = stop =>
+    switch outcome {
+    | Some(_) =>
+      () =>
+        Promise.race([
+          stop(),
+          Promise.make((resolve, _reject) =>
+            MockSource.realSetTimeout(() => resolve(), 5000)->ignore
+          ),
+        ])
+    | None => stop
+    }
   for i in 0 to stops->Array.length - 1 {
     switch stops->Array.get(i) {
-    | Some(stop) => await attempt(stop)
+    | Some(stop) => await attempt(stop->boundedStop)
     | None => ()
     }
   }
@@ -891,7 +898,12 @@ let run = async (
   | (Some(exn), _, _)
   | (None, Some(exn), _)
   | (None, None, Some(exn)) =>
-    throw(exn)
+    switch exn {
+    // Rethrown as caught, so vitest gets the AssertionError itself and can diff
+    // it, not a ReScript wrapper it prints as a plain object.
+    | JsExn(error) => JsExn.throw(error)
+    | exn => throw(exn)
+    }
   | (None, None, None) => ()
   }
 }

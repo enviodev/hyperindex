@@ -51,46 +51,53 @@ describe("Bytes read back into a handler", () => {
     ~source,
   ) => {
     let source = source(1)
-    await Utils.delay(0)
-    await Scenario.resolveInitialHeight(~t, ~source, ~head=100)
-    source.resolveGetItemsOrThrow(
-      [
-        inHandler(
-          ~block=1,
-          async context => {
-            context.blob.set({id: "a", kind: "k", data: Uint8Array.fromArray([0xde, 0xad])})
-            context.blob.set({id: "b", kind: "k", data: Uint8Array.fromArray([0xbe, 0xef])})
-          },
-        ),
-      ],
-      ~filter=MockSource.coveringBlock(1),
-      ~latestFetchedBlockNumber=1,
-    )
+    await Scenario.resolveInitialHeight(~source, ~head=100)
+    await source.expectItemsQueries([
+      {
+        coversBlock: 1,
+        reply: Respond({
+          items: [
+            inHandler(
+              ~block=1,
+              async context => {
+                context.blob.set({id: "a", kind: "k", data: Uint8Array.fromArray([0xde, 0xad])})
+                context.blob.set({id: "b", kind: "k", data: Uint8Array.fromArray([0xbe, 0xef])})
+              },
+            ),
+          ],
+          latestFetchedBlockNumber: 1,
+        }),
+      },
+    ])
     await indexer.getBatchWritePromise()
 
     // Restarted, so the values come from Postgres rather than memory.
     source.setAutoHeight(100)
     let restarted = await indexer.restart()
     let read = ref([])
-    source.resolveGetItemsOrThrow(
-      [
-        inHandler(
-          ~block=2,
-          async context =>
-            read :=
-              (await context.blob.getWhere({"kind": {"_eq": "k"}}))
-              ->Array.toSorted((a, b) => String.compare(a.id, b.id))
-              ->Array.map(
-                blob => (
-                  blob.data->TypedArray.toString,
-                  blob.data->TypedArray.buffer->ArrayBuffer.byteLength,
-                ),
-              ),
-        ),
-      ],
-      ~filter=MockSource.coveringBlock(2),
-      ~latestFetchedBlockNumber=2,
-    )
+    await source.expectItemsQueries([
+      {
+        coversBlock: 2,
+        reply: Respond({
+          items: [
+            inHandler(
+              ~block=2,
+              async context =>
+                read :=
+                  (await context.blob.getWhere({"kind": {"_eq": "k"}}))
+                  ->Array.toSorted((a, b) => String.compare(a.id, b.id))
+                  ->Array.map(
+                    blob => (
+                      blob.data->TypedArray.toString,
+                      blob.data->TypedArray.buffer->ArrayBuffer.byteLength,
+                    ),
+                  ),
+            ),
+          ],
+          latestFetchedBlockNumber: 2,
+        }),
+      },
+    ])
     await restarted.getBatchWritePromise()
 
     // Postgres' reader shares one buffer per column; ClickHouse's copies each

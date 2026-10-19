@@ -53,10 +53,14 @@ let feed = async (
   | Some(height) => source.resolveGetHeightOrThrow(height)
   | None => ()
   }
-  source.resolveGetItemsOrThrow(
-    [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
-    ~latestFetchedBlockNumber=blockNumber + 5,
-  )
+  await source.expectItemsQueries([
+    {
+      reply: Respond({
+        items: [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
+        latestFetchedBlockNumber: blockNumber + 5,
+      }),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -125,7 +129,7 @@ describe("ClickHouse sink after a resume", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       await feed(indexer, ~source=source(1), ~blockNumber=5, ~height=100000, ~count=1n)
-      await feed(indexer, ~source=source(1), ~blockNumber=6, ~count=2n)
+      await feed(indexer, ~source=source(1), ~blockNumber=12, ~count=2n)
 
       let resumed = await indexer.restart()
       await feed(resumed, ~source=source(1), ~blockNumber=20, ~count=3n)

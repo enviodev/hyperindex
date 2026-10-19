@@ -40,11 +40,15 @@ let it = (
     ~sources=deployedChains->Array.map((chain): Scenario.sourceMock => {chain: chain}),
     ~supervised=false,
     async (~t, ~indexer, ~source) => {
-      deployedChains->Array.forEach(chain => {
+      let _ = await deployedChains
+      ->Array.map(async chain => {
         let source = source(chain)
         source.resolveGetHeightOrThrow(100)
-        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+        await source.expectItemsQueries([
+          {reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+        ])
       })
+      ->Promise.all
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
 

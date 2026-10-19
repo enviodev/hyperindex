@@ -43,22 +43,27 @@ type loadedPosition = {
   reason: option<string>,
 }
 
-let setPosition = (position, ~indexer: IndexerRunner.t, ~source: MockSource.t) => {
+let setPosition = async (position, ~indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.resolveGetHeightOrThrow(300)
-  source.resolveGetItemsOrThrow(
-    [
-      {
-        blockNumber: 100,
-        logIndex: 0,
-        handler: async args => {
-          let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-          context.position.set(position)
-        },
-      },
-    ],
-    ~latestFetchedBlockNumber=100,
-  )
-  indexer.getBatchWritePromise()
+  await source.expectItemsQueries([
+    {
+      fromBlock: 1,
+      toBlock: Bounded(100),
+      reply: Respond({
+        items: [
+          {
+            blockNumber: 100,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+              context.position.set(position)
+            },
+          },
+        ],
+      }),
+    },
+  ])
+  await indexer.getBatchWritePromise()
 }
 
 let rec errorMessage = exn =>

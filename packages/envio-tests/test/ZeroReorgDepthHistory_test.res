@@ -99,12 +99,17 @@ describe("A chain with no reorg depth keeps no history", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let source100 = source(100)
-      await Scenario.resolveInitialHeight(~t, ~source=source100, ~head=120)
+      await Scenario.resolveInitialHeight(~source=source100, ~head=120)
 
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=110, ~count=1n), setCounter(~block=111, ~count=2n)],
-        ~latestFetchedBlockNumber=120,
-      )
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [setCounter(~block=110, ~count=1n), setCounter(~block=111, ~count=2n)],
+            latestFetchedBlockNumber: 120,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
@@ -127,39 +132,54 @@ describe("A chain with no reorg depth keeps no history", () => {
     async (~t, ~indexer, ~source) => {
       let source100 = source(100)
       let source1337 = source(1337)
-      await Utils.delay(0)
       let _ = await Promise.all2((
-        Scenario.resolveInitialHeight(~t, ~source=source100, ~head=300),
-        Scenario.resolveInitialHeight(~t, ~source=source1337, ~head=300),
+        Scenario.resolveInitialHeight(~source=source100, ~head=300),
+        Scenario.resolveInitialHeight(~source=source1337, ~head=300),
       ))
 
       // Chain 100 is held 200 blocks below the head until it reaches block 100,
       // which is what takes the indexer into the reorg threshold. Chain 1337 has
       // no depth to lag by and fetches to the head at once.
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=50, ~count=1n)],
-        ~latestFetchedBlockNumber=100,
-      )
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=50, ~count=2n)],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({items: [setCounter(~block=50, ~count=1n)]}),
+        },
+      ])
+      await source1337.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [setCounter(~block=50, ~count=2n)],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
       // A second batch on both chains. The stale-history prune is throttled to
       // one run per interval, so whatever this batch writes is still there.
       source1337.setAutoHeight(400)
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=150, ~count=3n)],
-        ~filter=MockSource.coveringBlock(101),
-        ~latestFetchedBlockNumber=300,
-      )
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=350, ~count=4n)],
-        ~filter=MockSource.coveringBlock(301),
-        ~latestFetchedBlockNumber=400,
-      )
+      await source100.expectItemsQueries([
+        {
+          coversBlock: 101,
+          reply: Respond({
+            items: [setCounter(~block=150, ~count=3n)],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
+      await source1337.expectItemsQueries([
+        {
+          coversBlock: 301,
+          reply: Respond({
+            items: [setCounter(~block=350, ~count=4n)],
+            latestFetchedBlockNumber: 400,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 

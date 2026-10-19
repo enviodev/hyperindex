@@ -36,26 +36,32 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       let source = source(1337)
 
       source.resolveGetHeightOrThrow(300)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.entityWithBigDecimal.set({
-                id: "testEntity",
-                bigDecimal: BigDecimal.fromFloat(123.456),
-              })
-              context.entityWithBigDecimal.set({
-                id: "testEntity2",
-                bigDecimal: BigDecimal.fromFloat(654.321),
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.entityWithBigDecimal.set({
+                    id: "testEntity",
+                    bigDecimal: BigDecimal.fromFloat(123.456),
+                  })
+                  context.entityWithBigDecimal.set({
+                    id: "testEntity2",
+                    bigDecimal: BigDecimal.fromFloat(654.321),
+                  })
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let entities: array<entityWithBigDecimal> = await indexer.query("EntityWithBigDecimal")

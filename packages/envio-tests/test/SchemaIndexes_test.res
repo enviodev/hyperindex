@@ -185,7 +185,9 @@ describe("Deferred schema indexes", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
 
@@ -223,7 +225,9 @@ describe("Deferred schema indexes", () => {
       ))
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       t.expect(
@@ -269,7 +273,9 @@ describe("Deferred schema indexes", () => {
       let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       while gate.entered.contents === 0 {
         await Utils.delay(0)
       }
@@ -322,7 +328,9 @@ describe("Deferred schema indexes", () => {
       let source = source(1337)
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       while gate.entered.contents === 0 {
         await Utils.delay(0)
       }
@@ -338,8 +346,9 @@ describe("Deferred schema indexes", () => {
       // and its response schedules processing again.
       await MockSource.waitHeightQuery(source, ~since=heightCallsAtHead)
       source.resolveGetHeightOrThrow(200)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
+      await source.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 200})},
+      ])
       let ticks = ref(0)
       while ticks.contents < 20 {
         ticks := ticks.contents + 1
@@ -385,11 +394,10 @@ describe("Deferred schema indexes", () => {
 
       chainA.resolveGetHeightOrThrow(100)
       chainB.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      await MockSource.waitItemsQuery(chainA)
-      chainA.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await chainA.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -397,8 +405,9 @@ describe("Deferred schema indexes", () => {
         ~message="Chain A is at its head, but chain B is still backfilling",
       ).toEqual((0, [(ChainId.fromInt(100), false), (ChainId.fromInt(1337), false)]))
 
-      await MockSource.waitItemsQuery(chainB)
-      chainB.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await chainB.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       let readyAtTimes = await readyAtTimesByChainId(~sql, ~pgSchema)
@@ -442,7 +451,9 @@ describe("Deferred schema indexes", () => {
       let _ = await sql->Sql.queryForTests(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
 
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       let conflicting = await findIndexes(~sql, ~tableName="B", ~columns=["c_id"], ~pgSchema)
@@ -480,33 +491,38 @@ describe("Automatic getWhere indexes", () => {
 
       source.resolveGetHeightOrThrow(1000)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 10,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.a.set({
-                id: "1",
-                b_id: "b",
-                optionalStringToTestLinkedEntities: Some("wanted"),
-              })
-              context.a.set({
-                id: "2",
-                b_id: "b",
-                optionalStringToTestLinkedEntities: Some("other"),
-              })
-              context.a.set({
-                id: "3",
-                b_id: "b",
-                optionalStringToTestLinkedEntities: Some("wanted"),
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 10,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.a.set({
+                    id: "1",
+                    b_id: "b",
+                    optionalStringToTestLinkedEntities: Some("wanted"),
+                  })
+                  context.a.set({
+                    id: "2",
+                    b_id: "b",
+                    optionalStringToTestLinkedEntities: Some("other"),
+                  })
+                  context.a.set({
+                    id: "3",
+                    b_id: "b",
+                    optionalStringToTestLinkedEntities: Some("wanted"),
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -514,23 +530,27 @@ describe("Automatic getWhere indexes", () => {
         ~message="Nothing has queried the field yet, so no index exists for it",
       ).toEqual([])
 
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 20,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              let rows = await context.a.getWhere({
-                optionalStringToTestLinkedEntities: {_eq: Some("wanted")},
-              })
-              matched := rows->Array.map(entity => entity.id)->Array.toSorted(String.compare)
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=20,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 11,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 20,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  let rows = await context.a.getWhere({
+                    optionalStringToTestLinkedEntities: {_eq: Some("wanted")},
+                  })
+                  matched := rows->Array.map(entity => entity.id)->Array.toSorted(String.compare)
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 20,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -551,10 +571,9 @@ describe("Automatic getWhere indexes", () => {
       ))
 
       // The automatic index is the indexer's own, so finalizing must leave it be.
-      await MockSource.waitItemsQuery(source)
       // The backfill is chunked into a query per range; the chain only reaches
       // the head once every one of them is answered.
-      source.drainItemsQueries(~latestFetchedBlockNumber=1000)
+      await source.respondEmptyUpTo(1000)
       await indexer.waitUntilReady()
 
       t.expect(

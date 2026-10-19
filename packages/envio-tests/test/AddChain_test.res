@@ -60,7 +60,7 @@ let bump = (count: bigint): MockSource.itemMock => {
 
 let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~items) => {
   source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow(items, ~latestFetchedBlockNumber=100)
+  await source.expectItemsQueries([{reply: Respond({items, latestFetchedBlockNumber: 100})}])
   await indexer.waitUntilReady()
   await indexer.waitUntilIdle()
 }

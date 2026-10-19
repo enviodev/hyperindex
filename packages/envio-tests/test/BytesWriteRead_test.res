@@ -90,14 +90,26 @@ describe("Bytes as Uint8Array", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow([setBoth], ~latestFetchedBlockNumber=5)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({items: [setBoth], latestFetchedBlockNumber: 5}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let queried = Dict.make()
-      source.resolveGetItemsOrThrow(
-        [queryByTag(~blockNumber=6, ~queried)],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 6,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [queryByTag(~blockNumber=6, ~queried)],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect((
@@ -138,18 +150,28 @@ describe("Bytes as Uint8Array", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
-      source.resolveGetItemsOrThrow([setBoth], ~latestFetchedBlockNumber=10)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({items: [setBoth], latestFetchedBlockNumber: 10}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Restarted, so the filters are answered by storage rather than memory.
       source.setAutoHeight(20)
       let restarted = await indexer.restart()
       let queried = Dict.make()
-      source.resolveGetItemsOrThrow(
-        [queryByTag(~blockNumber=11, ~queried)],
-        ~filter=MockSource.coveringBlock(11),
-        ~latestFetchedBlockNumber=11,
-      )
+      await source.expectItemsQueries([
+        {
+          coversBlock: 11,
+          reply: Respond({
+            items: [queryByTag(~blockNumber=11, ~queried)],
+            latestFetchedBlockNumber: 11,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
 
       t.expect(queried).toEqual(dict{"eq": [first], "in": [second]})

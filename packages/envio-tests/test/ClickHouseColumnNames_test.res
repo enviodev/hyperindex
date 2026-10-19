@@ -80,7 +80,9 @@ let writeAndRead = async (
 ) => {
   let source = source(1)
   source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow([setToken], ~latestFetchedBlockNumber=1)
+  await source.expectItemsQueries([
+    {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [setToken]})},
+  ])
   await indexer.getBatchWritePromise()
   await indexer->columns
 }
