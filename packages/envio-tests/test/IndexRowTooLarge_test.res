@@ -26,6 +26,12 @@ type Domain {
   name: String @index
 }
 `,
+  ~unsupported=[
+    {
+      backend: #clickhouseOnly,
+      reason: "the limit is a Postgres B-tree's; ClickHouse indexes with skipping indexes",
+    },
+  ],
 )
 
 type domain = {id: string, name: string}
