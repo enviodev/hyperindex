@@ -1047,12 +1047,11 @@ export class Entity extends TypedMap<string, Value> {
  * Tail of the entity prototype chain: instance -> generated prototype ->
  * Entity -> TypedMap -> here.
  *
- * `graph codegen` emits `changetype<Pair | null>(store.get(...))`, and
- * `changetype` erases its type argument, so a loaded entity reaches the mapping
- * without the generated prototype that carries `pair.token0`. Falling through to
- * the stored field — typed by the `Value` kind, which is what the generated
- * getter would have returned — is what makes that code work here. A name the
- * entity doesn't hold is still refused.
+ * `graph codegen`'s `changetype<Pair | null>(store.get(...))` gives a loaded
+ * entity the generated prototype, whose getters read its fields. An entity read
+ * without one — `store.get` called directly, or cast to a class the file can't
+ * reach — falls through to here, to the stored field typed by its `Value` kind.
+ * A name the entity doesn't hold is still refused.
  */
 /**
  * The entity type a loaded row came from. `changetype` erased the generated

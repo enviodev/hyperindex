@@ -1701,7 +1701,15 @@ impl<'a> Rewrite<'a> {
         if callee.name != "changetype" || call.arguments.len() != 1 {
             return None;
         }
-        let class = class_ref(call.type_arguments.as_ref()?.params.first()?, &self.classes)?;
+        // `changetype<Pair | null>(store.get(...))` is how generated code
+        // loads an entity: the class's getters are what reads its fields.
+        let class = match call.type_arguments.as_ref()?.params.first()? {
+            TSType::TSUnionType(union) => union
+                .types
+                .iter()
+                .find_map(|ty| class_ref(ty, &self.classes)),
+            ty => class_ref(ty, &self.classes),
+        }?;
         Some((class.span, class.name.to_string()))
     }
 }
@@ -2780,11 +2788,13 @@ export const base = ChainId.BASE;
             js("import { Pair } from \"../generated/schema\";
 export function f(value: Entity, n: i64): void {
   let pair = changetype<Pair>(value);
+  let loaded = changetype<Pair | null>(store.get(\"Pair\", \"1\"));
   let wide = changetype<i32>(n);
 }"),
             "import { Pair } from \"../generated/schema\";
 export function f(value, n) {
 \tlet pair = __envio_retag(Pair, value);
+\tlet loaded = __envio_retag(Pair, store.get(\"Pair\", \"1\"));
 \tlet wide = __envio_op.address(n);
 }
 "
