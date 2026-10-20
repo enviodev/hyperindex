@@ -357,16 +357,42 @@ pub fn missing_abi_files(
     if lines.is_empty() {
         return None;
     }
+    let mut hints: Vec<String> = Vec::new();
+    for source in manifest.all_sources() {
+        let Some(path) = source.abi.as_ref().and_then(|abi| source.abis.get(abi)) else {
+            continue;
+        };
+        if files.contains_key(path) || files.contains_key(path.trim_start_matches("./")) {
+            continue;
+        }
+        if let Some(hint) = abi_build_step(root, path) {
+            if !hints.contains(&hint) {
+                hints.push(hint);
+            }
+        }
+    }
     let mut message = format!(
         "These ABI files the manifest names don't exist under {}:\n{}\n\
          The manifest's paths are resolved against its own directory, as graph-cli \
-         resolves them. If a build step writes them (forge build, a git submodule, a copy \
-         script), run it first.",
+         resolves them. {}",
         root.canonicalize()
             .unwrap_or_else(|_| root.to_path_buf())
             .display(),
-        lines.join("\n")
+        lines.join("\n"),
+        if hints.is_empty() {
+            "If a build step writes them (forge build, a git submodule, a copy script), run it \
+             first."
+                .to_string()
+        } else {
+            "envio doesn't build contracts or run the repo's scripts for them; the step that \
+             writes them is:"
+                .to_string()
+        }
     );
+    for hint in &hints {
+        message.push('\n');
+        message.push_str(hint);
+    }
     // A manifest written on macOS can name `WrappedPunks.json` for a file
     // committed as `wrappedpunks.json` (CryptoPunks); only a case-sensitive
     // filesystem tells them apart.
@@ -405,7 +431,100 @@ pub fn missing_abi_files(
     Some(message)
 }
 
-/// Whether a data source of the manifest names no network: one left for
+/// The step that writes a missing ABI file, when the repo says: a
+/// package.json script that writes its directory (kleros-v2's `sync-abis`),
+/// a git submodule not checked out, the Foundry or Hardhat project whose
+/// build output it is (liquity's `../contracts/out/`), or a package the
+/// install didn't provide.
+fn abi_build_step(root: &std::path::Path, path: &str) -> Option<String> {
+    use crate::project_paths::path_utils::normalize_path;
+    let relative = std::path::Path::new(path);
+    // The first directory of the path that doesn't exist: what the step writes.
+    let mut missing_dir: Option<PathBuf> = None;
+    let mut so_far = PathBuf::new();
+    for component in relative.parent()?.components() {
+        so_far.push(component);
+        if !matches!(
+            component,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        ) && !root.join(&so_far).is_dir()
+        {
+            missing_dir = Some(so_far.clone());
+            break;
+        }
+    }
+    if let Some(dir) = &missing_dir {
+        let name = dir.file_name()?.to_string_lossy().to_string();
+        let shown = format!("{}/", dir.display());
+        if let Some((script, text)) = render::scripts_mentioning(root, &name).into_iter().next() {
+            let run = if text.chars().count() <= 60 {
+                format!(" ({text})")
+            } else {
+                String::new()
+            };
+            return Some(format!(
+                "The package.json script \"{script}\"{run} writes {shown}: run it, then start \
+                 envio again."
+            ));
+        }
+    }
+    let components: Vec<String> = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect();
+    if let Some(index) = components.iter().position(|part| part == "node_modules") {
+        let package = match components.get(index + 1) {
+            Some(scope) if scope.starts_with('@') => {
+                format!("{scope}/{}", components.get(index + 2)?)
+            }
+            Some(name) => name.clone(),
+            None => return None,
+        };
+        return Some(format!(
+            "{package} isn't installed: the ABI is part of that package, so install the \
+             project's dependencies first."
+        ));
+    }
+    for (index, part) in components.iter().enumerate() {
+        let project: PathBuf = components[..index].iter().collect();
+        let project_dir = normalize_path(root.join(&project));
+        let shown = if project.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            project.display().to_string()
+        };
+        let is_submodule_dir = project_dir.is_dir()
+            && std::fs::read_dir(&project_dir).is_ok_and(|mut entries| entries.next().is_none());
+        if is_submodule_dir {
+            return Some(format!(
+                "{shown} is empty, a git submodule not checked out: `git submodule update \
+                 --init --recursive`, then build it."
+            ));
+        }
+        let (tool, writes) = if part == "out" && project_dir.join("foundry.toml").exists() {
+            ("Foundry", "`forge build`")
+        } else if part == "artifacts"
+            && [
+                "hardhat.config.ts",
+                "hardhat.config.js",
+                "hardhat.config.cjs",
+            ]
+            .iter()
+            .any(|config| project_dir.join(config).exists())
+        {
+            ("Hardhat", "`npx hardhat compile`")
+        } else {
+            continue;
+        };
+        return Some(format!(
+            "{shown} is a {tool} project, and {writes} there writes {shown}/{part}/: run it, \
+             then start envio again."
+        ));
+    }
+    None
+}
+
+/// Whether a data source of the manifest names no network: one left for/// Whether a data source of the manifest names no network: one left for
 /// `graph build --network` to fill in from networks.json (Ekubo, iExec).
 pub fn names_no_network(yaml: &str) -> bool {
     serde_yaml::from_str::<serde_yaml::Value>(yaml)
@@ -2941,6 +3060,69 @@ type Renewal implements Event @entity {
                         "./abis/gravity.json".to_string()
                     ),
                 ]
+            )
+        );
+    }
+
+    // liquity's bold names `../contracts/out/BoldToken.sol/BoldToken.json`,
+    // what `forge build` writes in the Foundry project beside it; kleros-v2's
+    // `../abis/<network>/` is written by its `sync-abis` script. The error
+    // said only "if a build step writes them, run it first". envio builds
+    // neither: it names the step.
+    #[test]
+    fn names_the_build_step_that_writes_a_missing_abi() {
+        let dir = tempdir::TempDir::new("envio-subgraph-abi-build").unwrap();
+        let root = dir.path();
+        let subgraph = root.join("subgraph");
+        write_gravity(&subgraph, "subgraph.yaml");
+        fs::write(
+            subgraph.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace(
+                "./abis/Gravity.json",
+                "../contracts/out/Gravity.sol/Gravity.json",
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("contracts")).unwrap();
+        fs::write(root.join("contracts/foundry.toml"), "[profile.default]\n").unwrap();
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraph/subgraph.yaml").unwrap();
+        let forge = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        fs::write(
+            subgraph.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("./abis/Gravity.json", "../abis/mainnet/Gravity.json"),
+        )
+        .unwrap();
+        fs::create_dir_all(subgraph.join("scripts")).unwrap();
+        fs::write(
+            subgraph.join("scripts/sync-abis.sh"),
+            "jq .abi \"$DEPLOYMENTS/$1/$name.json\" > \"../abis/$1/$name.json\"\n",
+        )
+        .unwrap();
+        fs::write(
+            subgraph.join("package.json"),
+            r#"{"scripts": {"sync-abis": "./scripts/sync-abis.sh", "codegen": "graph codegen"}}"#,
+        )
+        .unwrap();
+        let script = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            (
+                forge.lines().last().unwrap_or_default(),
+                script.lines().last().unwrap_or_default()
+            ),
+            (
+                "../contracts is a Foundry project, and `forge build` there writes \
+                 ../contracts/out/: run it, then start envio again.",
+                "The package.json script \"sync-abis\" (./scripts/sync-abis.sh) writes ../abis/: \
+                 run it, then start envio again."
             )
         );
     }

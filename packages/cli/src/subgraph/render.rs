@@ -1520,6 +1520,20 @@ fn scan(dir: &Path, target: &Path) -> (Vec<Plan>, Vec<Writer>) {
     (plans, writers)
 }
 
+/// The package.json scripts in `dir` whose text, or a repo file they run,
+/// mentions `needle` (`sync-abis` runs ./scripts/sync-abis.sh, which writes
+/// `../abis/`). Read, never run.
+pub fn scripts_mentioning(dir: &Path, needle: &str) -> Vec<(String, String)> {
+    package_scripts(dir)
+        .into_iter()
+        .filter(|(_, script)| {
+            script.contains(needle)
+                || parse_steps(script)
+                    .is_some_and(|steps| runs_a_file_mentioning(dir, &steps, &[needle]))
+        })
+        .collect()
+}
+
 /// Whether `path` is a mustache template rather than a manifest.
 pub fn is_template(path: &Path) -> bool {
     std::fs::read_to_string(path).is_ok_and(|text| text.contains("{{"))
