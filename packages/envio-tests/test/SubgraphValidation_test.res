@@ -673,7 +673,7 @@ describe("subgraph translation: reporting", () => {
     )
     t.expect(
       message,
-    ).toEqual(`Envio Subgraph doesn't support event handlers whose topic0 is not the event signature's hash (anonymous events) yet.
+    ).toEqual(`Envio Subgraph doesn't support event handlers whose topic0 is not the event signature's hash on an event the ABI doesn't declare anonymous yet.
   Found in data source "Token" → eventHandlers → "handleTransfer" → topic0.
 First, make sure you're on the newest Envio Subgraph release — support may have landed:
   pnpm add -D envio@subgraph
