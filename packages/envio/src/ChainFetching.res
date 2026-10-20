@@ -143,6 +143,7 @@ let mergeRegisterItems = (~eventItems: array<Internal.item>, ~blockItems: array<
 let blockRegisterChunk = 2048
 // Block passes built at once: a response can span millions of blocks.
 let blockRegisterWindow = 10_000
+let maxResponseBlockPasses = 50_000
 
 let runRegisterPassesOrThrow = async (
   ~eventItems: array<Internal.item>,
@@ -212,16 +213,23 @@ let runResponsePassesOrThrow = async (
       idx.contents
     | _ => eventItems->Array.length
     }
-    registrations
-    ->Array.pushMany(
-      await runRegisterPassesOrThrow(
-        ~eventItems=eventItems->Array.slice(~start=eventIdx.contents, ~end=eventEnd),
-        ~blockItems,
-        ~config,
-        ~chainState,
-      ),
+    let startedAt = Date.now()
+    let windowRegistrations = await runRegisterPassesOrThrow(
+      ~eventItems=eventItems->Array.slice(~start=eventIdx.contents, ~end=eventEnd),
+      ~blockItems,
+      ~config,
+      ~chainState,
     )
-    ->ignore
+    Logging.trace({
+      "msg": "Ran register passes with block passes",
+      "after": after.contents,
+      "through": covered,
+      "blockPasses": blockItems->Array.length,
+      "eventPasses": eventEnd - eventIdx.contents,
+      "registrations": windowRegistrations->Array.length,
+      "ms": Date.now() -. startedAt,
+    })
+    registrations->Array.pushMany(windowRegistrations)->ignore
     eventIdx := eventEnd
     switch covered {
     | Some(covered) =>
@@ -451,7 +459,12 @@ let rec onQueryResponse = async (
 
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
-      let proceed = (~newRegistrations, ~blockRegisterThrough=?) =>
+      let proceed = (
+        ~newRegistrations,
+        ~blockRegisterThrough=?,
+        ~newItems=newItems,
+        ~latestFetchedBlock=latestFetchedBlockNumber,
+      ) =>
         if !(state->IndexerState.isStale(~stateId)) {
           applyQueryResponse(
             state,
@@ -459,7 +472,7 @@ let rec onQueryResponse = async (
             ~newItems,
             ~newRegistrations,
             ~knownHeight,
-            ~latestFetchedBlock=latestFetchedBlockNumber,
+            ~latestFetchedBlock,
             ~query,
           )
           switch blockRegisterThrough {
@@ -494,9 +507,35 @@ let rec onQueryResponse = async (
           finish()
           scheduleFetch()
         } else {
-          switch await runResponsePassesOrThrow(
-            ~eventItems=itemsWithContractRegister,
+          // A response spanning millions of blocks of an unfiltered handler is
+          // applied only once all their passes ran, so it carries at most
+          // `maxResponseBlockPasses` past its first block and is cut after
+          // them; the partition fetches the rest again.
+          let cutAt = switch chainState->ChainState.blockRegisterItemsAfter(
+            ~after=Pervasives.max(
+              chainState->ChainState.blockRegisterThrough->Option.getOr(blockRegisterCeiling),
+              query.fromBlock - 1,
+            ),
             ~through=blockRegisterCeiling,
+            ~limit=maxResponseBlockPasses,
+          ) {
+          | Some((_, covered)) if covered < blockRegisterCeiling => Some(covered)
+          | _ => None
+          }
+          let through = cutAt->Option.getOr(blockRegisterCeiling)
+          let (newItems, eventItems, latestFetchedBlock) = if cutAt !== None {
+            let isKept = item => item->Internal.getItemBlockNumber <= through
+            (
+              newItems->Array.filter(isKept),
+              itemsWithContractRegister->Array.filter(isKept),
+              through,
+            )
+          } else {
+            (newItems, itemsWithContractRegister, latestFetchedBlockNumber)
+          }
+          switch await runResponsePassesOrThrow(
+            ~eventItems,
+            ~through,
             ~config=state->IndexerState.config,
             ~chainState,
           ) {
@@ -505,7 +544,7 @@ let rec onQueryResponse = async (
             IndexerState.errorExit(state, exn->ErrorHandling.make)
           | (newRegistrations, blockRegisterThrough) =>
             chainState->ChainState.releaseExtraBudget(~items=extra)
-            proceed(~newRegistrations, ~blockRegisterThrough?)
+            proceed(~newRegistrations, ~blockRegisterThrough?, ~newItems, ~latestFetchedBlock)
             finish()
           }
         }
@@ -609,6 +648,7 @@ let catchUpBlockRegisters = async (
     | None => ()
     | Some((blockItems, through)) =>
       let (_, finish) = chainState->ChainState.queueBlockRegisterRun
+      let startedAt = Date.now()
       switch await runRegisterPassesOrThrow(
         ~eventItems=[],
         ~blockItems,
@@ -620,6 +660,15 @@ let catchUpBlockRegisters = async (
         IndexerState.errorExit(state, exn->ErrorHandling.make)
       | registrations =>
         let isStale = state->IndexerState.isStale(~stateId)
+        Logging.trace({
+          "msg": "Ran block passes",
+          "chainId": chainId,
+          "through": through,
+          "blockPasses": blockItems->Array.length,
+          "registrations": registrations->Array.length,
+          "stale": isStale,
+          "ms": Date.now() -. startedAt,
+        })
         if !isStale {
           chainState->ChainState.applyBlockRegisters(
             ~registrations=registrations->sortRegistrations,

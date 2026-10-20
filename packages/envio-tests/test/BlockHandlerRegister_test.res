@@ -192,3 +192,58 @@ describe("a data source a block handler creates", () => {
     },
   )
 })
+
+// centrifuge/tinlake's unfiltered handler has a pass for every block, and one
+// response of its only static partition spanned seven million blocks: nothing
+// was applied, so nothing was processed, until every pass of it had run.
+let everyBlock = Scenario.make(
+  ~configYaml=`
+name: block-handler-register-every-block
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - name: Pool
+        events:
+          - event: Epoch(uint256 id)
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async () => {});
+indexer.onEvent({ contract: "Pool", event: "Epoch" }, async () => {});
+indexer.onBlock({ name: "ticker", contractRegister: async () => {} } as any, async () => {});
+`,
+)
+
+describe("a response of a chain with an unfiltered block handler's register pass", () => {
+  beforeAll(() => Env.subgraphMode := true)
+  afterAll(() => Env.subgraphMode := false)
+
+  everyBlock->Scenario.it(
+    "carries at most 50,000 block passes, and the rest of its range is fetched again",
+    ~sources=[{chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    async (~t, ~indexer as _, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(200_000)
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200_000)
+      await Scenario.waitUntil(
+        () => source.getItemsOrThrowCalls->Array.some(call => call.payload["fromBlock"] > 1),
+        ~message="the next query",
+        ~timeoutMs=20_000.,
+      )
+      t.expect(
+        source.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ~message="the response was cut after the block of its 50,001st pass",
+      ).toEqual([50_002])
+    },
+  )
+})
