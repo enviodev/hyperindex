@@ -3659,6 +3659,43 @@ type Renewal implements Event @entity {
         );
     }
 
+    // beefy's `"codegen": "rm -Rf generated && graph codegen"`: a step before
+    // `graph codegen` that can't write a manifest isn't the manifest's
+    // writer. envio ran it and blamed it; the error is about the script that
+    // does write the manifest (`configure`, ./bin/prepare.sh).
+    #[test]
+    fn passes_over_codegen_steps_that_write_no_manifest() {
+        let dir = tempdir::TempDir::new("envio-subgraph-codegen-noop").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(
+            root.join("bin/prepare.sh"),
+            "jq -r . config/$1.json | sed -f - subgraph.template.yaml > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"codegen": "rm -Rf generated && graph codegen", "configure": "./bin/prepare.sh"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err.lines().take(3).collect::<Vec<_>>(),
+            vec![
+                "There is no subgraph.yaml here.",
+                "The project writes its manifest with a package.json script, and envio can't \
+                 repeat it:",
+                "  \"configure\": ./bin/prepare.sh",
+            ]
+        );
+    }
+
     // Only the codegen script's own steps run, as §6a runs them: a script that
     // writes the manifest anywhere else in package.json — lifecycle hooks
     // included — is named, never run.

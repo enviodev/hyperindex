@@ -1364,7 +1364,16 @@ fn run_codegen_prelude(
         return Ok(None);
     };
     let prelude = &steps[..first_codegen];
-    if prelude.is_empty() {
+    // beefy's `rm -Rf generated` writes no manifest; §6a runs it at codegen.
+    let writes_nothing = |step: &String| {
+        parse_steps(step).is_some_and(|parsed| {
+            parsed
+                .iter()
+                .flat_map(|step| &step.stages)
+                .all(|stage| classify(&stage.words) == Command::NoOp && stage.redirects.is_empty())
+        })
+    };
+    if prelude.iter().all(writes_nothing) {
         return Ok(None);
     }
     let manifest_name = target
@@ -1423,12 +1432,9 @@ fn run_codegen_prelude(
             ));
         }
     }
+    // Steps that wrote no manifest leave the error to what does write one.
     let Ok(manifest) = std::fs::read_to_string(target) else {
-        return Err(anyhow!(
-            "There is no {manifest_name} here: envio ran the codegen script's steps before \
-             `graph codegen` ({}), and they didn't write it.",
-            prelude.join(" && ")
-        ));
+        return Ok(None);
     };
     record(project_root, target, &manifest)?;
     Ok(Some(Rendered {
