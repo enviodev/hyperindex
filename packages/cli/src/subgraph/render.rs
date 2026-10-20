@@ -1033,6 +1033,15 @@ fn analyze(
                     } else {
                         view.clone()
                     };
+                    // sushiswap's `config/$NETWORK.js`: the mustache CLI runs
+                    // a JavaScript view, which envio's own render can't.
+                    let shown = word_text(&view);
+                    if [".js", ".cjs", ".mjs"]
+                        .iter()
+                        .any(|ext| shown.ends_with(ext))
+                    {
+                        unsupported.get_or_insert_with(|| format!("mustache {shown}"));
+                    }
                     inputs.push(view.clone());
                     inputs.push(template.clone());
                     let into_target = output.as_ref().is_some_and(writes_target)

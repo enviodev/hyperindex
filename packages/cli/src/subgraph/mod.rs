@@ -5457,6 +5457,64 @@ type Renewal implements Event @entity {
         );
     }
 
+    // sushiswap's v3 subgraph: `"generate": "mustache ../../config/$NETWORK.js
+    // template.yaml > subgraph.yaml && mustache ../../config/$NETWORK.js
+    // src/constants/index.template.ts > src/constants/index.ts && graph
+    // codegen"`. The view is a JavaScript module, which the mustache CLI
+    // runs; envio's own render can't, and refused ("the view … is a JavaScript
+    // module"). It is the one script that writes the manifest, so it runs.
+    #[test]
+    fn runs_a_mustache_script_whose_view_is_a_javascript_module() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir::TempDir::new("envio-subgraph-js-view").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/base.js"),
+            "module.exports = { network: 'base', gravity: { address: '0x00000000000014aA86C5d3c41765bb24e11bd701', startBlock: 1 } };\n",
+        )
+        .unwrap();
+        // The mustache CLI the install links: it requires a .js view.
+        fs::create_dir_all(root.join("node_modules/.bin")).unwrap();
+        fs::write(
+            root.join("node_modules/.bin/mustache"),
+            "#!/usr/bin/env node\nconst fs = require('fs'), path = require('path');\nconst view = require(path.resolve(process.argv[2]));\nlet text = fs.readFileSync(process.argv[3], 'utf8');\ntext = text.replace(/\\{\\{([\\w.]+)\\}\\}/g, (_, key) => key.split('.').reduce((value, part) => value[part], view));\nprocess.stdout.write(text);\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            root.join("node_modules/.bin/mustache"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"generate": "mustache config/$NETWORK.js subgraph.template.yaml > subgraph.yaml && graph codegen"}}"#,
+        )
+        .unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config),
+                config.subgraph.unwrap().rendered_manifest.unwrap().commands
+            ),
+            (
+                (
+                    8453,
+                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                ),
+                vec![
+                    "mustache config/$NETWORK.js subgraph.template.yaml > subgraph.yaml"
+                        .to_string()
+                ]
+            )
+        );
+    }
+
     // envio runs each of a script's `&&` commands in a shell of its own, so
     // `export NETWORK=… && node build.js` and `cd subgraph && …` would lose
     // what the shell they ran in carries to the next command.

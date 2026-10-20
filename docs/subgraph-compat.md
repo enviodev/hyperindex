@@ -768,7 +768,9 @@ moonwell renders in `make generate-config`.
   lists them.
 - The rendering is mustache.js 4.x's, standalone-line stripping and HTML
   escaping included (a `{{path}}` with a `/` renders `&#x2F;`, as it does for
-  the repo's author); `yaml2json` is read as YAML 1.2.
+  the repo's author); `yaml2json` is read as YAML 1.2. A view that is a
+  JavaScript module (sushiswap's `config/$NETWORK.js`) is code the mustache
+  CLI runs, so that script is a writer, run as below.
 - Every file the script writes is written, where it writes it (zora-creator's
   `src/constants/chainid.ts` too), and only inside the package. envio records
   the manifest it wrote (`.envio/rendered-manifests.json`), so a later start
