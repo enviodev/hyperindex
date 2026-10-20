@@ -7,9 +7,9 @@ const ISSUES_URL = "https://github.com/enviodev/hyperindex/issues";
 const UPGRADE_COMMAND = "pnpm add -D envio@subgraph";
 
 /** A feature we recognise and deliberately don't implement. */
-export function unsupported(feature: string, location: string): Error {
+export function unsupported(feature: string, location: string, why?: string): Error {
   return new Error(
-    `Envio Subgraph doesn't support ${feature} yet.\n` +
+    `Envio Subgraph doesn't support ${feature} yet${why ? `: ${why}` : ""}.\n` +
       `  Found in ${location}.\n` +
       `First, make sure you're on the newest Envio Subgraph release — support may have landed:\n` +
       `  ${UPGRADE_COMMAND}\n` +

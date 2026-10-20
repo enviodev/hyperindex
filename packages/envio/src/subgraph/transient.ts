@@ -48,9 +48,12 @@ const TRANSIENT_TEXT =
 
 /**
  * JSON-RPC codes public endpoints send for "slow down": -32005 "limit
- * exceeded" (Infura, Tenderly), -32097 (blastapi), -32090 (Alchemy).
+ * exceeded" (Infura, Tenderly), -32097 (blastapi), -32090 (Alchemy); and the
+ * node's own failure, -32603 "Internal error", which the same request
+ * answers on the next try. graph-node asks again after every eth_call error
+ * that isn't a revert (`interpret_eth_call_error`).
  */
-const RATE_LIMIT_CODES = new Set([-32005, -32097, -32090]);
+const TRANSIENT_CODES = new Set([-32005, -32097, -32090, -32603]);
 
 function transientStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
@@ -66,7 +69,7 @@ export function isTransient(error: unknown): boolean {
     if (current instanceof AttemptTimeout) return true;
     if (current.name === "AbortError" || current.name === "TimeoutError") return true;
     if (typeof current.status === "number") return transientStatus(current.status);
-    if (RATE_LIMIT_CODES.has(current.code)) return true;
+    if (TRANSIENT_CODES.has(current.code)) return true;
     for (const text of [current.shortMessage, current.details, current.message]) {
       if (typeof text === "string" && TRANSIENT_TEXT.test(text)) return true;
     }
@@ -105,7 +108,8 @@ export async function withDeadline<T>(
 /**
  * Tries `attempt` until it answers, backing off exponentially between transient
  * failures. With `maxTries`, the last transient failure is thrown once that
- * many attempts have failed.
+ * many attempts have failed; with `budgetMs`, once the next wait would end
+ * past that long after the first attempt.
  */
 export async function untilAnswered<T>(
   what: string,
@@ -116,14 +120,17 @@ export async function untilAnswered<T>(
     // once it holds a slot: timed from here, a request still queued behind
     // the gate would time out unsent, be asked again, and be sent twice.
     deadline = true,
-  }: { maxTries?: number; deadline?: boolean } = {},
+    budgetMs = Infinity,
+  }: { maxTries?: number; deadline?: boolean; budgetMs?: number } = {},
 ): Promise<T> {
+  const started = Date.now();
   for (let tries = 0; ; tries++) {
     try {
       return await (deadline ? withDeadline(what, attempt) : attempt(new AbortController().signal));
     } catch (error) {
       if (!isTransient(error) || tries + 1 >= maxTries) throw error;
       const wait = Math.min(firstBackoffMs() * 2 ** tries, MAX_BACKOFF_MS);
+      if (Date.now() - started + wait > budgetMs) throw error;
       const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
       warn(`Envio Subgraph: ${what} failed (${reason}); asking again in ${wait}ms.`);
       await sleep(wait);

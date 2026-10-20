@@ -2988,6 +2988,7 @@ mod test {
                     .to_string(),
                 event_signature: String::new(),
                 field_selection: None,
+                anonymous: false,
             },
             None,
             &"Gravatar".to_string().to_capitalized_options(),
@@ -3092,6 +3093,7 @@ mod test {
                 .to_string(),
             event_signature: String::new(),
             field_selection: None,
+            anonymous: false,
         }
     }
 
@@ -3151,6 +3153,7 @@ mod test {
                         data_type: TypeIdent::option(TypeIdent::Address),
                     }],
                 }),
+                anonymous: false,
             },
             all_ecosystem_fields,
             &"Gravatar".to_string().to_capitalized_options(),

@@ -470,6 +470,41 @@ async fn refuses_a_reference_behind_ours() {
     );
 }
 
+// Hosted subgraph platforms prune a deployment's history (arcaDeFAI's
+// arca-vaults answers from block 81366458 on), and a grafted deployment starts
+// at its graft block. graph-node refuses every query pinned earlier; each type
+// listed the same error instead of one line saying what to do.
+#[tokio::test]
+async fn names_the_first_block_a_pruned_reference_serves() {
+    let data = Arc::new(reference_data());
+    let reference = mock_graph(move |query| {
+        if query.contains("block: {number:") {
+            let message = "Failed to decode `block.number` value: `subgraph QmTest only has data \
+                           starting at block number 2000 and data for block number 1234 is \
+                           therefore not available`";
+            return (200, json!({"errors": [{"message": message}]}).to_string());
+        }
+        serve(&data, BLOCK + 5000, query)
+    })
+    .await;
+    let ours = graph_node(reference_data(), BLOCK).await;
+    let dir = project();
+    let report = run(dir.path(), &options(&reference.url, Some(&ours.url))).await;
+    assert_eq!(
+        (report.status, report.exit_code, report.errors),
+        (
+            Status::Error,
+            2,
+            vec![
+                "The reference answers only from block 2000 on (its history was pruned, or it \
+                 was grafted there), and ours is at block 1234. Index past block 2000 and \
+                 compare again."
+                    .to_string()
+            ]
+        )
+    );
+}
+
 #[tokio::test]
 async fn drops_a_field_the_reference_cannot_resolve() {
     let reference = graph_node_refusing(

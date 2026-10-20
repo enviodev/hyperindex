@@ -50,6 +50,7 @@ type addon = {
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
   subgraphFileToJavascript: (string, string, bool) => string,
   subgraphRegisterHandlers: (array<string>, array<array<string>>) => array<array<string>>,
+  subgraphSureCreates: (string, array<string>, array<string>) => array<array<string>>,
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
   subgraphBundledCodegenCurrent: (string, string) => bool,
@@ -347,6 +348,9 @@ let subgraphRegisterHandlers = (~mappingFiles, ~handlers) => {
   let addon = getAddon()
   addon.subgraphRegisterHandlers(mappingFiles, handlers)
 }
+
+let subgraphSureCreates = (~mappingFile, ~handlers, ~templates) =>
+  getAddon().subgraphSureCreates(mappingFile, handlers, templates)
 
 let subgraphKeccak256 = bytes => getAddon().subgraphKeccak256(bytes)
 

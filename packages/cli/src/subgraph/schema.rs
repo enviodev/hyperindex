@@ -17,7 +17,7 @@ use serde::Serialize;
 use super::errors::Report;
 
 /// `@entity` arguments graph-node accepts.
-const KNOWN_ENTITY_ARGS: &[&str] = &["immutable", "timeseries"];
+const KNOWN_ENTITY_ARGS: &[&str] = &["immutable", "timeseries", "skipDuplicates"];
 
 /// Scalars a subgraph schema can use, mapped to what envio stores.
 fn map_scalar(name: &str) -> Option<&'static str> {
@@ -68,6 +68,9 @@ pub struct SchemaTranslation {
     /// `@entity(timeseries: true)` types. The runtime stamps each save with the
     /// block's timestamp and an auto-generated, increasing `Int8` id.
     pub timeseries_entities: BTreeSet<String>,
+    /// `@entity(immutable: true, skipDuplicates: true)` types: a save of an id
+    /// stored in an earlier block is skipped, as graph-node's insert is.
+    pub skip_duplicate_entities: BTreeSet<String>,
     /// `@aggregation` types, rolled up by the runtime into one entity per
     /// interval, named `<Aggregation>_<interval>`.
     pub aggregations: Vec<Aggregation>,
@@ -116,13 +119,17 @@ pub struct AggregationDimension {
 #[serde(rename_all = "camelCase")]
 pub struct Aggregate {
     pub field: String,
+    /// The column the aggregation table holds it in: `<field>_id` for an
+    /// entity reference.
+    pub column: String,
     /// `sum`, `count`, `min`, `max`, `first` or `last`.
     pub func: String,
     /// A source field or a SQL expression over source fields. `count` needs none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arg: Option<String>,
     pub cumulative: bool,
-    /// The declared scalar: `Int`, `Int8`, `BigInt` or `BigDecimal`.
+    /// The declared scalar: `Int`, `Int8`, `BigInt` or `BigDecimal`; for
+    /// `first`/`last` also `String`, `Bytes` or `Reference` (an entity).
     pub kind: String,
 }
 
@@ -147,6 +154,9 @@ pub struct FieldType {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derived_from: Option<String>,
     pub list: bool,
+    /// Non-null at the top: graph-node refuses to save the entity without it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 fn directive_name<'a, 'b>(directive: &'a Directive<'b, String>) -> &'a str {
@@ -409,6 +419,7 @@ fn render_fields(
                         .then(|| base.clone()),
                     derived_from: derived_from.clone(),
                     list: is_list(&wrappers),
+                    required: wrappers.first() == Some(&Wrapper::NonNull),
                 },
             );
 
@@ -697,6 +708,24 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     check_timeseries(object, report);
                     translation.timeseries_entities.insert(object.name.clone());
                 }
+                // graph-node reads `skipDuplicates` only on an immutable type
+                // (a timeseries is one) and refuses it on any other.
+                if bool_arg(entity, "skipDuplicates") == Some(true) {
+                    if timeseries || bool_arg(entity, "immutable") == Some(true) {
+                        translation
+                            .skip_duplicate_entities
+                            .insert(object.name.clone());
+                    } else {
+                        report.unknown(
+                            format!(
+                                "skipDuplicates on the mutable type {}, which graph-node refuses \
+                                 as well (it requires immutable: true)",
+                                object.name
+                            ),
+                            format!("schema.graphql → type {}", object.name),
+                        );
+                    }
+                }
                 // `immutable: true` is validated and dropped: graph-node's
                 // write-once check only ever fires for mappings that are
                 // already broken, so a working subgraph loses nothing.
@@ -777,9 +806,11 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
             report,
         );
     }
+    // `aggregation` names the rollup a row belongs to, so a rollup reads every
+    // group's carried values with one lookup.
     if !translation.aggregations.is_empty() {
         out.push_str(&format!(
-            "type {ROLLUP_STATE_ENTITY} {{\n  id: ID!\n  payload: String!\n}}\n\n"
+            "type {ROLLUP_STATE_ENTITY} {{\n  id: ID!\n  aggregation: String! @index\n  payload: String!\n}}\n\n"
         ));
     }
 
@@ -914,14 +945,23 @@ fn translate_aggregation(
             });
             continue;
         };
-        if !["Int", "Int8", "BigInt", "BigDecimal"].contains(&base.as_str()) || is_list(&wrappers) {
+        let func = string_arg(aggregate, "fn").unwrap_or_default();
+        // graph-node v0.42 also takes a String, Bytes or entity reference for
+        // `first`/`last` (schema/input/mod.rs `aggregate_field_types`).
+        let first_last = func == "first" || func == "last";
+        let reference = entity_names.contains(&base);
+        let numeric = ["Int", "Int8", "BigInt", "BigDecimal"].contains(&base.as_str());
+        let picked = first_last && (base == "String" || base == "Bytes" || reference);
+        if !(numeric || picked) || is_list(&wrappers) {
             report.unknown(
-                format!("an aggregate of type {base} (graph-node takes Int, Int8, BigInt or BigDecimal)"),
+                format!(
+                    "an aggregate of type {base} (graph-node takes Int, Int8, BigInt or BigDecimal, \
+                     and for first/last also String, Bytes or an entity)"
+                ),
                 field_location.clone(),
             );
             continue;
         }
-        let func = string_arg(aggregate, "fn").unwrap_or_default();
         if !AGGREGATE_FUNCTIONS.contains(&func.as_str()) {
             report.unknown(
                 format!("the aggregate function \"{func}\""),
@@ -938,11 +978,20 @@ fn translate_aggregation(
             continue;
         }
         aggregates.push(Aggregate {
+            column: if reference {
+                format!("{}_id", field.name)
+            } else {
+                field.name.clone()
+            },
             field: field.name.clone(),
             func,
             arg,
             cumulative: bool_arg(aggregate, "cumulative").unwrap_or(false),
-            kind: base,
+            kind: if reference {
+                "Reference".to_string()
+            } else {
+                base
+            },
         });
     }
     if aggregates.is_empty() {
@@ -1109,6 +1158,7 @@ type Transfer @entity {
                     target: Some("Registration".to_string()),
                     derived_from: Some("domain".to_string()),
                     list: false,
+                    required: false,
                 }),
             )
         );
@@ -1442,7 +1492,7 @@ type TradeStats @aggregation(intervals: ["hour", "day"], source: "Trade") {
                    volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
                  type TradeStats_day {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
                    volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
-                 type EnvioSubgraphRollup {\n  id: ID!\n  payload: String!\n}",
+                 type EnvioSubgraphRollup {\n  id: ID!\n  aggregation: String! @index\n  payload: String!\n}",
                 vec!["Trade".to_string()],
                 Some(vec!["hour".to_string(), "day".to_string()]),
                 Some(vec!["token_id".to_string()]),
