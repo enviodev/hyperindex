@@ -2012,6 +2012,14 @@ class EthereumTransaction {
     if (arguments.length === 0) return;
     Object.assign(this, { hash, index, from, to, value, gasLimit, gasPrice, input, nonce });
   }
+
+  /**
+   * graph-ts up to 0.21 named this slot `gasUsed`, and graph-node has always
+   * filled it with the gas limit (`AscEthereumTransaction_0_0_1.gas_limit`).
+   */
+  get gasUsed(): BigInt_ {
+    return this.gasLimit;
+  }
 }
 
 const NOT_DECODED = Symbol("envio.subgraph.notDecoded");
@@ -2322,7 +2330,7 @@ const BLOCK_SHAPE: Shape<EthereumBlock> = {
   baseFeePerGas: ["baseFeePerGas", "bigint"],
 };
 
-const TRANSACTION_SHAPE: Shape<EthereumTransaction> = {
+const TRANSACTION_SHAPE: Shape<Omit<EthereumTransaction, "gasUsed">> = {
   hash: ["hash", "bytes"],
   index: ["transactionIndex", "bigint"],
   from: ["from", "address"],
