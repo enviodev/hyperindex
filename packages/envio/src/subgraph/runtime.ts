@@ -80,6 +80,7 @@ import {
   RETAG_EACH_HELPER,
   RETAG_HELPER,
   operators,
+  resetNullObjects,
   stringEncodings,
 } from "./assemblyscript.ts";
 import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
@@ -795,6 +796,7 @@ async function rerunProvisional(scope: Scope): Promise<boolean> {
  */
 let moduleGeneration = 0;
 function freshModuleState(scope: Scope): void {
+  resetNullObjects();
   scope.mappingExports[MODULE_INIT]?.(++moduleGeneration);
 }
 

@@ -75,8 +75,37 @@ const binary =
     return declared ? declared.call(a, b) : fallback(a, b);
   };
 
+/**
+ * `let result: JsonResult; result.error = "none"; return result;`: asc gives
+ * the local the null pointer, and the field writes land at that address, so
+ * every such local reads back what any of them wrote (one per class here, as
+ * the code that relies on it writes the fields it reads). It is still null to
+ * a comparison. graph-node's module memory is fresh in every trigger, and so
+ * are these.
+ */
+let nullObjects = new Map<Function, object>();
+let liveNullObjects = new WeakSet<object>();
+export function resetNullObjects(): void {
+  if (nullObjects.size === 0) return;
+  nullObjects = new Map();
+  liveNullObjects = new WeakSet();
+}
+const nullObject = (Class: Function): object => {
+  let object = nullObjects.get(Class);
+  if (!object) {
+    object = Object.create(Class.prototype) as object;
+    nullObjects.set(Class, object);
+    liveNullObjects.add(object);
+  }
+  return object;
+};
+const asNull = (value: unknown): unknown =>
+  nullObjects.size > 0 && isObject(value) && liveNullObjects.has(value as object) ? null : value;
+
 // Against null AssemblyScript compares the reference, overload or not.
 const equals = (a: unknown, b: unknown): boolean => {
+  a = asNull(a);
+  b = asNull(b);
   const declared = isObject(b) ? overload(a, "equals") : undefined;
   return declared ? (declared.call(a, b) as boolean) : a == b;
 };
@@ -103,6 +132,8 @@ const wrap64 = (from: bigint, value: bigint) => (from < 0n ? BigInt.asIntN(64, v
  * class field AssemblyScript zero-initializes is `undefined` here.
  */
 const same = (a: unknown, b: unknown): boolean => {
+  a = asNull(a);
+  b = asNull(b);
   if (a === b) return true;
   if (a == null || b == null) return a == null && b == null;
   const numeric = (v: unknown) => typeof v === "number" || typeof v === "bigint" || typeof v === "boolean";
@@ -364,6 +395,7 @@ export const builtinMin = (a: any, b: any) => (b < a ? b : a);
 export const builtinMax = (a: any, b: any) => (b > a ? b : a);
 
 const address = (value: unknown): unknown => {
+  value = asNull(value);
   if (value === null || value === undefined) return 0;
   if (isBuffer(value)) return new Pointer(value, 0);
   if (typeof value === "number" || typeof value === "bigint") return value;
@@ -592,6 +624,7 @@ export const operators = {
     width(type).set(new DataView(p.buffer), p.offset + number(offset), value);
   },
   static_array: (element: string, length: unknown): unknown => new TYPED_ARRAYS[element](number(length)),
+  null_object: nullObject,
   // `reinterpret<T>(x)`: x's bits as a T of x's width, the other of the pair
   // (std/assembly/builtins.ts: f32 <-> i32/u32, f64 <-> i64/u64).
   reinterpret: (type: string, value: unknown): unknown => {

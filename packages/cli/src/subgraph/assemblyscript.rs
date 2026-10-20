@@ -965,6 +965,9 @@ struct Locals {
     unsigned: HashSet<String>,
     /// Names declared with an integer type, by the type, likewise.
     integers: HashMap<String, String>,
+    /// Class-typed locals declared without a value whose first use writes one
+    /// of their fields, by their class.
+    null_objects: HashMap<String, String>,
 }
 
 /// What the module's top level declares, for every function in it.
@@ -1119,7 +1122,7 @@ fn module_names(program: &Program<'_>) -> ModuleNames {
 
 /// What a function's names hold. A name bound twice anywhere in the function —
 /// a parameter, a nested block's own `let` — is left out rather than told apart.
-fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
+fn locals(func: &Function<'_>, module: &ModuleNames, classes: &HashSet<String>) -> Locals {
     use oxc::ast_visit::{walk, Visit};
 
     #[derive(Default)]
@@ -1129,6 +1132,8 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
         assigned: HashSet<String>,
         unsigned: HashSet<String>,
         integers: HashMap<String, String>,
+        /// `let x: C;` of a class C, by name.
+        uninitialized: HashMap<String, String>,
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_binding_identifier(&mut self, id: &BindingIdentifier<'a>) {
@@ -1155,6 +1160,18 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
                 }
                 if let Some(ty) = integer_annotation(declarator.type_annotation.as_deref()) {
                     self.integers.insert(id.name.to_string(), ty);
+                }
+                if declarator.init.is_none() {
+                    if let Some(TSType::TSTypeReference(reference)) = declarator
+                        .type_annotation
+                        .as_deref()
+                        .map(|annotation| &annotation.type_annotation)
+                    {
+                        if let TSTypeName::IdentifierReference(class) = &reference.type_name {
+                            self.uninitialized
+                                .insert(id.name.to_string(), class.name.to_string());
+                        }
+                    }
                 }
             }
             walk::walk_variable_declarator(self, declarator);
@@ -1201,11 +1218,54 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
             .into_iter()
             .filter(|(name, _)| scan.bound.get(name) == Some(&1)),
     );
+
+    // Whether each candidate's first use, in source order, writes a field of
+    // it (`x.f = …`): the null pointer asc gives it is then an object the
+    // function builds in place.
+    struct FirstUse<'c> {
+        candidates: &'c HashMap<String, String>,
+        writes_field: HashMap<String, bool>,
+    }
+    impl<'a> Visit<'a> for FirstUse<'_> {
+        fn visit_assignment_expression(&mut self, assign: &AssignmentExpression<'a>) {
+            if let AssignmentTarget::StaticMemberExpression(member) = &assign.left {
+                if let Expression::Identifier(id) = &member.object {
+                    let name = id.name.as_str();
+                    if self.candidates.contains_key(name) && !self.writes_field.contains_key(name) {
+                        self.writes_field.insert(name.to_string(), true);
+                    }
+                }
+            }
+            walk::walk_assignment_expression(self, assign);
+        }
+        fn visit_identifier_reference(&mut self, id: &IdentifierReference<'a>) {
+            let name = id.name.as_str();
+            if self.candidates.contains_key(name) && !self.writes_field.contains_key(name) {
+                self.writes_field.insert(name.to_string(), false);
+            }
+        }
+    }
+    let candidates: HashMap<String, String> = scan
+        .uninitialized
+        .into_iter()
+        .filter(|(name, class)| scan.bound.get(name) == Some(&1) && classes.contains(class))
+        .collect();
+    let mut first_use = FirstUse {
+        candidates: &candidates,
+        writes_field: HashMap::new(),
+    };
+    first_use.visit_function(func, ScopeFlags::Function);
+    let null_objects = candidates
+        .iter()
+        .filter(|(name, _)| first_use.writes_field.get(*name) == Some(&true))
+        .map(|(name, class)| (name.clone(), class.clone()))
+        .collect();
     Locals {
         fresh,
         literal,
         unsigned,
         integers,
+        null_objects,
     }
 }
 
@@ -2073,9 +2133,28 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
             return;
         }
         for declarator in decl.declarations.iter_mut() {
-            if declarator.init.is_some()
-                || !matches!(declarator.id, BindingPattern::BindingIdentifier(_))
-            {
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                continue;
+            };
+            if declarator.init.is_some() {
+                continue;
+            }
+            // asc gives it the null pointer, and the function's field writes
+            // land at that address: an object every such local of the class
+            // shares, as they share address 0 under asc.
+            let class = self
+                .locals
+                .last()
+                .and_then(|locals| locals.null_objects.get(id.name.as_str()))
+                .cloned();
+            if let Some(class) = class {
+                let span = declarator.span;
+                let class = Expression::new_identifier(
+                    span,
+                    Ident::from_str_in(&class, &self.ast),
+                    &self.ast,
+                );
+                declarator.init = Some(self.operator(span, "null_object", [class]));
                 continue;
             }
             if let Some(annotation) = &declarator.type_annotation {
@@ -2087,7 +2166,8 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
     fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
         self.generics
             .push(type_parameter_names(&func.type_parameters));
-        self.locals.push(locals(func, &self.module_names));
+        self.locals
+            .push(locals(func, &self.module_names, &self.classes));
         walk_mut::walk_function(self, func, flags);
         self.locals.pop();
         self.generics.pop();
@@ -2403,6 +2483,39 @@ export function f(xs) {
 \t\ttotal = __envio_op.add(total, x);
 \t}
 \treturn total;
+}
+"
+        );
+    }
+
+    // Only a local whose first use writes one of its fields is built in place:
+    // one read first, or assigned first, keeps the null asc gives it.
+    #[test]
+    fn builds_a_class_local_declared_without_a_value_in_place() {
+        assert_eq!(
+            js("class Result {
+  error: string;
+}
+export function f(ok: bool): Result {
+  let result: Result;
+  result.error = ok ? \"none\" : \"failed\";
+  let read: Result;
+  let isNull = read == null;
+  let later: Result;
+  later = result;
+  return result;
+}"),
+            "class Result {
+\terror = null;
+}
+export function f(ok) {
+\tlet result = __envio_op.null_object(Result);
+\tresult.error = ok ? \"none\" : \"failed\";
+\tlet read = null;
+\tlet isNull = __envio_op.eq(read, null);
+\tlet later = null;
+\tlater = result;
+\treturn result;
 }
 "
         );
