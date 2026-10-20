@@ -337,6 +337,21 @@ describe("subgraph translation: unknown things", () => {
     )
   })
 
+  // graph-node reads `nonDeterministicIpfs` as `ipfsOnEthereumContracts`
+  // (`#[serde(alias)]` in graph/src/data/subgraph/features.rs); the VeBetter
+  // DAO subgraph declares it.
+  it("accepts the feature nonDeterministicIpfs, graph-node's older name", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)->String.replace(
+          "dataSources:",
+          "features:\n  - nonDeterministicIpfs\ndataSources:",
+        ),
+      ),
+    ).toEqual(accepted)
+  })
+
   it("accepts specVersion 0.0.2", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,

@@ -29,6 +29,8 @@ const KNOWN_FEATURES: &[&str] = &[
     "fullTextSearch",
     "grafting",
     "ipfsOnEthereumContracts",
+    // graph-node's serde alias of `ipfsOnEthereumContracts`.
+    "nonDeterministicIpfs",
     "aggregations",
     "declaredEthCalls",
     "immutableEntities",
