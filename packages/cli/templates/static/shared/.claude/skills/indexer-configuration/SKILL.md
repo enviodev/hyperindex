@@ -3,7 +3,7 @@ name: indexer-configuration
 description: >-
   Use when writing or editing config.yaml. Chain/contract structure, addresses,
   start_block, event selection, field_selection, custom event names, env vars,
-  address_format, bytes_type, schema/output paths, YAML validation, and
+  address_format, bytes_type, hex_type, schema/output paths, YAML validation, and
   deprecated options.
 metadata:
   managed-by: envio
@@ -19,6 +19,7 @@ description: Optional description
 schema: schema.graphql         # custom path (default: schema.graphql)
 address_format: checksum       # checksum (default) | lowercase
 bytes_type: hex                # hex (default) | uint8array — see bytes_type
+hex_type: string               # string (default) | hex — see hex_type
 
 contracts:
   - name: MyContract
@@ -113,6 +114,23 @@ bytes_type: uint8array
 
 Available on EVM and Fuel. SVM always uses `Uint8Array` and has no option.
 Changing it changes the column types, so resync from scratch.
+
+## hex_type
+
+The TypeScript type of `0x`-prefixed hex values: `bytes`/`bytesN` event params
+(including `where` filters and test `simulate` params), block and transaction
+hashes and other hex fields, and `Bytes` entity fields with `bytes_type: hex`.
+
+- `string` (default): plain `string`.
+- `hex`: the stricter `Hex` type (`` `0x${string}` ``), so a plain `string`
+  is rejected where a hex value is expected.
+
+```yaml
+hex_type: hex
+```
+
+Available on EVM and Fuel. Types only — runtime values, storage and ReScript
+types don't change, so no resync is needed.
 
 ## Environment Variables
 
