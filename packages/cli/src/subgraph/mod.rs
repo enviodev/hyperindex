@@ -3816,6 +3816,45 @@ type Renewal implements Event @entity {
         );
     }
 
+    // defi.money: `"codegen:arb": "cat ./subgraph/arbitrum/prod.yaml >
+    // subgraph.yaml && graph codegen"`, one per network. The scripts call it
+    // `arb`, its directory `arbitrum`, the manifest `arbitrum-one`: the
+    // network a user names is matched against what each manifest indexes too.
+    #[test]
+    fn picks_the_copied_manifest_by_the_network_it_indexes() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-cat").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        for (folder, network) in [("optimism", "optimism"), ("arbitrum", "arbitrum-one")] {
+            fs::create_dir_all(root.join(format!("subgraph/{folder}"))).unwrap();
+            fs::write(
+                root.join(format!("subgraph/{folder}/prod.yaml")),
+                GRAVITY_MANIFEST.replace("network: mainnet", &format!("network: {network}")),
+            )
+            .unwrap();
+        }
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "codegen:op": "cat ./subgraph/optimism/prod.yaml > subgraph.yaml && graph codegen",
+  "codegen:arb": "cat ./subgraph/arbitrum/prod.yaml > subgraph.yaml && graph codegen",
+  "codegen": "graph codegen"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
+        let by_manifest = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=op\n").unwrap();
+        let by_script = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (chain_of(&by_manifest).0, chain_of(&by_script).0),
+            (42161, 10)
+        );
+    }
+
     // FilOzone's filecoin-pay subgraph: `"generate:yaml": "mustache
     // ./config/${NETWORK:-calibration}.json ./templates/subgraph.template.yaml
     // > subgraph.yaml"` and `"generate:schema": "cp

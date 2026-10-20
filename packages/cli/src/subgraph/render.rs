@@ -1030,6 +1030,18 @@ fn analyze(
                     inputs.extend(files.iter().cloned());
                     if let [file] = files.as_slice() {
                         stdin_view = Some(file.clone());
+                        // defi.money copies a committed per-network manifest:
+                        // `cat ./subgraph/arbitrum/prod.yaml > subgraph.yaml`.
+                        let into_target = last
+                            && stage
+                                .redirects
+                                .iter()
+                                .any(|(kind, word)| *kind == Redirect::Out && writes_target(word));
+                        if into_target {
+                            let source = from_plan(file);
+                            let text = literal(&source).unwrap_or_else(|| word_text(&source));
+                            writes = Some((source, text));
+                        }
                     }
                 }
                 Command::Copy { from, to } => {
@@ -1310,7 +1322,40 @@ struct Choice<'a> {
     view: String,
 }
 
-/// Every network the plans render, with how.
+/// The option whose manifest indexes `network`, when the user names the
+/// network graph-node sees (`arbitrum-one`) rather than the scripts' name for
+/// it (defi.money's `codegen:arb`). Only one may match.
+fn choose_by_indexed_network<'a>(
+    plans: &'a [Plan],
+    network: &str,
+    target: &Path,
+) -> Option<Choice<'a>> {
+    let mut matching = options(plans).into_iter().filter_map(|(_, choice)| {
+        let mut run = Run {
+            dir: &choice.plan.dir,
+            cwd: choice.plan.dir.to_path_buf(),
+            target,
+            hole: None,
+            files: BTreeMap::new(),
+        };
+        let hole_name = choice.plan.hole.as_ref().map(|(name, _, _)| name.clone());
+        if let (Some(name), Some(value)) = (hole_name.as_deref(), choice.hole_value.as_deref()) {
+            run.hole = Some((name, value));
+        }
+        run.steps(&choice.plan.steps).ok()?;
+        let manifest: serde_yaml::Value = serde_yaml::from_str(run.files.get(target)?).ok()?;
+        let sources = manifest.get("dataSources")?.as_sequence()?;
+        let indexes = !sources.is_empty()
+            && sources
+                .iter()
+                .all(|source| source.get("network").and_then(|n| n.as_str()) == Some(network));
+        indexes.then_some(choice)
+    });
+    let first = matching.next()?;
+    matching.next().is_none().then_some(first)
+}
+
+/// Every network the plans render, with how./// Every network the plans render, with how.
 fn options<'a>(plans: &'a [Plan]) -> Vec<(String, Choice<'a>)> {
     let literal_plans: Vec<&Plan> = plans.iter().filter(|plan| plan.hole.is_none()).collect();
     let literal_names = literal_networks(&literal_plans);
@@ -2307,28 +2352,34 @@ pub fn render_manifest(
         return run_codegen_prelude(project_root, &target, &dir, network);
     }
 
-    let choice = choose(&plans, network).map_err(|networks| {
-        let scripts: Vec<String> = plans.iter().map(|plan| plan.script.clone()).collect();
-        let first = networks.first().cloned().unwrap_or_default();
-        match network {
-            Some(network) => anyhow!(
-                "{} names the network '{network}', but the package.json scripts that render \
+    let choice = choose(&plans, network)
+        .or_else(|names| {
+            network
+                .and_then(|network| choose_by_indexed_network(&plans, network, &target))
+                .ok_or(names)
+        })
+        .map_err(|networks| {
+            let scripts: Vec<String> = plans.iter().map(|plan| plan.script.clone()).collect();
+            let first = networks.first().cloned().unwrap_or_default();
+            match network {
+                Some(network) => anyhow!(
+                    "{} names the network '{network}', but the package.json scripts that render \
                  {manifest_name} ({}) render it for: {}.",
-                super::NETWORK_ENV_VAR,
-                scripts.join(", "),
-                networks.join(", ")
-            ),
-            None => anyhow!(
-                "There is no {manifest_name} here: the package.json scripts {} render it from \
+                    super::NETWORK_ENV_VAR,
+                    scripts.join(", "),
+                    networks.join(", ")
+                ),
+                None => anyhow!(
+                    "There is no {manifest_name} here: the package.json scripts {} render it from \
                  {} for one network at a time ({}). Pick the network, as the script's \
                  argument does:\n  {}={first}",
-                scripts.join(", "),
-                plans[0].template,
-                networks.join(", "),
-                super::NETWORK_ENV_VAR,
-            ),
-        }
-    })?;
+                    scripts.join(", "),
+                    plans[0].template,
+                    networks.join(", "),
+                    super::NETWORK_ENV_VAR,
+                ),
+            }
+        })?;
 
     let mut run = Run {
         dir: &choice.plan.dir,

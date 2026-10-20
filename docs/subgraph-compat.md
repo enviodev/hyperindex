@@ -606,7 +606,8 @@ network from a variable (`yaml2json config/${NETWORK:-zora-testnet}.yaml |
 mustache - subgraph.template.yaml >> subgraph.yaml`). When the manifest is
 missing, envio looks for a script in the package.json of the manifest's own
 package, or of a package above it up to the repository root, that
-writes it with the mustache CLI (or `cp`s a committed one into place), and
+writes it with the mustache CLI (or `cp`s or `cat`s a committed one into
+place, as defi.money's `cat ./subgraph/arbitrum/prod.yaml > subgraph.yaml`), and
 repeats it when every step before graph-cli is one of `mustache <view>
 <template> [out]` (also `npx`/`yarn`/`pnpm exec`/`cross-env`/`env-cmd` around
 it), `yaml2json <file>`, `cat`, `cp <from> <to>`, `echo`, `mkdir`/`rm`, with
@@ -631,7 +632,10 @@ moonwell renders in `make generate-config`.
   `config/<network>/config.json`, every file that matches), or, for one script
   per network, what tells the scripts' names apart past their common prefix
   (`prepare:<network>`, `generate-manifest-<network>`), else the path
-  component their views differ in. The chosen network's other scripts that
+  component their views differ in. A network that names none of these is
+  matched against the network each rendered manifest indexes
+  (`ENVIO_SUBGRAPH_NETWORK=arbitrum-one` for defi.money's `codegen:arb`).
+  The chosen network's other scripts that
   are standard renders run too (Seamless' `generate-addresses-base` writes
   `src/constants/addresses.ts` beside `generate-manifest-base`). Unset, it is the script's own default
   (`${NETWORK:-zora-testnet}`), else the only network there is; else the error
