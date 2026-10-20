@@ -63,7 +63,8 @@ type rec t = {
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
-  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // `~reset` starts over as `envio start -r` does: the schema is dropped.
+  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, ~reset: bool=?, unit) => promise<t>,
   // Every line this run has logged so far, in order — the run's own and its
   // chains'. Only for a run started with `~captureLogs`.
   logs: unit => array<logEntry>,
@@ -549,12 +550,12 @@ let run = async (
             "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
           )
         },
-      restart: async (~config=baseConfig, ~chains=?, ()) => {
+      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false, ~config, ~chains?)
+        await make(~reset, ~config, ~chains?)
       },
     }
   }
