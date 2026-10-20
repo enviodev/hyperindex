@@ -455,9 +455,10 @@ classes call `DataSource.create`. Consequences:
   graph-cli, else (missing or failing) envio's bundled port of graph-cli's
   generators; `bundled` always writes it; `graph-cli` never falls back. The
   bundled output follows the project's toolchain where graph-cli releases
-  differ: the installed graph-ts (Int8, derived loaders, `displayData`) and the
-  installed or declared graph-cli (a call output tuple is `…OutputStruct` from
-  0.94, `…Struct` before). A committed tree that differs from what the bundled
+  differ: the installed or declared graph-cli (a derived field is a `…Loader`
+  from 0.51, an array getter and setter before; a call output tuple is
+  `…OutputStruct` from 0.94, `…Struct` before) and the installed graph-ts
+  (Int8, `displayData`; derived loaders when no graph-cli is named). A committed tree that differs from what the bundled
   codegen would write gets a "running the generated code as it is" warning; one
   it wrote itself doesn't.
 - **Where the tree goes, and what it holds**, as graph codegen would leave it:
