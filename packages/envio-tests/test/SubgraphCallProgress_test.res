@@ -1,6 +1,6 @@
 // A batch is written only once every contract call its handlers make is in,
 // and a call-heavy backfill's first batch waits minutes on thousands of them
-// with nothing to show: the sweep took several such runs for hung. While calls
+// with nothing to show, which reads as a hang. While calls
 // are outstanding, how many were answered is now logged now and then.
 let port = FreePort.pick()
 

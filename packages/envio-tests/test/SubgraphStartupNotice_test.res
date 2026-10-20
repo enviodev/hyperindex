@@ -1,7 +1,6 @@
 // A subgraph team's first move against a running indexer is to POST a query
 // to its port, the way graph-node serves one; that port answers /metrics only.
-// Every agent in the eval did. Startup now says where the data is and what
-// serves it.
+// Startup now says where the data is and what serves it.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
