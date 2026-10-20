@@ -1891,7 +1891,7 @@ impl SystemConfig {
                 }
                 if root.join("subgraph.template.yaml").exists() && manifests.is_empty() {
                     let readers =
-                        crate::subgraph::render::files_reading(root, "subgraph.template.yaml");
+                        crate::subgraph::render::files_reading(root, &["subgraph", "template"]);
                     if let [reader] = readers.as_slice() {
                         return Err(anyhow!(
                             "Found subgraph.template.yaml but no subgraph.yaml.\n\

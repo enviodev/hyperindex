@@ -4258,7 +4258,8 @@ type Renewal implements Event @entity {
         fs::write(root.join("subgraph.template.yaml"), "specVersion: 0.0.2\n").unwrap();
         fs::write(
             root.join("render-templates.js"),
-            "const template = fs.readFileSync('subgraph.template.yaml').toString();\n",
+            // as kleros' does: the file name is put together
+            "for (const [name, ext] of [['subgraph', 'yaml']]) {\n  const template = fs.readFileSync(`${name}.template.${ext}`).toString();\n}\n",
         )
         .unwrap();
         fs::write(

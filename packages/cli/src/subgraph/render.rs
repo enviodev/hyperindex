@@ -2995,9 +2995,10 @@ pub fn scripts_mentioning(dir: &Path, needle: &str) -> Vec<(String, String)> {
 }
 
 /// The repo's own script files beside the manifest (and in its `scripts/`)
-/// whose source mentions `needle`: kleros/pgtcr's render-templates.js, which
-/// no package.json script runs. Read, never run.
-pub fn files_reading(dir: &Path, needle: &str) -> Vec<String> {
+/// whose source mentions every one of `needles`: kleros/pgtcr's
+/// render-templates.js, which no package.json script runs, and which puts the
+/// template's name together (`${name}.template.${ext}`). Read, never run.
+pub fn files_reading(dir: &Path, needles: &[&str]) -> Vec<String> {
     const EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "ts", "mts", "sh"];
     let mut found = Vec::new();
     for sub in ["", "scripts"] {
@@ -3017,7 +3018,9 @@ pub fn files_reading(dir: &Path, needle: &str) -> Vec<String> {
             .collect();
         paths.sort();
         for path in paths {
-            if std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle)) {
+            if std::fs::read_to_string(&path)
+                .is_ok_and(|text| needles.iter().all(|needle| text.contains(needle)))
+            {
                 if let Some(relative) = pathdiff::diff_paths(&path, dir) {
                     found.push(relative.display().to_string());
                 }
