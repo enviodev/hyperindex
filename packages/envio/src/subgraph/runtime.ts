@@ -8,7 +8,7 @@
  */
 
 import { instancesAt, rememberInstance } from "./template-instances.ts";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -166,6 +166,53 @@ type SubgraphConfig = {
 
 const AS_DATE = Symbol.for("envio.subgraph.date");
 
+/** `file` as the filesystem spells it, each missing component matched to the one entry differing only in case. */
+function onDiskPath(file: string): string | null {
+  if (existsSync(file)) return file;
+  const parent = path.dirname(file);
+  if (parent === file) return null;
+  const dir = onDiskPath(parent);
+  if (dir === null) return null;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const name = path.basename(file).toLowerCase();
+  const matches = entries.filter((entry) => entry.toLowerCase() === name);
+  return matches.length === 1 ? path.join(dir, matches[0]!) : null;
+}
+
+const caseWarned = new Set<string>();
+
+/**
+ * A project file's relative import that exists only in another case
+ * (`../generated/staking/staking` for codegen's `generated/Staking/Staking.ts`):
+ * asc resolves it on the macOS or Windows filesystem the subgraph builds on.
+ */
+function caseMatchedImport(specifier: string, parentURL: string | undefined): string | null {
+  if (!projectRoot || !parentURL?.startsWith(projectRoot) || parentURL.includes("/node_modules/")) return null;
+  const parent = fileURLToPath(parentURL);
+  const base = path.resolve(path.dirname(parent), specifier);
+  for (const candidate of [base, `${base}.ts`, path.join(base, "index.ts")]) {
+    const found = onDiskPath(candidate);
+    if (found === null || found === candidate || !statSync(found).isFile()) continue;
+    if (!pathToFileURL(found).href.startsWith(projectRoot)) continue;
+    const key = `${parent}\0${specifier}`;
+    if (!caseWarned.has(key)) {
+      caseWarned.add(key);
+      warn(
+        `Envio Subgraph: ${path.relative(fileURLToPath(projectRoot), parent)} imports "${specifier}", and the repo has ` +
+          `${path.relative(path.dirname(parent), found)}. They match only on a filesystem that ignores case ` +
+          "(macOS's and Windows' by default), where the subgraph builds; envio loads the file the repo has.",
+      );
+    }
+    return found;
+  }
+  return null;
+}
+
 /**
  * Where a call sits in its chain for the register pass's store: after every log
  * of its block, then by transaction and position in the transaction. graph-node
@@ -246,6 +293,11 @@ function installResolveHook(root: string) {
       try {
         resolved = nextResolve(specifier, context);
       } catch (error: any) {
+        const caseMatched =
+          error?.code === "ERR_MODULE_NOT_FOUND" && specifier.startsWith(".")
+            ? caseMatchedImport(specifier, context?.parentURL)
+            : null;
+        if (caseMatched) return nextResolve(pathToFileURL(caseMatched).href, context);
         const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
         let fetched;
         if (fetchedModulesParent && bare && error?.code === "ERR_MODULE_NOT_FOUND") {
