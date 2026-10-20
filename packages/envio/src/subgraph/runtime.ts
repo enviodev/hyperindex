@@ -8,14 +8,19 @@
  */
 
 import { instancesAt, rememberInstance } from "./template-instances.ts";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
-import { subgraphFileToJavascript, subgraphRegisterHandlers, subgraphWorkspacePackages } from "../Core.res.mjs";
+import {
+  subgraphFileToJavascript,
+  subgraphRegisterHandlers,
+  subgraphWorkspacePackages,
+  subgraphWorkspaceRoot,
+} from "../Core.res.mjs";
 import { install as installCallSource } from "../sources/CallSource.res.mjs";
 import { fetchCalls, resetCallBackends } from "./calls-source.ts";
 import {
@@ -89,7 +94,7 @@ import { fetchMappingPackages, missingMappingPackages } from "./toolchain.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
-import { resolveAssemblyScriptPackage, resolveWorkspacePackage } from "./as-package.ts";
+import { resolveAssemblyScriptPackage, resolveWorkspacePackage, unwrittenWorkspaceEntry } from "./as-package.ts";
 import { registerSlots } from "./register-slots.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
@@ -170,10 +175,70 @@ type SubgraphConfig = {
   rpcUrls: string[];
   /** Per chain id, the reorg depth a block handler's header reads are held back by. */
   blockHeaderLag?: Record<number, number>;
+  /** Set when envio wrote the manifest from the repo's template, or ran the codegen steps that write it. */
+  renderedManifest?: {
+    script: string;
+    inlined?: string[];
+    network: string;
+    template: string;
+    view: string;
+    steps?: string[];
+  };
+  /** Files the manifest names, as written and where they are read from (another case, or a fetched package). */
+  pathFixes?: [string, string][];
+  /** The network networks.json was applied for when none was picked: the repo build's `--network`. */
+  buildNetwork?: string;
   isDev: boolean;
 } & SubgraphSchema;
 
 const AS_DATE = Symbol.for("envio.subgraph.date");
+
+/** `file` as the filesystem spells it, each missing component matched to the one entry differing only in case. */
+function onDiskPath(file: string): string | null {
+  if (existsSync(file)) return file;
+  const parent = path.dirname(file);
+  if (parent === file) return null;
+  const dir = onDiskPath(parent);
+  if (dir === null) return null;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const name = path.basename(file).toLowerCase();
+  const matches = entries.filter((entry) => entry.toLowerCase() === name);
+  return matches.length === 1 ? path.join(dir, matches[0]!) : null;
+}
+
+const caseWarned = new Set<string>();
+
+/**
+ * A project file's relative import that exists only in another case
+ * (`../generated/staking/staking` for codegen's `generated/Staking/Staking.ts`):
+ * asc resolves it on the macOS or Windows filesystem the subgraph builds on.
+ */
+function caseMatchedImport(specifier: string, parentURL: string | undefined): string | null {
+  if (!projectRoot || !parentURL?.startsWith(projectRoot) || parentURL.includes("/node_modules/")) return null;
+  const parent = fileURLToPath(parentURL);
+  const base = path.resolve(path.dirname(parent), specifier);
+  for (const candidate of [base, `${base}.ts`, path.join(base, "index.ts")]) {
+    const found = onDiskPath(candidate);
+    if (found === null || found === candidate || !statSync(found).isFile()) continue;
+    if (!pathToFileURL(found).href.startsWith(projectRoot)) continue;
+    const key = `${parent}\0${specifier}`;
+    if (!caseWarned.has(key)) {
+      caseWarned.add(key);
+      warn(
+        `Envio Subgraph: ${path.relative(fileURLToPath(projectRoot), parent)} imports "${specifier}", and the repo has ` +
+          `${path.relative(path.dirname(parent), found)}. They match only on a filesystem that ignores case ` +
+          "(macOS's and Windows' by default), where the subgraph builds; envio loads the file the repo has.",
+      );
+    }
+    return found;
+  }
+  return null;
+}
 
 /**
  * Where a call sits in its chain for the register pass's store: after every log
@@ -221,6 +286,7 @@ let projectRoot: string | null = null;
 let fetchedModulesParent: string | null = null;
 /** The packages of the workspace the project sits in, by name, which an install would link. */
 let workspacePackages = new Map<string, string>();
+let workspaceRoot: string | null = null;
 /** Every project file the load hook has compiled, so their exports can be read back. */
 const projectModules = new Set<string>();
 
@@ -233,6 +299,7 @@ const projectModules = new Set<string>();
 function installResolveHook(root: string) {
   projectRoot = pathToFileURL(path.resolve(root) + path.sep).href;
   workspacePackages = new Map(Object.entries(subgraphWorkspacePackages(root)));
+  workspaceRoot = subgraphWorkspaceRoot(root);
   if (hooksInstalled) return;
   hooksInstalled = true;
   // The addon's output carries an inline source map back to the mapping, so a
@@ -258,6 +325,11 @@ function installResolveHook(root: string) {
       try {
         resolved = nextResolve(specifier, context);
       } catch (error: any) {
+        const caseMatched =
+          error?.code === "ERR_MODULE_NOT_FOUND" && specifier.startsWith(".")
+            ? caseMatchedImport(specifier, context?.parentURL)
+            : null;
+        if (caseMatched) return nextResolve(pathToFileURL(caseMatched).href, context);
         const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
         // The workspace's own package before any copy fetched from npm, which
         // may not be it.
@@ -267,6 +339,11 @@ function installResolveHook(root: string) {
             ? { url: workspaceFile, format: "module", shortCircuit: true }
             : { url: workspaceFile, shortCircuit: true };
         }
+        const unwritten =
+          bare && error?.code === "ERR_MODULE_NOT_FOUND"
+            ? unwrittenWorkspaceEntry(specifier, workspacePackages, workspaceRoot)
+            : null;
+        if (unwritten) throw unwritten;
         let fetched;
         if (fetchedModulesParent && bare && error?.code === "ERR_MODULE_NOT_FOUND") {
           try {
@@ -513,9 +590,31 @@ async function loadMapping(
     }
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
+    const template = undeclaredTemplate(message);
+    if (template) throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${template}`);
     const why = notGenerated(root, generated, message, sources) ?? notExported(root, generated, mappingFile, message);
     throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}${why ? `\n${why}` : ""}`);
   }
+}
+
+let declaredTemplates: string[] = [];
+let manifestName = "subgraph.yaml";
+
+/**
+ * daohaus' per-network manifests leave out templates a listed mapping still
+ * imports; graph codegen writes a class only for a declared template, so
+ * `graph build` fails on the import as well.
+ */
+function undeclaredTemplate(message: string): string | null {
+  const missing = message.match(/requested module '([^']*)' does not provide an export named '([^']+)'/);
+  if (!missing || !/(^|\/)templates(\.ts)?$/.test(missing[1]!) || declaredTemplates.includes(missing[2]!)) return null;
+  const name = missing[2]!;
+  const declared = declaredTemplates.length > 0 ? `it declares ${declaredTemplates.join(", ")}` : "it declares none";
+  return (
+    `It imports ${name} from generated/templates, and ${manifestName} declares no template ${name} (${declared}). ` +
+    "graph codegen writes a class only for a template the manifest declares, so `graph build` fails on this " +
+    "import too: the manifest was likely written for another network or deployment than the mappings."
+  );
 }
 
 /**
@@ -1242,15 +1341,56 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   fetchedModulesParent = fetchedModules
     ? pathToFileURL(path.join(path.dirname(fetchedModules), "resolve-from.mjs")).href
     : null;
+  const rendered = config.renderedManifest;
+  manifestName = config.manifestFile ?? "subgraph.yaml";
+  declaredTemplates = config.templates.map((template) => template.name);
+  if (rendered?.steps?.length) {
+    info(
+      `Envio Subgraph ran ${rendered.steps.map((step) => `\`${step}\``).join(", ")} from the codegen script ` +
+        `first: it writes ${manifestName}` +
+        (rendered.network ? ` (network "${rendered.network}"; ENVIO_SUBGRAPH_NETWORK picks another).` : "."),
+    );
+  } else if (rendered) {
+    const how =
+      rendered.template === rendered.view
+        ? `copied ${rendered.template} to ${manifestName}`
+        : `rendered ${manifestName} from ${rendered.template} with ${rendered.view}`;
+    info(
+      `Envio Subgraph ${how} for the network "${rendered.network}", as the package.json script ` +
+        `"${rendered.script}" does. ENVIO_SUBGRAPH_NETWORK picks another.`,
+    );
+  }
+  if (config.buildNetwork) {
+    info(
+      `Envio Subgraph built ${manifestName} for the network "${config.buildNetwork}" from networks.json, ` +
+        `as the project's own build does (\`graph build --network ${config.buildNetwork}\`). ` +
+        "ENVIO_SUBGRAPH_NETWORK picks another.",
+    );
+  }
+  for (const [written, found] of config.pathFixes ?? []) {
+    warn(
+      path.isAbsolute(found)
+        ? `Envio Subgraph: ${manifestName} names ${written}, in a package the project's install didn't ` +
+            `provide; envio reads it from the package fetched into ${found}.`
+        : `Envio Subgraph: ${manifestName} names ${written}, and the repo has ${found}. They match only on a ` +
+            "filesystem that ignores case (macOS's and Windows' by default), where the subgraph builds; " +
+            `envio reads ${found}.`,
+    );
+  }
   await ensureGeneratedCode(
     config.root,
     generated,
     config.manifestFile,
     sources.map((source) => source.mappingFile),
+    {
+      renderScripts: rendered && !rendered.steps?.length ? [rendered.script, ...(rendered.inlined ?? [])] : [],
+      ranSteps: rendered?.steps,
+      pathFixes: config.pathFixes,
+    },
   );
 
   if (config.isDev) {
-    await typeCheckMappings(config.root, config.manifestFile);
+    await typeCheckMappings(config.root, config.manifestFile, config.pathFixes);
   }
 
   // A file template has no contract: nothing is registered for it, so it takes
