@@ -1298,6 +1298,12 @@ templates:
             ("telos", 40),
             ("mantle-sepolia", 5003),
             ("pulse", 369),
+            // Slugs Sep 2026 repos deploy to hosted subgraph platforms with,
+            // checked against where their contracts are: stagezerolabs/stage0's
+            // launchpad factory is on RISE's testnet, Pratiikpy/ivaronix's
+            // registry on 0G's Galileo testnet.
+            ("rise-sepolia", 11155931),
+            ("0g-galileo", 16602),
             // Any chain by id, for one no host's slug list has.
             ("evm-9999991", 9999991),
         ];
