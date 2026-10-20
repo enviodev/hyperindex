@@ -1691,6 +1691,10 @@ fn is_pure(expr: &Expression<'_>) -> bool {
     match expr {
         Expression::Identifier(_) | Expression::ThisExpression(_) => true,
         Expression::StaticMemberExpression(member) => is_pure(&member.object),
+        // `account!.count += 1`: an assertion or a cast reads the same twice.
+        Expression::TSNonNullExpression(inner) => is_pure(&inner.expression),
+        Expression::TSAsExpression(cast) => is_pure(&cast.expression),
+        Expression::ParenthesizedExpression(paren) => is_pure(&paren.expression),
         _ => false,
     }
 }
@@ -2546,6 +2550,25 @@ export const __envio_event_classes = { handleFarmed: Farmed };
             "src/mapping.ts:2:3: Envio Subgraph can't apply this compound assignment the way \
              AssemblyScript does: an indexed or computed target would be evaluated twice. \
              Compute into a local first."
+        );
+    }
+
+    // Messari-style mappings count with `account!.depositCount += 1`: a `!` (or
+    // a cast, or parentheses) on the object reads the same twice.
+    #[test]
+    fn applies_a_compound_assignment_through_a_non_null_assertion() {
+        assert_eq!(
+            js(
+                "export function f(account: Account | null, pool: Pool): void {
+  account!.depositCount += 1;
+  (pool as Pool).total -= 2;
+}"
+            ),
+            "export function f(account, pool) {
+\taccount.depositCount = __envio_op.add(account.depositCount, 1);
+\tpool.total = __envio_op.sub(pool.total, 2);
+}
+"
         );
     }
 
