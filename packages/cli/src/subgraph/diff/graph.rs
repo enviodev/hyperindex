@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -24,8 +24,17 @@ pub struct GraphClient {
     /// Requests allowed in flight: `--concurrency`, one fewer after each 429
     /// down to one.
     in_flight_limit: AtomicUsize,
+    /// Spacing between request starts once the endpoint has rate-limited:
+    /// zero until the first 429, then doubled by each one (100 ms to 5 s).
+    pace: std::sync::Mutex<Pace>,
     max_retries: u32,
     requests: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct Pace {
+    interval: Duration,
+    next_start: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +93,7 @@ impl GraphClient {
             headers: header_map,
             permits: Arc::new(Semaphore::new(concurrency.max(1))),
             in_flight_limit: AtomicUsize::new(concurrency.max(1)),
+            pace: std::sync::Mutex::new(Pace::default()),
             // With the backoff capped at 30s this waits out about a minute and a
             // half, which shared-key public endpoints' rate windows need.
             max_retries: 8,
@@ -102,6 +112,10 @@ impl GraphClient {
         loop {
             let permit = self.permits.acquire().await.expect("never closed");
             let mut forget_permit = false;
+            let wait = self.reserve_start();
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
+            }
             self.requests.fetch_add(1, Ordering::Relaxed);
             let response = self
                 .http
@@ -132,7 +146,10 @@ impl GraphClient {
                         // A rate limit on requests in parallel refuses them
                         // again when they retry together: keep one fewer in
                         // flight from now on.
-                        forget_permit = rate_limited && self.shrink_in_flight_limit();
+                        if rate_limited {
+                            forget_permit = self.shrink_in_flight_limit();
+                            self.slow_down();
+                        }
                         retry_after
                     } else if !status.is_success() && !looks_like_graphql(&body) {
                         return Err(anyhow!(
@@ -163,6 +180,24 @@ impl GraphClient {
             tokio::time::sleep(backoff).await;
             attempt += 1;
         }
+    }
+
+    /// How long to wait before starting a request, holding its start slot.
+    fn reserve_start(&self) -> Duration {
+        let mut pace = self.pace.lock().expect("never poisoned");
+        if pace.interval.is_zero() {
+            return Duration::ZERO;
+        }
+        let now = Instant::now();
+        let start = pace.next_start.map_or(now, |next| next.max(now));
+        pace.next_start = Some(start + pace.interval);
+        start - now
+    }
+
+    fn slow_down(&self) {
+        let mut pace = self.pace.lock().expect("never poisoned");
+        pace.interval =
+            (pace.interval * 2).clamp(Duration::from_millis(100), Duration::from_secs(5));
     }
 
     /// One fewer request in flight, unless only one is left.
@@ -722,6 +757,37 @@ pub mod tests {
                 client.requests()
             ),
             (vec![Ok(json!({"ok": true})); 8], 11)
+        );
+    }
+
+    // The same endpoint also limits requests per second: one at a time, sent
+    // back to back, still drew 429s until a listing gave up. After a 429 the
+    // client spaces the requests it starts.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn spaces_requests_once_rate_limited() {
+        let last_served = Arc::new(Mutex::new(None::<std::time::Instant>));
+        let served = last_served.clone();
+        let mock = mock_graph(move |_| {
+            let mut last = served.lock().unwrap();
+            let now = std::time::Instant::now();
+            if last.is_some_and(|last| now - last < Duration::from_millis(200)) {
+                return (429, "<html>429 Too Many Requests</html>".to_string());
+            }
+            *last = Some(now);
+            (200, json!({"data": {"ok": true}}).to_string())
+        })
+        .await;
+        let mut client = GraphClient::new(&mock.url, &[], 4, Duration::from_secs(5)).unwrap();
+        client.max_retries = 3;
+        let queries: Vec<String> = (0..10).map(|i| format!("{{ ok{i}: ok }}")).collect();
+        let answers =
+            futures_util::future::join_all(queries.iter().map(|query| client.query(query))).await;
+        assert_eq!(
+            answers
+                .into_iter()
+                .map(|answer| answer.map_err(|err| err.to_string()))
+                .collect::<Vec<_>>(),
+            vec![Ok(json!({"ok": true})); 10]
         );
     }
 
