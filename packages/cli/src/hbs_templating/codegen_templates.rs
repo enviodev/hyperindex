@@ -684,7 +684,7 @@ impl ContractTemplate {
             .collect::<Result<_>>()?;
 
         let module_code = match &contract.abi {
-            // EVM: abi and eventSignatures are already in internal.config.json
+            // EVM: abi and event sighashes are already in internal.config.json
             Abi::Evm(_) => String::new(),
             Abi::Fuel(abi) => abi
                 .to_type_decl_multi()
