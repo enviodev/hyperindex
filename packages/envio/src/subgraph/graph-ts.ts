@@ -3752,6 +3752,14 @@ function floatNamespace(name: string, single: boolean) {
       NaN: Number.NaN,
       POSITIVE_INFINITY: Number.POSITIVE_INFINITY,
       NEGATIVE_INFINITY: Number.NEGATIVE_INFINITY,
+      parseFloat: (text: string) => cast(Number.parseFloat(text)),
+      isNaN: (value: number) => Number.isNaN(cast(value)),
+      isFinite: (value: number) => Number.isFinite(cast(value)),
+      isInteger: (value: number) => Number.isInteger(cast(value)),
+      isSafeInteger: (value: number) => {
+        const v = cast(value);
+        return Number.isInteger(v) && Math.abs(v) <= (single ? 16777215 : Number.MAX_SAFE_INTEGER);
+      },
     }),
   );
 }
