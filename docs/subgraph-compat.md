@@ -539,6 +539,47 @@ and with no networks.json, the file the repo's scripts pass with that network
 is used when they pass only one (zkBob: `--network sepolia --network-file
 ./networks-bob-sepolia.json`).
 
+## 6c. Proving a migration: `envio subgraph diff`
+
+```
+envio subgraph diff <graph-node endpoint> [--json] [--ours <graph endpoint>]
+```
+
+Run inside the subgraph project. It compares the indexer's Postgres (same
+`ENVIO_PG_*` settings, one `REPEATABLE READ READ ONLY` snapshot) with the
+endpoint the subgraph ran on before, at the block the indexer has processed
+(`envio_chains.progress_block`): the reference is pinned with
+`block: {number: N}`. Ours keeps no history, so that block is the only one it
+can answer for — `--block` only asserts it, and a reference that hasn't
+reached it, or reports `hasIndexingErrors`, is refused. `--ours` compares a
+Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
+block.
+
+Per `@entity` type (timeseries and aggregations skipped): every reference id
+is paged in by `id_gt` cursor, the id sets are diffed, and a deterministic
+sample (`--sample`, default 100; first by sha256 of the id) is compared field
+by field. Both sides are normalized to graph-node's encodings first: BigInt,
+Int8 and Timestamp (µs) as integers, BigDecimal plain at 34 significant
+digits, Bytes as lowercase `0x` hex, relations by id, stored entity lists as
+sorted id sets. `@derivedFrom` fields aren't stored on either side and aren't
+compared; a field the reference can't resolve (graph-node fails the whole
+query over a non-null relation to a missing entity) is dropped and listed
+under "Not compared". A relation ours stores as an id with no entity behind
+it is read the way graph-node serves it — a nullable one as `null`, a list
+without that id — and counted under "Notes" (`danglingRelations` in the
+JSON), not as a mismatch. Before an id counts as on one side only, or a
+sampled entity as different, the reference is asked for it again by `id_in`
+at the same block (a gateway's paged listing can come back short, and the
+indexers behind it can answer one pinned query differently); what that
+settled is under "Notes" (`recheck` in the JSON).
+
+Exit 0: every type within `--tolerance` (percent of the reference count,
+default 0.1) and at most `--max-field-mismatches` (default 0) across the run.
+Exit 1: a mismatch. Exit 2: couldn't compare (`status: error`), or a type
+was only partly compared (`status: incomplete`: `--max-entities` capped the
+reference listing and nothing seen so far differs). `--json` prints the same
+report with `schemaVersion: 1`.
+
 ## 6d. Repo shapes: what runs before graph-cli would
 
 graph-cli reads a finished manifest. What a hosting user hands it is the
@@ -581,8 +622,7 @@ that script of every workspace package that has it, each in its own
 directory; such a plan is preferred, since it also renders what the mappings
 import from other packages (sushiswap's root `prepare:matic` renders
 `packages/constants/index.ts` with the manifest). A script that only calls
-another one that renders is that one. A
-Makefile's targets count as scripts too (`make <target>`, recipe lines
+another one that renders is that one. A Makefile's targets count as scripts too (`make <target>`, recipe lines
 chained with `&&`, `$(network)` read as the variable `make target
 network=base` sets, with the Makefile's `network ?= …` as its default):
 moonwell renders in `make generate-config`.
@@ -613,6 +653,25 @@ moonwell renders in `make generate-config`.
 - The codegen script's step that runs the same script (`yarn gen-yaml-config
   && graph codegen`) is skipped: it would render the script's default network
   over the one picked.
+
+A script that runs anything else to write the manifest — `node`, `ts-node`,
+`truffle exec`, a shell script, `jq`, handlebars through a script of its own —
+isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or
+compute addresses; the error names each script and what it runs (a script is
+named when it writes the manifest, mentions a template, or runs a repo file
+whose source mentions one — Uniswap's `ts-node ./script/build`). `--config`
+naming the template itself renders what a repeatable script renders from it,
+else says it is a template:
+
+```
+There is no subgraph.yaml here.
+The project writes its manifest with a package.json script, and envio can't repeat it:
+  "render-subgraph-config:gnosis": node ops/render-subgraph-conf.js gnosis
+envio renders a manifest itself only when every step of the script is a standard tool
+over files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`,
+`cat`), so that the network you pick is its only input. Run the script for your
+network, then start envio again.
+```
 
 **The codegen script's own steps.** envio already runs the project's
 `codegen` script to build the generated code (§6a): `graph codegen`
@@ -659,6 +718,15 @@ templates, so `graph build` fails on the import as well; envio's load error
 names the template and the ones the manifest declares instead of Node's
 "does not provide an export".
 
+**Missing ABIs and schemas.** envio invents no ABI and builds no contracts.
+An ABI or schema the manifest names that isn't there is an error naming the
+step that writes it, when the repo says: a package.json script that writes its
+directory or mentions the file (kleros-v2's `sync-abis`, GoodCollective's
+`build:copyabi`, inverse-governance's `graph-compiler … --export-schema`), an
+empty git submodule, the Foundry (`out/`) or Hardhat (`artifacts/`) project
+the path runs through (liquity's `../contracts/out/`), or the npm package
+under node_modules the install didn't provide.
+
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
 (CryptoPunks): it builds there and runs on hosted platforms, and graph-cli on
@@ -670,66 +738,6 @@ that lists both. A mapping's relative import gets the same match when Node
 can't find it as written (Omni-DeFi imports `../generated/staking/staking`;
 graph codegen writes `generated/Staking/Staking.ts`), with one warning per
 import.
-
-A script that runs anything else to write the manifest — `node`, `ts-node`,
-`truffle exec`, a shell script, `jq`, handlebars through a script of its own —
-isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or
-compute addresses; the error names each script and what it runs (a script is
-named when it writes the manifest, mentions a template, or runs a repo file
-whose source mentions one — Uniswap's `ts-node ./script/build`). `--config`
-naming the template itself renders what a repeatable script renders from it,
-else says it is a template:
-
-```
-There is no subgraph.yaml here.
-The project writes its manifest with a package.json script, and envio can't repeat it:
-  "render-subgraph-config:gnosis": node ops/render-subgraph-conf.js gnosis
-envio renders a manifest itself only when every step of the script is a standard tool
-over files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`,
-`cat`), so that the network you pick is its only input. Run the script for your
-network, then start envio again.
-```
-
-## 6c. Proving a migration: `envio subgraph diff`
-
-```
-envio subgraph diff <graph-node endpoint> [--json] [--ours <graph endpoint>]
-```
-
-Run inside the subgraph project. It compares the indexer's Postgres (same
-`ENVIO_PG_*` settings, one `REPEATABLE READ READ ONLY` snapshot) with the
-endpoint the subgraph ran on before, at the block the indexer has processed
-(`envio_chains.progress_block`): the reference is pinned with
-`block: {number: N}`. Ours keeps no history, so that block is the only one it
-can answer for — `--block` only asserts it, and a reference that hasn't
-reached it, or reports `hasIndexingErrors`, is refused. `--ours` compares a
-Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
-block.
-
-Per `@entity` type (timeseries and aggregations skipped): every reference id
-is paged in by `id_gt` cursor, the id sets are diffed, and a deterministic
-sample (`--sample`, default 100; first by sha256 of the id) is compared field
-by field. Both sides are normalized to graph-node's encodings first: BigInt,
-Int8 and Timestamp (µs) as integers, BigDecimal plain at 34 significant
-digits, Bytes as lowercase `0x` hex, relations by id, stored entity lists as
-sorted id sets. `@derivedFrom` fields aren't stored on either side and aren't
-compared; a field the reference can't resolve (graph-node fails the whole
-query over a non-null relation to a missing entity) is dropped and listed
-under "Not compared". A relation ours stores as an id with no entity behind
-it is read the way graph-node serves it — a nullable one as `null`, a list
-without that id — and counted under "Notes" (`danglingRelations` in the
-JSON), not as a mismatch. Before an id counts as on one side only, or a
-sampled entity as different, the reference is asked for it again by `id_in`
-at the same block (a gateway's paged listing can come back short, and the
-indexers behind it can answer one pinned query differently); what that
-settled is under "Notes" (`recheck` in the JSON).
-
-Exit 0: every type within `--tolerance` (percent of the reference count,
-default 0.1) and at most `--max-field-mismatches` (default 0) across the run.
-Exit 1: a mismatch. Exit 2: couldn't compare (`status: error`), or a type
-was only partly compared (`status: incomplete`: `--max-entities` capped the
-reference listing and nothing seen so far differs). `--json` prints the same
-report with `schemaVersion: 1`.
 
 ## 7. Unsupported & unknown errors
 
