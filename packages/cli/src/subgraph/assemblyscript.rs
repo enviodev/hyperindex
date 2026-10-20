@@ -200,6 +200,10 @@ fn blank_statement_decorators(source: &str) -> String {
 /// The JavaScript to run for one AssemblyScript file, with an inline source map
 /// back to the original so a mapping's stack trace names its own lines.
 pub fn to_javascript(source: &str, path: &Path, legacy_nulls: bool) -> Result<String> {
+    transform(source, path, legacy_nulls, true)
+}
+
+fn transform(source: &str, path: &Path, legacy_nulls: bool, hoist: bool) -> Result<String> {
     let blanked = blank_statement_decorators(&class_expressions_for_type_names(source));
     let source = blanked.as_str();
     let allocator = Allocator::default();
@@ -238,6 +242,9 @@ pub fn to_javascript(source: &str, path: &Path, legacy_nulls: bool) -> Result<St
     if transformed.diagnostics.has_errors() {
         return Err(describe(path, source, transformed.diagnostics.errors()));
     }
+    if hoist {
+        hoist_statics(&mut program, &allocator);
+    }
 
     let printed = Codegen::new()
         .with_options(CodegenOptions {
@@ -252,6 +259,308 @@ pub fn to_javascript(source: &str, path: &Path, legacy_nulls: bool) -> Result<St
         .map(|map| format!("//# sourceMappingURL={}\n", map.to_data_url()))
         .unwrap_or_default();
     Ok(format!("{}{map}", printed.code))
+}
+
+const STATIC_INIT: &str = "__envio_static";
+const PLACEHOLDER: &str = "__envio_placeholder";
+
+/// What AssemblyScript has from the start, before any file's top-level code
+/// runs: a class (a compile-time entity) and a global whose initializer is a
+/// constant (asc emits it as the global's initial value; only other
+/// initializers run in the start function). An ES module's class and `const`
+/// are in their temporal dead zone until the module's body reaches them, so in
+/// an import cycle — Opolis' `Token.ts` ⇄ `ERC20/index.ts`, Flaunch's
+/// `addresses/index.ts` ⇄ `base.ts` — a file evaluated first throws where asc's
+/// code reads the value.
+///
+/// Each such declaration becomes a `var`, set by a hoisted `__envio_static()`
+/// that first calls the same function of every project file this one imports,
+/// and that a module calls before its own top-level code. A function
+/// declaration exists from the moment the module graph is linked, so a cyclic
+/// importer reaches it while the module itself hasn't run. A class is defined
+/// there only when nothing in its definition runs code (no static initializer
+/// or block, no computed key, a plain `extends` name); if even that throws, it
+/// is defined again at its own place, as before.
+fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Constant {
+        Text,
+        Number,
+    }
+    fn constant(
+        expr: &Expression<'_>,
+        known: &std::collections::HashMap<String, Constant>,
+    ) -> Option<Constant> {
+        let number = |expr: &Expression<'_>| constant(expr, known) == Some(Constant::Number);
+        match expr {
+            Expression::StringLiteral(_) => Some(Constant::Text),
+            Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
+                Some(Constant::Text)
+            }
+            Expression::NumericLiteral(_)
+            | Expression::BigIntLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NullLiteral(_) => Some(Constant::Number),
+            Expression::ParenthesizedExpression(paren) => constant(&paren.expression, known),
+            Expression::UnaryExpression(unary)
+                if matches!(
+                    unary.operator,
+                    UnaryOperator::UnaryNegation
+                        | UnaryOperator::UnaryPlus
+                        | UnaryOperator::BitwiseNot
+                        | UnaryOperator::LogicalNot
+                ) && number(&unary.argument) =>
+            {
+                Some(Constant::Number)
+            }
+            Expression::BinaryExpression(binary)
+                if number(&binary.left) && number(&binary.right) =>
+            {
+                Some(Constant::Number)
+            }
+            // `1 + 2`, `5 as u8`: arithmetic this pass already routed through
+            // the operator helper.
+            Expression::CallExpression(call)
+                if matches!(&call.callee, Expression::StaticMemberExpression(member)
+                    if matches!(&member.object, Expression::Identifier(id) if id.name == OPERATORS_HELPER))
+                    && call
+                        .arguments
+                        .iter()
+                        .all(|argument| argument.as_expression().is_some_and(number)) =>
+            {
+                Some(Constant::Number)
+            }
+            Expression::Identifier(id) => known.get(id.name.as_str()).copied(),
+            _ => None,
+        }
+    }
+    fn plain_name(expr: &Expression<'_>) -> bool {
+        match expr {
+            Expression::Identifier(_) => true,
+            Expression::StaticMemberExpression(member) => plain_name(&member.object),
+            _ => false,
+        }
+    }
+    fn runs_nothing(class: &Class<'_>) -> bool {
+        class.id.is_some()
+            && class
+                .heritage
+                .as_ref()
+                .is_none_or(|heritage| plain_name(&heritage.expression))
+            && class.body.body.iter().all(|element| match element {
+                ClassElement::StaticBlock(_) => false,
+                ClassElement::PropertyDefinition(property) => {
+                    !property.computed && !(property.r#static && property.value.is_some())
+                }
+                ClassElement::AccessorProperty(property) => {
+                    !property.computed && !(property.r#static && property.value.is_some())
+                }
+                ClassElement::MethodDefinition(method) => !method.computed,
+                _ => true,
+            })
+    }
+    fn variables<'s, 'a>(statement: &'s Statement<'a>) -> Option<&'s VariableDeclaration<'a>> {
+        match statement {
+            Statement::VariableDeclaration(decl) => Some(decl),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::VariableDeclaration(decl) => Some(decl),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn class<'s, 'a>(statement: &'s Statement<'a>) -> Option<&'s Class<'a>> {
+        match statement {
+            Statement::ClassDeclaration(class) => Some(class),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::ClassDeclaration(class) => Some(class),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn request<'s>(statement: &'s Statement<'_>) -> Option<&'s str> {
+        let source = match statement {
+            Statement::ImportDeclaration(import) => &import.source,
+            Statement::ExportAllDeclaration(export) => &export.source,
+            Statement::ExportFromDeclaration(export) => &export.source,
+            _ => return None,
+        };
+        source
+            .value
+            .starts_with('.')
+            .then_some(source.value.as_str())
+    }
+
+    // What to hoist, by statement index.
+    let mut known = std::collections::HashMap::new();
+    let mut hoisted: Vec<(usize, Vec<String>, bool)> = vec![];
+    let mut requests: Vec<String> = vec![];
+    for (index, statement) in program.body.iter().enumerate() {
+        if let Some(request) = request(statement) {
+            if !requests.iter().any(|seen| seen == request) {
+                requests.push(request.to_string());
+            }
+        }
+        let exported = matches!(statement, Statement::ExportDeclaration(_));
+        if let Some(decl) = variables(statement) {
+            let found: Option<Vec<(String, Constant)>> = decl
+                .declarations
+                .iter()
+                .map(|declarator| match (&declarator.id, &declarator.init) {
+                    (BindingPattern::BindingIdentifier(id), Some(init)) => {
+                        constant(init, &known).map(|kind| (id.name.to_string(), kind))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if let Some(found) = found.filter(|found| !found.is_empty()) {
+                let names = found.iter().map(|(name, _)| name.clone()).collect();
+                known.extend(found);
+                hoisted.push((index, names, exported));
+            }
+        } else if let Some(class) = class(statement).filter(|class| runs_nothing(class)) {
+            let name = class
+                .id
+                .as_ref()
+                .map(|id| id.name.to_string())
+                .unwrap_or_default();
+            hoisted.push((index, vec![name], exported));
+        }
+    }
+    if hoisted.is_empty() && requests.is_empty() {
+        return;
+    }
+
+    // Spans of the parsed text point into it, not into the mapping, and the
+    // source map refuses positions past the mapping's end.
+    struct Unplaced;
+    impl<'a> VisitMut<'a> for Unplaced {
+        fn visit_span(&mut self, span: &mut Span) {
+            *span = Span::default();
+        }
+    }
+    let parse = |text: String| -> ArenaVec<'a, Statement<'a>> {
+        let text = allocator.alloc_str(&text);
+        let mut body = Parser::new(allocator, text, SourceType::mjs())
+            .parse()
+            .program
+            .body;
+        for statement in body.iter_mut() {
+            Unplaced.visit_statement(statement);
+        }
+        body
+    };
+    struct Fill<'a> {
+        value: Option<Expression<'a>>,
+    }
+    impl<'a> VisitMut<'a> for Fill<'a> {
+        fn visit_expression(&mut self, expr: &mut Expression<'a>) {
+            if matches!(expr, Expression::Identifier(id) if id.name == PLACEHOLDER) {
+                if let Some(value) = self.value.take() {
+                    *expr = value;
+                }
+                return;
+            }
+            walk_mut::walk_expression(self, expr);
+        }
+    }
+    let filled = |text: String, value: Expression<'a>| -> ArenaVec<'a, Statement<'a>> {
+        let mut statements = parse(text);
+        let mut fill = Fill { value: Some(value) };
+        for statement in statements.iter_mut() {
+            fill.visit_statement(statement);
+        }
+        statements
+    };
+
+    let ast = AstBuilder::new(allocator);
+    let old = std::mem::replace(&mut program.body, ArenaVec::new_in(&ast));
+    let mut body = ArenaVec::new_in(&ast);
+    let mut init = ArenaVec::new_in(&ast);
+    let mut definers = ArenaVec::new_in(&ast);
+    let mut declared = String::new();
+    let mut deps = String::new();
+    let mut aliased: Vec<String> = vec![];
+    let mut hoisted = hoisted.into_iter().peekable();
+    for (index, statement) in old.into_iter().enumerate() {
+        let alias = request(&statement).and_then(|request| {
+            (!aliased.iter().any(|seen| seen == request)).then(|| {
+                aliased.push(request.to_string());
+                (
+                    format!("__envio_dep_{}", aliased.len() - 1),
+                    request.to_string(),
+                )
+            })
+        });
+        if hoisted.peek().is_some_and(|(at, _, _)| *at == index) {
+            let (_, names, exported) = hoisted.next().expect("peeked");
+            let export = if exported { "export " } else { "" };
+            declared.push_str(&format!("{export}var {};\n", names.join(", ")));
+            let declaration = match statement {
+                Statement::VariableDeclaration(decl) => Declaration::VariableDeclaration(decl),
+                Statement::ClassDeclaration(class) => Declaration::ClassDeclaration(class),
+                Statement::ExportDeclaration(export) => export.unbox().declaration,
+                _ => unreachable!("hoisted statements are declarations"),
+            };
+            match declaration {
+                Declaration::VariableDeclaration(mut decl) => {
+                    for declarator in decl.declarations.iter_mut() {
+                        let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                            continue;
+                        };
+                        let value = declarator.init.take().expect("a constant initializer");
+                        init.extend(filled(format!("{} = {PLACEHOLDER};", id.name), value));
+                    }
+                }
+                Declaration::ClassDeclaration(mut class) => {
+                    let name = &names[0];
+                    class.r#type = ClassType::ClassExpression;
+                    definers.extend(filled(
+                        format!(
+                            "function __envio_define_{name}() {{ if ({name} === undefined) {name} = {PLACEHOLDER}; }}"
+                        ),
+                        Expression::ClassExpression(class),
+                    ));
+                    init.extend(parse(format!(
+                        "try {{ __envio_define_{name}(); }} catch {{}}"
+                    )));
+                    body.extend(parse(format!("__envio_define_{name}();")));
+                }
+                _ => unreachable!("hoisted statements are declarations"),
+            }
+            continue;
+        }
+        body.push(statement);
+        if let Some((alias, request)) = alias {
+            let request = serde_json::to_string(&request).expect("a string");
+            body.extend(parse(format!("import * as {alias} from {request};")));
+            deps.push_str(&format!("{alias}.{STATIC_INIT}?.();\n"));
+        }
+    }
+
+    let mut prelude = parse(format!(
+        "{declared}var {STATIC_INIT}_state;
+export function {STATIC_INIT}() {{
+  if ({STATIC_INIT}_state) return;
+  {STATIC_INIT}_state = 1;
+  {deps}}}
+{STATIC_INIT}();"
+    ));
+    // The constants and classes go at the end of `__envio_static`'s body.
+    let function = prelude.iter_mut().find_map(|statement| match statement {
+        Statement::ExportDeclaration(export) => match &mut export.declaration {
+            Declaration::FunctionDeclaration(func) => func.body.as_mut(),
+            _ => None,
+        },
+        _ => None,
+    });
+    if let Some(function) = function {
+        function.statements.extend(init);
+    }
+    prelude.extend(definers);
+    prelude.extend(body);
+    program.body = prelude;
 }
 
 struct Rewrite<'a> {
@@ -1029,22 +1338,26 @@ fn describe<'d>(
 mod tests {
     use super::*;
 
-    fn js(source: &str) -> String {
-        let out =
-            to_javascript(source, Path::new("src/mapping.ts"), false).expect("a readable mapping");
+    fn transformed(source: &str, legacy_nulls: bool, hoist: bool) -> String {
+        let out = transform(source, Path::new("src/mapping.ts"), legacy_nulls, hoist)
+            .expect("a readable mapping");
         out.split("//# sourceMappingURL=")
             .next()
             .unwrap()
             .to_string()
     }
 
+    // Each rewrite on its own; `hoisted` adds what `hoist_statics` does.
+    fn js(source: &str) -> String {
+        transformed(source, false, false)
+    }
+
     fn legacy_js(source: &str) -> String {
-        let out =
-            to_javascript(source, Path::new("src/mapping.ts"), true).expect("a readable mapping");
-        out.split("//# sourceMappingURL=")
-            .next()
-            .unwrap()
-            .to_string()
+        transformed(source, true, false)
+    }
+
+    fn hoisted(source: &str) -> String {
+        transformed(source, false, true)
     }
 
     #[test]
@@ -1097,6 +1410,62 @@ mod tests {
 \t}
 \treturn __envio_op.rem(bucket, 7);
 }
+"
+        );
+    }
+
+    // A class with a static initializer runs code when defined, and a global
+    // with a call for initializer runs in asc's start function too: both stay.
+    #[test]
+    fn hoists_classes_and_constant_globals() {
+        assert_eq!(
+            hoisted(
+                "import { Token } from \"./token\";
+export const ethAddress = \"0xEee\";
+const LIMIT: i32 = 10 * 6;
+const ZERO = BigInt.fromI32(0);
+export class Mapping {
+  bidwall: string;
+}
+class Registry {
+  static instance: Registry = new Registry();
+}
+export function f(): Token { return new Token(); }
+export * from \"./base\";"
+            ),
+            "export var ethAddress;
+var LIMIT;
+export var Mapping;
+var __envio_static_state;
+export function __envio_static() {
+\tif (__envio_static_state) return;
+\t__envio_static_state = 1;
+\t__envio_dep_0.__envio_static?.();
+\t__envio_dep_1.__envio_static?.();
+\tethAddress = \"0xEee\";
+\tLIMIT = __envio_op.mul(10, 6);
+\ttry {
+\t\t__envio_define_Mapping();
+\t} catch {}
+}
+__envio_static();
+function __envio_define_Mapping() {
+\tif (Mapping === undefined) Mapping = class Mapping {
+\t\tbidwall;
+\t};
+}
+import { Token } from \"./token\";
+import * as __envio_dep_0 from \"./token\";
+const ZERO = BigInt.fromI32(0);
+__envio_define_Mapping();
+class Registry {
+\tstatic instance = new Registry();
+}
+export function f() {
+\treturn new Token();
+}
+export * from \"./base\";
+import * as __envio_dep_1 from \"./base\";
 "
         );
     }

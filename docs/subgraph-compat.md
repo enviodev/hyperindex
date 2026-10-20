@@ -384,7 +384,10 @@ classes call `DataSource.create`. Consequences:
   other loader sees it: it strips types and decorators, routes `/` and `/=`
   through an integer-aware helper, retags `changetype<Foo>(x)` onto the
   generated class, and renames a `let` that redeclares a parameter (every
-  generated `try_` binding does). It emits an inline source map, so stack
+  generated `try_` binding does). A file's classes and constant-initialized
+  globals exist before any top-level code runs, as under asc: inside an import
+  cycle, a file evaluated first would otherwise meet them in their temporal
+  dead zone. It emits an inline source map, so stack
   traces name the mapping's own lines, and refuses — located — what it can't
   rewrite faithfully. The runtime injects the few AS builtin globals generated
   code uses (`changetype` = identity, `assert`), and covers what AS's standard
