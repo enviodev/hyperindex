@@ -341,6 +341,19 @@ export function missingGeneratedCode(root: string, dir: string): Error {
   );
 }
 
+/**
+ * A package install (`yarn`, `npm ci`, `pnpm install --frozen-lockfile`), which
+ * graphprotocol/block-oracle's `"codegen": "yarn && graph codegen"` begins with:
+ * the developer installs before envio starts, and envio runs no installer, whose
+ * lifecycle scripts would run with it.
+ */
+const INSTALL_STEP =
+  /^(?:(?:npx|corepack)\s+)?(?:yarn(?:\s+install)?|npm\s+(?:i|install|ci)|pnpm\s+(?:i|install)|bun\s+(?:i|install))(?:\s+--?[\w-]+(?:=\S+)?)*$/;
+
+function isInstall(step: string): boolean {
+  return INSTALL_STEP.test(step.trim());
+}
+
 const GRAPH_CODEGEN = /^(?:(?:npx|pnpm exec|pnpm|yarn|bunx)\s+)?graph\s+codegen\b/;
 
 /**
@@ -516,7 +529,7 @@ export function bundledCodegen(root: string, dir: string, manifestFile: string):
  */
 async function runOtherSteps(root: string): Promise<void> {
   for (const step of codegenSteps(root) ?? []) {
-    if (GRAPH_CODEGEN.test(step)) continue;
+    if (GRAPH_CODEGEN.test(step) || isInstall(step)) continue;
     try {
       await runScriptStep(root, step);
     } catch (error) {
@@ -630,6 +643,13 @@ async function buildGeneratedCode(
   try {
     let ranOwn = false;
     for (const step of codegenSteps(root) ?? ["graph codegen"]) {
+      if (isInstall(step)) {
+        info(
+          `Envio Subgraph skipped the codegen script step \`${step}\`: installing the project's dependencies is ` +
+            "done before envio starts.",
+        );
+        continue;
+      }
       if (!GRAPH_CODEGEN.test(step)) {
         try {
           await runScriptStep(root, step);
