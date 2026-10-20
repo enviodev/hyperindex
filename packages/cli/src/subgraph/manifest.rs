@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
-use super::errors::Report;
+use super::errors::{Finding, Report};
 use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
@@ -120,6 +120,76 @@ fn network_to_chain_id(network: &str) -> Option<u64> {
         return Some(chain_id);
     }
     Network::from_str(network).ok().map(|n| n.get_network_id())
+}
+
+/// The chains the network names no table knows were resolved to — by asking
+/// the RPC endpoint, or by the name they spell — or why asking failed.
+pub type NetworksFromRpc = BTreeMap<String, Result<u64, String>>;
+
+/// The known network a name spells in another case or with other separators
+/// (`hyperEVM`, `base_sepolia`, `baseSepolia`), with its chain id.
+pub fn network_spelled(network: &str) -> Option<(String, u64)> {
+    let mut kebab = String::new();
+    let mut previous: Option<char> = None;
+    for c in network.chars() {
+        if c.is_ascii_uppercase()
+            && previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit())
+        {
+            kebab.push('-');
+        }
+        kebab.push(if c == '_' {
+            '-'
+        } else {
+            c.to_ascii_lowercase()
+        });
+        previous = Some(c);
+    }
+    // `hyperEVM` is `hyperevm`, not `hyper-evm`; try the plain lowercase first.
+    [network.to_ascii_lowercase().replace('_', "-"), kebab]
+        .into_iter()
+        .filter(|candidate| candidate != network)
+        .find_map(|candidate| network_to_chain_id(&candidate).map(|id| (candidate, id)))
+}
+
+/// The `network:` values of the manifest's chain data sources and templates,
+/// each with the chain id the tables give it, if any. Non-EVM networks are
+/// left out: they are refused by name.
+pub fn chain_networks(yaml: &str) -> Vec<(String, Option<u64>)> {
+    let Ok(value) = serde_yaml::from_str::<Value>(yaml) else {
+        return vec![];
+    };
+    let mut networks: Vec<(String, Option<u64>)> = Vec::new();
+    for key in ["dataSources", "templates"] {
+        let Some(sources) = value.get(key).and_then(Value::as_sequence) else {
+            continue;
+        };
+        for source in sources {
+            let is_chain = matches!(
+                source.get("kind").and_then(Value::as_str),
+                Some("ethereum" | "ethereum/contract")
+            );
+            let Some(network) = source.get("network").and_then(Value::as_str) else {
+                continue;
+            };
+            if is_chain
+                && !NON_EVM_NETWORKS.iter().any(|(name, _)| *name == network)
+                && !networks.iter().any(|(name, _)| name == network)
+            {
+                networks.push((network.to_string(), network_to_chain_id(network)));
+            }
+        }
+    }
+    networks
+}
+
+/// The `network:` values of the manifest's chain data sources and templates
+/// that neither the tables nor the non-EVM list know.
+pub fn unknown_networks(yaml: &str) -> Vec<String> {
+    chain_networks(yaml)
+        .into_iter()
+        .filter(|(_, chain_id)| chain_id.is_none())
+        .map(|(network, _)| network)
+        .collect()
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -458,6 +528,15 @@ impl Manifest {
 /// Parses subgraph.yaml, collecting every unsupported/unknown finding instead of
 /// stopping at the first.
 pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
+    parse_with_networks(yaml, &NetworksFromRpc::new(), report)
+}
+
+/// `parse`, with the chains an RPC endpoint named for networks no table knows.
+pub fn parse_with_networks(
+    yaml: &str,
+    networks: &NetworksFromRpc,
+    report: &mut Report,
+) -> Option<Manifest> {
     let value: Value = match serde_yaml::from_str(yaml) {
         Ok(value) => value,
         Err(err) => {
@@ -541,6 +620,7 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
             &format!("dataSources[{idx}]"),
             false,
             &mut declares_eth_calls,
+            networks,
             report,
         ) {
             data_sources.push(ds);
@@ -554,6 +634,7 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
             &format!("templates[{idx}]"),
             true,
             &mut declares_eth_calls,
+            networks,
             report,
         ) {
             templates.push(ds);
@@ -581,6 +662,7 @@ fn parse_data_source(
     path: &str,
     is_template: bool,
     declares_eth_calls: &mut bool,
+    networks: &NetworksFromRpc,
     report: &mut Report,
 ) -> Option<DataSource> {
     let mut obj = Obj::new(raw, path, report)?;
@@ -658,24 +740,33 @@ fn parse_data_source(
 
     let network = obj.string("network");
     let chain_id = match (&network, kind) {
-        (Some(network), DataSourceKind::Contract) => match network_to_chain_id(network) {
-            Some(id) => Some(id),
-            None => {
-                match NON_EVM_NETWORKS
-                    .iter()
-                    .find(|(name, _)| name == network)
-                    .map(|(_, ecosystem)| *ecosystem)
-                {
-                    Some(ecosystem) => report.unindexable(
-                        format!("the {ecosystem} network \"{network}\""),
-                        non_evm_reason(ecosystem),
-                        where_("network"),
-                    ),
-                    None => report.unknown(format!("the network \"{network}\""), where_("network")),
+        (Some(network), DataSourceKind::Contract) => {
+            // What the endpoint serves comes first: graph-node indexes a
+            // network on the chain its configured provider serves.
+            match (network_to_chain_id(network), networks.get(network)) {
+                (_, Some(Ok(id))) => Some(*id),
+                (Some(id), _) => Some(id),
+                (None, asked) => {
+                    match NON_EVM_NETWORKS
+                        .iter()
+                        .find(|(name, _)| name == network)
+                        .map(|(_, ecosystem)| *ecosystem)
+                    {
+                        Some(ecosystem) => report.unindexable(
+                            format!("the {ecosystem} network \"{network}\""),
+                            non_evm_reason(ecosystem),
+                            where_("network"),
+                        ),
+                        None => report.push(Finding::UnknownNetwork {
+                            network: network.clone(),
+                            location: where_("network"),
+                            rpc_failure: asked.and_then(|asked| asked.clone().err()),
+                        }),
+                    }
+                    None
                 }
-                None
             }
-        },
+        }
         _ => None,
     };
 
@@ -1228,6 +1319,9 @@ templates:
                 network_to_chain_id("apechain"),
                 network_to_chain_id("pulsechain"),
                 network_to_chain_id("pulse"),
+                // Aliases the registry added in 0.8.7.
+                network_to_chain_id("arctest"),
+                network_to_chain_id("basesepolia"),
                 network_to_chain_id("not-a-chain"),
             ],
             [
@@ -1243,6 +1337,8 @@ templates:
                 Some(33139),
                 Some(369),
                 Some(369),
+                Some(5042002),
+                Some(84532),
                 None,
             ]
         );
@@ -1280,6 +1376,12 @@ templates:
             ("telos", 40),
             ("mantle-sepolia", 5003),
             ("pulse", 369),
+            // Slugs Sep 2026 repos deploy to hosted subgraph platforms with,
+            // checked against where their contracts are: stagezerolabs/stage0's
+            // launchpad factory is on RISE's testnet, Pratiikpy/ivaronix's
+            // registry on 0G's Galileo testnet.
+            ("rise-sepolia", 11155931),
+            ("0g-galileo", 16602),
             // Any chain by id, for one no host's slug list has.
             ("evm-9999991", 9999991),
         ];

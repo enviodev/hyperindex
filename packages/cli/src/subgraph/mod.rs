@@ -117,6 +117,13 @@ pub struct SubgraphRuntimeConfig {
     /// How far, per chain, a block handler that reads header fields trails the
     /// head: the runtime refuses to serve a header from inside that distance.
     pub block_header_lag: BTreeMap<u64, u32>,
+    /// Chains HyperSync doesn't serve. The runtime reads their block headers
+    /// and receipts from RPC alone, without first asking a host that has no
+    /// such chain.
+    pub rpc_only_chains: Vec<u64>,
+    /// Warnings the runtime logs at startup: what the translation left out
+    /// and why.
+    pub notices: Vec<String>,
     /// Set when envio wrote the manifest from the repo's template (§6d), so the
     /// runtime says so and the codegen script doesn't render it over again.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -965,6 +972,7 @@ fn contract_config(
     source: &mut DataSource,
     files: &HashMap<String, String>,
     usage: &usage::FieldUsage,
+    notices: &mut Vec<String>,
     report: &mut Report,
 ) -> ContractConfig {
     let abi_path = source
@@ -979,6 +987,27 @@ fn contract_config(
             .cloned()
     });
     let source_name = source.name.clone();
+
+    // A log holds at most four topics, the first the event signature's hash,
+    // so an event with more than three indexed parameters never decodes from
+    // one and graph-node skips its handler for every log (data_source.rs,
+    // "Skipping handler because the event parameters do not match").
+    source.event_handlers.retain(|handler| {
+        let indexed = abi::event_inputs(&handler.event, abi_json.as_deref())
+            .iter()
+            .filter(|input| input.indexed)
+            .count();
+        if indexed <= 3 {
+            return true;
+        }
+        notices.push(format!(
+            "Envio Subgraph: data source \"{source_name}\" → \"{}\" never runs: its event {} \
+             declares {indexed} indexed parameters, more than the three a log has topics for, so \
+             no log decodes as it. graph-node skips it for the same reason.",
+            handler.handler, handler.event
+        ));
+        false
+    });
 
     // An overloaded name needs a unique envio name as well as a spelled-out
     // signature: the generated routing keys off the name, and the runtime has
@@ -1185,6 +1214,131 @@ fn rpc_for_chain(rpc: &RpcSelection, chain_id: u64) -> RpcSelection {
     }
 }
 
+/// How long the one `eth_chainId` request per endpoint may take.
+const CHAIN_ID_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The chain `ENVIO_SUBGRAPH_RPC` serves, for each manifest network no table
+/// knows and each one whose table chain it doesn't serve, with a startup
+/// notice for the latter. graph-node indexes a network on whatever chain the
+/// providers configured for it serve; its docker-compose calls the one chain
+/// `mainnet` whatever it is. An endpoint that doesn't answer leaves a known
+/// name to its table.
+fn networks_from_rpc(
+    manifest_yaml: &str,
+    rpc: &RpcSelection,
+    notices: &mut Vec<String>,
+) -> manifest::NetworksFromRpc {
+    let networks = manifest::chain_networks(manifest_yaml);
+    if networks.is_empty() {
+        return manifest::NetworksFromRpc::new();
+    }
+    let answer = chain_id_served_by(rpc);
+    // graph-node runs a subgraph on one network; a manifest naming several
+    // keeps their table chains, and the one endpoint is refused over them.
+    let single = networks.len() == 1;
+    let mut resolved = manifest::NetworksFromRpc::new();
+    for (network, known) in networks {
+        match (known, &answer) {
+            (None, answer) => {
+                resolved.insert(network, answer.clone());
+            }
+            (Some(known), Ok(served)) if single && known != *served => {
+                notices.push(format!(
+                    "Envio Subgraph indexes the network \"{network}\" on chain {served}, the chain \
+                     {RPC_ENV_VAR} serves, not chain {known}, which The Graph's networks registry \
+                     (or Envio) calls \"{network}\": graph-node indexes a network on the chain its \
+                     configured provider serves. If chain {known} is meant, point {RPC_ENV_VAR} at \
+                     an endpoint of it."
+                ));
+                resolved.insert(network, Ok(*served));
+            }
+            _ => {}
+        }
+    }
+    resolved
+}
+
+/// Asks each endpoint in turn which chain it serves; the first answer wins.
+/// On a thread of its own, since translation also runs inside the CLI's async
+/// runtime, where blocking on another one isn't allowed.
+fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
+    let endpoints: Vec<(String, BTreeMap<String, String>)> = match rpc {
+        RpcSelection::Url(url) => vec![(url.clone(), BTreeMap::new())],
+        RpcSelection::Single(entry) => {
+            vec![(entry.url.clone(), entry.headers.clone().unwrap_or_default())]
+        }
+        RpcSelection::List(entries) => entries
+            .iter()
+            .map(|entry| (entry.url.clone(), entry.headers.clone().unwrap_or_default()))
+            .collect(),
+    };
+    let asked = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("couldn't start a runtime to ask {RPC_ENV_VAR}: {err}"))?;
+        runtime.block_on(async {
+            let mut failure = format!("found no endpoint in {RPC_ENV_VAR}");
+            for (url, headers) in &endpoints {
+                match eth_chain_id(url, headers).await {
+                    Ok(chain_id) => return Ok(chain_id),
+                    Err(err) => failure = unanswered(url, &err),
+                }
+            }
+            Err(failure)
+        })
+    })
+    .join();
+    asked.unwrap_or_else(|_| Err(format!("failed asking {RPC_ENV_VAR} for its chain id")))
+}
+
+fn unanswered(url: &str, err: &anyhow::Error) -> String {
+    let host = endpoint_host(url);
+    format!("asked {host} (eth_chainId) which chain it serves and got no answer: {err:#}")
+}
+
+/// The endpoint without its path or query, where providers put API keys.
+fn endpoint_host(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(parsed) => match (parsed.host_str(), parsed.port()) {
+            (Some(host), Some(port)) => format!("{}://{host}:{port}", parsed.scheme()),
+            (Some(host), None) => format!("{}://{host}", parsed.scheme()),
+            _ => RPC_ENV_VAR.to_string(),
+        },
+        Err(_) => RPC_ENV_VAR.to_string(),
+    }
+}
+
+async fn eth_chain_id(url: &str, headers: &BTreeMap<String, String>) -> Result<u64> {
+    let client = reqwest::Client::builder()
+        .timeout(CHAIN_ID_TIMEOUT)
+        .build()?;
+    let mut request = client.post(url).json(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_chainId",
+        "params": [],
+    }));
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    // reqwest's errors name the URL, path and query included, where providers
+    // put API keys; the host is named by the caller instead.
+    let body: serde_json::Value = request
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)?
+        .json()
+        .await
+        .map_err(reqwest::Error::without_url)?;
+    let result = body
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("{body}"))?;
+    u64::from_str_radix(result.trim_start_matches("0x"), 16)
+        .map_err(|_| anyhow!("\"{result}\" isn't a chain id"))
+}
+
 /// Builds the envio config a translated manifest indexes with.
 pub fn translate(
     manifest_yaml: &str,
@@ -1198,7 +1352,28 @@ pub fn translate(
     let mut report = Report::new();
     let usage = usage::scan(mapping_sources);
 
-    let Some(manifest) = manifest::parse(manifest_yaml, &mut report) else {
+    let rpc_parsed = rpc_env.map(parse_rpc_env);
+    let mut notices = Vec::new();
+    let mut networks = match &rpc_parsed {
+        Some(Ok(rpc)) => networks_from_rpc(manifest_yaml, rpc, &mut notices),
+        _ => manifest::NetworksFromRpc::new(),
+    };
+    // With no endpoint to ask, a name that spells a known network another way
+    // is read as that network, and startup says so.
+    if rpc_parsed.is_none() {
+        for network in manifest::unknown_networks(manifest_yaml) {
+            if let Some((known, chain_id)) = manifest::network_spelled(&network) {
+                notices.push(format!(
+                    "Envio Subgraph reads the network \"{network}\" as \"{known}\" (chain \
+                     {chain_id}). graph-node matches network names exactly; if \"{network}\" \
+                     is another chain, set {RPC_ENV_VAR} to an endpoint of it."
+                ));
+                networks.insert(network, Ok(chain_id));
+            }
+        }
+    }
+    let Some(manifest) = manifest::parse_with_networks(manifest_yaml, &networks, &mut report)
+    else {
         report.into_result()?;
         return Err(anyhow!("Failed to read subgraph.yaml"));
     };
@@ -1221,7 +1396,7 @@ pub fn translate(
 
     // Held back until the manifest and schema have been checked too, so a
     // mistyped endpoint doesn't hide what else this subgraph needs changed.
-    let (rpc, rpc_error) = match rpc_env.map(parse_rpc_env) {
+    let (rpc, rpc_error) = match rpc_parsed {
         Some(Ok(rpc)) => (Some(rpc), None),
         Some(Err(err)) => (None, Some(err)),
         None => (None, None),
@@ -1246,7 +1421,7 @@ pub fn translate(
         }
         contracts.push(GlobalContract {
             name: contract_name(source),
-            config: contract_config(source, files, &usage, &mut report),
+            config: contract_config(source, files, &usage, &mut notices, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -1304,7 +1479,7 @@ pub fn translate(
         if source.kind.is_file() {
             continue;
         }
-        let config = contract_config(source, files, &usage, &mut report);
+        let config = contract_config(source, files, &usage, &mut notices, &mut report);
         let ids = match source.chain_id {
             Some(id) => vec![id],
             None => template_chain_ids.clone(),
@@ -1487,6 +1662,14 @@ pub fn translate(
         }
     }
 
+    let rpc_only_chains: Vec<u64> = chains
+        .keys()
+        .copied()
+        .filter(|id| {
+            crate::config_parsing::hypersync_endpoints::get_default_hypersync_endpoint(*id).is_err()
+        })
+        .collect();
+
     let human_config = HumanConfig {
         base: BaseConfig {
             name: project_name.to_string(),
@@ -1535,6 +1718,8 @@ pub fn translate(
             rpc_urls,
             manifest_file: DEFAULT_MANIFEST.to_string(),
             block_header_lag,
+            rpc_only_chains,
+            notices,
             rendered_manifest: None,
             path_fixes: Vec::new(),
             build_network: None,
@@ -2450,6 +2635,27 @@ type Gravatar @entity {
             message.contains("names one endpoint, but this subgraph indexes 2 chains"),
             "unexpected error: {message}"
         );
+
+        // An endpoint that answers doesn't fold the two networks into its one
+        // chain: graph-node runs a subgraph on a single network, so the chain
+        // an endpoint decides is that network's alone.
+        let polygon = rpc_serving_chain(137);
+        let message = translate(
+            &two_chains,
+            SCHEMA,
+            "gravatar",
+            Some(&polygon),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .err()
+        .map(|err| format!("{err:#}"))
+        .unwrap_or_default();
+        assert!(
+            message.contains("names one endpoint, but this subgraph indexes 2 chains"),
+            "unexpected error: {message}"
+        );
     }
 
     // Only `dataSources` open a chain, so a template on any other network is
@@ -2553,6 +2759,246 @@ type Gravatar @entity {
         )]);
         SystemConfig::parse_subgraph(&yaml, SCHEMA, "gravatar", &env, &files, ".", &ambiguous())
             .expect("filecoin over RPC");
+    }
+
+    /// An RPC endpoint on a thread of its own that answers every request with
+    /// `chain_id`, as `eth_chainId` would.
+    pub(super) fn rpc_serving_chain(chain_id: u64) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a local port");
+        let url = format!("http://{}", listener.local_addr().expect("a local address"));
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut chunk).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                    let length = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+                let body = format!(r#"{{"jsonrpc":"2.0","id":1,"result":"0x{chain_id:x}"}}"#);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
+    }
+
+    // graph-node never looks a network name up: its operator binds the name to
+    // providers (`[chains.<name>]` in graph-node's config.toml) and the chain is
+    // whichever one they serve, so a self-hosted node can call a chain anything.
+    // A name no table here knows is, the same way, the chain ENVIO_SUBGRAPH_RPC
+    // serves.
+    #[test]
+    fn an_unknown_network_is_the_chain_its_rpc_serves() {
+        let yaml = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace("network: mainnet", "network: risechain");
+
+        let unknown = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .err()
+        .map(|err| format!("{err:#}"))
+        .unwrap_or_default();
+        assert!(
+            unknown.contains("doesn't know the network \"risechain\"")
+                && unknown.contains("ENVIO_SUBGRAPH_RPC=https://"),
+            "unexpected error: {unknown}"
+        );
+
+        let rpc = rpc_serving_chain(11155931);
+        let translation = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            Some(&rpc),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .expect("the network is the chain the RPC serves");
+        let chain = &translation.human_config.chains[0];
+        assert_eq!(
+            (chain.id, chain.rpc.clone()),
+            (11155931, Some(RpcSelection::Url(rpc)))
+        );
+    }
+
+    // graph-node matches a network name exactly, against the names its operator
+    // chose, and self-hosted nodes spell the registry's names their own way
+    // (`hyperEVM`, `base_sepolia`, `baseSepolia`, `polygon_amoy`). With no RPC
+    // to ask, such a name is read as the one it spells, and startup says so.
+    #[test]
+    fn reads_a_registry_name_spelled_another_way_as_that_network() {
+        let read: Vec<(u64, usize)> = ["hyperEVM", "base_sepolia", "baseSepolia", "polygon_amoy"]
+            .iter()
+            .map(|written| {
+                let yaml = MANIFEST
+                    .split("templates:")
+                    .next()
+                    .unwrap()
+                    .replace("network: mainnet", &format!("network: {written}"));
+                let translation = translate(
+                    &yaml,
+                    SCHEMA,
+                    "gravatar",
+                    None,
+                    ".",
+                    &HashMap::new(),
+                    &ambiguous(),
+                )
+                .unwrap();
+                (
+                    translation.human_config.chains[0].id,
+                    translation.runtime.notices.len(),
+                )
+            })
+            .collect();
+        assert_eq!(read, vec![(999, 1), (84532, 1), (84532, 1), (80002, 1)]);
+    }
+
+    // An endpoint that doesn't answer leaves the network unknown, and the error
+    // says what was asked.
+    #[test]
+    fn an_unknown_network_names_the_rpc_that_did_not_answer() {
+        let yaml = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace("network: mainnet", "network: risechain");
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a local port");
+        let message = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            Some(&format!("http://{closed}/v2/sekret-api-key")),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .err()
+        .map(|err| format!("{err:#}"))
+        .unwrap_or_default();
+        // The path is where providers put API keys, so it stays out of the error.
+        assert!(
+            message.contains("doesn't know the network \"risechain\"")
+                && message.contains(&format!(
+                    "asked http://{closed} (eth_chainId) which chain it serves and got no answer"
+                ))
+                && !message.contains("sekret-api-key"),
+            "unexpected error: {message}"
+        );
+    }
+
+    // A non-anonymous event with four indexed parameters needs five topics, and
+    // a log holds at most four, so no log decodes as it: graph-node skips the
+    // handler for every log with its topic0 (chain/ethereum/src/data_source.rs,
+    // "Skipping handler because the event parameters do not match the event
+    // signature"). Agentic-Trust-Layer/agent-indexer declares ERC-6909's
+    // Transfer that way, and envio's log decoder refused to start over it.
+    #[test]
+    fn drops_a_handler_for_an_event_no_log_can_carry() {
+        let manifest = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace(
+                "        - event: NewGravatar(uint256,address,string,string)\n          handler: handleNewGravatar",
+                "        - event: Transfer(indexed address,indexed address,indexed address,indexed uint256,uint256)\n          handler: handleTransfer\n        - event: NewGravatar(uint256,address,string,string)\n          handler: handleNewGravatar",
+            );
+        let files = HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            r#"[{"type":"event","name":"Transfer","anonymous":false,"inputs":[
+              {"name":"caller","type":"address","indexed":true},
+              {"name":"from","type":"address","indexed":true},
+              {"name":"to","type":"address","indexed":true},
+              {"name":"id","type":"uint256","indexed":true},
+              {"name":"amount","type":"uint256","indexed":false}]},
+              {"type":"event","name":"NewGravatar","anonymous":false,"inputs":[
+              {"name":"id","type":"uint256","indexed":false},
+              {"name":"owner","type":"address","indexed":false},
+              {"name":"displayName","type":"string","indexed":false},
+              {"name":"imageUrl","type":"string","indexed":false}]},
+              {"type":"event","name":"UpdatedGravatar","anonymous":false,"inputs":[
+              {"name":"id","type":"uint256","indexed":false},
+              {"name":"owner","type":"address","indexed":false},
+              {"name":"displayName","type":"string","indexed":false},
+              {"name":"imageUrl","type":"string","indexed":false}]}]"#
+                .to_string(),
+        )]);
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &files,
+            &ambiguous(),
+        )
+        .unwrap();
+        let events: Vec<String> = translation.human_config.contracts.as_ref().unwrap()[0]
+            .config
+            .events
+            .iter()
+            .map(|event| {
+                event
+                    .event
+                    .split('(')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect();
+        let handlers: Vec<String> = translation.runtime.manifest.data_sources[0]
+            .event_handlers
+            .iter()
+            .map(|handler| handler.handler.clone())
+            .collect();
+        assert_eq!(
+            (events, handlers, translation.runtime.notices.len()),
+            (
+                vec!["NewGravatar".to_string(), "UpdatedGravatar".to_string()],
+                vec![
+                    "handleNewGravatar".to_string(),
+                    "handleUpdatedGravatar".to_string()
+                ],
+                1
+            )
+        );
+        assert!(
+            translation.runtime.notices[0].contains("handleTransfer"),
+            "{}",
+            translation.runtime.notices[0]
+        );
     }
 
     #[test]
@@ -2743,6 +3189,59 @@ dataSources:
                 json.contains("\"mappingFile\": \"./src/gravity.ts\""),
             ),
             (true, true, true, true, true, true)
+        );
+    }
+
+    /// A Gravity project on disk on `network`, with `.env` holding `env`.
+    fn gravity_project(network: &str, env: &str) -> tempdir::TempDir {
+        let dir = tempdir::TempDir::new("envio-subgraph").unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("abis")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("abis/Gravity.json"), GRAVITY_ABI).unwrap();
+        fs::write(
+            root.join("src/gravity.ts"),
+            "export function handleNewGravatar() {}",
+        )
+        .unwrap();
+        fs::write(
+            root.join("schema.graphql"),
+            "type Gravatar @entity {\n  id: Bytes!\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", &format!("network: {network}")),
+        )
+        .unwrap();
+        fs::write(root.join(".env"), env).unwrap();
+        dir
+    }
+
+    // graph-node indexes a network on whatever chain the providers configured
+    // for it serve; its docker-compose names the one chain `mainnet` whatever it
+    // is, so a local subgraph says `network: mainnet` for an anvil node (31337),
+    // and Hedera's graph-node says it for Hedera (295). When ENVIO_SUBGRAPH_RPC
+    // serves another chain than the registry's for the name, that chain is
+    // indexed, and startup says so.
+    #[test]
+    fn indexes_the_chain_the_rpc_serves_when_the_registry_names_another() {
+        let parse = |network: &str, chain_id: u64| {
+            let rpc = super::tests::rpc_serving_chain(chain_id);
+            let project = gravity_project(network, &format!("ENVIO_SUBGRAPH_RPC={rpc}\n"));
+            let project_paths =
+                ParsedProjectPaths::new(project.path().to_str().unwrap(), "config.yaml").unwrap();
+            let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+            let chains: Vec<u64> = config.get_chains().iter().map(|chain| chain.id).collect();
+            let notices = config
+                .subgraph
+                .map(|subgraph| subgraph.notices)
+                .unwrap_or_default();
+            (chains, notices.len())
+        };
+        assert_eq!(
+            (parse("mainnet", 31337), parse("sepolia", 11155111)),
+            ((vec![31337], 1), (vec![11155111], 0))
         );
     }
 

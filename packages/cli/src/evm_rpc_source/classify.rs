@@ -67,6 +67,12 @@ static PUBLIC_NODE: LazyLock<Regex> =
 static HYPERLIQUID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"query exceeds max block range (\d+)").unwrap());
 
+// Avalanche coreth / subnet-evm: "requested too many blocks from 1 to 4096,
+// maximum is set to 2048"
+static AVALANCHE_RANGE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"requested too many blocks from \d+ to \d+, maximum is set to (\d+)").unwrap()
+});
+
 fn extract_positive_u64(re: &Regex, message: &str) -> Option<u64> {
     let n: u64 = re.captures(message)?.get(1)?.as_str().parse().ok()?;
     (n > 0).then_some(n)
@@ -113,6 +119,9 @@ pub fn suggested_block_interval_from_message(message: &str) -> Option<(u64, bool
         return Some((n, true));
     }
     if let Some(n) = extract_positive_u64(&HYPERLIQUID, message) {
+        return Some((n, true));
+    }
+    if let Some(n) = extract_positive_u64(&AVALANCHE_RANGE, message) {
         return Some((n, true));
     }
     None
@@ -166,6 +175,11 @@ mod tests {
             ),
             ("maximum block range: 2000", Some((2000, true))),
             ("query exceeds max block range 1000", Some((1000, true))),
+            // Avalanche's coreth and subnet-evm (Beam's chain, 4337).
+            (
+                "requested too many blocks from 1 to 4096, maximum is set to 2048",
+                Some((2048, true)),
+            ),
             // Not a range limit at all.
             (
                 "height is not available (requested height: 138913957, base height: 155251499)",

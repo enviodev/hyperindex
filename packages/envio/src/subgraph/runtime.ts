@@ -169,6 +169,8 @@ type SubgraphConfig = {
   /** Set when the manifest has a `graft:` block; the indexer ignores it. */
   graft?: { base: string; block: number };
   graftNotice?: string;
+  /** What the translation left out of the config and why, logged at startup. */
+  notices?: string[];
   timeseriesEntities?: string[];
   skipDuplicateEntities?: string[];
   aggregations?: SubgraphSchema["aggregations"];
@@ -180,6 +182,8 @@ type SubgraphConfig = {
   rpcUrls: string[];
   /** Per chain id, the reorg depth a block handler's header reads are held back by. */
   blockHeaderLag?: Record<number, number>;
+  /** Chains HyperSync doesn't serve: their headers and receipts come from RPC alone. */
+  rpcOnlyChains?: number[];
   /** Set when envio wrote the manifest from the repo's template, or ran the codegen steps that write it. */
   renderedManifest?: {
     script: string;
@@ -1179,6 +1183,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   unregisteredCreates.clear();
   announceWhereToQuery();
   if (config.graftNotice) warn(config.graftNotice);
+  for (const notice of config.notices ?? []) warn(notice);
   if (config.graft && process.env.ENVIO_SUBGRAPH_GRAFT_CHECK !== "off") {
     const ownStarts = config.dataSources.flatMap((source) =>
       source.startBlock === undefined ? [] : [source.startBlock],
@@ -1198,7 +1203,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const hit = registerCache.get(`envio_subgraph_eth_call\u0000${encoded}`);
     return hit && "value" in hit ? (hit.value as string) : undefined;
   });
-  const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {});
+  const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {}, config.rpcOnlyChains ?? []);
   const callSync = (effect: unknown, input: unknown, what: string) => {
     const scope = currentScope();
     void what;

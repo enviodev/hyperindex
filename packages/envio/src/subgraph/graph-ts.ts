@@ -717,6 +717,15 @@ function entriesOf<K, V>(map: TypedMap<K, V>): TypedMapEntry<K, V>[] {
   return (map as any)[MAP_ENTRIES];
 }
 
+/** A loaded entity whose schema declares a field called `entries`. */
+function hasEntriesField<K, V>(map: TypedMap<K, V>): boolean {
+  const entityType = (map as any)[ENTITY_TYPE];
+  return (
+    typeof entityType === "string" &&
+    currentScope().schema.entityFields[entityType]?.includes("entries") === true
+  );
+}
+
 /**
  * AssemblyScript's `==` on a `Bytes`, `BigInt` or `BigDecimal` key compares the
  * values, which is how Lido looks a log's topic up in a `TypedMap<Bytes, …>`
@@ -738,10 +747,21 @@ export class TypedMap<K, V> {
     Object.defineProperty(this, MAP_ENTRIES, { value: [], writable: true });
   }
 
+  // A loaded entity keeps graph-ts' prototype (`load()`'s `changetype<T | null>`
+  // isn't retagged), so this accessor stands where the generated one would
+  // for a schema field called `entries`, and answers as it would.
   get entries(): TypedMapEntry<K, V>[] {
+    if (hasEntriesField(this)) {
+      const stored = (this as unknown as Entity).get("entries");
+      return (stored === null ? null : valueToNative(stored)) as TypedMapEntry<K, V>[];
+    }
     return entriesOf(this);
   }
   set entries(value: TypedMapEntry<K, V>[]) {
+    if (hasEntriesField(this)) {
+      (this as unknown as Entity).set("entries", nativeToValue(value));
+      return;
+    }
     (this as any)[MAP_ENTRIES] = value;
   }
 

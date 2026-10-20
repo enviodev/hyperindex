@@ -50,9 +50,9 @@ graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 | Data source without `source.address` (ENS's `Resolver`) | graph-node matches it against every contract's logs; an address-less contract whose handlers register as wildcard. A log matching both it and an addressed data source runs both | ✅ |
 | `source.addresses` (a list; not a graph-node field) | read as graph-node reads it: its `Source` has no such field and ignores unknown keys, so the data source has no address and matches every emitter (wildcard). graph-cli only lets it through when a file data source skips manifest validation | ✅ (parity, not the list) |
 | Data source `endBlock` | past it the runtime runs none of that data source's handlers (graph-node's `has_expired`) while other data sources and template instances keep indexing; the chain's `end_block` is set only when every data source on the network has one and no template is on it (graph-node's `max_end_block` rule) | ✅ |
-| `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then the slugs other hosts use for chains the registry lacks (`host_networks.json`: filecoin, plasma-mainnet, manta-pacific-*, story, fluent, …), then `evm-<chain id>`, then Envio's own chain names. A chain HyperSync doesn't serve indexes over `ENVIO_SUBGRAPH_RPC` (which then needs an archive node: Filecoin RPCs refuse logs older than ~2 weeks) | ✅ |
-| Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
-| `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` is every log of the transaction, read on first access from HyperSync's logs of its block (one query per block, shared by the batch), with `eth_getTransactionReceipt` over `ENVIO_SUBGRAPH_RPC` where HyperSync can't answer (`receipts.ts`) | ✅ |
+| `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then the slugs other hosts use for chains the registry lacks (`host_networks.json`: filecoin, plasma-mainnet, manta-pacific-*, story, fluent, …), then `evm-<chain id>`, then Envio's own chain names. A name none of these know (a self-hosted graph-node's own, `risechain`) is the chain `ENVIO_SUBGRAPH_RPC` serves, asked once by `eth_chainId` — graph-node binds a network name to the providers its operator configured for it and indexes whatever chain they serve. With no endpoint set, a name that spells a known one in another case or with `_` or camelCase (`hyperEVM`, `base_sepolia`, `baseSepolia`) is read as it, with a startup notice. A chain HyperSync doesn't serve indexes over `ENVIO_SUBGRAPH_RPC` (which then needs an archive node: Filecoin RPCs refuse logs older than ~2 weeks), with no HyperSync token; its block handlers' timestamps and headers and its `event.receipt.logs` come from that RPC alone, the blocks of a batch fetched concurrently | ✅ |
+| Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper. An event the ABI gives more than three indexed parameters needs more topics than a log has, so graph-node never decodes a log as it and skips the handler; it is left out, with a startup warning | ✅ |
+| `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — from HyperSync, or from `eth_getTransactionReceipt` on a chain synced over RPC (§6b); `receipt.logs` is every log of the transaction, read on first access from HyperSync's logs of its block (one query per block, shared by the batch), or from the RPC receipt where HyperSync can't answer or the chain is synced over RPC (`receipts.ts`) | ✅ |
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
 | Several handlers on one event | one envio event, a registration per handler, run in manifest order (graph-node's `handlers_for_log`) | ✅ |
 | `topic0` on an anonymous event (Balancer's `LOG_CALL`, keyed on the called selector) | an envio event per `topic0` value, matched on that first topic and decoded from all of them (no signature topic). A `topic0` other than the signature's hash on an event the ABI doesn't declare anonymous, or one combined with `topic1`–`topic3`, → §7 error | ✅ |
@@ -211,7 +211,7 @@ like any other entity list.
 | `changetype<Bytes[]>(event.params.<structs>)` (`graph init`'s scaffold for a struct array) | each struct is read as the bytes of its element pointers, four per field. (Deviation, with a warning: graph-node's are wasm memory addresses; envio's are stand-ins of the same length) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
 | RPC traffic | contract calls, `getBalance`/`hasCode` and the block-timestamp fallback share one client, which keeps at most 16 requests in flight and queues the rest — preload runs a batch's handlers at once, and unbounded that was one connection per call. A slot is held at most the request deadline, so requests that never settle can't stall every call behind them |
-| Transient host failures | envio exits on a handler error, it has no batch retry, so every host op (calls, balances, timestamps, IPFS, Arweave, ENS) gets a per-attempt deadline and is asked again with exponential backoff on a timeout, a network error, a 429/5xx or a JSON-RPC rate limit — as graph-node does — and only a deterministic answer (a value, a revert, a definite miss) reaches the mapping. Any other failure, such as a 401, still stops the run |
+| Transient host failures | envio exits on a handler error, it has no batch retry, so every host op (calls, balances, timestamps, IPFS, Arweave, ENS) gets a per-attempt deadline and is asked again with exponential backoff on a timeout, a network error, a 429/5xx, a JSON-RPC rate limit or a node's internal error (-32603) — as graph-node does — and only a deterministic answer (a value, a revert, a definite miss) reaches the mapping. Any other failure, such as a 401, still stops the run |
 | Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: false`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts). Uncached on purpose: a block's timestamp is read exactly once, by that block's own handler invocation, so a persisted row per indexed block would be pure bloat with no reuse. In-memory memoization (which holds even with `cache: false`, §5) still covers what the bridge needs — replay rounds and the preload→execute transition reuse the fetched value |
 | `log.*` | `context.log`, buffered per replay round, flushed on success; `log.critical` throws (halts, as graph-node) |
 | `dataSource.create/createWithContext` | captured in register pass (below) |
@@ -599,15 +599,18 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
   call effects (`ethereum.call`/`try_`/`getBalance`/`hasCode`) use the same
   entries in order as a viem fallback transport. The entries are fallbacks
   for one chain, not per-chain endpoints: translation refuses a non-empty
-  value when the subgraph indexes more than one chain.
-- **`receipt: true` + RPC: envio's standard behavior, inherited.** The
-  HyperSync-only receipt scalars aren't servable via RPC —
-  they're outside `RpcTransactionField`. Envio's existing validation already
-  rejects `for: sync` entries when those fields are selected;
-  `for: fallback` entries are accepted as in any envio project, with the
-  same documented degradation: if the fallback ever activates, the receipt
-  scalars can't be served during the fallback window. Subgraph mode adds no
-  special handling.
+  value when the subgraph indexes more than one chain. At startup the endpoint
+  is asked its `eth_chainId`. graph-node indexes a network on whatever chain the
+  providers configured for it serve (its docker-compose calls the one chain
+  `mainnet` whatever it is, and a local subgraph says `network: mainnet` for an
+  anvil node), so an endpoint that serves another chain than the registry's for
+  the network's name decides the chain, with a startup notice naming both; one
+  that doesn't answer leaves the name to the tables.
+- **`receipt: true` + RPC: envio's standard behavior, inherited.** envio's
+  RPC source reads the receipt scalars from `eth_getTransactionReceipt`, so a
+  chain synced over RPC (`for: sync`, or a fallback that took over) serves
+  them as HyperSync does; `event.receipt.logs` comes from the same receipt.
+  Subgraph mode adds no special handling.
 - **Contract calls fail lazily but clearly.** Whether mappings call
   contracts isn't statically knowable in general — except declared
   `eth_calls` (1.2.0), which are declared precisely for this: those
