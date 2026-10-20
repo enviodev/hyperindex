@@ -450,6 +450,13 @@ async function loadMapping(
     return await runInScopeUntilSettled(scope, () => import(url));
   } catch (exn) {
     const message = exn instanceof Error ? exn.message : String(exn);
+    if (!existsSync(path.resolve(root, mappingFile))) {
+      throw new Error(
+        `Envio Subgraph failed to load the mapping ${mappingFile}: the manifest names it as a data source's ` +
+          `mapping file, and there is no such file under ${path.resolve(root)}. graph-cli refuses the manifest the ` +
+          'same way ("File does not exist").',
+      );
+    }
     // Only reachable when codegen couldn't run up front, so this reports why
     // rather than retrying: Node caches a failed resolution for the process.
     if (message.includes(generated) && !existsSync(generated)) {
