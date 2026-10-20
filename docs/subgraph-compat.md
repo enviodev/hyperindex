@@ -780,17 +780,24 @@ build does first.
   `postinstall`) counts like any other script: the developer's install runs
   it. Never one whose name says `deploy`, `publish`, `release`, `docker`,
   `test`, `lint`, `format`, `clean`, `remove`, `watch`, `serve` or `start`;
-  one that runs `docker`, `git`, `curl`, `wget`, `ssh`, `scp`, `rsync`, a
-  hosting CLI or `npm publish`, or a file whose source runs `graph deploy`;
-  one that runs a repo file that isn't there, or renders a template that
-  isn't.
+  one that runs `docker`, `git`, `curl`, `wget`, `ssh`, `scp` or `rsync`, a
+  command with a `deploy` or `publish` argument (`npm publish`, a hosting
+  CLI's `subgraph deploy`), or a file whose source runs `graph deploy` or
+  `subgraph deploy`; one whose program (`node ops/render.js`, `./build.sh`)
+  isn't in the repo, or that renders a template that isn't.
 - *The network picks it,* as it picks a render: with `ENVIO_SUBGRAPH_NETWORK`
   set, the writer whose name ends with it (`prepare:bsc`), that passes it
   (`NETWORK=matic`, `build-manifest.sh polygon`, `--network mainnet`), or that
   reads it from a variable (`${NETWORK:-mainnet}`, `$CHAIN`; envio sets it).
-  Of several, the one that runs the fewest commands (Polymarket's
-  `templatify:matic`, not `prepare:matic`, which runs codegen after it), else
-  none. With no network picked, a writer runs only when it is the only one.
+  Of several, the one that writes the manifest itself — it names the file, or
+  runs a repo file that does (FilOzone's `generate:yaml:mainnet`, not
+  `generate:constants:mainnet`; the network subgraph's `prepare:mainnet`, not
+  the `prep:addresses:mainnet` it runs first) — and doesn't send its output to
+  another manifest (Reserve's `parse:fork --output subgraph.fork.yaml`); then
+  the one that runs the fewest commands (Polymarket's `templatify:matic`, not
+  `prepare:matic`, which runs codegen after it); else none. Scripts that run
+  the same commands (euler's `build:mainnet` runs `prepare:mainnet`, then
+  `graph build`) count once. With no network picked, a writer runs only when it is the only one.
   Any other case is the error above, saying why none ran.
 - *What runs:* the script's commands up to its first graph-cli step, with
   `npm run <script>` (`yarn <script>`, a workspace-wide run) read as that

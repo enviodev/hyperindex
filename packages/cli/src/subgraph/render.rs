@@ -661,6 +661,8 @@ struct Writer {
     /// Whether running it can write the manifest: not when a file it reads
     /// isn't in the repo.
     runnable: bool,
+    /// Whether the error names it: not when it only runs another writer.
+    named: bool,
 }
 
 impl Writer {
@@ -983,6 +985,7 @@ fn analyze(
         step: script.to_string(),
         inlined,
         runnable: true,
+        named: true,
     };
     let Some(steps) = parse_steps(script) else {
         return mentions.then(|| Err(writer(Vec::new())));
@@ -1854,7 +1857,7 @@ fn run_codegen_prelude(
 }
 
 /// One command of a package.json script, as the package manager runs it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Leaf {
     cwd: PathBuf,
     /// The variables an `X=y npm run <script>` call sets for the script.
@@ -2025,9 +2028,7 @@ const NOT_A_BUILD: &[&str] = &[
 ];
 
 /// Commands a manifest build doesn't need: a script that runs one isn't run.
-const NOT_A_RENDER: &[&str] = &[
-    "docker", "git", "curl", "wget", "ssh", "scp", "rsync",
-];
+const NOT_A_RENDER: &[&str] = &["docker", "git", "curl", "wget", "ssh", "scp", "rsync"];
 
 fn names_more_than_a_build(name: &str) -> bool {
     name.to_lowercase()
@@ -2035,42 +2036,63 @@ fn names_more_than_a_build(name: &str) -> bool {
         .any(|part| NOT_A_BUILD.contains(&part))
 }
 
+/// A stage's words, past variable assignments.
+fn command_words(stage: &Stage) -> Vec<String> {
+    stage
+        .words
+        .iter()
+        .skip_while(|word| assignment(word).is_some())
+        .filter_map(literal)
+        .collect()
+}
+
 fn runs_more_than_a_render(leaf: &Leaf) -> bool {
     let steps = parse_steps(&leaf.text).unwrap_or_default();
     let runs_tool = steps.iter().flat_map(|step| &step.stages).any(|stage| {
-        let words: Vec<String> = stage
-            .words
-            .iter()
-            .filter(|word| assignment(word).is_none())
-            .filter_map(literal)
-            .collect();
+        let words = command_words(stage);
         let tool = words
             .first()
             .map(|word| word.rsplit('/').next().unwrap_or(word).to_string());
+        // `npm publish`, and a hosting CLI's `… subgraph deploy`.
         tool.as_deref()
             .is_some_and(|tool| NOT_A_RENDER.contains(&tool))
-            || matches!(
-                (tool.as_deref(), words.get(1).map(String::as_str)),
-                (Some("npm" | "yarn" | "pnpm"), Some("publish"))
-            )
+            || words
+                .iter()
+                .any(|word| matches!(word.as_str(), "deploy" | "publish"))
     });
-    runs_tool || runs_a_file_mentioning(&leaf.cwd, &steps, &["graph deploy"])
+    runs_tool || runs_a_file_mentioning(&leaf.cwd, &steps, &["graph deploy", "subgraph deploy"])
 }
 
-/// A repo file the command runs (`node ops/render-subgraph-conf.js`,
-/// `./build.sh`) that isn't there.
+/// The repo file a command runs (`node ops/render-subgraph-conf.js`,
+/// `./build.sh`, `yarn ts-node config/index.ts`) isn't there. Its other
+/// arguments may well be files an earlier step writes.
 fn runs_a_missing_file(leaf: &Leaf) -> bool {
     const EXTENSIONS: &[&str] = &[".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".sh"];
-    lex(&leaf.text).iter().any(|token| {
-        let Tok::Word(word) = token else {
-            return false;
+    const RUNNERS: &[&str] = &[
+        "node",
+        "ts-node",
+        "tsx",
+        "bun",
+        "sh",
+        "bash",
+        "npx",
+        "yarn",
+        "pnpm",
+        "exec",
+        "cross-env",
+        "env",
+    ];
+    let steps = parse_steps(&leaf.text).unwrap_or_default();
+    steps.iter().flat_map(|step| &step.stages).any(|stage| {
+        let words = command_words(stage);
+        let program = words.iter().find(|word| !RUNNERS.contains(&word.as_str()));
+        let file = match program {
+            Some(program) if program.contains('/') && !program.starts_with('-') => Some(program),
+            _ => words.iter().find(|word| {
+                !word.contains("://") && EXTENSIONS.iter().any(|ext| word.ends_with(ext))
+            }),
         };
-        let Some(text) = literal(word) else {
-            return false;
-        };
-        let file = text.starts_with("./")
-            || (!text.contains("://") && EXTENSIONS.iter().any(|ext| text.ends_with(ext)));
-        file && assignment(word).is_none() && !leaf.cwd.join(&text).exists()
+        file.is_some_and(|file| !Path::new(file).is_absolute() && !leaf.cwd.join(file).exists())
     })
 }
 
@@ -2140,7 +2162,7 @@ fn pick_writer(target: &Path, network: Option<&str>) -> Pick {
     let Some(dir) = dirs.first() else {
         return Pick::Nothing;
     };
-    let candidates: Vec<Candidate> = writers
+    let mut candidates: Vec<Candidate> = writers
         .iter()
         .filter(|writer| writer.dir == *dir && writer.runnable)
         .filter(|writer| !names_more_than_a_build(&writer.name))
@@ -2159,6 +2181,19 @@ fn pick_writer(target: &Path, network: Option<&str>) -> Pick {
             })
         })
         .collect();
+    // euler's `build:mainnet` runs `pnpm prepare:mainnet && graph build`: the
+    // same commands as `prepare:mainnet`, which is the one kept.
+    candidates.sort_by_key(|candidate| candidate.writer.inlined.len());
+    let mut seen: Vec<Vec<Leaf>> = Vec::new();
+    candidates.retain(|candidate| {
+        let new = !seen.contains(&candidate.commands.leaves);
+        seen.push(candidate.commands.leaves.clone());
+        new
+    });
+    let manifest_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
     let names = |candidates: &[&Candidate]| {
         candidates
             .iter()
@@ -2192,16 +2227,48 @@ fn pick_writer(target: &Path, network: Option<&str>) -> Pick {
                     builds_for(&candidate.writer.name, &candidate.commands, network)
                 })
                 .collect();
-            // Polymarket's `templatify:matic` only writes the manifest;
-            // `prepare:matic` runs codegen after it.
-            let fewest = matching
-                .iter()
-                .map(|candidate| candidate.commands.leaves.len())
-                .min();
+            // The Graph's network subgraph: `prepare:mainnet` writes the
+            // manifest (`mustache … > subgraph.yaml`) after
+            // `prep:addresses:mainnet`, which writes only addresses.ts. Then
+            // the narrowest: Polymarket's `templatify:matic` only writes the
+            // manifest; `prepare:matic` runs codegen after it.
+            // FilOzone's `generate:yaml:mainnet` runs a file that writes
+            // subgraph.yaml, `generate:constants:mainnet` one that doesn't;
+            // Reserve's `parse:fork` passes `--output subgraph.fork.yaml`.
+            let rank = |candidate: &Candidate| {
+                let leaves = &candidate.commands.leaves;
+                let writes_it = leaves.iter().any(|leaf| {
+                    leaf.text.contains(&manifest_name)
+                        || runs_a_file_mentioning(
+                            &leaf.cwd,
+                            &parse_steps(&leaf.text).unwrap_or_default(),
+                            &[&manifest_name],
+                        )
+                });
+                let another = |text: &str| {
+                    (text.ends_with(".yaml") || text.ends_with(".yml"))
+                        && Path::new(text).file_name() != Some(std::ffi::OsStr::new(&manifest_name))
+                };
+                let names_another = leaves.iter().any(|leaf| {
+                    let tokens = lex(&leaf.text);
+                    tokens.windows(2).any(|pair| match pair {
+                        [Tok::Op(">" | ">>"), Tok::Word(word)] => {
+                            literal(word).is_some_and(|text| another(&text))
+                        }
+                        [Tok::Word(flag), Tok::Word(word)] => {
+                            matches!(literal(flag).as_deref(), Some("--output" | "-o" | "--out"))
+                                && literal(word).is_some_and(|text| another(&text))
+                        }
+                        _ => false,
+                    })
+                });
+                (!writes_it, names_another, leaves.len())
+            };
+            let best = matching.iter().map(|candidate| rank(candidate)).min();
             let narrowest: Vec<&Candidate> = matching
                 .iter()
                 .copied()
-                .filter(|candidate| Some(candidate.commands.leaves.len()) == fewest)
+                .filter(|candidate| Some(rank(candidate)) == best)
                 .collect();
             match narrowest.as_slice() {
                 [one] => Pick::Run(Box::new((*one).clone())),
@@ -2588,6 +2655,7 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
                             name,
                             dir: dir.clone(),
                             runnable: false,
+                            named: true,
                         }),
                         None => found.push(plan),
                     }
@@ -2599,11 +2667,14 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
         // `publish-graph:gnosis` only runs `render-subgraph-config:gnosis`,
         // the script that writes the manifest: that one is named.
         let writer_names: Vec<String> = raw_writers.iter().map(|w| w.name.clone()).collect();
-        writers.extend(raw_writers.into_iter().filter(|writer| {
-            !writer
-                .inlined
-                .iter()
-                .any(|name| *name != writer.name && writer_names.contains(name))
+        writers.extend(raw_writers.into_iter().map(|writer| {
+            Writer {
+                named: !writer
+                    .inlined
+                    .iter()
+                    .any(|name| *name != writer.name && writer_names.contains(name)),
+                ..writer
+            }
         }));
         // zora's `codegen` runs `yarn gen-yaml-config`, the script that
         // renders: the one that writes the manifest itself is the plan.
@@ -2768,6 +2839,7 @@ pub fn unrepeatable_writers(target: &Path, network: Option<&str>) -> Option<Stri
     let target = absolute(target);
     let manifest_name = target.file_name()?.to_string_lossy().to_string();
     let (_, writers) = scan(&target);
+    let writers: Vec<&Writer> = writers.iter().filter(|writer| writer.named).collect();
     if writers.is_empty() {
         return None;
     }

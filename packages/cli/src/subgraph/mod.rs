@@ -4470,6 +4470,107 @@ type Renewal implements Event @entity {
         );
     }
 
+    // Of the scripts that build for the network picked, the one that writes
+    // the manifest runs:
+    // - The Graph's network subgraph: `prepare:mainnet` runs
+    //   `prep:addresses:mainnet` (which writes only addresses.ts, and the
+    //   generatedAddresses.json input) before rendering the manifest itself;
+    // - Reserve's `parse:fork` passes `--output subgraph.fork.yaml`;
+    // - FilOzone's `generate:yaml:mainnet` runs a file that writes
+    //   subgraph.yaml, `generate:constants:mainnet` one that doesn't.
+    #[test]
+    fn runs_the_script_that_writes_the_manifest_of_those_for_the_network() {
+        let project = |files: &[(&str, &str)]| {
+            let dir = tempdir::TempDir::new("envio-subgraph-writer-pick").unwrap();
+            write_gravity(dir.path(), "subgraph.template.yaml");
+            fs::write(
+                dir.path().join("subgraph.template.yaml"),
+                GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+            )
+            .unwrap();
+            for (file, text) in files {
+                let path = dir.path().join(file);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, text).unwrap();
+            }
+            fs::write(dir.path().join(".env"), "ENVIO_SUBGRAPH_NETWORK=mainnet\n").unwrap();
+            dir
+        };
+        let picked = |dir: &tempdir::TempDir| {
+            let project_paths =
+                ParsedProjectPaths::new(dir.path().to_str().unwrap(), "config.yaml").unwrap();
+            match SystemConfig::parse_from_project_files(&project_paths) {
+                Ok(config) => config.subgraph.unwrap().rendered_manifest.unwrap().script,
+                Err(err) => format!("{err:#}"),
+            }
+        };
+        let network = project(&[
+            (
+                "config/addresses.sh",
+                "echo \"s/network: NETWORK/network: $1/\" > config/generatedAddresses.sed\n",
+            ),
+            (
+                "config/addresses.template.ts",
+                "export const NETWORK = \"X\";\n",
+            ),
+            (
+                "package.json",
+                r#"{"scripts": {
+  "prep:addresses:mainnet": "sh config/addresses.sh mainnet && sed s/X/mainnet/ ./config/addresses.template.ts > ./config/addresses.ts",
+  "prep:addresses:arbitrum": "sh config/addresses.sh arbitrum-one && sed s/X/arbitrum/ ./config/addresses.template.ts > ./config/addresses.ts",
+  "prepare:mainnet": "yarn prep:addresses:mainnet && sed -f ./config/generatedAddresses.sed subgraph.template.yaml > subgraph.yaml && graph codegen",
+  "prepare:arbitrum": "yarn prep:addresses:arbitrum && sed -f ./config/generatedAddresses.sed subgraph.template.yaml > subgraph.yaml && graph codegen"
+}}"#,
+            ),
+        ]);
+        let reserve = project(&[
+            (
+                "scripts/parse.sh",
+                "out=subgraph.yaml; [ \"$2\" = --output ] && out=$3\nsed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > $out\n",
+            ),
+            (
+                "package.json",
+                r#"{"scripts": {
+  "parse:fork": "sh scripts/parse.sh mainnet --output subgraph.fork.yaml",
+  "parse:mainnet": "sh scripts/parse.sh mainnet",
+  "parse:base": "sh scripts/parse.sh base"
+}}"#,
+            ),
+        ]);
+        let filoz = project(&[
+            (
+                "scripts/gen-config.sh",
+                "sed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > subgraph.yaml\n",
+            ),
+            (
+                "scripts/gen-constants.sh",
+                "sed s/X/$1/ src/constants.template.ts > src/constants.ts\n",
+            ),
+            (
+                "src/constants.template.ts",
+                "export const NETWORK = \"X\";\n",
+            ),
+            (
+                "package.json",
+                r#"{"scripts": {
+  "generate:constants:mainnet": "sh scripts/gen-constants.sh mainnet",
+  "generate:constants:calibration": "sh scripts/gen-constants.sh calibration",
+  "generate:yaml:mainnet": "sh scripts/gen-config.sh mainnet",
+  "generate:yaml:calibration": "sh scripts/gen-config.sh calibration"
+}}"#,
+            ),
+        ]);
+
+        assert_eq!(
+            (picked(&network), picked(&reserve), picked(&filoz)),
+            (
+                "prepare:mainnet".to_string(),
+                "parse:mainnet".to_string(),
+                "generate:yaml:mainnet".to_string()
+            )
+        );
+    }
+
     // A script that fails leaves no manifest behind: the shell had already
     // created the file its `>` names.
     #[test]
