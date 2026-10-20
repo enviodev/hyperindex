@@ -157,6 +157,10 @@ pub struct FieldType {
     /// Non-null at the top: graph-node refuses to save the entity without it.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
+    /// A flat list of scalars whose elements may be null (`[String]`), stored
+    /// as a list of non-null ones.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub nullable_elements: bool,
 }
 
 fn directive_name<'a, 'b>(directive: &'a Directive<'b, String>) -> &'a str {
@@ -227,6 +231,14 @@ fn is_list(wrappers: &[Wrapper]) -> bool {
     wrappers.contains(&Wrapper::List)
 }
 
+/// `[T]` or `[T]!`: one list, its elements nullable.
+fn has_nullable_flat_elements(wrappers: &[Wrapper]) -> bool {
+    matches!(
+        wrappers,
+        [Wrapper::List] | [Wrapper::NonNull, Wrapper::List]
+    )
+}
+
 fn non_null_elements(wrappers: &[Wrapper]) -> Vec<Wrapper> {
     let mut out = Vec::with_capacity(wrappers.len() + 1);
     for (index, wrapper) in wrappers.iter().enumerate() {
@@ -244,7 +256,7 @@ fn unstorable_list(base: &str, wrappers: &[Wrapper]) -> Option<&'static str> {
         *wrapper == Wrapper::List && wrappers.get(index + 1) != Some(&Wrapper::NonNull)
     });
     if nullable_element {
-        Some("lists whose elements can be null, like [String]")
+        Some("nested lists whose elements can be null, like [[Int!]]")
     } else if is_list(wrappers) && base == "Timestamp" {
         Some("lists of Timestamp")
     } else {
@@ -402,6 +414,8 @@ fn render_fields(
 
         let (base, wrappers) = unwrap_type(&field.field_type);
         let base = interfaces.resolve(base);
+        let nullable_elements =
+            !entity_names.contains(&base) && has_nullable_flat_elements(&wrappers);
 
         translation
             .entity_field_types
@@ -420,6 +434,7 @@ fn render_fields(
                     derived_from: derived_from.clone(),
                     list: is_list(&wrappers),
                     required: wrappers.first() == Some(&Wrapper::NonNull),
+                    nullable_elements,
                 },
             );
 
@@ -474,7 +489,10 @@ fn render_fields(
         // The original Uniswap v2 schema, and most of its forks, declare
         // `mints: [Mint]!`. A list of entities holds their ids, which a mapping
         // never leaves null, so its elements are stored as the ids they are.
-        let wrappers = if entity_names.contains(&base) {
+        // A flat list of scalars whose elements may be null (QuickSwap's
+        // `whitelist: [String]`) is stored the same way, and the runtime
+        // refuses a save that puts a null in it.
+        let wrappers = if entity_names.contains(&base) || nullable_elements {
             non_null_elements(&wrappers)
         } else {
             wrappers
@@ -1159,6 +1177,7 @@ type Transfer @entity {
                     derived_from: Some("domain".to_string()),
                     list: false,
                     required: false,
+                    nullable_elements: false,
                 }),
             )
         );
@@ -1258,6 +1277,41 @@ type Transfer implements DomainEvent @entity {
                id: ID!\n  \
                domain: Domain! @index\n\
              }"
+        );
+    }
+
+    // QuickSwap's `Token.whitelist: [String]`: graph-node stores the nulls too;
+    // the runtime refuses a save that has one.
+    #[test]
+    fn stores_a_flat_scalar_list_with_nullable_elements_as_non_null() {
+        let (translation, report) = translate_ok(
+            r#"
+type Token @entity {
+  id: ID!
+  whitelist: [String]
+  amounts: [BigInt]!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        let flags: Vec<(String, bool)> = translation.entity_field_types["Token"]
+            .iter()
+            .map(|(name, field)| (name.clone(), field.nullable_elements))
+            .collect();
+        assert_eq!(
+            (translation.text.as_str(), flags),
+            (
+                "type Token {\n  \
+                   id: ID!\n  \
+                   whitelist: [String!]\n  \
+                   amounts: [BigInt!]!\n\
+                 }",
+                vec![
+                    ("amounts".to_string(), true),
+                    ("id".to_string(), false),
+                    ("whitelist".to_string(), true),
+                ],
+            )
         );
     }
 

@@ -357,7 +357,7 @@ type Token @entity {
 `,
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support lists whose elements can be null, like [String] yet.",
+      ~headline="Envio Subgraph doesn't support nested lists whose elements can be null, like [[Int!]] yet.",
       ~location="schema.graphql → Token.grid",
     )
   })

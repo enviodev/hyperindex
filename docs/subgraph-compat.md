@@ -106,7 +106,11 @@ off the entity schema, §4; a JS date holds milliseconds, so a value's last
 three digits read back as zeros where graph-node keeps them — block times are
 whole seconds, so timeseries and `block.timestamp`-derived values are exact), stored entity lists → `[String!]!` id arrays
 (also when written with nullable elements, `[Mint]!` as Uniswap v2 forks do:
-a mapping stores ids there, never nulls),
+a mapping stores ids there, never nulls), a flat scalar list with nullable
+elements (`whitelist: [String]`, QuickSwap) → `[String!]` — graph-node
+stores a null element too, envio's store can't, so a save that puts one there
+fails with a §7 error naming the entity and field (nested ones, `[[Int!]]`,
+are refused at translation),
 `_Schema_ @fulltext` stripped, and every `@derivedFrom` field → `[T!]!`
 whatever nullability it was written with, including the one-to-one
 `Registration @derivedFrom(...)` the ENS subgraph uses. The lookup is the
