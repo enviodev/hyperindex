@@ -575,7 +575,13 @@ the call sets bound in them, as a shell passes them on: Aave's
 `"deploy:hosted:mainnet-v3": "VERSION=v3 BLOCKCHAIN=v3 NETWORK=mainnet env-cmd
 npm run prepare:subgraph"` renders `./config/mainnet-v3.json` into
 `./templates/v3.subgraph.template.yaml` and copies `schemas/v3.schema.graphql`
-in. A script that only calls another one that renders is that one. A
+in. A workspace-wide step (`yarn workspaces run <script>`, `npm run <script>
+--workspaces`, `pnpm -r run <script>`, `lerna run`, `turbo run`) is read as
+that script of every workspace package that has it, each in its own
+directory; such a plan is preferred, since it also renders what the mappings
+import from other packages (sushiswap's root `prepare:matic` renders
+`packages/constants/index.ts` with the manifest). A script that only calls
+another one that renders is that one. A
 Makefile's targets count as scripts too (`make <target>`, recipe lines
 chained with `&&`, `$(network)` read as the variable `make target
 network=base` sets, with the Makefile's `network ?= …` as its default):

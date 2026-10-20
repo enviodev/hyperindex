@@ -264,6 +264,9 @@ struct Stage {
 struct Step {
     stages: Vec<Stage>,
     after_failure: bool,
+    /// The package directory it runs in, when a workspace-wide script runs it
+    /// in another package than the plan's.
+    cwd: Option<PathBuf>,
 }
 
 fn parse_steps(script: &str) -> Option<Vec<Step>> {
@@ -318,6 +321,7 @@ fn parse_steps(script: &str) -> Option<Vec<Step>> {
                     steps.push(Step {
                         stages: std::mem::replace(&mut stages, vec![Stage::default()]),
                         after_failure,
+                        cwd: None,
                     });
                 }
                 after_failure = op == "||";
@@ -330,6 +334,7 @@ fn parse_steps(script: &str) -> Option<Vec<Step>> {
         steps.push(Step {
             stages,
             after_failure,
+            cwd: None,
         });
     }
     Some(steps)
@@ -388,6 +393,13 @@ enum Command {
         name: String,
         env: Vec<(String, Word)>,
     },
+    /// `yarn workspaces run <script>` (`npm run <script> --workspaces`, `pnpm
+    /// -r run <script>`, `lerna run`, `turbo run`): that script of every
+    /// workspace package that has it, each in its own directory.
+    FanOut {
+        name: String,
+        env: Vec<(String, Word)>,
+    },
     Other(String),
 }
 
@@ -407,6 +419,37 @@ fn assignment(word: &Word) -> Option<(String, Word)> {
     let mut rest = vec![Part::Lit(value.to_string())];
     rest.extend(word[1..].iter().cloned());
     Some((name.to_string(), rest))
+}
+
+/// The script a workspace-wide command runs: `yarn workspaces run X`, `yarn
+/// workspaces foreach [-A …] run X`, `lerna run X`, `turbo run X`, `pnpm -r
+/// [run] X`.
+fn fan_out_script(tool: &str, words: &[&Word]) -> Option<String> {
+    let texts: Vec<String> = words.iter().filter_map(|word| literal(word)).collect();
+    let after = |marker: &str| {
+        texts
+            .iter()
+            .position(|text| text == marker)
+            .and_then(|at| texts[at + 1..].iter().find(|text| !text.starts_with('-')))
+            .cloned()
+    };
+    match tool {
+        "yarn" => after("run"),
+        "lerna" | "turbo" => after("run"),
+        "pnpm"
+            if texts
+                .iter()
+                .any(|text| text == "-r" || text == "--recursive") =>
+        {
+            after("run").or_else(|| {
+                texts[1..]
+                    .iter()
+                    .find(|text| !text.starts_with('-'))
+                    .cloned()
+            })
+        }
+        _ => None,
+    }
 }
 
 fn classify(words: &[Word]) -> Command {
@@ -454,6 +497,24 @@ fn classify(words: &[Word]) -> Command {
                         words.remove(0);
                     }
                 }
+            }
+            ("yarn", Some("workspaces")) | ("lerna" | "turbo", Some("run")) | ("pnpm", _)
+                if fan_out_script(&name, &words).is_some() =>
+            {
+                return Command::FanOut {
+                    name: fan_out_script(&name, &words).expect("checked"),
+                    env,
+                };
+            }
+            ("npm", Some("run" | "run-script"))
+                if words.iter().any(|word| {
+                    matches!(literal(word).as_deref(), Some("--workspaces" | "-ws"))
+                }) =>
+            {
+                return match words.get(2).and_then(|word| literal(word)) {
+                    Some(name) => Command::FanOut { name, env },
+                    None => Command::Other("npm run --workspaces".to_string()),
+                };
             }
             ("npm" | "pnpm" | "yarn" | "bun", Some("run" | "run-script")) => {
                 return match words.get(2).and_then(|word| literal(word)) {
@@ -628,6 +689,7 @@ fn inline_scripts(
     bindings: &BTreeMap<String, String>,
     depth: usize,
     names: &mut Vec<String>,
+    dir: &Path,
 ) -> Vec<Step> {
     let mut inlined = Vec::new();
     for step in steps {
@@ -649,27 +711,63 @@ fn inline_scripts(
                 })
                 .collect(),
             after_failure: step.after_failure,
+            cwd: step.cwd,
         };
         let call = match step.stages.as_slice() {
-            [stage] if stage.redirects.is_empty() && !step.after_failure => {
+            [stage] if stage.redirects.is_empty() && !step.after_failure && depth < 5 => {
                 match classify(&stage.words) {
-                    Command::RunScript { name, env } => Some((name, env)),
+                    Command::RunScript { name, env } => Some((name, env, false)),
+                    Command::FanOut { name, env } => Some((name, env, true)),
                     _ => None,
                 }
             }
             _ => None,
         };
-        let inner = call.and_then(|(name, env)| {
-            let text = scripts.get(&name).filter(|_| depth < 5)?;
+        let scoped = |env: Vec<(String, Word)>| {
             let mut scoped = bindings.clone();
             for (variable, value) in env {
                 if let Some(value) = literal(&value) {
                     scoped.insert(variable, value);
                 }
             }
-            let steps = parse_steps(text)?;
+            scoped
+        };
+        let inner = call.and_then(|(name, env, fan_out)| {
+            let scoped = scoped(env);
+            if !fan_out {
+                let text = scripts.get(&name)?;
+                let steps = parse_steps(text)?;
+                names.push(name);
+                return Some(inline_scripts(
+                    scripts,
+                    steps,
+                    &scoped,
+                    depth + 1,
+                    names,
+                    dir,
+                ));
+            }
+            // Each workspace package that has the script runs it in its own
+            // directory, with its own scripts.
+            let mut all = Vec::new();
+            for package in workspace_package_dirs(dir) {
+                let package_scripts: BTreeMap<String, String> =
+                    package_scripts(&package).into_iter().collect();
+                let Some(steps) = package_scripts
+                    .get(&name)
+                    .and_then(|text| parse_steps(text))
+                else {
+                    continue;
+                };
+                let inner =
+                    inline_scripts(&package_scripts, steps, &scoped, depth + 1, names, &package);
+                all.extend(inner.into_iter().map(|step| Step {
+                    cwd: step.cwd.or_else(|| Some(package.clone())),
+                    ..step
+                }));
+            }
             names.push(name);
-            Some(inline_scripts(scripts, steps, &scoped, depth + 1, names))
+            Some(all)
         });
         match inner {
             Some(inner) => inlined.extend(inner),
@@ -677,6 +775,123 @@ fn inline_scripts(
         }
     }
     inlined
+}
+
+/// The directories of the workspace whose root is `dir`: package.json
+/// `workspaces` (npm, yarn) or pnpm-workspace.yaml globs, as the runtime
+/// reads them.
+fn workspace_package_dirs(dir: &Path) -> Vec<PathBuf> {
+    let manifest = std::fs::read_to_string(dir.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    let declared = manifest.as_ref().and_then(|manifest| {
+        let workspaces = manifest.get("workspaces")?;
+        workspaces
+            .as_array()
+            .or_else(|| workspaces.get("packages")?.as_array())
+            .cloned()
+    });
+    let mut globs: Vec<String> = declared
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|glob| glob.as_str().map(str::to_string))
+        .collect();
+    if globs.is_empty() {
+        if let Ok(pnpm) = std::fs::read_to_string(dir.join("pnpm-workspace.yaml")) {
+            if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&pnpm) {
+                globs = yaml
+                    .get("packages")
+                    .and_then(|packages| packages.as_sequence())
+                    .map(|packages| {
+                        packages
+                            .iter()
+                            .filter_map(|glob| glob.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+        }
+    }
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for glob in globs.iter().filter(|glob| !glob.starts_with('!')) {
+        let mut current = vec![dir.to_path_buf()];
+        for part in glob
+            .trim_start_matches("./")
+            .trim_end_matches('/')
+            .split('/')
+        {
+            let mut next = Vec::new();
+            for base in &current {
+                let entries = || -> Vec<PathBuf> {
+                    std::fs::read_dir(base)
+                        .map(|entries| {
+                            let mut paths: Vec<PathBuf> = entries
+                                .filter_map(|entry| entry.ok())
+                                .map(|entry| entry.path())
+                                .filter(|path| {
+                                    path.is_dir()
+                                        && path.file_name().is_some_and(|name| {
+                                            name != "node_modules"
+                                                && !name.to_string_lossy().starts_with('.')
+                                        })
+                                })
+                                .collect();
+                            paths.sort();
+                            paths
+                        })
+                        .unwrap_or_default()
+                };
+                if part == "**" {
+                    let mut stack = vec![(base.clone(), 0)];
+                    while let Some((path, depth)) = stack.pop() {
+                        next.push(path.clone());
+                        if depth < 4 {
+                            let saved = std::fs::read_dir(&path)
+                                .map(|entries| {
+                                    entries
+                                        .filter_map(|entry| entry.ok())
+                                        .map(|entry| entry.path())
+                                        .filter(|path| {
+                                            path.is_dir()
+                                                && path.file_name().is_some_and(|name| {
+                                                    name != "node_modules"
+                                                        && !name.to_string_lossy().starts_with('.')
+                                                })
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            stack.extend(saved.into_iter().map(|path| (path, depth + 1)));
+                        }
+                    }
+                } else if part.contains('*') {
+                    let pattern = format!(
+                        "^{}$",
+                        part.split('*')
+                            .map(regex::escape)
+                            .collect::<Vec<_>>()
+                            .join("[^/]*")
+                    );
+                    let Ok(pattern) = regex::Regex::new(&pattern) else {
+                        continue;
+                    };
+                    next.extend(entries().into_iter().filter(|path| {
+                        path.file_name()
+                            .is_some_and(|name| pattern.is_match(&name.to_string_lossy()))
+                    }));
+                } else if base.join(part).is_dir() {
+                    next.push(base.join(part));
+                }
+            }
+            current = next;
+        }
+        for path in current {
+            if path.join("package.json").exists() && !dirs.contains(&path) {
+                dirs.push(path);
+            }
+        }
+    }
+    dirs
 }
 
 /// Whether a step runs a file of the repo (`ts-node ./script/build`, `node
@@ -748,7 +963,7 @@ fn analyze(
         });
     };
     let mut inlined = Vec::new();
-    let steps = inline_scripts(scripts, steps, &BTreeMap::new(), 0, &mut inlined);
+    let steps = inline_scripts(scripts, steps, &BTreeMap::new(), 0, &mut inlined, dir);
     let mut unsupported: Option<String> = None;
     let mut writes: Option<(Word, String)> = None;
     let mut holes: Vec<(String, Option<String>, Word)> = Vec::new();
@@ -757,10 +972,23 @@ fn analyze(
             continue;
         }
         let mut stdin_view: Option<Word> = None;
+        let step_dir = step.cwd.as_deref().unwrap_or(dir);
+        // A template and view another package's script names are kept
+        // relative to the plan's directory.
+        let from_plan = |word: &Word| -> Word {
+            match (step.cwd.as_ref(), literal(word)) {
+                (Some(cwd), Some(text)) if text != "-" => vec![Part::Lit(
+                    pathdiff::diff_paths(normalize_path(cwd.join(&text)), dir)
+                        .map(|path| path.display().to_string())
+                        .unwrap_or(text),
+                )],
+                _ => word.clone(),
+            }
+        };
         for (index, stage) in step.stages.iter().enumerate() {
             let command = classify(&stage.words);
             let last = index + 1 == step.stages.len();
-            let writes_target = |output: &Word| same_path(dir, output, target);
+            let writes_target = |output: &Word| same_path(step_dir, output, target);
             let mut inputs: Vec<Word> = Vec::new();
             match &command {
                 Command::Graph => break 'steps,
@@ -786,8 +1014,8 @@ fn analyze(
                                     && writes_target(word)
                             }));
                     if into_target {
-                        match literal(template) {
-                            Some(template) => writes = Some((view, template)),
+                        match literal(&from_plan(template)) {
+                            Some(template) => writes = Some((from_plan(&view), template)),
                             None => {
                                 unsupported.get_or_insert_with(|| word_text(template));
                             }
@@ -807,15 +1035,15 @@ fn analyze(
                 Command::Copy { from, to } => {
                     inputs.push(from.clone());
                     if writes_target(to) {
-                        match literal(from) {
-                            Some(file) => writes = Some((from.clone(), file)),
+                        match literal(&from_plan(from)) {
+                            Some(file) => writes = Some((from_plan(from), file)),
                             None => {
                                 unsupported.get_or_insert_with(|| word_text(from));
                             }
                         }
                     }
                 }
-                Command::RunScript { name, .. } => {
+                Command::RunScript { name, .. } | Command::FanOut { name, .. } => {
                     unsupported.get_or_insert_with(|| format!("npm run {name}"));
                 }
                 Command::Echo(_) | Command::NoOp => {}
@@ -1039,6 +1267,7 @@ fn sibling_renders(plan: &Plan, network: &str, target: &Path) -> Vec<(String, Ve
                 &BTreeMap::new(),
                 0,
                 &mut inlined,
+                &plan.dir,
             );
             let mut writes = false;
             for stage in steps.iter().flat_map(|step| &step.stages) {
@@ -1050,7 +1279,9 @@ fn sibling_renders(plan: &Plan, network: &str, target: &Path) -> Vec<(String, Ve
                     | Command::Echo(_)
                     | Command::Copy { .. }
                     | Command::NoOp => {}
-                    Command::RunScript { .. } | Command::Other(_) => return None,
+                    Command::RunScript { .. } | Command::FanOut { .. } | Command::Other(_) => {
+                        return None
+                    }
                 }
                 for (_, word) in &stage.redirects {
                     if same_path(&plan.dir, word, target) {
@@ -1118,7 +1349,11 @@ fn options<'a>(plans: &'a [Plan]) -> Vec<(String, Choice<'a>)> {
 }
 
 fn choose<'a>(plans: &'a [Plan], network: Option<&str>) -> Result<Choice<'a>, Vec<String>> {
-    let options = options(plans);
+    let mut options = options(plans);
+    // A workspace root's `yarn workspaces run prepare:<net>` also renders the
+    // packages the mappings import; the package's own script renders only
+    // its manifest.
+    options.sort_by_key(|(_, choice)| !choice.plan.steps.iter().any(|step| step.cwd.is_some()));
     let mut names: Vec<String> = Vec::new();
     for (name, _) in &options {
         if !names.contains(name) {
@@ -1165,6 +1400,8 @@ impl Output {
 
 struct Run<'a> {
     dir: &'a Path,
+    /// The directory the current step runs in.
+    cwd: PathBuf,
     target: &'a Path,
     hole: Option<(&'a str, &'a str)>,
     files: BTreeMap<PathBuf, String>,
@@ -1189,7 +1426,7 @@ impl Run<'_> {
         if Path::new(&text).is_absolute() {
             return Err(anyhow!("{text} is outside the project"));
         }
-        Ok(normalize_path(self.dir.join(text)))
+        Ok(normalize_path(self.cwd.join(text)))
     }
 
     fn read(&self, word: &Word) -> Result<String> {
@@ -1304,9 +1541,10 @@ impl Run<'_> {
                 self.write(&to, text, false)?;
                 Output::Text(String::new())
             }
-            Command::Graph | Command::RunScript { .. } | Command::Other(_) => {
-                unreachable!("plans hold only these")
-            }
+            Command::Graph
+            | Command::RunScript { .. }
+            | Command::FanOut { .. }
+            | Command::Other(_) => unreachable!("plans hold only these"),
         })
     }
 
@@ -1315,6 +1553,7 @@ impl Run<'_> {
             if step.after_failure {
                 continue;
             }
+            self.cwd = step.cwd.clone().unwrap_or_else(|| self.dir.to_path_buf());
             if step
                 .stages
                 .iter()
@@ -1785,7 +2024,7 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
                     !writer
                         .inlined
                         .iter()
-                        .any(|name| writer_names.contains(name))
+                        .any(|name| *name != writer.script && writer_names.contains(name))
                 })
                 .map(|writer| Writer {
                     script: label(&writer.script),
@@ -1795,7 +2034,12 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
         // zora's `codegen` runs `yarn gen-yaml-config`, the script that
         // renders: the one that writes the manifest itself is the plan.
         let names: Vec<String> = found.iter().map(|plan| plan.script.clone()).collect();
-        found.retain(|plan| !plan.inlined.iter().any(|name| names.contains(name)));
+        found.retain(|plan| {
+            !plan
+                .inlined
+                .iter()
+                .any(|name| *name != plan.script && names.contains(name))
+        });
         plans.extend(found);
     }
     (plans, writers)
@@ -1917,6 +2161,7 @@ fn write_missing_companions(target: &Path) -> Result<()> {
     for (_, choice) in options(&plans) {
         let mut run = Run {
             dir: &choice.plan.dir,
+            cwd: choice.plan.dir.to_path_buf(),
             target,
             hole: None,
             files: BTreeMap::new(),
@@ -2007,6 +2252,7 @@ pub fn render_manifest(
 
     let mut run = Run {
         dir: &choice.plan.dir,
+        cwd: choice.plan.dir.to_path_buf(),
         target: &target,
         hole: None,
         files: BTreeMap::new(),

@@ -3648,6 +3648,86 @@ type Renewal implements Event @entity {
         assert_eq!(chain_of(&config).0, 137);
     }
 
+    // sushiswap's legacy monorepo: the root's `"prepare:mainnet": "yarn
+    // workspaces run prepare:mainnet"` runs every package's own
+    // `prepare:mainnet`, which renders subgraphs/exchange/subgraph.yaml there
+    // and packages/constants/index.ts (the `const` package the mappings
+    // import) in its own directory.
+    #[test]
+    fn renders_through_a_workspace_wide_script() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-fanout").unwrap();
+        let root = dir.path();
+        let exchange = root.join("subgraphs/exchange");
+        write_gravity(&exchange, "template.yaml");
+        fs::write(exchange.join("template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::create_dir_all(root.join("packages/constants")).unwrap();
+        for (network, address) in [
+            ("mainnet", "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"),
+            ("matic", "0x00000000000014aA86C5d3c41765bb24e11bd701"),
+        ] {
+            fs::write(
+                root.join(format!("config/{network}.json")),
+                format!(
+                    r#"{{"network": "{network}", "gravity": {{"address": "{address}", "startBlock": 1}}}}"#
+                ),
+            )
+            .unwrap();
+        }
+        let per_network = |output: &str, template: &str| -> String {
+            ["mainnet", "matic"]
+                .iter()
+                .map(|network| {
+                    format!(
+                        "\"prepare:{network}\": \"mustache ../../config/{network}.json {template} > {output}\""
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        fs::write(
+            root.join("package.json"),
+            r#"{"private": true, "workspaces": ["packages/*", "subgraphs/*"], "scripts": {
+  "prepare:mainnet": "yarn workspaces run prepare:mainnet",
+  "prepare:matic": "yarn workspaces run prepare:matic"
+}}"#,
+        )
+        .unwrap();
+        fs::write(
+            exchange.join("package.json"),
+            format!(
+                "{{\"name\": \"exchange\", \"scripts\": {{{}}}}}",
+                per_network("subgraph.yaml", "template.yaml")
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("packages/constants/package.json"),
+            format!(
+                "{{\"name\": \"const\", \"main\": \"index.ts\", \"scripts\": {{{}}}}}",
+                per_network("index.ts", "index.template.ts")
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("packages/constants/index.template.ts"),
+            "export const NETWORK = \"{{network}}\";\n",
+        )
+        .unwrap();
+        fs::write(exchange.join(".env"), "ENVIO_SUBGRAPH_NETWORK=matic\n").unwrap();
+        let project_paths =
+            ParsedProjectPaths::new(exchange.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config).0,
+                fs::read_to_string(root.join("packages/constants/index.ts")).ok(),
+            ),
+            (137, Some("export const NETWORK = \"matic\";\n".to_string()))
+        );
+    }
+
     // dolomite splits the render in two scripts per network:
     // `mustache-template:<net>` writes subgraph.yaml, `mustache-constants:<net>`
     // writes src/mappings/generated/constants.ts. The manifest there (here
