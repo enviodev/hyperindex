@@ -2572,12 +2572,12 @@ impl FieldSelection {
         Self::new(
             vec![SelectedField {
                 name: "id".to_string(),
-                data_type: TypeIdent::String,
+                data_type: TypeIdent::Hex,
             }],
             vec![
                 SelectedField {
                     name: "id".to_string(),
-                    data_type: TypeIdent::String,
+                    data_type: TypeIdent::Hex,
                 },
                 SelectedField {
                     name: "height".to_string(),
@@ -2620,99 +2620,112 @@ impl FieldSelection {
         use human_config::evm::{BlockField, TransactionField};
         use strum::IntoEnumIterator;
 
-        let block_fields: Vec<SelectedField> = BlockField::iter()
-            .map(|field| {
-                let data_type = match field {
-                    BlockField::ParentHash => TypeIdent::Hex,
-                    BlockField::Nonce => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::Sha3Uncles => TypeIdent::Hex,
-                    BlockField::LogsBloom => TypeIdent::Hex,
-                    BlockField::TransactionsRoot => TypeIdent::Hex,
-                    BlockField::StateRoot => TypeIdent::Hex,
-                    BlockField::ReceiptsRoot => TypeIdent::Hex,
-                    BlockField::Miner => TypeIdent::Address,
-                    BlockField::Difficulty => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::TotalDifficulty => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::ExtraData => TypeIdent::Hex,
-                    BlockField::Size => TypeIdent::BigInt,
-                    BlockField::GasLimit => TypeIdent::BigInt,
-                    BlockField::GasUsed => TypeIdent::BigInt,
-                    BlockField::Uncles => TypeIdent::option(TypeIdent::array(TypeIdent::Hex)),
-                    BlockField::BaseFeePerGas => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::BlobGasUsed => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::ExcessBlobGas => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::ParentBeaconBlockRoot => TypeIdent::option(TypeIdent::Hex),
-                    BlockField::WithdrawalsRoot => TypeIdent::option(TypeIdent::Hex),
-                    BlockField::L1BlockNumber => TypeIdent::option(TypeIdent::Int),
-                    BlockField::SendCount => TypeIdent::option(TypeIdent::Hex),
-                    BlockField::SendRoot => TypeIdent::option(TypeIdent::Hex),
-                    BlockField::MixHash => TypeIdent::option(TypeIdent::Hex),
-                };
-                SelectedField {
-                    name: field.to_string(),
-                    data_type,
-                }
+        let block_fields = BlockField::iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: Self::evm_block_field_type(&field),
             })
             .collect();
 
-        let transaction_fields: Vec<SelectedField> = TransactionField::iter()
-            .map(|field| {
-                let data_type = match field {
-                    TransactionField::TransactionIndex => TypeIdent::Int,
-                    TransactionField::Hash => TypeIdent::Hex,
-                    TransactionField::From => TypeIdent::option(TypeIdent::Address),
-                    TransactionField::To => TypeIdent::option(TypeIdent::Address),
-                    TransactionField::Gas => TypeIdent::BigInt,
-                    TransactionField::GasPrice => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::MaxPriorityFeePerGas => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::MaxFeePerGas => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::CumulativeGasUsed => TypeIdent::BigInt,
-                    TransactionField::EffectiveGasPrice => TypeIdent::BigInt,
-                    TransactionField::GasUsed => TypeIdent::BigInt,
-                    TransactionField::Input => TypeIdent::Hex,
-                    TransactionField::Nonce => TypeIdent::BigInt,
-                    TransactionField::Value => TypeIdent::BigInt,
-                    TransactionField::V => TypeIdent::option(TypeIdent::Hex),
-                    TransactionField::R => TypeIdent::option(TypeIdent::Hex),
-                    TransactionField::S => TypeIdent::option(TypeIdent::Hex),
-                    TransactionField::ContractAddress => TypeIdent::option(TypeIdent::Address),
-                    TransactionField::LogsBloom => TypeIdent::Hex,
-                    TransactionField::Root => TypeIdent::option(TypeIdent::Hex),
-                    TransactionField::Status => TypeIdent::option(TypeIdent::Int),
-                    TransactionField::YParity => TypeIdent::option(TypeIdent::Hex),
-                    TransactionField::MaxFeePerBlobGas => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::BlobVersionedHashes => {
-                        TypeIdent::option(TypeIdent::array(TypeIdent::Hex))
-                    }
-                    TransactionField::Type => TypeIdent::option(TypeIdent::Int),
-                    TransactionField::L1Fee => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::L1GasPrice => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::L1GasUsed => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::L1FeeScalar => TypeIdent::option(TypeIdent::Float),
-                    TransactionField::GasUsedForL1 => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::AccessList => {
+        let transaction_fields = TransactionField::iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: match field {
+                    // The ReScript response types these name have no
+                    // TypeScript counterpart.
+                    TransactionField::AccessList | TransactionField::AuthorizationList => {
                         TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
                     }
-                    TransactionField::AuthorizationList => {
-                        TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
-                    }
-                };
-                SelectedField {
-                    name: field.to_string(),
-                    data_type,
-                }
+                    _ => Self::evm_transaction_field_type(&field),
+                },
             })
             .collect();
 
         Self::new(transaction_fields, block_fields)
     }
 
+    fn evm_block_field_type(field: &human_config::evm::BlockField) -> TypeIdent {
+        use human_config::evm::BlockField as Block;
+        type Res = TypeIdent;
+
+        match field {
+            Block::ParentHash => Res::Hex,
+            Block::Nonce => Res::option(Res::BigInt),
+            Block::Sha3Uncles => Res::Hex,
+            Block::LogsBloom => Res::Hex,
+            Block::TransactionsRoot => Res::Hex,
+            Block::StateRoot => Res::Hex,
+            Block::ReceiptsRoot => Res::Hex,
+            Block::Miner => Res::Address,
+            Block::Difficulty => Res::option(Res::BigInt),
+            Block::TotalDifficulty => Res::option(Res::BigInt),
+            Block::ExtraData => Res::Hex,
+            Block::Size => Res::BigInt,
+            Block::GasLimit => Res::BigInt,
+            Block::GasUsed => Res::BigInt,
+            Block::Uncles => Res::option(Res::array(Res::Hex)),
+            Block::BaseFeePerGas => Res::option(Res::BigInt),
+            Block::BlobGasUsed => Res::option(Res::BigInt),
+            Block::ExcessBlobGas => Res::option(Res::BigInt),
+            Block::ParentBeaconBlockRoot => Res::option(Res::Hex),
+            Block::WithdrawalsRoot => Res::option(Res::Hex),
+            // Block::Withdrawals => todo!(), //should be array of withdrawal record
+            Block::L1BlockNumber => Res::option(Res::Int),
+            Block::SendCount => Res::option(Res::Hex),
+            Block::SendRoot => Res::option(Res::Hex),
+            Block::MixHash => Res::option(Res::Hex),
+        }
+    }
+
+    fn evm_transaction_field_type(field: &human_config::evm::TransactionField) -> TypeIdent {
+        use human_config::evm::TransactionField as Tx;
+        type Res = TypeIdent;
+
+        match field {
+            Tx::TransactionIndex => Res::Int,
+            Tx::Hash => Res::Hex,
+            Tx::From => Res::option(Res::Address),
+            Tx::To => Res::option(Res::Address),
+            Tx::Gas => Res::BigInt,
+            Tx::GasPrice => Res::option(Res::BigInt),
+            Tx::MaxPriorityFeePerGas => Res::option(Res::BigInt),
+            Tx::MaxFeePerGas => Res::option(Res::BigInt),
+            Tx::CumulativeGasUsed => Res::BigInt,
+            Tx::EffectiveGasPrice => Res::BigInt,
+            Tx::GasUsed => Res::BigInt,
+            Tx::Input => Res::Hex,
+            Tx::Nonce => Res::BigInt,
+            Tx::Value => Res::BigInt,
+            Tx::V => Res::option(Res::Hex),
+            Tx::R => Res::option(Res::Hex),
+            Tx::S => Res::option(Res::Hex),
+            Tx::ContractAddress => Res::option(Res::Address),
+            Tx::LogsBloom => Res::Hex,
+            Tx::Root => Res::option(Res::Hex),
+            Tx::Status => Res::option(Res::Int),
+            Tx::YParity => Res::option(Res::Hex),
+            Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
+            Tx::BlobVersionedHashes => Res::option(Res::array(Res::Hex)),
+            Tx::Type => Res::option(Res::Int),
+            Tx::L1Fee => Res::option(Res::BigInt),
+            Tx::L1GasPrice => Res::option(Res::BigInt),
+            Tx::L1GasUsed => Res::option(Res::BigInt),
+            Tx::L1FeeScalar => Res::option(Res::Float),
+            Tx::GasUsedForL1 => Res::option(Res::BigInt),
+            Tx::AccessList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                name: "HyperSyncClient.ResponseTypes.accessList".to_string(),
+                type_params: vec![],
+            }))),
+            Tx::AuthorizationList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
+                type_params: vec![],
+            }))),
+        }
+    }
+
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
     ) -> Result<Self> {
-        use human_config::evm::BlockField;
-        use human_config::evm::TransactionField;
-
         let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or_default();
         let block_fields = field_selection_cfg.block_fields.unwrap_or_default();
 
@@ -2735,94 +2748,21 @@ impl FieldSelection {
             ));
         }
 
-        let mut selected_block_fields = vec![];
-
-        type Res = TypeIdent;
-        type Block = BlockField;
-        type Tx = TransactionField;
-
-        for block_field in block_fields {
-            let data_type = match block_field {
-                Block::ParentHash => Res::Hex,
-                Block::Nonce => Res::option(Res::BigInt),
-                Block::Sha3Uncles => Res::Hex,
-                Block::LogsBloom => Res::Hex,
-                Block::TransactionsRoot => Res::Hex,
-                Block::StateRoot => Res::Hex,
-                Block::ReceiptsRoot => Res::Hex,
-                Block::Miner => Res::Address,
-                Block::Difficulty => Res::option(Res::BigInt),
-                Block::TotalDifficulty => Res::option(Res::BigInt),
-                Block::ExtraData => Res::Hex,
-                Block::Size => Res::BigInt,
-                Block::GasLimit => Res::BigInt,
-                Block::GasUsed => Res::BigInt,
-                Block::Uncles => Res::option(Res::array(Res::Hex)),
-                Block::BaseFeePerGas => Res::option(Res::BigInt),
-                Block::BlobGasUsed => Res::option(Res::BigInt),
-                Block::ExcessBlobGas => Res::option(Res::BigInt),
-                Block::ParentBeaconBlockRoot => Res::option(Res::Hex),
-                Block::WithdrawalsRoot => Res::option(Res::Hex),
-                // Block::Withdrawals => todo!(), //should be array of withdrawal record
-                Block::L1BlockNumber => Res::option(Res::Int),
-                Block::SendCount => Res::option(Res::Hex),
-                Block::SendRoot => Res::option(Res::Hex),
-                Block::MixHash => Res::option(Res::Hex),
-            };
-            selected_block_fields.push(SelectedField {
-                name: block_field.to_string(),
-                data_type,
+        let selected_block_fields = block_fields
+            .iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: Self::evm_block_field_type(field),
             })
-        }
+            .collect();
 
-        let mut selected_transaction_fields = vec![];
-
-        for transaction_field in transaction_fields {
-            let data_type = match transaction_field {
-                Tx::TransactionIndex => Res::Int,
-                Tx::Hash => Res::Hex,
-                Tx::From => Res::option(Res::Address),
-                Tx::To => Res::option(Res::Address),
-                Tx::Gas => Res::BigInt,
-                Tx::GasPrice => Res::option(Res::BigInt),
-                Tx::MaxPriorityFeePerGas => Res::option(Res::BigInt),
-                Tx::MaxFeePerGas => Res::option(Res::BigInt),
-                Tx::CumulativeGasUsed => Res::BigInt,
-                Tx::EffectiveGasPrice => Res::BigInt,
-                Tx::GasUsed => Res::BigInt,
-                Tx::Input => Res::Hex,
-                Tx::Nonce => Res::BigInt,
-                Tx::Value => Res::BigInt,
-                Tx::V => Res::option(Res::Hex),
-                Tx::R => Res::option(Res::Hex),
-                Tx::S => Res::option(Res::Hex),
-                Tx::ContractAddress => Res::option(Res::Address),
-                Tx::LogsBloom => Res::Hex,
-                Tx::Root => Res::option(Res::Hex),
-                Tx::Status => Res::option(Res::Int),
-                Tx::YParity => Res::option(Res::Hex),
-                Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
-                Tx::BlobVersionedHashes => Res::option(Res::array(Res::Hex)),
-                Tx::Type => Res::option(Res::Int),
-                Tx::L1Fee => Res::option(Res::BigInt),
-                Tx::L1GasPrice => Res::option(Res::BigInt),
-                Tx::L1GasUsed => Res::option(Res::BigInt),
-                Tx::L1FeeScalar => Res::option(Res::Float),
-                Tx::GasUsedForL1 => Res::option(Res::BigInt),
-                Tx::AccessList => Res::option(Res::Array(Box::new(Res::TypeApplication {
-                    name: "HyperSyncClient.ResponseTypes.accessList".to_string(),
-                    type_params: vec![],
-                }))),
-                Tx::AuthorizationList => Res::option(Res::Array(Box::new(Res::TypeApplication {
-                    name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
-                    type_params: vec![],
-                }))),
-            };
-            selected_transaction_fields.push(SelectedField {
-                name: transaction_field.to_string(),
-                data_type,
+        let selected_transaction_fields = transaction_fields
+            .iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: Self::evm_transaction_field_type(field),
             })
-        }
+            .collect();
 
         Ok(Self::new(
             selected_transaction_fields,

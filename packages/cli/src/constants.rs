@@ -84,4 +84,11 @@ pub mod reserved_keywords {
         // capitalized name, where `Enum` is already taken.
         "enum",
     ];
+
+    /// `envio` exports an entity may not take as its capitalized name: entity
+    /// aliases are declared inside `declare module "envio"`, where a second
+    /// `type Hex` is a duplicate identifier rather than a merge. Checked
+    /// against the capitalized name, unlike `RESERVED_NAMES`, so `hex` is
+    /// caught while an enum value or contract named `hex` stays allowed.
+    pub const ENVIO_EXPORTS_ENTITIES_CANNOT_SHADOW: &[&str] = &["Enum", "Hex"];
 }
