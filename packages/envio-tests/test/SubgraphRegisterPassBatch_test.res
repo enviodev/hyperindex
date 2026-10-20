@@ -4,8 +4,10 @@
 // and repeated its ~20 creation calls at its own block (retest-02). A pass that
 // misses an entity an earlier in-flight pass also missed now waits for that
 // pass once, and reads again.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4693")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 0.0.5
 schema:
@@ -166,7 +168,7 @@ beforeAll(async () => {
       );
     });
   });
-  await new Promise<void>((resolve) => server.listen(4693, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

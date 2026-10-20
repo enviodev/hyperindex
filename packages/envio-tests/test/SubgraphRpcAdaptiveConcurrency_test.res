@@ -3,8 +3,10 @@
 // call backs off on its own for longer and longer: the batch stalls for
 // minutes. Once refused, fewer requests are sent at once, and the queue drains
 // at the rate the endpoint takes.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4830")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -105,7 +107,7 @@ beforeAll(async () => {
       }, 30);
     });
   });
-  await new Promise<void>((resolve) => server.listen(4830, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

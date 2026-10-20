@@ -2,8 +2,10 @@
 // error rather than retrying the batch. So a contract call rides out a rate
 // limit, a 5xx and a request that never answers, as graph-node does, and only
 // a deterministic answer — a value or a revert — reaches the mapping.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8605")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -130,7 +132,7 @@ beforeAll(async () => {
       res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: word(n * 10n) }));
     });
   });
-  await new Promise<void>((resolve) => server.listen(8605, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

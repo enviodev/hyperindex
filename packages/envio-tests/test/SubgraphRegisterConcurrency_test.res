@@ -4,9 +4,11 @@
 // now take a slot first (ENVIO_SUBGRAPH_REGISTER_CONCURRENCY), so the RPC
 // endpoint and the heap see a bounded number of them, and every event still
 // registers its template.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
   ~env=Dict.fromArray([
-    ("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4854"),
+    ("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`),
     ("ENVIO_SUBGRAPH_REGISTER_CONCURRENCY", "4"),
   ]),
   ~manifest=`
@@ -163,7 +165,7 @@ beforeAll(async () => {
       }, 15);
     });
   });
-  await new Promise<void>((resolve) => server.listen(4854, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

@@ -1,8 +1,10 @@
 // Preload runs every handler of a batch at once, and each one's contract call
 // with it. The RPC endpoint sees a bounded number of them at a time rather
 // than one connection per call.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8604")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -95,7 +97,7 @@ beforeAll(async () => {
       }, 20);
     });
   });
-  await new Promise<void>((resolve) => server.listen(8604, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

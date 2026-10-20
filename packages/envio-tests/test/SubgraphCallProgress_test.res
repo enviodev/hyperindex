@@ -2,8 +2,10 @@
 // and a call-heavy backfill's first batch waits minutes on thousands of them
 // with nothing to show: the sweep took several such runs for hung. While calls
 // are outstanding, how many were answered is now logged now and then.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4691")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 0.0.5
 schema:
@@ -169,7 +171,7 @@ beforeAll(async () => {
       ), request.method === "eth_call" ? 150 : 0);
     });
   });
-  await new Promise<void>((resolve) => server.listen(4691, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {
