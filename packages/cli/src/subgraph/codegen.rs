@@ -185,6 +185,10 @@ pub struct GraphTs {
     pub related: bool,
     /// `Value.displayData`, in `save()`'s assertion message.
     pub display: bool,
+    /// Not graph-ts but the project's graph-cli: 0.22.0 to 0.29.0 (bar the
+    /// patch releases that dropped it) set every non-nullable field of a new
+    /// entity to a zero value in its constructor.
+    pub constructor_defaults: bool,
 }
 
 impl GraphTs {
@@ -192,13 +196,24 @@ impl GraphTs {
         int8: true,
         related: true,
         display: true,
+        constructor_defaults: false,
     };
 
-    /// The graph-ts Node would resolve from the manifest's directory.
+    /// The graph-ts Node would resolve from the manifest's directory, and the
+    /// graph-cli the project builds with.
     pub fn detect(manifest_dir: &Path) -> GraphTs {
         let Ok(start) = std::fs::canonicalize(manifest_dir) else {
             return GraphTs::ALL;
         };
+        let constructor_defaults =
+            graph_cli_version(&start).is_some_and(|version| writes_constructor_defaults(&version));
+        GraphTs {
+            constructor_defaults,
+            ..Self::detect_graph_ts(&start)
+        }
+    }
+
+    fn detect_graph_ts(start: &Path) -> GraphTs {
         for dir in start.ancestors() {
             let package = dir.join("node_modules/@graphprotocol/graph-ts");
             if !package.join("package.json").is_file() {
@@ -219,10 +234,103 @@ impl GraphTs {
                 int8: text.contains("Int8"),
                 related: text.contains("loadRelated"),
                 display: text.contains("displayData"),
+                constructor_defaults: false,
             };
         }
         GraphTs::ALL
     }
+}
+
+const GRAPH_CLI: &str = "@graphprotocol/graph-cli";
+
+/// The graph-cli release the project builds with: the installed one, else the
+/// one its lockfile pins, else the newest its package.json range allows.
+fn graph_cli_version(start: &Path) -> Option<[u64; 3]> {
+    let installed = start.ancestors().find_map(|dir| {
+        let text = std::fs::read_to_string(
+            dir.join("node_modules")
+                .join(GRAPH_CLI)
+                .join("package.json"),
+        )
+        .ok()?;
+        let json: Json = serde_json::from_str(&text).ok()?;
+        parse_version(json.get("version")?.as_str()?)
+    });
+    installed.or_else(|| start.ancestors().find_map(locked_or_declared_graph_cli))
+}
+
+fn locked_or_declared_graph_cli(dir: &Path) -> Option<[u64; 3]> {
+    let package: Json =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).ok()?).ok()?;
+    let declared = ["dependencies", "devDependencies"]
+        .iter()
+        .find_map(|key| package.get(key)?.get(GRAPH_CLI)?.as_str())?;
+    if let Some(locked) = locked_graph_cli(dir) {
+        return Some(locked);
+    }
+    let version = parse_version(declared)?;
+    match declared
+        .trim()
+        .trim_start_matches(['=', 'v'])
+        .chars()
+        .next()?
+    {
+        c if c.is_ascii_digit() => Some(version),
+        // On 0.x, `^` and `~` both stay within the minor and take its newest patch.
+        '^' | '~' => Some([version[0], version[1], u64::MAX]),
+        _ => None,
+    }
+}
+
+fn locked_graph_cli(dir: &Path) -> Option<[u64; 3]> {
+    if let Ok(text) = std::fs::read_to_string(dir.join("package-lock.json")) {
+        let json: Json = serde_json::from_str(&text).ok()?;
+        let entry = json
+            .get("packages")
+            .and_then(|packages| packages.get(format!("node_modules/{GRAPH_CLI}")))
+            .or_else(|| json.get("dependencies")?.get(GRAPH_CLI));
+        return parse_version(entry?.get("version")?.as_str()?);
+    }
+    if let Ok(text) = std::fs::read_to_string(dir.join("yarn.lock")) {
+        let mut lines = text.lines();
+        while let Some(line) = lines.next() {
+            let header = line.trim_start_matches('"');
+            if !line.starts_with(' ') && header.starts_with(&format!("{GRAPH_CLI}@")) {
+                let version = lines
+                    .by_ref()
+                    .take_while(|line| line.starts_with(' '))
+                    .find_map(|line| line.trim().strip_prefix("version "))?;
+                return parse_version(version.trim_matches('"'));
+            }
+        }
+        return None;
+    }
+    let text = std::fs::read_to_string(dir.join("pnpm-lock.yaml")).ok()?;
+    let at = text.find(&format!("{GRAPH_CLI}@"))? + GRAPH_CLI.len() + 1;
+    parse_version(&text[at..])
+}
+
+/// The leading `major.minor.patch` of a version or range, ignoring a prefix
+/// such as `^`, `~` or `>=`.
+fn parse_version(text: &str) -> Option<[u64; 3]> {
+    let start = text.find(|c: char| c.is_ascii_digit())?;
+    let mut parts = text[start..]
+        .split(|c: char| !c.is_ascii_digit())
+        .map(|part| part.parse::<u64>().ok());
+    Some([
+        parts.next()??,
+        parts.next()??,
+        parts.next().flatten().unwrap_or(0),
+    ])
+}
+
+/// graph-cli 0.22.0 added the zero values (`_generateDefaultFieldValues`);
+/// 0.26.1, 0.27.1, 0.28.2 and 0.29.1, released together, took them out.
+fn writes_constructor_defaults(version: &[u64; 3]) -> bool {
+    matches!(
+        version,
+        [0, 22..=25, _] | [0, 26, 0] | [0, 27, 0] | [0, 28, 0..=1] | [0, 29, 0]
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1317,6 +1425,43 @@ impl std::fmt::Display for Ty {
     }
 }
 
+/// The value graph-cli 0.22-0.29 set a non-nullable field to in a new entity
+/// (ASSEMBLYSCRIPT_TO_VALUE's initial values); `None` for a type it had no
+/// conversion for.
+fn zero_value(ty: &Ty) -> Option<String> {
+    let value = match ty {
+        Ty::Array(inner) => {
+            let method = match inner.as_ref() {
+                Ty::Named(asc) => match asc.as_str() {
+                    "Bytes" | "Address" => "fromBytesArray",
+                    "boolean" => "fromBooleanArray",
+                    "i32" => "fromI32Array",
+                    "BigInt" => "fromBigIntArray",
+                    "string" => "fromStringArray",
+                    "BigDecimal" => "fromBigDecimalArray",
+                    _ => return None,
+                },
+                Ty::Nullable(element) if matches!(element.as_ref(), Ty::Named(asc) if asc == "string") => {
+                    "fromStringArray"
+                }
+                _ => return None,
+            };
+            format!("Value.{method}(new Array(0))")
+        }
+        Ty::Named(asc) => match asc.as_str() {
+            "Bytes" => "Value.fromBytes(Bytes.empty())".to_string(),
+            "boolean" => "Value.fromBoolean(false)".to_string(),
+            "i32" => "Value.fromI32(0)".to_string(),
+            "BigInt" => "Value.fromBigInt(BigInt.zero())".to_string(),
+            "string" => "Value.fromString('')".to_string(),
+            "BigDecimal" => "Value.fromBigDecimal(BigDecimal.zero())".to_string(),
+            _ => return None,
+        },
+        Ty::Nullable(_) => return None,
+    };
+    Some(value)
+}
+
 fn is_primitive(name: &str) -> bool {
     matches!(
         name,
@@ -1435,8 +1580,23 @@ impl<'a> SchemaGen<'a> {
     fn entity_type(&self, object: &graphql_parser::schema::ObjectType<'a, String>) -> String {
         let name = &object.name;
         let id = id_kind(&object.fields);
+        let defaults: String = if self.graph_ts.constructor_defaults {
+            object
+                .fields
+                .iter()
+                .filter(|field| field.name != "id")
+                .filter(|field| matches!(field.field_type, Type::NonNullType(_)))
+                .filter(|field| !field.directives.iter().any(|d| d.name == "derivedFrom"))
+                .filter_map(|field| {
+                    let value = zero_value(&self.ty(&field.field_type, true))?;
+                    Some(format!("\n    this.set('{}', {value})", field.name))
+                })
+                .collect()
+        } else {
+            String::new()
+        };
         let mut methods = vec![format!(
-            "\n  constructor(id: {}) {{\n    super()\n    this.set('id', {})\n  }}\n",
+            "\n  constructor(id: {}) {{\n    super()\n    this.set('id', {}){defaults}\n  }}\n",
             id.type_name(),
             id.value_from()
         )];
@@ -1868,6 +2028,7 @@ mod tests {
             int8: false,
             related: false,
             display: false,
+            constructor_defaults: false,
         };
         let ts = schema_ts(
             "type Token @entity { id: ID! balances: [Balance!]! @derivedFrom(field: \"token\") } \
@@ -1900,13 +2061,88 @@ mod tests {
             GraphTs {
                 int8: true,
                 related: false,
-                display: false
+                display: false,
+                constructor_defaults: false,
             }
         );
         std::fs::remove_dir_all(&root).ok();
         assert_eq!(
             GraphTs::detect(Path::new("/nonexistent/project")),
             GraphTs::ALL
+        );
+    }
+
+    // swaap-labs/swaap-subgraph-v1 pins graph-cli 0.25.3, whose entity
+    // constructors set zero values; 0.26.1, 0.27.1, 0.28.2 and 0.29.1 dropped
+    // them, so a range takes its minor's newest patch and a lockfile wins.
+    #[test]
+    fn reads_which_graph_cli_writes_constructor_defaults() {
+        let root = std::env::temp_dir().join(format!("envio-graph-cli-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let declare = |spec: &str| {
+            std::fs::write(
+                project.join("package.json"),
+                format!(r#"{{"devDependencies":{{"@graphprotocol/graph-cli":"{spec}"}}}}"#),
+            )
+            .unwrap();
+            GraphTs::detect(&project).constructor_defaults
+        };
+        let declared: Vec<bool> = [
+            "0.25.3", "^0.25.0", "0.26.0", "^0.26.0", "0.29.1", "0.21.3", ">=0.22.0", "0.51.0",
+        ]
+        .into_iter()
+        .map(declare)
+        .collect();
+        std::fs::write(
+            project.join("yarn.lock"),
+            "\"@graphprotocol/graph-cli@^0.28.0\":\n  version \"0.28.1\"\n  resolved \"x\"\n",
+        )
+        .unwrap();
+        let locked = declare("^0.28.0");
+        let installed = root.join("node_modules/@graphprotocol/graph-cli");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("package.json"), r#"{"version":"0.28.2"}"#).unwrap();
+        let from_install = declare("0.28.0");
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(
+            (declared, locked, from_install),
+            (
+                vec![true, true, true, false, false, false, false, false],
+                true,
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn graph_cli_0_25_constructors_set_zero_values() {
+        let legacy = GraphTs {
+            constructor_defaults: true,
+            ..GraphTs::ALL
+        };
+        let ts = schema_ts(
+            "type Pool @entity { id: ID! name: String! count: Int! fees: BigDecimal! owner: Bytes! \
+             live: Boolean! tokens: [Token!]! sponsor: Bytes swaps: [Swap!]! @derivedFrom(field: \"pool\") } \
+             type Token @entity { id: ID! } type Swap @entity { id: ID! pool: Pool! }",
+            legacy,
+        )
+        .unwrap();
+        let constructor = ts
+            .split("export class Pool extends Entity {")
+            .nth(1)
+            .and_then(|class| class.split("save(): void").next())
+            .unwrap()
+            .trim();
+        assert_eq!(
+            constructor,
+            "constructor(id: string) {\n    super()\n    this.set('id', Value.fromString(id))\n    \
+             this.set('name', Value.fromString(''))\n    \
+             this.set('count', Value.fromI32(0))\n    \
+             this.set('fees', Value.fromBigDecimal(BigDecimal.zero()))\n    \
+             this.set('owner', Value.fromBytes(Bytes.empty()))\n    \
+             this.set('live', Value.fromBoolean(false))\n    \
+             this.set('tokens', Value.fromStringArray(new Array(0)))\n  }"
         );
     }
 
