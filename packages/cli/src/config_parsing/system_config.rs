@@ -1632,6 +1632,7 @@ impl SystemConfig {
                     .map(|file| file.to_string())
             })
             .unwrap_or_else(|| "./schema.graphql".to_string());
+        crate::subgraph::render::write_missing_inputs(root, &manifest)?;
         let schema_path = root.join(&schema_file);
         if !schema_path.exists() {
             // inverse-governance's schema is OpenZeppelin graph-compiler output.

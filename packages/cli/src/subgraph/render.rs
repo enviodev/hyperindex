@@ -1034,13 +1034,13 @@ fn analyze(
                 }
                 Command::Copy { from, to } => {
                     inputs.push(from.clone());
+                    // A copy's source is its view: `cp
+                    // ./schemas/schema.${VERSION:-v1}.graphql schema.graphql`
+                    // picks it by the variable.
                     if writes_target(to) {
-                        match literal(&from_plan(from)) {
-                            Some(file) => writes = Some((from_plan(from), file)),
-                            None => {
-                                unsupported.get_or_insert_with(|| word_text(from));
-                            }
-                        }
+                        let source = from_plan(from);
+                        let file = literal(&source).unwrap_or_else(|| word_text(&source));
+                        writes = Some((source, file));
                     }
                 }
                 Command::RunScript { name, .. } | Command::FanOut { name, .. } => {
@@ -1998,7 +1998,9 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
                     let absent = [Some(plan.template.clone()), view]
                         .into_iter()
                         .flatten()
-                        .find(|file| file != "-" && !dir.join(file).exists());
+                        .find(|file| {
+                            file != "-" && !file.contains("${") && !dir.join(file).exists()
+                        });
                     match absent {
                         Some(file) => raw_writers.push(Writer {
                             script: name,
@@ -2057,6 +2059,84 @@ pub fn scripts_mentioning(dir: &Path, needle: &str) -> Vec<(String, String)> {
                     .is_some_and(|steps| runs_a_file_mentioning(dir, &steps, &[needle]))
         })
         .collect()
+}
+
+/// The files a manifest needs that aren't there, written by a package.json
+/// script of standard tools that writes them (FilOzone's `generate:schema`:
+/// `cp ./schemas/schema.${VERSION:-v1}.graphql schema.graphql`), each with
+/// its variables at their defaults. Only missing files are written.
+pub fn write_missing_inputs(manifest_dir: &Path, manifest: &str) -> Result<()> {
+    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(manifest) else {
+        return Ok(());
+    };
+    let mut files: Vec<String> = Vec::new();
+    if let Some(schema) = yaml
+        .get("schema")
+        .and_then(|schema| schema.get("file"))
+        .and_then(|file| file.as_str())
+    {
+        files.push(schema.to_string());
+    }
+    for key in ["dataSources", "templates"] {
+        for source in yaml
+            .get(key)
+            .and_then(|list| list.as_sequence())
+            .into_iter()
+            .flatten()
+        {
+            let Some(mapping) = source.get("mapping") else {
+                continue;
+            };
+            if let Some(file) = mapping.get("file").and_then(|file| file.as_str()) {
+                files.push(file.to_string());
+            }
+            for abi in mapping
+                .get("abis")
+                .and_then(|abis| abis.as_sequence())
+                .into_iter()
+                .flatten()
+            {
+                if let Some(file) = abi.get("file").and_then(|file| file.as_str()) {
+                    files.push(file.to_string());
+                }
+            }
+        }
+    }
+    let dir = absolute(manifest_dir);
+    for file in files {
+        let target = normalize_path(dir.join(&file));
+        if target.exists() {
+            continue;
+        }
+        let (plans, _) = scan(&target);
+        let Ok(choice) = choose(&plans, None) else {
+            continue;
+        };
+        let mut run = Run {
+            dir: &choice.plan.dir,
+            cwd: choice.plan.dir.to_path_buf(),
+            target: &target,
+            hole: None,
+            files: BTreeMap::new(),
+        };
+        let hole_name = choice.plan.hole.as_ref().map(|(name, _, _)| name.clone());
+        if let (Some(name), Some(value)) = (hole_name.as_deref(), choice.hole_value.as_deref()) {
+            run.hole = Some((name, value));
+        }
+        if run.steps(&choice.plan.steps).is_err() {
+            continue;
+        }
+        for (path, text) in &run.files {
+            if path.exists() {
+                continue;
+            }
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, text).context(format!("Failed to write {}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether `path` is a mustache template rather than a manifest.

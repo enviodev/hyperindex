@@ -3816,6 +3816,55 @@ type Renewal implements Event @entity {
         );
     }
 
+    // FilOzone's filecoin-pay subgraph: `"generate:yaml": "mustache
+    // ./config/${NETWORK:-calibration}.json ./templates/subgraph.template.yaml
+    // > subgraph.yaml"` and `"generate:schema": "cp
+    // ./schemas/schema.${VERSION:-v1}.graphql schema.graphql"`, which its
+    // `precodegen` hook runs together. The schema the manifest names is
+    // written by a script of standard tools too, so it is repeated.
+    #[test]
+    fn writes_a_missing_manifest_input_a_standard_script_writes() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-inputs").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("schemas")).unwrap();
+        fs::rename(
+            root.join("schema.graphql"),
+            root.join("schemas/schema.v1.graphql"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/subgraph.template.yaml"),
+            gravity_template(),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/calibration.json"),
+            r#"{"network": "mainnet", "gravity": {"address": "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", "startBlock": 1}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "precodegen": "rm -rf ./generated && pnpm generate:schema && pnpm generate:yaml",
+  "codegen": "graph codegen",
+  "generate:yaml": "mustache ./config/${NETWORK:-calibration}.json ./templates/subgraph.template.yaml > subgraph.yaml",
+  "generate:schema": "cp ./schemas/schema.${VERSION:-v1}.graphql schema.graphql"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (chain_of(&config).0, root.join("schema.graphql").exists()),
+            (1, true)
+        );
+    }
+
     // dolomite splits the render in two scripts per network:
     // `mustache-template:<net>` writes subgraph.yaml, `mustache-constants:<net>`
     // writes src/mappings/generated/constants.ts. The manifest there (here

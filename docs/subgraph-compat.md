@@ -718,7 +718,12 @@ templates, so `graph build` fails on the import as well; envio's load error
 names the template and the ones the manifest declares instead of Node's
 "does not provide an export".
 
-**Missing ABIs and schemas.** envio invents no ABI and builds no contracts.
+**Missing ABIs and schemas.** A file the manifest needs (schema, mapping,
+ABI) that isn't there, and that a package.json script of standard tools
+writes, is written by repeating that script with its variables at their
+defaults: FilOzone's `"generate:schema": "cp
+./schemas/schema.${VERSION:-v1}.graphql schema.graphql"`. Otherwise
+envio invents no ABI and builds no contracts.
 An ABI or schema the manifest names that isn't there is an error naming the
 step that writes it, when the repo says: a package.json script that writes its
 directory or mentions the file (kleros-v2's `sync-abis`, GoodCollective's
