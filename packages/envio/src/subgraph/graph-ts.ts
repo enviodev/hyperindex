@@ -24,6 +24,8 @@ import {
   parseAbiParameters,
 } from "viem";
 import { subgraphKeccak256 } from "../Core.res.mjs";
+import { warn } from "../Logging.res.mjs";
+import { operators } from "./assemblyscript.ts";
 import { currentScope, type Scope } from "./scope.ts";
 import { timeseriesId } from "./rollup.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
@@ -864,6 +866,7 @@ export class Value {
   toBytes(): Bytes {
     if (this.data instanceof Bytes) return this.data;
     if (this.data instanceof ByteArray) return Bytes.fromByteArray(this.data);
+    if (Array.isArray(this.data)) return pointerBytes(this.data);
     return Bytes.fromHexString(String(this.data));
   }
   toBytesArray(): Bytes[] {
@@ -1196,6 +1199,30 @@ function columnOf(schema: Scope["schema"], entityType: string, layout: EntityLay
 }
 
 /** graph-ts `Value`s -> the plain scalars envio stores. */
+let warnedPointerBytes = false;
+
+/**
+ * An Array that AssemblyScript reads as a Uint8Array — `graph init`'s
+ * `changetype<Bytes[]>(event.params.structs)` — is its backing buffer, the
+ * two classes sharing the ArrayBufferView header: one little-endian four-byte
+ * pointer per element. graph-node's allocator picked those addresses; these
+ * are stand-ins, as many bytes, and the run says so once.
+ */
+function pointerBytes(elements: unknown[]): Bytes {
+  if (!warnedPointerBytes) {
+    warnedPointerBytes = true;
+    warn(
+      "Envio Subgraph: a mapping stores an array (an ethereum.Tuple, often) as Bytes, as graph init's " +
+        "`changetype<Bytes[]>(event.params.<structs>)` does. graph-node stores the wasm memory addresses of " +
+        "its elements there; envio stores as many bytes of stand-in addresses, so those values differ.",
+    );
+  }
+  const bytes = new Bytes(elements.length * 4);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  elements.forEach((element, index) => view.setUint32(index * 4, Number(operators.address(element)) >>> 0, true));
+  return bytes;
+}
+
 function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   const { schema } = currentScope();
   // graph-ts holds a relation as the related entity's id under the field's own
