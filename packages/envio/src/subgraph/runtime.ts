@@ -386,11 +386,49 @@ function fromTopic(type: string, topic: string): unknown {
   return type.startsWith("uint") ? BigInt.asUintN(bits, value) : BigInt.asIntN(bits, value);
 }
 
+/**
+ * Why `graph codegen` never wrote a generated file a mapping imports: it writes
+ * `schema.ts`, `templates.ts`, `<data source>/<ABI>.ts` and
+ * `templates/<template>/<ABI>.ts` for the manifest it runs on, no `index.ts`.
+ * `graph build` then fails on the import too (asc TS6054), so a project that
+ * builds has a tree left from an earlier manifest.
+ */
+function notGenerated(root: string, generated: string, message: string, sources: DataSource[]): string | undefined {
+  const missing = /Cannot find module '([^']+)'/.exec(message)?.[1] ?? /Directory import '([^']+)'/.exec(message)?.[1];
+  if (!missing) return undefined;
+  const relative = path.relative(generated, missing);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
+  const dir = path.relative(root, generated) || ".";
+  const stale = "A tree generated for an earlier manifest may still have the file.";
+  if (message.includes("Directory import")) {
+    return `graph codegen writes no index.ts in ${dir}/, so \`graph build\` fails on this directory import as well. ${stale}`;
+  }
+  const parts = relative.split(path.sep);
+  const [kind, name, abi] =
+    parts[0] === "templates" && parts.length === 3
+      ? ["template", parts[1], parts[2]]
+      : parts.length === 2
+        ? ["data source", parts[0], parts[1]]
+        : [undefined, undefined, undefined];
+  if (!kind || !name || !abi) return undefined;
+  const candidates = sources.filter((source) => source.isTemplate === (kind === "template"));
+  const where = `${dir}/${kind === "template" ? "templates/" : ""}<${kind}>/<ABI>.ts`;
+  const source = candidates.find((candidate) => candidate.name === name);
+  const declared = source
+    ? `its ${kind} "${name}" has no ABI named "${abi.replace(/\.ts$/, "")}" (it has ${Object.keys(source.abis ?? {}).join(", ")})`
+    : `the manifest declares no ${kind} named "${name}" (it has ${candidates.map((candidate) => candidate.name).join(", ") || "none"})`;
+  return (
+    `graph codegen writes ${where} for each ${kind} of the manifest, and ${declared}, so \`graph build\` fails on ` +
+    `this import as well. ${stale}`
+  );
+}
+
 async function loadMapping(
   root: string,
   generated: string,
   mappingFile: string,
   scope: Scope,
+  sources: DataSource[] = [],
 ): Promise<Record<string, any>> {
   const url = pathToFileURL(path.resolve(root, mappingFile)).href;
   try {
@@ -408,7 +446,8 @@ async function loadMapping(
     }
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
-    throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}`);
+    const why = notGenerated(root, generated, message, sources);
+    throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}${why ? `\n${why}` : ""}`);
   }
 }
 
@@ -1140,7 +1179,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       registered: new Set(),
       blockNumber: 0,
       mappingExports: {},
-    });
+    }, sources);
     await indexEventClasses();
     fileTemplates.set(source.name, {
       name: source.name,
@@ -1206,7 +1245,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       registered: new Set(),
       blockNumber: source.startBlock ?? 0,
       mappingExports: {},
-    });
+    }, sources);
 
     await indexEventClasses();
     const owns = ownerOf(source);
