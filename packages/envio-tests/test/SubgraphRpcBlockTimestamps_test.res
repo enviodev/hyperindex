@@ -5,7 +5,7 @@
 // graph-node fetches a range's blocks concurrently; so does the fallback now,
 // within the RPC client's bound on requests in flight.
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8611")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8612")]),
   ~manifest=`
 specVersion: 0.0.8
 schema:
@@ -113,7 +113,7 @@ beforeAll(async () => {
       }, 40);
     });
   });
-  await new Promise<void>((resolve) => server.listen(8611, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(8612, "127.0.0.1", resolve));
 
   // HyperSync doesn't serve chain 1404. Where a firewall drops the connection
   // instead of refusing it, a request to its host answers nothing until the
