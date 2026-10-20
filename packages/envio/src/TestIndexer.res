@@ -717,7 +717,6 @@ let createTestIndexer = (): t<'processConfig> => {
     ~userEntities=config.userEntities,
     ~allEnums=config.allEnums,
     ~storage,
-    ~logger,
   )
 
   // Build entity operations for each user entity

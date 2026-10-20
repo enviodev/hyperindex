@@ -7,12 +7,7 @@ describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
     let storageMock = MockStorage.make([#isInitialized, #resumeInitialState, #initialize])
 
-    let persistence = Persistence.make(
-      ~logger=Logger.makeInMemory(),
-      ~userEntities=[],
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-    )
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     t.expect(
       persistence.allEntities,
@@ -31,6 +26,7 @@ describe("Test Persistence layer init", () => {
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -104,6 +100,7 @@ describe("Test Persistence layer init", () => {
     await p
 
     await persistence->Persistence.init(
+      ~logger=Logger.makeInMemory(),
       ~chainConfigs=[],
       ~contractMapping=ContractMapping.empty,
       ~envioInfo,
@@ -121,6 +118,7 @@ describe("Test Persistence layer init", () => {
 
     let _p2 =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~reset=true,
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
@@ -157,15 +155,11 @@ describe("Test Persistence layer init", () => {
     // The stored snapshot matches the running one, so the compat gate no-ops.
     let storageMock = MockStorage.make([#isInitialized, #readStoredConfig, #resumeInitialState])
 
-    let persistence = Persistence.make(
-      ~logger=Logger.makeInMemory(),
-      ~userEntities=[],
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-    )
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     let p =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -175,6 +169,7 @@ describe("Test Persistence layer init", () => {
     // Additional calls to init should not do anything
     let _ =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -183,6 +178,7 @@ describe("Test Persistence layer init", () => {
       )
     let _ =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -231,17 +227,13 @@ Although it should load effect caches metadata.`,
       [#isInitialized, #readStoredConfig, #resumeInitialState],
       ~stored={envioInfo: storedEnvioInfo, chains: [], contractMapping: ContractMapping.empty},
     )
-    let persistence = Persistence.make(
-      ~logger=Logger.makeInMemory(),
-      ~userEntities=[],
-      ~allEnums=[],
-      ~storage=storageMock.storage,
-    )
+    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
     // Attach before resolving the mock: an incompatible config rejects this
     // promise, and an unattached rejection would surface as unhandled.
     let settled = (
       async () =>
         switch await persistence->Persistence.init(
+          ~logger=Logger.makeInMemory(),
           ~chainConfigs=[],
           ~contractMapping=ContractMapping.empty,
           ~envioInfo=current,

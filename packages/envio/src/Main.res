@@ -415,6 +415,7 @@ let migrate = async (~logger, ~reset) => {
   let config = Config.load()
   let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
   await persistence->Persistence.init(
+    ~logger,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
@@ -473,7 +474,7 @@ exception FatalError(exn)
         ? Promise.resolve()
         : HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles)
     let _ = await Promise.all2((
-      persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode),
+      persistence->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode),
       typeCheck,
     ))
 

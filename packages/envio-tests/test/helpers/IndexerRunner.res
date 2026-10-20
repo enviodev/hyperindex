@@ -263,6 +263,7 @@ let run = async (
     }
 
     await persistence->Persistence.initForRun(
+      ~logger,
       ~config,
       ~reset,
       ~isDevelopmentMode=true,

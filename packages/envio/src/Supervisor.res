@@ -448,7 +448,7 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
   let _ = await Promise.all2((
-    persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev),
+    persistence->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode=config.isDev),
     HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles),
   ))
   await persistence.storage.close()

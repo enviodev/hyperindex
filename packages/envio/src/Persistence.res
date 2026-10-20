@@ -239,7 +239,6 @@ type t = {
   allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
-  logger: Logger.t,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -248,7 +247,7 @@ exception StorageError({message: string, reason: exn})
 // need, so it's printed once, without a stack trace.
 exception Refused(string)
 
-let make = (~userEntities, ~allEnums, ~storage, ~logger) => {
+let make = (~userEntities, ~allEnums, ~storage) => {
   let allEntities = userEntities
   {
     userEntities,
@@ -256,13 +255,13 @@ let make = (~userEntities, ~allEnums, ~storage, ~logger) => {
     allEnums,
     storageStatus: Unknown,
     storage,
-    logger,
   }
 }
 
 let init = {
   async (
     persistence,
+    ~logger,
     ~chainConfigs: array<Config.chain>,
     ~contractMapping,
     ~envioInfo,
@@ -281,7 +280,6 @@ let init = {
     ~announceResume=true,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
-    let logger = persistence.logger
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -411,12 +409,14 @@ let init = {
 // since somebody is watching the run come up.
 let initForRun = (
   persistence,
+  ~logger,
   ~config: Config.t,
   ~reset,
   ~isDevelopmentMode,
   ~announceResume=!Worker.isEnabled,
 ) =>
   persistence->init(
+    ~logger,
     ~announceResume,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,

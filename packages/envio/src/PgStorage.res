@@ -1560,5 +1560,5 @@ let makePersistenceFromConfig = (
   ~logger,
   ~storage=makeStorageFromEnv(~config, ~logger),
 ) => {
-  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage, ~logger)
+  Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage)
 }
