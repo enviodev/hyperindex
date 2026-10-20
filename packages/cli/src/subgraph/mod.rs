@@ -4222,6 +4222,38 @@ type Renewal implements Event @entity {
         );
     }
 
+    // kleros/pgtcr renders its manifest with `node render-templates.js
+    // <network>`, a repo file no package.json script runs: envio runs no such
+    // file, and said only "run the package prepare script".
+    #[test]
+    fn names_the_repo_file_that_reads_the_template() {
+        let dir = tempdir::TempDir::new("envio-subgraph-template-file").unwrap();
+        let root = dir.path();
+        fs::write(root.join("subgraph.template.yaml"), "specVersion: 0.0.2\n").unwrap();
+        fs::write(
+            root.join("render-templates.js"),
+            "const template = fs.readFileSync('subgraph.template.yaml').toString();\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"codegen": "graph codegen", "build": "graph build"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(
+            err,
+            "Found subgraph.template.yaml but no subgraph.yaml.\nThe repo's render-templates.js \
+             reads subgraph.template.yaml, so it likely writes the manifest; no package.json \
+             script runs it, so envio doesn't either. Run it for your network, then start envio \
+             again."
+        );
+    }
+
     fn gravity_template() -> String {
         GRAVITY_MANIFEST
             .replace("network: mainnet", "network: {{network}}")

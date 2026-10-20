@@ -2903,6 +2903,39 @@ pub fn scripts_mentioning(dir: &Path, needle: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The repo's own script files beside the manifest (and in its `scripts/`)
+/// whose source mentions `needle`: kleros/pgtcr's render-templates.js, which
+/// no package.json script runs. Read, never run.
+pub fn files_reading(dir: &Path, needle: &str) -> Vec<String> {
+    const EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "ts", "mts", "sh"];
+    let mut found = Vec::new();
+    for sub in ["", "scripts"] {
+        let Ok(entries) = std::fs::read_dir(dir.join(sub)) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|ext| EXTENSIONS.contains(&ext.to_string_lossy().as_ref()))
+                    && std::fs::metadata(path).is_ok_and(|meta| meta.len() < 1_000_000)
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            if std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle)) {
+                if let Some(relative) = pathdiff::diff_paths(&path, dir) {
+                    found.push(relative.display().to_string());
+                }
+            }
+        }
+    }
+    found
+}
+
 /// The scripts that write a file the mappings import (Goldfinch's `"prebuild":
 /// "ts-node ./scripts/update-address-manifest.ts"`): those of the nearest
 /// package, from `dir` up to the repository's root, whose text or a repo file

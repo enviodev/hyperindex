@@ -1890,6 +1890,26 @@ impl SystemConfig {
                     ));
                 }
                 if root.join("subgraph.template.yaml").exists() && manifests.is_empty() {
+                    let readers =
+                        crate::subgraph::render::files_reading(root, "subgraph.template.yaml");
+                    if let [reader] = readers.as_slice() {
+                        return Err(anyhow!(
+                            "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                             The repo's {reader} reads subgraph.template.yaml, so it likely \
+                             writes the manifest; no package.json script runs it, so envio \
+                             doesn't either. Run it for your network, then start envio again."
+                        ));
+                    }
+                    if !readers.is_empty() {
+                        return Err(anyhow!(
+                            "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                             The repo's {} read subgraph.template.yaml, so one of them likely \
+                             writes the manifest; no package.json script runs them, so envio \
+                             doesn't either. Run the right one for your network, then start \
+                             envio again.",
+                            readers.join(", ")
+                        ));
+                    }
                     return Err(anyhow!(
                         "Found subgraph.template.yaml but no subgraph.yaml.\n\
                          This project generates its manifest — run the package prepare script \
