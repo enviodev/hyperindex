@@ -5414,13 +5414,31 @@ type Renewal implements Event @entity {
             "./bin/prepare.sh",
             "#!/bin/sh\n[ \"$1\" = '--network' ] || { echo \"Supply a valid network using --network\"; exit 1; }\nsed \"s/network: NETWORK/network: $2/\" subgraph.template.yaml > subgraph.yaml\n",
         );
+        // UMA has both `"build-manifest": "scripts/build-manifest.sh"` and
+        // `"prepare:polygon": "scripts/build-manifest.sh polygon && …"`: given
+        // the network, the first runs what the second does.
+        let both = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nCHAIN=$1\nsed \"s/network: NETWORK/network: $CHAIN/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
+        fs::write(
+            both.path().join("package.json"),
+            r#"{"scripts": {"build-manifest": "./bin/prepare.sh", "prepare:base": "./bin/prepare.sh base && yarn codegen", "prepare:mainnet": "./bin/prepare.sh mainnet && yarn codegen", "codegen": "graph codegen"}}"#,
+        )
+        .unwrap();
 
         assert_eq!(
-            (outcome(&chain), outcome(&output_path), outcome(&option)),
+            (
+                outcome(&chain),
+                outcome(&output_path),
+                outcome(&option),
+                outcome(&both)
+            ),
             (
                 "8453 [\"./bin/prepare.sh base\"]".to_string(),
                 "There is no subgraph.yaml here.".to_string(),
                 "8453 [\"./bin/prepare.sh --network base\"]".to_string(),
+                "8453 [\"./bin/prepare.sh base\"]".to_string(),
             )
         );
     }

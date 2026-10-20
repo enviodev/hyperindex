@@ -2329,16 +2329,28 @@ fn pick_writer(target: &Path, network: Option<&str>) -> Pick {
             )),
         },
         Some(network) => {
-            let matching: Vec<Candidate> = all
+            let mut matching: Vec<Candidate> = all
                 .iter()
-                .filter_map(|candidate| {
-                    if builds_for(&candidate.writer.name, &candidate.commands, network) {
-                        Some((*candidate).clone())
-                    } else {
-                        with_network_argument(candidate, network)
-                    }
+                .filter(|candidate| {
+                    builds_for(&candidate.writer.name, &candidate.commands, network)
                 })
+                .map(|candidate| (*candidate).clone())
                 .collect();
+            // UMA's `build-manifest` (`scripts/build-manifest.sh`), passed the
+            // network, runs what `prepare:polygon` does: they count once.
+            for candidate in &all {
+                if builds_for(&candidate.writer.name, &candidate.commands, network) {
+                    continue;
+                }
+                if let Some(passed) = with_network_argument(candidate, network) {
+                    if !matching
+                        .iter()
+                        .any(|other| other.commands.leaves == passed.commands.leaves)
+                    {
+                        matching.push(passed);
+                    }
+                }
+            }
             let matching: Vec<&Candidate> = matching.iter().collect();
             // The Graph's network subgraph: `prepare:mainnet` writes the
             // manifest (`mustache … > subgraph.yaml`) after
