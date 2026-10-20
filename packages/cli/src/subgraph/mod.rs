@@ -3311,6 +3311,44 @@ type Renewal implements Event @entity {
         );
     }
 
+    // inverse-governance's manifest names `mainnet.schema.graphql`, which
+    // OpenZeppelin's graph-compiler writes (`"prepare:subgraph":
+    // "graph-compiler --config config/mainnet.json … --export-schema
+    // --export-subgraph"`). The error was "Failed to read …"; it names the
+    // script.
+    #[test]
+    fn names_the_script_that_writes_a_missing_schema() {
+        let dir = tempdir::TempDir::new("envio-subgraph-schema-build").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("./schema.graphql", "./mainnet.schema.graphql"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "prepare:subgraph": "graph-compiler --config config/mainnet.json --include src/datasources --export-schema --export-subgraph",
+  "codegen": "graph codegen"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err,
+            "The schema ./mainnet.schema.graphql the manifest names doesn't exist. The \
+             package.json script \"prepare:subgraph\" looks like it writes it: graph-compiler \
+             --config config/mainnet.json --include src/datasources --export-schema \
+             --export-subgraph. Run it, then start envio again."
+        );
+    }
+
     // Two files that differ from the name only in case: neither is read, and
     // the error names one.
     #[test]

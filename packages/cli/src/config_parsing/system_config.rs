@@ -1633,6 +1633,27 @@ impl SystemConfig {
             })
             .unwrap_or_else(|| "./schema.graphql".to_string());
         let schema_path = root.join(&schema_file);
+        if !schema_path.exists() {
+            // inverse-governance's schema is OpenZeppelin graph-compiler output.
+            let stem = schema_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let writer = root.ancestors().take(4).find_map(|dir| {
+                ["schema", stem.as_str()].iter().find_map(|needle| {
+                    crate::subgraph::render::scripts_mentioning(dir, needle)
+                        .into_iter()
+                        .find(|(_, script)| !script.trim_start().starts_with("graph "))
+                })
+            });
+            if let Some((script, text)) = writer {
+                return Err(anyhow!(
+                    "The schema {schema_file} the manifest names doesn't exist. The package.json \
+                     script \"{script}\" looks like it writes it: {text}. Run it, then start envio \
+                     again."
+                ));
+            }
+        }
         let schema = std::fs::read_to_string(&schema_path)
             .context(format!("Failed to read {}", schema_path.display()))?;
 
