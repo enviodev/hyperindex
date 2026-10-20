@@ -172,6 +172,27 @@ async fn compare(project_root: &Path, options: &Options, report: &mut Report) ->
              at the block that failed. Pass --allow-indexing-errors to compare anyway."
         );
     }
+    // A pruned or grafted deployment refuses every query pinned before its
+    // first block; graph-node says which block that is.
+    if let Err(err) = reference
+        .query(&format!(
+            "{{ _meta(block: {{number: {block}}}) {{ block {{ number }} }} }}"
+        ))
+        .await
+    {
+        let message = format!("{err:#}");
+        let first = message
+            .split_once("only has data starting at block number ")
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .and_then(|number| number.parse::<u64>().ok());
+        if let Some(first) = first {
+            bail!(
+                "The reference answers only from block {first} on (its history was pruned, or it \
+                 was grafted there), and ours is at block {block}. Index past block {first} and \
+                 compare again."
+            );
+        }
+    }
     report.block = Some(block);
 
     let reference_exposed =
