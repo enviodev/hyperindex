@@ -639,6 +639,8 @@ export const operators = {
   rotr: rotate(false),
   mul: binary("times", widened((a, b) => a * b)),
   div: binary("div", integerDivision),
+  // A division the source types as a float's, whole numbers or not.
+  fdiv: binary("div", (a, b) => number(a) / number(b)),
   rem: binary("mod", widened((a, b) => a % b)),
   // `10 ** decimals.toI64()` is an i64 power, and graph-ts' `BigInt ** u8` its
   // `pow`: JavaScript's `**` refuses to mix a bigint with a number.
