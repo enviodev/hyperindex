@@ -61,7 +61,6 @@ let make = (): Ecosystem.t => {
     logger->Logger.withFields({
       "contract": eventItem.onEventRegistration.eventConfig.contractName,
       "event": eventItem.onEventRegistration.eventConfig.name,
-      "chainId": eventItem.chainId,
       "block": eventItem.blockNumber,
       "logIndex": eventItem.logIndex,
       "address": (eventItem.payload->toPayload).srcAddress,

@@ -71,7 +71,6 @@ let make = (): Ecosystem.t => {
     logger->Logger.withFields({
       "program": eventConfig.contractName,
       "instruction": eventConfig.name,
-      "chainId": eventItem.chainId,
       "slot": eventItem.blockNumber,
       "programId": eventConfig.programId,
     })

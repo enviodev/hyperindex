@@ -73,7 +73,6 @@ let loggerForItem = {
       | Block({blockNumber, onBlockRegistration}) =>
         logger->Logger.withFields({
           "onBlock": onBlockRegistration.name,
-          "chainId": onBlockRegistration.chainId,
           "block": blockNumber,
         })
       }

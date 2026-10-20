@@ -67,7 +67,11 @@ let makeItem = () => Internal.Event({
 
 let logUserLevels = (~shown, ~child) => {
   let logger = loggerAt(shown)
-  let userLogger = makeItem()->Ecosystem.loggerForItem(~ecosystem, ~logger)->asContextLog
+  // Built on the chain's logger, as the indexer builds it.
+  let userLogger =
+    makeItem()
+    ->Ecosystem.loggerForItem(~ecosystem, ~logger=logger->withChainId(1337->ChainId.fromInt))
+    ->asContextLog
   logger->info(`##Current log level: ${(shown :> string)}`)
   userLogger.debug("This is a user debug message.", ~params={"child": child})
   userLogger.info("This is a user info message.", ~params={"child": child})
