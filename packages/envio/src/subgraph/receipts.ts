@@ -33,13 +33,16 @@ export type ReceiptLog = {
 export type ReceiptRequest = { chainId: number; blockNumber: number; transactionIndex: number; transactionHash: string };
 
 let rpcUrls: string[] = [];
+/** Chains HyperSync doesn't serve, which RPC answers alone. */
+let rpcOnly = new Set<number>();
 /** Logs of recently read blocks, by chain then number; insertion order is age. */
 let recent = new Map<string, Promise<ReceiptLog[]>>();
 let inFlight = 0;
 const queued: (() => void)[] = [];
 
-export function configureReceiptLogs(urls: string[]) {
+export function configureReceiptLogs(urls: string[], rpcOnlyChains: number[] = []) {
   rpcUrls = urls;
+  rpcOnly = new Set(rpcOnlyChains);
   recent = new Map();
 }
 
@@ -160,6 +163,7 @@ async function fromRpc(request: ReceiptRequest): Promise<ReceiptLog[]> {
 
 /** The logs of one transaction, in log order. */
 export async function requestReceiptLogs(request: ReceiptRequest): Promise<ReceiptLog[]> {
+  if (rpcOnly.has(request.chainId) && rpcUrls.length > 0) return fromRpc(request);
   try {
     const logs = await blockLogs(request.chainId, request.blockNumber);
     const mine = logs.filter((log) => log.transactionIndex === request.transactionIndex);

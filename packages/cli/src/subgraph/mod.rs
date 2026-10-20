@@ -112,6 +112,10 @@ pub struct SubgraphRuntimeConfig {
     /// How far, per chain, a block handler that reads header fields trails the
     /// head: the runtime refuses to serve a header from inside that distance.
     pub block_header_lag: BTreeMap<u64, u32>,
+    /// Chains HyperSync doesn't serve. The runtime reads their block headers
+    /// and receipts from RPC alone, without first asking a host that has no
+    /// such chain.
+    pub rpc_only_chains: Vec<u64>,
 }
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
@@ -1371,6 +1375,14 @@ pub fn translate(
         }
     }
 
+    let rpc_only_chains: Vec<u64> = chains
+        .keys()
+        .copied()
+        .filter(|id| {
+            crate::config_parsing::hypersync_endpoints::get_default_hypersync_endpoint(*id).is_err()
+        })
+        .collect();
+
     let human_config = HumanConfig {
         base: BaseConfig {
             name: project_name.to_string(),
@@ -1419,6 +1431,7 @@ pub fn translate(
             rpc_urls,
             manifest_file: DEFAULT_MANIFEST.to_string(),
             block_header_lag,
+            rpc_only_chains,
         },
         human_config,
     })

@@ -157,6 +157,8 @@ type SubgraphConfig = {
   rpcUrls: string[];
   /** Per chain id, the reorg depth a block handler's header reads are held back by. */
   blockHeaderLag?: Record<number, number>;
+  /** Chains HyperSync doesn't serve: their headers and receipts come from RPC alone. */
+  rpcOnlyChains?: number[];
   isDev: boolean;
 } & SubgraphSchema;
 
@@ -913,7 +915,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const hit = registerCache.get(`envio_subgraph_eth_call\u0000${encoded}`);
     return hit && "value" in hit ? (hit.value as string) : undefined;
   });
-  const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {});
+  const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {}, config.rpcOnlyChains ?? []);
   const callSync = (effect: unknown, input: unknown, what: string) => {
     const scope = currentScope();
     void what;

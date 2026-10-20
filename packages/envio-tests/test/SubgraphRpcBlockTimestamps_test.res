@@ -74,6 +74,7 @@ const ZERO32 = "0x" + "00".repeat(32);
 let server: Server;
 let inFlight = 0;
 let mostInFlight = 0;
+let hypersyncRequests = 0;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -114,12 +115,17 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => server.listen(8611, "127.0.0.1", resolve));
 
-  // HyperSync doesn't serve chain 1404: its host refuses the connection.
+  // HyperSync doesn't serve chain 1404. Where a firewall drops the connection
+  // instead of refusing it, a request to its host answers nothing until the
+  // request deadline — and the translation already knows not to ask.
   const realFetch = g.fetch;
-  g.fetch = (input: any, init: any) =>
-    String(input).includes("hypersync.xyz")
-      ? Promise.reject(new TypeError("fetch failed"))
-      : realFetch(input, init);
+  g.fetch = (input: any, init: any) => {
+    if (!String(input).includes("hypersync.xyz")) return realFetch(input, init);
+    hypersyncRequests++;
+    return new Promise((_, reject) =>
+      init?.signal?.addEventListener("abort", () => reject(new TypeError("fetch failed"))),
+    );
+  };
 });
 
 afterAll(() => server.close());
@@ -138,7 +144,14 @@ describe("block timestamps over RPC", () => {
       first: ticks.find((tick) => tick.id === "100")?.timestamp,
       last: ticks.find((tick) => tick.id === "131")?.timestamp,
       concurrent: mostInFlight > 1,
-    }).toEqual({ ticks: 32, first: 1_700_000_100n, last: 1_700_000_131n, concurrent: true });
+      hypersyncRequests,
+    }).toEqual({
+      ticks: 32,
+      first: 1_700_000_100n,
+      last: 1_700_000_131n,
+      concurrent: true,
+      hypersyncRequests: 0,
+    });
   });
 });
 `,

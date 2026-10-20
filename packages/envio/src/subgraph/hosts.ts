@@ -197,9 +197,13 @@ function fileRetryMs(): number {
 
 export type HostEffects = ReturnType<typeof makeHostEffects>;
 
-export function makeHostEffects(rpcUrls: string[], headerLag: Record<number, number> = {}) {
-  configureBlockTimestamps(rpcUrls, headerLag);
-  configureReceiptLogs(rpcUrls);
+export function makeHostEffects(
+  rpcUrls: string[],
+  headerLag: Record<number, number> = {},
+  rpcOnlyChains: number[] = [],
+) {
+  configureBlockTimestamps(rpcUrls, headerLag, rpcOnlyChains);
+  configureReceiptLogs(rpcUrls, rpcOnlyChains);
 
   const clientOrThrow = (callSite: string) => {
     if (rpcUrls.length === 0) {

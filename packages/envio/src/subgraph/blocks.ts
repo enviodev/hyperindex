@@ -30,10 +30,17 @@ type Waiter<T> = {
 let rpcUrls: string[] = [];
 /** Per chain, how far below the head a header must sit before it is served. */
 let headerLag: Record<number, number> = {};
+/** Chains HyperSync doesn't serve, which RPC answers alone. */
+let rpcOnly = new Set<number>();
 
-export function configureBlockTimestamps(urls: string[], lag: Record<number, number> = {}) {
+export function configureBlockTimestamps(
+  urls: string[],
+  lag: Record<number, number> = {},
+  rpcOnlyChains: number[] = [],
+) {
   rpcUrls = urls;
   headerLag = lag;
+  rpcOnly = new Set(rpcOnlyChains);
   timestamps.reset();
   headers.reset();
 }
@@ -64,12 +71,18 @@ function makeBatcher<T>(
   async function answer(chainId: number, blocks: Map<number, Waiter<T>[]>) {
     let answers = new Map<number, T>();
 
+    // HyperSync isn't asked for a chain it doesn't serve: where a firewall
+    // drops the connection rather than refusing it, asking held the batch for
+    // the request deadline.
+    const askHyperSync = !(rpcOnly.has(chainId) && rpcUrls.length > 0);
     try {
-      const fetched = await bounded(
-        clusters([...blocks.keys()]).map(([from, to]) => () => fromHyperSync(chainId, from, to)),
-        MAX_QUERIES_IN_FLIGHT,
-      );
-      answers = new Map(fetched.flatMap((cluster) => [...cluster.blocks]));
+      if (askHyperSync) {
+        const fetched = await bounded(
+          clusters([...blocks.keys()]).map(([from, to]) => () => fromHyperSync(chainId, from, to)),
+          MAX_QUERIES_IN_FLIGHT,
+        );
+        answers = new Map(fetched.flatMap((cluster) => [...cluster.blocks]));
+      }
     } catch (error) {
       if (rpcUrls.length === 0) {
         const message = error instanceof Error ? error.message : String(error);
