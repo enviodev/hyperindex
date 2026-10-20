@@ -675,6 +675,9 @@ fn parse_data_source(
         if let Some(mut mapping) = Obj::new(mapping, &format!("{path}.mapping"), report) {
             match mapping.string("kind").as_deref() {
                 Some("ethereum/events") | Some("ethereum/contract") | Some("ethereum") | None => {}
+                // graph-node's offchain mapping has no `kind` to check.
+                Some(file_kind)
+                    if kind != DataSourceKind::Contract && file_kind == kind_raw.as_str() => {}
                 Some(other) => report.unknown(
                     format!("the mapping kind \"{other}\""),
                     where_("mapping → kind"),

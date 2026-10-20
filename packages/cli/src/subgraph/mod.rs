@@ -1954,6 +1954,35 @@ type Gravatar @entity {
             .contains_key(FILE_DATA_SOURCE_ENTITY));
     }
 
+    // Heesho/stickrnet-monorepo spells its file template's mapping kind as the
+    // data source's own. graph-node's offchain `UnresolvedMapping` has no
+    // `kind` and doesn't deny unknown fields, so it reads the same as any.
+    #[test]
+    fn reads_a_file_template_whose_mapping_kind_is_the_file_kind() {
+        let manifest = format!(
+            "{MANIFEST}{}",
+            FILE_TEMPLATE.replace("kind: ethereum/events", "kind: file/ipfs")
+        );
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        let file = translation
+            .runtime
+            .manifest
+            .templates
+            .iter()
+            .find(|template| template.name == "Metadata")
+            .map(|template| template.kind);
+        assert_eq!(file, Some(manifest::DataSourceKind::FileIpfs));
+    }
+
     #[test]
     fn adds_no_file_table_without_a_file_template() {
         let translation = translate(
