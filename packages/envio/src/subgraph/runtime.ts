@@ -15,7 +15,7 @@ import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
-import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
+import { subgraphFileToJavascript, subgraphRegisterHandlers } from "../Core.res.mjs";
 import { install as installCallSource } from "../sources/CallSource.res.mjs";
 import { fetchCalls, resetCallBackends } from "./calls-source.ts";
 import {
@@ -64,7 +64,16 @@ import {
 import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
 import { resetRpcClients } from "./rpc.ts";
 import {
+  AS_MAP,
+  AS_SET,
+  AsMap,
+  AsSet,
+  Pointer,
+  builtinMax,
+  builtinMin,
+  memory as assemblyScriptMemory,
   EVENT_CLASSES_EXPORT,
+  MODULE_INIT,
   OPERATORS_HELPER,
   RETAG_EACH_HELPER,
   RETAG_HELPER,
@@ -306,6 +315,23 @@ function installResolveHook(root: string) {
   globals[OPERATORS_HELPER] ??= operators;
   globals[RETAG_HELPER] ??= retagChangetype;
   globals[RETAG_EACH_HELPER] ??= retagEach;
+  globals[AS_MAP] ??= AsMap;
+  globals[AS_SET] ??= AsSet;
+  // AssemblyScript's memory builtins, over the buffers a typed array's
+  // `dataStart` points into.
+  globals.memory ??= assemblyScriptMemory;
+  globals.min ??= builtinMin;
+  globals.max ??= builtinMax;
+  globals.unchecked ??= (value: unknown) => value;
+  const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
+  if (!Object.getOwnPropertyDescriptor(typedArray, "dataStart")) {
+    Object.defineProperty(typedArray, "dataStart", {
+      get(this: Uint8Array) {
+        return new Pointer(this.buffer, this.byteOffset);
+      },
+      configurable: true,
+    });
+  }
   globals.assert ??= (value: unknown, message?: string) => {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;
@@ -676,6 +702,19 @@ async function rerunProvisional(scope: Scope): Promise<boolean> {
   return true;
 }
 
+/**
+ * graph-node runs every trigger in a fresh instance of the mapping's module
+ * (runtime/wasm/src/mapping.rs instantiates it before each `handle_trigger`):
+ * the files' top-level code runs again in that trigger's context, and no
+ * global keeps what an earlier trigger left in it. Each project module's
+ * `__envio_init` reruns its top-level code after that of the modules it
+ * imports, once per generation.
+ */
+let moduleGeneration = 0;
+function freshModuleState(scope: Scope): void {
+  scope.mappingExports[MODULE_INIT]?.(++moduleGeneration);
+}
+
 const maxRegisterRounds = 100;
 
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
@@ -685,7 +724,10 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
     scope.writes = undefined;
     let suspended = false;
     try {
-      runInScope(scope, fn);
+      runInScope(scope, () => {
+        freshModuleState(scope);
+        fn();
+      });
     } catch (error) {
       if (error !== REGISTER_SUSPEND) {
         // A host op that failed is never forgiven: the mapping was about to
@@ -869,7 +911,10 @@ function makeFileRunner(
               context: create.context,
             },
           }),
-          () => handler(decodeBase64(content)),
+          () => {
+            freshModuleState(ran.scope!);
+            return handler(decodeBase64(content));
+          },
         ),
       );
       if (ran.scope?.fileCreates) queue.push(...ran.scope.fileCreates.values());
@@ -1063,6 +1108,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // Aggregations roll up when a block's time passes a bucket's end, so every
   // handler checks first; the timeseries it saves carry the block's time.
   const startRun = (scope: Scope) => {
+    freshModuleState(scope);
     scope.timeseriesSequence = 0;
     // A replayed round creates its file data sources again.
     scope.fileCreates = undefined;
@@ -1075,6 +1121,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // the life of the process, so generating after the import has already failed
   // wouldn't help.
   const sources = [...config.dataSources, ...config.templates];
+  const handlersOf = (source: (typeof sources)[number]): string[] =>
+    [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
+      (handler) => handler.handler,
+    );
+  let registerPassHandlers: Map<(typeof sources)[number], Set<string>> | undefined;
   const generated = generatedDir(
     config.root,
     sources.map((source) => source.mappingFile),
@@ -1193,21 +1244,21 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const live = (event: any) =>
       source.isTemplate || source.endBlock === undefined || event.block.number <= source.endBlock;
     // After codegen, so the analysis can follow the mapping into
-    // `generated/templates.ts`.
-    const creating = new Set<string>(
+    // `generated/templates.ts`; for every source at once, as a create in one
+    // can hang on what another one's handlers save.
+    registerPassHandlers ??=
       templateNames.size === 0
-        ? []
-        : registerEveryHandler
-          ? [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
-              (handler) => handler.handler,
-            )
-          : subgraphCreatingHandlers(
-              path.resolve(config.root, source.mappingFile),
-              [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
-                (handler) => handler.handler,
-              ),
-            ),
-    );
+        ? new Map()
+        : new Map(
+            (registerEveryHandler
+              ? sources.map((each) => handlersOf(each))
+              : subgraphRegisterHandlers(
+                  sources.map((each) => path.resolve(config.root, each.mappingFile)),
+                  sources.map((each) => handlersOf(each)),
+                )
+            ).map((names: string[], index: number) => [sources[index], new Set(names)]),
+          );
+    const creating = registerPassHandlers.get(source) ?? new Set<string>();
     // graph-node matches a data source without `source.address` against every
     // contract's logs — ENS's Resolver is one data source for every resolver
     // anyone deploys. Nothing would ever register an address for it here.

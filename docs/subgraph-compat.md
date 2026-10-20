@@ -168,6 +168,7 @@ like any other entity list.
 |---|---|
 | `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A save merges onto the stored entity, as graph-node's does: a field the instance doesn't set keeps its stored value, an explicit null clears it. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
 | Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` and `a /= b` in a project file is rewritten as it loads (§6a) to a helper that truncates only when both operands really are integers |
+| `===` / `!==` | AssemblyScript can't overload them: references compare by identity, numbers by value (an i64 the shim holds as a bigint equals the number), null equals the `undefined` a zero-initialized field reads as. A string the host returns (`dataSource.network()`, `toHexString()`, …) is a new allocation, so it is never `===` a literal or another string, while literals equal each other wherever written; any other string compares by value |
 | A handler the mapping doesn't export | skipped, as `graph build` does — it doesn't check either, and Aave's mainnet manifest names one its mappings renamed years ago |
 | A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
@@ -271,9 +272,10 @@ register pass's own store, and reads see what an earlier register pass wrote**
 strictly earlier events on its chain, for the 50k most recently used
 entities (an evicted one reads `null` again); a `once` block handler runs in register mode too, at its
 block, before the first register pass of its chain (Venus saves its
-Comptroller there); an entity saved only by a handler that creates nothing —
-which gets no register pass — or by a polling block handler reads `null`, so a
-`create()` conditioned on such state can still mis-register. A mapping that throws in the
+Comptroller there); a change a handler without a register pass makes to an
+entity (it only updates one a create depends on, below) or one a polling block
+handler saves doesn't reach that store, so a `create()` conditioned on such
+state can still mis-register. A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
@@ -287,7 +289,12 @@ functions, classes and variables, relative imports and re-exports, into
 `generated/templates.ts`), and anything it can't see — a file that doesn't
 parse or resolve, another package, a namespace import of graph-ts — counts as
 a create. A pool's swap handler no longer replays its mapping and its contract
-calls at fetch time. Concurrent passes share one in-flight request per op.
+calls at fetch time. A handler that creates an entity a create depends on gets
+the pass too: the analysis notes, in creating code, the entity types whose
+load decides a create (a create under `if (collection)`, after
+`if (!pool) return`, handed `entity.address`), and a handler of any data source
+that constructs one (`new E(…)`, `store.set("E", …)`) has its writes in the
+register store. Concurrent passes share one in-flight request per op.
 `ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` restores the pass for every handler.
 
 ## 5. Sync bridge: try-sync, suspend, replay
@@ -383,13 +390,29 @@ classes call `DataSource.create`. Consequences:
   other loader sees it: it strips types and decorators, routes `/` and `/=`
   through an integer-aware helper, retags `changetype<Foo>(x)` onto the
   generated class, and renames a `let` that redeclares a parameter (every
-  generated `try_` binding does). It emits an inline source map, so stack
+  generated `try_` binding does). A file's classes and constant-initialized
+  globals exist before any top-level code runs, as under asc: inside an import
+  cycle, a file evaluated first would otherwise meet them in their temporal
+  dead zone. Its other top-level code runs again as each trigger's handler
+  starts, in that trigger's context, after that of the files it imports:
+  graph-node instantiates the module for every trigger, so a global keeps
+  nothing an earlier handler left in it, and `dataSource.context()` at top
+  level reads the current instance's. What can't differ between triggers — a
+  constant, a graph-ts value (`BigInt.fromI32(0)`), a `const` table nothing
+  changes in place — is built once. It emits an inline source map, so stack
   traces name the mapping's own lines, and refuses — located — what it can't
   rewrite faithfully. The runtime injects the few AS builtin globals generated
   code uses (`changetype` = identity, `assert`), and covers what AS's standard
   library spells differently: an i64 is a bigint, so `+ - * % /` with an
   integer on the other side stay i64 arithmetic (`timestamp.toI64() * 1000`),
   `Date` takes and sets an i64, and `DataView` has `setUint64`/`getUint64`.
+  `new Map`/`new Set` build AssemblyScript's own (`keys()`/`values()` arrays,
+  `map[key]` as `get`/`set`), a bit operation on a u32 stays unsigned and one
+  on an i64 runs in 64 bits, `new StaticArray<u32>(n)` is a typed array (stores
+  wrap), and memory builtins work over buffers: `x.dataStart` and
+  `changetype<usize>(x.buffer)` are pointers that `load<T>`, `store<T>`,
+  `memory.copy`/`fill`, `bswap`, `rotl`/`rotr`, `min`/`max` take — a raw
+  integer address is refused.
   `matchstick-as` (which re-exports graph-ts' `log`) resolves to the shim too.
   A handler's event is built as the generated class it declares, wherever the
   handler is written — the manifest's file may only re-export it.

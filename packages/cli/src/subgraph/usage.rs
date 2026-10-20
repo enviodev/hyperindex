@@ -111,7 +111,8 @@ fn transaction_field(name: &str) -> Option<TransactionField> {
         "from" => TransactionField::From,
         "to" => TransactionField::To,
         "value" => TransactionField::Value,
-        "gasLimit" => TransactionField::Gas,
+        // graph-ts before 0.22 called the gas limit `gasUsed`.
+        "gasLimit" | "gasUsed" => TransactionField::Gas,
         "gasPrice" => TransactionField::GasPrice,
         "input" => TransactionField::Input,
         "nonce" => TransactionField::Nonce,
@@ -400,6 +401,14 @@ mod tests {
                 transaction: Some(vec![TransactionField::Hash, TransactionField::Gas]),
                 block: Some(vec![BlockField::Miner]),
             }
+        );
+    }
+
+    #[test]
+    fn selects_the_gas_limit_for_a_pre_0_22_gas_used() {
+        assert_eq!(
+            scan_one("transaction.gasUsed = event.transaction.gasUsed").transaction,
+            Some(vec![TransactionField::Gas])
         );
     }
 
