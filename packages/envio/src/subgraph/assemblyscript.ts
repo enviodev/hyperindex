@@ -103,6 +103,31 @@ const sameFresh = (a: unknown, b: unknown): boolean =>
   typeof a === "string" && typeof b === "string" ? false : same(a, b);
 
 /**
+ * `changetype<usize>(ref)`: the reference's address. Null is 0 and each object
+ * keeps one nonzero address, which is all a mapping can observe of one — it
+ * tests it against 0, or two of them against each other. A string here is a
+ * value, so equal strings share an address; an integer is itself.
+ */
+const objectAddresses = new WeakMap<object, number>();
+const stringAddresses = new Map<string, number>();
+let lastAddress = 0;
+const nextAddress = () => (lastAddress += 16);
+const address = (value: unknown): unknown => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number" || typeof value === "bigint") return value;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") {
+    if (stringAddresses.size > 100_000) stringAddresses.clear();
+    let at = stringAddresses.get(value);
+    if (at === undefined) stringAddresses.set(value, (at = nextAddress()));
+    return at;
+  }
+  let at = objectAddresses.get(value as object);
+  if (at === undefined) objectAddresses.set(value as object, (at = nextAddress()));
+  return at;
+};
+
+/**
  * `x as i32` and its narrower kin. A number or bigint wraps to the width; a
  * boolean is 0 or 1; null is 0. Anything else is a reference, and an
  * AssemblyScript cast of one reads its address, which is garbage the mapping
@@ -214,6 +239,7 @@ export const operators = {
   ne: (a: unknown, b: unknown) => !equals(a, b),
   same,
   same_fresh: sameFresh,
+  address,
   lt: binary("lt", (a, b) => a < b),
   le: binary("le", (a, b) => a <= b),
   gt: binary("gt", (a, b) => a > b),

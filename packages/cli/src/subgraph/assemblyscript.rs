@@ -961,6 +961,28 @@ impl<'a> Rewrite<'a> {
     }
 }
 
+/// `changetype<usize>(ref)`: a reference reinterpreted as an integer is its
+/// address — what a mapping compares with 0 to test for null.
+fn integer_changetype(call: &CallExpression<'_>) -> bool {
+    let Expression::Identifier(callee) = &call.callee else {
+        return false;
+    };
+    if callee.name != "changetype" || call.arguments.len() != 1 {
+        return false;
+    }
+    let Some(TSType::TSTypeReference(reference)) = call
+        .type_arguments
+        .as_ref()
+        .and_then(|arguments| arguments.params.first())
+    else {
+        return false;
+    };
+    matches!(&reference.type_name, TSTypeName::IdentifierReference(ty) if matches!(
+        ty.name.as_str(),
+        "usize" | "isize" | "u64" | "i64" | "u32" | "i32" | "u16" | "i16" | "u8" | "i8"
+    ))
+}
+
 fn is_pure(expr: &Expression<'_>) -> bool {
     match expr {
         Expression::Identifier(_) | Expression::ThisExpression(_) => true,
@@ -1173,6 +1195,12 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                         &self.ast,
                     );
                     *expr = self.call(span, RETAG_EACH_HELPER, [class, value]);
+                    return;
+                }
+                if integer_changetype(call) {
+                    let span = call.span;
+                    let value = call.arguments[0].to_expression_mut().take_in(&self.ast);
+                    *expr = self.operator(span, "address", [value]);
                     return;
                 }
                 let Some((class_span, class)) = self.retag_target(call) else {
@@ -1642,7 +1670,7 @@ export function f(value: Entity, n: i64): void {
             "import { Pair } from \"../generated/schema\";
 export function f(value, n) {
 \tlet pair = __envio_retag(Pair, value);
-\tlet wide = changetype(n);
+\tlet wide = __envio_op.address(n);
 }
 "
         );
