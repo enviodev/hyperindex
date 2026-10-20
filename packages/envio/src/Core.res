@@ -44,6 +44,7 @@ type addon = {
   subgraphCreatingHandlers: (string, array<string>) => array<string>,
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
+  subgraphBundledCodegenCurrent: (string, string) => bool,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -342,6 +343,9 @@ let subgraphBundledCodegen = (~manifestFile, ~outputDir: option<string>) => {
   let addon = getAddon()
   addon.subgraphBundledCodegen(manifestFile, outputDir->Null.fromOption)
 }
+
+let subgraphBundledCodegenCurrent = (~manifestFile, ~outputDir) =>
+  getAddon().subgraphBundledCodegenCurrent(manifestFile, outputDir)
 
 let runCli = args => {
   let addon = getAddon()

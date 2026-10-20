@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { subgraphBundledCodegen } from "../Core.res.mjs";
+import { subgraphBundledCodegen, subgraphBundledCodegenCurrent } from "../Core.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
 import { fetchGraphCli, graphCliVersions } from "./toolchain.ts";
 
@@ -477,7 +477,8 @@ export async function ensureGeneratedCode(
   const graphCli = graphCliPackage(root);
   const complete = existsSync(dir) && missingGeneratedFiles(root, mappingFiles, dir).length === 0;
   if (complete) {
-    if (!graphCli) {
+    // `envio start` writes the bundled tree before the runtime loads.
+    if (!graphCli && !subgraphBundledCodegenCurrent(path.resolve(root, manifestFile), dir)) {
       warn(
         `Envio Subgraph is running the generated code in "${path.relative(root, dir)}/" as it is: ` +
           "@graphprotocol/graph-cli isn't installed, so it can't be rebuilt. If subgraph.yaml, the " +

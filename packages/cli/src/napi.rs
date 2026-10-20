@@ -171,6 +171,14 @@ pub fn subgraph_bundled_codegen(
     run().map_err(|e| napi::Error::from_reason(format!("{e:#}")))
 }
 
+#[napi_derive::napi]
+pub fn subgraph_bundled_codegen_current(manifest_file: String, output_dir: String) -> bool {
+    crate::subgraph::codegen::is_current(
+        std::path::Path::new(&manifest_file),
+        std::path::Path::new(&output_dir),
+    )
+}
+
 /// Parses a subgraph project the same way `from_user_api` parses an envio one:
 /// subgraph.yaml and its schema in memory, ABI bodies supplied through `files`,
 /// no process environment. The returned config carries the translated manifest

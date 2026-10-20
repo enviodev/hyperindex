@@ -70,6 +70,17 @@ pub fn generate(manifest_file: &Path, output_dir: &Path) -> Result<Vec<String>> 
     Ok(written)
 }
 
+/// Whether `output_dir` holds what `generate` would write there now, file for
+/// file, so it can't be stale.
+pub fn is_current(manifest_file: &Path, output_dir: &Path) -> bool {
+    let graph_ts = GraphTs::detect(manifest_file.parent().unwrap_or(Path::new(".")));
+    generate_files(manifest_file, graph_ts).is_ok_and(|files| {
+        files.iter().all(|(relative, text)| {
+            std::fs::read_to_string(output_dir.join(relative)).is_ok_and(|disk| &disk == text)
+        })
+    })
+}
+
 /// The generated tree in memory: relative path to file text.
 pub fn generate_files(manifest_file: &Path, graph_ts: GraphTs) -> Result<BTreeMap<String, String>> {
     let text = std::fs::read_to_string(manifest_file)
@@ -1908,6 +1919,21 @@ mod tests {
             GraphTs::detect(Path::new("/nonexistent/project")),
             GraphTs::ALL
         );
+    }
+
+    // The runtime warns that a generated tree it can't rebuild may be stale;
+    // one the bundled codegen just wrote for this manifest can't be.
+    #[test]
+    fn a_tree_is_current_only_while_it_is_what_bundled_codegen_writes() {
+        let dir = tempdir::TempDir::new("envio-codegen-current").unwrap();
+        let manifest = fixture().join("subgraph.yaml");
+        let out = dir.path().join("generated");
+        let fresh = is_current(&manifest, &out);
+        generate(&manifest, &out).unwrap();
+        let written = is_current(&manifest, &out);
+        std::fs::write(out.join("schema.ts"), "// hand edited\n").unwrap();
+        let edited = is_current(&manifest, &out);
+        assert_eq!((fresh, written, edited), (false, true, false));
     }
 
     #[test]
