@@ -123,13 +123,18 @@ type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
 
 // Adds to what a failure says without replacing it: vitest still gets the
 // AssertionError itself to diff, and a ReScript exception still matches as the
-// same exception.
+// same exception. A thrown string or a frozen error can't carry the text, and
+// stays the failure as thrown.
 let appendToFailureMessage = (exn, text) =>
-  switch exn {
-  | JsExn(error) => error->setErrorMessage(error->JsExn.message->Option.getOr("") ++ text)
-  | exn =>
-    let raw = exn->(Utils.magic: exn => rescriptExn)
-    raw.message = Some(raw.message->Option.getOr(raw.id) ++ text)
+  try {
+    switch exn {
+    | JsExn(error) => error->setErrorMessage(error->JsExn.message->Option.getOr("") ++ text)
+    | exn =>
+      let raw = exn->(Utils.magic: exn => rescriptExn)
+      raw.message = Some(raw.message->Option.getOr(raw.id) ++ text)
+    }
+  } catch {
+  | _ => ()
   }
 
 let logsLinkPrefix = "\n\nLogs: "
