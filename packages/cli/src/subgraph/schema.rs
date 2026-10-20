@@ -119,13 +119,17 @@ pub struct AggregationDimension {
 #[serde(rename_all = "camelCase")]
 pub struct Aggregate {
     pub field: String,
+    /// The column the aggregation table holds it in: `<field>_id` for an
+    /// entity reference.
+    pub column: String,
     /// `sum`, `count`, `min`, `max`, `first` or `last`.
     pub func: String,
     /// A source field or a SQL expression over source fields. `count` needs none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arg: Option<String>,
     pub cumulative: bool,
-    /// The declared scalar: `Int`, `Int8`, `BigInt` or `BigDecimal`.
+    /// The declared scalar: `Int`, `Int8`, `BigInt` or `BigDecimal`; for
+    /// `first`/`last` also `String`, `Bytes` or `Reference` (an entity).
     pub kind: String,
 }
 
@@ -937,14 +941,23 @@ fn translate_aggregation(
             });
             continue;
         };
-        if !["Int", "Int8", "BigInt", "BigDecimal"].contains(&base.as_str()) || is_list(&wrappers) {
+        let func = string_arg(aggregate, "fn").unwrap_or_default();
+        // graph-node v0.42 also takes a String, Bytes or entity reference for
+        // `first`/`last` (schema/input/mod.rs `aggregate_field_types`).
+        let first_last = func == "first" || func == "last";
+        let reference = entity_names.contains(&base);
+        let numeric = ["Int", "Int8", "BigInt", "BigDecimal"].contains(&base.as_str());
+        let picked = first_last && (base == "String" || base == "Bytes" || reference);
+        if !(numeric || picked) || is_list(&wrappers) {
             report.unknown(
-                format!("an aggregate of type {base} (graph-node takes Int, Int8, BigInt or BigDecimal)"),
+                format!(
+                    "an aggregate of type {base} (graph-node takes Int, Int8, BigInt or BigDecimal, \
+                     and for first/last also String, Bytes or an entity)"
+                ),
                 field_location.clone(),
             );
             continue;
         }
-        let func = string_arg(aggregate, "fn").unwrap_or_default();
         if !AGGREGATE_FUNCTIONS.contains(&func.as_str()) {
             report.unknown(
                 format!("the aggregate function \"{func}\""),
@@ -961,11 +974,20 @@ fn translate_aggregation(
             continue;
         }
         aggregates.push(Aggregate {
+            column: if reference {
+                format!("{}_id", field.name)
+            } else {
+                field.name.clone()
+            },
             field: field.name.clone(),
             func,
             arg,
             cumulative: bool_arg(aggregate, "cumulative").unwrap_or(false),
-            kind: base,
+            kind: if reference {
+                "Reference".to_string()
+            } else {
+                base
+            },
         });
     }
     if aggregates.is_empty() {

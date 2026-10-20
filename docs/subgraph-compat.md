@@ -161,7 +161,11 @@ like any other entity list.
   (fields without `@aggregate`, copied from the source row; a relation is
   `<field>_id`) and the aggregates (`sum`, `count`, `min`, `max`, `first`,
   `last`; `arg` may be an SQL expression; `cumulative: true` carries the
-  group's previous bucket forward). `id` is the largest source id in the group.
+  group's previous bucket forward). `first`/`last` also take a `String`,
+  `Bytes` or entity reference (graph-node v0.42), whose `arg` names a source
+  field of that type; a reference aggregate is the `<field>_id` column, and its
+  `aggregations` entry in the runtime config carries that `column`. `id` is the
+  largest source id in the group.
 - A bucket is rolled up when a block's time passes its end: the first bucket
   between the previous block's time and this one, as `Layout::rollup` does.
   Only completed buckets exist; the open bucket is the rows of the timeseries

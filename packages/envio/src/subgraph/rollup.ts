@@ -88,7 +88,7 @@ function rollup(scope: Scope, compiled: CompiledAggregation, interval: string, s
   for (const bucket of rollupBucket(compiled, rows, (dimKey) => carried.get(stateId(dimKey)) ?? null)) {
     const row: Record<string, unknown> = { id: bucket.id.toString(), timestamp, ...bucket.dimensions };
     for (const aggregate of def.aggregates) {
-      row[aggregate.field] = storedValue(bucket.values[aggregate.field], aggregate.kind);
+      row[aggregate.column ?? aggregate.field] = storedValue(bucket.values[aggregate.field], aggregate.kind);
     }
     target.set(row);
     if (hasCumulative) {
