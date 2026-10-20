@@ -82,6 +82,20 @@ const equals = (a: unknown, b: unknown): boolean => {
 };
 
 /**
+ * A bit operation where either side is an i64 — a bigint here — is a 64-bit
+ * one in AssemblyScript, the i32 side widened; JavaScript refuses to mix the
+ * two. Two numbers keep JavaScript's int32 operation, which is an i32's.
+ */
+const bits64 =
+  (op: (a: bigint, b: bigint) => bigint, numbers: (a: number, b: number) => number) =>
+  (a: unknown, b: unknown): unknown => {
+    if (typeof a !== "bigint" && typeof b !== "bigint") return numbers(a as number, b as number);
+    return op(BigInt(a as bigint | number), BigInt(b as bigint | number));
+  };
+// A u64 stays unsigned through a left shift, an i64 keeps its sign.
+const wrap64 = (from: bigint, value: bigint) => (from < 0n ? BigInt.asIntN(64, value) : BigInt.asUintN(64, value));
+
+/**
  * AssemblyScript's `===`, which no class can overload: references are the same
  * object, numbers the same value once converted to a common type — an i64 the
  * shim holds as a bigint equals the number it was compared with, and a bool is
@@ -342,6 +356,12 @@ export const operators = {
   le: binary("le", (a, b) => a <= b),
   gt: binary("gt", (a, b) => a > b),
   ge: binary("ge", (a, b) => a >= b),
+  band: bits64((a, b) => a & b, (a, b) => a & b),
+  bor: bits64((a, b) => a | b, (a, b) => a | b),
+  bxor: bits64((a, b) => a ^ b, (a, b) => a ^ b),
+  shl: bits64((a, b) => wrap64(a, a << (b & 63n)), (a, b) => a << b),
+  shr: bits64((a, b) => a >> (b & 63n), (a, b) => a >> b),
+  ushr: bits64((a, b) => BigInt.asUintN(64, a) >> (b & 63n), (a, b) => a >>> b),
   // A u32's bit operations, which AssemblyScript keeps unsigned.
   shl_u32: (a: unknown, b: unknown) => (Number(a) << Number(b)) >>> 0,
   shr_u32: (a: unknown, b: unknown) => Number(a) >>> Number(b),

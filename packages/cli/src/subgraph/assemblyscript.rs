@@ -1208,6 +1208,12 @@ fn binary_helper(operator: BinaryOperator) -> Option<&'static str> {
         BinaryOperator::LessEqualThan => "le",
         BinaryOperator::GreaterThan => "gt",
         BinaryOperator::GreaterEqualThan => "ge",
+        BinaryOperator::BitwiseAnd => "band",
+        BinaryOperator::BitwiseOR => "bor",
+        BinaryOperator::BitwiseXOR => "bxor",
+        BinaryOperator::ShiftLeft => "shl",
+        BinaryOperator::ShiftRight => "shr",
+        BinaryOperator::ShiftRightZeroFill => "ushr",
         _ => return None,
     })
 }
@@ -1276,6 +1282,12 @@ fn assignment_helper(operator: AssignmentOperator) -> Option<&'static str> {
         AssignmentOperator::Division => "div",
         AssignmentOperator::Remainder => "rem",
         AssignmentOperator::Exponential => "pow",
+        AssignmentOperator::BitwiseAnd => "band",
+        AssignmentOperator::BitwiseOR => "bor",
+        AssignmentOperator::BitwiseXOR => "bxor",
+        AssignmentOperator::ShiftLeft => "shl",
+        AssignmentOperator::ShiftRight => "shr",
+        AssignmentOperator::ShiftRightZeroFill => "ushr",
         _ => return None,
     })
 }
@@ -2176,7 +2188,8 @@ export function f(xs) {
         );
     }
 
-    // An i32's bit operations are JavaScript's own.
+    // An i32's bit operations are JavaScript's own, through the helper that
+    // widens an i64 operand.
     #[test]
     fn keeps_a_u32_unsigned_through_bit_operations() {
         assert_eq!(
@@ -2198,7 +2211,7 @@ export function f(tick, signed) {
 \tlet id = __envio_op.shr_u32(__envio_op.shl_u32(tick.toU32(), 8), 8);
 \tlet low = __envio_op.and_u32(word([]), mask);
 \tmask = __envio_op.shr_u32(mask, 1);
-\tlet plain = signed >> 4;
+\tlet plain = __envio_op.shr(signed, 4);
 }
 "
         );
@@ -2311,8 +2324,8 @@ export const __envio_event_classes = { handleFarmed: Farmed };
   w[(i + 1) & 15] ^= 3;
 }"),
             "export function f(w, i) {
-\tw[i] = __envio_op.add(w[i], w[__envio_op.add(i, 9) & 15]);
-\tw[__envio_op.add(i, 1) & 15] ^= 3;
+\tw[i] = __envio_op.add(w[i], w[__envio_op.band(__envio_op.add(i, 9), 15)]);
+\tw[__envio_op.band(__envio_op.add(i, 1), 15)] = __envio_op.bxor(w[__envio_op.band(__envio_op.add(i, 1), 15)], 3);
 }
 "
         );
