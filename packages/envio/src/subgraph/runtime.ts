@@ -798,7 +798,10 @@ function freshModuleState(scope: Scope): void {
   scope.mappingExports[MODULE_INIT]?.(++moduleGeneration);
 }
 
-const maxRegisterRounds = 100;
+// A round answers the one call the mapping stopped at, so a handler making N
+// calls before its create() takes N rounds; graph-node has no limit at all.
+// The handler pass's own bound (UserContext.maxSyncRounds).
+const maxRegisterRounds = 10_000;
 
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
   for (let round = 1; round <= maxRegisterRounds; round++) {
