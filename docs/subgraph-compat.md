@@ -226,7 +226,7 @@ later block, with a causality region of its own. Here:
   and id are two rows; here they share the table, and the file one overwrites.)
   `dataSource.stringParam()` is the CID, `dataSource.context()` the
   `createWithContext` context; `dataSource.address()` is a §7 error.
-- *Fetching.* `ENVIO_SUBGRAPH_IPFS_URL` (a gateway, with or without `/ipfs/`) and
+- *Fetching.* `ENVIO_SUBGRAPH_IPFS_URL` (gateways, comma separated, with or without `/ipfs/`; each asked once the one before it failed, lacked the file or kept silent for 2 s, the first answer winning) and
   `ENVIO_SUBGRAPH_ARWEAVE_URL`; at most 16 fetches in flight; during preload a
   batch's files download concurrently. The fetch is an effect with `cache: true`, so
   files live in the on-disk effect cache.

@@ -174,24 +174,66 @@ function fetchBase64(
   maxTries = Infinity,
   budgetMs = Infinity,
 ): Promise<string | null> {
-  return untilAnswered(
-    `the fetch of ${path}`,
-    async () => {
-      let failure: unknown;
-      for (const gateway of gateways) {
-        const url = gateway + path;
-        try {
-          const content = await withDeadline(`the fetch of ${url}`, (signal) => fetchOnce(url, signal));
-          if (content !== null) return content;
-        } catch (error) {
-          failure = error;
-        }
-      }
-      if (failure !== undefined) throw failure;
-      return null;
-    },
-    { maxTries, deadline: false, budgetMs },
-  );
+  return untilAnswered(`the fetch of ${path}`, () => firstGatewayAnswer(gateways, path), {
+    maxTries,
+    deadline: false,
+    budgetMs,
+  });
+}
+
+/** How long a gateway has to answer before the next one is asked as well. */
+const HEDGE_MS = 2_000;
+
+/**
+ * The gateways in order, each asked once the one before it has failed, has
+ * no such file, or has kept silent for `HEDGE_MS`: a gateway that hangs to
+ * its deadline holds the file up by `HEDGE_MS` rather than by the deadline.
+ * The first to hand the file over answers and the others are cancelled; a
+ * file is missing only if every gateway says so.
+ */
+function firstGatewayAnswer(gateways: string[], path: string): Promise<string | null> {
+  if (gateways.length === 0) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const cancels: AbortController[] = [];
+    let hedge: ReturnType<typeof setTimeout> | undefined;
+    let started = 0;
+    let finished = 0;
+    let failure: unknown;
+    let settled = false;
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hedge);
+      for (const cancel of cancels) cancel.abort();
+      finish();
+    };
+    const next = () => {
+      clearTimeout(hedge);
+      if (settled || started >= gateways.length) return;
+      const url = gateways[started++] + path;
+      const cancel = new AbortController();
+      cancels.push(cancel);
+      withDeadline(`the fetch of ${url}`, (signal) => fetchOnce(url, AbortSignal.any([signal, cancel.signal])))
+        .then(
+          (content) => {
+            if (content !== null) settle(() => resolve(content));
+          },
+          (error) => {
+            failure = error;
+          },
+        )
+        .finally(() => {
+          finished++;
+          if (finished === gateways.length) {
+            settle(() => (failure === undefined ? resolve(null) : reject(failure)));
+          } else if (finished === started) {
+            next();
+          }
+        });
+      if (started < gateways.length) hedge = setTimeout(next, HEDGE_MS);
+    };
+    next();
+  });
 }
 
 /** graph-node's `GRAPH_IPFS_TIMEOUT`, 60 s by default (graph/src/env/mappings.rs). */
