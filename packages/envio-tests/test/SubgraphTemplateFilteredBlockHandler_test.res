@@ -43,7 +43,7 @@ templates:
         - Tick
       abis:
         - name: Oracle
-          file: ./abis/Feed.json
+          file: ./abis/Oracle.json
       eventHandlers:
         - event: Updated(uint256)
           handler: handleUpdated
