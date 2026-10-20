@@ -3440,6 +3440,37 @@ type Renewal implements Event @entity {
         );
     }
 
+    // A workspace root's scripts render into a package: `"prepare:matic":
+    // "mustache config/matic.json subgraphs/exchange/template.yaml >
+    // subgraphs/exchange/subgraph.yaml"` (pangolin's root `template` script
+    // writes src/<subgraph>/ the same way, through a node script). Only the
+    // manifest's own package.json was read.
+    #[test]
+    fn renders_the_manifest_a_parent_package_script_writes() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-parent").unwrap();
+        let root = dir.path();
+        let package = root.join("subgraphs/exchange");
+        write_gravity(&package, "template.yaml");
+        fs::write(package.join("template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/matic.json"),
+            r#"{"network": "matic", "gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 1}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"workspaces": ["subgraphs/*"], "scripts": {"prepare:matic": "mustache config/matic.json subgraphs/exchange/template.yaml > subgraphs/exchange/subgraph.yaml"}}"#,
+        )
+        .unwrap();
+        fs::write(package.join("package.json"), r#"{"name": "exchange"}"#).unwrap();
+        let project_paths =
+            ParsedProjectPaths::new(package.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(chain_of(&config).0, 137);
+    }
+
     // A committed subgraph.yaml is the user's: a render script beside it
     // (GoodCollective's `prepare`) doesn't overwrite it.
     #[test]

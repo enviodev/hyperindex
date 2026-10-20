@@ -572,6 +572,8 @@ fn classify(words: &[Word]) -> Command {
 /// A package.json script that writes the manifest the way envio can repeat.
 #[derive(Debug, Clone)]
 struct Plan {
+    /// The package directory the script runs in.
+    dir: PathBuf,
     script: String,
     /// The scripts it runs through `npm run`, inlined into `steps`.
     inlined: Vec<String>,
@@ -864,6 +866,7 @@ fn analyze(
         }));
     }
     Some(Ok(Plan {
+        dir: dir.to_path_buf(),
         script: name.to_string(),
         inlined,
         steps,
@@ -986,14 +989,14 @@ struct Choice<'a> {
 }
 
 /// Every network the plans render, with how.
-fn options<'a>(plans: &'a [Plan], dir: &Path) -> Vec<(String, Choice<'a>)> {
+fn options<'a>(plans: &'a [Plan]) -> Vec<(String, Choice<'a>)> {
     let literal_plans: Vec<&Plan> = plans.iter().filter(|plan| plan.hole.is_none()).collect();
     let literal_names = literal_networks(&literal_plans);
     let mut options: Vec<(String, Choice<'a>)> = Vec::new();
     for plan in plans {
         if let Some((name, _, word)) = &plan.hole {
-            for (value, path) in expand_hole(dir, word, name) {
-                let view = pathdiff::diff_paths(&path, dir)
+            for (value, path) in expand_hole(&plan.dir, word, name) {
+                let view = pathdiff::diff_paths(&path, &plan.dir)
                     .unwrap_or(path)
                     .display()
                     .to_string();
@@ -1023,12 +1026,8 @@ fn options<'a>(plans: &'a [Plan], dir: &Path) -> Vec<(String, Choice<'a>)> {
     options
 }
 
-fn choose<'a>(
-    plans: &'a [Plan],
-    network: Option<&str>,
-    dir: &Path,
-) -> Result<Choice<'a>, Vec<String>> {
-    let options = options(plans, dir);
+fn choose<'a>(plans: &'a [Plan], network: Option<&str>) -> Result<Choice<'a>, Vec<String>> {
+    let options = options(plans);
     let mut names: Vec<String> = Vec::new();
     for (name, _) in &options {
         if !names.contains(name) {
@@ -1490,39 +1489,72 @@ fn absolute(path: &Path) -> PathBuf {
     normalize_path(std::env::current_dir().unwrap_or_default().join(path))
 }
 
-fn scan(dir: &Path, target: &Path) -> (Vec<Plan>, Vec<Writer>) {
-    let mut plans = Vec::new();
-    let mut writers = Vec::new();
-    let all = package_scripts(dir);
-    let scripts: BTreeMap<String, String> = all.iter().cloned().collect();
-    for (name, script) in all {
-        match analyze(dir, &name, &script, target, &scripts) {
-            Some(Ok(plan)) => {
-                // nftx's public repo gitignores the template its mustache
-                // scripts render: a ts-node script writes it first.
-                let view = plan.hole.is_none().then(|| literal(&plan.view)).flatten();
-                let absent = [Some(plan.template.clone()), view]
-                    .into_iter()
-                    .flatten()
-                    .find(|file| file != "-" && !dir.join(file).exists());
-                match absent {
-                    Some(file) => writers.push(Writer {
-                        script: name,
-                        step: format!(
-                            "{script} ({file} isn't in the repo: another step writes it)"
-                        ),
-                    }),
-                    None => plans.push(plan),
-                }
-            }
-            Some(Err(writer)) => writers.push(writer),
-            None => {}
+/// The package directories whose scripts may write `target`: its own, then
+/// the packages above it up to the repository's root (a workspace root's
+/// scripts render into its packages).
+fn package_dirs(target: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for dir in target.ancestors().skip(1).take(4) {
+        if dir.join("package.json").exists() {
+            dirs.push(dir.to_path_buf());
+        }
+        if dir.join(".git").exists() {
+            break;
         }
     }
-    // zora's `codegen` runs `yarn gen-yaml-config`, the script that renders:
-    // the one that writes the manifest itself is the plan.
-    let names: Vec<String> = plans.iter().map(|plan| plan.script.clone()).collect();
-    plans.retain(|plan| !plan.inlined.iter().any(|name| names.contains(name)));
+    dirs
+}
+
+fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
+    let mut plans = Vec::new();
+    let mut writers = Vec::new();
+    let own = target.parent().map(Path::to_path_buf);
+    for dir in package_dirs(target) {
+        let label = |name: &str| match &own {
+            Some(own) if *own != dir => format!(
+                "{name}\" in \"{}",
+                pathdiff::diff_paths(dir.join("package.json"), own)
+                    .unwrap_or_default()
+                    .display()
+            ),
+            _ => name.to_string(),
+        };
+        let mut found = Vec::new();
+        let all = package_scripts(&dir);
+        let scripts: BTreeMap<String, String> = all.iter().cloned().collect();
+        for (name, script) in all {
+            match analyze(&dir, &name, &script, target, &scripts) {
+                Some(Ok(plan)) => {
+                    // nftx's public repo gitignores the template its mustache
+                    // scripts render: a ts-node script writes it first.
+                    let view = plan.hole.is_none().then(|| literal(&plan.view)).flatten();
+                    let absent = [Some(plan.template.clone()), view]
+                        .into_iter()
+                        .flatten()
+                        .find(|file| file != "-" && !dir.join(file).exists());
+                    match absent {
+                        Some(file) => writers.push(Writer {
+                            script: label(&name),
+                            step: format!(
+                                "{script} ({file} isn't in the repo: another step writes it)"
+                            ),
+                        }),
+                        None => found.push(plan),
+                    }
+                }
+                Some(Err(writer)) => writers.push(Writer {
+                    script: label(&writer.script),
+                    step: writer.step,
+                }),
+                None => {}
+            }
+        }
+        // zora's `codegen` runs `yarn gen-yaml-config`, the script that
+        // renders: the one that writes the manifest itself is the plan.
+        let names: Vec<String> = found.iter().map(|plan| plan.script.clone()).collect();
+        found.retain(|plan| !plan.inlined.iter().any(|name| names.contains(name)));
+        plans.extend(found);
+    }
     (plans, writers)
 }
 
@@ -1583,10 +1615,10 @@ pub fn template_output(template: &Path) -> Option<PathBuf> {
         .into_iter()
         .filter(|output| *output != template)
         .find(|output| {
-            scan(&dir, output)
+            scan(output)
                 .0
                 .iter()
-                .any(|plan| normalize_path(dir.join(&plan.template)) == template)
+                .any(|plan| normalize_path(plan.dir.join(&plan.template)) == template)
         })
 }
 
@@ -1594,9 +1626,8 @@ pub fn template_output(template: &Path) -> Option<PathBuf> {
 /// write it, or may, with a step envio doesn't run — and why the user has to.
 pub fn unrepeatable_writers(target: &Path) -> Option<String> {
     let target = absolute(target);
-    let dir = target.parent()?;
     let manifest_name = target.file_name()?.to_string_lossy().to_string();
-    let (_, writers) = scan(dir, &target);
+    let (_, writers) = scan(&target);
     if writers.is_empty() {
         return None;
     }
@@ -1622,16 +1653,13 @@ pub fn unrepeatable_writers(target: &Path) -> Option<String> {
 /// (matic's gitignored `src/network.ts`) are written. Nothing that exists is
 /// touched, and an unproven network writes nothing.
 fn write_missing_companions(target: &Path) -> Result<()> {
-    let Some(dir) = target.parent() else {
-        return Ok(());
-    };
     let Ok(existing) = std::fs::read_to_string(target) else {
         return Ok(());
     };
-    let (plans, _) = scan(dir, target);
-    for (_, choice) in options(&plans, dir) {
+    let (plans, _) = scan(target);
+    for (_, choice) in options(&plans) {
         let mut run = Run {
-            dir,
+            dir: &choice.plan.dir,
             target,
             hole: None,
             files: BTreeMap::new(),
@@ -1679,12 +1707,12 @@ pub fn render_manifest(
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let (plans, _) = scan(&dir, &target);
+    let (plans, _) = scan(&target);
     if plans.is_empty() {
         return run_codegen_prelude(project_root, &target, &dir, network);
     }
 
-    let choice = choose(&plans, network, &dir).map_err(|networks| {
+    let choice = choose(&plans, network).map_err(|networks| {
         let scripts: Vec<String> = plans.iter().map(|plan| plan.script.clone()).collect();
         let first = networks.first().cloned().unwrap_or_default();
         match network {
@@ -1708,7 +1736,7 @@ pub fn render_manifest(
     })?;
 
     let mut run = Run {
-        dir: &dir,
+        dir: &choice.plan.dir,
         target: &target,
         hole: None,
         files: BTreeMap::new(),

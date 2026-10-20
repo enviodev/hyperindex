@@ -559,7 +559,8 @@ package.json script: one per network (`"prepare:matic": "mustache
 ../../config/matic.json template.yaml > subgraph.yaml"`) or one taking the
 network from a variable (`yaml2json config/${NETWORK:-zora-testnet}.yaml |
 mustache - subgraph.template.yaml >> subgraph.yaml`). When the manifest is
-missing, envio looks for a script in the manifest's own package.json that
+missing, envio looks for a script in the package.json of the manifest's own
+package, or of a package above it up to the repository root, that
 writes it with the mustache CLI (or `cp`s a committed one into place), and
 repeats it when every step before graph-cli is one of `mustache <view>
 <template> [out]` (also `npx`/`yarn`/`pnpm exec`/`cross-env`/`env-cmd` around
