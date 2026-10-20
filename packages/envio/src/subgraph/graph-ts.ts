@@ -1083,6 +1083,25 @@ function entityId(id: Value): string {
   return id.kind === ValueKind.BYTES ? id.toBytes().toHexString() : id.toString();
 }
 
+// graph-cli's codegen names the member of a field called after a reserved word
+// with a trailing `_` (packages/cli/src/codegen/util.ts `handleReservedWord`).
+const RESERVED_WORDS = new Set([
+  "await", "break", "case", "catch", "class", "const", "continue", "debugger", "delete", "do",
+  "else", "enum", "export", "extends", "false", "finally", "function", "if", "implements",
+  "import", "in", "interface", "let", "new", "package", "private", "protected", "public",
+  "return", "super", "switch", "static", "this", "throw", "true", "try", "typeof", "var",
+  "while", "with", "yield",
+]);
+
+/** The field a generated member reads, for an entity whose prototype is gone. */
+function memberField(entityType: unknown, prop: string): string {
+  if (typeof entityType !== "string" || !prop.endsWith("_") || !RESERVED_WORDS.has(prop.slice(0, -1))) {
+    return prop;
+  }
+  const declared = currentScope().schema.entityFields[entityType];
+  return declared?.includes(prop.slice(0, -1)) && !declared.includes(prop) ? prop.slice(0, -1) : prop;
+}
+
 const entityTail = new Proxy(Object.create(null), {
   get(_target, prop, receiver) {
     if (typeof prop === "symbol" || PROTOTYPE_PASSTHROUGH.has(prop as string)) {
@@ -1099,6 +1118,9 @@ const entityTail = new Proxy(Object.create(null), {
           storeImpl.set(entityType, entityId(id), receiver);
         };
       }
+    }
+    if (receiver instanceof Entity) {
+      prop = memberField((receiver as any)[ENTITY_TYPE], prop);
     }
     const stored = receiver instanceof Entity ? receiver.get(prop as string) : null;
     if (stored !== null) {
@@ -1155,7 +1177,7 @@ const entityTail = new Proxy(Object.create(null), {
         configurable: true,
       });
     }
-    receiver.set(prop as string, nativeToValue(value));
+    receiver.set(memberField((receiver as any)[ENTITY_TYPE], prop), nativeToValue(value));
     return true;
   },
 });
