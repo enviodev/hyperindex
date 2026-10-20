@@ -88,19 +88,24 @@ function makeBatcher<T>(
       }
     }
 
-    for (const [blockNumber, waiters] of blocks) {
-      const known = answers.get(blockNumber);
-      if (known !== undefined) {
-        for (const waiter of waiters) waiter.resolve(known);
-        continue;
-      }
-      try {
-        const value = await fromRpc(chainId, blockNumber);
-        for (const waiter of waiters) waiter.resolve(value);
-      } catch (error) {
-        for (const waiter of waiters) waiter.reject(error);
-      }
-    }
+    // What HyperSync didn't answer is asked of RPC all at once: the client
+    // bounds the requests in flight, and one at a time a chain HyperSync
+    // doesn't serve paid the endpoint's latency once per block.
+    await Promise.all(
+      [...blocks].map(async ([blockNumber, waiters]) => {
+        const known = answers.get(blockNumber);
+        if (known !== undefined) {
+          for (const waiter of waiters) waiter.resolve(known);
+          return;
+        }
+        try {
+          const value = await fromRpc(chainId, blockNumber);
+          for (const waiter of waiters) waiter.resolve(value);
+        } catch (error) {
+          for (const waiter of waiters) waiter.reject(error);
+        }
+      }),
+    );
   }
 
   return {
