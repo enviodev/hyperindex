@@ -571,7 +571,11 @@ the call sets bound in them, as a shell passes them on: Aave's
 `"deploy:hosted:mainnet-v3": "VERSION=v3 BLOCKCHAIN=v3 NETWORK=mainnet env-cmd
 npm run prepare:subgraph"` renders `./config/mainnet-v3.json` into
 `./templates/v3.subgraph.template.yaml` and copies `schemas/v3.schema.graphql`
-in. A script that only calls another one that renders is that one.
+in. A script that only calls another one that renders is that one. A
+Makefile's targets count as scripts too (`make <target>`, recipe lines
+chained with `&&`, `$(network)` read as the variable `make target
+network=base` sets, with the Makefile's `network ?= …` as its default):
+moonwell renders in `make generate-config`.
 
 - The network picks the view: the variable's value (`config/<network>.yaml`,
   `config/<network>/config.json`, every file that matches), or, for one script

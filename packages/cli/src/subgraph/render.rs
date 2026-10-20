@@ -1471,8 +1471,10 @@ pub fn build_network_default(dirs: &[&Path]) -> Option<String> {
     }
 }
 
+/// The scripts a package runs: package.json's, then its Makefile's targets
+/// (`make <target>`).
 fn package_scripts(dir: &Path) -> Vec<(String, String)> {
-    std::fs::read_to_string(dir.join("package.json"))
+    let mut scripts: Vec<(String, String)> = std::fs::read_to_string(dir.join("package.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .and_then(|json| json.get("scripts").and_then(Value::as_object).cloned())
@@ -1482,7 +1484,73 @@ fn package_scripts(dir: &Path) -> Vec<(String, String)> {
                 .filter_map(|(name, script)| Some((name, script.as_str()?.to_string())))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Ok(makefile) = std::fs::read_to_string(dir.join("Makefile")) {
+        scripts.extend(makefile_targets(&makefile));
+    }
+    scripts
+}
+
+/// A Makefile's targets as shell scripts: each recipe line chained with `&&`
+/// (make stops at the first that fails), `$(var)` read as the shell variable
+/// it is set as on make's command line, with the Makefile's own `var ?= x` as
+/// its default. moonwell renders its manifest in `make generate-config`.
+fn makefile_targets(makefile: &str) -> Vec<(String, String)> {
+    let joined = makefile.replace("\\\n", " ");
+    let assignment = regex::Regex::new(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\?=|:=|=)\s*(.*)$")
+        .expect("a valid regex");
+    let rule =
+        regex::Regex::new(r"^([A-Za-z0-9_][A-Za-z0-9_./-]*)\s*:([^=]|$)").expect("a valid regex");
+    let mut defaults: BTreeMap<String, String> = BTreeMap::new();
+    for line in joined.lines() {
+        if let Some(captures) = assignment.captures(line) {
+            let value = captures[2].trim().to_string();
+            if !value.contains('$') {
+                defaults.insert(captures[1].to_string(), value);
+            }
+        }
+    }
+    let reference =
+        regex::Regex::new(r"\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]").expect("a valid regex");
+    let to_shell = |line: &str| -> String {
+        let line = line.replace("$$", "\u{0}");
+        let line = reference.replace_all(&line, |captures: &regex::Captures| {
+            match defaults.get(&captures[1]) {
+                Some(value) => format!("${{{}:-{value}}}", &captures[1]),
+                None => format!("${{{}}}", &captures[1]),
+            }
+        });
+        line.replace('\u{0}', "$")
+    };
+    let mut targets: Vec<(String, String)> = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+    for line in joined.lines() {
+        if let Some(recipe) = line.strip_prefix('\t') {
+            if let Some((_, lines)) = current.as_mut() {
+                let recipe = recipe.trim_start_matches(['@', '-', '+']).trim();
+                if !recipe.is_empty() {
+                    lines.push(to_shell(recipe));
+                }
+            }
+            continue;
+        }
+        if let Some((name, lines)) = current.take() {
+            if !lines.is_empty() {
+                targets.push((format!("make {name}"), lines.join(" && ")));
+            }
+        }
+        if let Some(captures) = rule.captures(line) {
+            if !captures[1].starts_with('.') {
+                current = Some((captures[1].to_string(), Vec::new()));
+            }
+        }
+    }
+    if let Some((name, lines)) = current {
+        if !lines.is_empty() {
+            targets.push((format!("make {name}"), lines.join(" && ")));
+        }
+    }
+    targets
 }
 
 fn absolute(path: &Path) -> PathBuf {

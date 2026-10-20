@@ -3440,6 +3440,55 @@ type Renewal implements Event @entity {
         );
     }
 
+    // moonwell renders in a Makefile target, not a package.json script:
+    // `generate-config:` runs `YARN_SILENT=1 yarn mustache
+    // config/$(network).subgraph.json subgraph.mustache > subgraph.yaml && cp
+    // config/$(network).config.ts config/config.ts`, given `make
+    // generate-config network=base`.
+    #[test]
+    fn renders_the_manifest_a_makefile_target_writes() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-make").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.mustache");
+        fs::write(root.join("subgraph.mustache"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/base.subgraph.json"),
+            r#"{"network": "base", "gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 1}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("config/base.config.ts"),
+            "export const NETWORK = \"base\";\n",
+        )
+        .unwrap();
+        fs::write(root.join("package.json"), r#"{"scripts": {}}"#).unwrap();
+        fs::write(
+            root.join("Makefile"),
+            "graph_access_token ?= $(GRAPH_ACCESS_TOKEN)\n\nclean:\n\trm -rf subgraph.yaml generated/\n\n\
+             generate-config:\n\tYARN_SILENT=1 yarn mustache config/$(network).subgraph.json \
+             subgraph.mustache > subgraph.yaml && \\\n\tcp config/$(network).config.ts \
+             config/config.ts\n\ncodegen:\n\tyarn graph codegen\n",
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let rendered = config.subgraph.clone().unwrap().rendered_manifest.unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config).0,
+                rendered.script,
+                fs::read_to_string(root.join("config/config.ts")).ok(),
+            ),
+            (
+                8453,
+                "make generate-config".to_string(),
+                Some("export const NETWORK = \"base\";\n".to_string())
+            )
+        );
+    }
+
     // A workspace root's scripts render into a package: `"prepare:matic":
     // "mustache config/matic.json subgraphs/exchange/template.yaml >
     // subgraphs/exchange/subgraph.yaml"` (pangolin's root `template` script
