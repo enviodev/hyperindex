@@ -675,6 +675,49 @@ fn inline_scripts(
     inlined
 }
 
+/// Whether a step runs a file of the repo (`ts-node ./script/build`, `node
+/// ops/render.js`, `./build.sh`) whose source mentions one of `needles`:
+/// Uniswap's build script is what writes its manifest. The file is read,
+/// never run.
+fn runs_a_file_mentioning(dir: &Path, steps: &[Step], needles: &[&str]) -> bool {
+    const EXTENSIONS: &[&str] = &["", ".ts", ".js", ".mjs", ".cjs", ".sh"];
+    let find = |base: &Path, word: &str| -> Option<PathBuf> {
+        EXTENSIONS
+            .iter()
+            .map(|extension| base.join(format!("{word}{extension}")))
+            .find(|file| {
+                file.is_file() && std::fs::metadata(file).is_ok_and(|m| m.len() < 1_000_000)
+            })
+    };
+    let mentions = |file: &Path| {
+        std::fs::read_to_string(file)
+            .is_ok_and(|text| needles.iter().any(|needle| text.contains(needle)))
+    };
+    // Uniswap's script/build.ts imports the module that reads the template.
+    let imports = regex::Regex::new(r#"(?:from\s*|require\s*\(\s*)["'](\.\.?/[^"']+)["']"#)
+        .expect("a valid regex");
+    steps.iter().flat_map(|step| &step.stages).any(|stage| {
+        stage.words.iter().filter_map(literal).any(|word| {
+            if word.starts_with('-') || word.contains("://") || Path::new(&word).is_absolute() {
+                return false;
+            }
+            let Some(file) = find(dir, &word) else {
+                return false;
+            };
+            if mentions(&file) {
+                return true;
+            }
+            let base = file.parent().unwrap_or(dir).to_path_buf();
+            std::fs::read_to_string(&file).is_ok_and(|text| {
+                imports
+                    .captures_iter(&text)
+                    .filter_map(|captures| find(&base, &captures[1]))
+                    .any(|imported| mentions(&imported))
+            })
+        })
+    })
+}
+
 /// How a script relates to the manifest at `target`: a plan when envio can
 /// repeat it, a writer when it can't, or nothing.
 fn analyze(
@@ -795,13 +838,18 @@ fn analyze(
         // A script that may write it with a tool of its own: named in the
         // error, never run.
         let lowered = script.to_lowercase();
+        let manifest_name = target
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
         let suspect = mentions
             || ["template", "mustache", "handlebars", ".hbs", "render"]
                 .iter()
                 .any(|word| lowered.contains(word))
             || ["render", "manifest", "template", "yaml"]
                 .iter()
-                .any(|word| name.to_lowercase().contains(word));
+                .any(|word| name.to_lowercase().contains(word))
+            || runs_a_file_mentioning(dir, &steps, &[&manifest_name, "template"]);
         return (unsupported.is_some() && suspect).then(|| {
             Err(Writer {
                 script: name.to_string(),
@@ -1472,6 +1520,56 @@ fn scan(dir: &Path, target: &Path) -> (Vec<Plan>, Vec<Writer>) {
     (plans, writers)
 }
 
+/// Whether `path` is a mustache template rather than a manifest.
+pub fn is_template(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| text.contains("{{"))
+}
+
+/// The manifest a script beside `template` renders from it, when `--config`
+/// names the template rather than the manifest.
+pub fn template_output(template: &Path) -> Option<PathBuf> {
+    let template = absolute(template);
+    let dir = template.parent()?.to_path_buf();
+    let mut outputs: Vec<PathBuf> = Vec::new();
+    for (_, script) in package_scripts(&dir) {
+        for step in parse_steps(&script).unwrap_or_default() {
+            for stage in &step.stages {
+                let mut words: Vec<&Word> = stage.redirects.iter().map(|(_, word)| word).collect();
+                if let Command::Mustache {
+                    output: Some(output),
+                    ..
+                } = classify(&stage.words)
+                {
+                    outputs.push(normalize_path(
+                        dir.join(literal(&output).unwrap_or_default()),
+                    ));
+                }
+                words.retain(|word| {
+                    literal(word)
+                        .is_some_and(|text| text.ends_with(".yaml") || text.ends_with(".yml"))
+                });
+                outputs.extend(
+                    words
+                        .iter()
+                        .filter_map(|word| literal(word))
+                        .map(|text| normalize_path(dir.join(text))),
+                );
+            }
+        }
+    }
+    outputs.sort();
+    outputs.dedup();
+    outputs
+        .into_iter()
+        .filter(|output| *output != template)
+        .find(|output| {
+            scan(&dir, output)
+                .0
+                .iter()
+                .any(|plan| normalize_path(dir.join(&plan.template)) == template)
+        })
+}
+
 /// For "the manifest is missing": the package.json scripts beside it that
 /// write it, or may, with a step envio doesn't run — and why the user has to.
 pub fn unrepeatable_writers(target: &Path) -> Option<String> {
@@ -1487,7 +1585,7 @@ pub fn unrepeatable_writers(target: &Path) -> Option<String> {
         .map(|writer| format!("  \"{}\": {}", writer.script, writer.step))
         .collect();
     Some(format!(
-        "The project writes {manifest_name} with a package.json script, and envio can't repeat \
+        "The project writes its manifest with a package.json script, and envio can't repeat \
          {}:\n{}\n\
          envio renders a manifest itself only when every step of the script is a standard \
          tool over files in the repo (`mustache <config> <template> > {manifest_name}`, \

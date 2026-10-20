@@ -3312,20 +3312,74 @@ type Renewal implements Event @entity {
             .filter(|name| root.join(format!("ran-{name}")).exists())
             .collect();
 
+        let named: Vec<&str> = err
+            .lines()
+            .filter_map(|line| line.strip_prefix("  \""))
+            .filter_map(|line| line.split('"').next())
+            .collect();
+
+        assert_eq!(
+            (ran, root.join("subgraph.yaml").exists(), named),
+            (Vec::<&str>::new(), false, scripts.to_vec())
+        );
+    }
+
+    // `--config subgraph.template.yaml` names the template, not the manifest
+    // (the corpus's first runs did): envio parsed it and refused
+    // `startBlock: {{startBlock}}` as "has to be a number", or, where the
+    // template isn't YAML until rendered, as an invalid envio config.
+    #[test]
+    fn renders_the_template_config_names_or_says_it_is_one() {
+        let dir = tempdir::TempDir::new("envio-subgraph-template-config").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/matic.json"),
+            r#"{"network": "matic", "gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 1}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"prepare:matic": "mustache config/matic.json subgraph.template.yaml > subgraph.yaml"}}"#,
+        )
+        .unwrap();
+        let template_config =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraph.template.yaml").unwrap();
+        let rendered = SystemConfig::parse_from_project_files(&template_config).unwrap();
+
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"build": "cross-env ts-node ./script/build"}}"#,
+        )
+        .unwrap();
+        // Uniswap's build script renders the template; envio only reads it.
+        fs::create_dir_all(root.join("script")).unwrap();
+        fs::write(
+            root.join("script/build.ts"),
+            "const template = fs.readFileSync('subgraph.template.yaml')\n",
+        )
+        .unwrap();
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&template_config).unwrap_err()
+        );
+
         assert_eq!(
             (
-                ran,
-                root.join("subgraph.yaml").exists(),
-                err.lines().take(3).collect::<Vec<_>>(),
+                chain_of(&rendered).0,
+                err.lines().take(3).collect::<Vec<_>>()
             ),
             (
-                Vec::<&str>::new(),
-                false,
+                137,
                 vec![
-                    "There is no subgraph.yaml here.",
-                    "The project writes subgraph.yaml with a package.json script, and envio \
+                    "subgraph.template.yaml is a mustache template, not a manifest: graph-cli \
+                     can't read it either until a script renders it.",
+                    "The project writes its manifest with a package.json script, and envio \
                      can't repeat it:",
-                    "  \"manifest\": sh scripts/write.sh manifest",
+                    "  \"build\": cross-env ts-node ./script/build",
                 ]
             )
         );
@@ -3441,7 +3495,7 @@ type Renewal implements Event @entity {
             err.lines().take(3).collect::<Vec<_>>(),
             vec![
                 "There is no subgraph.yaml here.",
-                "The project writes subgraph.yaml with a package.json script, and envio can't \
+                "The project writes its manifest with a package.json script, and envio can't \
                  repeat it:",
                 "  \"manifest:mainnet\": cross-env mustache config/mainnet/config.json \
                  subgraph.template.yaml > subgraph.yaml (subgraph.template.yaml isn't in the \
@@ -3477,7 +3531,7 @@ type Renewal implements Event @entity {
         assert_eq!(
             err,
             "There is no subgraph.yaml here.\n\
-             The project writes subgraph.yaml with a package.json script, and envio can't \
+             The project writes its manifest with a package.json script, and envio can't \
              repeat it:\n  \"render-subgraph-config:gnosis\": node ops/render-subgraph-conf.js \
              gnosis\n\
              envio renders a manifest itself only when every step of the script is a standard \

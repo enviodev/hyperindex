@@ -1734,20 +1734,48 @@ impl SystemConfig {
 
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let root = &project_paths.project_root;
-        let manifest_path = Self::subgraph_manifest_path(project_paths);
-        if !project_paths.config.exists() || manifest_path == project_paths.config {
+        let mut manifest_path = Self::subgraph_manifest_path(project_paths);
+        // `--config subgraph.template.yaml`: the manifest is what a script
+        // renders from it.
+        let from_template = manifest_path == project_paths.config
+            && crate::subgraph::render::is_template(&manifest_path);
+        if from_template {
+            let Some(output) = crate::subgraph::render::template_output(&manifest_path) else {
+                let name = manifest_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let writers = manifest_path
+                    .parent()
+                    .and_then(|dir| {
+                        crate::subgraph::render::unrepeatable_writers(
+                            &dir.join(crate::subgraph::DEFAULT_MANIFEST),
+                        )
+                    })
+                    .map(|writers| format!("\n{writers}"))
+                    .unwrap_or_default();
+                return Err(anyhow!(
+                    "{name} is a mustache template, not a manifest: graph-cli can't read it \
+                     either until a script renders it.{writers}\nPoint --config (or \
+                     ENVIO_CONFIG) at the manifest the repo's build writes from it."
+                ));
+            };
+            manifest_path = output;
+        }
+        if !project_paths.config.exists() || manifest_path == project_paths.config || from_template
+        {
             let env = crate::utils::project_env::ProjectEnv::new(root);
             let network = env.var(crate::subgraph::NETWORK_ENV_VAR);
-            if let Some(rendered) =
-                crate::subgraph::render::render_manifest(root, &manifest_path, network.as_deref())?
-            {
+            let rendered =
+                crate::subgraph::render::render_manifest(root, &manifest_path, network.as_deref())?;
+            if rendered.is_some() || from_template {
                 let manifest = std::fs::read_to_string(&manifest_path)
                     .context(format!("Failed to read {}", manifest_path.display()))?;
                 return Self::parse_subgraph_from_project_files(
                     project_paths,
                     &manifest_path,
                     manifest,
-                    Some(rendered),
+                    rendered,
                 );
             }
         }

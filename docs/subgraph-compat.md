@@ -623,11 +623,15 @@ import.
 A script that runs anything else to write the manifest — `node`, `ts-node`,
 `truffle exec`, a shell script, `jq`, handlebars through a script of its own —
 isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or
-compute addresses; the error names each script and what it runs:
+compute addresses; the error names each script and what it runs (a script is
+named when it writes the manifest, mentions a template, or runs a repo file
+whose source mentions one — Uniswap's `ts-node ./script/build`). `--config`
+naming the template itself renders what a repeatable script renders from it,
+else says it is a template:
 
 ```
 There is no subgraph.yaml here.
-The project writes subgraph.yaml with a package.json script, and envio can't repeat it:
+The project writes its manifest with a package.json script, and envio can't repeat it:
   "render-subgraph-config:gnosis": node ops/render-subgraph-conf.js gnosis
 envio renders a manifest itself only when every step of the script is a standard tool
 over files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`,
