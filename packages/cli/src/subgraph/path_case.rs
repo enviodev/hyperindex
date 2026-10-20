@@ -56,7 +56,8 @@ pub fn on_disk(dir: &Path, path: &str) -> Option<String> {
 }
 
 /// The manifest with every file it names (schema, mappings, ABIs) spelled as
-/// the filesystem has it, and each path changed, as written and as found.
+/// the filesystem has it — or read from the npm package a failed install left
+/// out (`npm_fetch`) — and each path changed, as written and as found.
 pub fn match_manifest(dir: &Path, yaml: &str) -> (String, Vec<(String, String)>) {
     let Ok(mut manifest) = serde_yaml::from_str::<Value>(yaml) else {
         return (yaml.to_string(), Vec::new());
@@ -66,7 +67,10 @@ pub fn match_manifest(dir: &Path, yaml: &str) -> (String, Vec<(String, String)>)
         let Some(path) = value.as_str() else {
             return;
         };
-        if let Some(found) = on_disk(dir, path) {
+        let found = on_disk(dir, path).or_else(|| {
+            super::npm_fetch::fetched_file(dir, path).map(|file| file.display().to_string())
+        });
+        if let Some(found) = found {
             if !changed.iter().any(|(from, _)| from == path) {
                 changed.push((path.to_string(), found.clone()));
             }

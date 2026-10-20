@@ -12,6 +12,7 @@ pub mod diff;
 pub mod errors;
 pub mod manifest;
 pub mod mustache;
+pub mod npm_fetch;
 pub mod path_case;
 pub mod render;
 pub mod schema;
@@ -119,11 +120,11 @@ pub struct SubgraphRuntimeConfig {
     /// runtime says so and the codegen script doesn't render it over again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rendered_manifest: Option<RenderedManifest>,
-    /// Files the manifest names, as written and as the repo has them, where
-    /// they differ only in case (§6d): graph-cli's copy of the manifest is
-    /// spelled the repo's way too.
+    /// Files the manifest names, as written and where they are read from:
+    /// another case of the same path, or an absolute path in the npm package
+    /// envio fetched (§6d). graph-cli's copy of the manifest names them so.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub path_case_fixes: Vec<(String, String)>,
+    pub path_fixes: Vec<(String, String)>,
     /// The network networks.json was applied for when none was picked: the
     /// one the repo's own build passes `graph build --network` (§6d).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1481,7 +1482,7 @@ pub fn translate(
             manifest_file: DEFAULT_MANIFEST.to_string(),
             block_header_lag,
             rendered_manifest: None,
-            path_case_fixes: Vec::new(),
+            path_fixes: Vec::new(),
             build_network: None,
         },
         human_config,
@@ -3051,7 +3052,7 @@ type Renewal implements Event @entity {
         assert_eq!(
             (
                 subgraph.manifest.data_sources[0].mapping_file.as_str(),
-                subgraph.path_case_fixes,
+                subgraph.path_fixes,
             ),
             (
                 "./src/Marketplaces/gravity.ts",
@@ -3130,6 +3131,65 @@ type Renewal implements Event @entity {
                 "The package.json script \"sync-abis\" (./scripts/sync-abis.sh) writes ../abis/: \
                  run it, then start envio again."
             )
+        );
+    }
+
+    // sushiswap's legacy exchange subgraph decodes with
+    // `../../node_modules/@sushiswap/core/build/abi/UniswapV2Factory.json`, a
+    // file of a package its install provides — and the install fails on
+    // graph-cli 0.21's vanished gluegun fork. The ABI comes from that package
+    // at the version the repo declares, fetched into envio's cache (here
+    // already there, so no network).
+    #[test]
+    fn reads_an_abi_from_the_package_a_failed_install_left_out() {
+        let dir = tempdir::TempDir::new("envio-subgraph-abi-package").unwrap();
+        let root = dir.path();
+        let package = root.join("subgraphs/exchange");
+        write_gravity(&package, "subgraph.yaml");
+        fs::write(
+            package.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace(
+                "./abis/Gravity.json",
+                "../../node_modules/@sushiswap/core/build/abi/Gravity.json",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"workspaces": ["subgraphs/*"], "devDependencies": {"@sushiswap/core": "^1.4.2"}}"#,
+        )
+        .unwrap();
+        let cache = root.join("cache");
+        let fetched = cache.join("abi-packages/@sushiswap+core@^1.4.2");
+        fs::create_dir_all(fetched.join("node_modules/@sushiswap/core/build/abi")).unwrap();
+        fs::write(
+            fetched.join("node_modules/@sushiswap/core/build/abi/Gravity.json"),
+            GRAVITY_ABI,
+        )
+        .unwrap();
+        fs::write(fetched.join(".envio-installed"), "@sushiswap/core@^1.4.2").unwrap();
+        fs::write(
+            package.join(".env"),
+            format!("ENVIO_SUBGRAPH_CACHE_DIR={}\n", cache.display()),
+        )
+        .unwrap();
+        let project_paths =
+            ParsedProjectPaths::new(package.to_str().unwrap(), "config.yaml").unwrap();
+        let subgraph = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap()
+            .subgraph
+            .unwrap();
+
+        assert_eq!(
+            subgraph
+                .path_fixes
+                .iter()
+                .map(|(written, found)| (written.as_str(), found.ends_with("abi/Gravity.json")))
+                .collect::<Vec<_>>(),
+            vec![(
+                "../../node_modules/@sushiswap/core/build/abi/Gravity.json",
+                true
+            )]
         );
     }
 

@@ -623,7 +623,14 @@ packages the mappings import. A package of the repo's own workspace (package.jso
 `workspaces`, or pnpm-workspace.yaml) is never fetched — the registry's
 package of that name is someone else's, as sushiswap's `const` is — and a
 mapping's import of it loads from the workspace: its `main`, else its
-`index.ts` or `assembly/index.ts`, as the package manager's link would.
+`index.ts` or `assembly/index.ts`, as the package manager's link would. A
+workspace package whose `main` a script of its own writes (sushiswap's
+`const` renders `index.ts` per network) is named, with that script, in the
+load error. An ABI the manifest reads from a package under `node_modules`
+(`../../node_modules/@sushiswap/core/build/abi/…`) comes from that package
+fetched into envio's cache (`<cache>/abi-packages/`), at the version the
+lockfile pins, else the package.json range, with npm and no scripts; startup
+warns once per file.
 
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`

@@ -166,8 +166,8 @@ type SubgraphConfig = {
     view: string;
     steps?: string[];
   };
-  /** Files the manifest names, as written and as the repo spells them, differing only in case. */
-  pathCaseFixes?: [string, string][];
+  /** Files the manifest names, as written and where they are read from (another case, or a fetched package). */
+  pathFixes?: [string, string][];
   /** The network networks.json was applied for when none was picked: the repo build's `--network`. */
   buildNetwork?: string;
   isDev: boolean;
@@ -1210,11 +1210,14 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         "ENVIO_SUBGRAPH_NETWORK picks another.",
     );
   }
-  for (const [written, found] of config.pathCaseFixes ?? []) {
+  for (const [written, found] of config.pathFixes ?? []) {
     warn(
-      `Envio Subgraph: ${config.manifestFile ?? "subgraph.yaml"} names ${written}, and the repo has ${found}. ` +
-        "They match only on a filesystem that ignores case (macOS's and Windows' by default), where " +
-        `the subgraph builds; envio reads ${found}.`,
+      path.isAbsolute(found)
+        ? `Envio Subgraph: ${manifestName} names ${written}, in a package the project's install didn't ` +
+            `provide; envio reads it from the package fetched into ${found}.`
+        : `Envio Subgraph: ${manifestName} names ${written}, and the repo has ${found}. They match only on a ` +
+            "filesystem that ignores case (macOS's and Windows' by default), where the subgraph builds; " +
+            `envio reads ${found}.`,
     );
   }
   await ensureGeneratedCode(
@@ -1225,7 +1228,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     {
       renderScripts: rendered && !rendered.steps?.length ? [rendered.script, ...(rendered.inlined ?? [])] : [],
       ranSteps: rendered?.steps,
-      pathCaseFixes: config.pathCaseFixes,
+      pathFixes: config.pathFixes,
     },
   );
 

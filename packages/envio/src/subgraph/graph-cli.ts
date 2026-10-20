@@ -185,7 +185,7 @@ function outOfMemory(command: string): Error {
  */
 async function withCodegenManifest<T>(
   manifest: string,
-  pathCaseFixes: [string, string][],
+  pathFixes: [string, string][],
   use: (file: string) => Promise<T>,
 ): Promise<T> {
   let source: string;
@@ -197,7 +197,7 @@ async function withCodegenManifest<T>(
   let patched = source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5");
   // graph-cli on Linux can't read a file the manifest names in another case
   // than the repo's; the copy names it the repo's way.
-  for (const [written, found] of pathCaseFixes) {
+  for (const [written, found] of pathFixes) {
     const escaped = written.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     patched = patched.replace(new RegExp(`(\\bfile:\\s*["']?)${escaped}(["']?\\s*$)`, "gm"), `$1${found}$2`);
   }
@@ -223,14 +223,14 @@ async function runCodegen(
   outputDir: string,
   needed: boolean,
   flags: string[] = [],
-  pathCaseFixes: [string, string][] = [],
+  pathFixes: [string, string][] = [],
 ): Promise<boolean> {
   for (const provider of codegenProviders) {
     if (provider.fetches && !needed) continue;
     const candidates = await provider.locate(root);
     if (candidates.length === 0) continue;
     for (const [index, graphCli] of candidates.entries()) {
-      const outcome = await withCodegenManifest(path.resolve(root, manifestFile), pathCaseFixes, (manifest) =>
+      const outcome = await withCodegenManifest(path.resolve(root, manifestFile), pathFixes, (manifest) =>
         runGraphCli(graphCli, root, "codegen", [manifest, "--output-dir", outputDir, "--skip-migrations", ...flags]),
       );
       if (outcome === "ok") return true;
@@ -491,7 +491,7 @@ export async function ensureGeneratedCode(
   dir: string,
   manifestFile = "subgraph.yaml",
   mappingFiles: string[] = [],
-  { pathCaseFixes = [], ...skip }: { pathCaseFixes?: [string, string][] } & SkippedSteps = {},
+  { pathFixes = [], ...skip }: { pathFixes?: [string, string][] } & SkippedSteps = {},
 ): Promise<void> {
   const mode = codegenMode();
   if (mode === "bundled") {
@@ -550,7 +550,7 @@ export async function ensureGeneratedCode(
       // With no graph-cli anywhere, the mapping that imports the missing code
       // reports it, naming that mapping.
       const needed = importsFrom(root, mappingFiles, dir);
-      if (!(await runCodegen(root, manifestFile, dir, needed, codegenFlags(root, step), pathCaseFixes))) return;
+      if (!(await runCodegen(root, manifestFile, dir, needed, codegenFlags(root, step), pathFixes))) return;
     }
   } catch (error) {
     if (mode === "graph-cli" || bundledFailed) throw error;
