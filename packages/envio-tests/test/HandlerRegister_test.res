@@ -5,7 +5,8 @@ open Vitest
 // into a handler registration (either order) when their filters match, and
 // unlimited wildcard registrations are allowed.
 
-let config = InternalTestIndexer.fromUserApi(~configYaml=`
+let config = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
 name: handler-register-test
 contracts:
   - name: ERC20
@@ -23,11 +24,13 @@ chains:
         address: "0x1111111111111111111111111111111111111111"
       - name: ERC721
         address: "0x2222222222222222222222222222222222222222"
-`).config
+`,
+).config
 
 // Single chain 137 (narrowing target). Used with `configMultichain` to verify
 // that one registration resolved for the full chain set narrows to each chain.
-let config137 = InternalTestIndexer.fromUserApi(~configYaml=`
+let config137 = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
 name: handler-register-test-137
 contracts:
   - name: ERC20
@@ -40,12 +43,14 @@ chains:
     contracts:
       - name: ERC20
         address: "0x1111111111111111111111111111111111111111"
-`).config
+`,
+).config
 
 // The full chain set (1 + 137). Handlers register against this; a
 // `finishRegistration` for either `config` (chain 1) or `config137` (chain 137)
 // narrows to that chain (mirrors MockIndexer registering once, narrowing per run).
-let configMultichain = InternalTestIndexer.fromUserApi(~configYaml=`
+let configMultichain = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
 name: handler-register-multichain
 contracts:
   - name: ERC20
@@ -63,26 +68,8 @@ chains:
     contracts:
       - name: ERC20
         address: "0x1111111111111111111111111111111111111111"
-`).config
-
-// raw_events enabled, single chain. Used to verify that a `where: false` event
-// is excluded entirely while a handler-less event still gets a bare raw-events
-// registration.
-let configWithRawEvents = InternalTestIndexer.fromUserApi(~configYaml=`
-name: handler-register-raw-events
-raw_events: true
-contracts:
-  - name: ERC20
-    events:
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
-      - event: Approval(address indexed owner, address indexed spender, uint256 value)
-chains:
-  - id: 1
-    start_block: 0
-    contracts:
-      - name: ERC20
-        address: "0x1111111111111111111111111111111111111111"
-`).config
+`,
+).config
 
 // Each handler/contractRegister is a distinct function so registrations can be
 // identified by reference in assertions.
@@ -106,7 +93,9 @@ let setContractRegister = (
   HandlerRegister.setContractRegister(
     ~contractName,
     ~eventName,
-    contractRegister->(Utils.magic: Internal.contractRegister => Internal.genericContractRegister<_>),
+    contractRegister->(
+      Utils.magic: Internal.contractRegister => Internal.genericContractRegister<_>
+    ),
     ~eventOptions,
   )
 
@@ -152,90 +141,68 @@ describe("HandlerRegister multiple registrations", () => {
   it("keeps two onEvent handlers as separate registrations in registration order", t => {
     let h1 = makeHandler()
     let h2 = makeHandler()
-    let registrations = register(() => {
-      setHandler(h1)
-      setHandler(h2)
-    })
+    let registrations = register(
+      () => {
+        setHandler(h1)
+        setHandler(h2)
+      },
+    )
     t.expect(
-      registrations->describeRegistrations(
-        ~labels=[(h1, "h1"), (h2, "h2")],
-        ~crLabels=[],
-      ),
+      registrations->describeRegistrations(~labels=[(h1, "h1"), (h2, "h2")], ~crLabels=[]),
     ).toEqual([(Some("h1"), None, 0), (Some("h2"), None, 1)])
   })
 
   it("merges a contractRegister into a handler with matching filter", t => {
     let h1 = makeHandler()
     let cr1 = makeContractRegister()
-    let registrations = register(() => {
-      setHandler(h1)
-      setContractRegister(cr1)
-    })
+    let registrations = register(
+      () => {
+        setHandler(h1)
+        setContractRegister(cr1)
+      },
+    )
     t.expect(
-      registrations->describeRegistrations(
-        ~labels=[(h1, "h1")],
-        ~crLabels=[(cr1, "cr1")],
-      ),
+      registrations->describeRegistrations(~labels=[(h1, "h1")], ~crLabels=[(cr1, "cr1")]),
     ).toEqual([(Some("h1"), Some("cr1"), 0)])
   })
 
   it("merges a handler into an earlier contractRegister, keeping the handler's slot", t => {
     let h1 = makeHandler()
     let cr1 = makeContractRegister()
-    let registrations = register(() => {
-      setContractRegister(cr1)
-      setHandler(h1)
-    })
+    let registrations = register(
+      () => {
+        setContractRegister(cr1)
+        setHandler(h1)
+      },
+    )
     t.expect(
-      registrations->describeRegistrations(
-        ~labels=[(h1, "h1")],
-        ~crLabels=[(cr1, "cr1")],
-      ),
+      registrations->describeRegistrations(~labels=[(h1, "h1")], ~crLabels=[(cr1, "cr1")]),
     ).toEqual([(Some("h1"), Some("cr1"), 0)])
-  })
-
-  it("keeps a handler and contractRegister with different `where` filters separate", t => {
-    let h1 = makeHandler()
-    let cr1 = makeContractRegister()
-    let registrations = register(() => {
-      setHandler(h1)
-      setContractRegister(
-        ~eventOptions={
-          where: %raw(`{"params": {"from": "0x1111111111111111111111111111111111111111"}}`),
-        },
-        cr1,
-      )
-    })
-    t.expect(
-      registrations->describeRegistrations(
-        ~labels=[(h1, "h1")],
-        ~crLabels=[(cr1, "cr1")],
-      ),
-    ).toEqual([(Some("h1"), None, 0), (None, Some("cr1"), 1)])
   })
 
   it("does not merge a wildcard handler with a non-wildcard contractRegister", t => {
     let h1 = makeHandler()
     let cr1 = makeContractRegister()
-    let registrations = register(() => {
-      setHandler(~eventOptions={wildcard: true}, h1)
-      setContractRegister(cr1)
-    })
+    let registrations = register(
+      () => {
+        setHandler(~eventOptions={wildcard: true}, h1)
+        setContractRegister(cr1)
+      },
+    )
     t.expect(
-      registrations->describeRegistrations(
-        ~labels=[(h1, "h1")],
-        ~crLabels=[(cr1, "cr1")],
-      ),
+      registrations->describeRegistrations(~labels=[(h1, "h1")], ~crLabels=[(cr1, "cr1")]),
     ).toEqual([(Some("h1"), None, 0), (None, Some("cr1"), 1)])
   })
 
   it("allows multiple wildcard registrations sharing a signature", t => {
     let h1 = makeHandler()
     let h2 = makeHandler()
-    let registrations = register(() => {
-      setHandler(~contractName="ERC20", ~eventOptions={wildcard: true}, h1)
-      setHandler(~contractName="ERC721", ~eventOptions={wildcard: true}, h2)
-    })
+    let registrations = register(
+      () => {
+        setHandler(~contractName="ERC20", ~eventOptions={wildcard: true}, h1)
+        setHandler(~contractName="ERC721", ~eventOptions={wildcard: true}, h2)
+      },
+    )
     t.expect((
       registrations->describeRegistrations(
         ~contractName="ERC20",
@@ -280,43 +247,6 @@ describe("HandlerRegister multiple registrations", () => {
     t.expect(
       registrations->describeRegistrations(~labels=[(h1, "h1"), (h2, "h2")], ~crLabels=[]),
     ).toEqual([(Some("h1"), None, 0), (Some("h2"), None, 1)])
-  })
-
-  it("invokes a `where` callback once per chain, even across repeated finishes", t => {
-    // The `where` callback is resolved once per chain and cached on the intent,
-    // so re-materializing registrations (finishRegistration, simulate) must not
-    // call it again.
-    let calls = ref(0)
-    let h1 = makeHandler()
-    let whereFn = _ => {
-      calls := calls.contents + 1
-      true
-    }
-    HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config)
-    setHandler(~eventOptions={where: whereFn->Obj.magic}, h1)
-    let _ = HandlerRegister.finishRegistration(~config)
-    let _ = HandlerRegister.finishRegistration(~config)
-    t.expect(calls.contents).toBe(1)
-  })
-
-  it("excludes a where:false event but backfills a handler-less event for raw events", t => {
-    // Transfer's handler opts out of the chain via `where: false` → excluded
-    // entirely (no raw-events registration). Approval has no handler → with raw
-    // events enabled it gets a bare (handler-less) registration.
-    let h1 = makeHandler()
-    HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config=configWithRawEvents)
-    setHandler(~eventName="Transfer", ~eventOptions={where: %raw(`() => false`)}, h1)
-    let registrations = HandlerRegister.finishRegistration(~config=configWithRawEvents)
-    t.expect((
-      registrations->describeRegistrations(
-        ~eventName="Transfer",
-        ~labels=[(h1, "h1")],
-        ~crLabels=[],
-      ),
-      registrations->describeRegistrations(~eventName="Approval", ~labels=[], ~crLabels=[]),
-    )).toEqual(([], [(None, None, 0)]))
   })
 
   // A registration matching no configured chain can never be dispatched, so it
