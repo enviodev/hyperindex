@@ -2176,8 +2176,8 @@ impl Contract {
 
         // Two events on one contract that share a dispatch key are
         // indistinguishable at routing time — one log would decode to both —
-        // so reject them here. The key mirrors the runtime `eventId`: sighash
-        // plus indexed-topic count for EVM, the sighash for Fuel (a `LogData`
+        // so reject them here. Routing keys on the sighash plus indexed-topic
+        // count for EVM, and on the sighash for Fuel (a `LogData`
         // logId or a fixed `mint`/`burn`/…). SVM instructions are exempt: a
         // call routes to every instruction whose prefix it carries, each
         // decoding with its own layout and dropped on its own when the layout

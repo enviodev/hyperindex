@@ -445,7 +445,6 @@ let buildEvmEventConfig = (
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
 
   {
-    id: sighash ++ "_" ++ topicCount->Int.toString,
     name: eventName,
     contractName,
     paramsRawEventSchema: buildParamsSchema(params),
@@ -651,10 +650,6 @@ let buildSvmInstructionEventConfig = (
     ~transactionMaskFn=Svm.eventTransactionFieldMask,
   )
   {
-    id: switch discriminator {
-    | Some(d) => d
-    | None => "none"
-    },
     name: instructionName,
     contractName,
     paramsRawEventSchema: paramsSchema,
@@ -883,10 +878,6 @@ let buildFuelEventConfig = (
   | other => JsError.throwWithMessage(`Unsupported Fuel event kind: ${other}`)
   }
   {
-    id: switch kind {
-    | "logData" => sighash
-    | other => other
-    },
     name: eventName,
     contractName,
     paramsRawEventSchema: paramsSchema,
