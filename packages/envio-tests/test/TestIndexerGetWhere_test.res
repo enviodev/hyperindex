@@ -80,7 +80,7 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Token } from "envio";
+import { createTestIndexer, type Entity } from "envio";
 
 const collectionAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const otherCollectionAddress = "0xcccccccccccccccccccccccccccccccccccccccc";
@@ -106,13 +106,13 @@ const run = (indexer: ReturnType<typeof createTestIndexer>, testCase: string) =>
 describe("getWhere on linked-entity columns", () => {
   it("filters by the FK column of a named relation (#1199)", async (t) => {
     const indexer = createTestIndexer();
-    const matching: Token = {
+    const matching: Entity<"Token"> = {
       id: collectionAddress + "-1",
       tokenId: 1n,
       collection_id: collectionAddress,
       owner_id: ownerAddress,
     };
-    const other: Token = {
+    const other: Entity<"Token"> = {
       id: otherCollectionAddress + "-1",
       tokenId: 2n,
       collection_id: otherCollectionAddress,

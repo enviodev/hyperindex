@@ -209,7 +209,7 @@ expectType<TypeEqual<SvmChainName, "7565164">>(true);
   it("shapes the onSlot surface", _ =>
     check(`
 import type {
-  Account,
+  Entity,
   SvmChainId,
   SvmOnSlotContext,
   SvmOnSlotFilter,
@@ -230,12 +230,12 @@ const _slotOpts: SvmOnSlotOptions = {
 expectType<SvmOnSlotOptions>(_slotOpts);
 expectType<TypeEqual<SvmOnSlotContext["isPreload"], boolean>>(true);
 expectType<
-  TypeEqual<SvmOnSlotContext["Account"]["set"], (entity: Account) => void>
+  TypeEqual<SvmOnSlotContext["Account"]["set"], (entity: Entity<"Account">) => void>
 >(true);
 expectType<
   TypeEqual<
     SvmOnSlotContext["Account"]["get"],
-    (id: string) => Promise<Account | undefined>
+    (id: string) => Promise<Entity<"Account"> | undefined>
   >
 >(true);
 
@@ -855,13 +855,12 @@ if (0) {
 
   it("binds schema entities and enums under an SVM config", _ =>
     check(`
-import type { Account, Entity, EntityName, Enum, EnumName } from "envio";
+import type { Entity, EntityName, Enum, EnumName } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 const _entity: EntityName = "Account";
 // @ts-expect-error - "NotAnEntity" is not in the schema
 const _badEntity: EntityName = "NotAnEntity";
-expectType<TypeEqual<Entity<"Account">, Account>>(true);
 expectType<TypeEqual<Entity<"Account">["accountType"], "ADMIN" | "USER">>(true);
 
 const _enum: EnumName = "AccountType";

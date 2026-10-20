@@ -1,4 +1,4 @@
-import { indexer, type User } from "envio";
+import { indexer, type Entity } from "envio";
 
 // Type-level regression guards for `where.block` on Fuel. Declared as an
 // unreached function so `tsc --noEmit` checks the types without runtime
@@ -63,7 +63,7 @@ indexer.onEvent({ contract: "Greeter", event: "NewGreeting" }, async ({ event, c
   const currentUserEntity = await context.User.get(userId);
 
   //Construct the userEntity that is to be set in the DB
-  const userEntity: User = currentUserEntity
+  const userEntity: Entity<"User"> = currentUserEntity
     ? //In the case there is an existing "User" entity, update its
       //latestGreeting value, increment the numberOfGreetings and append latestGreeting
       //to the array of greetings

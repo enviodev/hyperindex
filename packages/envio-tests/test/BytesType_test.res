@@ -53,12 +53,12 @@ programs:
 
 let expectBytesTyped = bytesType =>
   `
-import type { Blob, Hex } from "envio";
+import type { Entity, Hex } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 expectType<
   TypeEqual<
-    Blob,
+    Entity<"Blob">,
     {
       readonly id: string;
       readonly data: ${bytesType};

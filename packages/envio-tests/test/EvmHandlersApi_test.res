@@ -144,8 +144,8 @@ expectType<TypeEqual<TransferEvent["block"]["hash"], \`0x\${string}\`>>(true);
   it("shapes onEvent / contractRegister options, handlers and contexts", _ =>
     check(`
 import type {
-  Account,
   Address,
+  Entity,
   EvmContractRegisterContext,
   EvmContractRegisterHandler,
   EvmContractRegisterOptions,
@@ -218,11 +218,11 @@ expectType<TypeEqual<EvmOnEventContext["isPreload"], boolean>>(true);
 expectType<
   TypeEqual<
     EvmOnEventContext["Account"]["get"],
-    (id: string) => Promise<Account | undefined>
+    (id: string) => Promise<Entity<"Account"> | undefined>
   >
 >(true);
 expectType<
-  TypeEqual<EvmOnEventContext["Account"]["set"], (entity: Account) => void>
+  TypeEqual<EvmOnEventContext["Account"]["set"], (entity: Entity<"Account">) => void>
 >(true);
 
 expectType<TypeEqual<EvmContractRegisterContext["chain"]["id"], 1 | 137>>(true);
@@ -504,7 +504,9 @@ indexer.onEvent(${source}, async () => {});
 
   it("binds Entity / EntityName / Enum / EnumName to the schema", _ =>
     check(`
-import type { Account, Entity, EntityName, Enum, EnumName } from "envio";
+import type { Entity, EntityName, Enum, EnumName } from "envio";
+// @ts-expect-error - entities are not exported by name; use Entity<"Account">
+import type { Account } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 const _account: EntityName = "Account";
@@ -512,7 +514,6 @@ const _delegation: EntityName = "Delegation";
 // @ts-expect-error - "NotAnEntity" is not in the schema
 const _badEntity: EntityName = "NotAnEntity";
 
-expectType<TypeEqual<Entity<"Account">, Account>>(true);
 expectType<TypeEqual<Entity<"Account">["id"], string>>(true);
 expectType<TypeEqual<Entity<"Account">["balance"], bigint>>(true);
 expectType<TypeEqual<Entity<"Account">["accountType"], "ADMIN" | "USER">>(true);
@@ -729,7 +730,7 @@ if (0) {
     check(`
 import { createTestIndexer, indexer, TestHelpers } from "envio";
 import type {
-  Account,
+  Entity,
   Indexer,
   TestIndexer,
   TestIndexerProcessConfig,
@@ -743,7 +744,7 @@ expectType<TypeEqual<Indexer["chainIds"], readonly (1 | 137)[]>>(true);
 
 // The test indexer exposes entity operations bound to the schema.
 expectType<
-  TypeEqual<TestIndexer["Account"]["set"], (entity: Account) => void>
+  TypeEqual<TestIndexer["Account"]["set"], (entity: Entity<"Account">) => void>
 >(true);
 
 // process() config is keyed by chain id.
@@ -822,8 +823,8 @@ expectType<TypeEqual<EffectOptions<number, string>["rateLimit"], RateLimit>>(tru
   it("shapes getWhere filters, the dynamic where callback, and misc aliases", _ =>
     check(`
 import type {
-  Account,
   Address,
+  Entity,
   EvmOnEventWhere,
   EvmOnEventWhereArgs,
   EvmOnEventWhereFilter,
@@ -837,8 +838,8 @@ import { expectType, type TypeEqual } from "ts-expect";
 // getWhere operators/filters over an entity type.
 const _op: GetWhereOperator<bigint> = { _gte: 1n, _in: [1n, 2n] };
 expectType<GetWhereOperator<bigint>>(_op);
-const _filter: GetWhereFilter<Account> = { balance: { _gt: 0n }, id: { _eq: "x" } };
-expectType<GetWhereFilter<Account>>(_filter);
+const _filter: GetWhereFilter<Entity<"Account">> = { balance: { _gt: 0n }, id: { _eq: "x" } };
+expectType<GetWhereFilter<Entity<"Account">>>(_filter);
 
 // The dynamic where callback form exposes the event's own contract addresses.
 type Args = EvmOnEventWhereArgs<"Token">;
@@ -973,7 +974,7 @@ chains:
 `,
       ~handlers=`
 import { createTestIndexer, indexer } from "envio";
-import type { Blob, EvmAllBlockFields, EvmAllTransactionFields, EvmEvent, Hex } from "envio";
+import type { Entity, EvmAllBlockFields, EvmAllTransactionFields, EvmEvent, Hex } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 expectType<TypeEqual<Hex, \`0x\${string}\`>>(true);
@@ -989,7 +990,7 @@ expectType<TypeEqual<Stored["transaction"]["input"], Hex>>(true);
 expectType<TypeEqual<Stored["transaction"]["r"], Hex | undefined>>(true);
 expectType<TypeEqual<EvmAllBlockFields["hash"], Hex>>(true);
 expectType<TypeEqual<EvmAllTransactionFields["hash"], Hex>>(true);
-expectType<TypeEqual<Blob["data"], Hex>>(true);
+expectType<TypeEqual<Entity<"Blob">["data"], Hex>>(true);
 
 const KEY: Hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
 const plain: string = KEY;

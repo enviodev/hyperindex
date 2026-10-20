@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTestIndexer, type User } from "envio";
+import { createTestIndexer, type Entity } from "envio";
 import { TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 
@@ -26,7 +26,7 @@ describe("Greeter template tests", () => {
       },
     });
 
-    const expectedUserEntity: User = {
+    const expectedUserEntity: Entity<"User"> = {
       id: userAddress,
       latestGreeting: greeting,
       numberOfGreetings: 1,

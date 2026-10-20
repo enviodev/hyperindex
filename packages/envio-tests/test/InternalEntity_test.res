@@ -33,7 +33,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Account, type Secret, TestHelpers } from "envio";
+import { createTestIndexer, type Entity, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
@@ -56,8 +56,8 @@ describe("@internal entity in handlers", () => {
       },
     });
 
-    const expectedAccount: Account = { id: to, balance: 5n };
-    const expectedSecret: Secret = { id: to, note: "hidden" };
+    const expectedAccount: Entity<"Account"> = { id: to, balance: 5n };
+    const expectedSecret: Entity<"Secret"> = { id: to, note: "hidden" };
     t.expect({
       account: await indexer.Account.getOrThrow(to),
       secret: await indexer.Secret.getOrThrow(to),

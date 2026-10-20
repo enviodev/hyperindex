@@ -37,11 +37,11 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async ({ event, c
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type SimulateTestEvent } from "envio";
+import { createTestIndexer, type Entity } from "envio";
 
 const emptyEvent = { contract: "Gravatar", event: "EmptyEvent" } as const;
 
-const at = (blockNumber: number): SimulateTestEvent => ({
+const at = (blockNumber: number): Entity<"SimulateTestEvent"> => ({
   id: \`\${blockNumber}_0\`,
   blockNumber,
   logIndex: 0,

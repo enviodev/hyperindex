@@ -17,6 +17,7 @@ metadata:
 - Names: 1-63 chars, alphanumeric + underscore, no reserved words
 - Relationship fields use the **entity type directly**: `collection: NftCollection!` — **never** add `_id` in the schema field name
 - The `_id` suffix only appears in TypeScript handlers (added by codegen): schema field `collection` → handler field `collection_id`, typed as the referenced entity's id
+- Reference an entity's TypeScript type as `Entity<"NftCollection">` and an enum's as `Enum<"Status">` (`import type { Entity, Enum } from "envio"`) — entities and enums are not exported by name
 
 ## Scalar Types
 

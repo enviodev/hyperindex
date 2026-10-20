@@ -29,7 +29,7 @@ let _ = InternalTestIndexer.fromUserApi(
   ~handlers=RpcE2eChain.handlers,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Transfer, TestHelpers } from "envio";
+import { createTestIndexer, type Entity, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
@@ -40,7 +40,7 @@ describe("Indexing over RPC", () => {
     await indexer.process({ chains: { 1337: { startBlock: 100, endBlock: 101 } } });
 
     const to = Addresses.mockAddresses[1];
-    const expected: Transfer[] = [
+    const expected: Entity<"Transfer">[] = [
       { id: "100-0", to, value: 3n },
       { id: "101-1", to, value: 4n },
     ];

@@ -44,7 +44,7 @@ event handler is a separate `indexer.onEvent` registration — order and file
 placement between the two don't matter:
 
 ```ts
-import { indexer, type Pair } from "envio";
+import { indexer, type Entity } from "envio";
 
 indexer.contractRegister(
   { contract: "Factory", event: "PairCreated" },
@@ -56,7 +56,7 @@ indexer.contractRegister(
 indexer.onEvent(
   { contract: "Factory", event: "PairCreated" },
   async ({ event, context }) => {
-    const pair: Pair = {
+    const pair: Entity<"Pair"> = {
       id: event.params.pair,
       token0_id: event.params.token0,
       token1_id: event.params.token1,

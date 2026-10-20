@@ -683,7 +683,7 @@ mod tests {
             "match.".to_string(),
         ];
         let flagged_words = super::check_reserved_words(&words);
-        assert_eq!(flagged_words, vec!["constructor", "enum"]);
+        assert_eq!(flagged_words, vec!["constructor"]);
     }
 
     #[test]
@@ -759,8 +759,8 @@ mod tests {
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "The config contains reserved words for contract names: \"constructor\", \"enum\". \
-             They are used for the generated code and must be valid identifiers, containing only \
+            "The config contains reserved words for contract names: \"constructor\". They are \
+             used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
 

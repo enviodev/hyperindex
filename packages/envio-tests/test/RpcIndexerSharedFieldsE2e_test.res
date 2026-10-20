@@ -26,8 +26,8 @@ let logs: array<RpcE2eChain.transfer> = [
 
 let receiptJson = hash =>
   JSON.parseOrThrow(
-    `{"transactionHash":"${hash}","blockNumber":"${approvalBlock->hex}","transactionIndex":"0x0","gasUsed":"${(approvalBlock *
-      3)->hex}"}`,
+    `{"transactionHash":"${hash}","blockNumber":"${approvalBlock->hex}","transactionIndex":"0x0","gasUsed":"${(approvalBlock * 3)
+        ->hex}"}`,
   )
 
 let mock = serveDuringSuite(() =>
@@ -98,7 +98,7 @@ indexer.onEvent(
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Approval, type Transfer } from "envio";
+import { createTestIndexer, type Entity } from "envio";
 
 describe("Two registrations selecting different fields of the same chain", () => {
   it("serves each its own fields", async (t) => {
@@ -106,7 +106,7 @@ describe("Two registrations selecting different fields of the same chain", () =>
 
     await indexer.process({ chains: { 1337: { startBlock: 100, endBlock: 101 } } });
 
-    const expected: [Transfer, Approval] = [
+    const expected: [Entity<"Transfer">, Entity<"Approval">] = [
       { id: "100", value: 3n },
       { id: "101", blockGasUsed: 202n, txGasUsed: 303n },
     ];

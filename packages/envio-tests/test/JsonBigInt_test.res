@@ -35,15 +35,10 @@ type WXTZ_BatchSent {
 }
 `,
   ~handlers=`
-import { indexer } from "envio";
-import type {
-  WXTZ_EnforcedOptionSet,
-  WXTZ_PeerSet,
-  WXTZ_BatchSent,
-} from "envio";
+import { indexer, type Entity } from "envio";
 
 indexer.onEvent({ contract: "WXTZ", event: "EnforcedOptionSet" }, async ({ event, context }) => {
-  const entity: WXTZ_EnforcedOptionSet = {
+  const entity: Entity<"WXTZ_EnforcedOptionSet"> = {
     id: \`\${event.chainId}_\${event.block.number}_\${event.logIndex}\`,
     _enforcedOptions: event.params._enforcedOptions.map((item) => ({
       0: item[0].toString(),
@@ -56,7 +51,7 @@ indexer.onEvent({ contract: "WXTZ", event: "EnforcedOptionSet" }, async ({ event
 });
 
 indexer.onEvent({ contract: "WXTZ", event: "PeerSet" }, async ({ event, context }) => {
-  const entity: WXTZ_PeerSet = {
+  const entity: Entity<"WXTZ_PeerSet"> = {
     id: \`\${event.chainId}_\${event.block.number}_\${event.logIndex}\`,
     info: event.params.info,
   };
@@ -65,7 +60,7 @@ indexer.onEvent({ contract: "WXTZ", event: "PeerSet" }, async ({ event, context 
 });
 
 indexer.onEvent({ contract: "WXTZ", event: "BatchSent" }, async ({ event, context }) => {
-  const entity: WXTZ_BatchSent = {
+  const entity: Entity<"WXTZ_BatchSent"> = {
     id: \`\${event.chainId}_\${event.block.number}_\${event.logIndex}\`,
     items: event.params.items.map((item) => ({
       amount: item.amount.toString(),
@@ -93,9 +88,7 @@ import { describe, it } from "vitest";
 import {
   createTestIndexer,
   TestHelpers,
-  type WXTZ_EnforcedOptionSet,
-  type WXTZ_PeerSet,
-  type WXTZ_BatchSent,
+  type Entity,
 } from "envio";
 
 const maxUint256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935n;
@@ -137,7 +130,11 @@ describe("Json fields from tuple params", () => {
       },
     });
 
-    const expected: [WXTZ_EnforcedOptionSet, WXTZ_PeerSet, WXTZ_BatchSent] = [
+    const expected: [
+      Entity<"WXTZ_EnforcedOptionSet">,
+      Entity<"WXTZ_PeerSet">,
+      Entity<"WXTZ_BatchSent">,
+    ] = [
       {
         id: "1_0_0",
         _enforcedOptions: [

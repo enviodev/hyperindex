@@ -120,7 +120,7 @@ indexer.onInstruction(
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Hit } from "envio";
+import { createTestIndexer, type Entity } from "envio";
 
 describe("SVM onInstruction where (live)", () => {
   it(
@@ -129,7 +129,7 @@ describe("SVM onInstruction where (live)", () => {
       const indexer = createTestIndexer();
       await indexer.process({ chains: { 7565164: { endBlock: 420650200 } } });
 
-      const hits: Hit[] = await indexer.Hit.getAll();
+      const hits: Entity<"Hit">[] = await indexer.Hit.getAll();
       const tagged = (tag: string) => hits.filter((hit) => hit.tag === tag);
       const all = tagged("all");
       const authority = tagged("authority");

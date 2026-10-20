@@ -1876,29 +1876,6 @@ type hasOwnProperty { id: ID! }
 `,
       "Schema contains the following reserved keywords: hasOwnProperty",
     ),
-    (
-      // `Enum` is already exported by the `envio` module, and every entity is
-      // re-exported there under its capitalized name.
-      "rejects an entity whose capitalized name collides with an envio export",
-      `
-type enum { id: ID! }
-`,
-      "Schema contains the following reserved keywords: enum",
-    ),
-    (
-      "rejects an entity named after the envio Hex type",
-      `
-type Hex { id: ID! }
-`,
-      "Schema contains entities whose capitalized names are already exported by the envio module: Hex (from Hex). Rename them.",
-    ),
-    (
-      "rejects an entity that becomes the envio Hex type when capitalized",
-      `
-type hex { id: ID! }
-`,
-      "Schema contains entities whose capitalized names are already exported by the envio module: Hex (from hex). Rename them.",
-    ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))
   })

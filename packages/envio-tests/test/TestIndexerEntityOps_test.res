@@ -38,9 +38,9 @@ indexer.onEvent({ contract: "Gravatar", event: "EmptyEvent" }, async () => {});
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type User } from "envio";
+import { createTestIndexer, type Entity } from "envio";
 
-const user: User = {
+const user: Entity<"User"> = {
   id: "test-user-1",
   address: "0x1234",
   updatesCountOnUserForTesting: 5,
@@ -64,7 +64,7 @@ describe("TestIndexer entity operations", () => {
 
   it("set overwrites an entity already under that id", async (t) => {
     const indexer = createTestIndexer();
-    const updated: User = {
+    const updated: Entity<"User"> = {
       id: "test-user-1",
       address: "0x5678",
       updatesCountOnUserForTesting: 10,
@@ -82,7 +82,7 @@ describe("TestIndexer entity operations", () => {
   // on to one and mutating it later can't rewrite what the store holds.
   it("mutating an entity across the set/get boundary leaves the store intact", async (t) => {
     const indexer = createTestIndexer();
-    const original: User = { ...user, id: "0", address: "existing" };
+    const original: Entity<"User"> = { ...user, id: "0", address: "existing" };
     indexer.User.set(original);
 
     Object.assign(original, { address: "mutated-after-set" });

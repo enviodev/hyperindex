@@ -3,9 +3,7 @@ use super::{
     validation::{check_names_from_schema_for_reserved_words, is_valid_postgres_db_name},
 };
 use crate::{
-    constants::{
-        project_paths::DEFAULT_SCHEMA_PATH, reserved_keywords::ENVIO_EXPORTS_ENTITIES_CANNOT_SHADOW,
-    },
+    constants::project_paths::DEFAULT_SCHEMA_PATH,
     hbs_templating::codegen_templates::DerivedFieldTemplate,
     project_paths::{path_utils, ParsedProjectPaths},
     type_schema::TypeIdent,
@@ -187,7 +185,6 @@ impl Schema {
         self.check_schema_for_reserved_words()?
             .check_duplicate_naming_between_enums_and_entities()?
             .check_capitalized_entity_name_collisions()?
-            .check_entities_dont_shadow_envio_exports()?
             .check_related_type_defs_exist()?
             .validate_entity_field_types()
     }
@@ -269,30 +266,6 @@ impl Schema {
                  exposed on the handler context under its capitalized name, so these must be \
                  unique: {}",
                 collisions.join("; ")
-            ))
-        }
-    }
-
-    fn check_entities_dont_shadow_envio_exports(self) -> anyhow::Result<Self> {
-        let mut shadowing = self
-            .entities
-            .keys()
-            .filter_map(|name| {
-                let capitalized = name.capitalize();
-                ENVIO_EXPORTS_ENTITIES_CANNOT_SHADOW
-                    .contains(&capitalized.as_str())
-                    .then(|| format!("{capitalized} (from {name})"))
-            })
-            .collect::<Vec<_>>();
-
-        if shadowing.is_empty() {
-            Ok(self)
-        } else {
-            shadowing.sort();
-            Err(anyhow!(
-                "Schema contains entities whose capitalized names are already exported by the \
-                 envio module: {}. Rename them.",
-                shadowing.join("; ")
             ))
         }
     }

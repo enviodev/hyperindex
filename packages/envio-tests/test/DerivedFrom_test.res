@@ -12,7 +12,8 @@ chains:
           - event: Registered(address indexed owner, uint256 id)
 `
 
-let schemaWith = derivedFields => `
+let schemaWith = derivedFields =>
+  `
 type Parent {
   id: ID!
 ${derivedFields}
@@ -75,12 +76,10 @@ describe("@derivedFrom spellings", () => {
 
   it("treats all four spellings in one entity as the same lookup", t => {
     let config = parse(
-      schemaWith(
-        `  strict: [Child!]! @derivedFrom(field: "parent")
+      schemaWith(`  strict: [Child!]! @derivedFrom(field: "parent")
   nullableList: [Child!] @derivedFrom(field: "parent")
   nullableItems: [Child]! @derivedFrom(field: "parent")
-  nullableBoth: [Child] @derivedFrom(field: "parent")`,
-      ),
+  nullableBoth: [Child] @derivedFrom(field: "parent")`),
     ).config
 
     t.expect(config->describeFields("Parent")).toEqual([
@@ -114,9 +113,7 @@ describe("@derivedFrom spellings", () => {
   it("rejects a derived field that is not an entity", t => {
     t.expect(
       parseError(schemaWith(`  children: [String!]! @derivedFrom(field: "parent")`)),
-    ).toEqual(
-      `schema.graphql:4:3: Failed parsing field children on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
-    )
+    ).toEqual(`schema.graphql:4:3: Failed parsing field children on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`)
   })
 
   // Loosening the shape must not start accepting a list of lists: there is no
@@ -124,18 +121,16 @@ describe("@derivedFrom spellings", () => {
   it("rejects a derived field nested in a list of lists", t => {
     t.expect(
       parseError(schemaWith(`  children: [[Child!]!]! @derivedFrom(field: "parent")`)),
-    ).toEqual(
-      `schema.graphql:4:3: Failed parsing field children on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
-    )
+    ).toEqual(`schema.graphql:4:3: Failed parsing field children on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`)
   })
 
   // A derived field surfaces as a list everywhere it is read — through the child
   // entity in a handler, as an array relationship in the GraphQL API — so the
   // one-to-one spelling is refused rather than quietly answered with an array.
   it("rejects a one-to-one derived field", t => {
-    t.expect(parseError(schemaWith(`  child: Child @derivedFrom(field: "parent")`))).toEqual(
-      `schema.graphql:4:3: Failed parsing field child on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
-    )
+    t.expect(
+      parseError(schemaWith(`  child: Child @derivedFrom(field: "parent")`)),
+    ).toEqual(`schema.graphql:4:3: Failed parsing field child on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`)
   })
 
   it("rejects a derived field naming an enum", t => {
@@ -168,7 +163,7 @@ indexer.onEvent({ contract: "Registry", event: "Registered" }, async ({ event, c
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Parent, TestHelpers } from "envio";
+import { createTestIndexer, type Entity, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
@@ -187,7 +182,7 @@ describe("@derivedFrom on a nullable list", () => {
       },
     });
 
-    const parent: Parent = { id: owner };
+    const parent: Entity<"Parent"> = { id: owner };
     t.expect([
       await indexer.Parent.getOrThrow(owner),
       await indexer.Child.getWhere({ parent_id: { _eq: owner } }),

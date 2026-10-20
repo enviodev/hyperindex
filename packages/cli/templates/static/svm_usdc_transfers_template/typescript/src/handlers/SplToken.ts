@@ -1,7 +1,7 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { indexer, type SvmInstruction, type Transfer } from "envio";
+import { indexer, type Entity, type SvmInstruction } from "envio";
 
 /** USD Coin. Swap in any SPL mint to follow that token instead. */
 const MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -18,7 +18,7 @@ type TokenTransfer =
   | SvmInstruction<typeof fields, "SplToken", "transfer">
   | SvmInstruction<typeof fields, "SplToken", "transferChecked">;
 
-const toTransfer = (instruction: TokenTransfer, checked: boolean): Transfer => ({
+const toTransfer = (instruction: TokenTransfer, checked: boolean): Entity<"Transfer"> => ({
   id: `${instruction.block.slot}-${instruction.transaction.transactionIndex}-${instruction.path.join(".")}`,
   amount: instruction.args.amount,
   source: instruction.accounts.source.address,
