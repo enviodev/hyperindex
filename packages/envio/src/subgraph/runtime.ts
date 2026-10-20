@@ -1316,6 +1316,19 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // own, so each runs once in register mode, at its block, before the first
   // register pass of its chain reads the register store.
   const onceHandlers = new Map<number, ((context: any) => Promise<void>)[]>();
+
+  // A block handler run's place among its block's runs, which orders the
+  // timeseries ids its rows get. Counted in the execute pass, the one that
+  // writes, as the runs happen; a replayed run keeps the place it was given.
+  const blockRuns = new Map<number, { block: number; first: number; late: number }>();
+  const nextBlockRun = (chainId: number, blockNumber: number, first: boolean) => {
+    let runs = blockRuns.get(chainId);
+    if (!runs || runs.block !== blockNumber) {
+      runs = { block: blockNumber, first: 0, late: 0 };
+      blockRuns.set(chainId, runs);
+    }
+    return { first, slot: first ? runs.first++ : runs.late++ };
+  };
   const primed = new Map<number, Promise<void>>();
   const primeOnceHandlers = (chainId: number, context: any) => {
     let done = primed.get(chainId);
@@ -1652,6 +1665,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               blockNumber: block.number,
               blockSeconds: secondsOf(block.number, block.timestamp),
               mappingExports: mapping,
+              blockRun: context.isPreload
+                ? undefined
+                : nextBlockRun(block.chainId ?? source.chainId ?? 0, block.number, once && !source.isTemplate),
             };
             await runSyncCounted(context, () =>
               runInScope(scope, () => {
