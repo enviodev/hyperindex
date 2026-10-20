@@ -297,13 +297,18 @@ const VALUE_CLASSES: &[&str] = &["BigInt", "BigDecimal", "Address", "Bytes", "By
 ///   module this one imports or re-exports, and a module calls it before its
 ///   own top-level code. A function declaration exists once the module graph is
 ///   linked, so a cyclic importer reaches it while the module itself hasn't run.
-/// - `__envio_start()`: every other top-level statement, in order, a
+/// - `__envio_start(again)`: every other top-level statement, in order, a
 ///   declaration turned into an assignment of its `var` — the start function.
 ///   It runs as the module loads, without failing the load: graph-node runs it
 ///   in a trigger's context, which the load only stands in for
-///   (`dataSource.context()` of a template instance). And through
+///   (`dataSource.context()` of a template instance). And again through
 ///   `__envio_init(generation)`, which the runtime calls as each trigger's
-///   handler starts, after the same function of every module this one imports.
+///   handler starts, after the same function of every module this one imports
+///   — but only what can differ by then: a `let`, an exported global or one
+///   the module changes in place, a statement, and what reads `dataSource` or
+///   one of those. A table a handler only reads (Kiln's BLS curve constants)
+///   is built once; rebuilding it in every trigger, as graph-node does, can't
+///   be observed.
 fn module_lifecycle<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
     use std::collections::HashMap;
 
@@ -511,13 +516,23 @@ fn module_lifecycle<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
         .collect();
 
     let ast = AstBuilder::new(allocator);
+    let mutated = mutated_names(program);
     let old = std::mem::replace(&mut program.body, ArenaVec::new_in(&ast));
     let mut constants: HashMap<String, bool> = HashMap::new();
     let mut values: HashSet<String> = HashSet::new();
     let mut declared: Vec<(String, bool)> = vec![];
     let mut static_init = ArenaVec::new_in(&ast);
     let mut definers = ArenaVec::new_in(&ast);
-    let mut start = ArenaVec::new_in(&ast);
+    // Each start statement, and whether it runs again in every trigger: what
+    // keeps state or reads the trigger's context. The rest — tables a handler
+    // only reads — build once; graph-node's rebuild of them is unobservable.
+    let mut start: Vec<(Statement<'a>, bool)> = vec![];
+    let mut per_trigger: HashSet<String> = HashSet::new();
+    let reruns = |expr: &Expression<'_>, per_trigger: &HashSet<String>| {
+        let mut names = References::default();
+        oxc::ast_visit::Visit::visit_expression(&mut names, expr);
+        names.0.contains("dataSource") || names.0.iter().any(|name| per_trigger.contains(name))
+    };
     let mut body = ArenaVec::new_in(&ast);
     let mut deps: Vec<String> = vec![];
     for statement in old {
@@ -560,7 +575,7 @@ fn module_lifecycle<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
             | Statement::TryStatement(_)
             | Statement::ThrowStatement(_)
             | Statement::LabeledStatement(_) => {
-                start.push(statement);
+                start.push((statement, true));
                 continue;
             }
             _ => false,
@@ -590,7 +605,12 @@ fn module_lifecycle<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
                     let assign = format!("{name} = {PLACEHOLDER};");
                     if let Some(kind) = constant(&init, &constants) {
                         if mutable {
-                            start.extend(filled(&assign, init.clone_in(allocator)));
+                            per_trigger.insert(name.clone());
+                            start.extend(
+                                filled(&assign, init.clone_in(allocator))
+                                    .into_iter()
+                                    .map(|statement| (statement, true)),
+                            );
                         } else {
                             constants.insert(name, kind);
                         }
@@ -601,7 +621,19 @@ fn module_lifecycle<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
                         values.insert(name);
                         static_init.extend(filled(&assign, init));
                     } else {
-                        start.extend(filled(&assign, init));
+                        // An exported global may be changed in place by an importer.
+                        let every = mutable
+                            || exported
+                            || mutated.contains(&name)
+                            || reruns(&init, &per_trigger);
+                        if every {
+                            per_trigger.insert(name.clone());
+                        }
+                        start.extend(
+                            filled(&assign, init)
+                                .into_iter()
+                                .map(|statement| (statement, every)),
+                        );
                     }
                 }
             }
@@ -638,12 +670,24 @@ fn module_lifecycle<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
                         "try {{ __envio_define_{name}(); }} catch {{}}"
                     )));
                     // Its own place, should the early definition have thrown.
-                    start.extend(parse(&format!("__envio_define_{name}();")));
+                    start.extend(
+                        parse(&format!("__envio_define_{name}();"))
+                            .into_iter()
+                            .map(|statement| (statement, false)),
+                    );
                     for reset in resets {
-                        start.extend(parse(&reset));
+                        start.extend(parse(&reset).into_iter().map(|statement| (statement, true)));
                     }
                 } else {
-                    start.extend(filled(&format!("{name} = {PLACEHOLDER};"), class));
+                    let every = mutated.contains(&name) || reruns(&class, &per_trigger);
+                    if every {
+                        per_trigger.insert(name.clone());
+                    }
+                    start.extend(
+                        filled(&format!("{name} = {PLACEHOLDER};"), class)
+                            .into_iter()
+                            .map(|statement| (statement, every)),
+                    );
                 }
             }
             _ => unreachable!("only variables and classes are handled"),
@@ -672,15 +716,15 @@ export function {STATIC_INIT}() {{
   if ({STATIC_INIT}_state) return;
   {STATIC_INIT}_state = 1;
   {}}}
-function {START}() {{}}
+function {START}(again) {{}}
 var {MODULE_INIT}_generation;
 export function {MODULE_INIT}(generation) {{
   if ({MODULE_INIT}_generation === generation) return;
   {MODULE_INIT}_generation = generation;
-  {}{START}();
+  {}{START}(true);
 }}
 {STATIC_INIT}();
-try {{ {START}(); }} catch {{}}",
+try {{ {START}(false); }} catch {{}}",
         calls(STATIC_INIT, ""),
         calls(MODULE_INIT, "generation"),
     ));
@@ -696,11 +740,135 @@ try {{ {START}(); }} catch {{}}",
         function.statements.extend(static_init);
     }
     if let Some(function) = bodies.next() {
-        function.statements.extend(start);
+        // Consecutive statements that run once share one `if (!again)`.
+        let mut once: Option<Statement<'a>> = None;
+        for (statement, every) in start {
+            if every {
+                function.statements.extend(once.take());
+                function.statements.push(statement);
+                continue;
+            }
+            let block = once.get_or_insert_with(|| {
+                parse("if (!again) {}")
+                    .into_iter()
+                    .next()
+                    .expect("one statement")
+            });
+            if let Statement::IfStatement(branch) = block {
+                if let Statement::BlockStatement(body) = &mut branch.consequent {
+                    body.body.push(statement);
+                }
+            }
+        }
+        function.statements.extend(once);
     }
     prelude.extend(definers);
     prelude.extend(body);
     program.body = prelude;
+}
+
+#[derive(Default)]
+struct References(HashSet<String>);
+
+impl<'a> oxc::ast_visit::Visit<'a> for References {
+    fn visit_identifier_reference(&mut self, id: &IdentifierReference<'a>) {
+        self.0.insert(id.name.to_string());
+    }
+}
+
+/// The names whose value the module changes in place anywhere — `x.set(…)`,
+/// `x.push(…)`, `x[i] = …`, `x.f = …` — so a global bound to one keeps
+/// state between triggers.
+fn mutated_names(program: &Program<'_>) -> HashSet<String> {
+    use oxc::ast_visit::{walk, Visit};
+
+    const MUTATORS: &[&str] = &[
+        "set",
+        "push",
+        "pop",
+        "shift",
+        "unshift",
+        "splice",
+        "add",
+        "delete",
+        "clear",
+        "fill",
+        "sort",
+        "reverse",
+        "copyWithin",
+    ];
+    fn root<'s>(expr: &'s Expression<'_>) -> Option<&'s str> {
+        match expr {
+            Expression::Identifier(id) => Some(id.name.as_str()),
+            Expression::StaticMemberExpression(member) => root(&member.object),
+            Expression::ComputedMemberExpression(member) => root(&member.object),
+            _ => None,
+        }
+    }
+    #[derive(Default)]
+    struct Bound(HashSet<String>);
+    impl<'a> Visit<'a> for Bound {
+        fn visit_binding_identifier(&mut self, id: &BindingIdentifier<'a>) {
+            self.0.insert(id.name.to_string());
+        }
+    }
+    /// What each enclosing function binds itself: a local of the same name
+    /// isn't the global.
+    #[derive(Default)]
+    struct Scan {
+        mutated: HashSet<String>,
+        locals: Vec<HashSet<String>>,
+    }
+    impl Scan {
+        fn record(&mut self, object: Option<&Expression<'_>>) {
+            if let Some(name) = object.and_then(root) {
+                if !self.locals.iter().any(|locals| locals.contains(name)) {
+                    self.mutated.insert(name.to_string());
+                }
+            }
+        }
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_function(&mut self, func: &Function<'a>, flags: ScopeFlags) {
+            let mut bound = Bound::default();
+            bound.visit_formal_parameters(&func.params);
+            if let Some(body) = &func.body {
+                bound.visit_function_body(body);
+            }
+            self.locals.push(bound.0);
+            walk::walk_function(self, func, flags);
+            self.locals.pop();
+        }
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            if let Expression::StaticMemberExpression(member) = &call.callee {
+                if MUTATORS.contains(&member.property.name.as_str()) {
+                    self.record(Some(&member.object));
+                }
+            }
+            walk::walk_call_expression(self, call);
+        }
+        fn visit_assignment_target(&mut self, target: &AssignmentTarget<'a>) {
+            let object = match target {
+                AssignmentTarget::StaticMemberExpression(member) => Some(&member.object),
+                AssignmentTarget::ComputedMemberExpression(member) => Some(&member.object),
+                _ => None,
+            };
+            self.record(object);
+            walk::walk_assignment_target(self, target);
+        }
+        fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
+            let object = match &update.argument {
+                SimpleAssignmentTarget::StaticMemberExpression(member) => Some(&member.object),
+                SimpleAssignmentTarget::ComputedMemberExpression(member) => Some(&member.object),
+                _ => None,
+            };
+            self.record(object);
+            walk::walk_update_expression(self, update);
+        }
+    }
+    let mut scan = Scan::default();
+    scan.visit_program(program);
+    scan.mutated
 }
 
 /// A literal's source text, to set a static field to it again.
@@ -1877,9 +2045,10 @@ mod tests {
     }
 
     // Classes and constant globals once, before anything else; every other
-    // top-level statement in the start function, which runs again per trigger
-    // after the modules it imports. A class whose definition runs code is
-    // defined there, and a hoisted class's static field reset there.
+    // top-level statement in the start function, where what keeps state runs
+    // again per trigger, after the modules it imports. A class whose
+    // definition runs code is defined there, a hoisted class's static field
+    // reset there.
     #[test]
     fn splits_a_module_into_static_and_per_trigger_stages() {
         assert_eq!(
@@ -1923,14 +2092,18 @@ export function __envio_static() {
 \t\t__envio_define_Mapping();
 \t} catch {}
 }
-function __envio_start() {
+function __envio_start(again) {
 \ttotal = 0;
 \tseen = new __envio_Map();
-\t__envio_define_Mapping();
+\tif (!again) {
+\t\t__envio_define_Mapping();
+\t}
 \tMapping.count = 0;
-\tRegistry = class Registry {
-\t\tstatic instance = new Registry();
-\t};
+\tif (!again) {
+\t\tRegistry = class Registry {
+\t\t\tstatic instance = new Registry();
+\t\t};
+\t}
 \tseen.set(\"a\", true);
 }
 var __envio_init_generation;
@@ -1939,11 +2112,11 @@ export function __envio_init(generation) {
 \t__envio_init_generation = generation;
 \t__envio_dep_0.__envio_init?.(generation);
 \t__envio_dep_1.__envio_init?.(generation);
-\t__envio_start();
+\t__envio_start(true);
 }
 __envio_static();
 try {
-\t__envio_start();
+\t__envio_start(false);
 } catch {}
 function __envio_define_Mapping() {
 \tif (Mapping === undefined) Mapping = class Mapping {

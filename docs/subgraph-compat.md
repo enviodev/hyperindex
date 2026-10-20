@@ -391,8 +391,9 @@ classes call `DataSource.create`. Consequences:
   starts, in that trigger's context, after that of the files it imports:
   graph-node instantiates the module for every trigger, so a global keeps
   nothing an earlier handler left in it, and `dataSource.context()` at top
-  level reads the current instance's. Globals built only from constants and
-  graph-ts values (`BigInt.fromI32(0)`) are built once. It emits an inline source map, so stack
+  level reads the current instance's. What can't differ between triggers — a
+  constant, a graph-ts value (`BigInt.fromI32(0)`), a `const` table nothing
+  changes in place — is built once. It emits an inline source map, so stack
   traces name the mapping's own lines, and refuses — located — what it can't
   rewrite faithfully. The runtime injects the few AS builtin globals generated
   code uses (`changetype` = identity, `assert`), and covers what AS's standard
