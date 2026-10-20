@@ -171,6 +171,47 @@ pub fn subgraph_bundled_codegen(
     run().map_err(|e| napi::Error::from_reason(format!("{e:#}")))
 }
 
+#[napi_derive::napi(object)]
+pub struct FilledGeneratedFile {
+    /// Relative to the generated directory.
+    pub file: String,
+    /// The project-relative manifest that declares it.
+    pub manifest: String,
+}
+
+/// The `wanted` generated files that the project's other manifests declare,
+/// written into `output_dir` (see `codegen::fill_from_manifests`).
+#[napi_derive::napi]
+pub fn subgraph_fill_generated(
+    root: String,
+    manifest_file: String,
+    output_dir: String,
+    wanted: Vec<String>,
+) -> Vec<FilledGeneratedFile> {
+    let root = std::path::Path::new(&root);
+    let own = std::fs::canonicalize(&manifest_file).ok();
+    let manifests: Vec<std::path::PathBuf> = crate::subgraph::find_manifests(root)
+        .into_iter()
+        .map(|relative| root.join(relative))
+        .filter(|manifest| std::fs::canonicalize(manifest).ok() != own)
+        .collect();
+    crate::subgraph::codegen::fill_from_manifests(
+        &manifests,
+        std::path::Path::new(&output_dir),
+        &wanted,
+    )
+    .into_iter()
+    .map(|(file, manifest)| FilledGeneratedFile {
+        file,
+        manifest: manifest
+            .strip_prefix(root)
+            .unwrap_or(&manifest)
+            .display()
+            .to_string(),
+    })
+    .collect()
+}
+
 #[napi_derive::napi]
 pub fn subgraph_bundled_codegen_current(manifest_file: String, output_dir: String) -> bool {
     crate::subgraph::codegen::is_current(

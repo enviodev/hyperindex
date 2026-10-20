@@ -70,6 +70,70 @@ pub fn generate(manifest_file: &Path, output_dir: &Path) -> Result<Vec<String>> 
     Ok(written)
 }
 
+/// Writes the files of `wanted` (relative to `output_dir`: `Pool/Pool.ts`,
+/// `templates/Pair/Pair.ts`) that are missing there and that one of
+/// `manifests` declares, from the first that does, and returns each with that
+/// manifest. graph codegen never cleans its output directory, so a project with
+/// one manifest per network has, in the tree it was built with, the data
+/// sources of every manifest it generated; its mappings may import them.
+pub fn fill_from_manifests(
+    manifests: &[PathBuf],
+    output_dir: &Path,
+    wanted: &[String],
+) -> Vec<(String, PathBuf)> {
+    let mut remaining: BTreeSet<&String> = wanted
+        .iter()
+        .filter(|file| !output_dir.join(file).exists())
+        .collect();
+    let mut written = Vec::new();
+    for manifest_file in manifests {
+        if remaining.is_empty() {
+            break;
+        }
+        let Some(manifest) = std::fs::read_to_string(manifest_file)
+            .ok()
+            .and_then(|text| serde_yaml::from_str::<Yaml>(&text).ok())
+        else {
+            continue;
+        };
+        let base = manifest_file.parent().unwrap_or(Path::new("."));
+        for (key, prefix) in [("dataSources", ""), ("templates", "templates/")] {
+            let sources = manifest.get(key).and_then(Yaml::as_sequence);
+            for source in sources.into_iter().flatten() {
+                let kind = source.get("kind").and_then(Yaml::as_str).unwrap_or("");
+                let Some(name) = source.get("name").and_then(Yaml::as_str) else {
+                    continue;
+                };
+                if prefix.is_empty() && !kind.starts_with("ethereum") {
+                    continue;
+                }
+                for (abi_name, file) in mapping_abis(source) {
+                    let relative = format!("{prefix}{name}/{abi_name}.ts");
+                    let Some(&found) = remaining.get(&relative) else {
+                        continue;
+                    };
+                    let Some(text) = load_abi(&abi_name, &base.join(&file))
+                        .ok()
+                        .and_then(|abi| abi_ts(&abi).ok())
+                    else {
+                        continue;
+                    };
+                    let target = output_dir.join(&relative);
+                    let saved = target
+                        .parent()
+                        .is_some_and(|parent| std::fs::create_dir_all(parent).is_ok())
+                        && std::fs::write(&target, text).is_ok();
+                    if saved {
+                        remaining.remove(found);
+                        written.push((relative, manifest_file.clone()));
+                    }
+                }
+            }
+        }
+    }
+    written
+}
+
 /// Whether `output_dir` holds what `generate` would write there now, file for
 /// file, so it can't be stale.
 pub fn is_current(manifest_file: &Path, output_dir: &Path) -> bool {

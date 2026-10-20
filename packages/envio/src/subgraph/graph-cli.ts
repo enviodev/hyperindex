@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { subgraphBundledCodegen, subgraphBundledCodegenCurrent } from "../Core.res.mjs";
+import { subgraphBundledCodegen, subgraphBundledCodegenCurrent, subgraphFillGenerated } from "../Core.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
 import { fetchGraphCli, graphCliVersions } from "./toolchain.ts";
 
@@ -521,6 +521,47 @@ export async function ensureGeneratedCode(
   dir: string,
   manifestFile = "subgraph.yaml",
   mappingFiles: string[] = [],
+): Promise<void> {
+  await buildGeneratedCode(root, dir, manifestFile, mappingFiles);
+  if (codegenMode() !== "graph-cli") fillFromOtherManifests(root, dir, manifestFile, mappingFiles);
+}
+
+/**
+ * graph codegen never cleans its output directory, so the tree a project with
+ * one manifest per network was built with holds the data sources of every
+ * manifest it generated, and its mappings may import them: WOOFi's bsc mappings
+ * import generated/WooRouterV1_3/ (avax.yaml), DODO's generated/DVMFactory/
+ * (mainnet). `graph build` of the one manifest fails on a clean checkout, but the
+ * deployed subgraph was compiled against that tree. The missing files are
+ * written from the other manifest that declares them, with a warning.
+ */
+function fillFromOtherManifests(root: string, dir: string, manifestFile: string, mappingFiles: string[]): void {
+  const missing = missingGeneratedFiles(root, mappingFiles, dir);
+  if (missing.length === 0) return;
+  const wanted = missing.map((file) => {
+    const relative = path.relative(dir, path.resolve(root, file));
+    return relative.endsWith(".ts") ? relative : `${relative}.ts`;
+  });
+  const filled = subgraphFillGenerated(root, path.resolve(root, manifestFile), dir, wanted);
+  const byManifest = new Map<string, string[]>();
+  for (const { file, manifest } of filled) {
+    byManifest.set(manifest, [...(byManifest.get(manifest) ?? []), path.join(path.relative(root, dir), file)]);
+  }
+  for (const [manifest, files] of byManifest) {
+    const it = files.length === 1 ? "it" : "them";
+    warn(
+      `Envio Subgraph wrote ${files.join(", ")} from ${manifest}: the mappings import ${it}, and ` +
+        `\`graph codegen ${manifestFile}\` doesn't write ${it}, so \`graph build\` of ${manifestFile} fails on a ` +
+        `clean checkout. The tree this subgraph was built with had ${it} from an earlier \`graph codegen ${manifest}\`.`,
+    );
+  }
+}
+
+async function buildGeneratedCode(
+  root: string,
+  dir: string,
+  manifestFile: string,
+  mappingFiles: string[],
 ): Promise<void> {
   const mode = codegenMode();
   if (mode === "bundled") {
