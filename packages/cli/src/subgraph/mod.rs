@@ -11,6 +11,8 @@ pub mod creates;
 pub mod diff;
 pub mod errors;
 pub mod manifest;
+pub mod mustache;
+pub mod render;
 pub mod schema;
 pub mod usage;
 
@@ -112,6 +114,19 @@ pub struct SubgraphRuntimeConfig {
     /// How far, per chain, a block handler that reads header fields trails the
     /// head: the runtime refuses to serve a header from inside that distance.
     pub block_header_lag: BTreeMap<u64, u32>,
+    /// Set when envio wrote the manifest from the repo's template (§6d), so the
+    /// runtime says so and the codegen script doesn't render it over again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rendered_manifest: Option<RenderedManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderedManifest {
+    pub script: String,
+    pub network: String,
+    pub template: String,
+    pub view: String,
 }
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
@@ -1294,6 +1309,7 @@ pub fn translate(
             rpc_urls,
             manifest_file: DEFAULT_MANIFEST.to_string(),
             block_header_lag,
+            rendered_manifest: None,
         },
         human_config,
     })
@@ -2848,6 +2864,272 @@ type Renewal implements Event @entity {
                 err.contains("graph build --network"),
             ),
             (true, true)
+        );
+    }
+
+    fn gravity_template() -> String {
+        GRAVITY_MANIFEST
+            .replace("network: mainnet", "network: {{network}}")
+            .replace(
+                "\"0x2E645469f354BB4F5c8a05B3b30A929361cf77eC\"",
+                "\"{{gravity.address}}\"",
+            )
+            .replace("startBlock: 6175244", "startBlock: {{gravity.startBlock}}")
+    }
+
+    fn chain_of(config: &SystemConfig) -> (u64, Vec<String>) {
+        let chain = config.get_chains().into_iter().next().unwrap();
+        (chain.id, chain.contracts[0].addresses.clone())
+    }
+
+    // zora-creator's `codegen` runs `yarn gen-yaml-config`, which writes
+    // subgraph.yaml with `cat … > subgraph.yaml && yaml2json
+    // config/${NETWORK:-…}.yaml | mustache - subgraph.template.yaml >>
+    // subgraph.yaml`, and src/constants/chainid.ts the same way. With no
+    // subgraph.yaml committed, envio stopped at "Found subgraph.template.yaml
+    // but no subgraph.yaml".
+    #[test]
+    fn renders_the_manifest_a_mustache_script_writes() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::write(
+            root.join("template_warning.md"),
+            "# GENERATED, DO NOT EDIT\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/mainnet.yaml"),
+            "network: mainnet\nchainid: \"1\"\ngravity:\n  address: \"0x2E645469f354BB4F5c8a05B3b30A929361cf77eC\"\n  startBlock: 6175244\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("config/arbitrum-one.yaml"),
+            "network: arbitrum-one\nchainid: \"42161\"\ngravity:\n  address: \"0x00000000000014aA86C5d3c41765bb24e11bd701\"\n  startBlock: 416469410\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/chainid.ts.template"),
+            "export const chainid = {{chainid}};\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "codegen": "yarn gen-yaml-config && graph codegen",
+  "gen-yaml-config": "cat template_warning.md > subgraph.yaml && yaml2json config/${NETWORK:-mainnet}.yaml | mustache - subgraph.template.yaml >> subgraph.yaml && yaml2json config/${NETWORK:-mainnet}.yaml | mustache - src/chainid.ts.template > src/chainid.ts"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+
+        // The script's own default network, as `yarn codegen` renders it.
+        let default = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let rendered = default.subgraph.clone().unwrap().rendered_manifest.unwrap();
+
+        // The file envio wrote is rendered again for the network picked.
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
+        let picked = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&default),
+                (
+                    rendered.script.as_str(),
+                    rendered.network.as_str(),
+                    rendered.view.as_str()
+                ),
+                chain_of(&picked),
+                fs::read_to_string(root.join("subgraph.yaml"))
+                    .unwrap()
+                    .starts_with("# GENERATED, DO NOT EDIT\n\nspecVersion: 0.0.5\n"),
+                fs::read_to_string(root.join("src/chainid.ts")).unwrap(),
+            ),
+            (
+                (
+                    1,
+                    vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()]
+                ),
+                ("gen-yaml-config", "mainnet", "config/mainnet.yaml"),
+                (
+                    42161,
+                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                ),
+                true,
+                "export const chainid = 42161;\n".to_string(),
+            )
+        );
+    }
+
+    // sushiswap's legacy subgraphs: `"prepare:matic": "mustache
+    // ../../config/matic.json template.yaml > subgraph.yaml"`, one script per
+    // network, in each workspace package.
+    #[test]
+    fn renders_the_manifest_of_the_per_network_script_picked() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-literal").unwrap();
+        let root = dir.path();
+        let package = root.join("subgraphs/exchange");
+        write_gravity(&package, "template.yaml");
+        fs::write(package.join("template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/mainnet.json"),
+            r#"{"network": "mainnet", "gravity": {"address": "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", "startBlock": 6175244}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("config/matic.json"),
+            r#"{"network": "matic", "gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 1000}}"#,
+        )
+        .unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"scripts": {
+  "codegen": "graph codegen subgraph.yaml",
+  "prepare:mainnet": "mustache ../../config/mainnet.json template.yaml > subgraph.yaml",
+  "prepare:matic": "mustache ../../config/matic.json template.yaml > subgraph.yaml"
+}}"#,
+        )
+        .unwrap();
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraphs/exchange/subgraph.yaml")
+                .unwrap();
+
+        let unset = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=bsc\n").unwrap();
+        let unknown = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=matic\n").unwrap();
+        let picked = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (unset, unknown, chain_of(&picked)),
+            (
+                "There is no subgraph.yaml here: the package.json scripts prepare:mainnet, \
+                 prepare:matic render it from template.yaml for one network at a time (mainnet, \
+                 matic). Pick the network, as the script's argument does:\n  \
+                 ENVIO_SUBGRAPH_NETWORK=mainnet"
+                    .to_string(),
+                "ENVIO_SUBGRAPH_NETWORK names the network 'bsc', but the package.json scripts \
+                 that render subgraph.yaml (prepare:mainnet, prepare:matic) render it for: \
+                 mainnet, matic."
+                    .to_string(),
+                (
+                    137,
+                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                ),
+            )
+        );
+    }
+
+    // A committed subgraph.yaml is the user's: a render script beside it
+    // (GoodCollective's `prepare`) doesn't overwrite it.
+    #[test]
+    fn leaves_a_committed_manifest_beside_its_render_script_alone() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-committed").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/matic.json"),
+            r#"{"network": "matic", "gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 1}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"prepare": "mustache config/${0}.json subgraph.template.yaml > subgraph.yaml"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config).0,
+                fs::read_to_string(root.join("subgraph.yaml")).unwrap() == GRAVITY_MANIFEST,
+            ),
+            (1, true)
+        );
+    }
+
+    // NFTX v3's public repo has `"manifest:mainnet": "cross-env mustache
+    // config/mainnet/config.json subgraph.template.yaml > subgraph.yaml"`, and
+    // gitignores the template: a ts-node script writes it.
+    #[test]
+    fn says_when_the_template_a_render_script_reads_is_not_in_the_repo() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-absent").unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("config/mainnet")).unwrap();
+        fs::write(root.join("config/mainnet/config.json"), "{}").unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "manifest:mainnet": "cross-env mustache config/mainnet/config.json subgraph.template.yaml > subgraph.yaml",
+  "prepare-build": "cross-env ts-node ./script/build"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err.lines().take(3).collect::<Vec<_>>(),
+            vec![
+                "There is no subgraph.yaml here.",
+                "The project writes subgraph.yaml with a package.json script, and envio can't \
+                 repeat it:",
+                "  \"manifest:mainnet\": cross-env mustache config/mainnet/config.json \
+                 subgraph.template.yaml > subgraph.yaml (subgraph.template.yaml isn't in the \
+                 repo: another step writes it)",
+            ]
+        );
+    }
+
+    // gnosis' hg-subgraph renders its manifest with `node
+    // ops/render-subgraph-conf.js <network>`, which reads truffle artifacts and
+    // asks an RPC for start blocks: not something envio repeats, so the error
+    // names the script.
+    #[test]
+    fn names_the_render_script_envio_does_not_run() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-node").unwrap();
+        let root = dir.path();
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "prepare": "husky install",
+  "render-subgraph-config:gnosis": "node ops/render-subgraph-conf.js gnosis",
+  "codegen": "graph codegen"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err,
+            "There is no subgraph.yaml here.\n\
+             The project writes subgraph.yaml with a package.json script, and envio can't \
+             repeat it:\n  \"render-subgraph-config:gnosis\": node ops/render-subgraph-conf.js \
+             gnosis\n\
+             envio renders a manifest itself only when every step of the script is a standard \
+             tool over files in the repo (`mustache <config> <template> > subgraph.yaml`, \
+             `yaml2json`, `cat`), so that the network you pick is its only input. Run the script \
+             for your network, then start envio again."
         );
     }
 }

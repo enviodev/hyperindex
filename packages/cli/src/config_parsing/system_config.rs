@@ -1543,6 +1543,7 @@ impl SystemConfig {
         project_paths: &ParsedProjectPaths,
         manifest_path: &Path,
         manifest: String,
+        rendered: Option<crate::subgraph::render::Rendered>,
     ) -> Result<Self> {
         let manifest_dir = match manifest_path.parent() {
             Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
@@ -1560,7 +1561,12 @@ impl SystemConfig {
             }
         }
 
-        let manifest = match env.var(crate::subgraph::NETWORK_ENV_VAR) {
+        // A manifest envio rendered for the network is already that network's;
+        // networks.json is `graph build --network`'s, a step such repos skip.
+        let network_from_json = env
+            .var(crate::subgraph::NETWORK_ENV_VAR)
+            .filter(|_| rendered.is_none());
+        let manifest = match network_from_json {
             Some(network) => {
                 // graph-cli's `--network-file` defaults to the directory it
                 // runs in; a manifest in a subfolder may keep its own.
@@ -1675,12 +1681,50 @@ impl SystemConfig {
         if let (Some(subgraph), Some(file)) = (config.subgraph.as_mut(), manifest_file) {
             subgraph.manifest_file = file.display().to_string();
         }
+        if let Some(subgraph) = config.subgraph.as_mut() {
+            subgraph.rendered_manifest =
+                rendered.map(|rendered| crate::subgraph::RenderedManifest {
+                    script: rendered.script,
+                    network: rendered.network,
+                    template: rendered.template,
+                    view: rendered.view,
+                });
+        }
         config.parsed_project_paths = project_paths.clone();
         Ok(config)
     }
 
+    /// The manifest a subgraph project runs: the one `--config` names, else
+    /// `subgraph.yaml` beside config.yaml's default spot.
+    fn subgraph_manifest_path(project_paths: &ParsedProjectPaths) -> PathBuf {
+        if project_paths.config_relative_to_root() == Path::new("config.yaml") {
+            project_paths
+                .project_root
+                .join(crate::subgraph::DEFAULT_MANIFEST)
+        } else {
+            project_paths.config.clone()
+        }
+    }
+
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let root = &project_paths.project_root;
+        let manifest_path = Self::subgraph_manifest_path(project_paths);
+        if !project_paths.config.exists() || manifest_path == project_paths.config {
+            let env = crate::utils::project_env::ProjectEnv::new(root);
+            let network = env.var(crate::subgraph::NETWORK_ENV_VAR);
+            if let Some(rendered) =
+                crate::subgraph::render::render_manifest(root, &manifest_path, network.as_deref())?
+            {
+                let manifest = std::fs::read_to_string(&manifest_path)
+                    .context(format!("Failed to read {}", manifest_path.display()))?;
+                return Self::parse_subgraph_from_project_files(
+                    project_paths,
+                    &manifest_path,
+                    manifest,
+                    Some(rendered),
+                );
+            }
+        }
         if !project_paths.config.exists() {
             let manifest_path = root.join(crate::subgraph::DEFAULT_MANIFEST);
             if manifest_path.exists() {
@@ -1690,6 +1734,7 @@ impl SystemConfig {
                     project_paths,
                     &manifest_path,
                     manifest,
+                    None,
                 );
             }
         }
@@ -1699,6 +1744,17 @@ impl SystemConfig {
             Err(err) => {
                 let manifests = crate::subgraph::find_manifests(root);
                 let hint = crate::subgraph::manifest_hint(&manifests);
+                if let Some(writers) = crate::subgraph::render::unrepeatable_writers(&manifest_path)
+                    .filter(|_| manifests.is_empty())
+                {
+                    return Err(anyhow!(
+                        "There is no {} here.\n{writers}",
+                        manifest_path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    ));
+                }
                 if root.join("subgraph.template.yaml").exists() && manifests.is_empty() {
                     return Err(anyhow!(
                         "Found subgraph.template.yaml but no subgraph.yaml.\n\
@@ -1724,6 +1780,7 @@ impl SystemConfig {
                 project_paths,
                 &project_paths.config,
                 human_config_string,
+                None,
             );
         }
 

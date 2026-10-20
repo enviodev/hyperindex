@@ -532,7 +532,64 @@ envio-side *how*.
 manifest is rewritten from `networks.json` beside it before translation, as
 graph-cli rewrites it (every data source moves to the network and takes its
 `source` fields from its entry; every template moves to the network; a data
-source without an entry is an error).
+source without an entry is an error). It also picks the network of a manifest
+envio renders from a template (§6d).
+
+## 6d. Repo shapes: what runs before graph-cli would
+
+graph-cli reads a finished manifest. What a hosting user hands it is the
+manifest's path and a network — `graph build --network <name> <manifest>` —
+and envio takes the same two: `--config` (or `ENVIO_CONFIG`) and
+`ENVIO_SUBGRAPH_NETWORK`. Everything a repo does *before* graph-cli runs is its
+own build, and envio repeats a step of it only when the step is a standard
+tool invocation over files in the repo, so that its output is a function of
+committed files and the network picked, nothing else.
+
+**Rendered manifests.** Many repos commit `subgraph.template.yaml` (or
+`template.yaml`) and a per-network config, and write the manifest with a
+package.json script: one per network (`"prepare:matic": "mustache
+../../config/matic.json template.yaml > subgraph.yaml"`) or one taking the
+network from a variable (`yaml2json config/${NETWORK:-zora-testnet}.yaml |
+mustache - subgraph.template.yaml >> subgraph.yaml`). When the manifest is
+missing, envio looks for a script in the manifest's own package.json that
+writes it with the mustache CLI, and repeats it when every step before
+graph-cli is one of `mustache <view> <template> [out]` (also `npx`/`yarn`/
+`pnpm exec`/`cross-env` around it), `yaml2json <file>`, `cat`, `echo`,
+`mkdir`/`rm`, with `|`, `>`, `>>`, `&&` and `;`:
+
+- The network picks the view: the variable's value (`config/<network>.yaml`,
+  `config/<network>/config.json`, every file that matches), or, for one script
+  per network, the path component their views differ in (`prepare:<network>`
+  also matches by name). Unset, it is the script's own default
+  (`${NETWORK:-zora-testnet}`), else the only network there is; else the error
+  lists them.
+- The rendering is mustache.js 4.x's, standalone-line stripping and HTML
+  escaping included (a `{{path}}` with a `/` renders `&#x2F;`, as it does for
+  the repo's author); `yaml2json` is read as YAML 1.2.
+- Every file the script writes is written, where it writes it (zora-creator's
+  `src/constants/chainid.ts` too), and only inside the package. envio records
+  the manifest it wrote (`.envio/rendered-manifests.json`), so a later start
+  renders it again — for another network — while a manifest the user wrote,
+  or committed beside a render script, is read as it is. networks.json isn't
+  applied on top of a rendered manifest.
+- The codegen script's step that runs the same script (`yarn gen-yaml-config
+  && graph codegen`) is skipped: it would render the script's default network
+  over the one picked.
+
+A script that runs anything else to write the manifest — `node`, `ts-node`,
+`truffle exec`, a shell script, `jq`, handlebars through a script of its own —
+isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or
+compute addresses; the error names each script and what it runs:
+
+```
+There is no subgraph.yaml here.
+The project writes subgraph.yaml with a package.json script, and envio can't repeat it:
+  "render-subgraph-config:gnosis": node ops/render-subgraph-conf.js gnosis
+envio renders a manifest itself only when every step of the script is a standard tool
+over files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`,
+`cat`), so that the network you pick is its only input. Run the script for your
+network, then start envio again.
+```
 
 ## 6c. Proving a migration: `envio subgraph diff`
 

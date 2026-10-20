@@ -157,6 +157,8 @@ type SubgraphConfig = {
   rpcUrls: string[];
   /** Per chain id, the reorg depth a block handler's header reads are held back by. */
   blockHeaderLag?: Record<number, number>;
+  /** Set when envio wrote the manifest from the repo's template. */
+  renderedManifest?: { script: string; network: string; template: string; view: string };
   isDev: boolean;
 } & SubgraphSchema;
 
@@ -1084,11 +1086,20 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   fetchedModulesParent = fetchedModules
     ? pathToFileURL(path.join(path.dirname(fetchedModules), "resolve-from.mjs")).href
     : null;
+  const rendered = config.renderedManifest;
+  if (rendered) {
+    info(
+      `Envio Subgraph rendered ${config.manifestFile ?? "subgraph.yaml"} from ${rendered.template} with ` +
+        `${rendered.view} for the network "${rendered.network}", as the package.json script ` +
+        `"${rendered.script}" does. ENVIO_SUBGRAPH_NETWORK picks another.`,
+    );
+  }
   await ensureGeneratedCode(
     config.root,
     generated,
     config.manifestFile,
     sources.map((source) => source.mappingFile),
+    rendered?.script,
   );
 
   if (config.isDev) {

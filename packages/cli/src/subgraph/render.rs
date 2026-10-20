@@ -1,0 +1,1290 @@
+//! A manifest the repo renders from a template before graph-cli runs.
+//!
+//! graph-cli only ever reads a finished manifest; what a hosting user passes it
+//! is the manifest path and `--network`. Many repos write that manifest first
+//! with a package.json script — `mustache config/mainnet.json
+//! subgraph.template.yaml > subgraph.yaml`, one per network or one taking the
+//! network from a variable. envio reproduces such a script itself when every
+//! step of it, up to graph-cli, is one of a few standard tool invocations
+//! (`mustache`, `yaml2json`, `cat`, `echo`, `mkdir`), so the manifest is a pure
+//! function of committed files and the network the user picks
+//! (`ENVIO_SUBGRAPH_NETWORK`). A script that runs anything else — node,
+//! truffle, a shell script, jq — is named in the error instead.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+use anyhow::{anyhow, Context, Result};
+use serde_json::Value;
+
+use super::mustache;
+use crate::project_paths::path_utils::normalize_path;
+
+#[derive(Debug, Clone, PartialEq)]
+enum Part {
+    Lit(String),
+    Var {
+        name: String,
+        default: Option<String>,
+    },
+    /// `$(…)`, backticks, `${x:+…}`: nothing envio evaluates.
+    Opaque,
+}
+
+type Word = Vec<Part>;
+
+#[derive(Debug, Clone, PartialEq)]
+enum Tok {
+    Word(Word),
+    Op(&'static str),
+}
+
+const OPERATORS: &[&str] = &[
+    "&&", "||", ">>", "&>", ">&", "|", ";", "&", ">", "<", "(", ")", "\n",
+];
+
+fn lex(src: &str) -> Vec<Tok> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    let rest = |i: usize| chars[i..].iter().collect::<String>();
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == ' ' || ch == '\t' || ch == '\r' {
+            i += 1;
+            continue;
+        }
+        if ch == '#' {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        let tail = rest(i);
+        if let Some(op) = OPERATORS.iter().find(|op| tail.starts_with(**op)) {
+            tokens.push(Tok::Op(if *op == "\n" { ";" } else { op }));
+            i += op.chars().count();
+            continue;
+        }
+        let mut word: Word = Vec::new();
+        let push = |word: &mut Word, ch: char| match word.last_mut() {
+            Some(Part::Lit(text)) => text.push(ch),
+            _ => word.push(Part::Lit(ch.to_string())),
+        };
+        while i < chars.len() {
+            let ch = chars[i];
+            if matches!(
+                ch,
+                ' ' | '\t' | '\r' | '\n' | '&' | '|' | ';' | '<' | '>' | '(' | ')'
+            ) {
+                // `2>` is a redirect of fd 2, not the word "2".
+                break;
+            }
+            match ch {
+                '\'' => {
+                    i += 1;
+                    while i < chars.len() && chars[i] != '\'' {
+                        push(&mut word, chars[i]);
+                        i += 1;
+                    }
+                    i += 1;
+                    if word.is_empty() {
+                        word.push(Part::Lit(String::new()));
+                    }
+                }
+                '"' => {
+                    i += 1;
+                    if word.is_empty() {
+                        word.push(Part::Lit(String::new()));
+                    }
+                    while i < chars.len() && chars[i] != '"' {
+                        match chars[i] {
+                            '\\' if i + 1 < chars.len()
+                                && matches!(chars[i + 1], '"' | '\\' | '$' | '`') =>
+                            {
+                                push(&mut word, chars[i + 1]);
+                                i += 2;
+                            }
+                            '$' => i = expand(&chars, i, &mut word),
+                            '`' => {
+                                word.push(Part::Opaque);
+                                i += 1;
+                                while i < chars.len() && chars[i] != '`' {
+                                    i += 1;
+                                }
+                                i += 1;
+                            }
+                            ch => {
+                                push(&mut word, ch);
+                                i += 1;
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+                '\\' if i + 1 < chars.len() => {
+                    if chars[i + 1] != '\n' {
+                        push(&mut word, chars[i + 1]);
+                    }
+                    i += 2;
+                }
+                '$' => i = expand(&chars, i, &mut word),
+                '`' => {
+                    word.push(Part::Opaque);
+                    i += 1;
+                    while i < chars.len() && chars[i] != '`' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                ch => {
+                    push(&mut word, ch);
+                    i += 1;
+                }
+            }
+        }
+        // `2>file`: the fd number belongs to the redirect.
+        if i < chars.len()
+            && chars[i] == '>'
+            && matches!(word.as_slice(), [Part::Lit(text)] if text.chars().all(|c| c.is_ascii_digit()))
+        {
+            continue;
+        }
+        tokens.push(Tok::Word(word));
+    }
+    tokens
+}
+
+/// A `$` expansion at `chars[i]`, appended to `word`; returns the index after it.
+fn expand(chars: &[char], i: usize, word: &mut Word) -> usize {
+    let next = chars.get(i + 1).copied();
+    match next {
+        Some('(') => {
+            let mut depth = 0;
+            let mut j = i + 1;
+            while j < chars.len() {
+                match chars[j] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            word.push(Part::Opaque);
+            j + 1
+        }
+        Some('{') => {
+            let Some(end) = chars[i + 2..].iter().position(|ch| *ch == '}') else {
+                word.push(Part::Opaque);
+                return chars.len();
+            };
+            let body: String = chars[i + 2..i + 2 + end].iter().collect();
+            let name_len = body
+                .char_indices()
+                .find(|(index, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_') || *index > 64)
+                .map(|(index, _)| index)
+                .unwrap_or(body.len());
+            let (name, op) = body.split_at(name_len);
+            let part = if name.is_empty() {
+                Part::Opaque
+            } else if op.is_empty() {
+                Part::Var {
+                    name: name.to_string(),
+                    default: None,
+                }
+            } else if let Some(default) = op.strip_prefix(":-").or_else(|| op.strip_prefix('-')) {
+                if default.contains(['$', '`']) {
+                    Part::Opaque
+                } else {
+                    Part::Var {
+                        name: name.to_string(),
+                        default: Some(default.trim_matches(['"', '\'']).to_string()),
+                    }
+                }
+            } else {
+                Part::Opaque
+            };
+            word.push(part);
+            i + 3 + end
+        }
+        Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {
+            let len = chars[i + 1..]
+                .iter()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || **ch == '_')
+                .count();
+            word.push(Part::Var {
+                name: chars[i + 1..i + 1 + len].iter().collect(),
+                default: None,
+            });
+            i + 1 + len
+        }
+        Some(ch) if ch.is_ascii_digit() => {
+            word.push(Part::Var {
+                name: ch.to_string(),
+                default: None,
+            });
+            i + 2
+        }
+        Some('@' | '*' | '#' | '?' | '!' | '-') => {
+            word.push(Part::Opaque);
+            i + 2
+        }
+        _ => {
+            match word.last_mut() {
+                Some(Part::Lit(text)) => text.push('$'),
+                _ => word.push(Part::Lit("$".to_string())),
+            }
+            i + 1
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Redirect {
+    Out,
+    Append,
+    In,
+    /// `2>`, `&>`, `>&`: where errors go, which a render doesn't depend on.
+    Other,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Stage {
+    words: Vec<Word>,
+    redirects: Vec<(Redirect, Word)>,
+}
+
+/// One pipeline of a script, and whether it runs only if the one before failed.
+#[derive(Debug, Clone)]
+struct Step {
+    stages: Vec<Stage>,
+    after_failure: bool,
+}
+
+fn parse_steps(script: &str) -> Option<Vec<Step>> {
+    let mut steps = Vec::new();
+    let mut stages = vec![Stage::default()];
+    let mut after_failure = false;
+    let mut tokens = lex(script).into_iter().peekable();
+    let mut fd_redirect = false;
+    while let Some(token) = tokens.next() {
+        let stage = stages.last_mut().expect("a stage");
+        match token {
+            Tok::Word(word) => {
+                // `2>&1`'s `1`, and `2>`'s fd: leftovers of an fd redirect.
+                if fd_redirect {
+                    fd_redirect = false;
+                    stage.redirects.push((Redirect::Other, word));
+                } else {
+                    stage.words.push(word);
+                }
+            }
+            Tok::Op(op @ (">" | ">>" | "<" | "&>" | ">&")) => {
+                let kind = match op {
+                    ">" => Redirect::Out,
+                    ">>" => Redirect::Append,
+                    "<" => Redirect::In,
+                    _ => Redirect::Other,
+                };
+                // A digit word just before `>` (`2>`) was lexed as a word.
+                let fd = matches!(stage.words.last().map(|w| w.as_slice()), Some([Part::Lit(text)]) if text.chars().all(|c| c.is_ascii_digit()))
+                    && kind != Redirect::In;
+                let kind = if fd {
+                    let digits = stage.words.pop();
+                    if digits != Some(vec![Part::Lit("1".to_string())]) {
+                        Redirect::Other
+                    } else {
+                        kind
+                    }
+                } else {
+                    kind
+                };
+                match tokens.next() {
+                    Some(Tok::Word(target)) => stage.redirects.push((kind, target)),
+                    Some(Tok::Op("&")) if op == ">" => {
+                        fd_redirect = true;
+                    }
+                    _ => return None,
+                }
+            }
+            Tok::Op("|") => stages.push(Stage::default()),
+            Tok::Op(op @ ("&&" | "||" | ";")) => {
+                if stages.iter().any(|stage| !stage.words.is_empty()) {
+                    steps.push(Step {
+                        stages: std::mem::replace(&mut stages, vec![Stage::default()]),
+                        after_failure,
+                    });
+                }
+                after_failure = op == "||";
+            }
+            // Subshells and background jobs.
+            Tok::Op(_) => return None,
+        }
+    }
+    if stages.iter().any(|stage| !stage.words.is_empty()) {
+        steps.push(Step {
+            stages,
+            after_failure,
+        });
+    }
+    Some(steps)
+}
+
+fn literal(word: &Word) -> Option<String> {
+    let mut text = String::new();
+    for part in word {
+        match part {
+            Part::Lit(lit) => text.push_str(lit),
+            _ => return None,
+        }
+    }
+    Some(text)
+}
+
+fn word_text(word: &Word) -> String {
+    word.iter()
+        .map(|part| match part {
+            Part::Lit(text) => text.clone(),
+            Part::Var {
+                name,
+                default: None,
+            } => format!("${{{name}}}"),
+            Part::Var {
+                name,
+                default: Some(default),
+            } => format!("${{{name}:-{default}}}"),
+            Part::Opaque => "$(…)".to_string(),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Command {
+    Mustache {
+        view: Word,
+        template: Word,
+        output: Option<Word>,
+    },
+    Yaml2Json(Word),
+    Cat(Vec<Word>),
+    Echo(Vec<Word>),
+    /// `mkdir`, `true`, `rm`: nothing a render reads.
+    NoOp,
+    /// graph-cli itself: what follows is envio's job, not the render's.
+    Graph,
+    Other(String),
+}
+
+fn is_assignment(word: &Word) -> bool {
+    matches!(word.first(), Some(Part::Lit(text)) if text.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !name.starts_with(|ch: char| ch.is_ascii_digit())
+    }))
+}
+
+fn classify(words: &[Word]) -> Command {
+    let mut words: Vec<&Word> = words.iter().collect();
+    loop {
+        while words.first().is_some_and(|word| is_assignment(word)) {
+            words.remove(0);
+        }
+        let Some(first) = words.first().and_then(|word| literal(word)) else {
+            return Command::Other(words.first().map(|w| word_text(w)).unwrap_or_default());
+        };
+        let name = first.rsplit('/').next().unwrap_or(&first).to_string();
+        let second = words.get(1).and_then(|word| literal(word));
+        match (name.as_str(), second.as_deref()) {
+            ("npx", _) => {
+                words.remove(0);
+                while words
+                    .first()
+                    .and_then(|word| literal(word))
+                    .is_some_and(|text| text.starts_with('-'))
+                {
+                    words.remove(0);
+                }
+            }
+            ("cross-env" | "env", _) => {
+                words.remove(0);
+            }
+            ("npm" | "pnpm", Some("exec" | "dlx")) | ("yarn", Some("exec")) => {
+                words.drain(..2);
+                if words.first().and_then(|word| literal(word)).as_deref() == Some("--") {
+                    words.remove(0);
+                }
+            }
+            ("yarn" | "pnpm", Some("mustache" | "yaml2json" | "graph")) => {
+                words.remove(0);
+            }
+            ("mustache", _) => {
+                let args: Vec<&Word> = words[1..].to_vec();
+                if args.iter().any(|word| {
+                    literal(word).is_none_or(|text| text.starts_with('-') && text != "-")
+                }) {
+                    // Partials (`-p`) and options the CLI may grow.
+                    return Command::Other(format!(
+                        "mustache {}",
+                        args.iter()
+                            .map(|w| word_text(w))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ));
+                }
+                return match args.as_slice() {
+                    [view, template] => Command::Mustache {
+                        view: (*view).clone(),
+                        template: (*template).clone(),
+                        output: None,
+                    },
+                    [view, template, output] => Command::Mustache {
+                        view: (*view).clone(),
+                        template: (*template).clone(),
+                        output: Some((*output).clone()),
+                    },
+                    _ => Command::Other("mustache".to_string()),
+                };
+            }
+            ("yaml2json", _) => {
+                let args: Vec<&Word> = words[1..]
+                    .iter()
+                    .copied()
+                    .filter(|word| !matches!(literal(word).as_deref(), Some("-p" | "--pretty")))
+                    .collect();
+                return match args.as_slice() {
+                    [file] if literal(file).is_none_or(|text| !text.starts_with('-')) => {
+                        Command::Yaml2Json((*file).clone())
+                    }
+                    _ => Command::Other("yaml2json".to_string()),
+                };
+            }
+            ("cat", _) => {
+                let args: Vec<Word> = words[1..].iter().map(|word| (*word).clone()).collect();
+                if args
+                    .iter()
+                    .any(|word| literal(word).is_some_and(|text| text.starts_with('-')))
+                {
+                    return Command::Other("cat".to_string());
+                }
+                return Command::Cat(args);
+            }
+            ("echo", _) => {
+                let args: Vec<Word> = words[1..].iter().map(|word| (*word).clone()).collect();
+                if args
+                    .first()
+                    .and_then(literal)
+                    .is_some_and(|text| text.starts_with('-'))
+                {
+                    return Command::Other("echo".to_string());
+                }
+                return Command::Echo(args);
+            }
+            ("mkdir" | "true" | "rm" | "rimraf", _) => return Command::NoOp,
+            ("graph", _) => return Command::Graph,
+            _ => {
+                return Command::Other(
+                    words
+                        .iter()
+                        .map(|word| word_text(word))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
+            }
+        }
+    }
+}
+
+/// A package.json script that writes the manifest the way envio can repeat.
+#[derive(Debug, Clone)]
+struct Plan {
+    script: String,
+    steps: Vec<Step>,
+    /// The variable that picks the view (`config/${NETWORK:-mainnet}.json`),
+    /// with the script's own default, and the word it appears in.
+    hole: Option<(String, Option<String>, Word)>,
+    /// The view of the mustache call that writes the manifest.
+    view: Word,
+    template: String,
+}
+
+/// A script that writes the manifest, but with a step envio doesn't run.
+#[derive(Debug, Clone)]
+struct Writer {
+    script: String,
+    step: String,
+}
+
+fn vars(word: &Word) -> Vec<(String, Option<String>)> {
+    word.iter()
+        .filter_map(|part| match part {
+            Part::Var { name, default } => Some((name.clone(), default.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn same_path(dir: &Path, word: &Word, target: &Path) -> bool {
+    literal(word).is_some_and(|text| normalize_path(dir.join(text)) == target)
+}
+
+/// How a script relates to the manifest at `target`: a plan when envio can
+/// repeat it, a writer when it can't, or nothing.
+fn analyze(dir: &Path, name: &str, script: &str, target: &Path) -> Option<Result<Plan, Writer>> {
+    let mentions = script.contains(
+        target
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default()
+            .as_str(),
+    );
+    let Some(steps) = parse_steps(script) else {
+        return mentions.then(|| {
+            Err(Writer {
+                script: name.to_string(),
+                step: script.to_string(),
+            })
+        });
+    };
+    let mut unsupported: Option<String> = None;
+    let mut writes: Option<(Word, String)> = None;
+    let mut holes: Vec<(String, Option<String>, Word)> = Vec::new();
+    'steps: for step in &steps {
+        if step.after_failure {
+            continue;
+        }
+        let mut stdin_view: Option<Word> = None;
+        for (index, stage) in step.stages.iter().enumerate() {
+            let command = classify(&stage.words);
+            let last = index + 1 == step.stages.len();
+            let writes_target = |output: &Word| same_path(dir, output, target);
+            let mut inputs: Vec<Word> = Vec::new();
+            match &command {
+                Command::Graph => break 'steps,
+                Command::Other(text) => {
+                    unsupported.get_or_insert_with(|| text.clone());
+                }
+                Command::Mustache {
+                    view,
+                    template,
+                    output,
+                } => {
+                    let view = if literal(view).as_deref() == Some("-") {
+                        stdin_view.clone().unwrap_or_else(|| view.clone())
+                    } else {
+                        view.clone()
+                    };
+                    inputs.push(view.clone());
+                    inputs.push(template.clone());
+                    let into_target = output.as_ref().is_some_and(writes_target)
+                        || (last
+                            && stage.redirects.iter().any(|(kind, word)| {
+                                matches!(kind, Redirect::Out | Redirect::Append)
+                                    && writes_target(word)
+                            }));
+                    if into_target {
+                        match literal(template) {
+                            Some(template) => writes = Some((view, template)),
+                            None => {
+                                unsupported.get_or_insert_with(|| word_text(template));
+                            }
+                        }
+                    }
+                }
+                Command::Yaml2Json(file) => {
+                    inputs.push(file.clone());
+                    stdin_view = Some(file.clone());
+                }
+                Command::Cat(files) => {
+                    inputs.extend(files.iter().cloned());
+                    if let [file] = files.as_slice() {
+                        stdin_view = Some(file.clone());
+                    }
+                }
+                Command::Echo(_) | Command::NoOp => {}
+            }
+            for (_, word) in &stage.redirects {
+                if vars(word).iter().any(|(_, default)| default.is_none())
+                    || word.contains(&Part::Opaque)
+                {
+                    unsupported.get_or_insert_with(|| word_text(word));
+                }
+            }
+            for word in inputs {
+                if word.contains(&Part::Opaque) {
+                    unsupported.get_or_insert_with(|| word_text(&word));
+                }
+                for (var, default) in vars(&word) {
+                    if !holes.iter().any(|(name, _, _)| *name == var) {
+                        holes.push((var, default, word.clone()));
+                    }
+                }
+            }
+        }
+    }
+    let Some((view, template)) = writes else {
+        // A script that may write it with a tool of its own: named in the
+        // error, never run.
+        let lowered = script.to_lowercase();
+        let suspect = mentions
+            || ["template", "mustache", "handlebars", ".hbs", "render"]
+                .iter()
+                .any(|word| lowered.contains(word))
+            || ["render", "manifest", "template", "yaml"]
+                .iter()
+                .any(|word| name.to_lowercase().contains(word));
+        return (unsupported.is_some() && suspect).then(|| {
+            Err(Writer {
+                script: name.to_string(),
+                step: script.to_string(),
+            })
+        });
+    };
+    if unsupported.is_some() || holes.len() > 1 {
+        return Some(Err(Writer {
+            script: name.to_string(),
+            step: script.to_string(),
+        }));
+    }
+    Some(Ok(Plan {
+        script: name.to_string(),
+        steps,
+        hole: holes.into_iter().next(),
+        view,
+        template,
+    }))
+}
+
+/// The files a `word` with `hole` in it names under `dir`, by the hole's value.
+fn expand_hole(dir: &Path, word: &Word, hole: &str) -> BTreeMap<String, PathBuf> {
+    let mut pattern = String::from("^");
+    for part in word {
+        match part {
+            Part::Lit(text) => pattern.push_str(&regex::escape(text)),
+            Part::Var { name, .. } if name == hole => pattern.push_str("([^/]+)"),
+            Part::Var {
+                default: Some(default),
+                ..
+            } => pattern.push_str(&regex::escape(default)),
+            _ => return BTreeMap::new(),
+        }
+    }
+    pattern.push('$');
+    let Ok(pattern) = regex::Regex::new(&pattern) else {
+        return BTreeMap::new();
+    };
+    // Every directory the pattern can reach: its literal prefix, walked down
+    // as deep as the pattern has components.
+    let prefix: String = match word.first() {
+        Some(Part::Lit(text)) => text
+            .rsplit_once('/')
+            .map(|(dir, _)| dir)
+            .unwrap_or("")
+            .to_string(),
+        _ => String::new(),
+    };
+    let depth = word_text(word).matches('/').count() - prefix.matches('/').count();
+    let mut found = BTreeMap::new();
+    let mut pending = vec![(prefix.clone(), 0)];
+    while let Some((relative, level)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(dir.join(&relative)) else {
+            continue;
+        };
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let path = if relative.is_empty() {
+                name
+            } else {
+                format!("{relative}/{name}")
+            };
+            if entry.path().is_dir() {
+                if level < depth {
+                    pending.push((path.clone(), level + 1));
+                }
+                continue;
+            }
+            let candidate = path.clone();
+            if let Some(captures) = pattern.captures(&candidate) {
+                let values: BTreeSet<&str> = captures
+                    .iter()
+                    .skip(1)
+                    .flatten()
+                    .map(|capture| capture.as_str())
+                    .collect();
+                if let [value] = values.into_iter().collect::<Vec<_>>().as_slice() {
+                    found.insert(value.to_string(), dir.join(path));
+                }
+            }
+        }
+    }
+    found
+}
+
+fn stem(path: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.split_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file)
+        .to_string()
+}
+
+/// The network each literal plan renders: the path component its view
+/// differs in from the other scripts' (`config/<network>.json`,
+/// `config/<network>/config.json`), else its view's file name.
+fn literal_networks(plans: &[&Plan]) -> Vec<String> {
+    let views: Vec<Vec<String>> = plans
+        .iter()
+        .map(|plan| {
+            literal(&plan.view)
+                .unwrap_or_default()
+                .split('/')
+                .map(str::to_string)
+                .collect()
+        })
+        .collect();
+    let same_shape = views.len() > 1 && views.iter().all(|view| view.len() == views[0].len());
+    let differing: Vec<usize> = if same_shape {
+        (0..views[0].len())
+            .filter(|index| views.iter().any(|view| view[*index] != views[0][*index]))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    views
+        .iter()
+        .map(|view| match differing.as_slice() {
+            [index] => stem(&view[*index]),
+            _ => stem(&view.join("/")),
+        })
+        .collect()
+}
+
+#[derive(Debug)]
+struct Choice<'a> {
+    plan: &'a Plan,
+    network: String,
+    hole_value: Option<String>,
+    view: String,
+}
+
+fn choose<'a>(
+    plans: &'a [Plan],
+    network: Option<&str>,
+    dir: &Path,
+) -> Result<Choice<'a>, Vec<String>> {
+    let literal_plans: Vec<&Plan> = plans.iter().filter(|plan| plan.hole.is_none()).collect();
+    let literal_names = literal_networks(&literal_plans);
+    let mut options: Vec<(String, Choice<'a>)> = Vec::new();
+    for plan in plans {
+        if let Some((name, _, word)) = &plan.hole {
+            for (value, path) in expand_hole(dir, word, name) {
+                let view = pathdiff::diff_paths(&path, dir)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string();
+                options.push((
+                    value.clone(),
+                    Choice {
+                        plan,
+                        network: value.clone(),
+                        hole_value: Some(value),
+                        view,
+                    },
+                ));
+            }
+        }
+    }
+    for (plan, name) in literal_plans.iter().zip(literal_names) {
+        options.push((
+            name.clone(),
+            Choice {
+                plan,
+                network: name,
+                hole_value: None,
+                view: literal(&plan.view).unwrap_or_default(),
+            },
+        ));
+    }
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in &options {
+        if !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    let picked = match network {
+        Some(network) => options.into_iter().find(|(name, choice)| {
+            name == network
+                || choice.plan.script == network
+                || choice.plan.script.rsplit(':').next() == Some(network)
+        }),
+        None => {
+            let default = plans.iter().find_map(|plan| {
+                plan.hole
+                    .as_ref()
+                    .and_then(|(_, default, _)| default.clone())
+            });
+            match default {
+                Some(default) if names.contains(&default) => {
+                    options.into_iter().find(|(name, _)| *name == default)
+                }
+                _ if names.len() == 1 => options.into_iter().next(),
+                _ => None,
+            }
+        }
+    };
+    picked.map(|(_, choice)| choice).ok_or(names)
+}
+
+enum Output {
+    Text(String),
+    Json(Value),
+}
+
+impl Output {
+    fn text(self) -> String {
+        match self {
+            Output::Text(text) => text,
+            Output::Json(value) => value.to_string(),
+        }
+    }
+}
+
+struct Run<'a> {
+    dir: &'a Path,
+    target: &'a Path,
+    hole: Option<(&'a str, &'a str)>,
+    files: BTreeMap<PathBuf, String>,
+}
+
+impl Run<'_> {
+    fn resolve(&self, word: &Word) -> Result<PathBuf> {
+        let mut text = String::new();
+        for part in word {
+            match part {
+                Part::Lit(lit) => text.push_str(lit),
+                Part::Var { name, .. } if self.hole.is_some_and(|(hole, _)| hole == name) => {
+                    text.push_str(self.hole.expect("checked").1)
+                }
+                Part::Var {
+                    default: Some(default),
+                    ..
+                } => text.push_str(default),
+                _ => return Err(anyhow!("{} has a value envio can't know", word_text(word))),
+            }
+        }
+        if Path::new(&text).is_absolute() {
+            return Err(anyhow!("{text} is outside the project"));
+        }
+        Ok(normalize_path(self.dir.join(text)))
+    }
+
+    fn read(&self, word: &Word) -> Result<String> {
+        let path = self.resolve(word)?;
+        if let Some(text) = self.files.get(&path) {
+            return Ok(text.clone());
+        }
+        std::fs::read_to_string(&path).context(format!("Failed to read {}", path.display()))
+    }
+
+    fn word(&self, word: &Word) -> Result<String> {
+        let path = self.resolve(word)?;
+        Ok(pathdiff::diff_paths(path, self.dir)
+            .map(|path| path.display().to_string())
+            .unwrap_or_default())
+    }
+
+    fn write(&mut self, word: &Word, text: String, append: bool) -> Result<()> {
+        let path = self.resolve(word)?;
+        if !path.starts_with(self.dir) {
+            return Err(anyhow!(
+                "the script writes {}, outside the project",
+                path.display()
+            ));
+        }
+        let existing = match (append, self.files.get(&path)) {
+            (false, _) => String::new(),
+            (true, Some(text)) => text.clone(),
+            // Appending to the manifest envio is writing anew starts it empty.
+            (true, None) if path == self.target => String::new(),
+            (true, None) => std::fs::read_to_string(&path).unwrap_or_default(),
+        };
+        self.files.insert(path, existing + &text);
+        Ok(())
+    }
+
+    fn stage(&mut self, stage: &Stage, stdin: Option<Output>) -> Result<Output> {
+        let stdin = match stage
+            .redirects
+            .iter()
+            .find(|(kind, _)| *kind == Redirect::In)
+        {
+            Some((_, word)) => Some(Output::Text(self.read(word)?)),
+            None => stdin,
+        };
+        Ok(match classify(&stage.words) {
+            Command::Mustache {
+                view,
+                template,
+                output,
+            } => {
+                let view_value = if literal(&view).as_deref() == Some("-") {
+                    match stdin {
+                        Some(Output::Json(value)) => value,
+                        Some(Output::Text(text)) => serde_json::from_str(&text)
+                            .context("mustache read a view from stdin that isn't JSON")?,
+                        None => {
+                            return Err(anyhow!(
+                                "mustache reads its view from stdin, and nothing is piped in"
+                            ))
+                        }
+                    }
+                } else {
+                    let file = self.word(&view)?;
+                    if file.ends_with(".js") || file.ends_with(".cjs") {
+                        return Err(anyhow!(
+                            "the view {file} is a JavaScript module, which mustache runs"
+                        ));
+                    }
+                    serde_json::from_str(&self.read(&view)?)
+                        .context(format!("mustache's view {file} isn't JSON"))?
+                };
+                let rendered = mustache::render(&self.read(&template)?, &view_value).context(
+                    format!("mustache failed to render {}", self.word(&template)?),
+                )?;
+                match output {
+                    Some(output) => {
+                        self.write(&output, rendered, false)?;
+                        Output::Text(String::new())
+                    }
+                    None => Output::Text(rendered),
+                }
+            }
+            Command::Yaml2Json(file) => {
+                let yaml: serde_yaml::Value = serde_yaml::from_str(&self.read(&file)?)
+                    .context(format!("{} isn't YAML", self.word(&file)?))?;
+                Output::Json(serde_json::to_value(yaml)?)
+            }
+            Command::Cat(files) => {
+                let mut text = String::new();
+                for file in &files {
+                    text.push_str(&self.read(file)?);
+                }
+                if files.is_empty() {
+                    text = stdin.map(Output::text).unwrap_or_default();
+                }
+                Output::Text(text)
+            }
+            Command::Echo(words) => {
+                let mut parts = Vec::new();
+                for word in &words {
+                    parts.push(match literal(word) {
+                        Some(text) => text,
+                        None => self.word(word)?,
+                    });
+                }
+                Output::Text(format!("{}\n", parts.join(" ")))
+            }
+            Command::NoOp => Output::Text(String::new()),
+            Command::Graph | Command::Other(_) => unreachable!("plans hold only these"),
+        })
+    }
+
+    fn steps(&mut self, steps: &[Step]) -> Result<()> {
+        for step in steps {
+            if step.after_failure {
+                continue;
+            }
+            if step
+                .stages
+                .iter()
+                .any(|stage| classify(&stage.words) == Command::Graph)
+            {
+                break;
+            }
+            let mut stdout: Option<Output> = None;
+            for stage in &step.stages {
+                let output = self.stage(stage, stdout.take())?;
+                let outputs: Vec<&(Redirect, Word)> = stage
+                    .redirects
+                    .iter()
+                    .filter(|(kind, _)| matches!(kind, Redirect::Out | Redirect::Append))
+                    .collect();
+                // A shell opens every `>` of a command in order, and the
+                // output goes to the last.
+                let Some(((last_kind, last), opened)) = outputs.split_last() else {
+                    stdout = Some(output);
+                    continue;
+                };
+                for (kind, word) in opened {
+                    self.write(word, String::new(), *kind == Redirect::Append)?;
+                }
+                self.write(last, output.text(), *last_kind == Redirect::Append)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What envio rendered, for the log and for the codegen script to skip.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rendered {
+    pub script: String,
+    pub network: String,
+    pub template: String,
+    pub view: String,
+    pub files: Vec<PathBuf>,
+}
+
+/// Where envio records the manifests it wrote, so a later start renders them
+/// again — for another `ENVIO_SUBGRAPH_NETWORK` — rather than reading one as
+/// the user's own.
+fn record_path(project_root: &Path) -> PathBuf {
+    project_root.join(".envio").join("rendered-manifests.json")
+}
+
+fn digest(text: &str) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+}
+
+fn rendered_by_envio(project_root: &Path, target: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(target) else {
+        return false;
+    };
+    std::fs::read_to_string(record_path(project_root))
+        .ok()
+        .and_then(|record| serde_json::from_str::<BTreeMap<String, String>>(&record).ok())
+        .and_then(|record| record.get(&target.display().to_string()).cloned())
+        .is_some_and(|recorded| recorded == digest(&text))
+}
+
+fn package_scripts(dir: &Path) -> Vec<(String, String)> {
+    std::fs::read_to_string(dir.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|json| json.get("scripts").and_then(Value::as_object).cloned())
+        .map(|scripts| {
+            scripts
+                .into_iter()
+                .filter_map(|(name, script)| Some((name, script.as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn absolute(path: &Path) -> PathBuf {
+    normalize_path(std::env::current_dir().unwrap_or_default().join(path))
+}
+
+fn scan(dir: &Path, target: &Path) -> (Vec<Plan>, Vec<Writer>) {
+    let mut plans = Vec::new();
+    let mut writers = Vec::new();
+    for (name, script) in package_scripts(dir) {
+        match analyze(dir, &name, &script, target) {
+            Some(Ok(plan)) => {
+                // nftx's public repo gitignores the template its mustache
+                // scripts render: a ts-node script writes it first.
+                let view = plan.hole.is_none().then(|| literal(&plan.view)).flatten();
+                let absent = [Some(plan.template.clone()), view]
+                    .into_iter()
+                    .flatten()
+                    .find(|file| file != "-" && !dir.join(file).exists());
+                match absent {
+                    Some(file) => writers.push(Writer {
+                        script: name,
+                        step: format!(
+                            "{script} ({file} isn't in the repo: another step writes it)"
+                        ),
+                    }),
+                    None => plans.push(plan),
+                }
+            }
+            Some(Err(writer)) => writers.push(writer),
+            None => {}
+        }
+    }
+    (plans, writers)
+}
+
+/// For "the manifest is missing": the package.json scripts beside it that
+/// write it, or may, with a step envio doesn't run — and why the user has to.
+pub fn unrepeatable_writers(target: &Path) -> Option<String> {
+    let target = absolute(target);
+    let dir = target.parent()?;
+    let manifest_name = target.file_name()?.to_string_lossy().to_string();
+    let (_, writers) = scan(dir, &target);
+    if writers.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = writers
+        .iter()
+        .map(|writer| format!("  \"{}\": {}", writer.script, writer.step))
+        .collect();
+    Some(format!(
+        "The project writes {manifest_name} with a package.json script, and envio can't repeat \
+         {}:\n{}\n\
+         envio renders a manifest itself only when every step of the script is a standard \
+         tool over files in the repo (`mustache <config> <template> > {manifest_name}`, \
+         `yaml2json`, `cat`), so that the network you pick is its only input. Run the script \
+         for your network, then start envio again.",
+        if writers.len() == 1 { "it" } else { "these" },
+        lines.join("\n")
+    ))
+}
+
+/// Writes the manifest at `target` (and whatever else its script writes) when
+/// it is missing, or is one envio rendered before, and a package.json script
+/// beside it renders it in a way envio can repeat. `Ok(None)`: nothing to
+/// render, the manifest is read as it is (or reported missing).
+pub fn render_manifest(
+    project_root: &Path,
+    target: &Path,
+    network: Option<&str>,
+) -> Result<Option<Rendered>> {
+    let target = absolute(target);
+    if target.exists() && !rendered_by_envio(project_root, &target) {
+        return Ok(None);
+    }
+    let Some(dir) = target.parent().map(Path::to_path_buf) else {
+        return Ok(None);
+    };
+    let manifest_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let (plans, _) = scan(&dir, &target);
+    if plans.is_empty() {
+        return Ok(None);
+    }
+
+    let choice = choose(&plans, network, &dir).map_err(|networks| {
+        let scripts: Vec<String> = plans.iter().map(|plan| plan.script.clone()).collect();
+        let first = networks.first().cloned().unwrap_or_default();
+        match network {
+            Some(network) => anyhow!(
+                "{} names the network '{network}', but the package.json scripts that render \
+                 {manifest_name} ({}) render it for: {}.",
+                super::NETWORK_ENV_VAR,
+                scripts.join(", "),
+                networks.join(", ")
+            ),
+            None => anyhow!(
+                "There is no {manifest_name} here: the package.json scripts {} render it from \
+                 {} for one network at a time ({}). Pick the network, as the script's \
+                 argument does:\n  {}={first}",
+                scripts.join(", "),
+                plans[0].template,
+                networks.join(", "),
+                super::NETWORK_ENV_VAR,
+            ),
+        }
+    })?;
+
+    let mut run = Run {
+        dir: &dir,
+        target: &target,
+        hole: None,
+        files: BTreeMap::new(),
+    };
+    let hole_name = choice.plan.hole.as_ref().map(|(name, _, _)| name.clone());
+    if let (Some(name), Some(value)) = (hole_name.as_deref(), choice.hole_value.as_deref()) {
+        run.hole = Some((name, value));
+    }
+    run.steps(&choice.plan.steps).map_err(|err| {
+        anyhow!(
+            "Envio Subgraph rendered {manifest_name} as the package.json script \"{}\" does, \
+             and it failed: {err:#}",
+            choice.plan.script
+        )
+    })?;
+    let Some(manifest) = run.files.get(&target).cloned() else {
+        return Ok(None);
+    };
+    for (path, text) in &run.files {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, text).context(format!("Failed to write {}", path.display()))?;
+    }
+    let record = record_path(project_root);
+    let mut recorded: BTreeMap<String, String> = std::fs::read_to_string(&record)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    recorded.insert(target.display().to_string(), digest(&manifest));
+    if let Some(parent) = record.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&record, serde_json::to_string_pretty(&recorded)?)?;
+
+    Ok(Some(Rendered {
+        script: choice.plan.script.clone(),
+        network: choice.network.clone(),
+        template: choice.plan.template.clone(),
+        view: choice.view.clone(),
+        files: run.files.keys().cloned().collect(),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn script_steps(script: &str) -> Vec<Vec<Command>> {
+        parse_steps(script)
+            .unwrap()
+            .iter()
+            .map(|step| {
+                step.stages
+                    .iter()
+                    .map(|stage| classify(&stage.words))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reads_the_commands_of_a_render_script() {
+        let lit = |text: &str| vec![Part::Lit(text.to_string())];
+        let network = vec![
+            Part::Lit("config/".to_string()),
+            Part::Var {
+                name: "NETWORK".to_string(),
+                default: Some("zora-testnet".to_string()),
+            },
+            Part::Lit(".yaml".to_string()),
+        ];
+        assert_eq!(
+            script_steps(
+                "cat template_warning.md > subgraph.yaml && yaml2json config/${NETWORK:-zora-testnet}.yaml | npx mustache - subgraph.template.yaml >> subgraph.yaml && graph codegen 2>&1"
+            ),
+            vec![
+                vec![Command::Cat(vec![lit("template_warning.md")])],
+                vec![
+                    Command::Yaml2Json(network),
+                    Command::Mustache {
+                        view: lit("-"),
+                        template: lit("subgraph.template.yaml"),
+                        output: None
+                    }
+                ],
+                vec![Command::Graph],
+            ]
+        );
+        assert_eq!(
+            script_steps("cross-env mustache 'config/mainnet/config.json' subgraph.template.yaml out.yaml; node build.js"),
+            vec![
+                vec![Command::Mustache {
+                    view: lit("config/mainnet/config.json"),
+                    template: lit("subgraph.template.yaml"),
+                    output: Some(lit("out.yaml"))
+                }],
+                vec![Command::Other("node build.js".to_string())],
+            ]
+        );
+    }
+}
