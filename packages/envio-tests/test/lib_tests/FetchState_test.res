@@ -2454,21 +2454,20 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Narrows a query's selection to the registrations its range can match", t => {
-    let makeReg = (~id, ~startBlock=?) =>
+    let makeReg = (~contractName, ~startBlock=?) =>
       (EventRegistration.evmOnEventRegistration(
-        ~id,
-        ~contractName="Gravatar",
+        ~contractName,
         ~isWildcard=true,
         ~startBlock?,
       ) :> Internal.onEventRegistration)
-    let open_ = makeReg(~id="open")
-    let restricted = makeReg(~id="restricted", ~startBlock=100)
+    let open_ = makeReg(~contractName="open")
+    let restricted = makeReg(~contractName="restricted", ~startBlock=100)
     let selection: FetchState.selection = {
       dependsOnAddresses: false,
       onEventRegistrations: [open_, restricted],
     }
     let registrationIds = (selection: FetchState.selection) =>
-      selection.onEventRegistrations->Array.map(reg => reg.eventConfig.id)
+      selection.onEventRegistrations->Array.map(reg => reg.eventConfig.contractName)
 
     t.expect({
       // Whole range sits below the restricted registration's start block.

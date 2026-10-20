@@ -18,25 +18,16 @@ let topicSelection: Internal.resolvedTopicSelection = {
   topic3: Values([]),
 }
 
-let withPinIdentity = (registration: Internal.evmOnEventRegistration, ~index) => {
-  let eventConfig =
-    registration.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-  {
-    ...registration,
-    index,
-    eventConfig: ({...eventConfig, id: `${sighash}_1`, sighash} :> Internal.eventConfig),
-  }
-}
-
 let makeRegistration = (~index=0, ~receiptOnly=false) => {
-  EventRegistration.evmOnEventRegistration(
+  ...EventRegistration.evmOnEventRegistration(
     ~id=sighash,
     ~blockFieldNames=[Number, Timestamp, Hash, ParentHash, GasUsed, Miner],
     ~transactionFieldNames=receiptOnly
       ? [GasUsed]
       : [Hash, TransactionIndex, From, Gas, GasUsed, Status],
     ~eventFilters=[topicSelection],
-  )->withPinIdentity(~index)
+  ),
+  index,
 }
 
 let makeRoutingRegistration = (
@@ -47,14 +38,15 @@ let makeRoutingRegistration = (
   // topicCount is derived from paramsMetadata inside evmOnEventRegistration.
   ~paramsMetadata: array<Internal.paramMeta>=[],
 ) => {
-  EventRegistration.evmOnEventRegistration(
+  ...EventRegistration.evmOnEventRegistration(
     ~id=sighash,
     ~contractName,
     ~blockFieldNames=[Number],
     ~isWildcard,
     ~eventFilters,
     ~paramsMetadata,
-  )->withPinIdentity(~index)
+  ),
+  index,
 }
 
 let syncConfig = EvmChain.getSyncConfig({
@@ -198,7 +190,7 @@ let eventSummary = (event: RpcSourcePins.pinnedEvent) => {
     ->Option.getOrThrow
     ->(Utils.magic: Internal.eventTransaction => transactionView)
   {
-    "registrationId": event.registrationId,
+    "registrationIndex": event.registrationIndex,
     "blockNumber": event.blockNumber,
     "logIndex": event.logIndex,
     "transactionIndex": event.transactionIndex,
@@ -251,7 +243,7 @@ describe("RPC source public contract", () => {
       "latestFetchedBlockNumber": 100,
       "events": [
         {
-          "registrationId": `${sighash}_1`,
+          "registrationIndex": 0,
           "blockNumber": 100,
           "logIndex": 2,
           "transactionIndex": 1,
@@ -277,7 +269,7 @@ describe("RPC source public contract", () => {
           },
         },
         {
-          "registrationId": `${sighash}_1`,
+          "registrationIndex": 0,
           "blockNumber": 100,
           "logIndex": 3,
           "transactionIndex": 1,

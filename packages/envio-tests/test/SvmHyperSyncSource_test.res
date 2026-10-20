@@ -22,7 +22,6 @@ let makeEventConfig = (
   ~selectedTransactionFields: array<Internal.svmTransactionField>=[],
 ): Internal.svmInstructionEventConfig => {
   {
-    id: "0x21",
     name: "CreateMetadataAccountV3",
     contractName: "TokenMetadata",
     paramsRawEventSchema: %raw(`null`),

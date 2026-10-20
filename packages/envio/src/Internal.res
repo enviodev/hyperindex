@@ -477,7 +477,6 @@ let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection
 // ecosystem variant (fields never overwritten), which lets sources cast the
 // base back down to evm/fuel/svm safely.
 type eventConfig = private {
-  id: string,
   name: string,
   contractName: string,
   paramsRawEventSchema: S.schema<eventParams>,
