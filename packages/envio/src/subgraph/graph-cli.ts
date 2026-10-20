@@ -586,7 +586,67 @@ export async function ensureGeneratedCode(
   options: CodegenOptions = {},
 ): Promise<void> {
   await buildGeneratedCode(root, dir, manifestFile, mappingFiles, options);
-  if (codegenMode() !== "graph-cli") fillFromOtherManifests(root, dir, manifestFile, mappingFiles);
+  if (codegenMode() !== "graph-cli") {
+    fillFromOtherManifests(root, dir, manifestFile, mappingFiles);
+    fillDirectoryIndex(root, dir, mappingFiles);
+  }
+}
+
+/**
+ * tornado-subgraph's mappings import their event classes from the generated
+ * directory itself (`from '../generated'`), and graph codegen writes no index.ts
+ * there: the repo's manifest script, a node script envio doesn't run, writes one
+ * re-exporting a data source's generated module. When every generated data
+ * source module that has all the names a mapping imports from the directory is
+ * the same code (one ABI under several data sources), the index re-exports it,
+ * with a warning; otherwise the load error says what graph codegen writes.
+ */
+function fillDirectoryIndex(root: string, dir: string, mappingFiles: string[]): void {
+  dir = path.resolve(dir);
+  const index = path.join(dir, "index.ts");
+  if (existsSync(index) || existsSync(`${dir}.ts`) || !existsSync(dir)) return;
+  const names = new Set<string>();
+  const importers: string[] = [];
+  for (const { file } of scanImports(root, mappingFiles)) {
+    const source = readFileSync(file, "utf8");
+    for (const [, clause, specifier] of source.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*["'](\.\.?\/[^"']*)["']/g)) {
+      if (path.resolve(path.dirname(file), specifier.replace(/\/$/, "")) !== dir) continue;
+      importers.push(path.relative(root, file));
+      for (const name of clause.split(",")) {
+        const imported = name.trim().split(/\s+as\s+/)[0];
+        if (imported) names.add(imported);
+      }
+    }
+  }
+  if (names.size === 0) return;
+  const modules = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== "templates")
+    .flatMap((entry) =>
+      readdirSync(path.join(dir, entry.name))
+        .filter((file) => file.endsWith(".ts"))
+        .map((file) => path.join(entry.name, file)),
+    )
+    .sort()
+    .filter((module) => {
+      const exported = new Set(
+        [...readFileSync(path.join(dir, module), "utf8").matchAll(/^export class (\w+)/gm)].map(([, name]) => name),
+      );
+      return [...names].every((name) => exported.has(name));
+    });
+  const sources = new Set(modules.map((module) => readFileSync(path.join(dir, module), "utf8")));
+  if (sources.size !== 1) return;
+  const module = modules[0].replace(/\.ts$/, "").split(path.sep).join("/");
+  writeFileSync(index, `export * from "./${module}";\n`);
+  const files = [...new Set(importers)];
+  warn(
+    `Envio Subgraph wrote ${path.relative(root, index)}, re-exporting ${path.relative(root, dir)}/${module}.ts: ` +
+      `${files.join(", ")} import${files.length === 1 ? "s" : ""} ${[...names].join(", ")} from the generated ` +
+      "directory itself, where graph codegen writes no index.ts, so `graph build` fails on a clean checkout. " +
+      (modules.length === 1
+        ? "That module is the only generated one with those names; "
+        : "Every generated module with those names is the same code; ") +
+      "the tree this subgraph was built with had an index written by the project's own scripts.",
+  );
 }
 
 /**
