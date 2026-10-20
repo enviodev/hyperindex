@@ -718,20 +718,11 @@ fn parse_data_source(
 
     if let Some(mapping) = obj.get("mapping") {
         if let Some(mut mapping) = Obj::new(mapping, &format!("{path}.mapping"), report) {
-            match mapping.string("kind").as_deref() {
-                Some("ethereum/events") | Some("ethereum/contract") | Some("ethereum") | None => {}
-                Some(other) => report.unknown(
-                    format!("the mapping kind \"{other}\""),
-                    where_("mapping → kind"),
-                ),
-            }
-            match mapping.string("language").as_deref() {
-                Some("wasm/assemblyscript") | None => {}
-                Some(other) => report.unknown(
-                    format!("the mapping language \"{other}\""),
-                    where_("mapping → language"),
-                ),
-            }
+            // Free strings graph-node keeps and never reads, for ethereum and
+            // file data sources alike (graph-cli types them `String` too):
+            // the mapping is the code, whatever these say.
+            mapping.string("kind");
+            mapping.string("language");
 
             api_version = mapping.string("apiVersion").unwrap_or_default();
             match parse_version(&api_version) {

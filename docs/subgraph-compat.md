@@ -647,9 +647,11 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues
 refuse instead, so behavior never silently diverges:
 
 - *Manifest*: `deny_unknown_fields` on every subgraph.yaml struct; unknown
-  `kind`, unknown `features` entries, unknown block-handler filter kinds,
+  data source `kind`, unknown `features` entries, unknown block-handler filter kinds,
   and `specVersion`/`apiVersion` above the supported range all raise the
-  unknown error with the YAML path as location.
+  unknown error with the YAML path as location. `mapping.kind` and
+  `mapping.language` are the exception: free strings graph-node keeps and
+  never reads (graph-cli types them `String`), so any value is accepted.
 - *Schema*: unknown arguments on known directives (e.g. `@entity(...)`
   beyond `immutable`/`timeseries`) and unknown type names that aren't
   schema-defined raise the unknown error. Unknown directives are dropped

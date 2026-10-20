@@ -271,6 +271,22 @@ If you need this, please open an issue so we can look at your use case:
     ).toEqual(accepted)
   })
 
+  // graph-node's ethereum UnresolvedMapping keeps `kind` and `language` as
+  // free strings and never reads them (chain/ethereum/src/data_source.rs), and
+  // graph-cli's manifest schema types them `String`: rethink-finance writes
+  // `kind: ethereum/call`, an autonolas subgraph `language:
+  // wassm/assemblyscript`, and both deploy.
+  it("accepts any mapping kind and language, which graph-node never reads", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)
+        ->String.replace("kind: ethereum/events", "kind: ethereum/call")
+        ->String.replace("language: wasm/assemblyscript", "language: wassm/assemblyscript"),
+      ),
+    ).toEqual(accepted)
+  })
+
   it("refuses a NEAR subgraph as one it can't index", t => {
     let manifest =
       manifestWith(plainEventHandler)
