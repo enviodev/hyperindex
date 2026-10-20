@@ -78,6 +78,27 @@ let numEventsProcessed: t => float
 let pendingBudget: t => float
 let holdExtraBudget: (t, ~items: int) => unit
 let releaseExtraBudget: (t, ~items: int) => unit
+// Subgraph mode: the register passes of block handlers that create data
+// sources. See `FetchState.blockRegisterThrough`.
+let hasBlockRegisters: t => bool
+let isBlockRegisterIdle: t => bool
+let queueBlockRegisterRun: t => (promise<unit>, unit => unit)
+let canAdvanceBlockRegisters: (t, ~through: int) => bool
+let nextBlockRegisterItems: (t, ~through: int, ~limit: int) => option<(array<Internal.item>, int)>
+let blockRegisterItemsAfter: (
+  t,
+  ~after: int,
+  ~through: int,
+  ~limit: int,
+) => option<(array<Internal.item>, int)>
+let blockRegisterThrough: t => option<int>
+let blockRegisterFrontier: t => int
+let applyBlockRegisters: (
+  t,
+  ~registrations: array<AddressStore.registration>,
+  ~through: int,
+) => unit
+let markBlockRegistered: (t, ~through: int) => unit
 let startFetchingQueries: (t, ~queries: array<FetchState.query>) => unit
 let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 

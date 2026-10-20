@@ -34,9 +34,7 @@ let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
     switch prop {
-    | "id" =>
-      let eventItem = params.item->Internal.castUnsafeEventItem
-      eventItem.chainId->(Utils.magic: ChainId.t => unknown)
+    | "id" => params.item->Internal.getItemChainId->(Utils.magic: ChainId.t => unknown)
     | _ =>
       // Look up the contract name directly in config contracts across all chains.
       let contractName = prop
@@ -93,4 +91,18 @@ let getContractRegisterContext = (params: contractRegisterParams) => {
 let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
   event: params.item->Ecosystem.getItemEvent(~ecosystem=params.config.ecosystem),
   context: getContractRegisterContext(params),
+}
+
+// A block handler's register pass gets what its handler gets, the block (or
+// slot), with the register context in place of the handler's.
+let getBlockContractRegisterArgs = (
+  params: contractRegisterParams,
+): Internal.onBlockContractRegisterArgs => {
+  let blockNumber = params.item->Internal.getItemBlockNumber
+  let ecosystem = params.config.ecosystem
+  let context = getContractRegisterContext(params)
+  switch ecosystem.name {
+  | Ecosystem.Svm => {slot: blockNumber, context}
+  | _ => {block: Ecosystem.makeBlockEvent(~blockNumber, ~ecosystem), context}
+  }
 }

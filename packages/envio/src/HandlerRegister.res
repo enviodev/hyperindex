@@ -701,6 +701,7 @@ let registerOnBlock = (
   ~where: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
   ~runsFirst=false,
+  ~contractRegister=?,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => {
   withRegistration(registration => {
@@ -794,6 +795,7 @@ let registerOnBlock = (
               chainId,
               handler,
               runsFirst,
+              ?contractRegister,
             }: Internal.onBlockRegistration
           ),
         )

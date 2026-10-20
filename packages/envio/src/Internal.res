@@ -717,6 +717,12 @@ type onBlockArgs = {
   context: handlerContext,
 }
 
+type onBlockContractRegisterArgs = {
+  slot?: int,
+  block?: blockEvent,
+  context: contractRegisterContext,
+}
+
 type onBlockRegistration = {
   // When there are multiple onBlock handlers per chain,
   // we want to use the order they are defined for sorting
@@ -730,6 +736,11 @@ type onBlockRegistration = {
   // Subgraph mode only: a `once` block handler, whose trigger graph-node runs
   // ahead of everything else in its block (`EthereumBlockTriggerType::Start`).
   runsFirst?: bool,
+  // Subgraph mode only: the register pass of a block handler that can create a
+  // data source. It runs for each of the handler's blocks at fetch time, and no
+  // block item is processed until every pass up to its block has run and what
+  // they registered is fetched, as an event's contractRegister.
+  contractRegister?: onBlockContractRegisterArgs => promise<unit>,
 }
 
 @tag("kind")

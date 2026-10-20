@@ -73,6 +73,12 @@ type t = {
   // Timestamp of the committed progress block itself. See
   // `Batch.chainAfterBatch.progressBlockTime`.
   mutable committedProgressBlockTime: option<int>,
+  // Subgraph mode, with a block handler that has a register pass: the chain's
+  // register work runs one unit at a time, a response's passes or a run of
+  // block passes alone, so a pass never runs ahead of a block pass of an
+  // earlier block. Settles when the latest unit is applied.
+  mutable blockRegisterTail: promise<unit>,
+  mutable blockRegisterRuns: int,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -187,6 +193,8 @@ let make = (
     rollbackTargetBlock: None,
     progressLatencyMs: None,
     committedProgressBlockTime,
+    blockRegisterTail: Promise.resolve(),
+    blockRegisterRuns: 0,
   }
 }
 
@@ -506,6 +514,47 @@ let holdExtraBudget = (cs: t, ~items) => {
 let releaseExtraBudget = (cs: t, ~items) => {
   cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. items->Int.toFloat)
 }
+
+let hasBlockRegisters = (cs: t) => cs.fetchState.blockRegisterThrough !== None
+let isBlockRegisterIdle = (cs: t) => cs.blockRegisterRuns === 0
+
+// Queues a unit of register work behind the chain's latest one. Returns the
+// promise to wait on before running it, and the callback that settles it,
+// which must be called however the unit ends.
+let queueBlockRegisterRun = (cs: t) => {
+  let previous = cs.blockRegisterTail
+  let settle = ref(() => ())
+  cs.blockRegisterTail = Promise.make((resolve, _) => settle := resolve)
+  cs.blockRegisterRuns = cs.blockRegisterRuns + 1
+  let finish = () => {
+    cs.blockRegisterRuns = cs.blockRegisterRuns - 1
+    settle.contents()
+  }
+  (previous, finish)
+}
+
+let canAdvanceBlockRegisters = (cs: t, ~through) =>
+  cs.fetchState->FetchState.canAdvanceBlockRegisters(~through)
+let nextBlockRegisterItems = (cs: t, ~through, ~limit) =>
+  cs.fetchState->FetchState.nextBlockRegisterItems(~through, ~limit)
+let blockRegisterItemsAfter = (cs: t, ~after, ~through, ~limit) =>
+  cs.fetchState->FetchState.blockRegisterItemsAfter(~after, ~through, ~limit)
+let blockRegisterThrough = (cs: t) => cs.fetchState.blockRegisterThrough
+let blockRegisterFrontier = (cs: t) => cs.fetchState->FetchState.blockRegisterFrontier
+
+// Applies what a run of block passes alone registered, then lets block items
+// through its last block be generated.
+let applyBlockRegisters = (cs: t, ~registrations, ~through) => {
+  let fs = switch registrations {
+  | [] => cs.fetchState
+  | _ =>
+    cs.fetchState->FetchState.registerDynamicContracts(~addressStore=cs.addressStore, registrations)
+  }
+  cs.fetchState = fs->FetchState.setBlockRegisterThrough(~through)
+}
+
+let markBlockRegistered = (cs: t, ~through) =>
+  cs.fetchState = cs.fetchState->FetchState.setBlockRegisterThrough(~through)
 
 let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 

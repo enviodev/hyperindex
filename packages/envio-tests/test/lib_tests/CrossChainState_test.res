@@ -59,6 +59,7 @@ let makeChainState = (
     firstEventBlock: Some(firstEventBlock),
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
     buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
   }
   let mockSource = MockSource.make([], ~chainId=1)
@@ -132,6 +133,7 @@ let makeFetchingChainState = (
     firstEventBlock,
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
   }
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
@@ -537,6 +539,7 @@ describe("CrossChainState fetch control", () => {
       firstEventBlock: Some(0),
       clientFilterAddressThreshold: None,
       creationBlocks: None,
+      blockRegisterThrough: None,
     }
     let mockSource1 = MockSource.make([], ~chainId=1)
     let a = ChainState.make(
