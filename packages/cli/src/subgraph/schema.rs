@@ -147,8 +147,6 @@ pub struct FieldType {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derived_from: Option<String>,
     pub list: bool,
-    /// Declared non-null: graph-node refuses a save that leaves it unset.
-    pub required: bool,
 }
 
 fn directive_name<'a, 'b>(directive: &'a Directive<'b, String>) -> &'a str {
@@ -411,7 +409,6 @@ fn render_fields(
                         .then(|| base.clone()),
                     derived_from: derived_from.clone(),
                     list: is_list(&wrappers),
-                    required: wrappers.first() == Some(&Wrapper::NonNull),
                 },
             );
 
@@ -1112,7 +1109,6 @@ type Transfer @entity {
                     target: Some("Registration".to_string()),
                     derived_from: Some("domain".to_string()),
                     list: false,
-                    required: false,
                 }),
             )
         );

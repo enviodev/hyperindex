@@ -13,7 +13,7 @@ export type SubgraphSchema = {
   /** Each field as the subgraph schema declares it, which is what a mapping reads. */
   entityFieldTypes: Record<
     string,
-    Record<string, { kind: string; target?: string; derivedFrom?: string; list: boolean; required?: boolean }>
+    Record<string, { kind: string; target?: string; derivedFrom?: string; list: boolean }>
   >;
   /** The context accessor envio generated for each entity, by schema name. */
   entityAccessors: Record<string, string>;
