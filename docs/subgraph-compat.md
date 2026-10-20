@@ -583,7 +583,10 @@ Linux fails on it. envio reads a file the manifest names (schema, mapping,
 ABI) from the one entry per path component that differs from it only in case,
 as the author's filesystem does, warns once per path, and hands graph-cli a
 copy of the manifest spelled the repo's way. Two such entries are an error
-that lists both.
+that lists both. A mapping's relative import gets the same match when Node
+can't find it as written (Omni-DeFi imports `../generated/staking/staking`;
+graph codegen writes `generated/Staking/Staking.ts`), with one warning per
+import.
 
 A script that runs anything else to write the manifest — `node`, `ts-node`,
 `truffle exec`, a shell script, `jq`, handlebars through a script of its own —
