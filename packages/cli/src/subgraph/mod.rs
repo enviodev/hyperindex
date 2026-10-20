@@ -977,17 +977,41 @@ fn rpc_for_chain(rpc: &RpcSelection, chain_id: u64) -> RpcSelection {
 const CHAIN_ID_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// The chain `ENVIO_SUBGRAPH_RPC` serves, for each manifest network no table
-/// knows. Only asked when there is such a network.
-fn networks_from_rpc(manifest_yaml: &str, rpc: &RpcSelection) -> manifest::NetworksFromRpc {
-    let unknown = manifest::unknown_networks(manifest_yaml);
-    if unknown.is_empty() {
+/// knows and each one whose table chain it doesn't serve, with a startup
+/// notice for the latter. graph-node indexes a network on whatever chain the
+/// providers configured for it serve; its docker-compose calls the one chain
+/// `mainnet` whatever it is. An endpoint that doesn't answer leaves a known
+/// name to its table.
+fn networks_from_rpc(
+    manifest_yaml: &str,
+    rpc: &RpcSelection,
+    notices: &mut Vec<String>,
+) -> manifest::NetworksFromRpc {
+    let networks = manifest::chain_networks(manifest_yaml);
+    if networks.is_empty() {
         return manifest::NetworksFromRpc::new();
     }
     let answer = chain_id_served_by(rpc);
-    unknown
-        .into_iter()
-        .map(|network| (network, answer.clone()))
-        .collect()
+    let mut resolved = manifest::NetworksFromRpc::new();
+    for (network, known) in networks {
+        match (known, &answer) {
+            (None, answer) => {
+                resolved.insert(network, answer.clone());
+            }
+            (Some(known), Ok(served)) if known != *served => {
+                notices.push(format!(
+                    "Envio Subgraph indexes the network \"{network}\" on chain {served}, the chain \
+                     {RPC_ENV_VAR} serves, not chain {known}, which The Graph's networks registry \
+                     (or Envio) calls \"{network}\": graph-node indexes a network on the chain its \
+                     configured provider serves. If chain {known} is meant, point {RPC_ENV_VAR} at \
+                     an endpoint of it."
+                ));
+                resolved.insert(network, Ok(*served));
+            }
+            _ => {}
+        }
+    }
+    resolved
 }
 
 /// Asks each endpoint in turn which chain it serves; the first answer wins.
@@ -1022,34 +1046,6 @@ fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
     })
     .join();
     asked.unwrap_or_else(|_| Err(format!("failed asking {RPC_ENV_VAR} for its chain id")))
-}
-
-/// graph-node checks a provider against the chain its network was configured
-/// for and refuses one that serves another; `ENVIO_SUBGRAPH_RPC` gets the same
-/// check. An endpoint that doesn't answer is left to the runtime, which asks it
-/// again — it may only be starting up.
-pub fn verify_rpc_chain(rpc_env: &str, manifest: &Manifest) -> Result<()> {
-    let Some(source) = manifest
-        .all_sources()
-        .find(|source| source.chain_id.is_some())
-    else {
-        return Ok(());
-    };
-    let (Some(chain_id), Some(network)) = (source.chain_id, source.network.as_ref()) else {
-        return Ok(());
-    };
-    let Ok(rpc) = parse_rpc_env(rpc_env) else {
-        return Ok(());
-    };
-    match chain_id_served_by(&rpc) {
-        Ok(served) if served != chain_id => Err(anyhow!(
-            "{RPC_ENV_VAR} serves chain {served}, but the subgraph's network \"{network}\" is \
-             chain {chain_id}.\n\
-             Its contract calls would read another chain's state. Point {RPC_ENV_VAR} at an \
-             endpoint of chain {chain_id}."
-        )),
-        _ => Ok(()),
-    }
 }
 
 fn unanswered(url: &str, err: &anyhow::Error) -> String {
@@ -1113,13 +1109,13 @@ pub fn translate(
     let usage = usage::scan(mapping_sources);
 
     let rpc_parsed = rpc_env.map(parse_rpc_env);
+    let mut notices = Vec::new();
     let mut networks = match &rpc_parsed {
-        Some(Ok(rpc)) => networks_from_rpc(manifest_yaml, rpc),
+        Some(Ok(rpc)) => networks_from_rpc(manifest_yaml, rpc, &mut notices),
         _ => manifest::NetworksFromRpc::new(),
     };
     // With no endpoint to ask, a name that spells a known network another way
     // is read as that network, and startup says so.
-    let mut notices = Vec::new();
     if rpc_parsed.is_none() {
         for network in manifest::unknown_networks(manifest_yaml) {
             if let Some((known, chain_id)) = manifest::network_spelled(&network) {
@@ -2889,31 +2885,31 @@ dataSources:
         dir
     }
 
-    // graph-node checks a provider against the chain it was configured for (its
-    // genesis hash and net version) and refuses one that serves another. An
-    // endpoint of the wrong chain here would answer the mapping's contract calls
-    // with another chain's state, or index another chain outright.
+    // graph-node indexes a network on whatever chain the providers configured
+    // for it serve; its docker-compose names the one chain `mainnet` whatever it
+    // is, so a local subgraph says `network: mainnet` for an anvil node (31337),
+    // and Hedera's graph-node says it for Hedera (295). When ENVIO_SUBGRAPH_RPC
+    // serves another chain than the registry's for the name, that chain is
+    // indexed, and startup says so.
     #[test]
-    fn refuses_an_rpc_endpoint_of_another_chain() {
-        let mainnet = super::tests::rpc_serving_chain(1);
-        let project = gravity_project("sepolia", &format!("ENVIO_SUBGRAPH_RPC={mainnet}\n"));
-        let project_paths =
-            ParsedProjectPaths::new(project.path().to_str().unwrap(), "config.yaml").unwrap();
-        let message = SystemConfig::parse_from_project_files(&project_paths)
-            .err()
-            .map(|err| format!("{err:#}"))
-            .unwrap_or_default();
-        assert!(
-            message.contains("ENVIO_SUBGRAPH_RPC serves chain 1")
-                && message.contains("network \"sepolia\" is chain 11155111"),
-            "unexpected error: {message}"
+    fn indexes_the_chain_the_rpc_serves_when_the_registry_names_another() {
+        let parse = |network: &str, chain_id: u64| {
+            let rpc = super::tests::rpc_serving_chain(chain_id);
+            let project = gravity_project(network, &format!("ENVIO_SUBGRAPH_RPC={rpc}\n"));
+            let project_paths =
+                ParsedProjectPaths::new(project.path().to_str().unwrap(), "config.yaml").unwrap();
+            let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+            let chains: Vec<u64> = config.get_chains().iter().map(|chain| chain.id).collect();
+            let notices = config
+                .subgraph
+                .map(|subgraph| subgraph.notices)
+                .unwrap_or_default();
+            (chains, notices.len())
+        };
+        assert_eq!(
+            (parse("mainnet", 31337), parse("sepolia", 11155111)),
+            ((vec![31337], 1), (vec![11155111], 0))
         );
-
-        let sepolia = super::tests::rpc_serving_chain(11155111);
-        let project = gravity_project("sepolia", &format!("ENVIO_SUBGRAPH_RPC={sepolia}\n"));
-        let project_paths =
-            ParsedProjectPaths::new(project.path().to_str().unwrap(), "config.yaml").unwrap();
-        SystemConfig::parse_from_project_files(&project_paths).expect("the endpoint's own chain");
     }
 
     const GRAVITY_ABI: &str = r#"[{"type":"event","name":"NewGravatar","anonymous":false,"inputs":[{"name":"id","type":"uint256","indexed":false}]}]"#;

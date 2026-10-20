@@ -149,13 +149,14 @@ pub fn network_spelled(network: &str) -> Option<(String, u64)> {
         .find_map(|candidate| network_to_chain_id(&candidate).map(|id| (candidate, id)))
 }
 
-/// The `network:` values of the manifest's chain data sources and templates
-/// that neither the tables nor the non-EVM list know.
-pub fn unknown_networks(yaml: &str) -> Vec<String> {
+/// The `network:` values of the manifest's chain data sources and templates,
+/// each with the chain id the tables give it, if any. Non-EVM networks are
+/// left out: they are refused by name.
+pub fn chain_networks(yaml: &str) -> Vec<(String, Option<u64>)> {
     let Ok(value) = serde_yaml::from_str::<Value>(yaml) else {
         return vec![];
     };
-    let mut names = Vec::new();
+    let mut networks: Vec<(String, Option<u64>)> = Vec::new();
     for key in ["dataSources", "templates"] {
         let Some(sources) = value.get(key).and_then(Value::as_sequence) else {
             continue;
@@ -169,15 +170,24 @@ pub fn unknown_networks(yaml: &str) -> Vec<String> {
                 continue;
             };
             if is_chain
-                && network_to_chain_id(network).is_none()
                 && !NON_EVM_NETWORKS.iter().any(|(name, _)| *name == network)
-                && !names.iter().any(|name| name == network)
+                && !networks.iter().any(|(name, _)| name == network)
             {
-                names.push(network.to_string());
+                networks.push((network.to_string(), network_to_chain_id(network)));
             }
         }
     }
-    names
+    networks
+}
+
+/// The `network:` values of the manifest's chain data sources and templates
+/// that neither the tables nor the non-EVM list know.
+pub fn unknown_networks(yaml: &str) -> Vec<String> {
+    chain_networks(yaml)
+        .into_iter()
+        .filter(|(_, chain_id)| chain_id.is_none())
+        .map(|(network, _)| network)
+        .collect()
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -684,9 +694,11 @@ fn parse_data_source(
     let network = obj.string("network");
     let chain_id = match (&network, kind) {
         (Some(network), DataSourceKind::Contract) => {
+            // What the endpoint serves comes first: graph-node indexes a
+            // network on the chain its configured provider serves.
             match (network_to_chain_id(network), networks.get(network)) {
+                (_, Some(Ok(id))) => Some(*id),
                 (Some(id), _) => Some(id),
-                (None, Some(Ok(id))) => Some(*id),
                 (None, asked) => {
                     match NON_EVM_NETWORKS
                         .iter()

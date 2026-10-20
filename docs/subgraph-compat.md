@@ -491,9 +491,12 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
   entries in order as a viem fallback transport. The entries are fallbacks
   for one chain, not per-chain endpoints: translation refuses a non-empty
   value when the subgraph indexes more than one chain. At startup the endpoint
-  is asked its `eth_chainId`, and one that serves another chain than the
-  network's is refused, as graph-node refuses a provider whose chain doesn't
-  match its network; one that doesn't answer is left to the runtime's retries.
+  is asked its `eth_chainId`. graph-node indexes a network on whatever chain the
+  providers configured for it serve (its docker-compose calls the one chain
+  `mainnet` whatever it is, and a local subgraph says `network: mainnet` for an
+  anvil node), so an endpoint that serves another chain than the registry's for
+  the network's name decides the chain, with a startup notice naming both; one
+  that doesn't answer leaves the name to the tables.
 - **`receipt: true` + RPC: envio's standard behavior, inherited.** envio's
   RPC source reads the receipt scalars from `eth_getTransactionReceipt`, so a
   chain synced over RPC (`for: sync`, or a fallback that took over) serves

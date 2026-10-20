@@ -1662,12 +1662,6 @@ impl SystemConfig {
             }
             (parsed, _) => parsed?,
         };
-        if let (Some(rpc), Some(subgraph)) = (
-            env_vars.get(crate::subgraph::RPC_ENV_VAR),
-            config.subgraph.as_ref(),
-        ) {
-            crate::subgraph::verify_rpc_chain(rpc, &subgraph.manifest)?;
-        }
         let manifest_file = if *root == manifest_dir {
             manifest_path.file_name().map(PathBuf::from)
         } else {
