@@ -832,17 +832,6 @@ type ChainPasses = {
 };
 const chainPasses = new Map<number, ChainPasses>();
 
-if (process.env.ENVIO_SUBGRAPH_LOG_MEMORY) {
-  const t = setInterval(() => {
-    let running = 0;
-    for (const p of chainPasses.values()) running += p.running.length;
-    const m = process.memoryUsage();
-    // eslint-disable-next-line no-console
-    console.log(`[mem] heap=${Math.round(m.heapUsed / 1e6)}MB ext=${Math.round(m.external / 1e6)}MB ab=${Math.round(m.arrayBuffers / 1e6)}MB passes=${running} inflight=${registerInFlight.size} cache=${registerCache.size} missers=${missers.size} slots=${JSON.stringify(registerSlots.stats())}`);
-  }, 5000);
-  t.unref();
-}
-
 /** Passes start in about the order of their events, so this mostly appends. */
 function insertByPosition<T extends { position: number }>(list: T[], item: T) {
   let at = list.length;
