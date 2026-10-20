@@ -634,6 +634,16 @@ function fillFromImportedNames(root: string, dir: string, mappingFiles: string[]
       if (target !== dir && !target.startsWith(dir + path.sep)) continue;
       if ([`${target}.ts`, path.join(target, "index.ts")].some((candidate) => existsSync(candidate))) continue;
       const module = target === dir || existsSync(target) ? path.join(target, "index.ts") : `${target}.ts`;
+      // Only where graph codegen writes ABI modules, or the directory's own
+      // index: schema.ts and templates.ts hold entity and template classes.
+      const parts = path.relative(dir, module).split(path.sep);
+      const abiModule =
+        parts.length === 1
+          ? parts[0] === "index.ts"
+          : parts.length === 2
+            ? parts[0] !== "templates"
+            : parts.length === 3 && parts[0] === "templates";
+      if (!abiModule) continue;
       const entry = wanted.get(module) ?? { names: new Set<string>(), importers: new Set<string>() };
       for (const name of clause.split(",")) {
         const imported = name.trim().split(/\s+as\s+/)[0];
