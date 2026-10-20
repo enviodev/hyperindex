@@ -480,7 +480,9 @@ classes call `DataSource.create`. Consequences:
   steps — Lido's `graph codegen && node genParserData.js` writes
   `generated/parserData.ts` — every step runs in order: `graph codegen`
   in-process as above, the rest in a shell with the project's
-  `node_modules/.bin` on `PATH`, as the package manager would. A step that
+  `node_modules/.bin` on `PATH`, as the package manager would, and without
+  envio's own `ENVIO_*` settings (its HyperSync token, the database password)
+  in its environment: it is the repo's code. A step that
   is only a package install (`yarn && graph codegen`) is skipped: the
   developer installs before envio starts, and envio runs no installer.
   graph-cli before 0.93 ships CommonJS, whose command class an ES import
