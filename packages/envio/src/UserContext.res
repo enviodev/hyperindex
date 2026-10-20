@@ -199,7 +199,10 @@ let rec prepareEffectCall = (
   let effectArgs: Internal.effectArgs = {
     input,
     context: effectContext,
-    cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+    cacheKey: input
+    ->S.reverseConvertOrThrow(effect.input)
+    ->Utils.Hash.makeOrThrow
+    ->Utils.Hash.boundCacheKey,
     chainId: params.item->Internal.getItemChainId,
     checkpointId: params.checkpointId,
   }
