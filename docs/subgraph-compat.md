@@ -931,7 +931,10 @@ is a copy naming `../src/…`), the error names that manifest to point
 isn't there gets the same in its load error: the nearest package's scripts
 that mention it, or run a repo file that does (Goldfinch's `"prebuild":
 "ts-node ./scripts/update-address-manifest.ts"` writes
-src/address-manifest.ts).
+src/address-manifest.ts). An event handler whose event the data source's ABI
+doesn't declare (burngraph handles `AnonymousDeposit(…)`, its ABI declares
+`ReceivedDeposit(…)`) is refused as graph-cli refuses it ("Event with
+signature … not present in ABI"), with the events the ABI does declare.
 
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`

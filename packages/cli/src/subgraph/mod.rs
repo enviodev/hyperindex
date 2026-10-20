@@ -348,6 +348,54 @@ pub fn apply_network(manifest_yaml: &str, networks_json: &str, network: &str) ->
     Ok(serde_yaml::to_string(&manifest)?)
 }
 
+/// An event handler whose event the data source's ABI doesn't declare, as
+/// graph-cli's validation reports it ("Event with signature … not present in
+/// ABI"), or `None`. envio's own check reported it as a translation gap.
+pub fn undeclared_events(manifest_yaml: &str, files: &HashMap<String, String>) -> Option<String> {
+    let mut discard = Report::new();
+    let manifest = manifest::parse(manifest_yaml, &mut discard)?;
+    let mut messages = Vec::new();
+    for source in manifest.all_sources() {
+        let Some((abi, path)) = source
+            .abi
+            .as_ref()
+            .and_then(|abi| Some((abi, source.abis.get(abi)?)))
+        else {
+            continue;
+        };
+        let Some(abi_json) = files
+            .get(path)
+            .or_else(|| files.get(path.trim_start_matches("./")))
+        else {
+            continue;
+        };
+        for handler in &source.event_handlers {
+            let Some((false, events)) = abi::declared_events(&handler.event, abi_json) else {
+                continue;
+            };
+            let kind = if source.is_template {
+                "template"
+            } else {
+                "data source"
+            };
+            messages.push(format!(
+                "The {kind} \"{}\" handles the event {}, which its ABI \"{abi}\" ({path}) doesn't \
+                 declare. The ABI's events: {}. graph-cli refuses the manifest the same way \
+                 (\"Event with signature … not present in ABI\"): the manifest and the ABI are \
+                 from different versions of the contract.",
+                source.name,
+                handler.event,
+                if events.is_empty() {
+                    "none".to_string()
+                } else {
+                    events.join(", ")
+                }
+            ));
+        }
+    }
+    (!messages.is_empty()).then(|| messages.join("\n"))
+}
+
 /// The ABI files the manifest's data sources and templates decode with that
 /// aren't among `files`, as one message naming each, or `None`. envio's own
 /// check names only a "Virtual config file", once per run.
@@ -3452,6 +3500,38 @@ type Renewal implements Event @entity {
         )
         .unwrap();
         fs::write(dir.join(manifest), GRAVITY_MANIFEST).unwrap();
+    }
+
+    // burngraph's manifest handles `AnonymousDeposit(indexed
+    // address,uint256,string,string)`, and its VoteOption ABI declares that
+    // event as ReceivedDeposit: graph-cli refuses it ("Event with signature …
+    // not present in ABI"). envio reported a translation gap of its own
+    // ("envio can't index the result … Event AnonymousDeposit not found in ABI
+    // file", "please open an issue").
+    #[test]
+    fn says_which_event_the_abi_does_not_declare() {
+        let dir = tempdir::TempDir::new("envio-subgraph-undeclared-event").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("NewGravatar(uint256)", "AnonymousGravatar(uint256)"),
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err,
+            "The data source \"Gravity\" handles the event AnonymousGravatar(uint256), which its \
+             ABI \"Gravity\" (./abis/Gravity.json) doesn't declare. The ABI's events: \
+             NewGravatar(uint256). graph-cli refuses the manifest the same way (\"Event with \
+             signature … not present in ABI\"): the manifest and the ABI are from different \
+             versions of the contract."
+        );
     }
 
     // Uniswap v3's build writes `v3-subgraph.yaml`; `--config` naming it was

@@ -160,6 +160,36 @@ fn candidates(name: &str, abi_json: Option<&str>) -> Vec<Value> {
         .collect()
 }
 
+/// Whether the ABI declares an event of the manifest signature's name, and
+/// its events as graph-cli prints them (`Transfer(indexed address,uint256)`).
+/// `None` when the ABI can't be read.
+pub fn declared_events(manifest_signature: &str, abi_json: &str) -> Option<(bool, Vec<String>)> {
+    let abi = serde_json::from_str::<Value>(abi_json).ok()?;
+    let entries = abi
+        .as_array()
+        .or_else(|| abi.get("abi").and_then(Value::as_array))?;
+    let events: Vec<String> = entries
+        .iter()
+        .filter(|entry| entry.get("type").and_then(Value::as_str) == Some("event"))
+        .map(|entry| {
+            let params: Vec<String> = inputs_of(entry)
+                .iter()
+                .map(|input| {
+                    let ty = solidity_type(input);
+                    if is_indexed(input) {
+                        format!("indexed {ty}")
+                    } else {
+                        ty
+                    }
+                })
+                .collect();
+            format!("{}({})", abi_name(entry), params.join(","))
+        })
+        .collect();
+    let declared = !candidates(&event_name(manifest_signature), Some(abi_json)).is_empty();
+    Some((declared, events))
+}
+
 fn inputs_of(entry: &Value) -> Vec<Value> {
     entry
         .get("inputs")

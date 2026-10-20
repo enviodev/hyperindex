@@ -1485,6 +1485,11 @@ impl SystemConfig {
         let rpc_env = env.get(crate::subgraph::RPC_ENV_VAR).map(|s| s.as_str());
         let missing_abis =
             crate::subgraph::missing_abi_files(manifest_yaml, files, Path::new(root));
+        if missing_abis.is_none() {
+            if let Some(undeclared) = crate::subgraph::undeclared_events(manifest_yaml, files) {
+                return Err(anyhow!("{undeclared}"));
+            }
+        }
         let translation = match (
             crate::subgraph::translate(
                 manifest_yaml,
