@@ -768,11 +768,13 @@ export class Value {
   static fromString(value: string): Value {
     return new Value(ValueKind.STRING, value);
   }
+  // AssemblyScript compiles a `null` passed as a value type (a nullable
+  // `Timestamp` field's generated `set x(value: i64)`) to 0.
   static fromI32(value: number): Value {
-    return new Value(ValueKind.INT, value);
+    return new Value(ValueKind.INT, value ?? 0);
   }
   static fromI64(value: bigint): Value {
-    return new Value(ValueKind.INT8, value);
+    return new Value(ValueKind.INT8, value ?? 0n);
   }
   static fromBigInt(value: BigInt_): Value {
     return new Value(ValueKind.BIGINT, value);
@@ -781,7 +783,7 @@ export class Value {
     return new Value(ValueKind.BIGDECIMAL, value);
   }
   static fromBoolean(value: boolean): Value {
-    return new Value(ValueKind.BOOL, value);
+    return new Value(ValueKind.BOOL, value ?? false);
   }
   static fromBytes(value: Bytes): Value {
     return new Value(ValueKind.BYTES, value);
@@ -790,7 +792,7 @@ export class Value {
     return new Value(ValueKind.BYTES, value);
   }
   static fromTimestamp(value: bigint): Value {
-    return new Value(ValueKind.TIMESTAMP, value);
+    return new Value(ValueKind.TIMESTAMP, value ?? 0n);
   }
   static fromNull(): Value {
     return new Value(ValueKind.NULL, null);
