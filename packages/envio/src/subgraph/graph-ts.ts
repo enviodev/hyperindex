@@ -1623,9 +1623,16 @@ const storeImpl = {
     const visible = file
       ? rows.filter((row: any) => file.entities.has(target) && file.written.has(`${target}\u0000${row.id}`))
       : rows;
-    return visible.map((row: any) => toEntity(target, row) as Entity);
+    // graph-node answers in key order (`EntityCache::load_related` walks a
+    // BTreeSet of entity keys): by id, as the id's type orders.
+    return [...visible].sort(byId).map((row: any) => toEntity(target, row) as Entity);
   },
 };
+
+function byId(a: { id: unknown }, b: { id: unknown }): number {
+  if (typeof a.id === "string" && typeof b.id === "string") return codePointOrder(a.id, b.id);
+  return (a.id as bigint) < (b.id as bigint) ? -1 : (a.id as bigint) > (b.id as bigint) ? 1 : 0;
+}
 
 export const store = strictNamespace("store", storeImpl);
 
