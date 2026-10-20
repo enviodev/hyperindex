@@ -727,6 +727,7 @@ fn call_event_config(name: &str) -> EventConfig {
             transaction_fields: Some(vec![]),
             block_fields: Some(vec![]),
         }),
+        topic0: None,
     }
 }
 
@@ -782,12 +783,12 @@ fn contract_config(
     // An overloaded name needs a unique envio name as well as a spelled-out
     // signature: the generated routing keys off the name, and the runtime has
     // to register the handler under the same one.
-    let mut resolved: Vec<(String, Option<String>)> = Vec::new();
+    let mut resolved: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     let mut ordinals: HashMap<String, usize> = HashMap::new();
     // graph-node runs every handler whose event matches a log, in manifest
     // order (`handlers_for_log`); envio runs every registration on an event,
     // so a second handler of the same event registers on the first's.
-    let mut by_event: HashMap<String, (String, usize)> = HashMap::new();
+    let mut by_event: HashMap<(String, Option<String>), (String, usize)> = HashMap::new();
     for handler in source.event_handlers.iter_mut() {
         if handler.name.is_empty() {
             continue;
@@ -803,7 +804,26 @@ fn contract_config(
             report,
         );
         handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
-        if let Some((name, _)) = by_event.get(&event) {
+        if handler.topic0.is_some() {
+            let location = format!(
+                "data source \"{source_name}\" → eventHandlers → \"{}\" → topic0",
+                handler.handler
+            );
+            if !abi::is_anonymous(&handler.event, abi_json.as_deref()) {
+                report.unsupported(
+                    "event handlers whose topic0 is not the event signature's hash on an event \
+                     the ABI doesn't declare anonymous",
+                    location,
+                );
+            } else if !handler.topics.is_empty() {
+                report.unsupported(
+                    "topic1-3 filters on an anonymous event matched on topic0",
+                    location,
+                );
+            }
+        }
+        let key = (event.clone(), handler.topic0.clone());
+        if let Some((name, _)) = by_event.get(&key) {
             handler.name = name.clone();
             continue;
         }
@@ -815,12 +835,12 @@ fn contract_config(
         };
         *ordinal += 1;
         handler.name = unique.clone();
-        by_event.insert(event.clone(), (unique.clone(), resolved.len()));
+        by_event.insert(key, (unique.clone(), resolved.len()));
         // The generated config needs the same unique name whenever one was
         // minted for an overload: the runtime registers under the name the
         // config carries.
         let renamed = unique != base;
-        resolved.push((event, renamed.then_some(unique)));
+        resolved.push((event, renamed.then_some(unique), handler.topic0.clone()));
     }
 
     let mut receipts = vec![false; resolved.len()];
@@ -867,10 +887,11 @@ fn contract_config(
     let mut events: Vec<EventConfig> = resolved
         .into_iter()
         .zip(receipts)
-        .map(|((event, name), receipt)| EventConfig {
+        .map(|((event, name, topic0), receipt)| EventConfig {
             event,
             name,
             field_selection: Some(field_selection_for(receipt, usage)),
+            topic0,
         })
         .collect();
 
@@ -1871,7 +1892,17 @@ type Gravatar @entity {
                 &ambiguous(),
             )
         };
-        assert_eq!((with(&own).is_ok(), with("0x").is_ok()), (true, false));
+        // Another word is only a selector on an anonymous event, which
+        // NewGravatar isn't.
+        let selector = format!("0x4bb278f3{}", "00".repeat(28));
+        assert_eq!(
+            (
+                with(&own).is_ok(),
+                with("0x").is_ok(),
+                with(&selector).is_ok()
+            ),
+            (true, false, false)
+        );
     }
 
     #[test]
