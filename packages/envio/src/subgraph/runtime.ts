@@ -37,6 +37,7 @@ import {
   retagChangetype,
   retagEach,
   installCallHook,
+  installLegacySignatureHook,
   installHosts,
   installHandlerCreateHook,
   setLegacyNullOperands,
@@ -62,6 +63,7 @@ import {
   ethereumValueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
+import { functionSignature } from "./abi-types.ts";
 import { resetRpcClients } from "./rpc.ts";
 import {
   EVENT_CLASSES_EXPORT,
@@ -132,6 +134,8 @@ type DataSource = {
   endBlock?: number;
   mappingFile: string;
   apiVersion?: string;
+  /** ABI name to file, relative to `root`. */
+  abis?: Record<string, string>;
   entities?: string[];
   eventHandlers: EventHandler[];
   callHandlers?: CallHandler[];
@@ -1017,6 +1021,29 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         `events of that ${templateName} are not indexed. A register pass reads only what earlier register passes ` +
         "saved. Please open an issue: https://github.com/enviodev/hyperindex/issues",
     );
+  });
+
+  const abiFiles = new Map<string, string>();
+  for (const source of [...config.dataSources, ...config.templates]) {
+    for (const [name, file] of Object.entries(source.abis ?? {})) {
+      if (!abiFiles.has(name)) abiFiles.set(name, path.resolve(config.root, file));
+    }
+  }
+  const legacySignatures = new Map<string, string>();
+  installLegacySignatureHook((abiName, functionName) => {
+    const key = `${abiName}.${functionName}`;
+    const known = legacySignatures.get(key);
+    if (known) return known;
+    const file = abiFiles.get(abiName);
+    const signature = file ? functionSignature(JSON.parse(readFileSync(file, "utf8")), functionName) : null;
+    if (!signature) {
+      throw new Error(
+        `Envio Subgraph: the mapping calls ${key} by name, and the manifest's ABI "${abiName}" has no function ` +
+          `${functionName}. graph-node fails the call the same way.`,
+      );
+    }
+    legacySignatures.set(key, signature);
+    return signature;
   });
 
   installCallHook((call) => {
