@@ -1642,7 +1642,6 @@ pub struct Rendered {
     pub network: String,
     pub template: String,
     pub view: String,
-    pub files: Vec<PathBuf>,
     pub steps: Vec<String>,
 }
 
@@ -1842,7 +1841,6 @@ fn run_codegen_prelude(
         network: picked.unwrap_or_default(),
         template: String::new(),
         view: String::new(),
-        files: vec![written],
         steps: prelude.to_vec(),
     }))
 }
@@ -2430,7 +2428,6 @@ pub fn render_manifest(
         network: choice.network.clone(),
         template: choice.plan.template.clone(),
         view: choice.view.clone(),
-        files: run.files.keys().cloned().collect(),
         steps: Vec::new(),
     }))
 }
