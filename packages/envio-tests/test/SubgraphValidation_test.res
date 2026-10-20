@@ -199,7 +199,8 @@ If you need this, please open an issue so we can look at your use case:
   })
 
   // A substreams-powered subgraph's entities come out of a Substreams
-  // package, which graph-node streams from a Substreams provider.
+  // package, which graph-node read from a Substreams provider until v0.42
+  // removed Substreams support (NEWS.md).
   it("refuses a substreams-powered subgraph, naming its package", t => {
     let manifest = `
 specVersion: 0.0.4
@@ -221,7 +222,7 @@ dataSources:
       translate(~schema=baseSchema, ~manifest),
     ).toEqual(`Envio Subgraph can't index a substreams-powered subgraph (\`kind: substreams\`).
   Found in data source "substream_test" → kind.
-Its entities come from the module graph_out of the Substreams package substreams-test-v1.0.1.spkg, which graph-node streams from a Substreams provider. Envio Subgraph runs AssemblyScript mappings over chain data and can't run a Substreams module.
+Its entities come from the module graph_out of the Substreams package substreams-test-v1.0.1.spkg, which graph-node read from a Substreams provider until v0.42 removed Substreams support. Envio Subgraph runs AssemblyScript mappings over chain data and can't run a Substreams module.
 If you need this, please open an issue so we can look at your use case:
   https://github.com/enviodev/hyperindex/issues`)
   })

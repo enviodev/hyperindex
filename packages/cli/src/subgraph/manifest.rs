@@ -598,8 +598,9 @@ fn parse_data_source(
                 "a substreams-powered subgraph (`kind: substreams`)",
                 format!(
                     "Its entities come from the module {} of the Substreams package {}, which \
-                     graph-node streams from a Substreams provider. Envio Subgraph runs \
-                     AssemblyScript mappings over chain data and can't run a Substreams module.",
+                     graph-node read from a Substreams provider until v0.42 removed Substreams \
+                     support. Envio Subgraph runs AssemblyScript mappings over chain data and \
+                     can't run a Substreams module.",
                     package("moduleName"),
                     package("file"),
                 ),
