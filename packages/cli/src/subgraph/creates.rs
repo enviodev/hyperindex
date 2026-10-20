@@ -14,7 +14,7 @@
 //! wrong "creates" costs a register pass; a wrong "doesn't" would lose every
 //! address the handler registers.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use oxc::{allocator::Allocator, ast::ast::*, ast_visit::Visit, parser::Parser, span::SourceType};
@@ -792,6 +792,45 @@ pub fn creating_handlers(mapping: &Path, handlers: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// For each of `handlers`, the `templates` whose generated class (graph
+/// codegen's `templates.ts`) its code surely reaches: by name, through code
+/// the analysis read in full. Unlike `creating_handlers`, whatever it can't
+/// see leads nowhere here, and neither does a namespace import, which may
+/// stand for any of a module's declarations.
+pub fn sure_creates(mapping: &Path, handlers: &[String], templates: &[String]) -> Vec<Vec<String>> {
+    let mut analysis = Analysis::default();
+    let Ok(mapping) = std::fs::canonicalize(mapping) else {
+        return vec![Vec::new(); handlers.len()];
+    };
+    let templates: HashSet<&str> = templates.iter().map(String::as_str).collect();
+    handlers
+        .iter()
+        .map(|handler| {
+            let Some(start) = analysis.export(&mapping, handler, &mut HashSet::new()) else {
+                return Vec::new();
+            };
+            let mut seen: HashSet<Node> = HashSet::new();
+            let mut reached: BTreeSet<String> = BTreeSet::new();
+            let mut queue: VecDeque<Node> = start.into_iter().collect();
+            while let Some(node) = queue.pop_front() {
+                let Node::Decl(path, name) = &node else {
+                    continue;
+                };
+                if templates.contains(name.as_str())
+                    && path.file_stem().is_some_and(|stem| stem == "templates")
+                {
+                    reached.insert(name.clone());
+                    continue;
+                }
+                if seen.insert(node.clone()) {
+                    queue.extend(analysis.edges(&node));
+                }
+            }
+            reached.into_iter().collect()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,6 +1010,78 @@ export function viaIpfsMap(): void { ipfs.map("Qm", "processItem", null, []); }
         assert_eq!(
             creating(&dir, "src/broken.ts", &["handleBroken"]),
             vec!["handleBroken".to_string()]
+        );
+    }
+
+    // A create the analysis can't pin to a contract template's generated
+    // class is not sure: a namespace import, a package, graph-ts's own
+    // DataSourceTemplate, or a file template (which a block handler's run
+    // does create).
+    #[test]
+    fn is_sure_only_of_a_contract_template_class_it_reaches_by_name() {
+        let dir = project(&[
+            (
+                "generated/templates.ts",
+                r#"
+import { Address, DataSourceTemplate } from "@graphprotocol/graph-ts";
+export class Pool extends DataSourceTemplate {
+  static create(address: Address): void { DataSourceTemplate.create("Pool", [address.toHex()]); }
+}
+export class Metadata extends DataSourceTemplate {
+  static create(cid: string): void { DataSourceTemplate.create("Metadata", [cid]); }
+}
+"#,
+            ),
+            (
+                "src/pools.ts",
+                r#"
+import { Pool as PoolTemplate, Metadata } from "../generated/templates";
+export function createPool(address: Address): void { PoolTemplate.create(address); }
+export function readMetadata(cid: string): void { Metadata.create(cid); }
+"#,
+            ),
+            (
+                "src/block.ts",
+                r#"
+import { DataSourceTemplate } from "@graphprotocol/graph-ts";
+import * as templates from "../generated/templates";
+import { helper } from "some-package";
+import { createPool, readMetadata } from "./pools";
+export function viaHelper(block: any): void { if (block.number.isZero()) createPool(block.author); }
+export function viaNamespace(block: any): void { templates.Pool.create(block.author); }
+export function viaFileTemplate(block: any): void { readMetadata("Qm"); }
+export function viaPackage(block: any): void { helper(); }
+export function viaRawCreate(block: any): void { DataSourceTemplate.create("Pool", []); }
+export function plain(block: any): void {}
+"#,
+            ),
+        ]);
+        let handlers: Vec<String> = [
+            "viaHelper",
+            "viaNamespace",
+            "viaFileTemplate",
+            "viaPackage",
+            "viaRawCreate",
+            "plain",
+            "notExported",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            sure_creates(
+                &dir.path().join("src/block.ts"),
+                &handlers,
+                &["Pool".to_string()]
+            ),
+            vec![
+                vec!["Pool".to_string()],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            ]
         );
     }
 

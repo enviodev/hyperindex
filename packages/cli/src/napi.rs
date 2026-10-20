@@ -147,6 +147,21 @@ pub fn subgraph_register_handlers(
     crate::subgraph::creates::register_handlers(&sources)
 }
 
+/// For each handler of the mapping, the templates whose generated class its
+/// code surely reaches.
+#[napi_derive::napi]
+pub fn subgraph_sure_creates(
+    mapping_file: String,
+    handlers: Vec<String>,
+    templates: Vec<String>,
+) -> Vec<Vec<String>> {
+    crate::subgraph::creates::sure_creates(
+        std::path::Path::new(&mapping_file),
+        &handlers,
+        &templates,
+    )
+}
+
 #[napi_derive::napi(object)]
 pub struct BundledCodegenResult {
     /// Where the tree was written.

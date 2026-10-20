@@ -15,9 +15,11 @@ import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
+import { cached as storedEffectOutput, resetStartupTables } from "../EffectCacheLookup.res.mjs";
 import {
   subgraphFileToJavascript,
   subgraphRegisterHandlers,
+  subgraphSureCreates,
   subgraphWorkspacePackages,
   subgraphWorkspaceRoot,
 } from "../Core.res.mjs";
@@ -63,6 +65,7 @@ import {
   type CallKind,
   commitRegisterWrites,
   resetRegisterStore,
+  setRegisterFrontier,
   POSITION_BLOCK,
   ROUND_SPAN,
   ethereumValueToJs,
@@ -85,6 +88,8 @@ import {
   RETAG_EACH_HELPER,
   RETAG_HELPER,
   operators,
+  resetNullObjects,
+  stringEncodings,
 } from "./assemblyscript.ts";
 import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
 import { createHash } from "node:crypto";
@@ -165,7 +170,10 @@ type SubgraphConfig = {
   /** Set when the manifest has a `graft:` block; the indexer ignores it. */
   graft?: { base: string; block: number };
   graftNotice?: string;
+  /** What the translation left out of the config and why, logged at startup. */
+  notices?: string[];
   timeseriesEntities?: string[];
+  skipDuplicateEntities?: string[];
   aggregations?: SubgraphSchema["aggregations"];
   /** The config's contract name for each data source and template. */
   contractAccessors: Record<string, string>;
@@ -175,6 +183,8 @@ type SubgraphConfig = {
   rpcUrls: string[];
   /** Per chain id, the reorg depth a block handler's header reads are held back by. */
   blockHeaderLag?: Record<number, number>;
+  /** Chains HyperSync doesn't serve: their headers and receipts come from RPC alone. */
+  rpcOnlyChains?: number[];
   /** Set when envio wrote the manifest from the repo's template, or ran the codegen steps that write it. */
   renderedManifest?: {
     script: string;
@@ -267,6 +277,18 @@ function isOutsideSource(url: string): boolean {
     !url.endsWith(".d.ts") &&
     !url.includes("/node_modules/") &&
     !url.startsWith(ENVIO_PACKAGE_URL)
+  );
+}
+
+/** A bare import Node resolved to a dependency's JavaScript, which has no AssemblyScript entry at all. */
+function isJavaScriptPackage(specifier: string, url: string | undefined, parentUrl: string): boolean {
+  const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
+  return (
+    bare &&
+    url !== undefined &&
+    url.includes("/node_modules/") &&
+    /\.[cm]?js$/.test(url) &&
+    resolveAssemblyScriptPackage(specifier, parentUrl) === null
   );
 }
 
@@ -364,6 +386,22 @@ function installResolveHook(root: string) {
           return { url: asFile, shortCircuit: true };
         }
       }
+      const parentUrl: string | undefined = context?.parentURL;
+      const fromProject =
+        projectRoot !== null &&
+        typeof parentUrl === "string" &&
+        (parentUrl.startsWith(projectRoot) || isOutsideSource(parentUrl)) &&
+        !parentUrl.includes("/node_modules/");
+      // Packages envio fetched for the mappings resolve from a parent of their own.
+      const forProject = fromProject || (parentUrl !== undefined && parentUrl === fetchedModulesParent);
+      if (forProject && isJavaScriptPackage(specifier, resolved?.url, parentUrl!)) {
+        const importer = fromProject ? path.relative(fileURLToPath(projectRoot!), fileURLToPath(parentUrl!)) : "A mapping";
+        throw new Error(
+          `${importer} imports the JavaScript package "${specifier}", which AssemblyScript can't compile: ` +
+            "asc reads a package's `ascMain`, assembly/index.ts or a .ts entry, and this one has none, so " +
+            "`graph build` fails on this mapping too.",
+        );
+      }
       // A subgraph project's package.json has no `type`, so its mappings and
       // its `generated/` would load as CommonJS and reach the shim — a real ES
       // module — through `require()`, which Node refuses inside a cycle. They
@@ -412,6 +450,8 @@ function installResolveHook(root: string) {
   globals.min ??= builtinMin;
   globals.max ??= builtinMax;
   globals.unchecked ??= (value: unknown) => value;
+  globals.String.UTF8 ??= stringEncodings.UTF8;
+  globals.String.UTF16 ??= stringEncodings.UTF16;
   const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
   if (!Object.getOwnPropertyDescriptor(typedArray, "dataStart")) {
     Object.defineProperty(typedArray, "dataStart", {
@@ -686,10 +726,17 @@ const registerInFlight = new Map<string, Promise<unknown>>();
  */
 const registerCost = { hostOps: 0, passes: 0 };
 const REGISTER_COST_MIN_PASSES = 20;
+// ChainFetching reports each chain's lowest partition frontier after every
+// response it applies; the register store keeps the versions above it.
+(globalThis as any).__envioSubgraphRegisterFrontier = setRegisterFrontier;
 (globalThis as any).__envioSubgraphRegisterCostPerItem = () =>
   registerCost.passes < REGISTER_COST_MIN_PASSES ? undefined : registerCost.hostOps / registerCost.passes;
 
 async function runRegisterHost(effect: Effect, input: unknown, chainId: number): Promise<unknown> {
+  // A resync after `envio start -r` keeps the stored call answers; the handler
+  // pass reads them through the effect machinery, this pass reads them here.
+  const stored = await storedEffectOutput(effect as any, chainId, input as any);
+  if (stored !== undefined) return stored;
   return effect.handler({
     input,
     // Only `blockTimestamp` reads the context, and only for the chain id, which
@@ -892,10 +939,14 @@ async function rerunProvisional(scope: Scope): Promise<boolean> {
  */
 let moduleGeneration = 0;
 function freshModuleState(scope: Scope): void {
+  resetNullObjects();
   scope.mappingExports[MODULE_INIT]?.(++moduleGeneration);
 }
 
-const maxRegisterRounds = 100;
+// A round answers the one call the mapping stopped at, so a handler making N
+// calls before its create() takes N rounds; graph-node has no limit at all.
+// The handler pass's own bound (UserContext.maxSyncRounds).
+const maxRegisterRounds = 10_000;
 
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
   for (let round = 1; round <= maxRegisterRounds; round++) {
@@ -977,6 +1028,21 @@ const registeredTemplates = new Set<string>();
 const blockTemplates = new Set<string>();
 const REGISTERED_TEMPLATES_LIMIT = 100_000;
 const unregisteredCreates = new Set<string>();
+
+/**
+ * A `call` block handler is a call handler, and a data source's `once` one
+ * runs in register mode first; a template's runs per instance, as a handler only.
+ */
+function hasRegisterPass(source: DataSource, handler: BlockHandler): boolean {
+  return handler.filter === "call" || (handler.filter === "once" && !source.isTemplate);
+}
+
+// Core registers no contract from onBlock, so graph-node's create from a block
+// handler (centrifuge/tinlake's preloaded pools) can't be matched.
+const BLOCK_HANDLER_CREATE =
+  "envio registers a template's instances in a register pass ahead of the handlers, and only event " +
+  "handlers, call handlers and a data source's `once` block handlers get one, so the instances a block " +
+  "handler creates would never have their events indexed";
 
 /**
  * The block and round each registered address was created in, by the same key.
@@ -1110,6 +1176,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   setLegacyNullOperands(legacyNulls);
   installResolveHook(config.root);
   resetRpcClients();
+  resetStartupTables();
   resetCallBackends();
   // The chain's sources read calls only when a handler wants them.
   installCallSource(fetchCalls, config.rpcUrls ?? []);
@@ -1123,6 +1190,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   unregisteredCreates.clear();
   announceWhereToQuery();
   if (config.graftNotice) warn(config.graftNotice);
+  for (const notice of config.notices ?? []) warn(notice);
   if (config.graft && process.env.ENVIO_SUBGRAPH_GRAFT_CHECK !== "off") {
     const ownStarts = config.dataSources.flatMap((source) =>
       source.startBlock === undefined ? [] : [source.startBlock],
@@ -1142,7 +1210,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const hit = registerCache.get(`envio_subgraph_eth_call\u0000${encoded}`);
     return hit && "value" in hit ? (hit.value as string) : undefined;
   });
-  const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {});
+  const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {}, config.rpcOnlyChains ?? []);
   const callSync = (effect: unknown, input: unknown, what: string) => {
     const scope = currentScope();
     void what;
@@ -1153,7 +1221,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   };
 
   installHosts({
-    ipfsCat: (hash) => callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.cat()"),
+    // graph-node's `ipfs.cat` answers null for a path its ContentPath refuses.
+    ipfsCat: (hash) => {
+      const path = normalizeIpfsPath(hash);
+      return path === null ? null : callSync(hosts.ipfsCat, path, "ipfs.cat()");
+    },
     ipfsMap: (hash, callback, userData, flags) => {
       const scope = currentScope();
       // graph-node: `ensure!(flags.contains("json"), "Flags must contain 'json'")`.
@@ -1164,7 +1236,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           `ipfs.map() names the callback "${callback}", which the mapping doesn't export.`,
         );
       }
-      const encoded: string | null = callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.map()");
+      const path = normalizeIpfsPath(hash);
+      if (path === null) throw new Error(`ipfs.map(): "${hash}" is not an IPFS content path`);
+      const encoded: string | null = callSync(hosts.ipfsMapFile, path, "ipfs.map()");
       if (encoded === null) return;
       const body = Buffer.from(encoded, "base64").toString("utf8");
       // One JSON value per line, each handed to the callback in turn; a line
@@ -1232,13 +1306,22 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   });
 
   // Only the register pass registers an address, at fetch time. A create it
-  // didn't make — it threw on an entity no register pass saved, or there is
-  // none, as for a polling block handler — loses that template's events.
+  // didn't make (it threw on an entity no register pass saved) loses that
+  // template's events; one from a block handler that has no register pass is
+  // refused.
   installHandlerCreateHook((templateName, address) => {
     const scope = currentScope();
     if (scope.context.isPreload) return;
     const key = `${scope.dataSource.chainId}:${templateName}:${address.toLowerCase()}`;
     if (registeredTemplates.has(key) || unregisteredCreates.has(key)) return;
+    if (scope.blockHandler) {
+      throw unsupported(
+        "creating contract templates from a block handler",
+        `data source "${scope.dataSource.name}" → blockHandlers → "${scope.blockHandler}", which created ` +
+          `${templateName} ${address.toLowerCase()} at block ${scope.blockNumber}`,
+        BLOCK_HANDLER_CREATE,
+      );
+    }
     unregisteredCreates.add(key);
     warn(
       `Envio Subgraph: data source "${scope.dataSource.name}" created the template "${templateName}" for ` +
@@ -1301,6 +1384,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     entityFieldTypes: config.entityFieldTypes ?? {},
     entityAccessors: config.entityAccessors,
     timeseriesEntities: config.timeseriesEntities ?? [],
+    skipDuplicateEntities: config.skipDuplicateEntities ?? [],
     aggregations: config.aggregations ?? [],
   };
   const secondsOf = (blockNumber: number, given: unknown) => () =>
@@ -1309,9 +1393,28 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       : Number(callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"));
   // Aggregations roll up when a block's time passes a bucket's end, so every
   // handler checks first; the timeseries it saves carry the block's time.
+  // graph-node's `SeqGenerator`: one id sequence per block, which its handlers
+  // draw from in the order they run, so a timeseries row gets graph-node's id.
+  // The execute pass runs a chain's handlers one at a time; a run starts where
+  // the block's previous run stopped, and a replayed run starts over there.
+  const idSequences = new Map<number, { block: number; next: number }>();
+  const idSequence = (scope: Scope) => {
+    const chainId = scope.dataSource.chainId;
+    let sequence = idSequences.get(chainId);
+    if (!sequence || sequence.block !== scope.blockNumber) {
+      sequence = { block: scope.blockNumber, next: 0 };
+      idSequences.set(chainId, sequence);
+    }
+    return sequence;
+  };
+  const endRun = (scope: Scope) => {
+    if (scope.timeseriesBase === undefined) return;
+    idSequence(scope).next = scope.timeseriesBase + (scope.timeseriesSequence ?? 0);
+  };
   const startRun = (scope: Scope) => {
     freshModuleState(scope);
     scope.timeseriesSequence = 0;
+    if (!scope.context.isPreload) scope.timeseriesBase ??= idSequence(scope).next;
     // A replayed round creates its file data sources again.
     scope.fileCreates = undefined;
     if (schema.aggregations.length > 0) {
@@ -1406,6 +1509,27 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const templateNames = new Set(
     config.templates.filter((template) => !isFile(template)).map((template) => template.name),
   );
+  // A block handler's create is refused when it runs (the create hook above).
+  // Whether one will run depends on data — moonwell's Feed handler creates
+  // only at the blocks its network's config lists, none on base — so the
+  // creates the analysis is sure the code reaches are named up front, as a
+  // warning.
+  if (templateNames.size > 0) {
+    for (const source of sources) {
+      const handlers = source.blockHandlers
+        .filter((handler) => !hasRegisterPass(source, handler))
+        .map((handler) => handler.handler);
+      if (source.kind !== "contract" || handlers.length === 0) continue;
+      const created = subgraphSureCreates(path.resolve(config.root, source.mappingFile), handlers, [...templateNames]);
+      handlers.forEach((handler, index) => {
+        if (created[index]!.length === 0) return;
+        warn(
+          `Envio Subgraph: data source "${source.name}" → blockHandlers → "${handler}" can create ` +
+            `${created[index]!.join(", ")}, and envio stops with an error if it does: ${BLOCK_HANDLER_CREATE}.`,
+        );
+      });
+    }
+  }
   const fileTemplates = new Map<string, FileTemplate>();
   for (const source of config.templates) {
     if (!isFile(source)) continue;
@@ -1455,6 +1579,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // own, so each runs once in register mode, at its block, before the first
   // register pass of its chain reads the register store.
   const onceHandlers = new Map<number, ((context: any) => Promise<void>)[]>();
+
   const primed = new Map<number, Promise<void>>();
   const primeOnceHandlers = (chainId: number, context: any) => {
     let done = primed.get(chainId);
@@ -1542,6 +1667,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           chainId: event.chainId,
           network: source.network ?? "",
           context: contextOf(event.chainId, source.name, event.srcAddress) ?? source.context ?? {},
+          wildcard: !source.isTemplate && !source.address,
         },
         registered: new Set(),
         blockNumber: event.block.number,
@@ -1570,6 +1696,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               return fn(makeEvent(event));
             }),
           );
+          endRun(scope);
           await runFileDataSources(scope, context);
         },
       );
@@ -1657,6 +1784,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             return run(event, make(event));
           }),
         );
+        endRun(scope);
         await runFileDataSources(scope, context);
       });
 
@@ -1707,7 +1835,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
       const start = source.startBlock ?? 0;
-      if (handler.filter === "once" && templateNames.size > 0 && source.chainId !== undefined) {
+      if (handler.filter === "once" && !source.isTemplate && templateNames.size > 0 && source.chainId !== undefined) {
         const location = `data source "${source.name}" → "${handler.handler}"`;
         const runs = onceHandlers.get(source.chainId) ?? [];
         runs.push((context) =>
@@ -1741,25 +1869,38 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         .filter((other) => other.chainId === source.chainId)
         .map((other) => other.startBlock ?? 0);
       const first = source.isTemplate ? Math.min(...chainStarts, 0 + (chainStarts.length === 0 ? 0 : Number.MAX_SAFE_INTEGER)) : start;
-      const blocks =
-        handler.filter === "once"
+      // An instance's creation block is its start block (graph-node), so a
+      // template's `once` and `polling` schedules differ by instance: every
+      // block is visited and each instance checked.
+      const blocks = source.isTemplate
+        ? { _gte: first, _every: 1 }
+        : handler.filter === "once"
           ? { _gte: start, _lte: start }
           : source.endBlock === undefined
             ? { _gte: first, _every: handler.filter.every }
             : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
+      const once = handler.filter === "once";
+      const every = typeof handler.filter === "object" ? handler.filter.every : 1;
+      const scheduled = (created: number, blockNumber: number) =>
+        once ? blockNumber === created : (blockNumber - created) % every === 0;
       indexer.onBlock(
         {
           name: `${source.name}_${handler.handler}`,
           where: ({ chain }: { chain: { id: number } }) =>
             chain.id === source.chainId && { block: { number: blocks } },
-        },
+          runsFirst: once && !source.isTemplate,
+        } as any,
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;
           const graphBlock = makeBlockHandlerBlock(
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
           );
-          const addresses = source.isTemplate ? instancesAt(block.chainId ?? source.chainId, source.name, block.number) : [source.address ?? ""];
+          const addresses = source.isTemplate
+            ? instancesAt(block.chainId ?? source.chainId, source.name, block.number)
+                .filter((instance) => scheduled(instance.block, block.number))
+                .map((instance) => instance.address)
+            : [source.address ?? ""];
           for (const address of addresses) {
             const scope: Scope = {
               context,
@@ -1777,6 +1918,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               blockNumber: block.number,
               blockSeconds: secondsOf(block.number, block.timestamp),
               mappingExports: mapping,
+              blockHandler: hasRegisterPass(source, handler) ? undefined : handler.handler,
             };
             await runSyncCounted(context, () =>
               runInScope(scope, () => {
@@ -1784,6 +1926,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
                 return fn(graphBlock);
               }),
             );
+            endRun(scope);
             await runFileDataSources(scope, context);
           }
         },

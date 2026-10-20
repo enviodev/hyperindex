@@ -13,12 +13,14 @@ export type SubgraphSchema = {
   /** Each field as the subgraph schema declares it, which is what a mapping reads. */
   entityFieldTypes: Record<
     string,
-    Record<string, { kind: string; target?: string; derivedFrom?: string; list: boolean }>
+    Record<string, { kind: string; target?: string; derivedFrom?: string; list: boolean; required?: boolean }>
   >;
   /** The context accessor envio generated for each entity, by schema name. */
   entityAccessors: Record<string, string>;
   /** `@entity(timeseries: true)` types: saved with an automatic id and timestamp. */
   timeseriesEntities: string[];
+  /** `@entity(immutable: true, skipDuplicates: true)` types: an id stored in an earlier block keeps its first write. */
+  skipDuplicateEntities: string[];
   aggregations: AggregationDef[];
 };
 
@@ -47,6 +49,8 @@ export type Scope = {
     network: string;
     /** The manifest's `context` entries, as `dataSource.context()` serves them. */
     context: Record<string, { type: string; data: string }>;
+    /** A static data source without `source.address`: `address` is the emitter's, `dataSource.address()` none. */
+    wildcard?: boolean;
   };
   /** Addresses already registered this round, so replays stay idempotent. */
   registered: Set<string>;
@@ -64,6 +68,8 @@ export type Scope = {
   blockSeconds?: () => number | string;
   /** Timeseries entities saved so far by this run of the handler. */
   timeseriesSequence?: number;
+  /** Where this run's timeseries ids start in its block's id sequence. */
+  timeseriesBase?: number;
   /** Where the event sits in its chain, for what the register pass may read. */
   position?: number;
   /** The register round's own writes, kept only once the round completes. */
@@ -80,6 +86,8 @@ export type Scope = {
   mappingExports: Record<string, any>;
   /** Set when the scope is a file data source's handler. */
   file?: FileScope;
+  /** The block handler this run is, when it has no register pass of its own. */
+  blockHandler?: string;
   /** File templates this run created, keyed to dedupe a replayed mapping. */
   fileCreates?: Map<string, FileCreate>;
 };

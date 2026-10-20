@@ -70,7 +70,8 @@
   "arc-testnet": {
     "chainId": 5042002,
     "aliases": [
-      "evm-5042002"
+      "evm-5042002",
+      "arctest"
     ]
   },
   "aurora": {
@@ -118,7 +119,8 @@
     "chainId": 84532,
     "aliases": [
       "evm-84532",
-      "base-testnet"
+      "base-testnet",
+      "basesepolia"
     ]
   },
   "berachain": {
@@ -810,7 +812,8 @@
     "chainId": 1301,
     "aliases": [
       "evm-1301",
-      "unichain-sepolia"
+      "unichain-sepolia",
+      "unisepolia"
     ]
   },
   "vana": {
@@ -886,7 +889,8 @@
     "aliases": [
       "evm-324",
       "zksync",
-      "zksync-era-mainnet"
+      "zksync-era-mainnet",
+      "zksyncera"
     ]
   },
   "zksync-era-sepolia": {

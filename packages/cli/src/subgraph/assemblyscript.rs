@@ -71,7 +71,9 @@ pub const AS_SET: &str = "__envio_Set";
 /// generated class graph-node would hand it — the class whose `params` getters
 /// codegen wrote. Types don't survive into JavaScript, so each exported
 /// function's first-parameter class is also exported as a value, keyed by the
-/// function's name, for the runtime to build the event as that class.
+/// function's name, for the runtime to build the event as that class. Each is
+/// a getter: the class may come from a module still evaluating in an import
+/// cycle, whose binding can't be read until it has run.
 fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Option<String> {
     let entries: Vec<String> = program
         .body
@@ -87,7 +89,7 @@ fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Opt
             let name = func.id.as_ref()?.name;
             let annotation = func.params.items.first()?.type_annotation.as_ref()?;
             let class = class_ref(&annotation.type_annotation, classes)?;
-            Some(format!("{name}: {}", class.name))
+            Some(format!("get {name}() {{ return {}; }}", class.name))
         })
         .collect();
     (!entries.is_empty()).then(|| {
@@ -965,6 +967,9 @@ struct Locals {
     unsigned: HashSet<String>,
     /// Names declared with an integer type, by the type, likewise.
     integers: HashMap<String, String>,
+    /// Class-typed locals declared without a value whose first use writes one
+    /// of their fields, by their class.
+    null_objects: HashMap<String, String>,
 }
 
 /// What the module's top level declares, for every function in it.
@@ -1119,7 +1124,7 @@ fn module_names(program: &Program<'_>) -> ModuleNames {
 
 /// What a function's names hold. A name bound twice anywhere in the function —
 /// a parameter, a nested block's own `let` — is left out rather than told apart.
-fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
+fn locals(func: &Function<'_>, module: &ModuleNames, classes: &HashSet<String>) -> Locals {
     use oxc::ast_visit::{walk, Visit};
 
     #[derive(Default)]
@@ -1129,6 +1134,8 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
         assigned: HashSet<String>,
         unsigned: HashSet<String>,
         integers: HashMap<String, String>,
+        /// `let x: C;` of a class C, by name.
+        uninitialized: HashMap<String, String>,
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_binding_identifier(&mut self, id: &BindingIdentifier<'a>) {
@@ -1155,6 +1162,18 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
                 }
                 if let Some(ty) = integer_annotation(declarator.type_annotation.as_deref()) {
                     self.integers.insert(id.name.to_string(), ty);
+                }
+                if declarator.init.is_none() {
+                    if let Some(TSType::TSTypeReference(reference)) = declarator
+                        .type_annotation
+                        .as_deref()
+                        .map(|annotation| &annotation.type_annotation)
+                    {
+                        if let TSTypeName::IdentifierReference(class) = &reference.type_name {
+                            self.uninitialized
+                                .insert(id.name.to_string(), class.name.to_string());
+                        }
+                    }
                 }
             }
             walk::walk_variable_declarator(self, declarator);
@@ -1201,11 +1220,54 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
             .into_iter()
             .filter(|(name, _)| scan.bound.get(name) == Some(&1)),
     );
+
+    // Whether each candidate's first use, in source order, writes a field of
+    // it (`x.f = …`): the null pointer asc gives it is then an object the
+    // function builds in place.
+    struct FirstUse<'c> {
+        candidates: &'c HashMap<String, String>,
+        writes_field: HashMap<String, bool>,
+    }
+    impl<'a> Visit<'a> for FirstUse<'_> {
+        fn visit_assignment_expression(&mut self, assign: &AssignmentExpression<'a>) {
+            if let AssignmentTarget::StaticMemberExpression(member) = &assign.left {
+                if let Expression::Identifier(id) = &member.object {
+                    let name = id.name.as_str();
+                    if self.candidates.contains_key(name) && !self.writes_field.contains_key(name) {
+                        self.writes_field.insert(name.to_string(), true);
+                    }
+                }
+            }
+            walk::walk_assignment_expression(self, assign);
+        }
+        fn visit_identifier_reference(&mut self, id: &IdentifierReference<'a>) {
+            let name = id.name.as_str();
+            if self.candidates.contains_key(name) && !self.writes_field.contains_key(name) {
+                self.writes_field.insert(name.to_string(), false);
+            }
+        }
+    }
+    let candidates: HashMap<String, String> = scan
+        .uninitialized
+        .into_iter()
+        .filter(|(name, class)| scan.bound.get(name) == Some(&1) && classes.contains(class))
+        .collect();
+    let mut first_use = FirstUse {
+        candidates: &candidates,
+        writes_field: HashMap::new(),
+    };
+    first_use.visit_function(func, ScopeFlags::Function);
+    let null_objects = candidates
+        .iter()
+        .filter(|(name, _)| first_use.writes_field.get(*name) == Some(&true))
+        .map(|(name, class)| (name.clone(), class.clone()))
+        .collect();
     Locals {
         fresh,
         literal,
         unsigned,
         integers,
+        null_objects,
     }
 }
 
@@ -1414,10 +1476,11 @@ impl<'a> Rewrite<'a> {
         Expression::new_call_expression(span, callee, None, args, false, &self.ast)
     }
 
-    /// `load<T>(p)`, `store<T>(p, v)`, `bswap(x)`, `rotr(x, n)`, `rotl(x, n)`:
-    /// AssemblyScript builtins of a type, which the call names or its operand
-    /// has. The helper method and its arguments, the type as a string — for
-    /// `load` and `store` first, after the operands for the others.
+    /// `load<T>(p)`, `store<T>(p, v)`, `reinterpret<T>(x)`, `bswap(x)`,
+    /// `rotr(x, n)`, `rotl(x, n)`: AssemblyScript builtins of a type, which the
+    /// call names or its operand has. The helper method and its arguments, the
+    /// type as a string — for `load`, `store` and `reinterpret` first, after the
+    /// operands for the others.
     fn memory_builtin(
         &self,
         call: &mut CallExpression<'a>,
@@ -1428,6 +1491,7 @@ impl<'a> Rewrite<'a> {
         let method = match callee.name.as_str() {
             "load" => "load",
             "store" => "store",
+            "reinterpret" => "reinterpret",
             "bswap" => "bswap",
             "rotl" => "rotl",
             "rotr" => "rotr",
@@ -1450,7 +1514,8 @@ impl<'a> Rewrite<'a> {
                 TSType::TSBooleanKeyword(_) => Some("bool".to_string()),
                 _ => None,
             });
-        if matches!(method, "load" | "store") && named.is_none() {
+        let typed_first = matches!(method, "load" | "store" | "reinterpret");
+        if typed_first && named.is_none() {
             return None;
         }
         let ty = named.or_else(|| {
@@ -1466,7 +1531,7 @@ impl<'a> Rewrite<'a> {
             .iter_mut()
             .map(|argument| argument.to_expression_mut().take_in(&self.ast))
             .collect();
-        if matches!(method, "load" | "store") {
+        if typed_first {
             args.insert(0, ty);
         } else {
             while args.len() < if method == "bswap" { 1 } else { 2 } {
@@ -1631,6 +1696,58 @@ impl<'a> Rewrite<'a> {
     }
 
     /// The class `changetype<Foo>` names, if it is one the runtime can reach.
+    /// A cast to `ty`, which `expression` is taken from when it converts.
+    ///
+    /// To a number type it converts: a wider integer wraps, a float truncates
+    /// toward zero, null is 0, and a reference is its address, which JavaScript
+    /// has no number for; to a float, an i64 (a bigint here) is a float. To a
+    /// class — graph-cli before 0.2x's tuple getters and old entity loads cast
+    /// so, not with `changetype` — it is the same reinterpret, except that a
+    /// value already of the class (an upcast) keeps its own.
+    fn cast(
+        &self,
+        span: Span,
+        ty: &TSType<'a>,
+        expression: &mut Expression<'a>,
+    ) -> Option<Expression<'a>> {
+        let number = match ty {
+            TSType::TSTypeReference(reference) => match &reference.type_name {
+                TSTypeName::IdentifierReference(ty) => match ty.name.as_str() {
+                    "i8" => Some("as_i8"),
+                    "u8" => Some("as_u8"),
+                    "i16" => Some("as_i16"),
+                    "u16" => Some("as_u16"),
+                    "i32" => Some("as_i32"),
+                    "u32" => Some("as_u32"),
+                    "f32" => Some("as_f32"),
+                    "f64" => Some("as_f64"),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(method) = number {
+            let value = expression.take_in(&self.ast);
+            return Some(self.operator(span, method, [value]));
+        }
+        let class = match ty {
+            TSType::TSUnionType(union) => union
+                .types
+                .iter()
+                .find_map(|ty| class_ref(ty, &self.classes)),
+            ty => class_ref(ty, &self.classes),
+        }?;
+        let ctor = Expression::new_identifier(
+            class.span,
+            Ident::from_str_in(class.name.as_str(), &self.ast),
+            &self.ast,
+        );
+        let value = expression.take_in(&self.ast);
+        let keep = Expression::new_boolean_literal(span, true, &self.ast);
+        Some(self.call(span, RETAG_HELPER, [ctor, value, keep]))
+    }
+
     fn retag_target(&self, call: &CallExpression<'a>) -> Option<(Span, String)> {
         let Expression::Identifier(callee) = &call.callee else {
             return None;
@@ -1638,7 +1755,15 @@ impl<'a> Rewrite<'a> {
         if callee.name != "changetype" || call.arguments.len() != 1 {
             return None;
         }
-        let class = class_ref(call.type_arguments.as_ref()?.params.first()?, &self.classes)?;
+        // `changetype<Pair | null>(store.get(...))` is how generated code
+        // loads an entity: the class's getters are what reads its fields.
+        let class = match call.type_arguments.as_ref()?.params.first()? {
+            TSType::TSUnionType(union) => union
+                .types
+                .iter()
+                .find_map(|ty| class_ref(ty, &self.classes)),
+            ty => class_ref(ty, &self.classes),
+        }?;
         Some((class.span, class.name.to_string()))
     }
 }
@@ -1833,52 +1958,28 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 assign.right = self.operator(assign.span, method, [read, right]);
                 assign.operator = AssignmentOperator::Assign;
             }
-            // graph-cli before 0.2x's tuple getters, and old entity loads, cast
-            // with `as` rather than `changetype`: the same reinterpret, except
-            // that a value already of the class (an upcast) keeps its own.
+            // `x as T` and `<T>x` are one cast in AssemblyScript.
             Expression::TSAsExpression(cast) => {
-                // `x as i32` converts: a wider integer wraps, a null is 0, and a
-                // reference is its address, which JavaScript has no number for.
-                let integer = match &cast.type_annotation {
-                    TSType::TSTypeReference(reference) => match &reference.type_name {
-                        TSTypeName::IdentifierReference(ty) => match ty.name.as_str() {
-                            "i8" => Some("as_i8"),
-                            "u8" => Some("as_u8"),
-                            "i16" => Some("as_i16"),
-                            "u16" => Some("as_u16"),
-                            "i32" => Some("as_i32"),
-                            "u32" => Some("as_u32"),
-                            _ => None,
-                        },
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                if let Some(method) = integer {
-                    let span = cast.span;
-                    let value = cast.expression.take_in(&self.ast);
-                    *expr = self.operator(span, method, [value]);
-                    return;
+                let TSAsExpression {
+                    span,
+                    expression,
+                    type_annotation,
+                    ..
+                } = &mut **cast;
+                if let Some(cast) = self.cast(*span, type_annotation, expression) {
+                    *expr = cast;
                 }
-                let class = match &cast.type_annotation {
-                    TSType::TSUnionType(union) => union
-                        .types
-                        .iter()
-                        .find_map(|ty| class_ref(ty, &self.classes)),
-                    ty => class_ref(ty, &self.classes),
-                };
-                let Some(class) = class.map(|class| (class.span, class.name.to_string())) else {
-                    return;
-                };
-                let span = cast.span;
-                let value = cast.expression.take_in(&self.ast);
-                let ctor = Expression::new_identifier(
-                    class.0,
-                    Ident::from_str_in(&class.1, &self.ast),
-                    &self.ast,
-                );
-                let keep = Expression::new_boolean_literal(span, true, &self.ast);
-                *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
+            }
+            Expression::TSTypeAssertion(cast) => {
+                let TSTypeAssertion {
+                    span,
+                    expression,
+                    type_annotation,
+                    ..
+                } = &mut **cast;
+                if let Some(cast) = self.cast(*span, type_annotation, expression) {
+                    *expr = cast;
+                }
             }
             // AssemblyScript's std Map and Set aren't JavaScript's: `keys()`
             // is an array and `map[key]` an operator (std/assembly/map.ts).
@@ -2070,9 +2171,28 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
             return;
         }
         for declarator in decl.declarations.iter_mut() {
-            if declarator.init.is_some()
-                || !matches!(declarator.id, BindingPattern::BindingIdentifier(_))
-            {
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                continue;
+            };
+            if declarator.init.is_some() {
+                continue;
+            }
+            // asc gives it the null pointer, and the function's field writes
+            // land at that address: an object every such local of the class
+            // shares, as they share address 0 under asc.
+            let class = self
+                .locals
+                .last()
+                .and_then(|locals| locals.null_objects.get(id.name.as_str()))
+                .cloned();
+            if let Some(class) = class {
+                let span = declarator.span;
+                let class = Expression::new_identifier(
+                    span,
+                    Ident::from_str_in(&class, &self.ast),
+                    &self.ast,
+                );
+                declarator.init = Some(self.operator(span, "null_object", [class]));
                 continue;
             }
             if let Some(annotation) = &declarator.type_annotation {
@@ -2084,7 +2204,8 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
     fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
         self.generics
             .push(type_parameter_names(&func.type_parameters));
-        self.locals.push(locals(func, &self.module_names));
+        self.locals
+            .push(locals(func, &self.module_names, &self.classes));
         walk_mut::walk_function(self, func, flags);
         self.locals.pop();
         self.generics.pop();
@@ -2405,6 +2526,39 @@ export function f(xs) {
         );
     }
 
+    // Only a local whose first use writes one of its fields is built in place:
+    // one read first, or assigned first, keeps the null asc gives it.
+    #[test]
+    fn builds_a_class_local_declared_without_a_value_in_place() {
+        assert_eq!(
+            js("class Result {
+  error: string;
+}
+export function f(ok: bool): Result {
+  let result: Result;
+  result.error = ok ? \"none\" : \"failed\";
+  let read: Result;
+  let isNull = read == null;
+  let later: Result;
+  later = result;
+  return result;
+}"),
+            "class Result {
+\terror = null;
+}
+export function f(ok) {
+\tlet result = __envio_op.null_object(Result);
+\tresult.error = ok ? \"none\" : \"failed\";
+\tlet read = null;
+\tlet isNull = __envio_op.eq(read, null);
+\tlet later = null;
+\tlater = result;
+\treturn result;
+}
+"
+        );
+    }
+
     // An i32's bit operations are JavaScript's own, through the helper that
     // widens an i64 operand.
     #[test]
@@ -2444,6 +2598,7 @@ export function f(tick, signed) {
   let r = rotr(v, 7);
   let words = new StaticArray<u32>(16);
   let names = new StaticArray<string>(2);
+  let d = reinterpret<f64>(u);
 }"),
             "export function f(x, u, v) {
 \tlet w = __envio_op.bswap(__envio_op.load(\"u32\", __envio_op.add(__envio_op.address(x.buffer), 4)), \"u32\");
@@ -2451,6 +2606,7 @@ export function f(tick, signed) {
 \tlet r = __envio_op.rotr(v, 7, \"u32\");
 \tlet words = __envio_op.static_array(\"u32\", 16);
 \tlet names = new StaticArray(2);
+\tlet d = __envio_op.reinterpret(\"f64\", u);
 }
 "
         );
@@ -2536,7 +2692,9 @@ export function handleFarmed(event: Farmed): void {}"),
             "import { Farmed } from \"./a\";
 import \"./b\";
 export function handleFarmed(event) {}
-export const __envio_event_classes = { handleFarmed: Farmed };
+export const __envio_event_classes = { get handleFarmed() {
+\treturn Farmed;
+} };
 "
         );
     }
@@ -2597,12 +2755,18 @@ export function f(value: ethereum.Tuple, n: i64): void {
   let pair = value as Pair;
   let maybe = value as Pair | null;
   let wide = n as i32;
+  let old = <Pair>value;
+  let byte = <u8>n;
+  let float = n as f64;
 }"),
             "import { Pair } from \"../generated/schema\";
 export function f(value, n) {
 \tlet pair = __envio_retag(Pair, value, true);
 \tlet maybe = __envio_retag(Pair, value, true);
 \tlet wide = __envio_op.as_i32(n);
+\tlet old = __envio_retag(Pair, value, true);
+\tlet byte = __envio_op.as_u8(n);
+\tlet float = __envio_op.as_f64(n);
 }
 "
         );
@@ -2662,11 +2826,13 @@ export const base = ChainId.BASE;
             js("import { Pair } from \"../generated/schema\";
 export function f(value: Entity, n: i64): void {
   let pair = changetype<Pair>(value);
+  let loaded = changetype<Pair | null>(store.get(\"Pair\", \"1\"));
   let wide = changetype<i32>(n);
 }"),
             "import { Pair } from \"../generated/schema\";
 export function f(value, n) {
 \tlet pair = __envio_retag(Pair, value);
+\tlet loaded = __envio_retag(Pair, store.get(\"Pair\", \"1\"));
 \tlet wide = __envio_op.address(n);
 }
 "
@@ -2745,8 +2911,12 @@ export function helper(n) {
 \treturn n;
 }
 export const __envio_event_classes = {
-\thandleTransfer: Transfer,
-\thandleApproval: Approval
+\tget handleTransfer() {
+\t\treturn Transfer;
+\t},
+\tget handleApproval() {
+\t\treturn Approval;
+\t}
 };
 "
         );
@@ -2759,7 +2929,7 @@ export const __envio_event_classes = {
 export class Token {
   @inline
   scaled(amount: BigInt, decimals: u8): BigInt {
-    return <BigInt>amount;
+    return amount;
   }
 }"),
             "export class Token {

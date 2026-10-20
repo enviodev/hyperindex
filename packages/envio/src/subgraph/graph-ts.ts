@@ -21,11 +21,11 @@ import {
   toHex,
   hexToBytes,
   decodeAbiParameters,
-  encodeAbiParameters,
   parseAbiParameters,
-  type AbiParameter,
 } from "viem";
 import { subgraphKeccak256 } from "../Core.res.mjs";
+import { warn } from "../Logging.res.mjs";
+import { operators } from "./assemblyscript.ts";
 import { currentScope, type Scope } from "./scope.ts";
 import { timeseriesId } from "./rollup.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
@@ -77,17 +77,31 @@ function byteWidth(value: bigint): number {
 }
 
 /**
- * graph-ts' `BigInt.toU32()`/`toU64()`: the minimal two's-complement
- * little-endian bytes, zero-padded to the width — so -1 (the byte 0xff) is
- * 255 — overflowing only when a byte past the width is set.
+ * graph-ts' `BigInt.toU32()`/`toU64()`: the BigInt's own `width` bytes of two's
+ * complement, zero-padded to `size` — so the host's -1 (the byte 0xff) is 255
+ * while `BigInt.fromI32(-1)` (four bytes) is 4294967295 — overflowing only when
+ * a byte past `size` is set.
  */
-function unsignedFromSignedBytes(value: bigint, size: number, target: string): bigint {
+function unsignedFromSignedBytes(value: bigint, width: number, size: number, target: string): bigint {
   if (value >= 0n) return fitted(value, 0n, (1n << BigInt(size * 8)) - 1n, target);
-  const width = byteWidth(value);
   if (width > size) {
     throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
   }
   return BigInt.asUintN(width * 8, value);
+}
+
+/**
+ * graph-ts' `ByteArray.toI32()`/`toI64()`, which BigInt's defer to: the bytes
+ * past the width must be the sign padding, and the low bytes are read as two's
+ * complement. So a uint32 of 2^32 - 1 (`ff ff ff ff 00`) is -1: a value fits
+ * from -2^(8·size) to 2^(8·size) - 1 and wraps into the signed range.
+ */
+function signedFromBytes(value: bigint, size: number, target: string): bigint {
+  const bound = 1n << BigInt(size * 8);
+  if (value < -bound || value >= bound) {
+    throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
+  }
+  return BigInt.asIntN(size * 8, value);
 }
 
 function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint {
@@ -173,8 +187,9 @@ export class ByteArray extends Uint8Array {
   static fromU64(value: bigint): ByteArray {
     return ByteArray.fromI64(value);
   }
+  // graph-ts builds it as `ByteArray.fromI32(0)`: four zero bytes.
   static empty(): ByteArray {
-    return new ByteArray(0);
+    return ByteArray.fromI32(0);
   }
   toHex(): string {
     return this.toHexString();
@@ -202,7 +217,7 @@ export class ByteArray extends Uint8Array {
     return Number(fitted(fromLittleEndian(this, false), 0n, 4294967295n, "u32"));
   }
   toI32(): number {
-    return Number(fitted(fromLittleEndian(this, true), -2147483648n, 2147483647n, "i32"));
+    return Number(signedFromBytes(fromLittleEndian(this, true), 4, "i32"));
   }
   toBigInt(): BigInt_ {
     return new BigInt_(fromLittleEndian(this, true));
@@ -223,7 +238,7 @@ export class ByteArray extends Uint8Array {
     return this.concat(ByteArray.fromI32(other));
   }
   toI64(): bigint {
-    return fitted(fromLittleEndian(this, true), -(2n ** 63n), 2n ** 63n - 1n, "i64");
+    return signedFromBytes(fromLittleEndian(this, true), 8, "i64");
   }
   toU64(): bigint {
     return fitted(fromLittleEndian(this, false), 0n, 2n ** 64n - 1n, "u64");
@@ -259,7 +274,7 @@ export class Bytes extends ByteArray {
     return new Bytes(ByteArray.fromBigInt(value));
   }
   static empty(): Bytes {
-    return new Bytes(0);
+    return new Bytes(ByteArray.empty());
   }
 }
 
@@ -413,17 +428,19 @@ class BigInt_ extends Uint8Array {
   toHex(): string {
     return this.toHexString();
   }
+  // graph-node's `big_int_to_hex`: the magnitude's bytes in hex, leading
+  // zeros trimmed, the sign dropped.
   toHexString(): string {
-    return toHex(this.value);
+    return `0x${(this.value < 0n ? -this.value : this.value).toString(16)}`;
   }
   toI32(): number {
-    return Number(fitted(this.value, -2147483648n, 2147483647n, "i32"));
+    return Number(signedFromBytes(this.value, 4, "i32"));
   }
   toU32(): number {
-    return Number(unsignedFromSignedBytes(this.value, 4, "u32"));
+    return Number(unsignedFromSignedBytes(this.value, this.byteLength, 4, "u32"));
   }
   toI64(): bigint {
-    return this.value;
+    return signedFromBytes(this.value, 8, "i64");
   }
   toBigDecimal(): BigDecimal {
     return new BigDecimal(new BigNumber(this.value.toString()));
@@ -478,7 +495,7 @@ class BigInt_ extends Uint8Array {
     return this.value >= -2147483648n && this.value <= 2147483647n;
   }
   toU64(): bigint {
-    return unsignedFromSignedBytes(this.value, 8, "u64");
+    return unsignedFromSignedBytes(this.value, this.byteLength, 8, "u64");
   }
   sqrt(): BigInt_ {
     if (this.value < 0n) {
@@ -538,11 +555,13 @@ function parseDecimal(text: string): GraphNodeDecimal.Decimal {
  * number for envio's store, made only when something asks for it.
  */
 export class BigDecimal {
-  readonly decimal: GraphNodeDecimal.Decimal;
+  private _decimal: GraphNodeDecimal.Decimal;
+  /** The two fields as a mapping last assigned them, if it assigned one. */
+  private _fields: GraphNodeDecimal.Decimal | undefined;
   private _value: BigNumber | undefined;
 
   constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
-    this.decimal =
+    this._decimal =
       value instanceof BigInt_
         ? GraphNodeDecimal.fromInteger(value.value)
         : value instanceof BigNumber
@@ -551,6 +570,10 @@ export class BigDecimal {
           : typeof value === "object"
             ? GraphNodeDecimal.normalize(value)
             : parseDecimal(String(value));
+  }
+
+  get decimal(): GraphNodeDecimal.Decimal {
+    return this._decimal;
   }
 
   get value(): BigNumber {
@@ -616,13 +639,26 @@ export class BigDecimal {
   truncate(decimals: number): BigDecimal {
     return new BigDecimal(this.value.decimalPlaces(decimals, BigNumber.ROUND_DOWN));
   }
-  // graph-ts stores a decimal as `digits * 10 ** exp`, in graph-node's
-  // normalized form.
+  // graph-ts stores a decimal as two public fields, `digits * 10 ** exp`, in
+  // graph-node's normalized form. A mapping may assign either — graph-node's
+  // host-exports test lowers `exp` — and every host operation reads them back
+  // through `BigDecimal::new`, which normalizes.
   get digits(): BigInt_ {
-    return new BigInt_(this.decimal.int);
+    return new BigInt_((this._fields ?? this._decimal).int);
+  }
+  set digits(digits: BigInt_) {
+    this.assignFields({ int: digits.value, scale: (this._fields ?? this._decimal).scale });
   }
   get exp(): BigInt_ {
-    return BigInt_.fromI32(-this.decimal.scale);
+    return BigInt_.fromI32(-(this._fields ?? this._decimal).scale);
+  }
+  set exp(exp: BigInt_) {
+    this.assignFields({ int: (this._fields ?? this._decimal).int, scale: -Number(exp.value) });
+  }
+  private assignFields(fields: GraphNodeDecimal.Decimal): void {
+    this._fields = fields;
+    this._decimal = GraphNodeDecimal.normalize(fields);
+    this._value = undefined;
   }
 }
 
@@ -681,6 +717,15 @@ function entriesOf<K, V>(map: TypedMap<K, V>): TypedMapEntry<K, V>[] {
   return (map as any)[MAP_ENTRIES];
 }
 
+/** A loaded entity whose schema declares a field called `entries`. */
+function hasEntriesField<K, V>(map: TypedMap<K, V>): boolean {
+  const entityType = (map as any)[ENTITY_TYPE];
+  return (
+    typeof entityType === "string" &&
+    currentScope().schema.entityFields[entityType]?.includes("entries") === true
+  );
+}
+
 /**
  * AssemblyScript's `==` on a `Bytes`, `BigInt` or `BigDecimal` key compares the
  * values, which is how Lido looks a log's topic up in a `TypedMap<Bytes, …>`
@@ -702,10 +747,21 @@ export class TypedMap<K, V> {
     Object.defineProperty(this, MAP_ENTRIES, { value: [], writable: true });
   }
 
+  // A loaded entity keeps graph-ts' prototype (`load()`'s `changetype<T | null>`
+  // isn't retagged), so this accessor stands where the generated one would
+  // for a schema field called `entries`, and answers as it would.
   get entries(): TypedMapEntry<K, V>[] {
+    if (hasEntriesField(this)) {
+      const stored = (this as unknown as Entity).get("entries");
+      return (stored === null ? null : valueToNative(stored)) as TypedMapEntry<K, V>[];
+    }
     return entriesOf(this);
   }
   set entries(value: TypedMapEntry<K, V>[]) {
+    if (hasEntriesField(this)) {
+      (this as unknown as Entity).set("entries", nativeToValue(value));
+      return;
+    }
     (this as any)[MAP_ENTRIES] = value;
   }
 
@@ -769,11 +825,13 @@ export class Value {
   static fromString(value: string): Value {
     return new Value(ValueKind.STRING, value);
   }
+  // AssemblyScript compiles a `null` passed as a value type (a nullable
+  // `Timestamp` field's generated `set x(value: i64)`) to 0.
   static fromI32(value: number): Value {
-    return new Value(ValueKind.INT, value);
+    return new Value(ValueKind.INT, value ?? 0);
   }
   static fromI64(value: bigint): Value {
-    return new Value(ValueKind.INT8, value);
+    return new Value(ValueKind.INT8, value ?? 0n);
   }
   static fromBigInt(value: BigInt_): Value {
     return new Value(ValueKind.BIGINT, value);
@@ -782,7 +840,7 @@ export class Value {
     return new Value(ValueKind.BIGDECIMAL, value);
   }
   static fromBoolean(value: boolean): Value {
-    return new Value(ValueKind.BOOL, value);
+    return new Value(ValueKind.BOOL, value ?? false);
   }
   static fromBytes(value: Bytes): Value {
     return new Value(ValueKind.BYTES, value);
@@ -791,7 +849,7 @@ export class Value {
     return new Value(ValueKind.BYTES, value);
   }
   static fromTimestamp(value: bigint): Value {
-    return new Value(ValueKind.TIMESTAMP, value);
+    return new Value(ValueKind.TIMESTAMP, value ?? 0n);
   }
   static fromNull(): Value {
     return new Value(ValueKind.NULL, null);
@@ -866,6 +924,7 @@ export class Value {
   toBytes(): Bytes {
     if (this.data instanceof Bytes) return this.data;
     if (this.data instanceof ByteArray) return Bytes.fromByteArray(this.data);
+    if (Array.isArray(this.data)) return pointerBytes(this.data);
     return Bytes.fromHexString(String(this.data));
   }
   toBytesArray(): Bytes[] {
@@ -1046,12 +1105,11 @@ export class Entity extends TypedMap<string, Value> {
  * Tail of the entity prototype chain: instance -> generated prototype ->
  * Entity -> TypedMap -> here.
  *
- * `graph codegen` emits `changetype<Pair | null>(store.get(...))`, and
- * `changetype` erases its type argument, so a loaded entity reaches the mapping
- * without the generated prototype that carries `pair.token0`. Falling through to
- * the stored field — typed by the `Value` kind, which is what the generated
- * getter would have returned — is what makes that code work here. A name the
- * entity doesn't hold is still refused.
+ * `graph codegen`'s `changetype<Pair | null>(store.get(...))` gives a loaded
+ * entity the generated prototype, whose getters read its fields. An entity read
+ * without one — `store.get` called directly, or cast to a class the file can't
+ * reach — falls through to here, to the stored field typed by its `Value` kind.
+ * A name the entity doesn't hold is still refused.
  */
 /**
  * The entity type a loaded row came from. `changetype` erased the generated
@@ -1063,6 +1121,25 @@ const ENTITY_TYPE = Symbol("envio.entityType");
 /** An id as the store keys rows by: text, hex when the schema declares Bytes. */
 function entityId(id: Value): string {
   return id.kind === ValueKind.BYTES ? id.toBytes().toHexString() : id.toString();
+}
+
+// graph-cli's codegen names the member of a field called after a reserved word
+// with a trailing `_` (packages/cli/src/codegen/util.ts `handleReservedWord`).
+const RESERVED_WORDS = new Set([
+  "await", "break", "case", "catch", "class", "const", "continue", "debugger", "delete", "do",
+  "else", "enum", "export", "extends", "false", "finally", "function", "if", "implements",
+  "import", "in", "interface", "let", "new", "package", "private", "protected", "public",
+  "return", "super", "switch", "static", "this", "throw", "true", "try", "typeof", "var",
+  "while", "with", "yield",
+]);
+
+/** The field a generated member reads, for an entity whose prototype is gone. */
+function memberField(entityType: unknown, prop: string): string {
+  if (typeof entityType !== "string" || !prop.endsWith("_") || !RESERVED_WORDS.has(prop.slice(0, -1))) {
+    return prop;
+  }
+  const declared = currentScope().schema.entityFields[entityType];
+  return declared?.includes(prop.slice(0, -1)) && !declared.includes(prop) ? prop.slice(0, -1) : prop;
 }
 
 const entityTail = new Proxy(Object.create(null), {
@@ -1081,6 +1158,9 @@ const entityTail = new Proxy(Object.create(null), {
           storeImpl.set(entityType, entityId(id), receiver);
         };
       }
+    }
+    if (receiver instanceof Entity) {
+      prop = memberField((receiver as any)[ENTITY_TYPE], prop);
     }
     const stored = receiver instanceof Entity ? receiver.get(prop as string) : null;
     if (stored !== null) {
@@ -1137,7 +1217,7 @@ const entityTail = new Proxy(Object.create(null), {
         configurable: true,
       });
     }
-    receiver.set(prop as string, nativeToValue(value));
+    receiver.set(memberField((receiver as any)[ENTITY_TYPE], prop), nativeToValue(value));
     return true;
   },
 });
@@ -1154,6 +1234,8 @@ Object.setPrototypeOf(TypedMap.prototype, entityTail);
  * schema doesn't change under a running indexer.
  */
 type EntityLayout = {
+  /** Every field the type declares, when the schema lists them. */
+  fields: Set<string> | undefined;
   timestampFields: Set<string>;
   refFields: Set<string>;
   listFields: Set<string>;
@@ -1171,7 +1253,9 @@ function entityLayout(schema: Scope["schema"], entityType: string): EntityLayout
   }
   let layout = layouts.get(entityType);
   if (!layout) {
+    const declared = schema.entityFields[entityType];
     layout = {
+      fields: declared === undefined ? undefined : new Set(declared),
       timestampFields: new Set(schema.timestampFields[entityType] ?? []),
       refFields: new Set(schema.entityRefFields[entityType] ?? []),
       listFields: new Set(schema.entityListFields[entityType] ?? []),
@@ -1198,13 +1282,41 @@ function columnOf(schema: Scope["schema"], entityType: string, layout: EntityLay
 }
 
 /** graph-ts `Value`s -> the plain scalars envio stores. */
+let warnedPointerBytes = false;
+
+/**
+ * An Array that AssemblyScript reads as a Uint8Array — `graph init`'s
+ * `changetype<Bytes[]>(event.params.structs)` — is its backing buffer, the
+ * two classes sharing the ArrayBufferView header: one little-endian four-byte
+ * pointer per element. graph-node's allocator picked those addresses; these
+ * are stand-ins, as many bytes, and the run says so once.
+ */
+function pointerBytes(elements: unknown[]): Bytes {
+  if (!warnedPointerBytes) {
+    warnedPointerBytes = true;
+    warn(
+      "Envio Subgraph: a mapping stores an array (an ethereum.Tuple, often) as Bytes, as graph init's " +
+        "`changetype<Bytes[]>(event.params.<structs>)` does. graph-node stores the wasm memory addresses of " +
+        "its elements there; envio stores as many bytes of stand-in addresses, so those values differ.",
+    );
+  }
+  const bytes = new Bytes(elements.length * 4);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  elements.forEach((element, index) => view.setUint32(index * 4, Number(operators.address(element)) >>> 0, true));
+  return bytes;
+}
+
 function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   const { schema } = currentScope();
   // graph-ts holds a relation as the related entity's id under the field's own
   // name; envio's column for it is `<field>_id`.
-  const { timestampFields, refFields, listFields } = entityLayout(schema, entityType);
+  const { fields, timestampFields, refFields, listFields } = entityLayout(schema, entityType);
   const row: Record<string, unknown> = {};
   for (const entry of entriesOf(entity)) {
+    // A field the schema doesn't define isn't stored: graph-node only writes
+    // the declared columns, and before apiVersion 0.0.8 lets a mapping set
+    // others (`check_invalid_fields` refuses them from 0.0.8 on).
+    if (fields !== undefined && !fields.has(entry.key)) continue;
     const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
     // An id is a string column whatever the subgraph declared it as, and so is
     // a relation, which carries one. Every other `Bytes` field is a bytes
@@ -1396,17 +1508,41 @@ export const ROUND_SPAN = 1_000_000;
 export const POSITION_BLOCK = 16 * ROUND_SPAN;
 
 /**
- * Adds one write to an entity's versions, in position order. The newest few
- * versions of earlier blocks stay, and a bounded run of the newest block's own.
+ * Every chain's lowest partition frontier, as a position: no fetch starts
+ * below it, so no register pass still to run reads there. A data source
+ * created at a block gets a partition of its own that starts at that block
+ * while the others fetch ahead, so its passes read versions far below the
+ * newest.
+ */
+const registerFloors = new Map<number, number>();
+export function setRegisterFrontier(chainId: number, block: number): void {
+  registerFloors.set(chainId, block * POSITION_BLOCK);
+}
+/** Versions of one entity above the floor, past which the oldest go anyway. */
+const REGISTER_STORE_MAX_VERSIONS = 512;
+
+/**
+ * Adds one write to an entity's versions, in position order. Above `floor`
+ * every version stays and below it only the newest, which a pass at the floor
+ * reads. Without one, the newest few versions of earlier blocks stay, and a
+ * bounded run of the newest block's own.
  */
 export function addRegisterVersion(
   versions: { position: number; row: Record<string, unknown> | null }[],
   version: { position: number; row: Record<string, unknown> | null },
+  floor?: number,
 ): void {
   const at = versions.findIndex((other) => other.position >= version.position);
   if (at === -1) versions.push(version);
   else if (versions[at].position === version.position) versions[at] = version;
   else versions.splice(at, 0, version);
+  if (floor !== undefined) {
+    let below = 0;
+    while (below + 1 < versions.length && versions[below + 1].position < floor) below++;
+    if (below > 0) versions.splice(0, below);
+    if (versions.length > REGISTER_STORE_MAX_VERSIONS) versions.splice(0, versions.length - REGISTER_STORE_MAX_VERSIONS);
+    return;
+  }
   const newest = Math.floor(versions[versions.length - 1].position / POSITION_BLOCK);
   const blockStart = versions.findIndex((other) => Math.floor(other.position / POSITION_BLOCK) === newest);
   const dropOlder = blockStart - REGISTER_STORE_VERSIONS;
@@ -1433,13 +1569,14 @@ export function commitRegisterWrites(scope: Scope): void {
       }
     }
     registerStore.set(key, versions);
-    addRegisterVersion(versions, { position, row });
+    addRegisterVersion(versions, { position, row }, registerFloors.get(scope.dataSource.chainId));
   }
 }
 
 /** Between test indexers, whose chains restart at block zero. */
 export function resetRegisterStore(): void {
   registerStore.clear();
+  registerFloors.clear();
 }
 
 /**
@@ -1454,6 +1591,39 @@ function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, u
     if (!(column in row)) row[column] = null;
   }
   return row;
+}
+
+/**
+ * graph-node's EntityCache::set validates a save: an update that sets every
+ * non-nullable field passes as it is (a null counts as set), otherwise it is
+ * merged onto the stored entity — where a null removes the field — and the
+ * first non-nullable field still missing, in schema order, fails the handler.
+ * `store.set` supplies the id itself, and a timeseries point's timestamp too.
+ */
+function assertRequiredFields(
+  scope: Scope,
+  entityType: string,
+  id: string,
+  data: Entity,
+  stored: Record<string, unknown> | undefined,
+  supplied?: string,
+) {
+  const declared = scope.schema.entityFieldTypes[entityType] ?? {};
+  const required = (scope.schema.entityFields[entityType] ?? Object.keys(declared)).filter(
+    (field) => field !== "id" && field !== supplied && declared[field]?.required && !declared[field]?.derivedFrom,
+  );
+  const update = new Map(entriesOf(data).map((entry) => [entry.key as string, entry.value]));
+  if (required.every((field) => update.has(field))) return;
+  const refFields = new Set(scope.schema.entityRefFields[entityType] ?? []);
+  const missing = required.find((field) => {
+    const value = update.get(field);
+    if (value !== undefined) return value.kind === ValueKind.NULL;
+    const column = refFields.has(field) ? `${field}_id` : field;
+    return stored?.[column] === undefined || stored[column] === null;
+  });
+  if (missing !== undefined) {
+    throw new Error(`Entity ${entityType}[${id}]: missing value for non-nullable field \`${missing}\``);
+  }
 }
 
 function registerWrite(scope: Scope, entityType: string, id: string, row: Record<string, unknown> | null) {
@@ -1514,13 +1684,19 @@ const storeImpl = {
       // graph-node overrides whatever id and timestamp the mapping set.
       const sequence = scope.timeseriesSequence ?? 0;
       scope.timeseriesSequence = sequence + 1;
-      row.id = timeseriesId(scope.blockNumber, scope.event?.logIndex ?? -1, sequence);
+      row.id = timeseriesId(scope.blockNumber, (scope.timeseriesBase ?? 0) + sequence);
       row.timestamp = new Date(Number(scope.blockSeconds?.() ?? 0) * 1000);
+      assertRequiredFields(scope, entityType, row.id as string, data, undefined, "timestamp");
       return table.set(withUnsetAsNull(scope, entityType, row));
     }
     // A file data source's first write of an id is a new entity of its own,
     // whatever a chain handler stored under the same id.
     const stored = own === false ? undefined : table.getSync(id);
+    assertRequiredFields(scope, entityType, id, data, stored);
+    // graph-node inserts a skipDuplicates type with ON CONFLICT DO NOTHING, so
+    // an id an earlier block stored keeps that block's write; saves within
+    // this block merge in its entity cache first.
+    if (stored && scope.schema.skipDuplicateEntities.includes(entityType) && !table.getInBlockSync(id)) return;
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
@@ -1561,9 +1737,22 @@ const storeImpl = {
     const visible = file
       ? rows.filter((row: any) => file.entities.has(target) && file.written.has(`${target}\u0000${row.id}`))
       : rows;
-    return visible.map((row: any) => toEntity(target, row) as Entity);
+    // graph-node answers in key order (`EntityCache::load_related` walks a
+    // BTreeSet of entity keys): by id, as the id's type orders.
+    const numeric = schema.entityFieldTypes[target]?.id?.kind === "Int8";
+    return [...visible].sort(numeric ? byNumericId : byId).map((row: any) => toEntity(target, row) as Entity);
   },
 };
+
+function byId(a: { id: unknown }, b: { id: unknown }): number {
+  return codePointOrder(String(a.id), String(b.id));
+}
+
+function byNumericId(a: { id: unknown }, b: { id: unknown }): number {
+  const x = BigInt(String(a.id));
+  const y = BigInt(String(b.id));
+  return x < y ? -1 : x > y ? 1 : 0;
+}
 
 export const store = strictNamespace("store", storeImpl);
 
@@ -1877,34 +2066,104 @@ export function ethereumValueToJs(value: EthereumValue): unknown {
   }
 }
 
-function abiParameterOf(value: EthereumValue): AbiParameter {
+/**
+ * One ABI token's encoding, and whether it is dynamic (encoded after the heads
+ * of the sequence holding it, which points at it) or inline in its head.
+ */
+type EncodedToken = { dynamic: boolean; bytes: Uint8Array };
+
+const WORD = 32;
+const wordOf = (value: bigint): Uint8Array => hexToBytes(toHex(value, { size: WORD }));
+const padded = (bytes: Uint8Array, left: boolean): Uint8Array => {
+  const out = new Uint8Array(Math.ceil(bytes.length / WORD) * WORD || (left ? WORD : 0));
+  out.set(bytes, left ? out.length - bytes.length : 0);
+  return out;
+};
+const joined = (parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+
+function integerWord(value: BigInt_, signed: boolean): Uint8Array {
+  const n = value.valueOf() as bigint;
+  const [min, max] = signed ? [-(2n ** 255n), 2n ** 255n - 1n] : [0n, 2n ** 256n - 1n];
+  if (n < min || n > max) throw new Error(`ethereum.encode: ${n} doesn't fit an ${signed ? "int" : "uint"}256`);
+  return wordOf(BigInt.asUintN(256, n));
+}
+
+/** Heads in order, then the tails of the dynamic tokens the heads point at. */
+function encodedSequence(items: EthereumValue[]): Uint8Array {
+  const tokens = items.map(encodedToken);
+  let offset = tokens.reduce((total, token) => total + (token.dynamic ? WORD : token.bytes.length), 0);
+  const heads: Uint8Array[] = [];
+  const tails: Uint8Array[] = [];
+  for (const token of tokens) {
+    if (!token.dynamic) {
+      heads.push(token.bytes);
+      continue;
+    }
+    heads.push(wordOf(BigInt(offset)));
+    tails.push(token.bytes);
+    offset += token.bytes.length;
+  }
+  return joined([...heads, ...tails]);
+}
+
+/**
+ * Each token encodes by its own kind, the way alloy's `DynSolValue` (and
+ * ethabi's `Token` before it) does. An array of unlike values, which no
+ * Solidity type spells, still encodes element by element: Reserve hashes a
+ * timelock batch as such an array's encoding minus its offset and length.
+ */
+function encodedToken(value: EthereumValue): EncodedToken {
   switch (value.kind) {
     case EthereumValueKind.ADDRESS:
-      return { type: "address" };
     case EthereumValueKind.BOOL:
-      return { type: "bool" };
-    case EthereumValueKind.STRING:
-      return { type: "string" };
-    case EthereumValueKind.BYTES:
-      return { type: "bytes" };
-    case EthereumValueKind.FIXED_BYTES:
-      return { type: `bytes${(value.data as Bytes).length}` };
     case EthereumValueKind.INT:
-      return { type: "int256" };
     case EthereumValueKind.UINT:
-      return { type: "uint256" };
-    case EthereumValueKind.ARRAY:
-    case EthereumValueKind.FIXED_ARRAY: {
-      const items = value.data as EthereumValue[];
-      // An empty array encodes as its length alone, whatever it holds.
-      const element: AbiParameter = items.length > 0 ? abiParameterOf(items[0]) : { type: "uint256" };
-      const suffix = value.kind === EthereumValueKind.ARRAY ? "[]" : `[${items.length}]`;
-      return { ...element, type: `${element.type}${suffix}` } as AbiParameter;
+      return { dynamic: false, bytes: staticWord(value) };
+    case EthereumValueKind.FIXED_BYTES: {
+      const bytes = value.data as Bytes;
+      if (bytes.length > WORD) throw new Error(`ethereum.encode: fixed bytes of ${bytes.length} bytes`);
+      const word = new Uint8Array(WORD);
+      word.set(bytes);
+      return { dynamic: false, bytes: word };
     }
-    case EthereumValueKind.TUPLE:
-      return { type: "tuple", components: (value.data as EthereumValue[]).map(abiParameterOf) };
+    case EthereumValueKind.STRING:
+    case EthereumValueKind.BYTES: {
+      const bytes =
+        value.kind === EthereumValueKind.STRING ? new TextEncoder().encode(value.data as string) : (value.data as Bytes);
+      return { dynamic: true, bytes: joined([wordOf(BigInt(bytes.length)), padded(bytes, false)]) };
+    }
+    case EthereumValueKind.ARRAY: {
+      const items = value.data as EthereumValue[];
+      return { dynamic: true, bytes: joined([wordOf(BigInt(items.length)), encodedSequence(items)]) };
+    }
+    case EthereumValueKind.FIXED_ARRAY:
+    case EthereumValueKind.TUPLE: {
+      const items = value.data as EthereumValue[];
+      return { dynamic: items.some((item) => encodedToken(item).dynamic), bytes: encodedSequence(items) };
+    }
     default:
       throw new Error(`ethereum.encode can't encode a value of kind ${value.kind}`);
+  }
+}
+
+function staticWord(value: EthereumValue): Uint8Array {
+  switch (value.kind) {
+    case EthereumValueKind.ADDRESS:
+      return padded(value.data as Bytes, true);
+    case EthereumValueKind.BOOL:
+      return wordOf(value.data ? 1n : 0n);
+    case EthereumValueKind.INT:
+      return integerWord(value.data as BigInt_, true);
+    default:
+      return integerWord(value.data as BigInt_, false);
   }
 }
 
@@ -2652,13 +2911,28 @@ const ethereumImpl = {
       return null;
     }
   },
-  // graph-node's `ethabi::encode(&[token])`, which is Solidity's `abi.encode`
-  // of the one value. A token carries no integer width and every integer
-  // takes a full word, so 256 bits encodes the same bytes.
+  // graph-node's `ethereum_decode_params` (apiVersion 0.0.10): alloy's
+  // `abi_decode_params`, which reads a top-level tuple's fields as a sequence
+  // of parameters, as calldata holds them, with no offset word before them.
+  decodeParams(types: string, data: Bytes): EthereumValue | null {
+    try {
+      const parameters = parseAbiParameters(types);
+      const [only] = parameters;
+      if (parameters.length !== 1 || only.type !== "tuple" || !("components" in only)) {
+        return ethereumImpl.decode(types, data);
+      }
+      const decoded = decodeAbiParameters(only.components, data.toHexString() as `0x${string}`);
+      return ethereumConverter(types)([...decoded]);
+    } catch {
+      return null;
+    }
+  },
+  // graph-node's `DynSolValue::abi_encode` (`ethabi::encode(&[token])` before
+  // alloy), which is Solidity's `abi.encode` of the one value. A token carries
+  // no integer width and every integer takes a full word.
   encode(value: EthereumValue): Bytes | null {
     try {
-      const parameters: readonly AbiParameter[] = [abiParameterOf(value)];
-      return Bytes.fromHexString(encodeAbiParameters(parameters, [ethereumValueToJs(value)] as readonly unknown[]));
+      return new Bytes(encodedSequence([value]));
     } catch {
       return null;
     }
@@ -2894,11 +3168,13 @@ function contextValue(kind: string, data: string, key: string): Value {
 }
 
 const dataSourceImpl = {
+  // graph-node's DataSourceDetails holds `ds.address().unwrap_or_default()`:
+  // nothing for a data source without `source.address`, and a file data
+  // source's source text (offchain.rs `Source::address`).
   address(): Address {
     const scope = currentScope();
-    if (scope.file) {
-      throw unsupported("dataSource.address() in a file data source, which has no contract", scope.dataSource.name);
-    }
+    if (scope.file) return new Address(ByteArray.fromUTF8(scope.dataSource.address));
+    if (scope.dataSource.wildcard) return new Address(new Uint8Array(0));
     return Address.fromString(scope.dataSource.address);
   },
   network(): string {
@@ -3012,6 +3288,42 @@ export enum JSONValueKind {
   OBJECT = 5,
 }
 
+// graph-node's serde_json is built with `arbitrary_precision` and without
+// `preserve_order` (its Cargo.toml; no indexmap in Cargo.lock): a number's
+// payload is its literal text (`to_from/external.rs`), and an object is a
+// BTreeMap, so its entries come in key order.
+class JsonNumberText {
+  constructor(readonly text: string) {}
+}
+
+const keepNumberText = (_key: string, value: unknown, context?: { source?: string }) =>
+  typeof value === "number" ? new JsonNumberText(context?.source ?? String(value)) : value;
+
+/** Rust's `String` order: UTF-8 bytes, which is code point order. */
+function codePointOrder(a: string, b: string): number {
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index++) {
+    const x = a.codePointAt(index)!;
+    const y = b.codePointAt(index)!;
+    if (x !== y) return x - y;
+    if (x > 0xffff) index++;
+  }
+  return a.length - b.length;
+}
+
+const I64_MIN = -(2n ** 63n);
+const I64_MAX = 2n ** 63n - 1n;
+const U64_MAX = 2n ** 64n - 1n;
+
+/** Rust's `from_str` for an integer type: decimal digits only, in range. */
+function parseInteger(decimal: string, type: string, min: bigint, max: bigint): bigint {
+  const parsed = /^[+-]?\d+$/.test(decimal) ? BigInt(decimal) : null;
+  if (parsed === null || parsed < min || parsed > max) {
+    throw new Error(`JSON \`${decimal}\` cannot be parsed as ${type}`);
+  }
+  return parsed;
+}
+
 export class JSONValue {
   constructor(
     public kind: JSONValueKind,
@@ -3027,25 +3339,24 @@ export class JSONValue {
     return this.kind === JSONValueKind.NULL;
   }
   toU64(): bigint {
-    return this.toI64();
+    return jsonImpl.toU64(String(this.data));
   }
   toI64(): bigint {
-    return BigInt(this.data);
+    return jsonImpl.toI64(String(this.data));
   }
   toF64(): number {
-    return Number(this.data);
+    return jsonImpl.toF64(String(this.data));
   }
   toBigInt(): BigInt_ {
-    return BigInt_.fromString(String(this.data));
+    return jsonImpl.toBigInt(String(this.data));
   }
   toArray(): JSONValue[] {
     return (this.data as unknown[]).map(fromJson);
   }
   toObject(): TypedMap<string, JSONValue> {
     const map = new TypedMap<string, JSONValue>();
-    for (const [key, value] of Object.entries(this.data as object)) {
-      map.set(key, fromJson(value));
-    }
+    const keys = Object.keys(this.data as object).sort(codePointOrder);
+    map.entries = keys.map((key) => new TypedMapEntry(key, fromJson((this.data as any)[key])));
     return map;
   }
 }
@@ -3053,29 +3364,34 @@ export class JSONValue {
 function fromJson(value: unknown): JSONValue {
   if (value === null) return new JSONValue(JSONValueKind.NULL, null);
   if (typeof value === "boolean") return new JSONValue(JSONValueKind.BOOL, value);
-  if (typeof value === "number") return new JSONValue(JSONValueKind.NUMBER, value);
+  if (value instanceof JsonNumberText) return new JSONValue(JSONValueKind.NUMBER, value.text);
+  if (typeof value === "number") return new JSONValue(JSONValueKind.NUMBER, String(value));
   if (typeof value === "string") return new JSONValue(JSONValueKind.STRING, value);
   if (Array.isArray(value)) return new JSONValue(JSONValueKind.ARRAY, value);
   return new JSONValue(JSONValueKind.OBJECT, value);
 }
 
+// serde_json's `from_slice` refuses invalid UTF-8 and a byte order mark.
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 const jsonImpl = {
   fromBytes(bytes: Bytes): JSONValue {
-    return fromJson(JSON.parse(new TextDecoder().decode(bytes)));
+    return jsonImpl.fromString(strictUtf8.decode(bytes));
   },
   fromString(input: string): JSONValue {
-    return fromJson(JSON.parse(input));
+    return fromJson(JSON.parse(input, keepNumberText));
   },
   toI64(decimal: string): bigint {
-    return BigInt(decimal);
+    return parseInteger(decimal, "i64", I64_MIN, I64_MAX);
   },
   toU64(decimal: string): bigint {
-    return BigInt(decimal);
+    return parseInteger(decimal, "u64", 0n, U64_MAX);
   },
   toF64(decimal: string): number {
     return Number(decimal);
   },
   toBigInt(decimal: string): BigInt_ {
+    if (!/^[+-]?\d+$/.test(decimal)) throw new Error(`JSON \`${decimal}\` is not a decimal string`);
     return BigInt_.fromString(decimal);
   },
   try_fromString(input: string): Result<JSONValue, boolean> {
@@ -3514,6 +3830,17 @@ export enum YAMLValueKind {
   TAGGED = 6,
 }
 
+const yamlIndex: ProxyHandler<YAMLValue> = {
+  get(target, prop, receiver) {
+    if (typeof prop === "symbol" || prop in target) return Reflect.get(target, prop, receiver);
+    const held =
+      target.kind === YAMLValueKind.ARRAY
+        ? /^\d+$/.test(prop) && Number(prop) < (target.data as unknown[]).length
+        : target.kind === YAMLValueKind.OBJECT && target.toObject().get(YAMLValue.newString(prop)) !== null;
+    return held ? target.get(prop) : undefined;
+  },
+};
+
 /**
  * graph-ts' YAML value, over graph-node's `serde_yaml::Value`: numbers are kept
  * as the text they print as, an object's keys are YAML values themselves, and a
@@ -3523,7 +3850,11 @@ export class YAMLValue {
   constructor(
     public kind: YAMLValueKind,
     public data: any,
-  ) {}
+  ) {
+    // graph-ts' `@operator('[]')` makes `value['dataSources']['0']` a `get`;
+    // in JavaScript it is a property read.
+    return new Proxy(this, yamlIndex);
+  }
 
   static newNull(): YAMLValue {
     return new YAMLValue(YAMLValueKind.NULL, 0);

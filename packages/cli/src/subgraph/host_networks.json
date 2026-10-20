@@ -255,6 +255,11 @@
   "source": "host-list"
  },
  {
+  "name": "0g-galileo",
+  "chainId": 16602,
+  "source": "host-list"
+ },
+ {
   "name": "0g-testnet",
   "chainId": 16602,
   "source": "host-list"
@@ -392,6 +397,11 @@
  {
   "name": "manta-testnet",
   "chainId": 3441006,
+  "source": "host-list"
+ },
+ {
+  "name": "rise-sepolia",
+  "chainId": 11155931,
   "source": "host-list"
  },
  {

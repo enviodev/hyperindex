@@ -11,7 +11,7 @@ import { createEffect } from "../Envio.res.mjs";
 import { configureBlockTimestamps, requestBlockHeader, requestBlockTimestamp } from "./blocks.ts";
 import { configureReceiptLogs, requestReceiptLogs } from "./receipts.ts";
 import { missingRpcMessage } from "./errors.ts";
-import { HttpStatusError, untilAnswered, withDeadline } from "./transient.ts";
+import { HttpStatusError, isTransient, untilAnswered, withDeadline } from "./transient.ts";
 import { warn } from "../Logging.res.mjs";
 
 /**
@@ -53,21 +53,43 @@ export function arweaveGatewayUrls(): string[] {
 }
 
 /**
- * A CID, or a CID and a path under it, as a content path; `null` for anything
- * graph-node would refuse to parse (a data source created with one is ignored).
- * Accepts the `/ipfs/` and `ipfs://` spellings.
+ * graph-node's `ContentPath::new` (graph/src/ipfs/content_path.rs): a CID and
+ * an optional path under it, as `<CID>[/<path>]`, `/ipfs/<CID>…`,
+ * `ipfs://<CID>…`, or an http(s) URL with `/ipfs/<CID>…` in its path or the CID
+ * in its `arg` query parameter. `null` for anything it refuses to parse, which
+ * `ipfs.cat` answers with null and a file data source is ignored for.
  */
 export function normalizeIpfsPath(raw: string): string | null {
-  const path = raw
-    .trim()
-    .replace(/^ipfs:\/\//, "")
-    .replace(/^\/?ipfs\//, "");
-  const [root] = path.split("/");
+  const input = raw.trim();
+  if (input === "") return null;
+  if (/^https?:\/\//.test(input)) {
+    let url: URL;
+    try {
+      url = new URL(input);
+    } catch {
+      return null;
+    }
+    const arg = url.searchParams.get("arg");
+    if (arg !== null) return cidAndPath(arg);
+    const at = url.pathname.indexOf("/ipfs/");
+    return cidAndPath(at >= 0 ? url.pathname.slice(at + "/ipfs/".length) : url.pathname);
+  }
+  return cidAndPath(input);
+}
+
+function cidAndPath(raw: string): string | null {
+  let input = raw.replace(/^\/+|\/+$/g, "");
+  for (const prefix of ["ipfs/", "ipfs://"]) {
+    if (input.startsWith(prefix)) input = input.slice(prefix.length);
+  }
+  const slash = input.indexOf("/");
+  const root = slash < 0 ? input : input.slice(0, slash);
+  if (slash >= 0 && input.includes("?", slash)) return null;
   // CIDv0 is 46 base58 characters; CIDv1 is multibase-prefixed, most often
   // base32 (`b`) or base36 (`k`).
   const v0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
   const v1 = /^(b[a-z2-7]{20,}|k[a-z0-9]{20,}|z[1-9A-HJ-NP-Za-km-z]{20,}|f[0-9a-f]{20,})$/;
-  return v0.test(root) || v1.test(root) ? path : null;
+  return v0.test(root) || v1.test(root) ? input.replace(/\/+$/, "") : null;
 }
 /** graph-node heals a hash from its rainbow table; this is the public one. */
 const ENS_RAINBOW = "https://api.ensrainbow.io/v1/heal/";
@@ -146,25 +168,78 @@ async function fetchOnce(url: string, signal: AbortSignal): Promise<string | nul
  * cached as a null for good. With `maxTries`, the last failure is thrown once
  * that many rounds of the gateways have failed.
  */
-function fetchBase64(gateways: string[], path: string, maxTries = Infinity): Promise<string | null> {
-  return untilAnswered(
-    `the fetch of ${path}`,
-    async () => {
-      let failure: unknown;
-      for (const gateway of gateways) {
-        const url = gateway + path;
-        try {
-          const content = await withDeadline(`the fetch of ${url}`, (signal) => fetchOnce(url, signal));
-          if (content !== null) return content;
-        } catch (error) {
-          failure = error;
-        }
-      }
-      if (failure !== undefined) throw failure;
-      return null;
-    },
-    { maxTries, deadline: false },
-  );
+function fetchBase64(
+  gateways: string[],
+  path: string,
+  maxTries = Infinity,
+  budgetMs = Infinity,
+): Promise<string | null> {
+  return untilAnswered(`the fetch of ${path}`, () => firstGatewayAnswer(gateways, path), {
+    maxTries,
+    deadline: false,
+    budgetMs,
+  });
+}
+
+/** How long a gateway has to answer before the next one is asked as well. */
+const HEDGE_MS = 2_000;
+
+/**
+ * The gateways in order, each asked once the one before it has failed, has
+ * no such file, or has kept silent for `HEDGE_MS`: a gateway that hangs to
+ * its deadline holds the file up by `HEDGE_MS` rather than by the deadline.
+ * The first to hand the file over answers and the others are cancelled; a
+ * file is missing only if every gateway says so.
+ */
+function firstGatewayAnswer(gateways: string[], path: string): Promise<string | null> {
+  if (gateways.length === 0) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const cancels: AbortController[] = [];
+    let hedge: ReturnType<typeof setTimeout> | undefined;
+    let started = 0;
+    let finished = 0;
+    let failure: unknown;
+    let settled = false;
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hedge);
+      for (const cancel of cancels) cancel.abort();
+      finish();
+    };
+    const next = () => {
+      clearTimeout(hedge);
+      if (settled || started >= gateways.length) return;
+      const url = gateways[started++] + path;
+      const cancel = new AbortController();
+      cancels.push(cancel);
+      withDeadline(`the fetch of ${url}`, (signal) => fetchOnce(url, AbortSignal.any([signal, cancel.signal])))
+        .then(
+          (content) => {
+            if (content !== null) settle(() => resolve(content));
+          },
+          (error) => {
+            failure = error;
+          },
+        )
+        .finally(() => {
+          finished++;
+          if (finished === gateways.length) {
+            settle(() => (failure === undefined ? resolve(null) : reject(failure)));
+          } else if (finished === started) {
+            next();
+          }
+        });
+      if (started < gateways.length) hedge = setTimeout(next, HEDGE_MS);
+    };
+    next();
+  });
+}
+
+/** graph-node's `GRAPH_IPFS_TIMEOUT`, 60 s by default (graph/src/env/mappings.rs). */
+function ipfsTimeoutMs(): number {
+  const value = Number(process.env.ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 60_000;
 }
 
 /** At most `limit` of `task`s run at once; the rest queue. */
@@ -197,9 +272,13 @@ function fileRetryMs(): number {
 
 export type HostEffects = ReturnType<typeof makeHostEffects>;
 
-export function makeHostEffects(rpcUrls: string[], headerLag: Record<number, number> = {}) {
-  configureBlockTimestamps(rpcUrls, headerLag);
-  configureReceiptLogs(rpcUrls);
+export function makeHostEffects(
+  rpcUrls: string[],
+  headerLag: Record<number, number> = {},
+  rpcOnlyChains: number[] = [],
+) {
+  configureBlockTimestamps(rpcUrls, headerLag, rpcOnlyChains);
+  configureReceiptLogs(rpcUrls, rpcOnlyChains);
 
   const clientOrThrow = (callSite: string) => {
     if (rpcUrls.length === 0) {
@@ -208,9 +287,40 @@ export function makeHostEffects(rpcUrls: string[], headerLag: Record<number, num
     return rpcClient(rpcUrls);
   };
 
+  // graph-node's `ipfs.cat` returns null for a file no gateway handed over
+  // within its timeout ("Failed ipfs.cat, returning `null`"); that null isn't
+  // cached, so a later ask fetches anew.
   const ipfsCat = createEffect(
     {
       name: "envio_subgraph_ipfs_cat",
+      input: Sury.string,
+      output: nullableString,
+      rateLimit: false,
+      cache: true,
+    },
+    async ({ input, context }: { input: string; context: { cache: boolean } }) => {
+      const budget = ipfsTimeoutMs();
+      try {
+        return await fetchBase64(ipfsGatewayUrls(), input, Infinity, budget);
+      } catch (error) {
+        if (!isTransient(error)) throw error;
+        context.cache = false;
+        const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+        warn(
+          `Envio Subgraph: ipfs.cat(${input}) got no answer within ${budget}ms (${reason}), so it returns null, ` +
+            "as graph-node's does after GRAPH_IPFS_TIMEOUT. The null isn't cached; ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS " +
+            "sets the wait, ENVIO_SUBGRAPH_IPFS_URL the gateways.",
+        );
+        return null;
+      }
+    },
+  );
+
+  // `ipfs.map` fails its handler where `ipfs.cat` would answer null, and
+  // graph-node retries a block that failed that way, so it waits for the file.
+  const ipfsMapFile = createEffect(
+    {
+      name: "envio_subgraph_ipfs_map",
       input: Sury.string,
       output: nullableString,
       rateLimit: false,
@@ -430,5 +540,5 @@ export function makeHostEffects(rpcUrls: string[], headerLag: Record<number, num
       JSON.stringify(await requestReceiptLogs({ ...JSON.parse(input), chainId: context.chain.id })),
   );
 
-  return { ipfsCat, arweaveData, fileData, ensName, getBalance, hasCode, blockTimestamp, blockHeader, receiptLogs };
+  return { ipfsCat, ipfsMapFile, arweaveData, fileData, ensName, getBalance, hasCode, blockTimestamp, blockHeader, receiptLogs };
 }

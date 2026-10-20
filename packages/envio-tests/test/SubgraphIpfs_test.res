@@ -61,6 +61,9 @@ import { beforeAll, describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
 const g = globalThis as any;
+// Shaped as CIDv0s: graph-node answers null for anything that doesn't parse as one.
+const QmMissing = "QmMissingMissingMissingMissingMissingMissingMi";
+const QmFlaky = "QmFreshFreshFreshFreshFreshFreshFreshFreshFres";
 
 beforeAll(() => {
   process.env.ENVIO_SUBGRAPH_RETRY_BACKOFF_MS = "20";
@@ -68,8 +71,8 @@ beforeAll(() => {
   const realFetch = g.fetch;
   g.fetch = (input: any, init: any) => {
     const url = String(input);
-    if (url.endsWith("/ipfs/QmMissing")) return Promise.resolve(new Response("not found", { status: 404 }));
-    if (url.endsWith("/ipfs/QmFlaky")) {
+    if (url.endsWith("/ipfs/" + QmMissing)) return Promise.resolve(new Response("not found", { status: 404 }));
+    if (url.endsWith("/ipfs/" + QmFlaky)) {
       return Promise.resolve(
         flakyFailures++ < 2 ? new Response("busy", { status: 503 }) : new Response("hello"),
       );
@@ -87,14 +90,14 @@ const published = (hash: string) => ({
 describe("ipfs.cat", () => {
   it("reads a file the gateway doesn't have as null", async (t) => {
     const indexer = createTestIndexer();
-    await indexer.process({ chains: { 1: { simulate: [published("QmMissing")] } } });
-    t.expect(await indexer.Metadata.getAll()).toEqual([{ id: "QmMissing", content: "null" }]);
+    await indexer.process({ chains: { 1: { simulate: [published(QmMissing)] } } });
+    t.expect(await indexer.Metadata.getAll()).toEqual([{ id: QmMissing, content: "null" }]);
   });
 
   it("asks a failing gateway again rather than answering null", async (t) => {
     const indexer = createTestIndexer();
-    await indexer.process({ chains: { 1: { simulate: [published("QmFlaky")] } } });
-    t.expect(await indexer.Metadata.getAll()).toEqual([{ id: "QmFlaky", content: "hello" }]);
+    await indexer.process({ chains: { 1: { simulate: [published(QmFlaky)] } } });
+    t.expect(await indexer.Metadata.getAll()).toEqual([{ id: QmFlaky, content: "hello" }]);
   });
 });
 `,

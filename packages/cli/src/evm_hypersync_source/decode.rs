@@ -170,7 +170,8 @@ impl OnEventRegistration {
             topic_filters: TopicFilters::parse(&ep.topic_selections)
                 .context("parse topic filters")?,
             params: ep.params.clone(),
-            decoder: build_event_decoder(**sighash, &ep.params).context("build decoder")?,
+            decoder: build_event_decoder(**sighash, topic_count, &ep.params)
+                .context("build decoder")?,
         })
     }
 
@@ -438,7 +439,13 @@ pub(crate) struct RoutedEvent {
 /// from a signature string, so an event surfaced to handlers under a different
 /// `name:` (display name != on-chain name) still matches its real log (issue
 /// #1285). The event name plays no part in decoding — only the param types do.
-fn build_event_decoder(sighash: [u8; 32], params: &[ParamMeta]) -> Result<DynSolEvent> {
+/// An anonymous event has no signature topic, only one per indexed param, and
+/// its `sighash` is the value its first indexed param is matched on.
+fn build_event_decoder(
+    sighash: [u8; 32],
+    topic_count: u8,
+    params: &[ParamMeta],
+) -> Result<DynSolEvent> {
     let mut indexed = Vec::new();
     let mut body = Vec::new();
     for param in params {
@@ -450,8 +457,8 @@ fn build_event_decoder(sighash: [u8; 32], params: &[ParamMeta]) -> Result<DynSol
             body.push(ty);
         }
     }
-    DynSolEvent::new(Some(B256::from(sighash)), indexed, DynSolType::Tuple(body))
-        .context("construct event decoder")
+    let topic0 = (usize::from(topic_count) != indexed.len()).then(|| B256::from(sighash));
+    DynSolEvent::new(topic0, indexed, DynSolType::Tuple(body)).context("construct event decoder")
 }
 
 #[cfg(test)]
@@ -712,6 +719,71 @@ mod tests {
                     ("value", JsValue::uint(42u64)),
                 ])
             )
+        );
+    }
+
+    // Balancer's anonymous `LOG_CALL(bytes4 indexed sig, address indexed
+    // caller, bytes data)`: no signature topic, so its first indexed param is
+    // topic0 and a registration matches it on that value. One topic per
+    // indexed param is what marks it anonymous.
+    #[test]
+    fn decodes_an_anonymous_event_from_all_of_its_topics() {
+        use alloy_dyn_abi::DynSolValue;
+        use alloy_primitives::hex;
+
+        let selector = format!("0x34e19907{}", "00".repeat(28));
+        let caller = format!("0x{}{}", "00".repeat(12), "cc".repeat(20));
+        let core = Decoder::from_registrations(
+            &[OnEventRegistrationInput {
+                index: 3,
+                sighash: selector.clone(),
+                topic_count: 2,
+                event_name: "LOG_CALL_34e19907".to_string(),
+                contract_name: "Pool".to_string(),
+                is_wildcard: false,
+                depends_on_addresses: false,
+                start_block: None,
+                topic_selections: no_filter_selection(&selector),
+                block_fields: vec![],
+                transaction_fields: vec![],
+                params: vec![
+                    pm("sig", "bytes4", true),
+                    pm("caller", "address", true),
+                    pm("data", "bytes", false),
+                ],
+            }],
+            false,
+            &store(&["Pool"], Some("Pool")),
+        )
+        .unwrap();
+        let data =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(vec![0x12, 0x34])]).abi_encode_params();
+        let log = Log {
+            topics: vec![Some(selector.clone()), Some(caller)],
+            data: Some(format!("0x{}", hex::encode(data))),
+            ..Default::default()
+        };
+
+        let decoder = selection_of(&core, &[3], &Default::default()).unwrap();
+        let routed: Vec<_> = route(&decoder, &log, &owned(0))
+            .into_iter()
+            .map(|r| (r.index, JsValue::of(&r.params)))
+            .collect();
+        assert_eq!(
+            routed,
+            vec![(
+                3,
+                JsValue::obj([
+                    // A fixed-size value crosses as its whole word, as any
+                    // indexed bytesN does.
+                    ("sig", JsValue::str(&selector)),
+                    (
+                        "caller",
+                        JsValue::str("0xcccccccccccccccccccccccccccccccccccccccc")
+                    ),
+                    ("data", JsValue::str("0x1234")),
+                ])
+            )]
         );
     }
 

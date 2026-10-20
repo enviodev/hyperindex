@@ -930,6 +930,12 @@ pub mod evm {
                            event"
         )]
         pub field_selection: Option<FieldSelection>,
+        /// The first topic an anonymous event is matched on, which it carries
+        /// in place of a signature hash. Set by subgraph translation (a
+        /// manifest handler's `topic0`), not part of config.yaml's schema.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(skip)]
+        pub topic0: Option<String>,
     }
 }
 
