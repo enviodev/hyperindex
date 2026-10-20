@@ -1633,13 +1633,19 @@ const storeImpl = {
       : rows;
     // graph-node answers in key order (`EntityCache::load_related` walks a
     // BTreeSet of entity keys): by id, as the id's type orders.
-    return [...visible].sort(byId).map((row: any) => toEntity(target, row) as Entity);
+    const numeric = schema.entityFieldTypes[target]?.id?.kind === "Int8";
+    return [...visible].sort(numeric ? byNumericId : byId).map((row: any) => toEntity(target, row) as Entity);
   },
 };
 
 function byId(a: { id: unknown }, b: { id: unknown }): number {
-  if (typeof a.id === "string" && typeof b.id === "string") return codePointOrder(a.id, b.id);
-  return (a.id as bigint) < (b.id as bigint) ? -1 : (a.id as bigint) > (b.id as bigint) ? 1 : 0;
+  return codePointOrder(String(a.id), String(b.id));
+}
+
+function byNumericId(a: { id: unknown }, b: { id: unknown }): number {
+  const x = BigInt(String(a.id));
+  const y = BigInt(String(b.id));
+  return x < y ? -1 : x > y ? 1 : 0;
 }
 
 export const store = strictNamespace("store", storeImpl);
