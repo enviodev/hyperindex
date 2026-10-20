@@ -423,6 +423,7 @@ pub fn generate_files(
         related: graph_cli.derived_loaders.unwrap_or(graph_ts.related),
         unset_only_null: graph_cli.unset_only_null,
         constructor_defaults: graph_cli.constructor_defaults,
+        int8_ids: graph_cli.int8_ids,
         ..graph_ts
     };
     files.insert(
@@ -538,6 +539,9 @@ pub struct GraphTs {
     /// patch releases that dropped it) set every non-nullable field of a new
     /// entity to a zero value in its constructor.
     pub constructor_defaults: bool,
+    /// Not graph-ts but the project's graph-cli: an `Int8` id is typed `Int8`
+    /// (0.97+), a string before.
+    pub int8_ids: bool,
 }
 
 impl GraphTs {
@@ -547,6 +551,7 @@ impl GraphTs {
         display: true,
         unset_only_null: false,
         constructor_defaults: false,
+        int8_ids: true,
     };
 
     /// The graph-ts Node would resolve from the manifest's directory.
@@ -576,6 +581,7 @@ impl GraphTs {
                 display: text.contains("displayData"),
                 unset_only_null: false,
                 constructor_defaults: false,
+                int8_ids: true,
             };
         }
         GraphTs::ALL
@@ -691,6 +697,8 @@ pub struct GraphCli {
     /// A new entity's constructor sets its non-nullable fields to zero values
     /// (0.22.0 to 0.29.0, bar the patch releases that dropped it).
     pub constructor_defaults: bool,
+    /// An `Int8` id is typed `Int8` (0.97+); a string before.
+    pub int8_ids: bool,
 }
 
 impl GraphCli {
@@ -699,6 +707,7 @@ impl GraphCli {
         derived_loaders: None,
         unset_only_null: false,
         constructor_defaults: false,
+        int8_ids: true,
     };
 
     /// The graph-cli the project builds with (`graph_cli_version`); the latest
@@ -711,6 +720,7 @@ impl GraphCli {
                 derived_loaders: Some(version >= [0, 51, 0]),
                 unset_only_null: version < [0, 22, 0],
                 constructor_defaults: writes_constructor_defaults(&version),
+                int8_ids: version >= [0, 97, 0],
             },
             None => GraphCli::LATEST,
         }
@@ -1779,14 +1789,16 @@ fn named_type<'t>(ty: &'t Type<'_, String>) -> &'t str {
     }
 }
 
-fn id_kind(fields: &[SchemaField<'_>]) -> IdKind {
+/// graph-cli before 0.97 knew Bytes and String ids only: it typed any other
+/// id, an `Int8` one among them, as a string.
+fn id_kind(fields: &[SchemaField<'_>], int8_ids: bool) -> IdKind {
     let Some(field) = fields.iter().find(|field| field.name == "id") else {
         return IdKind::Str;
     };
     match &field.field_type {
         Type::NonNullType(inner) => match &**inner {
             Type::NamedType(name) if name == "Bytes" => IdKind::Bytes,
-            Type::NamedType(name) if name == "Int8" => IdKind::Int8,
+            Type::NamedType(name) if name == "Int8" && int8_ids => IdKind::Int8,
             _ => IdKind::Str,
         },
         _ => IdKind::Str,
@@ -1917,10 +1929,14 @@ impl<'a> SchemaGen<'a> {
                     if object.name == name
                         && object.directives.iter().any(|d| d.name == "entity") =>
                 {
-                    return id_kind(&object.fields).type_name().to_string();
+                    return id_kind(&object.fields, self.graph_ts.int8_ids)
+                        .type_name()
+                        .to_string();
                 }
                 TypeDefinition::Interface(interface) if interface.name == name => {
-                    return id_kind(&interface.fields).type_name().to_string();
+                    return id_kind(&interface.fields, self.graph_ts.int8_ids)
+                        .type_name()
+                        .to_string();
                 }
                 _ => {}
             }
@@ -1964,7 +1980,7 @@ impl<'a> SchemaGen<'a> {
 
     fn entity_type(&self, object: &graphql_parser::schema::ObjectType<'a, String>) -> String {
         let name = &object.name;
-        let id = id_kind(&object.fields);
+        let id = id_kind(&object.fields, self.graph_ts.int8_ids);
         let defaults: String = if self.graph_ts.constructor_defaults {
             object
                 .fields
@@ -2031,7 +2047,7 @@ impl<'a> SchemaGen<'a> {
             // Only a derived field whose type is an object type gets a getter.
             self.object(named_type(&field.field_type))?;
             let loader = format!("{}Loader", named_type(&field.field_type));
-            let id_is_bytes = id_kind(&entity.fields) == IdKind::Bytes;
+            let id_is_bytes = id_kind(&entity.fields, self.graph_ts.int8_ids) == IdKind::Bytes;
             let to_value = if id_is_bytes {
                 ".toBytes().toHexString()"
             } else {
@@ -2430,6 +2446,7 @@ mod tests {
             display: false,
             unset_only_null: false,
             constructor_defaults: false,
+            int8_ids: true,
         };
         let ts = schema_ts(
             "type Token @entity { id: ID! balances: [Balance!]! @derivedFrom(field: \"token\") } \
@@ -2465,6 +2482,7 @@ mod tests {
                 display: false,
                 unset_only_null: false,
                 constructor_defaults: false,
+                int8_ids: true,
             }
         );
         std::fs::remove_dir_all(&root).ok();
