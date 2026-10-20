@@ -1464,7 +1464,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           name: `${source.name}_${handler.handler}`,
           where: ({ chain }: { chain: { id: number } }) =>
             chain.id === source.chainId && { block: { number: blocks } },
-        },
+          runsFirst: once && !source.isTemplate,
+        } as any,
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;
           const graphBlock = makeBlockHandlerBlock(

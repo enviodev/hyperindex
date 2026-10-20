@@ -46,5 +46,6 @@ let registerOnBlock: (
   ~name: string,
   ~where: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
+  ~runsFirst: bool=?,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => unit
