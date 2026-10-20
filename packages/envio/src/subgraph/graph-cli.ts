@@ -573,8 +573,15 @@ function fillFromOtherManifests(root: string, dir: string, manifestFile: string,
   const filled = subgraphFillGenerated(root, path.resolve(root, manifestFile), dir, wanted);
   const shown = (file: string) => path.join(path.relative(root, dir), file);
   const bySource = new Map<string, string[]>();
-  for (const { file, source, abiName, renamedFrom } of filled) {
-    if (renamedFrom) {
+  for (const { file, source, abiName, renamedFrom, undeclared } of filled) {
+    if (undeclared) {
+      warn(
+        `Envio Subgraph wrote ${shown(file)} from ${source}, an ABI file no manifest of the project names any more: ` +
+          `the mappings import it, and no manifest has a data source or template named ` +
+          `"${path.basename(path.dirname(file))}" or an ABI named "${abiName}", so \`graph build\` fails on a clean ` +
+          "checkout. The tree this subgraph was built with had it from when one did.",
+      );
+    } else if (renamedFrom) {
       const name = path.basename(path.dirname(file));
       warn(
         `Envio Subgraph wrote ${shown(file)} from data source ${name}'s ABI "${renamedFrom}" (${source}) under the ` +

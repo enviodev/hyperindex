@@ -480,7 +480,8 @@ classes call `DataSource.create`. Consequences:
     manifest ABI of that name, since what graph codegen writes for a data
     source and ABI depends on the ABI alone (a renamed data source); and a
     `<X>/<X>.ts` from data source X's own ABI under that name (a renamed
-    ABI). A file
+    ABI); and from an `<ABI>.json` the manifests' ABI directories still hold
+    (a data source taken out of the manifest). A file
     none of them accounts for fails to load with the reason (no data source of
     that name, no such ABI, no `index.ts`), as `graph build` fails on it.
 - **Workspace packages resolve without an install.** A bare import a monorepo's

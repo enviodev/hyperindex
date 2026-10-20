@@ -318,6 +318,75 @@ pub fn fill_from_source_abis(
     written
 }
 
+/// Writes the files of `wanted` still missing under `output_dir` whose ABI no
+/// manifest names but whose ABI file is still there, `<ABI>.json` in a
+/// directory the manifests keep their ABIs in: LayerCover commented its
+/// SyndicateRoleManager data source out and kept the mapping importing
+/// generated/SyndicateRoleManager/SyndicateRoleManager, with
+/// abis/SyndicateRoleManager.json beside the others. Returns each file with the
+/// ABI file it came from.
+pub fn fill_from_abi_files(
+    manifests: &[PathBuf],
+    root: &Path,
+    output_dir: &Path,
+    wanted: &[String],
+) -> Vec<(String, PathBuf)> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for manifest_file in manifests {
+        let Some(manifest) = std::fs::read_to_string(manifest_file)
+            .ok()
+            .and_then(|text| serde_yaml::from_str::<Yaml>(&text).ok())
+        else {
+            continue;
+        };
+        let base = manifest_file.parent().unwrap_or(Path::new("."));
+        for (_, source) in declared_sources(&manifest) {
+            for (_, file) in mapping_abis(source) {
+                if let Some(dir) = abi_file(base, root, &file).parent() {
+                    if !dirs.iter().any(|known| known == dir) {
+                        dirs.push(dir.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+    let mut written = Vec::new();
+    for relative in wanted {
+        if output_dir.join(relative).exists() {
+            continue;
+        }
+        let abi_name = match relative.split('/').collect::<Vec<_>>().as_slice() {
+            [_, file] | ["templates", _, file] => file.trim_end_matches(".ts").to_string(),
+            _ => continue,
+        };
+        let found = dirs.iter().find_map(|dir| {
+            [format!("{abi_name}.json"), format!("{abi_name}.abi.json")]
+                .into_iter()
+                .map(|file| dir.join(file))
+                .find(|file| file.is_file())
+        });
+        let Some(abi_path) = found else {
+            continue;
+        };
+        let base = abi_path.parent().unwrap_or(root);
+        let Some(text) = load_abi(&abi_name, &abi_path)
+            .ok()
+            .and_then(|abi| abi_ts(&abi, GraphCli::detect(base)).ok())
+        else {
+            continue;
+        };
+        let target = output_dir.join(relative);
+        let saved = target
+            .parent()
+            .is_some_and(|parent| std::fs::create_dir_all(parent).is_ok())
+            && std::fs::write(&target, text).is_ok();
+        if saved {
+            written.push((relative.clone(), abi_path));
+        }
+    }
+    written
+}
+
 /// Whether `output_dir` holds what `generate` would write there now, file for
 /// file, so it can't be stale.
 pub fn is_current(manifest_file: &Path, output_dir: &Path) -> bool {
