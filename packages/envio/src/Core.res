@@ -37,7 +37,7 @@ type fromSubgraphOptions = {
 
 type bundledCodegenResult = {outputDir: string, files: array<string>}
 
-type filledGeneratedFile = {file: string, manifest: string}
+type filledGeneratedFile = {file: string, source: string, abiName?: string}
 
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,

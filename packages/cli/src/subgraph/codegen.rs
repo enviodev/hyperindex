@@ -134,6 +134,61 @@ pub fn fill_from_manifests(
     written
 }
 
+/// Writes the files of `wanted` still missing under `output_dir` whose ABI one
+/// of `manifests` declares by that name, whatever the data source: what graph
+/// codegen writes to `<data source>/<ABI>.ts` depends on the ABI alone, and a
+/// mapping importing it for a data source no manifest declares any more (a
+/// renamed one) was compiled against a tree left from when one did. Returns
+/// each file with the ABI file it came from.
+pub fn fill_from_abi_names(
+    manifests: &[PathBuf],
+    output_dir: &Path,
+    wanted: &[String],
+) -> Vec<(String, PathBuf)> {
+    let mut written = Vec::new();
+    for relative in wanted {
+        if output_dir.join(relative).exists() {
+            continue;
+        }
+        let parts: Vec<&str> = relative.split('/').collect();
+        let abi_name = match parts.as_slice() {
+            [_, file] | ["templates", _, file] => file.trim_end_matches(".ts"),
+            _ => continue,
+        };
+        let found = manifests.iter().find_map(|manifest_file| {
+            let manifest = std::fs::read_to_string(manifest_file)
+                .ok()
+                .and_then(|text| serde_yaml::from_str::<Yaml>(&text).ok())?;
+            let base = manifest_file.parent().unwrap_or(Path::new("."));
+            ["dataSources", "templates"]
+                .iter()
+                .filter_map(|key| manifest.get(*key).and_then(Yaml::as_sequence))
+                .flatten()
+                .flat_map(mapping_abis)
+                .find(|(name, _)| name == abi_name)
+                .map(|(_, file)| (base.to_path_buf(), base.join(file)))
+        });
+        let Some((base, abi_file)) = found else {
+            continue;
+        };
+        let Some(text) = load_abi(abi_name, &abi_file)
+            .ok()
+            .and_then(|abi| abi_ts(&abi, GraphCli::detect(&base)).ok())
+        else {
+            continue;
+        };
+        let target = output_dir.join(relative);
+        let saved = target
+            .parent()
+            .is_some_and(|parent| std::fs::create_dir_all(parent).is_ok())
+            && std::fs::write(&target, text).is_ok();
+        if saved {
+            written.push((relative.clone(), abi_file));
+        }
+    }
+    written
+}
+
 /// Whether `output_dir` holds what `generate` would write there now, file for
 /// file, so it can't be stale.
 pub fn is_current(manifest_file: &Path, output_dir: &Path) -> bool {

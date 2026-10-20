@@ -543,11 +543,22 @@ function fillFromOtherManifests(root: string, dir: string, manifestFile: string,
     return relative.endsWith(".ts") ? relative : `${relative}.ts`;
   });
   const filled = subgraphFillGenerated(root, path.resolve(root, manifestFile), dir, wanted);
-  const byManifest = new Map<string, string[]>();
-  for (const { file, manifest } of filled) {
-    byManifest.set(manifest, [...(byManifest.get(manifest) ?? []), path.join(path.relative(root, dir), file)]);
+  const shown = (file: string) => path.join(path.relative(root, dir), file);
+  const bySource = new Map<string, string[]>();
+  for (const { file, source, abiName } of filled) {
+    if (abiName) {
+      warn(
+        `Envio Subgraph wrote ${shown(file)} from the ABI "${abiName}" (${source}): the mappings import it, and no ` +
+          `manifest of the project has a data source or template named "${path.basename(path.dirname(file))}" that ` +
+          "graph codegen would write it for, so `graph build` fails on a clean checkout. The tree this subgraph was " +
+          "built with had it from an earlier manifest; graph codegen writes the same file for every data source with " +
+          "that ABI.",
+      );
+    } else {
+      bySource.set(source, [...(bySource.get(source) ?? []), shown(file)]);
+    }
   }
-  for (const [manifest, files] of byManifest) {
+  for (const [manifest, files] of bySource) {
     const it = files.length === 1 ? "it" : "them";
     warn(
       `Envio Subgraph wrote ${files.join(", ")} from ${manifest}: the mappings import ${it}, and ` +

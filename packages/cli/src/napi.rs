@@ -175,12 +175,16 @@ pub fn subgraph_bundled_codegen(
 pub struct FilledGeneratedFile {
     /// Relative to the generated directory.
     pub file: String,
-    /// The project-relative manifest that declares it.
-    pub manifest: String,
+    /// The project-relative manifest that declares its data source, or the ABI
+    /// file it was written from when no manifest does (`abi_name` set).
+    pub source: String,
+    /// Set when the file was written from the ABI of this name.
+    pub abi_name: Option<String>,
 }
 
 /// The `wanted` generated files that the project's other manifests declare,
-/// written into `output_dir` (see `codegen::fill_from_manifests`).
+/// then those whose ABI some manifest names, written into `output_dir` (see
+/// `codegen::fill_from_manifests` and `codegen::fill_from_abi_names`).
 #[napi_derive::napi]
 pub fn subgraph_fill_generated(
     root: String,
@@ -188,28 +192,46 @@ pub fn subgraph_fill_generated(
     output_dir: String,
     wanted: Vec<String>,
 ) -> Vec<FilledGeneratedFile> {
-    let root = std::path::Path::new(&root);
+    let root = std::fs::canonicalize(&root).unwrap_or_else(|_| std::path::PathBuf::from(&root));
+    let root = root.as_path();
+    let output_dir = std::path::Path::new(&output_dir);
     let own = std::fs::canonicalize(&manifest_file).ok();
-    let manifests: Vec<std::path::PathBuf> = crate::subgraph::find_manifests(root)
+    let others: Vec<std::path::PathBuf> = crate::subgraph::find_manifests(root)
         .into_iter()
         .map(|relative| root.join(relative))
         .filter(|manifest| std::fs::canonicalize(manifest).ok() != own)
         .collect();
-    crate::subgraph::codegen::fill_from_manifests(
-        &manifests,
-        std::path::Path::new(&output_dir),
-        &wanted,
-    )
-    .into_iter()
-    .map(|(file, manifest)| FilledGeneratedFile {
-        file,
-        manifest: manifest
-            .strip_prefix(root)
-            .unwrap_or(&manifest)
+    let relative = |path: &std::path::Path| {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        path.strip_prefix(root)
+            .unwrap_or(&path)
             .display()
-            .to_string(),
-    })
-    .collect()
+            .to_string()
+    };
+    let mut filled: Vec<FilledGeneratedFile> =
+        crate::subgraph::codegen::fill_from_manifests(&others, output_dir, &wanted)
+            .into_iter()
+            .map(|(file, manifest)| FilledGeneratedFile {
+                file,
+                source: relative(&manifest),
+                abi_name: None,
+            })
+            .collect();
+    let all: Vec<std::path::PathBuf> = std::iter::once(std::path::PathBuf::from(&manifest_file))
+        .chain(others)
+        .collect();
+    filled.extend(
+        crate::subgraph::codegen::fill_from_abi_names(&all, output_dir, &wanted)
+            .into_iter()
+            .map(|(file, abi_file)| FilledGeneratedFile {
+                abi_name: std::path::Path::new(&file)
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string()),
+                file,
+                source: relative(&abi_file),
+            }),
+    );
+    filled
 }
 
 /// The packages of the workspace `root` sits in, name to directory.
