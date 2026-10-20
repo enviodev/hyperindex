@@ -253,7 +253,11 @@ function installResolveHook(root: string) {
         // The workspace's own package before any copy fetched from npm, which
         // may not be it.
         const workspaceFile = bare ? resolveWorkspacePackage(specifier, workspacePackages) : null;
-        if (workspaceFile) return { url: workspaceFile, format: "module", shortCircuit: true };
+        if (workspaceFile) {
+          return workspaceFile.endsWith(".ts")
+            ? { url: workspaceFile, format: "module", shortCircuit: true }
+            : { url: workspaceFile, shortCircuit: true };
+        }
         let fetched;
         if (fetchedModulesParent && bare && error?.code === "ERR_MODULE_NOT_FOUND") {
           try {
