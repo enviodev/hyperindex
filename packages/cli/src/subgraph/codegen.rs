@@ -165,7 +165,14 @@ pub fn generate_files(
         .unwrap_or("schema.graphql");
     let schema_text = std::fs::read_to_string(base.join(schema_file))
         .with_context(|| format!("reading the schema {schema_file}"))?;
-    files.insert("schema.ts".to_string(), schema_ts(&schema_text, graph_ts)?);
+    let schema_graph_ts = GraphTs {
+        related: graph_cli.derived_loaders.unwrap_or(graph_ts.related),
+        ..graph_ts
+    };
+    files.insert(
+        "schema.ts".to_string(),
+        schema_ts(&schema_text, schema_graph_ts)?,
+    );
 
     let list = |key: &str| -> Vec<&Yaml> {
         manifest
@@ -315,11 +322,15 @@ pub struct GraphCli {
     /// A call handler's output tuple class is `…OutputStruct` (graph-cli
     /// 0.94+), `…Struct` before.
     pub output_struct_suffix: bool,
+    /// A derived field is a `…Loader` (graph-cli 0.51+), an array getter and
+    /// setter before; unknown without a version, when graph-ts decides.
+    pub derived_loaders: Option<bool>,
 }
 
 impl GraphCli {
     pub const LATEST: GraphCli = GraphCli {
         output_struct_suffix: true,
+        derived_loaders: None,
     };
 
     /// The graph-cli Node would resolve from the manifest's directory, else the
@@ -357,6 +368,7 @@ impl GraphCli {
         match installed.or_else(declared) {
             Some(version) => GraphCli {
                 output_struct_suffix: version >= (0, 94),
+                derived_loaders: Some(version >= (0, 51)),
             },
             None => GraphCli::LATEST,
         }
@@ -2107,6 +2119,55 @@ mod tests {
                     "QuoteCallValue0OutputStruct".to_string(),
                     "QuoteCall__Inputs".to_string(),
                     "QuoteCall__Outputs".to_string()
+                ]
+            )
+        );
+    }
+
+    // graph-cli 0.51 made a derived field a `…Loader` (store.loadRelated);
+    // before, it was an array getter with a setter, which old mappings assign.
+    #[test]
+    fn derived_fields_are_generated_as_the_projects_graph_cli_generates_them() {
+        let derived = |graph_cli: &str| {
+            let dir = tempdir::TempDir::new("envio-codegen-derived").unwrap();
+            let write =
+                |path: &str, text: &str| std::fs::write(dir.path().join(path), text).unwrap();
+            write(
+                "package.json",
+                &format!(r#"{{"dependencies":{{"@graphprotocol/graph-cli":"{graph_cli}"}}}}"#),
+            );
+            write(
+                "schema.graphql",
+                "type Token @entity { id: ID! balances: [Balance!]! @derivedFrom(field: \"token\") } \
+                 type Balance @entity { id: ID! token: Token! }",
+            );
+            write(
+                "subgraph.yaml",
+                "specVersion: 0.0.5\nschema:\n  file: ./schema.graphql\ndataSources: []\n",
+            );
+            let files = generate_files(
+                &dir.path().join("subgraph.yaml"),
+                GraphTs::ALL,
+                GraphCli::detect(dir.path()),
+            )
+            .unwrap();
+            surface(&files["schema.ts"])
+                .into_iter()
+                .filter(|name| name.contains("alances") || name.contains("Loader"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (derived("0.49.0"), derived("^0.51.0")),
+            (
+                vec![
+                    "Token.get balances".to_string(),
+                    "Token.set balances".to_string()
+                ],
+                vec![
+                    "BalanceLoader".to_string(),
+                    "BalanceLoader.constructor".to_string(),
+                    "BalanceLoader.load".to_string(),
+                    "Token.get balances".to_string()
                 ]
             )
         );
