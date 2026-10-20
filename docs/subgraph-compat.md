@@ -867,7 +867,10 @@ build does first.
   it, as `npm run configure -- base` does. Only a first argument the file
   assigns to a `network` or `chain` variable counts; a file that reads a
   `--network` option instead (Decentraland's buildData.ts, Spectra's config
-  generator) is passed `--network <network>`. With no network picked,
+  generator) is passed `--network <network>`. A script that names its network
+  itself (Polymarket's `NETWORK_NAME=mainnet ts-node ./templatify.ts`) isn't
+  given another, and one that, given it, runs another script's commands
+  (UMA's `build-manifest` beside `prepare:polygon`) counts once. With no network picked,
   a writer runs only when it is the only one.
   Any other case is the error above, saying why none ran.
 - *What runs:* the script's commands up to its first graph-cli step, with

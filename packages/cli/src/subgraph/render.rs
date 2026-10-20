@@ -2178,8 +2178,23 @@ fn network_argument(leaf: &Leaf) -> Option<NetworkArgument> {
 }
 
 /// `candidate` with the network passed to each command that takes it, as
-/// `npm run <script> -- <network>` passes it.
+/// `npm run <script> -- <network>` passes it. A script that names its network
+/// itself (Polymarket's `NETWORK_NAME=mainnet ts-node ./templatify.ts`) isn't
+/// given another.
 fn with_network_argument(candidate: &Candidate, network: &str) -> Option<Candidate> {
+    let network_named = |name: &str| {
+        let upper = name.to_uppercase();
+        upper.contains("NETWORK") || upper.contains("CHAIN")
+    };
+    let names_its_own = candidate.commands.leaves.iter().any(|leaf| {
+        leaf.env.iter().any(|(name, _)| network_named(name))
+            || lex(&leaf.text).iter().any(|token| {
+                matches!(token, Tok::Word(word) if assignment(word).is_some_and(|(name, _)| network_named(&name)))
+            })
+    });
+    if names_its_own {
+        return None;
+    }
     let mut candidate = candidate.clone();
     let mut passed = false;
     for leaf in candidate.commands.leaves.iter_mut() {

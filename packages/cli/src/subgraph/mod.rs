@@ -5427,18 +5427,32 @@ type Renewal implements Event @entity {
         )
         .unwrap();
 
+        // Polymarket's `"prepare:mainnet": "NETWORK_NAME=mainnet ts-node
+        // ./templatify.ts"` names its network itself: it isn't given another.
+        let named = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nCHAIN=$1\nsed \"s/network: NETWORK/network: $CHAIN/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
+        fs::write(
+            named.path().join("package.json"),
+            r#"{"scripts": {"prepare:mainnet": "NETWORK_NAME=mainnet ./bin/prepare.sh"}}"#,
+        )
+        .unwrap();
+
         assert_eq!(
             (
                 outcome(&chain),
                 outcome(&output_path),
                 outcome(&option),
-                outcome(&both)
+                outcome(&both),
+                outcome(&named)
             ),
             (
                 "8453 [\"./bin/prepare.sh base\"]".to_string(),
                 "There is no subgraph.yaml here.".to_string(),
                 "8453 [\"./bin/prepare.sh --network base\"]".to_string(),
                 "8453 [\"./bin/prepare.sh base\"]".to_string(),
+                "There is no subgraph.yaml here.".to_string(),
             )
         );
     }
