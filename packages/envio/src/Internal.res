@@ -727,6 +727,9 @@ type onBlockRegistration = {
   endBlock: option<int>,
   interval: int,
   handler: onBlockArgs => promise<unit>,
+  // Subgraph mode only: a `once` block handler, whose trigger graph-node runs
+  // ahead of everything else in its block (`EthereumBlockTriggerType::Start`).
+  runsFirst?: bool,
 }
 
 @tag("kind")
@@ -773,6 +776,12 @@ external getItemRunsAfterBlock: item => bool = "runsAfterBlock"
 external getItemCreationRound: item => option<int> = "runsAfterBlock"
 @set
 external markItemCreationRound: (item, int) => unit = "runsAfterBlock"
+
+let itemRunsFirst = (item: item) =>
+  switch item {
+  | Block({onBlockRegistration: {runsFirst: true}}) => true
+  | _ => false
+  }
 
 // Subgraph mode only. A call trigger travels through fetch and batching as an
 // event item (see `subgraph/calls-source.ts`), and graph-node orders it by its

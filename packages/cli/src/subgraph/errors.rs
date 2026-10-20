@@ -19,6 +19,14 @@ pub enum Finding {
     /// Something we don't recognise at all: a newer subgraph feature, a newer
     /// graph-ts API, or a typo.
     Unknown { thing: String, location: String },
+    /// A kind of subgraph whose data doesn't come from mappings over chain
+    /// data, so no release of a mapping runtime can index it. `why` says where
+    /// its data comes from instead.
+    Unindexable {
+        what: String,
+        why: String,
+        location: String,
+    },
 }
 
 impl Finding {
@@ -59,6 +67,18 @@ impl Display for Finding {
                  {UPGRADE_COMMAND}\n\
                  If you're up to date and this is a real subgraph feature, please open an\n\
                  issue so we can add it: {ISSUES_URL}"
+            ),
+            Finding::Unindexable {
+                what,
+                why,
+                location,
+            } => write!(
+                f,
+                "Envio Subgraph can't index {what}.\n  \
+                 Found in {location}.\n\
+                 {why}\n\
+                 If you need this, please open an issue so we can look at your use case:\n  \
+                 {ISSUES_URL}"
             ),
         }
     }
@@ -121,6 +141,19 @@ impl Report {
 
     pub fn unknown(&mut self, thing: impl Into<String>, location: impl Into<String>) {
         self.push(Finding::unknown(thing, location));
+    }
+
+    pub fn unindexable(
+        &mut self,
+        what: impl Into<String>,
+        why: impl Into<String>,
+        location: impl Into<String>,
+    ) {
+        self.push(Finding::Unindexable {
+            what: what.into(),
+            why: why.into(),
+            location: location.into(),
+        });
     }
 
     pub fn is_empty(&self) -> bool {

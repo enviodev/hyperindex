@@ -22,11 +22,21 @@ import BigNumber from "bignumber.js";
 
 export type Aggregate = {
   field: string;
+  /** The aggregation table's column: `<field>_id` for an entity reference. */
+  column?: string;
   func: "sum" | "count" | "min" | "max" | "first" | "last";
   arg?: string;
   cumulative: boolean;
-  kind: "Int" | "Int8" | "BigInt" | "BigDecimal";
+  /** `first`/`last` also take a String, Bytes or entity reference (graph-node v0.42). */
+  kind: "Int" | "Int8" | "BigInt" | "BigDecimal" | "String" | "Bytes" | "Reference";
 };
+
+const isPicked = (kind: Aggregate["kind"]) => kind === "String" || kind === "Bytes" || kind === "Reference";
+
+/** A picked (non-numeric) value as the cumulative state keeps it: text. */
+function pickedText(value: unknown): string {
+  return value instanceof Uint8Array ? `0x${Buffer.from(value).toString("hex")}` : String(value);
+}
 
 export type AggregationDef = {
   name: string;
@@ -557,8 +567,14 @@ export type CompiledAggregation = {
 };
 
 export function compileAggregation(def: AggregationDef, fields: SourceFields): CompiledAggregation {
-  const args = def.aggregates.map((aggregate) => {
+  const args = def.aggregates.map((aggregate): Expr | null => {
     if (aggregate.arg === undefined) return null;
+    // A String, Bytes or reference `first`/`last` names a source field of its
+    // type (graph-node's `check_ident`): its value is taken as stored.
+    if (isPicked(aggregate.kind)) {
+      const column = columnOf(fields, aggregate.arg.trim().replace(/^"(.*)"$/, "$1"));
+      return (row) => (row[column] ?? null) as Val;
+    }
     return compileExpression(
       aggregate.arg,
       (field) => columnOf(fields, field),
@@ -574,7 +590,7 @@ export type PrevState = Record<string, string | null>;
 export type BucketRow = {
   id: bigint;
   dimensions: Record<string, unknown>;
-  values: Record<string, Num | null>;
+  values: Record<string, unknown>;
   /** The cumulative values to store as the group's new `prev`. */
   next: PrevState;
   dimKey: string;
@@ -620,11 +636,28 @@ export function rollupBucket(
       return x < y ? -1 : x > y ? 1 : 0;
     });
     const previous = def.aggregates.some((a) => a.cumulative) ? prev(dimKey) : null;
-    const values: Record<string, Num | null> = {};
+    const values: Record<string, unknown> = {};
     const next: PrevState = {};
     def.aggregates.forEach((aggregate, index) => {
       const arg = args[index];
       const evaluated: Val[] = aggregate.func === "count" ? [] : group.map((row) => arg!(row));
+      if (isPicked(aggregate.kind)) {
+        // arg_min/arg_max by id over the non-null values; a cumulative one
+        // keeps the earlier bucket's for `first`, takes this one's for `last`.
+        const present = evaluated.filter((v) => v !== null && v !== undefined) as unknown[];
+        const bucket = present.length === 0 ? null : aggregate.func === "first" ? present[0] : present[present.length - 1];
+        let value: unknown = bucket;
+        if (aggregate.cumulative) {
+          const before = previous?.[aggregate.field];
+          const p = before === undefined || before === null ? null : before;
+          if (p !== null && (aggregate.func === "first" || bucket === null)) {
+            value = aggregate.kind === "Bytes" ? new Uint8Array(Buffer.from(p.slice(2), "hex")) : p;
+          }
+          next[aggregate.field] = value === null ? null : pickedText(value);
+        }
+        values[aggregate.field] = value;
+        return;
+      }
       const nums = evaluated.map((v) => (v === null ? null : num_(v))).filter((n): n is Num => n !== null);
       let bucket: Num | null;
       switch (aggregate.func) {
@@ -694,17 +727,19 @@ function num_(v: Val): Num | null {
 }
 
 /** A rolled-up value as the column holds it. */
-export function storedValue(value: Num | null, kind: Aggregate["kind"]): unknown {
-  if (value === null) return null;
+export function storedValue(value: unknown, kind: Aggregate["kind"]): unknown {
+  if (value === null || value === undefined) return null;
+  if (isPicked(kind)) return value;
+  const num = value as Num;
   switch (kind) {
     case "Int": {
-      const n = value.v.integerValue(BigNumber.ROUND_HALF_UP).toNumber();
+      const n = num.v.integerValue(BigNumber.ROUND_HALF_UP).toNumber();
       return n;
     }
     case "Int8":
     case "BigInt":
-      return BigInt(value.v.integerValue(BigNumber.ROUND_HALF_UP).toFixed(0));
+      return BigInt(num.v.integerValue(BigNumber.ROUND_HALF_UP).toFixed(0));
     default:
-      return new BigNumber(value.v);
+      return new BigNumber(num.v);
   }
 }

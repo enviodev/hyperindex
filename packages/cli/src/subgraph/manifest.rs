@@ -16,11 +16,11 @@ use super::errors::Report;
 use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
-pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 3, 0);
+pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 5, 0);
 /// The newest graph-ts the runtime shim implements. There is no floor: older
 /// versions expose a subset of the same API, and anything genuinely missing from
 /// one is refused by name when the mapping reaches for it.
-pub const MAX_API_VERSION: (u32, u32, u32) = (0, 0, 9);
+pub const MAX_API_VERSION: (u32, u32, u32) = (0, 0, 10);
 
 /// Manifest `features` entries graph-node knows about. Anything else is a typo
 /// or newer than us.
@@ -29,6 +29,8 @@ const KNOWN_FEATURES: &[&str] = &[
     "fullTextSearch",
     "grafting",
     "ipfsOnEthereumContracts",
+    // graph-node's serde alias of `ipfsOnEthereumContracts`.
+    "nonDeterministicIpfs",
     "aggregations",
     "declaredEthCalls",
     "immutableEntities",
@@ -592,18 +594,60 @@ fn parse_data_source(
         "file/ipfs" => DataSourceKind::FileIpfs,
         "file/arweave" => DataSourceKind::FileArweave,
         "substreams" => {
-            report.unsupported("substreams data sources", where_("kind"));
-            return None;
-        }
-        "near" | "cosmos" | "arweave" | "starknet" => {
-            report.unsupported(
-                format!("{kind_raw} subgraphs — Envio Subgraph indexes EVM chains"),
+            let package = |key: &str| {
+                source_str(raw, &["package", key]).unwrap_or_else(|| "(unnamed)".to_string())
+            };
+            report.unindexable(
+                "a substreams-powered subgraph (`kind: substreams`)",
+                format!(
+                    "Its entities come from the module {} of the Substreams package {}, which \
+                     graph-node read from a Substreams provider until v0.42 removed Substreams \
+                     support. Envio Subgraph runs AssemblyScript mappings over chain data and \
+                     can't run a Substreams module.",
+                    package("moduleName"),
+                    package("file"),
+                ),
                 where_("kind"),
             );
             return None;
         }
+        // graph-node's Amp data sources (SPEC_VERSION_1_5_0,
+        // graph/src/amp/manifest/data_source) fill their tables with SQL.
+        "amp" => {
+            report.unindexable(
+                "an Amp data source (`kind: amp`)",
+                format!(
+                    "Its tables are SQL queries over the Amp dataset {}, which only an Amp \
+                     server answers. Envio Subgraph runs AssemblyScript mappings over chain data.",
+                    source_str(raw, &["dataset"]).unwrap_or_else(|| "(unnamed)".to_string()),
+                ),
+                where_("kind"),
+            );
+            return None;
+        }
+        "near" | "cosmos" | "arweave" | "starknet" => {
+            let ecosystem = match kind_raw.as_str() {
+                "near" => "NEAR",
+                "cosmos" => "Cosmos",
+                "arweave" => "Arweave",
+                _ => "Starknet",
+            };
+            report.unindexable(
+                format!("a {ecosystem} subgraph (`kind: {kind_raw}`)"),
+                non_evm_reason(ecosystem),
+                where_("kind"),
+            );
+            return None;
+        }
+        // graph-node triggers a `kind: subgraph` data source on the immutable
+        // entities the source deployment writes (graph/src/data_source/subgraph.rs),
+        // reading them from that deployment's store.
         "subgraph" => {
-            report.unsupported("subgraph composition", where_("kind"));
+            report.unindexable(
+                "subgraph composition (`kind: subgraph`)",
+                composition_reason(source_str(raw, &["address"]).as_deref()),
+                where_("kind"),
+            );
             return None;
         }
         other => {
@@ -622,8 +666,9 @@ fn parse_data_source(
                     .find(|(name, _)| name == network)
                     .map(|(_, ecosystem)| *ecosystem)
                 {
-                    Some(ecosystem) => report.unsupported(
-                        format!("{ecosystem} subgraphs — Envio Subgraph indexes EVM chains"),
+                    Some(ecosystem) => report.unindexable(
+                        format!("the {ecosystem} network \"{network}\""),
+                        non_evm_reason(ecosystem),
                         where_("network"),
                     ),
                     None => report.unknown(format!("the network \"{network}\""), where_("network")),
@@ -676,23 +721,11 @@ fn parse_data_source(
 
     if let Some(mapping) = obj.get("mapping") {
         if let Some(mut mapping) = Obj::new(mapping, &format!("{path}.mapping"), report) {
-            match mapping.string("kind").as_deref() {
-                Some("ethereum/events") | Some("ethereum/contract") | Some("ethereum") | None => {}
-                // graph-node's offchain mapping has no `kind` to check.
-                Some(file_kind)
-                    if kind != DataSourceKind::Contract && file_kind == kind_raw.as_str() => {}
-                Some(other) => report.unknown(
-                    format!("the mapping kind \"{other}\""),
-                    where_("mapping → kind"),
-                ),
-            }
-            match mapping.string("language").as_deref() {
-                Some("wasm/assemblyscript") | None => {}
-                Some(other) => report.unknown(
-                    format!("the mapping language \"{other}\""),
-                    where_("mapping → language"),
-                ),
-            }
+            // Free strings graph-node keeps and never reads, for ethereum and
+            // file data sources alike (graph-cli types them `String` too):
+            // the mapping is the code, whatever these say.
+            mapping.string("kind");
+            mapping.string("language");
 
             api_version = mapping.string("apiVersion").unwrap_or_default();
             match parse_version(&api_version) {
@@ -744,13 +777,14 @@ fn parse_data_source(
                     &name,
                     report,
                 ) {
-                    // graph-node runs a handler on a template for each instance
-                    // from its creation block; the runtime does so for an
-                    // unfiltered one. A filtered one counts from the instance's
-                    // own block, which envio's chain-wide filters don't know.
-                    if is_template && handler.filter != BlockFilter::Every(1) {
+                    // graph-node runs a handler on a template for each instance,
+                    // its creation block standing in for the start block; the
+                    // runtime keeps each instance's block for `once` and
+                    // `polling`. A `call` filter would need the trace source
+                    // to follow every instance's address.
+                    if is_template && handler.filter == BlockFilter::Call {
                         report.unsupported(
-                            "filtered block handlers on templates",
+                            "call-filtered block handlers on templates",
                             where_(&format!("blockHandlers → \"{}\"", handler.handler)),
                         );
                     }
@@ -767,14 +801,6 @@ fn parse_data_source(
                 ) {
                     call_handlers.push(handler);
                 }
-            }
-
-            for (idx, raw) in mapping.seq("entityHandlers").into_iter().enumerate() {
-                let _ = raw;
-                report.unsupported(
-                    "subgraph composition",
-                    format!("data source \"{name}\" → entityHandlers[{idx}]"),
-                );
             }
 
             // File data sources declare a single `handler` instead of a list.
@@ -839,6 +865,31 @@ fn parse_data_source(
         context,
         is_template,
     })
+}
+
+/// A string under the data source's `source`, `path` deep.
+fn source_str(raw: &Value, path: &[&str]) -> Option<String> {
+    let mut value = raw.get("source")?;
+    for key in path {
+        value = value.get(*key)?;
+    }
+    value.as_str().map(|s| s.to_string())
+}
+
+fn non_evm_reason(ecosystem: &str) -> String {
+    format!(
+        "Envio Subgraph runs subgraphs on EVM chains, whose blocks and logs it reads; \
+         {ecosystem}'s aren't among them."
+    )
+}
+
+fn composition_reason(deployment: Option<&str>) -> String {
+    format!(
+        "graph-node feeds this data source the entities deployment {} writes. That deployment is \
+         published as compiled WASM, which Envio Subgraph can't run, and envio doesn't read \
+         another indexer's store. Index the source subgraph's contracts in this subgraph instead.",
+        deployment.unwrap_or("(unnamed)")
+    )
 }
 
 /// graph-node's context value types. Anything else is newer than this parser.
@@ -1512,8 +1563,7 @@ dataSources:
         let rendered = report.to_string();
         assert_eq!(
             (
-                rendered
-                    .contains("doesn't support near subgraphs — Envio Subgraph indexes EVM chains"),
+                rendered.contains("can't index a NEAR subgraph (`kind: near`)"),
                 rendered.contains("doesn't know"),
             ),
             (true, false)
@@ -1540,7 +1590,7 @@ dataSources:
             parse_ok(&yaml)
                 .1
                 .to_string()
-                .contains("doesn't support Arweave subgraphs"),
+                .contains("can't index the Arweave network \"arweave-mainnet\""),
             "expected an Arweave finding"
         );
     }

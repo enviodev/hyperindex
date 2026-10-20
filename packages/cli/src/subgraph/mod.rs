@@ -2634,7 +2634,7 @@ type Gravatar @entity {
 
         assert_eq!(
             (
-                error.contains("doesn't support subgraph composition"),
+                error.contains("doesn't know the manifest field \"entityHandlers\""),
                 error.contains("doesn't know the type NotAType"),
             ),
             (true, true)

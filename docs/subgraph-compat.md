@@ -31,13 +31,16 @@ specVersion (manifest): **0.0.4** feature declarations · **0.0.5**
 **0.0.8** polling/once block handlers · **0.0.9** `endBlock` · **1.0.0**
 `indexerHints.prune` · **1.1.0** timeseries/aggregations, `Int8`, `Timestamp`
 · **1.2.0** topic filters, declared eth_calls · **1.3.0** subgraph
-composition.
+composition · **1.4.0** struct fields in declared eth_calls · **1.5.0** Amp
+data sources (refused: SQL over an Amp dataset, §2).
 
 apiVersion (graph-ts): **0.0.5** modern baseline · **0.0.6** `tx.nonce`,
 `block.baseFeePerGas` · **0.0.7** `event.receipt` · **0.0.8** field
-validation on `save()` · **0.0.9** `getBalance`/`hasCode`. No floor: older
-versions expose a subset, and what a mapping actually reaches for is refused
-by name. Newer than 0.0.9 is a §7 error.
+validation on `save()` · **0.0.9** `getBalance`/`hasCode` · **0.0.10**
+`ethereum.decodeParams` (graph-node v0.45: a top-level tuple's fields read as
+calldata parameters). No floor: older versions expose a subset, and
+what a mapping actually reaches for is refused by name. Newer than 0.0.10,
+graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 
 ## 2. Manifest → envio config
 
@@ -49,13 +52,13 @@ by name. Newer than 0.0.9 is a §7 error.
 | Data source `endBlock` | past it the runtime runs none of that data source's handlers (graph-node's `has_expired`) while other data sources and template instances keep indexing; the chain's `end_block` is set only when every data source on the network has one and no template is on it (graph-node's `max_end_block` rule) | ✅ |
 | `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then the slugs other hosts use for chains the registry lacks (`host_networks.json`: filecoin, plasma-mainnet, manta-pacific-*, story, fluent, …), then `evm-<chain id>`, then Envio's own chain names. A chain HyperSync doesn't serve indexes over `ENVIO_SUBGRAPH_RPC` (which then needs an archive node: Filecoin RPCs refuse logs older than ~2 weeks) | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper | ✅ |
-| `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
+| `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` is every log of the transaction, read on first access from HyperSync's logs of its block (one query per block, shared by the batch), with `eth_getTransactionReceipt` over `ENVIO_SUBGRAPH_RPC` where HyperSync can't answer (`receipts.ts`) | ✅ |
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
 | Several handlers on one event | one envio event, a registration per handler, run in manifest order (graph-node's `handlers_for_log`) | ✅ |
 | `topic0` on an anonymous event (Balancer's `LOG_CALL`, keyed on the called selector) | an envio event per `topic0` value, matched on that first topic and decoded from all of them (no signature topic). A `topic0` other than the signature's hash on an event the ABI doesn't declare anonymous, or one combined with `topic1`–`topic3`, → §7 error | ✅ |
-| Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
+| Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock`; `once` runs ahead of its block's events, as graph-node's `Start` trigger does | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
-| Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
+| Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); the other header fields (`hash`, `parentHash`, …) from a second batched header query, served only from below the chain's reorg depth, so a block handler that reads them holds its chain that far behind the head (spec/BLOCK_HASH.md) | ✅ |
 | A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned. The handlers stay apart: the data source's run for its static address, the template's for the addresses it created | ✅ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create. A new address's events in the block that created it run after that block's other events and block handlers, as graph-node runs a new data source's creation-block triggers — a constructor's logs precede the factory event that announces it | ✅ |
 | File data sources (0.0.7): `kind: file/ipfs`, `file/arweave` templates, `DataSourceTemplate.create("X", [cid])` / `createWithContext` | No contract, no chain: the translator leaves them out of the envio config. `create()` queues the file; once the creating handler returns, the file is fetched (`envio_subgraph_file` effect, `cache: true`, so on disk) and the template's `handler(content: Bytes)` runs in the same block and checkpoint. See "File data sources" below | ⚠️ timing differs |
@@ -63,10 +66,15 @@ by name. Newer than 0.0.9 is a §7 error.
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` keeps its context by chain, template and address (also in `.envio/subgraph-data-source-contexts.jsonl`, for a restart) | ⚠️ |
 | `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
+| `features: [nonFatalErrors]` | accepted, not honored: a handler that throws stops the indexer. graph-node logs "Handler skipped due to execution failure", drops that handler's changes and keeps indexing (`runtime/wasm/src/module/instance.rs`). Skipping here would also hide this shim's own gaps, which surface as handler errors | ⚠️ |
 | `graft` | **ignored**: envio can't copy another deployment's data, so the subgraph indexes from its data sources' own `startBlock`s — a full re-index. Startup logs a warning saying so, and a louder one naming any data source that starts after the graft block (the base deployment may hold data from before it that a re-index cannot reproduce; lower that `startBlock` to the base's start). The result equals the grafted deployment only if the base's mappings produced the same data as these mappings do up to the graft block. graph-node's docs and source give no rule that can be applied offline (a graft is a store-level copy: `Graft::validate` only checks the base's head and health); the one record of where the base started is its manifest on IPFS, which startup reads best-effort (`ENVIO_SUBGRAPH_GRAFT_CHECK=off` skips it, following `graft.base` up its own grafts) and reports the exact blocks a re-index would miss | ⚠️ |
 | `callHandlers` | an envio event named `__envio_call_<selector>_<function>` on the data source's contract; the source reads **calls** instead of logs for it (§4a). The first handler for a selector wins, as in graph-node | ✅ needs traces (§4a) |
 | Block handler `filter: {kind: call}` | an envio event `__envio_call_any`: one item per call to the address, ordered after the block's logs and calls and before its block handlers | ✅ needs traces (§4a) |
-| Block handlers on a template, composition (1.3.0) | — | ❌ §7 error |
+| Block handlers on a template (unfiltered, `once`, `polling`) | each instance's creation block is its start block, as in graph-node: unfiltered runs every block from it, `once` at it, `polling` where `(block - creation) % every == 0`. The handler visits every block from the chain's first static start and checks each instance. An instance's own events in its creation block run after that block's block handlers here (graph-node runs them first) | ✅ |
+| `call`-filtered block handlers on a template | — | ❌ §7 error |
+| Subgraph composition (`kind: subgraph`, 1.3.0) | **refused, by design.** graph-node triggers such a data source on the immutable entities its source deployment writes, read from that deployment's store (`graph/src/data_source/subgraph.rs`). The deployment hash names compiled WASM on IPFS, which the shim can't run, and envio doesn't read another indexer's store; indexing the source in-process would need its AssemblyScript source, which a deployment hash doesn't lead to. The error names the source deployment and suggests indexing its contracts directly | ❌ §7 error |
+| Amp data sources (`kind: amp`, 1.5.0) | **refused, by design**: their tables are SQL over an Amp dataset, answered by an Amp server. The error names the dataset | ❌ §7 error |
+| Substreams-powered subgraphs (`kind: substreams`) | **refused, by design**: the entities come out of a Substreams module (`.spkg`) graph-node streams from a Substreams provider; there is no mapping over chain data to run. The error names the package and module | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
@@ -94,7 +102,9 @@ its type and stores raw bytes, see §6b), `Int8` → `BigInt` (Int8 is a
 only safe to 2^53, so `BigInt` is the lossless fit), `Timestamp` → envio's
 `Timestamp` (graph-ts sees an i64 of microseconds, envio stores a Postgres
 timestamp — the shim converts micros ↔ date at the store boundary, keyed
-off the entity schema, §4), stored entity lists → `[String!]!` id arrays
+off the entity schema, §4; a JS date holds milliseconds, so a value's last
+three digits read back as zeros where graph-node keeps them — block times are
+whole seconds, so timeseries and `block.timestamp`-derived values are exact), stored entity lists → `[String!]!` id arrays
 (also when written with nullable elements, `[Mint]!` as Uniswap v2 forks do:
 a mapping stores ids there, never nulls),
 `_Schema_ @fulltext` stripped, and every `@derivedFrom` field → `[T!]!`
@@ -125,6 +135,14 @@ dropped — graph-node's write-once check is not enforced. It's a safety net
 for buggy mappings: any subgraph that runs cleanly on graph-node never
 trips it, so working subgraphs lose nothing.
 
+`@entity(immutable: true, skipDuplicates: true)` (graph-node v0.43) is the
+exception that a working subgraph can reach: graph-node inserts such a type
+with `ON CONFLICT DO NOTHING`, so a save of an id an earlier block stored is
+skipped and the first block's write stands; saves within one block merge
+first, as for any entity. The shim does the same (the save reads the stored
+row anyway, for the merge). `skipDuplicates` on a mutable type is refused,
+as graph-node refuses it.
+
 **Interfaces** carry through to the entity parser, which folds each one into
 the entities that implement it — the interface itself has no table. A field
 *typed* as an interface with **one** implementor is translated as that
@@ -148,15 +166,24 @@ like any other entity list.
   (fields without `@aggregate`, copied from the source row; a relation is
   `<field>_id`) and the aggregates (`sum`, `count`, `min`, `max`, `first`,
   `last`; `arg` may be an SQL expression; `cumulative: true` carries the
-  group's previous bucket forward). `id` is the largest source id in the group.
+  group's previous bucket forward). `first`/`last` also take a `String`,
+  `Bytes` or entity reference (graph-node v0.42), whose `arg` names a source
+  field of that type; a reference aggregate is the `<field>_id` column, and its
+  `aggregations` entry in the runtime config carries that `column`. `id` is the
+  largest source id in the group.
 - A bucket is rolled up when a block's time passes its end: the first bucket
   between the previous block's time and this one, as `Layout::rollup` does.
   Only completed buckets exist; the open bucket is the rows of the timeseries
-  since the last rolled-up end (graph-node's `current: include`).
-- Bookkeeping lives in one extra entity, `EnvioSubgraphRollup` (`id`, `payload`):
-  `clock` holds the last block time, `prev|<Aggregation>|<interval>|<dims>` the
-  latest cumulative values of a group. Both are ordinary entities, so reorg
-  rollback and restarts restore them with everything else.
+  since the last rolled-up end (graph-node's `current: include`). Rollups run
+  in the execute pass only: preload drops writes, so there every handler would
+  read the clock the last batch left and roll the same bucket up again.
+- Bookkeeping lives in one extra entity, `EnvioSubgraphRollup` (`id`,
+  `aggregation`, `payload`): `clock` holds the last block time,
+  `prev|<Aggregation>|<interval>|<dims>` the latest cumulative values of a
+  group, with `aggregation` = `<Aggregation>|<interval>` (indexed), so a rollup
+  reads every group's carried values in one lookup rather than one sync-bridge
+  round per group. Both are ordinary entities, so reorg rollback and restarts
+  restore them with everything else.
 - A derived list of aggregation rows (`stats: [Stat!] @derivedFrom(field:
   "pool")`) is not an envio field; it is recorded in the runtime config
   (`aggregationDerivedFields`) for the query layer.
@@ -186,9 +213,9 @@ like any other entity list.
 | Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: false`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts). Uncached on purpose: a block's timestamp is read exactly once, by that block's own handler invocation, so a persisted row per indexed block would be pure bloat with no reuse. In-memory memoization (which holds even with `cache: false`, §5) still covers what the bridge needs — replay rounds and the preload→execute transition reuse the fetched value |
 | `log.*` | `context.log`, buffered per replay round, flushed on success; `log.critical` throws (halts, as graph-node) |
 | `dataSource.create/createWithContext` | captured in register pass (below) |
-| `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup |
+| `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup. `address()` is what graph-node's `DataSourceDetails` holds: the data source's or instance's address, empty bytes for a data source without `source.address` (the emitter is `event.address`), a file data source's source text |
 | `dataSource.context()` | persisted in an internal entity table |
-| `ipfs.cat/map`, `arweave.*` | effect + gateway (`ENVIO_SUBGRAPH_IPFS_URL`, default `https://ipfs.io/ipfs/`; `ENVIO_SUBGRAPH_ARWEAVE_URL`, default `https://arweave.net/`), `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again. `ipfs.map` calls the callback once per non-blank line of the file (a JSON value each), refuses flags without `"json"`, and names the callback and line in a failure, as graph-node does |
+| `ipfs.cat/map`, `arweave.*` | effect + gateway (`ENVIO_SUBGRAPH_IPFS_URL`, default `https://ipfs.io/ipfs/`; `ENVIO_SUBGRAPH_ARWEAVE_URL`, default `https://arweave.net/`), `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again for up to `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS` (default 60000, graph-node's `GRAPH_IPFS_TIMEOUT`), after which `ipfs.cat` answers `null` as graph-node's does (not cached, with a warning) and `ipfs.map` keeps waiting (graph-node fails and retries that block). The argument is read as graph-node's `ContentPath`: `<CID>[/<path>]`, `/ipfs/…`, `ipfs://…`, or an http(s) URL with `/ipfs/<CID>…` or `?arg=<CID>`; anything else (an empty string, a bare word, a query on the path) is `null` without a fetch, as graph-node's `ipfs.cat` answers it, and an error for `ipfs.map`. `ipfs.map` calls the callback once per non-blank line of the file (a JSON value each), refuses flags without `"json"`, and names the callback and line in a failure, as graph-node does |
 | `ens.nameByHash` | effect against ENSRainbow (`ENVIO_SUBGRAPH_ENS_RAINBOW_URL`, default the public `api.ensrainbow.io/v1/heal/`), `cache: true`, at most 32 lookups in flight; `null` when its table lacks the hash (its "Label not found" 404), as graph-node's does; a failing lookup is asked again, up to 5 attempts. A service that stays down — or a 404 that isn't ENSRainbow's — answers `null` for 5 minutes, as graph-node without a rainbow table does, with one warning and without caching those nulls. `off` skips lookups |
 
 **File data sources.** graph-node runs a file data source when its file arrives, in a
@@ -208,8 +235,8 @@ later block, with a causality region of its own. Here:
   an entity by causality region too, so a file entity and a chain entity of one type
   and id are two rows; here they share the table, and the file one overwrites.)
   `dataSource.stringParam()` is the CID, `dataSource.context()` the
-  `createWithContext` context; `dataSource.address()` is a §7 error.
-- *Fetching.* `ENVIO_SUBGRAPH_IPFS_URL` (a gateway, with or without `/ipfs/`) and
+  `createWithContext` context; `dataSource.address()` is the CID's UTF-8 bytes, as graph-node's.
+- *Fetching.* `ENVIO_SUBGRAPH_IPFS_URL` (gateways, comma separated, with or without `/ipfs/`; each asked once the one before it failed, lacked the file or kept silent for 2 s, the first answer winning) and
   `ENVIO_SUBGRAPH_ARWEAVE_URL`; at most 16 fetches in flight; during preload a
   batch's files download concurrently. The fetch is an effect with `cache: true`, so
   files live in the on-disk effect cache.
@@ -277,9 +304,15 @@ block, before the first register pass of its chain (Venus saves its
 Comptroller there); a change a handler without a register pass makes to an
 entity (it only updates one a create depends on, below) or one a polling block
 handler saves doesn't reach that store, so a `create()` conditioned on such
-state can still mis-register. A polling or unfiltered block handler gets no
-register pass at all, so its own `create()` of a contract template is
-refused when it runs (§7). A mapping that throws in the
+state can still mis-register. An unfiltered or polling block handler gets no
+register pass at all (envio registers addresses only at fetch time, from
+events), so a contract template's `create()` it makes is refused when it runs
+(§7). graph-node's own block-handlers integration test, centrifuge's tinlake
+and beefy-balances (a `polling` handler on a one-block data source) create
+templates that way. A `once` handler's `create()` is registered by the first
+register pass of its chain, at that event's block — on a chain with no
+template-creating event at all (yieldyak's strategies, whose only data source
+is the `once` handler) never. A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
@@ -550,6 +583,7 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 | ENSRainbow heal endpoint for `ens.nameByHash` | `ENVIO_SUBGRAPH_ENS_RAINBOW_URL` | optional, default `https://api.ensrainbow.io/v1/heal/` (no hosted instance has stayed up; self-host ENSRainbow for healed names); `off` → every lookup is `null`, as on graph-node without a rainbow table |
 | Contract-call progress log interval | `ENVIO_SUBGRAPH_PROGRESS_LOG_MS` | optional, default 30000: while contract calls are outstanding, how often answered/waiting counts are logged (a batch is written only once its calls are all in) |
 | Register pass for every handler | `ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` | escape hatch: rerun every handler at fetch time, not only those whose code can reach `DataSourceTemplate.create` (§4) |
+| `ipfs.cat` wait before it answers null | `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS` | optional, default 60000, graph-node's `GRAPH_IPFS_TIMEOUT`: how long a file every gateway fails to hand over is asked for again |
 | Host op retry backoff | `ENVIO_SUBGRAPH_RETRY_BACKOFF_MS` | optional, default 500: the first wait before asking again after a transient failure, doubling up to 30 s |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
@@ -826,7 +860,7 @@ import.
 
 ## 7. Unsupported & unknown errors
 
-Two error kinds, one factory each, shared tail. Translation reports **all**
+Three error kinds, one factory each. Translation reports **all**
 findings at once, not just the first.
 
 **Unsupported** — a feature we recognize and deliberately don't implement:
@@ -838,6 +872,19 @@ First, make sure you're on the newest Envio Subgraph release — support may hav
   pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing
 issues welcome a 👍 — demand drives prioritization):
+  https://github.com/enviodev/hyperindex/issues
+```
+
+**Unindexable** — a kind of subgraph whose data doesn't come from mappings
+over EVM chain data, so no release will run it (substreams, composition, Amp,
+NEAR/Cosmos/Arweave/Starknet); the third line says where its data comes from
+instead:
+
+```
+Envio Subgraph can't index <what>.
+  Found in <location>.
+<where its data comes from, and why envio can't get it>
+If you need this, please open an issue so we can look at your use case:
   https://github.com/enviodev/hyperindex/issues
 ```
 
@@ -858,9 +905,11 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues
 refuse instead, so behavior never silently diverges:
 
 - *Manifest*: `deny_unknown_fields` on every subgraph.yaml struct; unknown
-  `kind`, unknown `features` entries, unknown block-handler filter kinds,
+  data source `kind`, unknown `features` entries, unknown block-handler filter kinds,
   and `specVersion`/`apiVersion` above the supported range all raise the
-  unknown error with the YAML path as location.
+  unknown error with the YAML path as location. `mapping.kind` and
+  `mapping.language` are the exception: free strings graph-node keeps and
+  never reads (graph-cli types them `String`), so any value is accepted.
 - *Schema*: unknown arguments on known directives (e.g. `@entity(...)`
   beyond `immutable`/`timeseries`) and unknown type names that aren't
   schema-defined raise the unknown error. Unknown directives are dropped
@@ -894,14 +943,12 @@ refuse instead, so behavior never silently diverges:
 |---|---|
 | A call handler on a data source with no `source.address`, or whose function the ABI lacks | translation (manifest) |
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
-| A filtered block handler on a template | translation (manifest) |
+| `call`-filtered `blockHandlers` on a template | translation (manifest) |
 | A contract template's `create()` from a block handler other than `filter: once` (a `call` one runs as a call handler), which no register pass registers | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
-| Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |
+| Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`) | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
 | Timeseries & aggregations | supported (§3); malformed declarations refused at translation (schema) |
-| `event.receipt.logs` | runtime, on access (receipt scalars keep working) |
-| Block-handler `ethereum.Block` fields other than `number`/`timestamp` | runtime, on access |
 
 ## 8. Implementation plan
 

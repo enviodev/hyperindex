@@ -970,12 +970,13 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
 // block handlers. A call item is told apart by its rank (see
 // `Internal.getItemCallRank`), and only a run that has one pays for this
 // comparison. Creation-block items (rank 4) keep their place after everything
-// else, ordered among themselves by the same transaction rule.
+// else, ordered among themselves by the same transaction rule. A `once`
+// handler's item (rank -1) comes before all of them.
 let blockOrderRank = (item: Internal.item) =>
   if item->Internal.getItemRunsAfterBlock {
     3 + item->Internal.getItemCreationRound->Option.getOr(1)
   } else if item->Internal.getItemKind !== 0 {
-    3
+    item->Internal.itemRunsFirst ? -1 : 3
   } else if item->Internal.getItemCallRank === Some(2) {
     2
   } else {
@@ -987,7 +988,7 @@ let compareWithCalls = (a: Internal.item, b: Internal.item): int => {
   let rb = blockOrderRank(b)
   if ra !== rb {
     ra < rb ? -1 : 1
-  } else if ra === 3 {
+  } else if ra === 3 || ra === -1 {
     // Block handlers: as before.
     let la = a->Internal.getItemLogIndex
     let lb = b->Internal.getItemLogIndex
@@ -1031,7 +1032,8 @@ let compareWithCalls = (a: Internal.item, b: Internal.item): int => {
 // block's handlers by construction. A sentinel log index for block items
 // would put the same guarantee at the mercy of how large an ecosystem's key
 // grows — which is how SVM, keyed by transaction index, came to run slot
-// handlers ahead of most of a slot's instructions.
+// handlers ahead of most of a slot's instructions. A subgraph's `once` handler
+// is the exception: it runs ahead of its block's events.
 let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   let ba = a->Internal.getItemBlockNumber
   let bb = b->Internal.getItemBlockNumber
@@ -1042,11 +1044,19 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   } else {
     let ka = switch a->Internal.getItemCreationRound {
     | Some(round) => 1 + round
-    | None => a->Internal.getItemKind
+    | None =>
+      switch a->Internal.getItemKind {
+      | 0 => 0
+      | kind => a->Internal.itemRunsFirst ? -1 : kind
+      }
     }
     let kb = switch b->Internal.getItemCreationRound {
     | Some(round) => 1 + round
-    | None => b->Internal.getItemKind
+    | None =>
+      switch b->Internal.getItemKind {
+      | 0 => 0
+      | kind => b->Internal.itemRunsFirst ? -1 : kind
+      }
     }
     if ka !== kb {
       ka < kb ? -1 : 1
@@ -1878,7 +1888,10 @@ let registerDynamicContracts = (
       | Some(creationBlocks) =>
         creationBlocks->Dict.set(
           creationBlockKey(~contractName=registration.contractName, ~address=registration.address),
-          {block: registration.registrationBlock, round: registration.creationRound->Option.getOr(1)},
+          {
+            block: registration.registrationBlock,
+            round: registration.creationRound->Option.getOr(1),
+          },
         )
       | None => ()
       }

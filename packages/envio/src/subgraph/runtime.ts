@@ -167,6 +167,7 @@ type SubgraphConfig = {
   graft?: { base: string; block: number };
   graftNotice?: string;
   timeseriesEntities?: string[];
+  skipDuplicateEntities?: string[];
   aggregations?: SubgraphSchema["aggregations"];
   /** The config's contract name for each data source and template. */
   contractAccessors: Record<string, string>;
@@ -1193,7 +1194,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   };
 
   installHosts({
-    ipfsCat: (hash) => callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.cat()"),
+    // graph-node's `ipfs.cat` answers null for a path its ContentPath refuses.
+    ipfsCat: (hash) => {
+      const path = normalizeIpfsPath(hash);
+      return path === null ? null : callSync(hosts.ipfsCat, path, "ipfs.cat()");
+    },
     ipfsMap: (hash, callback, userData, flags) => {
       const scope = currentScope();
       // graph-node: `ensure!(flags.contains("json"), "Flags must contain 'json'")`.
@@ -1204,7 +1209,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           `ipfs.map() names the callback "${callback}", which the mapping doesn't export.`,
         );
       }
-      const encoded: string | null = callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.map()");
+      const path = normalizeIpfsPath(hash);
+      if (path === null) throw new Error(`ipfs.map(): "${hash}" is not an IPFS content path`);
+      const encoded: string | null = callSync(hosts.ipfsMapFile, path, "ipfs.map()");
       if (encoded === null) return;
       const body = Buffer.from(encoded, "base64").toString("utf8");
       // One JSON value per line, each handed to the callback in turn; a line
@@ -1350,6 +1357,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     entityFieldTypes: config.entityFieldTypes ?? {},
     entityAccessors: config.entityAccessors,
     timeseriesEntities: config.timeseriesEntities ?? [],
+    skipDuplicateEntities: config.skipDuplicateEntities ?? [],
     aggregations: config.aggregations ?? [],
   };
   const secondsOf = (blockNumber: number, given: unknown) => () =>
@@ -1358,9 +1366,28 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       : Number(callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"));
   // Aggregations roll up when a block's time passes a bucket's end, so every
   // handler checks first; the timeseries it saves carry the block's time.
+  // graph-node's `SeqGenerator`: one id sequence per block, which its handlers
+  // draw from in the order they run, so a timeseries row gets graph-node's id.
+  // The execute pass runs a chain's handlers one at a time; a run starts where
+  // the block's previous run stopped, and a replayed run starts over there.
+  const idSequences = new Map<number, { block: number; next: number }>();
+  const idSequence = (scope: Scope) => {
+    const chainId = scope.dataSource.chainId;
+    let sequence = idSequences.get(chainId);
+    if (!sequence || sequence.block !== scope.blockNumber) {
+      sequence = { block: scope.blockNumber, next: 0 };
+      idSequences.set(chainId, sequence);
+    }
+    return sequence;
+  };
+  const endRun = (scope: Scope) => {
+    if (scope.timeseriesBase === undefined) return;
+    idSequence(scope).next = scope.timeseriesBase + (scope.timeseriesSequence ?? 0);
+  };
   const startRun = (scope: Scope) => {
     freshModuleState(scope);
     scope.timeseriesSequence = 0;
+    if (!scope.context.isPreload) scope.timeseriesBase ??= idSequence(scope).next;
     // A replayed round creates its file data sources again.
     scope.fileCreates = undefined;
     if (schema.aggregations.length > 0) {
@@ -1519,6 +1546,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // own, so each runs once in register mode, at its block, before the first
   // register pass of its chain reads the register store.
   const onceHandlers = new Map<number, ((context: any) => Promise<void>)[]>();
+
   const primed = new Map<number, Promise<void>>();
   const primeOnceHandlers = (chainId: number, context: any) => {
     let done = primed.get(chainId);
@@ -1606,6 +1634,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           chainId: event.chainId,
           network: source.network ?? "",
           context: contextOf(event.chainId, source.name, event.srcAddress) ?? source.context ?? {},
+          wildcard: !source.isTemplate && !source.address,
         },
         registered: new Set(),
         blockNumber: event.block.number,
@@ -1634,6 +1663,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               return fn(makeEvent(event));
             }),
           );
+          endRun(scope);
           await runFileDataSources(scope, context);
         },
       );
@@ -1721,6 +1751,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             return run(event, make(event));
           }),
         );
+        endRun(scope);
         await runFileDataSources(scope, context);
       });
 
@@ -1771,7 +1802,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
       const start = source.startBlock ?? 0;
-      if (handler.filter === "once" && templateNames.size > 0 && source.chainId !== undefined) {
+      if (handler.filter === "once" && !source.isTemplate && templateNames.size > 0 && source.chainId !== undefined) {
         const location = `data source "${source.name}" → "${handler.handler}"`;
         const runs = onceHandlers.get(source.chainId) ?? [];
         runs.push((context) =>
@@ -1805,25 +1836,38 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         .filter((other) => other.chainId === source.chainId)
         .map((other) => other.startBlock ?? 0);
       const first = source.isTemplate ? Math.min(...chainStarts, 0 + (chainStarts.length === 0 ? 0 : Number.MAX_SAFE_INTEGER)) : start;
-      const blocks =
-        handler.filter === "once"
+      // An instance's creation block is its start block (graph-node), so a
+      // template's `once` and `polling` schedules differ by instance: every
+      // block is visited and each instance checked.
+      const blocks = source.isTemplate
+        ? { _gte: first, _every: 1 }
+        : handler.filter === "once"
           ? { _gte: start, _lte: start }
           : source.endBlock === undefined
             ? { _gte: first, _every: handler.filter.every }
             : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
+      const once = handler.filter === "once";
+      const every = typeof handler.filter === "object" ? handler.filter.every : 1;
+      const scheduled = (created: number, blockNumber: number) =>
+        once ? blockNumber === created : (blockNumber - created) % every === 0;
       indexer.onBlock(
         {
           name: `${source.name}_${handler.handler}`,
           where: ({ chain }: { chain: { id: number } }) =>
             chain.id === source.chainId && { block: { number: blocks } },
-        },
+          runsFirst: once && !source.isTemplate,
+        } as any,
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;
           const graphBlock = makeBlockHandlerBlock(
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
           );
-          const addresses = source.isTemplate ? instancesAt(block.chainId ?? source.chainId, source.name, block.number) : [source.address ?? ""];
+          const addresses = source.isTemplate
+            ? instancesAt(block.chainId ?? source.chainId, source.name, block.number)
+                .filter((instance) => scheduled(instance.block, block.number))
+                .map((instance) => instance.address)
+            : [source.address ?? ""];
           for (const address of addresses) {
             const scope: Scope = {
               context,
@@ -1849,6 +1893,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
                 return fn(graphBlock);
               }),
             );
+            endRun(scope);
             await runFileDataSources(scope, context);
           }
         },
