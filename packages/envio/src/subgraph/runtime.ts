@@ -74,7 +74,7 @@ import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
 import { createHash } from "node:crypto";
 import { advanceRollup } from "./rollup.ts";
 import { graftBaseNotice } from "./graft.ts";
-import { fetchMappingPackages, missingMappingPackages, workspacePackages } from "./toolchain.ts";
+import { fetchMappingPackages, missingMappingPackages, workspacePackages, workspaceRoot } from "./toolchain.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
@@ -214,15 +214,29 @@ function workspaceImport(specifier: string, parentURL: string | undefined): stri
       (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
     );
   if (subpath) return file(path.join(dir, subpath)) ?? null;
-  let main: unknown;
+  let manifest: any = {};
   try {
-    main = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")).main;
+    manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
   } catch {}
-  return (
-    (typeof main === "string" ? file(path.join(dir, main)) : undefined) ??
+  const main = typeof manifest.main === "string" ? manifest.main : undefined;
+  const entry =
+    (main ? file(path.join(dir, main)) : undefined) ??
     file(path.join(dir, "index")) ??
-    file(path.join(dir, "assembly", "index")) ??
-    null
+    file(path.join(dir, "assembly", "index"));
+  if (entry) return entry;
+  if (!main) return null;
+  // sushiswap's `const` renders its own index.ts per network
+  // (`"prepare:mainnet": "mustache ../../config/mainnet.json index.template.ts > index.ts"`).
+  const writers = Object.entries<unknown>(manifest.scripts ?? {})
+    .filter(([, script]) => typeof script === "string" && script.includes(path.basename(main)))
+    .map(([script]) => script);
+  const where = path.relative(workspaceRoot(fileURLToPath(projectRoot)) ?? dir, dir);
+  throw new Error(
+    `${name} is a package of the project's workspace (${where}), and the ${main} its package.json names ` +
+      "doesn't exist: " +
+      (writers.length > 0
+        ? `its scripts ${writers.join(", ")} write it. Run the one for your network, then start envio again.`
+        : "a build step of that package writes it. Run it, then start envio again."),
   );
 }
 

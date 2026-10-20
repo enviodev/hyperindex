@@ -243,18 +243,22 @@ function workspaceGlobs(dir: string): string[] | null {
  */
 export function workspacePackages(root: string): Map<string, string> {
   const packages = new Map<string, string>();
-  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
-    const globs = workspaceGlobs(dir);
-    if (globs) {
-      for (const glob of globs.filter((glob) => !glob.startsWith("!"))) {
-        for (const packageDir of expandWorkspaceGlob(dir, glob)) {
-          const name = readJson(path.join(packageDir, "package.json"))?.name;
-          if (typeof name === "string" && !packages.has(name)) packages.set(name, packageDir);
-        }
-      }
-      return packages;
+  const workspace = workspaceRoot(root);
+  if (!workspace) return packages;
+  for (const glob of (workspaceGlobs(workspace) ?? []).filter((glob) => !glob.startsWith("!"))) {
+    for (const packageDir of expandWorkspaceGlob(workspace, glob)) {
+      const name = readJson(path.join(packageDir, "package.json"))?.name;
+      if (typeof name === "string" && !packages.has(name)) packages.set(name, packageDir);
     }
-    if (path.dirname(dir) === dir) return packages;
+  }
+  return packages;
+}
+
+/** The root of the workspace `root` is in: the nearest directory declaring workspaces. */
+export function workspaceRoot(root: string): string | null {
+  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
+    if (workspaceGlobs(dir)) return dir;
+    if (path.dirname(dir) === dir) return null;
   }
 }
 
