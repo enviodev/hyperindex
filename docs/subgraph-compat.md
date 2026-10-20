@@ -317,7 +317,10 @@ pass reads it) — run in register mode at each of their blocks, as an `onBlock`
 fetch response that first reaches it, among that response's events in
 graph-node's trigger order (a `once` handler ahead of the block's logs, the
 others after its logs and calls), a chain's register work one response at a
-time; blocks no response covers (no partition yet, as for yieldyak's strategies,
+time. A response carries the passes of at most 50,000 blocks past its first
+block and is cut after them, its partition fetching the rest again: one of
+tinlake's spanned seven million blocks of an unfiltered handler. Blocks no
+response covers (no partition yet, as for yieldyak's strategies,
 whose only data source is a `once` handler) are passed up to where every
 partition has fetched. No block item is processed before its block's passes
 ran and what they created is fetched. What a block's passes register is
