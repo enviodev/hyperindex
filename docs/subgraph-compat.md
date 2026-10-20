@@ -944,7 +944,7 @@ refuse instead, so behavior never silently diverges:
 | A call handler on a data source with no `source.address`, or whose function the ABI lacks | translation (manifest) |
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `call`-filtered `blockHandlers` on a template | translation (manifest) |
-| A contract template's `create()` from a block handler other than `filter: once` (a `call` one runs as a call handler), which no register pass registers | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
+| A contract template's `create()` from a block handler other than a data source's `filter: once` one (a `call` one runs as a call handler; a template's `once` one runs per instance as a handler only), which no register pass registers | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
 | Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`) | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |

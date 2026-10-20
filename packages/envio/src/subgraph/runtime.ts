@@ -1007,17 +1007,20 @@ const blockTemplates = new Set<string>();
 const REGISTERED_TEMPLATES_LIMIT = 100_000;
 const unregisteredCreates = new Set<string>();
 
-/** A `once` block handler runs in register mode first, and a `call` one is a call handler. */
-function hasRegisterPass(handler: BlockHandler): boolean {
-  return handler.filter === "once" || handler.filter === "call";
+/**
+ * A `call` block handler is a call handler, and a data source's `once` one
+ * runs in register mode first; a template's runs per instance, as a handler only.
+ */
+function hasRegisterPass(source: DataSource, handler: BlockHandler): boolean {
+  return handler.filter === "call" || (handler.filter === "once" && !source.isTemplate);
 }
 
 // Core registers no contract from onBlock, so graph-node's create from a block
 // handler (centrifuge/tinlake's preloaded pools) can't be matched.
 const BLOCK_HANDLER_CREATE =
   "envio registers a template's instances in a register pass ahead of the handlers, and only event " +
-  "handlers, call handlers and `once` block handlers get one, so the instances a block handler creates " +
-  "would never have their events indexed";
+  "handlers, call handlers and a data source's `once` block handlers get one, so the instances a block " +
+  "handler creates would never have their events indexed";
 
 /**
  * The block and round each registered address was created in, by the same key.
@@ -1484,7 +1487,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   if (templateNames.size > 0) {
     for (const source of sources) {
       const handlers = source.blockHandlers
-        .filter((handler) => !hasRegisterPass(handler))
+        .filter((handler) => !hasRegisterPass(source, handler))
         .map((handler) => handler.handler);
       if (source.kind !== "contract" || handlers.length === 0) continue;
       const created = subgraphSureCreates(path.resolve(config.root, source.mappingFile), handlers, [...templateNames]);
@@ -1885,7 +1888,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               blockNumber: block.number,
               blockSeconds: secondsOf(block.number, block.timestamp),
               mappingExports: mapping,
-              blockHandler: hasRegisterPass(handler) ? undefined : handler.handler,
+              blockHandler: hasRegisterPass(source, handler) ? undefined : handler.handler,
             };
             await runSyncCounted(context, () =>
               runInScope(scope, () => {

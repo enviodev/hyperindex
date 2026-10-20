@@ -118,8 +118,8 @@ describe("a block handler that creates a contract template", () => {
       .rejects.toThrow(
         "Envio Subgraph doesn't support creating contract templates from a block handler yet: envio " +
           "registers a template's instances in a register pass ahead of the handlers, and only event " +
-          "handlers, call handlers and \`once\` block handlers get one, so the instances a block handler " +
-          "creates would never have their events indexed.\\n" +
+          "handlers, call handlers and a data source's \`once\` block handlers get one, so the instances a " +
+          "block handler creates would never have their events indexed.\\n" +
           '  Found in data source "Block" → blockHandlers → "handleBlock", which created Coordinator ' +
           "0x3333333333333333333333333333333333333333 at block 5.",
       );
