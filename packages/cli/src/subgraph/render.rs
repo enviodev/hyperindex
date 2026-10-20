@@ -1784,6 +1784,7 @@ fn run_codegen_prelude(
             .arg(step)
             .current_dir(dir)
             .env("PATH", bin_path(dir));
+        pass_output(&mut command);
         for (name, default) in &variables {
             match network {
                 Some(network) => {
@@ -2220,6 +2221,19 @@ fn pick_writer(target: &Path, network: Option<&str>) -> Pick {
     }
 }
 
+/// A repo command's stdout and stderr: duplicates of envio's. Node, which this
+/// runs inside, holds its own close-on-exec, so a child that only inherits them
+/// starts with both closed, and a script's first `echo` fails.
+fn pass_output(command: &mut std::process::Command) {
+    use std::os::fd::AsFd;
+    if let Ok(stdout) = std::io::stdout().as_fd().try_clone_to_owned() {
+        command.stdout(stdout);
+    }
+    if let Ok(stderr) = std::io::stderr().as_fd().try_clone_to_owned() {
+        command.stderr(stderr);
+    }
+}
+
 /// Envio's own settings, which a script that writes the manifest never needs:
 /// the HyperSync token and the database password stay out of its environment.
 fn scrub_envio_env(command: &mut std::process::Command) {
@@ -2255,6 +2269,7 @@ fn run_writer_script(
             .arg(&leaf.text)
             .current_dir(&leaf.cwd)
             .stdin(std::process::Stdio::null());
+        pass_output(&mut command);
         scrub_envio_env(&mut command);
         command.env("PATH", bin_path(&leaf.cwd));
         let mut assigned: Vec<String> = Vec::new();
