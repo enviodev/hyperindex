@@ -279,9 +279,11 @@ fn select_types<'a>(model: &'a Model, types: &[String]) -> Result<Vec<&'a Entity
     if types.is_empty() {
         return Ok(model.entities.iter().collect());
     }
+    // An aggregation's name selects each of its intervals.
+    let named = |entity: &Entity, name: &str| entity.name == name || entity.graph_type() == name;
     let unknown: Vec<&str> = types
         .iter()
-        .filter(|name| !model.entities.iter().any(|e| &e.name == *name))
+        .filter(|name| !model.entities.iter().any(|e| named(e, name)))
         .map(String::as_str)
         .collect();
     if !unknown.is_empty() {
@@ -299,7 +301,7 @@ fn select_types<'a>(model: &'a Model, types: &[String]) -> Result<Vec<&'a Entity
     Ok(model
         .entities
         .iter()
-        .filter(|entity| types.contains(&entity.name))
+        .filter(|entity| types.iter().any(|name| named(entity, name)))
         .collect())
 }
 
@@ -338,6 +340,15 @@ async fn exposed_or_guess(client: &GraphClient, who: &str, warnings: &mut Vec<St
             ));
             Exposed::default()
         }
+    }
+}
+
+/// An aggregation interval's collection carries the interval graph-node
+/// requires: `candleStats(interval: hour)`.
+fn served_collection(collection: String, entity: &Entity) -> String {
+    match &entity.served {
+        Some(served) => format!("{collection}({})", served.args),
+        None => collection,
     }
 }
 
@@ -389,13 +400,16 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         Ours::Graph { exposed, .. } => exposed,
         Ours::Postgres(_) => &empty,
     };
-    let their_collection = collection(
-        context.reference_exposed,
-        our_exposed,
-        &entity.name,
-        "The reference",
-    )?;
-    let their_fields = context.reference_exposed.fields.get(&entity.name);
+    let their_collection = served_collection(
+        collection(
+            context.reference_exposed,
+            our_exposed,
+            entity.graph_type(),
+            "The reference",
+        )?,
+        entity,
+    );
+    let their_fields = context.reference_exposed.fields.get(entity.graph_type());
 
     let (our_columns, our_collection, our_fields) = match context.ours {
         Ours::Postgres(pg) => {
@@ -407,13 +421,16 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         }
         Ours::Graph { exposed, .. } => (
             None,
-            Some(collection(
-                exposed,
-                context.reference_exposed,
-                &entity.name,
-                "Ours",
-            )?),
-            exposed.fields.get(&entity.name),
+            Some(served_collection(
+                collection(
+                    exposed,
+                    context.reference_exposed,
+                    entity.graph_type(),
+                    "Ours",
+                )?,
+                entity,
+            )),
+            exposed.fields.get(entity.graph_type()),
         ),
     };
 

@@ -682,7 +682,10 @@ reports `hasIndexingErrors` is refused. `--ours` compares a
 Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
 block.
 
-Per `@entity` type (timeseries and aggregations skipped): every reference id
+Per `@entity` type (a timeseries too), and per interval of each
+`@aggregation` (ours' `<Aggregation>_<interval>` table against the
+reference's `<collection>(interval: hour|day)`, reported as
+`<Aggregation>_<interval>`): every reference id
 is paged in by `id_gt` cursor, the id sets are diffed, and a deterministic
 sample (`--sample`, default 100; first by sha256 of the id) is compared field
 by field. Both sides are normalized to graph-node's encodings first: BigInt,

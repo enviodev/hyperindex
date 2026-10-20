@@ -134,6 +134,21 @@ fn serve(data: &Dataset, block: u64, query: &str) -> (u16, String) {
     else {
         return (400, "unparseable".to_string());
     };
+    // An aggregation's rows are served per interval, which graph-node requires.
+    let collection = match collection.as_str() {
+        "candleStats" => match ["hour", "day"]
+            .into_iter()
+            .find(|interval| query.contains(&format!("interval: {interval}")))
+        {
+            Some(interval) => format!("candleStats@{interval}"),
+            None => {
+                let message = "Field \"candleStats\" argument \"interval\" of type \
+                               \"Aggregation_interval!\" is required but not provided.";
+                return (200, json!({"errors": [{"message": message}]}).to_string());
+            }
+        },
+        _ => collection,
+    };
     let rows = data.get(collection.as_str()).cloned().unwrap_or_default();
     if query.starts_with("{ page:") {
         let after = cursor(query);
@@ -176,6 +191,8 @@ fn introspection(data: &Dataset) -> Value {
         ("tokens", "Token"),
         ("emodeCategories", "EModeCategory"),
         ("dynamicQuorumParams_collection", "DynamicQuorumParams"),
+        ("candles", "Candle"),
+        ("candleStats", "CandleStats"),
     ];
     let list_of = |name: &str| {
         json!({"kind": "NON_NULL", "name": null, "ofType": {"kind": "LIST", "name": null,
@@ -183,7 +200,10 @@ fn introspection(data: &Dataset) -> Value {
     };
     let fields: Vec<Value> = types
         .iter()
-        .filter(|(collection, _)| data.contains_key(collection))
+        .filter(|(collection, _)| {
+            data.keys()
+                .any(|key| key.split('@').next() == Some(*collection))
+        })
         .map(|(collection, name)| json!({"name": collection, "type": list_of(name)}))
         .collect();
     let object_types: Vec<Value> = [
@@ -196,6 +216,8 @@ fn introspection(data: &Dataset) -> Value {
         ),
         ("EModeCategory", vec!["id", "label"]),
         ("DynamicQuorumParams", vec!["id", "minQuorumVotesBPS"]),
+        ("Candle", vec!["id", "timestamp", "volume"]),
+        ("CandleStats", vec!["id", "timestamp", "volume"]),
     ]
     .iter()
     .map(|(name, fields)| {
@@ -468,6 +490,71 @@ async fn refuses_a_reference_behind_ours() {
                  give it longer with --wait), or compare an indexer stopped at or before block \
                  1233."
                     .to_string()
+            ]
+        )
+    );
+}
+
+// Timeseries and aggregations are indexed (docs §3), but the diff skipped them
+// as if they weren't, so kenjohnscreates/agent-economy's TownStat timeseries
+// and TownDaily rollups were never compared. graph-node serves the timeseries
+// as an ordinary collection and each aggregation interval as
+// `<collection>(interval: hour|day)`, which ours stores as `<Aggregation>_<interval>`.
+#[tokio::test]
+async fn compares_timeseries_and_each_aggregation_interval() {
+    const CANDLES: &str = r#"
+type Candle @entity(timeseries: true) {
+  id: Int8!
+  timestamp: Timestamp!
+  volume: BigInt!
+}
+
+type CandleStats @aggregation(intervals: ["hour", "day"], source: "Candle") {
+  id: Int8!
+  timestamp: Timestamp!
+  volume: BigInt! @aggregate(fn: "sum", arg: "volume")
+}
+"#;
+    let dataset = |day_volume: &str| -> Dataset {
+        let candle = |id: u64, ts: u64, volume: u64| json!({"id": id.to_string(), "timestamp": ts.to_string(), "volume": volume.to_string()});
+        let stat = |id: u64, ts: u64, volume: &str| json!({"id": id.to_string(), "timestamp": ts.to_string(), "volume": volume});
+        BTreeMap::from([
+            (
+                "candles",
+                vec![
+                    candle(4294967296, 3_600_000_000, 5),
+                    candle(8589934592, 7_200_000_000, 7),
+                ],
+            ),
+            (
+                "candleStats@hour",
+                vec![
+                    stat(4294967296, 3_600_000_000, "5"),
+                    stat(8589934592, 7_200_000_000, "7"),
+                ],
+            ),
+            ("candleStats@day", vec![stat(8589934592, 0, day_volume)]),
+        ])
+    };
+    let reference = graph_node(dataset("12"), BLOCK).await;
+    let ours = graph_node(dataset("5"), BLOCK).await;
+    let dir = project_with(CANDLES);
+    let report = run(dir.path(), &options(&reference.url, Some(&ours.url))).await;
+    assert_eq!(
+        (
+            report.skipped_types.len(),
+            report
+                .entities
+                .iter()
+                .map(|e| json!([e.name, e.status, e.ours, e.theirs, e.mismatched_fields]))
+                .collect::<Vec<_>>()
+        ),
+        (
+            0,
+            vec![
+                json!(["Candle", "match", 2, 2, {}]),
+                json!(["CandleStats_hour", "match", 2, 2, {}]),
+                json!(["CandleStats_day", "mismatch", 1, 1, {"volume": 1}]),
             ]
         )
     );

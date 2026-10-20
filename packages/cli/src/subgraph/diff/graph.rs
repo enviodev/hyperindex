@@ -271,15 +271,27 @@ fn block_arg(block: Option<u64>) -> String {
         .unwrap_or_default()
 }
 
+/// `collection(arguments)`, joining the arguments a collection carries
+/// (`candleStats(interval: hour)`) with the query's own.
+fn call(collection: &str, arguments: &str) -> String {
+    match collection
+        .strip_suffix(')')
+        .and_then(|collection| collection.split_once('('))
+    {
+        Some((name, own)) => format!("{name}({own}, {arguments})"),
+        None => format!("{collection}({arguments})"),
+    }
+}
+
 pub fn page_query(collection: &str, cursor: Option<&str>, block: Option<u64>) -> String {
     let filter = cursor
         .map(|cursor| format!(", where: {{id_gt: {cursor}}}"))
         .unwrap_or_default();
-    format!(
-        "{{ page: {collection}(first: {PAGE_SIZE}, orderBy: id, orderDirection: asc{filter}{}) {{ \
-         id }} }}",
+    let arguments = format!(
+        "first: {PAGE_SIZE}, orderBy: id, orderDirection: asc{filter}{}",
         block_arg(block)
-    )
+    );
+    format!("{{ page: {} {{ id }} }}", call(collection, &arguments))
 }
 
 pub fn rows_query(collection: &str, selection: &str, ids: &[Value], block: Option<u64>) -> String {
@@ -294,10 +306,13 @@ fn rows_query_as(
     block: Option<u64>,
 ) -> String {
     let ids = ids.iter().map(literal).collect::<Vec<_>>().join(", ");
-    format!(
-        "{{ {alias}: {collection}(first: {PAGE_SIZE}, where: {{id_in: [{ids}]}}{}) {{ id \
-         {selection} }} }}",
+    let arguments = format!(
+        "first: {PAGE_SIZE}, where: {{id_in: [{ids}]}}{}",
         block_arg(block)
+    );
+    format!(
+        "{{ {alias}: {} {{ id {selection} }} }}",
+        call(collection, &arguments)
     )
 }
 
