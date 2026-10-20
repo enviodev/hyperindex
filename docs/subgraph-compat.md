@@ -927,7 +927,11 @@ under node_modules the install didn't provide. When another script runs
 `graph codegen` on a different manifest (inverse-governance's `build:codegen`
 builds `generated/mainnet.subgraph.yaml`, and its committed `subgraph.yaml`
 is a copy naming `../src/…`), the error names that manifest to point
-`--config` at once the step has run.
+`--config` at once the step has run. A project file a mapping imports that
+isn't there gets the same in its load error: the nearest package's scripts
+that mention it, or run a repo file that does (Goldfinch's `"prebuild":
+"ts-node ./scripts/update-address-manifest.ts"` writes
+src/address-manifest.ts).
 
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`

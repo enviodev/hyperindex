@@ -22,6 +22,7 @@ import {
   subgraphSureCreates,
   subgraphWorkspacePackages,
   subgraphWorkspaceRoot,
+  subgraphScriptsWriting,
 } from "../Core.res.mjs";
 import { install as installCallSource } from "../sources/CallSource.res.mjs";
 import { fetchCalls, resetCallBackends } from "./calls-source.ts";
@@ -601,6 +602,31 @@ function notExported(root: string, generated: string, mappingFile: string, messa
   );
 }
 
+/**
+ * Why a project file a mapping imports isn't there: a package.json script
+ * writes it before `graph build` (Goldfinch's `"prebuild": "ts-node
+ * ./scripts/update-address-manifest.ts"` writes src/address-manifest.ts).
+ */
+function unwrittenImport(root: string, generated: string, message: string): string | undefined {
+  const found = /Cannot find module '([^']+)' imported from /.exec(message);
+  if (!found) return undefined;
+  const target = found[1]!;
+  const inside = (dir: string) => target.startsWith(path.resolve(dir) + path.sep);
+  if (!path.isAbsolute(target) || !inside(root) || inside(generated)) return undefined;
+  const stem = path.basename(target).replace(/\.[cm]?[jt]s$/, "");
+  const writers = subgraphScriptsWriting(root, stem) as string[][];
+  if (writers.length === 0) return undefined;
+  const file = path.relative(root, target) + (path.extname(target) ? "" : ".ts");
+  const names = writers.map(([name]) => `"${name}"`).join(", ");
+  return writers.length === 1
+    ? `${file}, which the mapping imports, isn't in the repo: the package.json script ${names} writes it ` +
+        `(${writers[0]![1]}), and \`graph build\` fails on this import too until it has run. Run it, then start ` +
+        "envio again."
+    : `${file}, which the mapping imports, isn't in the repo: the package.json scripts ${names} write it, and ` +
+        "`graph build` fails on this import too until one has run. Run the one for your network, then start " +
+        "envio again.";
+}
+
 async function loadMapping(
   root: string,
   generated: string,
@@ -633,7 +659,10 @@ async function loadMapping(
     // in the shim can see it — rewrap it with the mapping that caused it.
     const template = undeclaredTemplate(message);
     if (template) throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${template}`);
-    const why = notGenerated(root, generated, message, sources) ?? notExported(root, generated, mappingFile, message);
+    const why =
+      notGenerated(root, generated, message, sources) ??
+      notExported(root, generated, mappingFile, message) ??
+      unwrittenImport(root, generated, message);
     throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}${why ? `\n${why}` : ""}`);
   }
 }

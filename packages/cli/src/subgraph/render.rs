@@ -2802,6 +2802,20 @@ pub fn scripts_mentioning(dir: &Path, needle: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The scripts that write a file the mappings import (Goldfinch's `"prebuild":
+/// "ts-node ./scripts/update-address-manifest.ts"`): those of the nearest
+/// package, from `dir` up to the repository's root, whose text or a repo file
+/// they run mentions `needle`.
+pub fn scripts_writing(dir: &Path, needle: &str) -> Vec<(String, String)> {
+    for dir in absolute(dir).ancestors().take(5) {
+        let found = scripts_mentioning(dir, needle);
+        if !found.is_empty() || dir.join(".git").exists() {
+            return found;
+        }
+    }
+    Vec::new()
+}
+
 /// The files a manifest needs that aren't there, written by a package.json
 /// script of standard tools that writes them (FilOzone's `generate:schema`:
 /// `cp ./schemas/schema.${VERSION:-v1}.graphql schema.graphql`), each with
