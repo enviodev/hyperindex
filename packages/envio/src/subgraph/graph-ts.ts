@@ -3655,6 +3655,17 @@ export enum YAMLValueKind {
   TAGGED = 6,
 }
 
+const yamlIndex: ProxyHandler<YAMLValue> = {
+  get(target, prop, receiver) {
+    if (typeof prop === "symbol" || prop in target) return Reflect.get(target, prop, receiver);
+    const held =
+      target.kind === YAMLValueKind.ARRAY
+        ? /^\d+$/.test(prop) && Number(prop) < (target.data as unknown[]).length
+        : target.kind === YAMLValueKind.OBJECT && target.toObject().get(YAMLValue.newString(prop)) !== null;
+    return held ? target.get(prop) : undefined;
+  },
+};
+
 /**
  * graph-ts' YAML value, over graph-node's `serde_yaml::Value`: numbers are kept
  * as the text they print as, an object's keys are YAML values themselves, and a
@@ -3664,7 +3675,11 @@ export class YAMLValue {
   constructor(
     public kind: YAMLValueKind,
     public data: any,
-  ) {}
+  ) {
+    // graph-ts' `@operator('[]')` makes `value['dataSources']['0']` a `get`;
+    // in JavaScript it is a property read.
+    return new Proxy(this, yamlIndex);
+  }
 
   static newNull(): YAMLValue {
     return new YAMLValue(YAMLValueKind.NULL, 0);
