@@ -124,6 +124,10 @@ pub struct SubgraphRuntimeConfig {
     /// spelled the repo's way too.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub path_case_fixes: Vec<(String, String)>,
+    /// The network networks.json was applied for when none was picked: the
+    /// one the repo's own build passes `graph build --network` (§6d).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_network: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -395,6 +399,22 @@ pub fn missing_abi_files(
         }
     }
     Some(message)
+}
+
+/// Whether a data source of the manifest names no network: one left for
+/// `graph build --network` to fill in from networks.json (Ekubo, iExec).
+pub fn names_no_network(yaml: &str) -> bool {
+    serde_yaml::from_str::<serde_yaml::Value>(yaml)
+        .ok()
+        .and_then(|manifest| {
+            let sources = manifest.get("dataSources")?.as_sequence()?.clone();
+            Some(
+                sources
+                    .iter()
+                    .any(|source| source.get("network").and_then(|n| n.as_str()).is_none()),
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// Whether a YAML document is a subgraph manifest rather than an envio config.
@@ -1334,6 +1354,7 @@ pub fn translate(
             block_header_lag,
             rendered_manifest: None,
             path_case_fixes: Vec::new(),
+            build_network: None,
         },
         human_config,
     })
@@ -2808,6 +2829,63 @@ type Renewal implements Event @entity {
                 crate::config_parsing::human_config::StartBlock::Number(416469410),
                 vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()],
             )
+        );
+    }
+
+    // iExec's PoCo subgraph names no network, and its build passes graph-cli
+    // one: `graph build --network ${NETWORK_NAME:-arbitrum-sepolia}`.
+    #[test]
+    fn builds_the_manifest_for_the_network_the_repo_build_passes() {
+        let dir = tempdir::TempDir::new("envio-subgraph-network-default").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("    network: mainnet\n", ""),
+        )
+        .unwrap();
+        fs::write(
+            root.join("networks.json"),
+            r#"{
+  "mainnet": {"Gravity": {"address": "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", "startBlock": 6175244}},
+  "arbitrum-one": {"Gravity": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 416469410}}
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "build": "dotenv -e .env -- sh -c 'npm run codegen && graph build --network ${NETWORK_NAME:-arbitrum-one}'",
+  "deploy": "graph deploy poco --network ${NETWORK_NAME:-arbitrum-one} --version-label dev",
+  "deploy-studio": "graph deploy --studio poco --network ${SUBGRAPH_NETWORK_NAME}"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        // Two defaults that disagree are no default at all.
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "build:mainnet": "graph build --network mainnet",
+  "build:arbitrum": "graph build --network arbitrum-one"
+}}"#,
+        )
+        .unwrap();
+        let ambiguous = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            (
+                config.get_chains().into_iter().next().unwrap().id,
+                ambiguous.ends_with(
+                    "Pick one, as `graph build --network` does:\n  ENVIO_SUBGRAPH_NETWORK=mainnet"
+                ),
+            ),
+            (42161, true)
         );
     }
 

@@ -1212,6 +1212,35 @@ fn run_codegen_prelude(
     }))
 }
 
+/// The network the repo's own build passes `graph build --network`, when its
+/// scripts agree on one (`--network ${NETWORK_NAME:-arbitrum-sepolia}`, or a
+/// literal): what graph-cli builds with when nothing else is set.
+pub fn build_network_default(dirs: &[&Path]) -> Option<String> {
+    let flag =
+        regex::Regex::new(r#"--network(?:=|\s+)["']?(?:\$\{\w+:-([\w.-]+)\}|([A-Za-z][\w.-]*))"#)
+            .expect("a valid regex");
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut networks: BTreeSet<String> = BTreeSet::new();
+    for dir in dirs {
+        let dir = absolute(dir);
+        if seen.contains(&dir) {
+            continue;
+        }
+        seen.push(dir.clone());
+        for (_, script) in package_scripts(&dir) {
+            for captures in flag.captures_iter(&script) {
+                if let Some(network) = captures.get(1).or_else(|| captures.get(2)) {
+                    networks.insert(network.as_str().to_string());
+                }
+            }
+        }
+    }
+    match networks.into_iter().collect::<Vec<_>>().as_slice() {
+        [network] => Some(network.clone()),
+        _ => None,
+    }
+}
+
 fn package_scripts(dir: &Path) -> Vec<(String, String)> {
     std::fs::read_to_string(dir.join("package.json"))
         .ok()

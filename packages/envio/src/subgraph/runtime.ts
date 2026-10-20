@@ -161,6 +161,8 @@ type SubgraphConfig = {
   renderedManifest?: { script: string; network: string; template: string; view: string; steps?: string[] };
   /** Files the manifest names, as written and as the repo spells them, differing only in case. */
   pathCaseFixes?: [string, string][];
+  /** The network networks.json was applied for when none was picked: the repo build's `--network`. */
+  buildNetwork?: string;
   isDev: boolean;
 } & SubgraphSchema;
 
@@ -1153,6 +1155,13 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       `Envio Subgraph rendered ${manifestName} from ${rendered.template} with ` +
         `${rendered.view} for the network "${rendered.network}", as the package.json script ` +
         `"${rendered.script}" does. ENVIO_SUBGRAPH_NETWORK picks another.`,
+    );
+  }
+  if (config.buildNetwork) {
+    info(
+      `Envio Subgraph built ${manifestName} for the network "${config.buildNetwork}" from networks.json, ` +
+        `as the project's own build does (\`graph build --network ${config.buildNetwork}\`). ` +
+        "ENVIO_SUBGRAPH_NETWORK picks another.",
     );
   }
   for (const [written, found] of config.pathCaseFixes ?? []) {

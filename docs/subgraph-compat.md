@@ -545,6 +545,14 @@ own build, and envio repeats a step of it only when the step is a standard
 tool invocation over files in the repo, so that its output is a function of
 committed files and the network picked, nothing else.
 
+**networks.json with no network picked.** A manifest that leaves a data
+source's network to `graph build --network` (iExec's PoCo names none) takes
+the network the repo's own scripts pass graph-cli, when they agree on one:
+`graph build --network ${NETWORK_NAME:-arbitrum-sepolia}` (the default) or a
+literal `--network base`, found in networks.json. Scripts that pass several
+leave the choice to `ENVIO_SUBGRAPH_NETWORK`, and the error lists the
+networks. Startup logs which network was built.
+
 **Rendered manifests.** Many repos commit `subgraph.template.yaml` (or
 `template.yaml`) and a per-network config, and write the manifest with a
 package.json script: one per network (`"prepare:matic": "mustache

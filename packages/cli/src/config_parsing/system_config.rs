@@ -1563,8 +1563,28 @@ impl SystemConfig {
 
         // A manifest envio rendered for the network is already that network's;
         // networks.json is `graph build --network`'s, a step such repos skip.
+        let json_networks: Vec<String> = [&project_paths.project_root, &manifest_dir]
+            .iter()
+            .find_map(|dir| std::fs::read_to_string(dir.join("networks.json")).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|json| json.as_object().map(|all| all.keys().cloned().collect()))
+            .unwrap_or_default();
+        // What graph-cli is given when nothing is set: the repo's own build's
+        // `--network`, for a manifest that names none.
+        let build_network = (env.var(crate::subgraph::NETWORK_ENV_VAR).is_none()
+            && rendered.is_none()
+            && crate::subgraph::names_no_network(&manifest))
+        .then(|| {
+            crate::subgraph::render::build_network_default(&[
+                &manifest_dir,
+                &project_paths.project_root,
+            ])
+        })
+        .flatten()
+        .filter(|network| json_networks.contains(network));
         let network_from_json = env
             .var(crate::subgraph::NETWORK_ENV_VAR)
+            .or_else(|| build_network.clone())
             .filter(|_| rendered.is_none());
         let manifest = match network_from_json {
             Some(network) => {
@@ -1685,6 +1705,7 @@ impl SystemConfig {
         }
         if let Some(subgraph) = config.subgraph.as_mut() {
             subgraph.path_case_fixes = path_case_fixes;
+            subgraph.build_network = build_network;
             subgraph.rendered_manifest =
                 rendered.map(|rendered| crate::subgraph::RenderedManifest {
                     script: rendered.script,
