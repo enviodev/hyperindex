@@ -154,17 +154,27 @@ function parseHexPair(pair: string): number {
   return (sign * value) & 0xff;
 }
 
+const HEX_DIGITS = /^[0-9a-fA-F]*$/;
+
+/**
+ * graph-ts' `ByteArray.fromHexString`: it asserts on the whole string, strips
+ * one `0x`, then reads each pair with `I8.parseInt(pair, 16)`, which stops at
+ * the first character that isn't a hex digit: Croc pads "0x00000000" on the
+ * left with `0`s and the pair that holds the `x` reads as 0. Plain hex, which
+ * is every hash and address envio hands a mapping, decodes natively.
+ */
+function hexBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error(`input ${hex} has odd length`);
+  const digits = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (HEX_DIGITS.test(digits)) return Buffer.from(digits, "hex");
+  const bytes = new Uint8Array(digits.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseHexPair(digits.slice(2 * i, 2 * i + 2));
+  return bytes;
+}
+
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
-    // graph-ts asserts on the whole string, strips one `0x`, then reads each
-    // pair with `I8.parseInt(pair, 16)`, which stops at the first character
-    // that isn't a hex digit: Croc pads "0x00000000" on the left with `0`s and
-    // the pair that holds the `x` reads as 0.
-    if (hex.length % 2 !== 0) throw new Error(`input ${hex} has odd length`);
-    const digits = hex.startsWith("0x") ? hex.slice(2) : hex;
-    const bytes = new Uint8Array(digits.length / 2);
-    for (let i = 0; i < bytes.length; i++) bytes[i] = parseHexPair(digits.slice(2 * i, 2 * i + 2));
-    return new ByteArray(bytes);
+    return new ByteArray(hexBytes(hex));
   }
   static fromUTF8(input: string): ByteArray {
     return new ByteArray(new TextEncoder().encode(input));
@@ -247,7 +257,7 @@ export class ByteArray extends Uint8Array {
 
 export class Bytes extends ByteArray {
   static fromHexString(hex: string): Bytes {
-    return new Bytes(ByteArray.fromHexString(hex));
+    return new Bytes(hexBytes(hex));
   }
   static fromUTF8(input: string): Bytes {
     return new Bytes(ByteArray.fromUTF8(input));
