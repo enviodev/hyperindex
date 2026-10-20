@@ -1212,6 +1212,8 @@ Object.setPrototypeOf(TypedMap.prototype, entityTail);
  * schema doesn't change under a running indexer.
  */
 type EntityLayout = {
+  /** Every field the type declares, when the schema lists them. */
+  fields: Set<string> | undefined;
   timestampFields: Set<string>;
   refFields: Set<string>;
   listFields: Set<string>;
@@ -1229,7 +1231,9 @@ function entityLayout(schema: Scope["schema"], entityType: string): EntityLayout
   }
   let layout = layouts.get(entityType);
   if (!layout) {
+    const declared = schema.entityFields[entityType];
     layout = {
+      fields: declared === undefined ? undefined : new Set(declared),
       timestampFields: new Set(schema.timestampFields[entityType] ?? []),
       refFields: new Set(schema.entityRefFields[entityType] ?? []),
       listFields: new Set(schema.entityListFields[entityType] ?? []),
@@ -1260,9 +1264,13 @@ function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   const { schema } = currentScope();
   // graph-ts holds a relation as the related entity's id under the field's own
   // name; envio's column for it is `<field>_id`.
-  const { timestampFields, refFields, listFields } = entityLayout(schema, entityType);
+  const { fields, timestampFields, refFields, listFields } = entityLayout(schema, entityType);
   const row: Record<string, unknown> = {};
   for (const entry of entriesOf(entity)) {
+    // A field the schema doesn't define isn't stored: graph-node only writes
+    // the declared columns, and before apiVersion 0.0.8 lets a mapping set
+    // others (`check_invalid_fields` refuses them from 0.0.8 on).
+    if (fields !== undefined && !fields.has(entry.key)) continue;
     const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
     // An id is a string column whatever the subgraph declared it as, and so is
     // a relation, which carries one. Every other `Bytes` field is a bytes
