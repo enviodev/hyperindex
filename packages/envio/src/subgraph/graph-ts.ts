@@ -1949,6 +1949,11 @@ class EthereumTransaction {
   declare to: Address | null;
   declare value: BigInt_;
   declare gasLimit: BigInt_;
+  /**
+   * graph-ts before 0.22's name for the slot graph-node fills with the gas
+   * limit (`gas_limit` in every `AscEthereumTransaction_0_0_*`).
+   */
+  declare gasUsed: BigInt_;
   declare gasPrice: BigInt_;
   declare input: Bytes;
   declare nonce: BigInt_;
@@ -2284,6 +2289,7 @@ const TRANSACTION_SHAPE: Shape<EthereumTransaction> = {
   to: ["to", "address"],
   value: ["value", "bigint"],
   gasLimit: ["gas", "bigint"],
+  gasUsed: ["gas", "bigint"],
   gasPrice: ["gasPrice", "bigint"],
   input: ["input", "bytes"],
   nonce: ["nonce", "bigint"],
