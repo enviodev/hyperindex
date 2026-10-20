@@ -154,17 +154,27 @@ function parseHexPair(pair: string): number {
   return (sign * value) & 0xff;
 }
 
+const HEX_DIGITS = /^[0-9a-fA-F]*$/;
+
+/**
+ * graph-ts' `ByteArray.fromHexString`: it asserts on the whole string, strips
+ * one `0x`, then reads each pair with `I8.parseInt(pair, 16)`, which stops at
+ * the first character that isn't a hex digit: Croc pads "0x00000000" on the
+ * left with `0`s and the pair that holds the `x` reads as 0. Plain hex, which
+ * is every hash and address envio hands a mapping, decodes natively.
+ */
+function hexBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error(`input ${hex} has odd length`);
+  const digits = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (HEX_DIGITS.test(digits)) return Buffer.from(digits, "hex");
+  const bytes = new Uint8Array(digits.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseHexPair(digits.slice(2 * i, 2 * i + 2));
+  return bytes;
+}
+
 export class ByteArray extends Uint8Array {
   static fromHexString(hex: string): ByteArray {
-    // graph-ts asserts on the whole string, strips one `0x`, then reads each
-    // pair with `I8.parseInt(pair, 16)`, which stops at the first character
-    // that isn't a hex digit: Croc pads "0x00000000" on the left with `0`s and
-    // the pair that holds the `x` reads as 0.
-    if (hex.length % 2 !== 0) throw new Error(`input ${hex} has odd length`);
-    const digits = hex.startsWith("0x") ? hex.slice(2) : hex;
-    const bytes = new Uint8Array(digits.length / 2);
-    for (let i = 0; i < bytes.length; i++) bytes[i] = parseHexPair(digits.slice(2 * i, 2 * i + 2));
-    return new ByteArray(bytes);
+    return new ByteArray(hexBytes(hex));
   }
   static fromUTF8(input: string): ByteArray {
     return new ByteArray(new TextEncoder().encode(input));
@@ -247,7 +257,7 @@ export class ByteArray extends Uint8Array {
 
 export class Bytes extends ByteArray {
   static fromHexString(hex: string): Bytes {
-    return new Bytes(ByteArray.fromHexString(hex));
+    return new Bytes(hexBytes(hex));
   }
   static fromUTF8(input: string): Bytes {
     return new Bytes(ByteArray.fromUTF8(input));
@@ -554,15 +564,88 @@ function parseDecimal(text: string): GraphNodeDecimal.Decimal {
  * what a later operation, `toString` or the store sees. `value` is the same
  * number for envio's store, made only when something asks for it.
  */
+/**
+ * Set for the one `new BigDecimal` that wraps what an operation of
+ * graph-node-decimal returned: normal already, but for `renormalize`'s case.
+ * graph-ts' constructor takes one argument, so the flag says it instead.
+ */
+let constructingOperationResult = false;
+function operationResult(decimal: GraphNodeDecimal.Decimal): BigDecimal {
+  constructingOperationResult = true;
+  return new BigDecimal(decimal);
+}
+
+/**
+ * Powers of a value built by multiplying by it one step at a time, which is
+ * how Uniswap v3's `bigDecimalExponated` computes `1.0001^tick` in createTick
+ * — up to 887k steps for a full-range tick, every pool's first such position
+ * repeating the same ones, and every replay of the handler again. Each step's
+ * product is kept: `[base, base·base, (base^2)·base, …]` as `multiply`
+ * returned it, so a later step is the same product, rounded the same way,
+ * without the work. Bounded in all; past the bound a step is computed as any
+ * other product.
+ */
+type PowerChain = { key: string; products: GraphNodeDecimal.Decimal[] };
+const powerChains = new Map<string, PowerChain>();
+const POWER_CHAIN_LIMIT = 1_000_000;
+const CHAIN_KEPT_FROM = 64;
+let chainedProducts = 0;
+const sameDecimal = (x: GraphNodeDecimal.Decimal, y: GraphNodeDecimal.Decimal) =>
+  x.int === y.int && x.scale === y.scale;
+
+/** `a · b` when one is a step of a chain the other is the base of, or `a` is `b`. */
+function chainedProduct(a: BigDecimal, b: BigDecimal): BigDecimal | undefined {
+  let chain: PowerChain;
+  let step: number;
+  let at: GraphNodeDecimal.Decimal;
+  const aPower = a._power;
+  const bPower = b._power;
+  if (aPower !== undefined && sameDecimal(b.decimal, aPower.chain.products[0])) {
+    ({ chain, step } = aPower);
+    at = a.decimal;
+  } else if (bPower !== undefined && sameDecimal(a.decimal, bPower.chain.products[0])) {
+    ({ chain, step } = bPower);
+    at = b.decimal;
+  } else if (sameDecimal(a.decimal, b.decimal)) {
+    const key = `${a.decimal.int}e${a.decimal.scale}`;
+    chain = powerChains.get(key) ?? { key, products: [a.decimal] };
+    step = 0;
+    at = a.decimal;
+  } else {
+    return undefined;
+  }
+  const next = step + 1;
+  let product = chain.products[next];
+  if (product === undefined) {
+    product = GraphNodeDecimal.multiply(at, chain.products[0]);
+    if (next === chain.products.length && chainedProducts < POWER_CHAIN_LIMIT) {
+      chain.products.push(product);
+      chainedProducts++;
+      // A square on its own is no chain: only one that keeps going is kept
+      // for the next computation of the same powers.
+      if (next === CHAIN_KEPT_FROM) powerChains.set(chain.key, chain);
+    }
+  }
+  const made = operationResult(product);
+  made._power = { chain, step: next };
+  return made;
+}
+
 export class BigDecimal {
   private _decimal: GraphNodeDecimal.Decimal;
   /** The two fields as a mapping last assigned them, if it assigned one. */
   private _fields: GraphNodeDecimal.Decimal | undefined;
   private _value: BigNumber | undefined;
+  /** This value's place in a power chain, if a chained product made it. */
+  _power: { chain: PowerChain; step: number } | undefined;
 
   constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
-    this._decimal =
-      value instanceof BigInt_
+    this._power = undefined;
+    const operationResult = constructingOperationResult;
+    constructingOperationResult = false;
+    this._decimal = operationResult
+      ? GraphNodeDecimal.renormalize(value as GraphNodeDecimal.Decimal)
+      : value instanceof BigInt_
         ? GraphNodeDecimal.fromInteger(value.value)
         : value instanceof BigNumber
           ? ((value as BigNumber & { [DECIMAL]?: GraphNodeDecimal.Decimal })[DECIMAL] ??
@@ -602,16 +685,20 @@ export class BigDecimal {
     return BigInt_.fromString(this.value.integerValue(BigNumber.ROUND_DOWN).toFixed());
   }
   plus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.add(this.decimal, decimalOperandOf(other)));
+    return operationResult(GraphNodeDecimal.add(this.decimal, decimalOperandOf(other)));
   }
   minus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.subtract(this.decimal, decimalOperandOf(other)));
+    return operationResult(GraphNodeDecimal.subtract(this.decimal, decimalOperandOf(other)));
   }
   times(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.multiply(this.decimal, decimalOperandOf(other)));
+    if (other instanceof BigDecimal) {
+      const chained = chainedProduct(this, other);
+      if (chained !== undefined) return chained;
+    }
+    return operationResult(GraphNodeDecimal.multiply(this.decimal, decimalOperandOf(other)));
   }
   div(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.divide(this.decimal, decimalOperandOf(other)));
+    return operationResult(GraphNodeDecimal.divide(this.decimal, decimalOperandOf(other)));
   }
   equals(other: BigDecimal): boolean {
     return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) === 0;
@@ -659,6 +746,7 @@ export class BigDecimal {
     this._fields = fields;
     this._decimal = GraphNodeDecimal.normalize(fields);
     this._value = undefined;
+    this._power = undefined;
   }
 }
 
@@ -2598,22 +2686,55 @@ const RECEIPT_SHAPE: Shape<Omit<EthereumTransactionReceipt, "blockHash" | "block
   logsBloom: ["logsBloom", "bytes"],
 };
 
+/** A shaped object's raw payload and the fields read or assigned so far. */
+const SHAPED_FIELDS = Symbol("envio.shapedFields");
+type ShapedFields = { raw: Record<string, unknown> | undefined; values: Record<string, unknown> };
+const shapedPrototypes = new WeakSet<object>();
+
+function shapedField(value: unknown, kind: "bytes" | "address" | "bigint"): unknown {
+  return value === null || value === undefined
+    ? null
+    : kind === "bytes"
+      ? Bytes.fromHexString(value as string)
+      : kind === "address"
+        ? Address.fromString(value as string)
+        : new BigInt_(typeof value === "bigint" ? value : BigInt(value as number));
+}
+
+/**
+ * Each field of `shape` becomes an accessor on the class that converts the
+ * raw value the first time it is read: a handler reads a few of a block's or
+ * transaction's fields, and converting all of them — the roots, the
+ * transaction's whole input as hex — for every event was a large share of
+ * indexing CPU. An assignment, the constructor's included, holds its value.
+ */
+function shapeFields(prototype: object, shape: object): void {
+  shapedPrototypes.add(prototype);
+  for (const [graphName, [rawName, kind]] of Object.entries(shape) as [string, [string, "bytes" | "address" | "bigint"]][]) {
+    Object.defineProperty(prototype, graphName, {
+      configurable: true,
+      get(this: { [SHAPED_FIELDS]?: ShapedFields }) {
+        const fields = this[SHAPED_FIELDS];
+        if (fields === undefined) return undefined;
+        const values = fields.values;
+        if (graphName in values) return values[graphName];
+        return (values[graphName] = shapedField(fields.raw?.[rawName], kind));
+      },
+      set(this: { [SHAPED_FIELDS]?: ShapedFields }, value: unknown) {
+        (this[SHAPED_FIELDS] ??= { raw: undefined, values: {} }).values[graphName] = value;
+      },
+    });
+  }
+}
+
 function shaped<T extends object>(
   into: T,
   shape: Partial<Shape<T>>,
   raw: Record<string, unknown> | undefined,
 ): T {
-  for (const [graphName, [rawName, kind]] of Object.entries(shape) as [string, Shape<T>[keyof T]][]) {
-    const value = raw?.[rawName];
-    (into as Record<string, unknown>)[graphName] =
-      value === null || value === undefined
-        ? null
-        : kind === "bytes"
-          ? Bytes.fromHexString(value as string)
-          : kind === "address"
-            ? Address.fromString(value as string)
-            : new BigInt_(typeof value === "bigint" ? value : BigInt(value as number));
-  }
+  const prototype = Object.getPrototypeOf(into);
+  if (!shapedPrototypes.has(prototype)) shapeFields(prototype, shape);
+  (into as { [SHAPED_FIELDS]?: ShapedFields })[SHAPED_FIELDS] = { raw, values: {} };
   return into;
 }
 
@@ -3631,6 +3752,14 @@ function floatNamespace(name: string, single: boolean) {
       NaN: Number.NaN,
       POSITIVE_INFINITY: Number.POSITIVE_INFINITY,
       NEGATIVE_INFINITY: Number.NEGATIVE_INFINITY,
+      parseFloat: (text: string) => cast(Number.parseFloat(text)),
+      isNaN: (value: number) => Number.isNaN(cast(value)),
+      isFinite: (value: number) => Number.isFinite(cast(value)),
+      isInteger: (value: number) => Number.isInteger(cast(value)),
+      isSafeInteger: (value: number) => {
+        const v = cast(value);
+        return Number.isInteger(v) && Math.abs(v) <= (single ? 16777215 : Number.MAX_SAFE_INTEGER);
+      },
     }),
   );
 }

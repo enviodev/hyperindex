@@ -437,6 +437,20 @@ const wrapTo = (bits: number, signed: boolean) => (value: unknown): number => {
 };
 
 /**
+ * `x as i64` and `x as u64`: a bigint of that width. A number truncates toward
+ * zero and an i32 sign-extends before the wrap, as `i64.extend_i32_s` and
+ * `i64.trunc_f64_s` do; a reference, like `as i32`'s, is 0.
+ */
+const wrapTo64 = (signed: boolean) => (value: unknown): bigint => {
+  let n: bigint;
+  if (typeof value === "bigint") n = value;
+  else if (typeof value === "number") n = Number.isFinite(value) ? BigInt(Math.trunc(value)) : 0n;
+  else if (typeof value === "boolean") n = value ? 1n : 0n;
+  else n = 0n;
+  return signed ? BigInt.asIntN(64, n) : BigInt.asUintN(64, n);
+};
+
+/**
  * AssemblyScript's `Array#indexOf`, `lastIndexOf` and `includes` compare each
  * element with `==`, so with graph-ts' overload: ENS's
  * `if (!coinTypes.includes(coinType))` finds a BigInt already there. A
@@ -458,6 +472,25 @@ const search =
     for (; index < length; index++) if (equals(receiver[index], value)) return method === "includes" ? true : index;
     return method === "includes" ? false : -1;
   };
+
+/**
+ * AssemblyScript's default comparator (std/assembly/util/sort.ts COMPARATOR):
+ * numbers by value, strings by code unit, and another reference by `a > b`
+ * and `a < b` — graph-ts' BigInt and BigDecimal overload them. A reference
+ * without the overload compares by address, its allocation order; here it
+ * keeps its place, the order the array was built in.
+ */
+function defaultCompare(a: unknown, b: unknown): number {
+  if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
+  const greater = isObject(b) ? overload(a, "gt") : undefined;
+  const less = isObject(b) ? overload(a, "lt") : undefined;
+  if (greater && less) return (greater.call(a, b) ? 1 : 0) - (less.call(a, b) ? 1 : 0);
+  const numeric = (v: unknown) => typeof v === "number" || typeof v === "bigint" || typeof v === "boolean";
+  if (numeric(a) && numeric(b)) return (a as number) > (b as number) ? 1 : (a as number) < (b as number) ? -1 : 0;
+  return 0;
+}
+
+const sort = (receiver: any): unknown => (Array.isArray(receiver) ? receiver.sort(defaultCompare) : receiver.sort());
 
 /**
  * What a graph-ts method on a null receiver computes below apiVersion 0.0.5,
@@ -639,6 +672,8 @@ export const operators = {
   rotr: rotate(false),
   mul: binary("times", widened((a, b) => a * b)),
   div: binary("div", integerDivision),
+  // A division the source types as a float's, whole numbers or not.
+  fdiv: binary("div", (a, b) => number(a) / number(b)),
   rem: binary("mod", widened((a, b) => a % b)),
   // `10 ** decimals.toI64()` is an i64 power, and graph-ts' `BigInt ** u8` its
   // `pow`: JavaScript's `**` refuses to mix a bigint with a number.
@@ -675,12 +710,21 @@ export const operators = {
   as_u16: wrapTo(16, false),
   as_i32: wrapTo(32, true),
   as_u32: wrapTo(32, false),
+  // AssemblyScript's dtoa writes what JavaScript does, but a whole number
+  // with ".0" (JavaScript already writes -0 as "0").
+  ftoa: (value: unknown): string => {
+    const text = String(isObject(value) ? value : number(value));
+    return /^-?\d+$/.test(text) ? `${text}.0` : text;
+  },
+  as_i64: wrapTo64(true),
+  as_u64: wrapTo64(false),
   as_f64: (value: unknown): unknown => (isObject(value) ? value : number(value ?? 0)),
   as_f32: (value: unknown): unknown => (isObject(value) ? value : Math.fround(number(value ?? 0))),
   neg: (a: unknown) => {
     const declared = overload(a, "neg");
     return declared ? declared.call(a) : -(a as number);
   },
+  sort,
   indexOf: search("indexOf"),
   lastIndexOf: search("lastIndexOf"),
   includes: search("includes"),
