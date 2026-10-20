@@ -5209,12 +5209,18 @@ type Renewal implements Event @entity {
             "./bin/prepare.sh",
             "#!/bin/sh\nOUT=${1:-subgraph.yaml}\nsed \"s/network: NETWORK/network: mainnet/\" subgraph.template.yaml > $OUT\n",
         );
+        // Decentraland's buildData.ts: `if (process.argv[i] === '--network')`.
+        let option = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\n[ \"$1\" = '--network' ] || { echo \"Supply a valid network using --network\"; exit 1; }\nsed \"s/network: NETWORK/network: $2/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
 
         assert_eq!(
-            (outcome(&chain), outcome(&output_path)),
+            (outcome(&chain), outcome(&output_path), outcome(&option)),
             (
                 "8453 [\"./bin/prepare.sh base\"]".to_string(),
-                "There is no subgraph.yaml here.".to_string()
+                "There is no subgraph.yaml here.".to_string(),
+                "8453 [\"./bin/prepare.sh --network base\"]".to_string(),
             )
         );
     }

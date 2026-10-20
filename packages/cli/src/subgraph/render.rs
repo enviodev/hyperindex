@@ -2130,35 +2130,53 @@ fn runs_a_missing_file(leaf: &Leaf) -> bool {
         .any(|program| program.found.is_none() && !program.written.is_empty())
 }
 
-/// The command runs a repo file that takes its network as its first argument
-/// (beefy's `CHAIN=$1`, NFTX's `const network = process.argv[2]`) and passes
-/// it none.
-fn takes_network_argument(leaf: &Leaf) -> bool {
-    let first_argument = regex::Regex::new(
+/// How a command that is passed no arguments takes its network, when the
+/// repo file it runs takes one: as its first argument (beefy's `CHAIN=$1`,
+/// NFTX's `const network = process.argv[2]`), or as a `--network` option
+/// (Decentraland's `process.argv[i] === '--network'`, Spectra's).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum NetworkArgument {
+    First,
+    Option,
+}
+
+fn network_argument(leaf: &Leaf) -> Option<NetworkArgument> {
+    let first = regex::Regex::new(
         r#"(?i)\b\w*(?:network|chain)\w*\s*=\s*(?:process\.argv\[2\]|"?\$\{?1\b)"#,
     )
     .expect("a valid regex");
+    let option = regex::Regex::new(r#"["'`]--network["'`]|\.option\(\s*["']network["']"#)
+        .expect("a valid regex");
     match program_files(leaf).as_slice() {
-        [program] if !program.has_arguments => program.found.as_ref().is_some_and(|file| {
-            std::fs::read_to_string(file).is_ok_and(|text| first_argument.is_match(&text))
-        }),
-        _ => false,
+        [program] if !program.has_arguments => {
+            let text = std::fs::read_to_string(program.found.as_ref()?).ok()?;
+            if first.is_match(&text) {
+                Some(NetworkArgument::First)
+            } else if option.is_match(&text) {
+                Some(NetworkArgument::Option)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
-/// `candidate` with the network passed to each command that takes it as its
-/// first argument, as `npm run <script> -- <network>` passes it.
+/// `candidate` with the network passed to each command that takes it, as
+/// `npm run <script> -- <network>` passes it.
 fn with_network_argument(candidate: &Candidate, network: &str) -> Option<Candidate> {
-    if !candidate.commands.leaves.iter().any(takes_network_argument) {
-        return None;
-    }
     let mut candidate = candidate.clone();
+    let mut passed = false;
     for leaf in candidate.commands.leaves.iter_mut() {
-        if takes_network_argument(leaf) {
-            leaf.text = format!("{} {}", leaf.text, shell_word(network));
-        }
+        let argument = match network_argument(leaf) {
+            Some(NetworkArgument::First) => shell_word(network),
+            Some(NetworkArgument::Option) => format!("--network {}", shell_word(network)),
+            None => continue,
+        };
+        leaf.text = format!("{} {argument}", leaf.text);
+        passed = true;
     }
-    Some(candidate)
+    passed.then_some(candidate)
 }
 
 fn shell_word(text: &str) -> String {
