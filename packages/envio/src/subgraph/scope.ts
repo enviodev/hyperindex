@@ -90,6 +90,8 @@ export type Scope = {
   blockHandler?: string;
   /** File templates this run created, keyed to dedupe a replayed mapping. */
   fileCreates?: Map<string, FileCreate>;
+  /** Register mode: instances this pass created of templates with a `once` handler. */
+  templateOnces?: { template: string; address: string }[];
 };
 
 /** A `DataSourceTemplate.create` of a file template, waiting for its file. */

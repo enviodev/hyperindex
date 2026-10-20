@@ -1,8 +1,10 @@
-// A template's `once` block handler runs per instance, at the block that
-// created it, and only in handler mode: the register-mode run that a data
-// source's `once` handler gets ahead of its chain's register passes is for
-// static sources. So a create in it registers nothing, as one in a polling
-// handler doesn't, and is refused the same way.
+// A template's `once` block handler runs for each instance at the block that
+// created it: the instance's start block (chain/ethereum/src/data_source.rs,
+// `from_template_info`: `start_block: creation_block`), matched by its `Start`
+// trigger when graph-node reprocesses that block for the new data source. What
+// it creates is indexed from there. sushi's clipper-rfq creates a PriceOracle
+// from the `once` handler of each PriceOracleProxy a Blade pool registers.
+// That create was refused: the handler had no register pass.
 let manifest = `
 specVersion: 0.0.8
 schema:
@@ -108,7 +110,11 @@ export function handleVaultStart(block: ethereum.Block): void {
     (
       "src/strategy.ts",
       `
-export function handleStrategy(event: any): void {}
+import { Entity, store } from "@graphprotocol/graph-ts";
+
+export function handleStrategy(event: any): void {
+  store.set("Probe", event.block.number.toString(), new Entity());
+}
 `,
     ),
   ]),
@@ -116,33 +122,36 @@ export function handleStrategy(event: any): void {}
 import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
-describe("a template's once block handler that creates a contract template", () => {
-  it("is refused at the create, naming the handler", async (t) => {
-    const indexer = createTestIndexer();
+const strategyEvent = (block) => ({
+  contract: "Strategy",
+  event: "Deployed",
+  params: { target: "0x0000000000000000000000000000000000000000" },
+  srcAddress: "0x3333333333333333333333333333333333333333",
+  block: { number: block },
+});
 
-    await t
-      .expect(
-        indexer.process({
-          chains: {
-            1: {
-              startBlock: 0,
-              endBlock: 12,
-              simulate: [
-                {
-                  contract: "Factory",
-                  event: "Deployed",
-                  params: { target: "0x2222222222222222222222222222222222222222" },
-                  block: { number: 10 },
-                },
-              ],
+describe("a template's once block handler that creates a contract template", () => {
+  it("indexes what it creates from the block that created the template's instance", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 12,
+          simulate: [
+            {
+              contract: "Factory",
+              event: "Deployed",
+              params: { target: "0x2222222222222222222222222222222222222222" },
+              block: { number: 10 },
             },
-          },
-        }),
-      )
-      .rejects.toThrow(
-        '  Found in data source "Vault" → blockHandlers → "handleVaultStart", which created Strategy ' +
-          "0x3333333333333333333333333333333333333333 at block 10.",
-      );
+            strategyEvent(10),
+            strategyEvent(12),
+          ],
+        },
+      },
+    });
+    t.expect(await indexer.Probe.getAll()).toEqual([{ id: "10" }, { id: "12" }]);
   });
 });
 `,

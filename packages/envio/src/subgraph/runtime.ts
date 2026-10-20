@@ -1031,16 +1031,19 @@ const unregisteredCreates = new Set<string>();
 /**
  * A `call` block handler is a call handler, and a data source's other block
  * handlers get a register pass of their own for each of their blocks. A
- * template's run per instance, as a handler only: its instances are known only
- * as register passes register them, so no pass of one block can list them.
+ * template's `once` one gets a pass right after the one that creates each
+ * instance; its unfiltered and polling ones run per instance as a handler
+ * only: its instances are known only as register passes register them, so no
+ * pass of one block can list them.
  */
 function hasRegisterPass(source: DataSource, handler: BlockHandler): boolean {
-  return handler.filter === "call" || !source.isTemplate;
+  return handler.filter === "call" || handler.filter === "once" || !source.isTemplate;
 }
 
 const BLOCK_HANDLER_CREATE =
   "envio registers a template's instances in a register pass ahead of the handlers, and a template's " +
-  "block handlers get none, so the instances one creates would never have their events indexed";
+  "unfiltered and polling block handlers get none, so the instances one creates would never have their " +
+  "events indexed";
 
 /**
  * Where a block handler sits in its block for the register pass's store: a
@@ -1290,11 +1293,37 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // the items in a batch run concurrently, and this hook is process-wide.
   installRegisterMissHook(onRegisterMiss);
 
+  // A template's `once` handler runs for an instance at the block that created
+  // it, in the round after its creator (graph-node's reprocessing of that
+  // block for the new data source starts with its `Start` trigger). Its
+  // register pass runs right after the pass that created the instance, with
+  // that pass's register context, so what it creates is registered at the
+  // same block.
+  const templateOnces = new Map<string, (parent: Scope, address: string) => Promise<Scope>>();
+  const runTemplateOnces = async (parent: Scope): Promise<void> => {
+    const queue = [...(parent.templateOnces ?? [])];
+    parent.templateOnces = undefined;
+    for (let index = 0; index < queue.length; index++) {
+      if (index >= MAX_FILES_PER_TRIGGER) {
+        throw new Error(
+          `A handler created more than ${MAX_FILES_PER_TRIGGER} template instances with a once handler from ` +
+            "one trigger; a once handler that keeps creating more is not going to stop.",
+        );
+      }
+      const { template, address } = queue[index]!;
+      const nested = await templateOnces.get(template)!(parent, address);
+      queue.push(...(nested.templateOnces ?? []));
+    }
+  };
+
   installRegisterHook((templateName, address) => {
     const accessor = config.contractAccessors[templateName];
     if (accessor === undefined) throw unknown(`the template ${templateName}`, "a mapping handler");
     const scope = currentScope();
     scope.context.chain[accessor].add(address);
+    if (templateOnces.has(templateName)) {
+      (scope.templateOnces ??= []).push({ template: templateName, address });
+    }
     if (blockTemplates.has(templateName)) {
       rememberInstance(scope.dataSource.chainId, templateName, address, scope.blockNumber);
     }
@@ -1704,6 +1733,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               settle();
               scope.slot?.release();
             }
+            await runTemplateOnces(scope);
           },
         );
       }
@@ -1784,6 +1814,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             settle();
             scope.slot?.release();
           }
+          await runTemplateOnces(scope);
         });
       }
     };
@@ -1855,8 +1886,44 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
                 settle();
                 scope.slot?.release();
               }
+              await runTemplateOnces(scope);
             }
           : undefined;
+      if (source.isTemplate && once && templateNames.size > 0) {
+        templateOnces.set(source.name, async (parent, address) => {
+          const { chainId } = parent.dataSource;
+          const { blockNumber } = parent;
+          const round = roundOf(chainId, source.name, address, blockNumber);
+          const position = blockNumber * POSITION_BLOCK + Math.min(round, 15) * ROUND_SPAN - 0.5;
+          const scope: Scope = {
+            context: parent.context,
+            event: { number: blockNumber },
+            mode: "register",
+            schema,
+            dataSource: {
+              name: source.name,
+              address,
+              chainId,
+              network: source.network ?? "",
+              context: contextOf(chainId, source.name, address) ?? source.context ?? {},
+            },
+            registered: new Set(),
+            blockNumber,
+            position,
+            mappingExports: mapping,
+          };
+          scope.slot = await registerSlots.acquire(position);
+          const { pass, settle } = startRegisterPass(chainId, position);
+          scope.pass = pass;
+          try {
+            await runRegisterRounds(scope, () => fn(makeBlockHandlerBlock(blockNumber, location)));
+          } finally {
+            settle();
+            scope.slot?.release();
+          }
+          return scope;
+        });
+      }
       // A template's instances all exist from the first static source on its
       // chain, and the handler runs once per instance from its creation block.
       const chainStarts = config.dataSources

@@ -327,8 +327,15 @@ block again. centrifuge's tinlake (unfiltered, preloaded pools), beefy-balances
 (a `polling` handler on a one-block data source) and yieldyak's strategies
 create templates this way. Not matched: an event pass of a partition behind the
 one that ran a block's passes reads the store after them, whatever its block. A
-template's block handlers have no pass (its instances are known only as passes
-register them), so a `create()` in one is refused when it runs (§7). A mapping that throws in the
+template's `once` handler runs in register mode for each instance right after
+the pass that created it, at its creation block, one round later (graph-node
+reprocesses that block for the new data source, `Start` trigger first), and
+what it creates is registered at that block too (sushi's clipper-rfq: each
+PriceOracleProxy a Blade pool registers creates its PriceOracle there). Its
+creates' events of that block run in its creator's round, not the next. A
+template's unfiltered and `polling` handlers have no pass (its instances are
+known only as passes register them), so a `create()` in one is refused when it
+runs (§7). A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
@@ -976,7 +983,7 @@ refuse instead, so behavior never silently diverges:
 | A call handler on a data source with no `source.address`, or whose function the ABI lacks | translation (manifest) |
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `call`-filtered `blockHandlers` on a template | translation (manifest) |
-| A contract template's `create()` from a template's block handler (unfiltered, `polling` or `once`), which no register pass registers; a data source's block handlers have one (§4) | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
+| A contract template's `create()` from a template's unfiltered or `polling` block handler, which no register pass registers; a data source's block handlers and a template's `once` one have one (§4) | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
 | Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`) | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
