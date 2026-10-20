@@ -9,6 +9,10 @@ use super::model::{FieldKind, Scalar};
 /// of those.
 pub fn canonical(kind: &FieldKind, list: bool, value: &Value) -> Value {
     match (value, list) {
+        // graph-node resolves a list of entities by loading its children
+        // (graphql/src/store/prefetch.rs), so one the store holds as null is
+        // served as no children at all.
+        (Value::Null, true) if matches!(kind, FieldKind::Entity { .. }) => Value::Array(vec![]),
         (Value::Null, _) => Value::Null,
         (Value::Array(items), true) => {
             let mut items: Vec<Value> = items.iter().map(|item| element(kind, item)).collect();
@@ -263,6 +267,9 @@ mod tests {
             ),
             (&bigint, true, json!(["1", "2"]), json!(["1", "2"])),
             (&bigint, false, Value::Null, Value::Null),
+            // A nullable `[Token!]` no mapping set (TakoTako-xyz/takotako-subgraph's
+            // LendingProtocol.mintedTokens): stored null, served as `[]`.
+            (&relation, true, Value::Null, json!([])),
         ];
         assert_eq!(
             pairs
