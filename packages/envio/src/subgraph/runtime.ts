@@ -157,8 +157,8 @@ type SubgraphConfig = {
   rpcUrls: string[];
   /** Per chain id, the reorg depth a block handler's header reads are held back by. */
   blockHeaderLag?: Record<number, number>;
-  /** Set when envio wrote the manifest from the repo's template. */
-  renderedManifest?: { script: string; network: string; template: string; view: string };
+  /** Set when envio wrote the manifest from the repo's template, or ran the codegen steps that write it. */
+  renderedManifest?: { script: string; network: string; template: string; view: string; steps?: string[] };
   /** Files the manifest names, as written and as the repo spells them, differing only in case. */
   pathCaseFixes?: [string, string][];
   isDev: boolean;
@@ -1141,9 +1141,16 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     ? pathToFileURL(path.join(path.dirname(fetchedModules), "resolve-from.mjs")).href
     : null;
   const rendered = config.renderedManifest;
-  if (rendered) {
+  const manifestName = config.manifestFile ?? "subgraph.yaml";
+  if (rendered?.steps?.length) {
     info(
-      `Envio Subgraph rendered ${config.manifestFile ?? "subgraph.yaml"} from ${rendered.template} with ` +
+      `Envio Subgraph ran ${rendered.steps.map((step) => `\`${step}\``).join(", ")} from the codegen script ` +
+        `first: it writes ${manifestName}` +
+        (rendered.network ? ` (network "${rendered.network}"; ENVIO_SUBGRAPH_NETWORK picks another).` : "."),
+    );
+  } else if (rendered) {
+    info(
+      `Envio Subgraph rendered ${manifestName} from ${rendered.template} with ` +
         `${rendered.view} for the network "${rendered.network}", as the package.json script ` +
         `"${rendered.script}" does. ENVIO_SUBGRAPH_NETWORK picks another.`,
     );
@@ -1160,7 +1167,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     generated,
     config.manifestFile,
     sources.map((source) => source.mappingFile),
-    { renderScript: rendered?.script, pathCaseFixes: config.pathCaseFixes },
+    {
+      renderScript: rendered?.steps?.length ? undefined : rendered?.script,
+      ranSteps: rendered?.steps,
+      pathCaseFixes: config.pathCaseFixes,
+    },
   );
 
   if (config.isDev) {

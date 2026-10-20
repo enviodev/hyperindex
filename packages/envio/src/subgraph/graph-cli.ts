@@ -377,7 +377,7 @@ export function codegenFlags(root: string, step: string): string[] {
  * itself. Some do more after it — Lido writes `generated/parserData.ts` with a
  * script of its own — and the mappings import what those steps leave.
  */
-function codegenSteps(root: string, renderScript?: string): string[] | null {
+function codegenSteps(root: string, skip: SkippedSteps = {}): string[] | null {
   let script: unknown;
   try {
     script = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).scripts?.codegen;
@@ -389,9 +389,21 @@ function codegenSteps(root: string, renderScript?: string): string[] | null {
     .split("&&")
     .map((step) => step.trim())
     .filter(Boolean)
-    .filter((step) => renderScript === undefined || !runsScript(step, renderScript));
+    .filter((step) => !(skip.renderScript !== undefined && runsScript(step, skip.renderScript)))
+    .filter((step) => !skip.ranSteps?.includes(step));
   return steps.some((step) => GRAPH_CODEGEN.test(step)) ? steps : null;
 }
+
+/**
+ * Codegen steps envio already ran to write the manifest, for the network
+ * picked: run again, they would write the script's default network over it.
+ */
+type SkippedSteps = {
+  /** The package.json script envio rendered the manifest with itself. */
+  renderScript?: string;
+  /** The codegen script's own steps envio ran before translating. */
+  ranSteps?: string[];
+};
 
 /** Whether a step runs package.json script `script`: `yarn x`, `npm run x`, `pnpm x`. */
 function runsScript(step: string, script: string): boolean {
@@ -457,8 +469,8 @@ export function bundledCodegen(root: string, dir: string, manifestFile: string):
  * a script of its own), which bundled codegen can't replace. A failure is a
  * warning: the mappings that don't import their output still run.
  */
-async function runOtherSteps(root: string, renderScript?: string): Promise<void> {
-  for (const step of codegenSteps(root, renderScript) ?? []) {
+async function runOtherSteps(root: string, skip: SkippedSteps): Promise<void> {
+  for (const step of codegenSteps(root, skip) ?? []) {
     if (GRAPH_CODEGEN.test(step)) continue;
     try {
       await runScriptStep(root, step);
@@ -479,21 +491,12 @@ export async function ensureGeneratedCode(
   dir: string,
   manifestFile = "subgraph.yaml",
   mappingFiles: string[] = [],
-  {
-    renderScript,
-    pathCaseFixes = [],
-  }: {
-    // The package.json script envio rendered the manifest with, for the network
-    // picked: run again from the codegen script, it would write the script's
-    // default network over that.
-    renderScript?: string;
-    pathCaseFixes?: [string, string][];
-  } = {},
+  { pathCaseFixes = [], ...skip }: { pathCaseFixes?: [string, string][] } & SkippedSteps = {},
 ): Promise<void> {
   const mode = codegenMode();
   if (mode === "bundled") {
     bundledCodegen(root, dir, manifestFile);
-    await runOtherSteps(root, renderScript);
+    await runOtherSteps(root, skip);
     return;
   }
   const graphCli = graphCliPackage(root);
@@ -509,14 +512,14 @@ export async function ensureGeneratedCode(
     return;
   }
   let bundledFailed = false;
-  const needsGraphCli = (codegenSteps(root, renderScript) ?? []).some((step) => codegenFlags(root, step).length > 0);
+  const needsGraphCli = (codegenSteps(root, skip) ?? []).some((step) => codegenFlags(root, step).length > 0);
   if (!graphCli && mode === "auto" && !needsGraphCli) {
     // Nothing to build when no mapping imports a generated file.
     if (missingGeneratedFiles(root, mappingFiles, dir).length === 0) return;
     info("Envio Subgraph found no @graphprotocol/graph-cli in the project; writing the generated code itself.");
     try {
       bundledCodegen(root, dir, manifestFile);
-      await runOtherSteps(root, renderScript);
+      await runOtherSteps(root, skip);
       return;
     } catch (error) {
       bundledFailed = true;
@@ -528,7 +531,7 @@ export async function ensureGeneratedCode(
   }
 
   try {
-    for (const step of codegenSteps(root, renderScript) ?? ["graph codegen"]) {
+    for (const step of codegenSteps(root, skip) ?? ["graph codegen"]) {
       if (!GRAPH_CODEGEN.test(step)) {
         try {
           await runScriptStep(root, step);
@@ -556,7 +559,7 @@ export async function ensureGeneratedCode(
         "itself. Set ENVIO_SUBGRAPH_CODEGEN=graph-cli to stop at the failure instead.",
     );
     bundledCodegen(root, dir, manifestFile);
-    await runOtherSteps(root, renderScript);
+    await runOtherSteps(root, skip);
   }
 }
 

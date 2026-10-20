@@ -576,6 +576,19 @@ graph-cli is one of `mustache <view> <template> [out]` (also `npx`/`yarn`/
   && graph codegen`) is skipped: it would render the script's default network
   over the one picked.
 
+**The codegen script's own steps.** envio already runs the project's
+`codegen` script to build the generated code (§6a): `graph codegen`
+in-process, every other step in a shell. When the manifest is missing and no
+mustache script renders it, the steps before `graph codegen` run first, before
+translation — cope-market's `"codegen": "node scripts/build-manifest.mjs
+${NETWORK:-arc-testnet} && graph codegen"` writes subgraph.yaml there. Each
+variable such a step reads is set to `ENVIO_SUBGRAPH_NETWORK` when it is set
+(unset, the script's default applies), the manifest is recorded as envio's
+like a rendered one, and codegen doesn't run those steps again. This is the
+one place envio runs a repo's own script to get a manifest, and only because
+it runs that script anyway; a failing step stops envio with the script's own
+error above it.
+
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
 (CryptoPunks): it builds there and runs on hosted platforms, and graph-cli on

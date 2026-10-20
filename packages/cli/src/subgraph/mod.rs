@@ -133,6 +133,10 @@ pub struct RenderedManifest {
     pub network: String,
     pub template: String,
     pub view: String,
+    /// The codegen script's own steps envio ran to write the manifest, which
+    /// the runtime's codegen then doesn't run again.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<String>,
 }
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
@@ -428,7 +432,10 @@ pub fn find_manifests(root: &std::path::Path) -> Vec<String> {
                 }
                 continue;
             }
-            let is_yaml = name.ends_with(".yaml") || name.ends_with(".yml");
+            // `subgraph.template.yaml` is the input a render step writes the
+            // manifest from, even when it holds no mustache tag yet.
+            let is_yaml =
+                (name.ends_with(".yaml") || name.ends_with(".yml")) && !name.contains(".template.");
             // A mustache template (`network: {{ network }}`) still parses, but
             // it is the input to the build that writes the manifest.
             let is_manifest_file = |text: String| !text.contains("{{") && is_manifest(&text);
@@ -3127,6 +3134,54 @@ type Renewal implements Event @entity {
                 fs::read_to_string(root.join("subgraph.yaml")).unwrap() == GRAVITY_MANIFEST,
             ),
             (1, true)
+        );
+    }
+
+    // cope-market's `"codegen": "node scripts/build-manifest.mjs
+    // ${NETWORK:-arc-testnet} && graph codegen"` writes subgraph.yaml in the
+    // step envio's codegen runs before `graph codegen` anyway (§6a); the
+    // missing manifest stopped envio before it got there.
+    #[test]
+    fn runs_the_codegen_steps_that_write_the_manifest() {
+        let dir = tempdir::TempDir::new("envio-subgraph-codegen-prelude").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(
+            root.join("subgraph.template.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/build-manifest.sh"),
+            "sed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"codegen": "sh scripts/build-manifest.sh ${NETWORK:-mainnet} && graph codegen"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+
+        let default = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
+        let picked = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let rendered = picked.subgraph.clone().unwrap().rendered_manifest.unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&default).0,
+                chain_of(&picked).0,
+                rendered.script,
+                rendered.steps
+            ),
+            (
+                1,
+                42161,
+                "codegen".to_string(),
+                vec!["sh scripts/build-manifest.sh ${NETWORK:-mainnet}".to_string()]
+            )
         );
     }
 

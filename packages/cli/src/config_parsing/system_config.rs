@@ -1691,6 +1691,7 @@ impl SystemConfig {
                     network: rendered.network,
                     template: rendered.template,
                     view: rendered.view,
+                    steps: rendered.steps,
                 });
         }
         config.parsed_project_paths = project_paths.clone();

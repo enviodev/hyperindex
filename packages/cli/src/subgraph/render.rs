@@ -1036,6 +1036,7 @@ pub struct Rendered {
     pub template: String,
     pub view: String,
     pub files: Vec<PathBuf>,
+    pub steps: Vec<String>,
 }
 
 /// Where envio records the manifests it wrote, so a later start renders them
@@ -1059,6 +1060,140 @@ fn rendered_by_envio(project_root: &Path, target: &Path) -> bool {
         .and_then(|record| serde_json::from_str::<BTreeMap<String, String>>(&record).ok())
         .and_then(|record| record.get(&target.display().to_string()).cloned())
         .is_some_and(|recorded| recorded == digest(&text))
+}
+
+fn record(project_root: &Path, target: &Path, manifest: &str) -> Result<()> {
+    let record = record_path(project_root);
+    let mut recorded: BTreeMap<String, String> = std::fs::read_to_string(&record)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    recorded.insert(target.display().to_string(), digest(manifest));
+    if let Some(parent) = record.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&record, serde_json::to_string_pretty(&recorded)?)?;
+    Ok(())
+}
+
+/// The variables a step reads: where a script takes its network
+/// (`${NETWORK:-arc-testnet}`), with the default it gives.
+fn step_variables(step: &str) -> Vec<(String, Option<String>)> {
+    let mut found: Vec<(String, Option<String>)> = Vec::new();
+    for token in lex(step) {
+        let Tok::Word(word) = token else { continue };
+        for (name, default) in vars(&word) {
+            let positional = name.chars().all(|ch| ch.is_ascii_digit());
+            if !positional && !name.starts_with("npm_") && !found.iter().any(|(n, _)| *n == name) {
+                found.push((name, default));
+            }
+        }
+    }
+    found
+}
+
+/// The project's bins and its workspaces', nearest first, as a package
+/// manager puts them on PATH.
+fn bin_path(dir: &Path) -> std::ffi::OsString {
+    let mut dirs: Vec<PathBuf> = dir
+        .ancestors()
+        .map(|dir| dir.join("node_modules").join(".bin"))
+        .collect();
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    std::env::join_paths(dirs).unwrap_or_default()
+}
+
+/// The project's `codegen` script, which envio runs to build the generated
+/// code anyway (§6a), when its steps before `graph codegen` are what write
+/// the manifest (cope-market: `node scripts/build-manifest.mjs
+/// ${NETWORK:-arc-testnet} && graph codegen`). They run first, with the
+/// network picked in the variable they read it from.
+fn run_codegen_prelude(
+    project_root: &Path,
+    target: &Path,
+    dir: &Path,
+    network: Option<&str>,
+) -> Result<Option<Rendered>> {
+    let graph_codegen =
+        regex::Regex::new(r"^(?:(?:npx|pnpm exec|pnpm|yarn|bunx)\s+)?graph\s+codegen\b")
+            .expect("a valid regex");
+    let Some(script) = package_scripts(dir)
+        .into_iter()
+        .find(|(name, _)| name == "codegen")
+        .map(|(_, script)| script)
+    else {
+        return Ok(None);
+    };
+    let steps: Vec<String> = script
+        .split("&&")
+        .map(|step| step.trim().to_string())
+        .filter(|step| !step.is_empty())
+        .collect();
+    let Some(first_codegen) = steps.iter().position(|step| graph_codegen.is_match(step)) else {
+        return Ok(None);
+    };
+    let prelude = &steps[..first_codegen];
+    if prelude.is_empty() {
+        return Ok(None);
+    }
+    let manifest_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let mut picked = network.map(str::to_string);
+    for step in prelude {
+        let variables = step_variables(step);
+        let mut command = std::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg(step)
+            .current_dir(dir)
+            .env("PATH", bin_path(dir));
+        for (name, default) in &variables {
+            match network {
+                Some(network) => {
+                    command.env(name, network);
+                }
+                None => {
+                    if picked.is_none() && std::env::var_os(name).is_none() {
+                        picked = default.clone();
+                    }
+                }
+            }
+        }
+        let status = command
+            .status()
+            .context(format!("Failed to run `{step}`"))?;
+        if !status.success() {
+            return Err(anyhow!(
+                "There is no {manifest_name} here, and the project's codegen script writes it: \
+                 envio ran `{step}` from it, and it exited with {} — the error above is the \
+                 script's own.",
+                status
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "a signal".to_string())
+            ));
+        }
+    }
+    let Ok(manifest) = std::fs::read_to_string(target) else {
+        return Err(anyhow!(
+            "There is no {manifest_name} here: envio ran the codegen script's steps before \
+             `graph codegen` ({}), and they didn't write it.",
+            prelude.join(" && ")
+        ));
+    };
+    record(project_root, target, &manifest)?;
+    Ok(Some(Rendered {
+        script: "codegen".to_string(),
+        network: picked.unwrap_or_default(),
+        template: String::new(),
+        view: String::new(),
+        files: vec![target.to_path_buf()],
+        steps: prelude.to_vec(),
+    }))
 }
 
 fn package_scripts(dir: &Path) -> Vec<(String, String)> {
@@ -1158,7 +1293,7 @@ pub fn render_manifest(
 
     let (plans, _) = scan(&dir, &target);
     if plans.is_empty() {
-        return Ok(None);
+        return run_codegen_prelude(project_root, &target, &dir, network);
     }
 
     let choice = choose(&plans, network, &dir).map_err(|networks| {
@@ -1210,16 +1345,7 @@ pub fn render_manifest(
         }
         std::fs::write(path, text).context(format!("Failed to write {}", path.display()))?;
     }
-    let record = record_path(project_root);
-    let mut recorded: BTreeMap<String, String> = std::fs::read_to_string(&record)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default();
-    recorded.insert(target.display().to_string(), digest(&manifest));
-    if let Some(parent) = record.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&record, serde_json::to_string_pretty(&recorded)?)?;
+    record(project_root, &target, &manifest)?;
 
     Ok(Some(Rendered {
         script: choice.plan.script.clone(),
@@ -1227,6 +1353,7 @@ pub fn render_manifest(
         template: choice.plan.template.clone(),
         view: choice.view.clone(),
         files: run.files.keys().cloned().collect(),
+        steps: Vec::new(),
     }))
 }
 
