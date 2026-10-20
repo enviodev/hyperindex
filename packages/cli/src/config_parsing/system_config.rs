@@ -1775,6 +1775,7 @@ impl SystemConfig {
                     template: rendered.template,
                     view: rendered.view,
                     steps: rendered.steps,
+                    commands: rendered.commands,
                 });
         }
         config.parsed_project_paths = project_paths.clone();
@@ -1811,6 +1812,9 @@ impl SystemConfig {
                     .and_then(|dir| {
                         crate::subgraph::render::unrepeatable_writers(
                             &dir.join(crate::subgraph::DEFAULT_MANIFEST),
+                            crate::utils::project_env::ProjectEnv::new(root)
+                                .var(crate::subgraph::NETWORK_ENV_VAR)
+                                .as_deref(),
                         )
                     })
                     .map(|writers| format!("\n{writers}"))
@@ -1862,8 +1866,13 @@ impl SystemConfig {
             Err(err) => {
                 let manifests = crate::subgraph::find_manifests(root);
                 let hint = crate::subgraph::manifest_hint(&manifests);
-                if let Some(writers) = crate::subgraph::render::unrepeatable_writers(&manifest_path)
-                    .filter(|_| manifests.is_empty())
+                let network = crate::utils::project_env::ProjectEnv::new(root)
+                    .var(crate::subgraph::NETWORK_ENV_VAR);
+                if let Some(writers) = crate::subgraph::render::unrepeatable_writers(
+                    &manifest_path,
+                    network.as_deref(),
+                )
+                .filter(|_| manifests.is_empty())
                 {
                     return Err(anyhow!(
                         "There is no {} here.\n{writers}",

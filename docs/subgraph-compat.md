@@ -727,20 +727,26 @@ moonwell renders in `make generate-config`.
 
 A script that runs anything else to write the manifest — `node`, `ts-node`,
 `truffle exec`, a shell script, `jq`, handlebars through a script of its own —
-isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or
-compute addresses; the error names each script and what it runs (a script is
-named when it writes the manifest, mentions a template, or runs a repo file
-whose source mentions one — Uniswap's `ts-node ./script/build`). `--config`
-naming the template itself renders what a repeatable script renders from it,
-else says it is a template:
+envio doesn't repeat itself. Those read node_modules artifacts, ask an RPC for
+start blocks, or compute addresses. Such a script is a *writer* when it writes
+the manifest's file name, mentions a template, or runs a repo file whose source
+mentions one (Uniswap's `ts-node ./script/build`), and envio runs the one
+writer as it is (below, *The one script that writes the manifest*); otherwise
+the error names each writer and what it runs. `--config` naming the template
+itself renders what a repeatable script renders from it, else says it is a
+template:
 
 ```
 There is no subgraph.yaml here.
-The project writes its manifest with a package.json script, and envio can't repeat it:
-  "render-subgraph-config:gnosis": node ops/render-subgraph-conf.js gnosis
-envio renders a manifest itself only when every step of the script is a standard tool
-over files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`,
-`cat`), so that the network you pick is its only input. Run the script for your
+The project writes its manifest with a package.json script, and envio can't repeat these:
+  "prepare:mainnet": NETWORK_NAME=mainnet ts-node ./templatify.ts && yarn codegen
+  "prepare:matic": NETWORK_NAME=matic ts-node ./templatify.ts && yarn codegen
+envio renders a manifest itself when every step of the script is a standard tool over
+files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`, `cat`),
+so that the network you pick is its only input.
+envio runs such a script itself when it is the only one that writes the manifest;
+"prepare:mainnet", "prepare:matic" all do, so set ENVIO_SUBGRAPH_NETWORK to run the one
+for your network (its name ends with it, or it passes it). Run the script for your
 network, then start envio again.
 ```
 
@@ -755,14 +761,58 @@ generate-manifests && graph codegen subgraph.mainnet.yaml`), that is the
 manifest envio runs. Steps that are only `rm`/`mkdir` don't run early. Each
 variable such a step reads is set to `ENVIO_SUBGRAPH_NETWORK` when it is set
 (unset, the script's default applies), the manifest is recorded as envio's
-like a rendered one, and codegen doesn't run those steps again. This is the
-one place envio runs a repo's own script to get a manifest, and only because
-it runs that script anyway: only the `codegen` script's steps, split on `&&`
-exactly as §6a splits them; no other package.json script and no lifecycle
-hook (`preinstall`, `install`, `postinstall`, `prepare`) ever runs, even one
-that would write the manifest — that one is named in the error instead.
+like a rendered one, and codegen doesn't run those steps again. Only the
+`codegen` script's steps run here, split on `&&` exactly as §6a splits them.
 Each step logs a line naming it (and the variables set) before it runs, and
 a failing step stops envio with the script's own error above it.
+
+**The one script that writes the manifest.** When the manifest is missing, no
+standard render writes it and the codegen script's steps don't either, envio
+runs the writer — Venus' `"prepare:bsc": "NETWORK=bsc yarn ts-node
+config/index.ts"`, Polymarket's `"templatify:matic": "ts-node ./templatify.ts
+matic"`, UMA's `scripts/build-manifest.sh polygon` — as the developer runs it
+before `graph build`, and as envio runs the codegen script's own steps: the
+user's own repo, on their machine or in their build, doing what their own
+build does first.
+
+- *Which:* the writers of the nearest package that has any (the manifest's
+  own, then the packages above it). A lifecycle hook (`prepare`,
+  `postinstall`) counts like any other script: the developer's install runs
+  it. Never one whose name says `deploy`, `publish`, `release`, `docker`,
+  `test`, `lint`, `format`, `clean`, `remove`, `watch`, `serve` or `start`;
+  one that runs `docker`, `git`, `curl`, `wget`, `ssh`, `scp`, `rsync`, a
+  hosting CLI or `npm publish`, or a file whose source runs `graph deploy`;
+  one that runs a repo file that isn't there, or renders a template that
+  isn't.
+- *The network picks it,* as it picks a render: with `ENVIO_SUBGRAPH_NETWORK`
+  set, the writer whose name ends with it (`prepare:bsc`), that passes it
+  (`NETWORK=matic`, `build-manifest.sh polygon`, `--network mainnet`), or that
+  reads it from a variable (`${NETWORK:-mainnet}`, `$CHAIN`; envio sets it).
+  Of several, the one that runs the fewest commands (Polymarket's
+  `templatify:matic`, not `prepare:matic`, which runs codegen after it), else
+  none. With no network picked, a writer runs only when it is the only one.
+  Any other case is the error above, saying why none ran.
+- *What runs:* the script's commands up to its first graph-cli step, with
+  `npm run <script>` (`yarn <script>`, a workspace-wide run) read as that
+  script's commands and the variables the call sets, and package installs
+  skipped as in §6a; each in a shell, in its package, with the project's bins
+  on PATH, stdin closed, and without envio's own `ENVIO_*` settings (the
+  HyperSync token, the database password) in its environment. No command
+  after graph-cli runs, and no other script.
+- Each command logs a line before it runs:
+
+  ```
+  Envio Subgraph is running `NETWORK=bsc yarn ts-node config/index.ts` from the
+  package.json script "prepare:bsc": there is no subgraph.yaml, and that script is
+  the one that writes it.
+  ```
+
+  A failing command stops envio with the script's own error above it, and
+  leaves no manifest behind (its `>` had created the file). The manifest is
+  recorded as envio's, like a rendered one, so a later start runs the script
+  again, for whichever network is picked then; when the script's own `graph
+  codegen <manifest>` names the manifest it wrote (stakewise's
+  `src/subgraph-mainnet.yaml`), that is the manifest envio runs.
 
 **A workspace with nothing installed.** When the repo's install fails (graph-cli
 0.2x's vanished git dependencies), §6a's fetch supplies graph-cli and the npm

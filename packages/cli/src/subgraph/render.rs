@@ -9,7 +9,9 @@
 //! (`mustache`, `yaml2json`, `cat`, `echo`, `mkdir`), so the manifest is a pure
 //! function of committed files and the network the user picks
 //! (`ENVIO_SUBGRAPH_NETWORK`). A script that runs anything else — node,
-//! truffle, a shell script, jq — is named in the error instead.
+//! truffle, a shell script, jq — runs as it is when it is the one script that
+//! writes the manifest (or the one for the network picked); otherwise it is
+//! named in the error.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -647,13 +649,35 @@ struct Plan {
     template: String,
 }
 
-/// A script that writes the manifest, but with a step envio doesn't run.
+/// A script that writes the manifest, but with a step envio doesn't repeat.
 #[derive(Debug, Clone)]
 struct Writer {
-    script: String,
+    /// Its name in package.json, and the package it runs in.
+    name: String,
+    dir: PathBuf,
     step: String,
     /// The scripts it runs through `npm run`.
     inlined: Vec<String>,
+    /// Whether running it can write the manifest: not when a file it reads
+    /// isn't in the repo.
+    runnable: bool,
+}
+
+impl Writer {
+    /// As the error names it: with its package.json when that is another
+    /// package's than the manifest's.
+    fn label(&self, target: &Path) -> String {
+        match target.parent() {
+            Some(own) if own != self.dir => format!(
+                "{}\" in \"{}",
+                self.name,
+                pathdiff::diff_paths(self.dir.join("package.json"), own)
+                    .unwrap_or_default()
+                    .display()
+            ),
+            _ => self.name.clone(),
+        }
+    }
 }
 
 fn vars(word: &Word) -> Vec<(String, Option<String>)> {
@@ -953,14 +977,15 @@ fn analyze(
             .unwrap_or_default()
             .as_str(),
     );
+    let writer = |inlined: Vec<String>| Writer {
+        name: name.to_string(),
+        dir: dir.to_path_buf(),
+        step: script.to_string(),
+        inlined,
+        runnable: true,
+    };
     let Some(steps) = parse_steps(script) else {
-        return mentions.then(|| {
-            Err(Writer {
-                script: name.to_string(),
-                step: script.to_string(),
-                inlined: Vec::new(),
-            })
-        });
+        return mentions.then(|| Err(writer(Vec::new())));
     };
     let mut inlined = Vec::new();
     let steps = inline_scripts(scripts, steps, &BTreeMap::new(), 0, &mut inlined, dir);
@@ -1095,20 +1120,10 @@ fn analyze(
                 .iter()
                 .any(|word| name.to_lowercase().contains(word))
             || runs_a_file_mentioning(dir, &steps, &[&manifest_name, "template"]);
-        return (unsupported.is_some() && suspect).then(|| {
-            Err(Writer {
-                script: name.to_string(),
-                step: script.to_string(),
-                inlined: inlined.clone(),
-            })
-        });
+        return (unsupported.is_some() && suspect).then(|| Err(writer(inlined.clone())));
     };
     if unsupported.is_some() || holes.len() > 1 {
-        return Some(Err(Writer {
-            script: name.to_string(),
-            step: script.to_string(),
-            inlined,
-        }));
+        return Some(Err(writer(inlined)));
     }
     Some(Ok(Plan {
         dir: dir.to_path_buf(),
@@ -1643,6 +1658,9 @@ pub struct Rendered {
     pub template: String,
     pub view: String,
     pub steps: Vec<String>,
+    /// The commands run of `script`, the one script that writes the manifest
+    /// with the repo's own code.
+    pub commands: Vec<String>,
 }
 
 /// Where envio records the manifests it wrote, so a later start renders them
@@ -1830,6 +1848,496 @@ fn run_codegen_prelude(
         template: String::new(),
         view: String::new(),
         steps: prelude.to_vec(),
+        commands: Vec::new(),
+    }))
+}
+
+/// One command of a package.json script, as the package manager runs it.
+#[derive(Debug, Clone)]
+struct Leaf {
+    cwd: PathBuf,
+    /// The variables an `X=y npm run <script>` call sets for the script.
+    env: Vec<(String, String)>,
+    text: String,
+}
+
+/// What a script runs before graph-cli: its commands, each `npm run
+/// <script>` read as that script's, and the graph-cli step it stops at.
+#[derive(Debug, Clone, Default)]
+struct Commands {
+    leaves: Vec<Leaf>,
+    graph: Option<String>,
+    inlined: Vec<String>,
+}
+
+/// `text` split at its top-level `&&`, as §6a splits a codegen script.
+fn split_and(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        match quote {
+            Some(open) if ch == open => quote = None,
+            Some('\'') => {}
+            _ if ch == '\\' && i + 1 < chars.len() => {
+                current.push(ch);
+                current.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            Some(_) => {}
+            None if ch == '\'' || ch == '"' => quote = Some(ch),
+            None if ch == '&' && chars.get(i + 1) == Some(&'&') => {
+                parts.push(std::mem::take(&mut current));
+                i += 2;
+                continue;
+            }
+            None => {}
+        }
+        current.push(ch);
+        i += 1;
+    }
+    parts.push(current);
+    parts
+        .into_iter()
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+/// A package install (`yarn`, `npm ci`, `pnpm i`): §6a skips it too, since
+/// the developer installs before envio starts.
+fn is_install(words: &[Word]) -> bool {
+    let texts: Vec<String> = words.iter().filter_map(literal).collect();
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    match texts.as_slice() {
+        ["yarn", rest @ ..] => {
+            rest.iter().all(|word| word.starts_with('-')) || rest.first() == Some(&"install")
+        }
+        ["npm", "install" | "i" | "ci", ..]
+        | ["pnpm", "install" | "i", ..]
+        | ["bun", "install" | "i", ..] => true,
+        _ => false,
+    }
+}
+
+/// Appends what `text`, run in package `dir`, runs before graph-cli; false
+/// once it reaches graph-cli, after which nothing runs.
+fn collect_commands(
+    dir: &Path,
+    scripts: &BTreeMap<String, String>,
+    text: &str,
+    env: &[(String, String)],
+    depth: usize,
+    out: &mut Commands,
+) -> bool {
+    let mut cwd = dir.to_path_buf();
+    for part in split_and(text) {
+        let parsed = parse_steps(&part).unwrap_or_default();
+        if parsed
+            .iter()
+            .flat_map(|step| &step.stages)
+            .any(|stage| classify(&stage.words) == Command::Graph)
+        {
+            out.graph = Some(part);
+            return false;
+        }
+        let single = match parsed.as_slice() {
+            [step] if !step.after_failure => match step.stages.as_slice() {
+                [stage] if stage.redirects.is_empty() => Some(stage.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(stage) = single {
+            let texts: Vec<Option<String>> = stage.words.iter().map(literal).collect();
+            // Each command runs in a shell of its own, so a `cd` carries over
+            // by hand.
+            if let [Some(cd), Some(target)] = texts.as_slice() {
+                if cd == "cd" {
+                    cwd = normalize_path(cwd.join(target));
+                    continue;
+                }
+            }
+            if is_install(&stage.words) {
+                continue;
+            }
+            let bound = |call: Vec<(String, Word)>| {
+                let mut env = env.to_vec();
+                env.extend(
+                    call.into_iter()
+                        .filter_map(|(name, value)| Some((name, literal(&value)?))),
+                );
+                env
+            };
+            match classify(&stage.words) {
+                Command::RunScript { name, env: call } if depth < 5 => {
+                    if let Some(inner) = scripts.get(&name) {
+                        out.inlined.push(name.clone());
+                        if !collect_commands(dir, scripts, inner, &bound(call), depth + 1, out) {
+                            return false;
+                        }
+                        continue;
+                    }
+                }
+                Command::FanOut { name, env: call } if depth < 5 => {
+                    let env = bound(call);
+                    out.inlined.push(name.clone());
+                    for package in workspace_package_dirs(&cwd) {
+                        let package_scripts: BTreeMap<String, String> =
+                            package_scripts(&package).into_iter().collect();
+                        if let Some(inner) = package_scripts.get(&name) {
+                            if !collect_commands(
+                                &package,
+                                &package_scripts,
+                                inner,
+                                &env,
+                                depth + 1,
+                                out,
+                            ) {
+                                return false;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out.leaves.push(Leaf {
+            cwd: cwd.clone(),
+            env: env.to_vec(),
+            text: part,
+        });
+    }
+    true
+}
+
+/// Script names that say the script does more than build: envio never runs
+/// one, whatever else it writes.
+const NOT_A_BUILD: &[&str] = &[
+    "deploy", "publish", "release", "docker", "test", "tests", "lint", "format", "clean", "remove",
+    "watch", "serve", "start",
+];
+
+/// Commands a manifest build doesn't need: a script that runs one isn't run.
+const NOT_A_RENDER: &[&str] = &[
+    "docker", "git", "curl", "wget", "ssh", "scp", "rsync",
+];
+
+fn names_more_than_a_build(name: &str) -> bool {
+    name.to_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|part| NOT_A_BUILD.contains(&part))
+}
+
+fn runs_more_than_a_render(leaf: &Leaf) -> bool {
+    let steps = parse_steps(&leaf.text).unwrap_or_default();
+    let runs_tool = steps.iter().flat_map(|step| &step.stages).any(|stage| {
+        let words: Vec<String> = stage
+            .words
+            .iter()
+            .filter(|word| assignment(word).is_none())
+            .filter_map(literal)
+            .collect();
+        let tool = words
+            .first()
+            .map(|word| word.rsplit('/').next().unwrap_or(word).to_string());
+        tool.as_deref()
+            .is_some_and(|tool| NOT_A_RENDER.contains(&tool))
+            || matches!(
+                (tool.as_deref(), words.get(1).map(String::as_str)),
+                (Some("npm" | "yarn" | "pnpm"), Some("publish"))
+            )
+    });
+    runs_tool || runs_a_file_mentioning(&leaf.cwd, &steps, &["graph deploy"])
+}
+
+/// A repo file the command runs (`node ops/render-subgraph-conf.js`,
+/// `./build.sh`) that isn't there.
+fn runs_a_missing_file(leaf: &Leaf) -> bool {
+    const EXTENSIONS: &[&str] = &[".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".sh"];
+    lex(&leaf.text).iter().any(|token| {
+        let Tok::Word(word) = token else {
+            return false;
+        };
+        let Some(text) = literal(word) else {
+            return false;
+        };
+        let file = text.starts_with("./")
+            || (!text.contains("://") && EXTENSIONS.iter().any(|ext| text.ends_with(ext)));
+        file && assignment(word).is_none() && !leaf.cwd.join(&text).exists()
+    })
+}
+
+/// Whether a script builds for `network`: its name ends with it
+/// (`prepare:bsc`), it passes it (`NETWORK=matic`, `build-manifest.sh
+/// polygon`, `--network mainnet`), or it reads it from a variable, which envio
+/// sets.
+fn builds_for(name: &str, commands: &Commands, network: &str) -> bool {
+    let named = name == network
+        || name.ends_with(&format!(":{network}"))
+        || name.ends_with(&format!("-{network}"));
+    named
+        || commands.leaves.iter().any(|leaf| {
+            leaf.env.iter().any(|(_, value)| value == network)
+                || !network_variables(&leaf.text).is_empty()
+                || lex(&leaf.text).iter().any(|token| {
+                    let Tok::Word(word) = token else {
+                        return false;
+                    };
+                    literal(word).is_some_and(|text| {
+                        text == network
+                            || text
+                                .split_once('=')
+                                .is_some_and(|(_, value)| value == network)
+                    })
+                })
+        })
+}
+
+/// The variables a command takes its network from: one with a default
+/// (`${NETWORK:-arc-testnet}`), or one named for it.
+fn network_variables(text: &str) -> Vec<String> {
+    step_variables(text)
+        .into_iter()
+        .filter(|(name, default)| {
+            default.is_some() || name.contains("NETWORK") || name.contains("CHAIN")
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+struct Candidate {
+    writer: Writer,
+    commands: Commands,
+}
+
+enum Pick {
+    Run(Box<Candidate>),
+    /// Why none runs.
+    Refused(String),
+    Nothing,
+}
+
+/// The package.json script envio runs to get the manifest when only the
+/// repo's own code writes it: the one that does, or the one for the network
+/// picked, in the nearest package that has any. One that deploys, publishes or
+/// runs docker or git never runs.
+fn pick_writer(target: &Path, network: Option<&str>) -> Pick {
+    let (_, writers) = scan(target);
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for writer in &writers {
+        if !dirs.contains(&writer.dir) {
+            dirs.push(writer.dir.clone());
+        }
+    }
+    let Some(dir) = dirs.first() else {
+        return Pick::Nothing;
+    };
+    let candidates: Vec<Candidate> = writers
+        .iter()
+        .filter(|writer| writer.dir == *dir && writer.runnable)
+        .filter(|writer| !names_more_than_a_build(&writer.name))
+        .filter_map(|writer| {
+            let scripts: BTreeMap<String, String> = package_scripts(dir).into_iter().collect();
+            let mut commands = Commands::default();
+            collect_commands(dir, &scripts, &writer.step, &[], 0, &mut commands);
+            let runs = !commands.leaves.is_empty()
+                && !commands
+                    .leaves
+                    .iter()
+                    .any(|leaf| runs_more_than_a_render(leaf) || runs_a_missing_file(leaf));
+            runs.then(|| Candidate {
+                writer: writer.clone(),
+                commands,
+            })
+        })
+        .collect();
+    let names = |candidates: &[&Candidate]| {
+        candidates
+            .iter()
+            .map(|candidate| format!("\"{}\"", candidate.writer.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let all: Vec<&Candidate> = candidates.iter().collect();
+    match network {
+        _ if all.is_empty() => Pick::Refused(
+            "envio runs the one script that writes the manifest itself, but never one that \
+             deploys, publishes or runs docker or git, nor one that reads a file the repo doesn't \
+             have."
+                .to_string(),
+        ),
+        None => match all.as_slice() {
+            [one] => Pick::Run(Box::new((*one).clone())),
+            many => Pick::Refused(format!(
+                "envio runs such a script itself when it is the only one that writes the \
+                 manifest; {} all do, so set {} to run the one for your network (its name ends \
+                 with it, or it passes it).",
+                names(many),
+                super::NETWORK_ENV_VAR
+            )),
+        },
+        Some(network) => {
+            let matching: Vec<&Candidate> = all
+                .iter()
+                .copied()
+                .filter(|candidate| {
+                    builds_for(&candidate.writer.name, &candidate.commands, network)
+                })
+                .collect();
+            // Polymarket's `templatify:matic` only writes the manifest;
+            // `prepare:matic` runs codegen after it.
+            let fewest = matching
+                .iter()
+                .map(|candidate| candidate.commands.leaves.len())
+                .min();
+            let narrowest: Vec<&Candidate> = matching
+                .iter()
+                .copied()
+                .filter(|candidate| Some(candidate.commands.leaves.len()) == fewest)
+                .collect();
+            match narrowest.as_slice() {
+                [one] => Pick::Run(Box::new((*one).clone())),
+                [] => Pick::Refused(format!(
+                    "{} names the network '{network}', and none of them builds for it (by its \
+                     name, its arguments or a variable it reads), so envio runs none.",
+                    super::NETWORK_ENV_VAR
+                )),
+                many => Pick::Refused(format!(
+                    "{} names the network '{network}', and {} all build for it, so envio runs \
+                     none.",
+                    super::NETWORK_ENV_VAR,
+                    names(many)
+                )),
+            }
+        }
+    }
+}
+
+/// Envio's own settings, which a script that writes the manifest never needs:
+/// the HyperSync token and the database password stay out of its environment.
+fn scrub_envio_env(command: &mut std::process::Command) {
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("ENVIO_") {
+            command.env_remove(name);
+        }
+    }
+}
+
+/// The one package.json script that writes the missing manifest with the
+/// repo's own code (Venus' `NETWORK=bsc yarn ts-node config/index.ts`), run as
+/// the developer runs it before `graph build`: its commands up to graph-cli,
+/// each in a shell in its package with the project's bins on PATH, each
+/// logged first.
+fn run_writer_script(
+    project_root: &Path,
+    target: &Path,
+    network: Option<&str>,
+) -> Result<Option<Rendered>> {
+    let Pick::Run(candidate) = pick_writer(target, network) else {
+        return Ok(None);
+    };
+    let manifest_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let label = candidate.writer.label(target);
+    for leaf in &candidate.commands.leaves {
+        let mut command = std::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg(&leaf.text)
+            .current_dir(&leaf.cwd)
+            .stdin(std::process::Stdio::null());
+        scrub_envio_env(&mut command);
+        command.env("PATH", bin_path(&leaf.cwd));
+        let mut assigned: Vec<String> = Vec::new();
+        for (name, value) in &leaf.env {
+            command.env(name, value);
+            assigned.push(format!("{name}={value}"));
+        }
+        if let Some(network) = network {
+            for name in network_variables(&leaf.text) {
+                if !leaf.env.iter().any(|(set, _)| *set == name) {
+                    command.env(&name, network);
+                    assigned.push(format!("{name}={network}"));
+                }
+            }
+        }
+        let place = pathdiff::diff_paths(&leaf.cwd, project_root)
+            .map(|path| path.display().to_string())
+            .filter(|path| !path.is_empty())
+            .map(|path| format!(" in {path}"))
+            .unwrap_or_default();
+        eprintln!(
+            "Envio Subgraph is running `{}`{}{place} from the package.json script \"{label}\": \
+             there is no {manifest_name}, and that script is the one that writes it.",
+            leaf.text,
+            if assigned.is_empty() {
+                String::new()
+            } else {
+                format!(" with {}", assigned.join(" "))
+            }
+        );
+        let status = command
+            .status()
+            .context(format!("Failed to run `{}`", leaf.text))?;
+        if !status.success() {
+            if target.is_file() {
+                std::fs::remove_file(target).ok();
+            }
+            return Err(anyhow!(
+                "There is no {manifest_name} here, and the package.json script \"{label}\" writes \
+                 it: envio ran `{}` from it, and it exited with {} — the error above is the \
+                 script's own.",
+                leaf.text,
+                status
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "a signal".to_string())
+            ));
+        }
+    }
+    // stakewise's `graph codegen src/subgraph-mainnet.yaml` names the
+    // manifest the script wrote.
+    let named = candidate
+        .commands
+        .graph
+        .as_deref()
+        .and_then(codegen_manifest_arg)
+        .map(|word| absolute(&candidate.writer.dir.join(word)));
+    let Some(written) = [Some(target.to_path_buf()), named]
+        .into_iter()
+        .flatten()
+        .find(|manifest| manifest.is_file())
+    else {
+        return Err(anyhow!(
+            "There is no {manifest_name} here. envio ran the package.json script \"{label}\", \
+             which looks like the one that writes it, and it wrote none."
+        ));
+    };
+    let manifest = std::fs::read_to_string(&written)?;
+    record(project_root, &written, &manifest)?;
+    Ok(Some(Rendered {
+        manifest: written,
+        script: candidate.writer.name.clone(),
+        inlined: candidate.commands.inlined.clone(),
+        network: network.unwrap_or_default().to_string(),
+        template: String::new(),
+        view: String::new(),
+        steps: Vec::new(),
+        commands: candidate
+            .commands
+            .leaves
+            .iter()
+            .map(|leaf| leaf.text.clone())
+            .collect(),
     }))
 }
 
@@ -2039,17 +2547,7 @@ fn package_dirs(target: &Path) -> Vec<PathBuf> {
 fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
     let mut plans = Vec::new();
     let mut writers = Vec::new();
-    let own = target.parent().map(Path::to_path_buf);
     for dir in package_dirs(target) {
-        let label = |name: &str| match &own {
-            Some(own) if *own != dir => format!(
-                "{name}\" in \"{}",
-                pathdiff::diff_paths(dir.join("package.json"), own)
-                    .unwrap_or_default()
-                    .display()
-            ),
-            _ => name.to_string(),
-        };
         let mut found = Vec::new();
         let mut raw_writers: Vec<Writer> = Vec::new();
         let all = package_scripts(&dir);
@@ -2068,11 +2566,13 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
                         });
                     match absent {
                         Some(file) => raw_writers.push(Writer {
-                            script: name,
                             step: format!(
                                 "{script} ({file} isn't in the repo: another step writes it)"
                             ),
                             inlined: plan.inlined,
+                            name,
+                            dir: dir.clone(),
+                            runnable: false,
                         }),
                         None => found.push(plan),
                     }
@@ -2083,21 +2583,13 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
         }
         // `publish-graph:gnosis` only runs `render-subgraph-config:gnosis`,
         // the script that writes the manifest: that one is named.
-        let writer_names: Vec<String> = raw_writers.iter().map(|w| w.script.clone()).collect();
-        writers.extend(
-            raw_writers
-                .into_iter()
-                .filter(|writer| {
-                    !writer
-                        .inlined
-                        .iter()
-                        .any(|name| *name != writer.script && writer_names.contains(name))
-                })
-                .map(|writer| Writer {
-                    script: label(&writer.script),
-                    ..writer
-                }),
-        );
+        let writer_names: Vec<String> = raw_writers.iter().map(|w| w.name.clone()).collect();
+        writers.extend(raw_writers.into_iter().filter(|writer| {
+            !writer
+                .inlined
+                .iter()
+                .any(|name| *name != writer.name && writer_names.contains(name))
+        }));
         // zora's `codegen` runs `yarn gen-yaml-config`, the script that
         // renders: the one that writes the manifest itself is the plan.
         let names: Vec<String> = found.iter().map(|plan| plan.script.clone()).collect();
@@ -2255,8 +2747,9 @@ pub fn template_output(template: &Path) -> Option<PathBuf> {
 }
 
 /// For "the manifest is missing": the package.json scripts beside it that
-/// write it, or may, with a step envio doesn't run — and why the user has to.
-pub fn unrepeatable_writers(target: &Path) -> Option<String> {
+/// write it, or may, with a step envio doesn't repeat — and why envio ran
+/// none of them.
+pub fn unrepeatable_writers(target: &Path, network: Option<&str>) -> Option<String> {
     let target = absolute(target);
     let manifest_name = target.file_name()?.to_string_lossy().to_string();
     let (_, writers) = scan(&target);
@@ -2265,15 +2758,19 @@ pub fn unrepeatable_writers(target: &Path) -> Option<String> {
     }
     let lines: Vec<String> = writers
         .iter()
-        .map(|writer| format!("  \"{}\": {}", writer.script, writer.step))
+        .map(|writer| format!("  \"{}\": {}", writer.label(&target), writer.step))
         .collect();
+    let why = match pick_writer(&target, network) {
+        Pick::Refused(why) => format!("\n{why}"),
+        Pick::Run(_) | Pick::Nothing => String::new(),
+    };
     Some(format!(
         "The project writes its manifest with a package.json script, and envio can't repeat \
          {}:\n{}\n\
-         envio renders a manifest itself only when every step of the script is a standard \
+         envio renders a manifest itself when every step of the script is a standard \
          tool over files in the repo (`mustache <config> <template> > {manifest_name}`, \
-         `yaml2json`, `cat`), so that the network you pick is its only input. Run the script \
-         for your network, then start envio again.",
+         `yaml2json`, `cat`), so that the network you pick is its only input.{why} Run the \
+         script for your network, then start envio again.",
         if writers.len() == 1 { "it" } else { "these" },
         lines.join("\n")
     ))
@@ -2369,7 +2866,10 @@ pub fn render_manifest(
 
     let (plans, _) = scan(&target);
     if plans.is_empty() {
-        return run_codegen_prelude(project_root, &target, &dir, network);
+        if let Some(rendered) = run_codegen_prelude(project_root, &target, &dir, network)? {
+            return Ok(Some(rendered));
+        }
+        return run_writer_script(project_root, &target, network);
     }
 
     let choice = choose(&plans, network)
@@ -2451,6 +2951,7 @@ pub fn render_manifest(
         template: choice.plan.template.clone(),
         view: choice.view.clone(),
         steps: Vec::new(),
+        commands: Vec::new(),
     }))
 }
 

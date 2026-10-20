@@ -183,6 +183,7 @@ type SubgraphConfig = {
     template: string;
     view: string;
     steps?: string[];
+    commands?: string[];
   };
   /** Files the manifest names, as written and where they are read from (another case, or a fetched package). */
   pathFixes?: [string, string][];
@@ -1344,7 +1345,13 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const rendered = config.renderedManifest;
   manifestName = config.manifestFile ?? "subgraph.yaml";
   declaredTemplates = config.templates.map((template) => template.name);
-  if (rendered?.steps?.length) {
+  if (rendered?.commands?.length) {
+    info(
+      `Envio Subgraph ran ${rendered.commands.map((command) => `\`${command}\``).join(", ")} from the package.json ` +
+        `script "${rendered.script}" first: it is the one that writes ${manifestName}` +
+        (rendered.network ? ` (network "${rendered.network}").` : "."),
+    );
+  } else if (rendered?.steps?.length) {
     info(
       `Envio Subgraph ran ${rendered.steps.map((step) => `\`${step}\``).join(", ")} from the codegen script ` +
         `first: it writes ${manifestName}` +
