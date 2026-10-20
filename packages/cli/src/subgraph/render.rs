@@ -985,11 +985,8 @@ struct Choice<'a> {
     view: String,
 }
 
-fn choose<'a>(
-    plans: &'a [Plan],
-    network: Option<&str>,
-    dir: &Path,
-) -> Result<Choice<'a>, Vec<String>> {
+/// Every network the plans render, with how.
+fn options<'a>(plans: &'a [Plan], dir: &Path) -> Vec<(String, Choice<'a>)> {
     let literal_plans: Vec<&Plan> = plans.iter().filter(|plan| plan.hole.is_none()).collect();
     let literal_names = literal_networks(&literal_plans);
     let mut options: Vec<(String, Choice<'a>)> = Vec::new();
@@ -1023,6 +1020,15 @@ fn choose<'a>(
             },
         ));
     }
+    options
+}
+
+fn choose<'a>(
+    plans: &'a [Plan],
+    network: Option<&str>,
+    dir: &Path,
+) -> Result<Choice<'a>, Vec<String>> {
+    let options = options(plans, dir);
     let mut names: Vec<String> = Vec::new();
     for (name, _) in &options {
         if !names.contains(name) {
@@ -1610,7 +1616,48 @@ pub fn unrepeatable_writers(target: &Path) -> Option<String> {
     ))
 }
 
-/// Writes the manifest at `target` (and whatever else its script writes) when
+/// The rest of a render whose manifest is already there: when one network's
+/// render writes exactly the manifest at `target` (committed, or written by an
+/// earlier run of the script), the files it writes beside it that are missing
+/// (matic's gitignored `src/network.ts`) are written. Nothing that exists is
+/// touched, and an unproven network writes nothing.
+fn write_missing_companions(target: &Path) -> Result<()> {
+    let Some(dir) = target.parent() else {
+        return Ok(());
+    };
+    let Ok(existing) = std::fs::read_to_string(target) else {
+        return Ok(());
+    };
+    let (plans, _) = scan(dir, target);
+    for (_, choice) in options(&plans, dir) {
+        let mut run = Run {
+            dir,
+            target,
+            hole: None,
+            files: BTreeMap::new(),
+        };
+        let hole_name = choice.plan.hole.as_ref().map(|(name, _, _)| name.clone());
+        if let (Some(name), Some(value)) = (hole_name.as_deref(), choice.hole_value.as_deref()) {
+            run.hole = Some((name, value));
+        }
+        if run.steps(&choice.plan.steps).is_err() || run.files.get(target) != Some(&existing) {
+            continue;
+        }
+        for (path, text) in &run.files {
+            if path.as_path() == target || path.exists() {
+                continue;
+            }
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, text).context(format!("Failed to write {}", path.display()))?;
+        }
+        return Ok(());
+    }
+    Ok(())
+}
+
+/// Writes the manifest at `target` (and whatever else its script writes) when/// Writes the manifest at `target` (and whatever else its script writes) when
 /// it is missing, or is one envio rendered before, and a package.json script
 /// beside it renders it in a way envio can repeat. `Ok(None)`: nothing to
 /// render, the manifest is read as it is (or reported missing).
@@ -1621,6 +1668,7 @@ pub fn render_manifest(
 ) -> Result<Option<Rendered>> {
     let target = absolute(target);
     if target.exists() && !rendered_by_envio(project_root, &target) {
+        write_missing_companions(&target)?;
         return Ok(None);
     }
     let Some(dir) = target.parent().map(Path::to_path_buf) else {

@@ -3376,6 +3376,70 @@ type Renewal implements Event @entity {
         );
     }
 
+    // matic's root subgraph: `"prepare:mainnet": "mustache config/mainnet.json
+    // subgraph.template.yaml > subgraph.yaml && mustache config/mainnet.json
+    // src/network.template.ts > src/network.ts"`. With subgraph.yaml in place
+    // (committed, or written by hand) and src/network.ts gitignored, the
+    // mapping failed to load `./network`. The script renders exactly that
+    // manifest for mainnet, so mainnet's src/network.ts is written; the
+    // manifest itself is left alone.
+    #[test]
+    fn writes_the_companion_files_of_the_render_that_made_the_manifest() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-companion").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::write(
+            root.join("src/network.template.ts"),
+            "export const NETWORK = \"{{network}}\";\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        for (network, address) in [
+            ("mainnet", "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"),
+            ("goerli", "0x00000000000014aA86C5d3c41765bb24e11bd701"),
+        ] {
+            fs::write(
+                root.join(format!("config/{network}.json")),
+                format!(
+                    r#"{{"network": "{network}", "gravity": {{"address": "{address}", "startBlock": 6175244}}}}"#
+                ),
+            )
+            .unwrap();
+        }
+        let scripts: Vec<String> = ["mainnet", "goerli"]
+            .iter()
+            .map(|network| {
+                format!(
+                    "\"prepare:{network}\": \"mustache config/{network}.json subgraph.template.yaml > \
+                     subgraph.yaml && mustache config/{network}.json src/network.template.ts > \
+                     src/network.ts\""
+                )
+            })
+            .collect();
+        fs::write(
+            root.join("package.json"),
+            format!("{{\"scripts\": {{{}}}}}", scripts.join(", ")),
+        )
+        .unwrap();
+        fs::write(root.join("subgraph.yaml"), GRAVITY_MANIFEST).unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config).0,
+                fs::read_to_string(root.join("src/network.ts")).ok(),
+                fs::read_to_string(root.join("subgraph.yaml")).unwrap() == GRAVITY_MANIFEST,
+            ),
+            (
+                1,
+                Some("export const NETWORK = \"mainnet\";\n".to_string()),
+                true
+            )
+        );
+    }
+
     // A committed subgraph.yaml is the user's: a render script beside it
     // (GoodCollective's `prepare`) doesn't overwrite it.
     #[test]

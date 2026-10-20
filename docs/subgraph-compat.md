@@ -587,6 +587,10 @@ in. A script that only calls another one that renders is that one.
   renders it again — for another network — while a manifest the user wrote,
   or committed beside a render script, is read as it is. networks.json isn't
   applied on top of a rendered manifest.
+- A manifest that is there already, and that one network's render writes
+  byte for byte, proves that network: the files the same script writes beside
+  it and that are missing are written (matic commits subgraph.yaml-shaped
+  output and gitignores `src/network.ts`). Existing files are never touched.
 - The codegen script's step that runs the same script (`yarn gen-yaml-config
   && graph codegen`) is skipped: it would render the script's default network
   over the one picked.
