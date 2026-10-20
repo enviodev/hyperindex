@@ -53,27 +53,21 @@ function countDigits(n: bigint): number {
   return digits;
 }
 
-/** `get_rounding_term` of a positive: 1 when its leading digit is 5 or more. */
-function roundingTerm(n: bigint): bigint {
-  if (n === 0n) return 0n;
-  return n >= 5n * ten(countDigits(n) - 1) ? 1n : 0n;
-}
-
-function withPrecision({ int, scale }: Decimal, precision: number): Decimal {
-  const digits = countDigits(int);
-  if (digits > precision) {
-    const diff = digits - precision;
-    const p = ten(diff);
-    let quotient = int / p;
-    const remainder = int % p;
-    if (p < 10n * remainder) quotient += roundingTerm(remainder);
-    return { int: quotient, scale: scale - diff };
-  }
-  if (digits < precision) {
-    const diff = precision - digits;
-    return { int: int * ten(diff), scale: scale + diff };
-  }
-  return { int, scale };
+/**
+ * `with_prec` of a coefficient with more digits (as `countDigits` counts
+ * them) than `precision`. The crate adds `get_rounding_term(remainder)`, 1
+ * when the remainder's leading digit is 5 or more, if `p < 10 * remainder`:
+ * the remainder then has exactly `diff` digits, so its leading digit is 5 or
+ * more just when `2 * remainder >= p`. A negative remainder never passes the
+ * test, so a negative truncates.
+ */
+function withPrecision({ int, scale }: Decimal, digits: number, precision: number): Decimal {
+  const diff = digits - precision;
+  const p = ten(diff);
+  let quotient = int / p;
+  const remainder = int - quotient * p;
+  if (remainder > 0n && 2n * remainder >= p) quotient += 1n;
+  return { int: quotient, scale: scale - diff };
 }
 
 const ZERO: Decimal = { int: 0n, scale: 0 };
@@ -87,8 +81,9 @@ const TEN_TO_THE_8 = 10n ** 8n;
  */
 export function normalize(value: Decimal): Decimal {
   if (value.int === 0n) return ZERO;
+  const digits = countDigits(value.int);
   let { int, scale } =
-    countDigits(value.int) > MAX_SIGNIFICANT_DIGITS ? withPrecision(value, MAX_SIGNIFICANT_DIGITS) : value;
+    digits > MAX_SIGNIFICANT_DIGITS ? withPrecision(value, digits, MAX_SIGNIFICANT_DIGITS) : value;
   if (int % 10n !== 0n) return int === value.int ? value : { int, scale };
   while (int % TEN_TO_THE_8 === 0n) {
     int /= TEN_TO_THE_8;
@@ -99,6 +94,19 @@ export function normalize(value: Decimal): Decimal {
     scale -= 1;
   }
   return { int, scale };
+}
+
+const NEGATIVE_LIMIT = -(10n ** BigInt(MAX_SIGNIFICANT_DIGITS));
+
+/**
+ * `normalize` of a value `normalize` made, as graph-node does when it reads a
+ * result back from the module (`BigDecimal::new` in `FromAscObj`). It is the
+ * identity except for a negative coefficient of 35 digits or more, which the
+ * first pass's undercount can leave behind; anything shorter, or positive,
+ * already is normal.
+ */
+export function renormalize(value: Decimal): Decimal {
+  return value.int <= NEGATIVE_LIMIT ? normalize(value) : value;
 }
 
 /** The sign of `a - b`. */

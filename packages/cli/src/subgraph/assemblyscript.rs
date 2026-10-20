@@ -970,6 +970,10 @@ struct Locals {
     /// Class-typed locals declared without a value whose first use writes one
     /// of their fields, by their class.
     null_objects: HashMap<String, String>,
+    /// Names AssemblyScript types as a float: parameters and locals declared
+    /// or initialized so, and the module's globals this function doesn't
+    /// rebind.
+    floats: HashSet<String>,
 }
 
 /// What the module's top level declares, for every function in it.
@@ -985,6 +989,10 @@ struct ModuleNames {
     integers: HashMap<String, String>,
     /// Every top-level function's name.
     functions: HashSet<String>,
+    /// Globals AssemblyScript types as a float.
+    floats: HashSet<String>,
+    /// Functions declared to return a float.
+    float_functions: HashSet<String>,
 }
 
 /// The integer type an annotation names, if it names one.
@@ -1006,6 +1014,87 @@ fn is_u32(annotation: Option<&TSTypeAnnotation<'_>>) -> bool {
     matches!(annotation.map(|annotation| &annotation.type_annotation),
         Some(TSType::TSTypeReference(reference))
             if matches!(&reference.type_name, TSTypeName::IdentifierReference(name) if name.name == "u32"))
+}
+
+fn is_float_type(ty: &TSType<'_>) -> bool {
+    matches!(ty, TSType::TSTypeReference(reference)
+        if matches!(&reference.type_name, TSTypeName::IdentifierReference(name)
+            if matches!(name.name.as_str(), "f64" | "f32")))
+}
+
+fn is_float(annotation: Option<&TSTypeAnnotation<'_>>) -> bool {
+    annotation.is_some_and(|annotation| is_float_type(&annotation.type_annotation))
+}
+
+/// Whether AssemblyScript types `expr` as a float, as far as its source says:
+/// a literal written with a point or an exponent, a cast to f32/f64,
+/// `parseFloat` and the Math functions, a name `float_name` knows, a call of a
+/// function returning one, and arithmetic with such a side. It reads the
+/// expression before or after this pass rewrote it.
+fn is_float_expression(
+    expr: &Expression<'_>,
+    float_name: &dyn Fn(&str) -> bool,
+    float_functions: &HashSet<String>,
+) -> bool {
+    let float = |expr: &Expression<'_>| is_float_expression(expr, float_name, float_functions);
+    match expr.without_parentheses() {
+        Expression::NumericLiteral(literal) => literal.raw.is_some_and(|raw| {
+            let raw = raw.as_str();
+            !raw.starts_with("0x")
+                && !raw.starts_with("0X")
+                && !raw.starts_with("0b")
+                && !raw.starts_with("0o")
+                && raw.contains(['.', 'e', 'E'])
+        }),
+        Expression::UnaryExpression(unary) => {
+            matches!(
+                unary.operator,
+                UnaryOperator::UnaryNegation | UnaryOperator::UnaryPlus
+            ) && float(&unary.argument)
+        }
+        Expression::TSAsExpression(cast) => is_float_type(&cast.type_annotation),
+        Expression::TSTypeAssertion(cast) => is_float_type(&cast.type_annotation),
+        Expression::TSNonNullExpression(inner) => float(&inner.expression),
+        Expression::Identifier(id) => float_name(id.name.as_str()),
+        Expression::BinaryExpression(binary) => {
+            matches!(
+                binary.operator,
+                BinaryOperator::Addition
+                    | BinaryOperator::Subtraction
+                    | BinaryOperator::Multiplication
+                    | BinaryOperator::Division
+                    | BinaryOperator::Remainder
+            ) && (float(&binary.left) || float(&binary.right))
+        }
+        Expression::ConditionalExpression(conditional) => {
+            float(&conditional.consequent) || float(&conditional.alternate)
+        }
+        Expression::CallExpression(call) => match &call.callee {
+            Expression::Identifier(callee) => {
+                matches!(callee.name.as_str(), "parseFloat" | "f64" | "f32")
+                    || float_functions.contains(callee.name.as_str())
+            }
+            Expression::StaticMemberExpression(member) => match &member.object {
+                Expression::Identifier(object) => match object.name.as_str() {
+                    "Math" | "Mathf" | "NativeMath" | "NativeMathf" => true,
+                    "F64" | "F32" | "Number" => member.property.name == "parseFloat",
+                    OPERATORS_HELPER => match member.property.name.as_str() {
+                        "as_f64" | "as_f32" => true,
+                        "add" | "sub" | "mul" | "div" | "fdiv" | "rem" | "neg" => call
+                            .arguments
+                            .iter()
+                            .filter_map(Argument::as_expression)
+                            .any(float),
+                        _ => false,
+                    },
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 enum StringKind<'s> {
@@ -1106,6 +1195,19 @@ fn module_names(program: &Program<'_>) -> ModuleNames {
                     if let Some(ty) = integer_annotation(declarator.type_annotation.as_deref()) {
                         names.integers.insert(id.name.to_string(), ty);
                     }
+                    let float = match &declarator.type_annotation {
+                        Some(annotation) => is_float_type(&annotation.type_annotation),
+                        None => declarator.init.as_ref().is_some_and(|init| {
+                            is_float_expression(
+                                init,
+                                &|name| names.floats.contains(name),
+                                &names.float_functions,
+                            )
+                        }),
+                    };
+                    if float {
+                        names.floats.insert(id.name.to_string());
+                    }
                 }
             }
             Declaration::FunctionDeclaration(func) => {
@@ -1113,6 +1215,9 @@ fn module_names(program: &Program<'_>) -> ModuleNames {
                     names.functions.insert(id.name.to_string());
                     if is_u32(func.return_type.as_deref()) {
                         names.unsigned_functions.insert(id.name.to_string());
+                    }
+                    if is_float(func.return_type.as_deref()) {
+                        names.float_functions.insert(id.name.to_string());
                     }
                 }
             }
@@ -1262,12 +1367,68 @@ fn locals(func: &Function<'_>, module: &ModuleNames, classes: &HashSet<String>) 
         .filter(|(name, _)| first_use.writes_field.get(*name) == Some(&true))
         .map(|(name, class)| (name.clone(), class.clone()))
         .collect();
+
+    // In source order, so a local initialized from an earlier float local is
+    // one too.
+    struct FloatScan<'m> {
+        module: &'m ModuleNames,
+        bound: &'m std::collections::HashMap<String, usize>,
+        floats: HashSet<String>,
+    }
+    impl FloatScan<'_> {
+        fn knows(&self, name: &str) -> bool {
+            self.floats.contains(name)
+                || (!self.bound.contains_key(name) && self.module.floats.contains(name))
+        }
+    }
+    impl<'a> Visit<'a> for FloatScan<'_> {
+        fn visit_formal_parameter(&mut self, param: &FormalParameter<'a>) {
+            if let BindingPattern::BindingIdentifier(id) = &param.pattern {
+                if is_float(param.type_annotation.as_deref()) {
+                    self.floats.insert(id.name.to_string());
+                }
+            }
+            walk::walk_formal_parameter(self, param);
+        }
+        fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+            walk::walk_variable_declarator(self, declarator);
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                return;
+            };
+            let float = match &declarator.type_annotation {
+                Some(annotation) => is_float_type(&annotation.type_annotation),
+                None => declarator.init.as_ref().is_some_and(|init| {
+                    is_float_expression(
+                        init,
+                        &|name| self.knows(name),
+                        &self.module.float_functions,
+                    )
+                }),
+            };
+            if float {
+                self.floats.insert(id.name.to_string());
+            }
+        }
+    }
+    let mut float_scan = FloatScan {
+        module,
+        bound: &scan.bound,
+        floats: HashSet::new(),
+    };
+    float_scan.visit_function(func, ScopeFlags::Function);
+    let mut floats: HashSet<String> = float_scan
+        .floats
+        .into_iter()
+        .filter(|name| scan.bound.get(name) == Some(&1))
+        .collect();
+    floats.extend(module_level(&module.floats));
     Locals {
         fresh,
         literal,
         unsigned,
         integers,
         null_objects,
+        floats,
     }
 }
 
@@ -1336,7 +1497,6 @@ fn search_helper(call: &CallExpression<'_>) -> Option<&'static str> {
     if call.optional
         || member.optional
         || matches!(member.object, Expression::Super(_))
-        || !(1..=2).contains(&call.arguments.len())
         || call
             .arguments
             .iter()
@@ -1344,10 +1504,13 @@ fn search_helper(call: &CallExpression<'_>) -> Option<&'static str> {
     {
         return None;
     }
+    let arguments = call.arguments.len();
     Some(match member.property.name.as_str() {
-        "includes" => "includes",
-        "indexOf" => "indexOf",
-        "lastIndexOf" => "lastIndexOf",
+        "includes" if (1..=2).contains(&arguments) => "includes",
+        "indexOf" if (1..=2).contains(&arguments) => "indexOf",
+        "lastIndexOf" if (1..=2).contains(&arguments) => "lastIndexOf",
+        // With no comparator, AssemblyScript's default one.
+        "sort" if arguments == 0 => "sort",
         _ => return None,
     })
 }
@@ -1625,6 +1788,15 @@ impl<'a> Rewrite<'a> {
         }
     }
 
+    /// An expression AssemblyScript types as a float (`is_float_expression`).
+    fn float(&self, expr: &Expression<'a>) -> bool {
+        let float_name = |name: &str| match self.locals.last() {
+            Some(locals) => locals.floats.contains(name),
+            None => self.module_names.floats.contains(name),
+        };
+        is_float_expression(expr, &float_name, &self.module_names.float_functions)
+    }
+
     fn zero(&self, span: Span, annotation: &TSTypeAnnotation<'a>) -> Option<Expression<'a>> {
         Some(
             match zero_of(&annotation.type_annotation, &self.generics)? {
@@ -1717,8 +1889,10 @@ impl<'a> Rewrite<'a> {
                     "u8" => Some("as_u8"),
                     "i16" => Some("as_i16"),
                     "u16" => Some("as_u16"),
-                    "i32" => Some("as_i32"),
-                    "u32" => Some("as_u32"),
+                    "i32" | "isize" => Some("as_i32"),
+                    "u32" | "usize" => Some("as_u32"),
+                    "i64" => Some("as_i64"),
+                    "u64" => Some("as_u64"),
                     "f32" => Some("as_f32"),
                     "f64" => Some("as_f64"),
                     _ => None,
@@ -1908,9 +2082,14 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 *expr = self.operator(span, method, [left, right]);
             }
             Expression::BinaryExpression(binary) => {
-                let Some(method) = binary_helper(binary.operator) else {
+                let Some(mut method) = binary_helper(binary.operator) else {
                     return;
                 };
+                // The runtime divides two whole numbers as integers; a float
+                // the source types as one divides as a float however whole.
+                if method == "div" && (self.float(&binary.left) || self.float(&binary.right)) {
+                    method = "fdiv";
+                }
                 let span = binary.span;
                 let left = binary.left.take_in(&self.ast);
                 let right = binary.right.take_in(&self.ast);
@@ -1942,7 +2121,7 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 assign.operator = AssignmentOperator::Assign;
             }
             Expression::AssignmentExpression(assign) => {
-                let Some(method) = assignment_helper(assign.operator) else {
+                let Some(mut method) = assignment_helper(assign.operator) else {
                     return;
                 };
                 let Some(read) = self.read_of(&assign.left) else {
@@ -1954,6 +2133,9 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                     ));
                     return;
                 };
+                if method == "div" && (self.float(&read) || self.float(&assign.right)) {
+                    method = "fdiv";
+                }
                 let right = assign.right.take_in(&self.ast);
                 assign.right = self.operator(assign.span, method, [read, right]);
                 assign.operator = AssignmentOperator::Assign;
@@ -2026,6 +2208,21 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                             member.object = self.operator(span, "recv", [object]);
                             return;
                         }
+                    }
+                }
+                // A float's `toString()` is AssemblyScript's dtoa, which
+                // writes a whole number with ".0".
+                let plain_call = call.arguments.is_empty() && !call.optional;
+                let span = call.span;
+                if let Expression::StaticMemberExpression(member) = &mut call.callee {
+                    if plain_call
+                        && member.property.name == "toString"
+                        && !member.optional
+                        && self.float(&member.object)
+                    {
+                        let object = member.object.take_in(&self.ast);
+                        *expr = self.operator(span, "ftoa", [object]);
+                        return;
                     }
                 }
                 if let Some(method) = search_helper(call) {
@@ -2526,6 +2723,51 @@ export function f(xs) {
         );
     }
 
+    // What the source types as a float divides as one; integers keep the
+    // runtime's integer division.
+    #[test]
+    fn divides_a_float_side_as_floats() {
+        assert_eq!(
+            js("const RATE: f64 = 4;
+const ONE = 1.0;
+function half(v: f64): f64 { return v / 2; }
+export function f(n: i32, big: i64): void {
+  let a = n / 2;
+  let b = n / 2.0;
+  let c = big as f64 / n;
+  let d = parseFloat(\"5\") / n;
+  let e = Math.floor(n) / 2;
+  let x = 1.5;
+  let y = x * 2;
+  let g = y / n;
+  let h = n / RATE + n / ONE + half(n) / 2;
+  g /= 2;
+  a /= 2;
+  let text = x.toString() + a.toString();
+}"),
+            "const RATE = 4;
+const ONE = 1;
+function half(v) {
+\treturn __envio_op.fdiv(v, 2);
+}
+export function f(n, big) {
+\tlet a = __envio_op.div(n, 2);
+\tlet b = __envio_op.fdiv(n, 2);
+\tlet c = __envio_op.fdiv(__envio_op.as_f64(big), n);
+\tlet d = __envio_op.fdiv(parseFloat(\"5\"), n);
+\tlet e = __envio_op.fdiv(Math.floor(n), 2);
+\tlet x = 1.5;
+\tlet y = __envio_op.mul(x, 2);
+\tlet g = __envio_op.fdiv(y, n);
+\tlet h = __envio_op.add(__envio_op.add(__envio_op.fdiv(n, RATE), __envio_op.fdiv(n, ONE)), __envio_op.fdiv(half(n), 2));
+\tg = __envio_op.fdiv(g, 2);
+\ta = __envio_op.div(a, 2);
+\tlet text = __envio_op.add(__envio_op.ftoa(x), a.toString());
+}
+"
+        );
+    }
+
     // Only a local whose first use writes one of its fields is built in place:
     // one read first, or assigned first, keeps the null asc gives it.
     #[test]
@@ -2671,10 +2913,14 @@ export function f(action, a) {
         assert_eq!(
             js("export function has(resolver: Resolver, coinType: BigInt): bool {
   let at = resolver.coinTypes!.indexOf(coinType, 1);
+  let sorted = resolver.coinTypes!.sort();
+  let byHand = sorted.sort((a: BigInt, b: BigInt): i32 => 0);
   return resolver.coinTypes!.includes(coinType) || names().lastIndexOf(\"a\") > at || list.find(coinType);
 }"),
             "export function has(resolver, coinType) {
 \tlet at = __envio_op.indexOf(resolver.coinTypes, coinType, 1);
+\tlet sorted = __envio_op.sort(resolver.coinTypes);
+\tlet byHand = sorted.sort((a, b) => 0);
 \treturn __envio_op.includes(resolver.coinTypes, coinType) || __envio_op.gt(__envio_op.lastIndexOf(names(), \"a\"), at) || list.find(coinType);
 }
 "
@@ -2758,6 +3004,7 @@ export function f(value: ethereum.Tuple, n: i64): void {
   let old = <Pair>value;
   let byte = <u8>n;
   let float = n as f64;
+  let long = <u64>n;
 }"),
             "import { Pair } from \"../generated/schema\";
 export function f(value, n) {
@@ -2767,6 +3014,7 @@ export function f(value, n) {
 \tlet old = __envio_retag(Pair, value, true);
 \tlet byte = __envio_op.as_u8(n);
 \tlet float = __envio_op.as_f64(n);
+\tlet long = __envio_op.as_u64(n);
 }
 "
         );
