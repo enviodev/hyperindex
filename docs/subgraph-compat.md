@@ -586,8 +586,12 @@ variable such a step reads is set to `ENVIO_SUBGRAPH_NETWORK` when it is set
 (unset, the script's default applies), the manifest is recorded as envio's
 like a rendered one, and codegen doesn't run those steps again. This is the
 one place envio runs a repo's own script to get a manifest, and only because
-it runs that script anyway; a failing step stops envio with the script's own
-error above it.
+it runs that script anyway: only the `codegen` script's steps, split on `&&`
+exactly as §6a splits them; no other package.json script and no lifecycle
+hook (`preinstall`, `install`, `postinstall`, `prepare`) ever runs, even one
+that would write the manifest — that one is named in the error instead.
+Each step logs a line naming it (and the variables set) before it runs, and
+a failing step stops envio with the script's own error above it.
 
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`

@@ -3185,6 +3185,70 @@ type Renewal implements Event @entity {
         );
     }
 
+    // Only the codegen script's own steps run, as §6a runs them: a script that
+    // writes the manifest anywhere else in package.json — lifecycle hooks
+    // included — is named, never run.
+    #[test]
+    fn runs_no_script_but_the_codegen_scripts_steps() {
+        let dir = tempdir::TempDir::new("envio-subgraph-codegen-only").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/write.sh"),
+            "touch \"ran-$1\" && cp subgraph.template.yaml subgraph.yaml\n",
+        )
+        .unwrap();
+        let scripts = [
+            "preinstall",
+            "install",
+            "postinstall",
+            "prepare",
+            "build",
+            "manifest",
+        ];
+        let entries: Vec<String> = scripts
+            .iter()
+            .map(|name| format!("\"{name}\": \"sh scripts/write.sh {name}\""))
+            .collect();
+        fs::write(
+            root.join("package.json"),
+            format!(
+                "{{\"scripts\": {{{}, \"codegen\": \"graph codegen\"}}}}",
+                entries.join(", ")
+            ),
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        let ran: Vec<&str> = scripts
+            .iter()
+            .copied()
+            .filter(|name| root.join(format!("ran-{name}")).exists())
+            .collect();
+
+        assert_eq!(
+            (
+                ran,
+                root.join("subgraph.yaml").exists(),
+                err.lines().take(3).collect::<Vec<_>>(),
+            ),
+            (
+                Vec::<&str>::new(),
+                false,
+                vec![
+                    "There is no subgraph.yaml here.",
+                    "The project writes subgraph.yaml with a package.json script, and envio \
+                     can't repeat it:",
+                    "  \"manifest\": sh scripts/write.sh manifest",
+                ]
+            )
+        );
+    }
+
     // NFTX v3's public repo has `"manifest:mainnet": "cross-env mustache
     // config/mainnet/config.json subgraph.template.yaml > subgraph.yaml"`, and
     // gitignores the template: a ts-node script writes it.

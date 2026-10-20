@@ -1163,6 +1163,22 @@ fn run_codegen_prelude(
                 }
             }
         }
+        let assigned: Vec<String> = match network {
+            Some(network) => variables
+                .iter()
+                .map(|(name, _)| format!("{name}={network}"))
+                .collect(),
+            None => Vec::new(),
+        };
+        eprintln!(
+            "Envio Subgraph is running `{step}`{} from the project's codegen script: there is no \
+             {manifest_name}, and the script's steps before `graph codegen` write it.",
+            if assigned.is_empty() {
+                String::new()
+            } else {
+                format!(" with {}", assigned.join(" "))
+            }
+        );
         let status = command
             .status()
             .context(format!("Failed to run `{step}`"))?;
