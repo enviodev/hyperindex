@@ -80,6 +80,8 @@ export type Scope = {
   mappingExports: Record<string, any>;
   /** Set when the scope is a file data source's handler. */
   file?: FileScope;
+  /** The block handler this run is, when it has no register pass of its own. */
+  blockHandler?: string;
   /** File templates this run created, keyed to dedupe a replayed mapping. */
   fileCreates?: Map<string, FileCreate>;
 };

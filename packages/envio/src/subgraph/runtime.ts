@@ -18,6 +18,7 @@ import { info, warn } from "../Logging.res.mjs";
 import {
   subgraphFileToJavascript,
   subgraphRegisterHandlers,
+  subgraphSureCreates,
   subgraphWorkspacePackages,
   subgraphWorkspaceRoot,
 } from "../Core.res.mjs";
@@ -1005,6 +1006,18 @@ const blockTemplates = new Set<string>();
 const REGISTERED_TEMPLATES_LIMIT = 100_000;
 const unregisteredCreates = new Set<string>();
 
+/** A `once` block handler runs in register mode first, and a `call` one is a call handler. */
+function hasRegisterPass(handler: BlockHandler): boolean {
+  return handler.filter === "once" || handler.filter === "call";
+}
+
+// Core registers no contract from onBlock, so graph-node's create from a block
+// handler (centrifuge/tinlake's preloaded pools) can't be matched.
+const BLOCK_HANDLER_CREATE =
+  "envio registers a template's instances in a register pass ahead of the handlers, and only event " +
+  "handlers, call handlers and `once` block handlers get one, so the instances a block handler creates " +
+  "would never have their events indexed";
+
 /**
  * The block and round each registered address was created in, by the same key.
  * graph-node runs a data source's events of its creation block in a later round
@@ -1259,13 +1272,22 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   });
 
   // Only the register pass registers an address, at fetch time. A create it
-  // didn't make — it threw on an entity no register pass saved, or there is
-  // none, as for a polling block handler — loses that template's events.
+  // didn't make (it threw on an entity no register pass saved) loses that
+  // template's events; one from a block handler that has no register pass is
+  // refused.
   installHandlerCreateHook((templateName, address) => {
     const scope = currentScope();
     if (scope.context.isPreload) return;
     const key = `${scope.dataSource.chainId}:${templateName}:${address.toLowerCase()}`;
     if (registeredTemplates.has(key) || unregisteredCreates.has(key)) return;
+    if (scope.blockHandler) {
+      throw unsupported(
+        "creating contract templates from a block handler",
+        `data source "${scope.dataSource.name}" → blockHandlers → "${scope.blockHandler}", which created ` +
+          `${templateName} ${address.toLowerCase()} at block ${scope.blockNumber}`,
+        BLOCK_HANDLER_CREATE,
+      );
+    }
     unregisteredCreates.add(key);
     warn(
       `Envio Subgraph: data source "${scope.dataSource.name}" created the template "${templateName}" for ` +
@@ -1427,6 +1449,27 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const templateNames = new Set(
     config.templates.filter((template) => !isFile(template)).map((template) => template.name),
   );
+  // A block handler's create is refused when it runs (the create hook above).
+  // Whether one will run depends on data — moonwell's Feed handler creates
+  // only at the blocks its network's config lists, none on base — so the
+  // creates the analysis is sure the code reaches are named up front, as a
+  // warning.
+  if (templateNames.size > 0) {
+    for (const source of sources) {
+      const handlers = source.blockHandlers
+        .filter((handler) => !hasRegisterPass(handler))
+        .map((handler) => handler.handler);
+      if (source.kind !== "contract" || handlers.length === 0) continue;
+      const created = subgraphSureCreates(path.resolve(config.root, source.mappingFile), handlers, [...templateNames]);
+      handlers.forEach((handler, index) => {
+        if (created[index]!.length === 0) return;
+        warn(
+          `Envio Subgraph: data source "${source.name}" → blockHandlers → "${handler}" can create ` +
+            `${created[index]!.join(", ")}, and envio stops with an error if it does: ${BLOCK_HANDLER_CREATE}.`,
+        );
+      });
+    }
+  }
   const fileTemplates = new Map<string, FileTemplate>();
   for (const source of config.templates) {
     if (!isFile(source)) continue;
@@ -1798,6 +1841,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               blockNumber: block.number,
               blockSeconds: secondsOf(block.number, block.timestamp),
               mappingExports: mapping,
+              blockHandler: hasRegisterPass(handler) ? undefined : handler.handler,
             };
             await runSyncCounted(context, () =>
               runInScope(scope, () => {

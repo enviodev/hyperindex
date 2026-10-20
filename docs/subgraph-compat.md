@@ -277,7 +277,9 @@ block, before the first register pass of its chain (Venus saves its
 Comptroller there); a change a handler without a register pass makes to an
 entity (it only updates one a create depends on, below) or one a polling block
 handler saves doesn't reach that store, so a `create()` conditioned on such
-state can still mis-register. A mapping that throws in the
+state can still mis-register. A polling or unfiltered block handler gets no
+register pass at all, so its own `create()` of a contract template is
+refused when it runs (§7). A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
@@ -892,7 +894,8 @@ refuse instead, so behavior never silently diverges:
 |---|---|
 | A call handler on a data source with no `source.address`, or whose function the ABI lacks | translation (manifest) |
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
-| `blockHandlers` on a template | translation (manifest) |
+| A filtered block handler on a template | translation (manifest) |
+| A contract template's `create()` from a block handler other than `filter: once` (a `call` one runs as a call handler), which no register pass registers | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
 | Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
