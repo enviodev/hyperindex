@@ -589,6 +589,9 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 | Register pass for every handler | `ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` | escape hatch: rerun every handler at fetch time, not only those whose code can reach `DataSourceTemplate.create` (§4) |
 | `ipfs.cat` wait before it answers null | `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS` | optional, default 60000, graph-node's `GRAPH_IPFS_TIMEOUT`: how long a file every gateway fails to hand over is asked for again |
 | Host op retry backoff | `ENVIO_SUBGRAPH_RETRY_BACKOFF_MS` | optional, default 500: the first wait before asking again after a transient failure, doubling up to 30 s |
+| RPC requests in flight | `ENVIO_SUBGRAPH_RPC_CONCURRENCY` | optional, default 48 per endpoint. When the endpoint says "slow down" (HTTP 429 or a JSON-RPC rate-limit error), requests in flight and the calls per batch are halved, once per wave of requests, and grow back by one per round of answers |
+| JSON-RPC batch size | `ENVIO_SUBGRAPH_RPC_BATCH` | optional, default 32; 1 sends every request alone. Contract calls, balances and block lookups that queue while every connection is busy (48, `ENVIO_SUBGRAPH_RPC_CONCURRENCY`) leave together as one JSON-RPC batch. Answers are matched by id, so a revert stays that call's revert; an endpoint that refuses a batch (HTTP 4xx, an error instead of the array, "batch of more than N" per item) gets smaller ones, down to single requests |
+| Preload lookahead | `ENVIO_SUBGRAPH_PRELOAD_LOOKAHEAD` | optional, default 256; 0 turns it off. A handler whose preload read an entity as absent is preloaded again once an earlier event of the batch creates it, while it is at most this many events ahead of the one executing, so its contract calls go out together instead of one event at a time (a v3 pool's Mint after its PoolCreated). Preload also reads what earlier events of the batch wrote in their own preload (held apart from the store, and only until execute has run that event), so a handler reading the entity the previous log created gets to its calls in the first preload. Preload never writes to the store, so results are the same either way |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
   `<url>` | `{...}` (JSON object matching the config `rpc` entry schema —
@@ -639,6 +642,14 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 
 A subgraph.yaml says *what* to index; these two vars are the only
 envio-side *how*.
+
+**Call cache.** Contract calls, `getBalance`/`hasCode` and file data source
+files are cached in Postgres (effect cache tables), keyed by the call and its
+block (a file by its content id), like graph-node's call cache. Those tables
+survive `envio start -r`: the schema is dropped and recreated, they are put
+back, and a resync asks the RPC only for what it never asked; the register pass
+(which runs at fetch time, outside the effect machinery) reads the stored answers
+too, one query per turn. A cache key over 2 kB is the input's sha256.
 
 `ENVIO_SUBGRAPH_NETWORK=<name>` is `graph build --network <name>`: the
 manifest is rewritten from `networks.json` beside it before translation, as
