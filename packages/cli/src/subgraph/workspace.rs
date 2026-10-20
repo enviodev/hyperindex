@@ -111,12 +111,19 @@ fn children(dir: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// The nearest directory at or above `start` that declares a workspace.
+pub fn root(start: &Path) -> Option<PathBuf> {
+    let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+    start
+        .ancestors()
+        .find(|dir| declared_globs(dir).is_some())
+        .map(Path::to_path_buf)
+}
+
 /// Every package of the nearest workspace at or above `start`, by name.
 pub fn packages(start: &Path) -> BTreeMap<String, PathBuf> {
-    let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
-    let Some((root, globs)) = start
-        .ancestors()
-        .find_map(|dir| declared_globs(dir).map(|globs| (dir.to_path_buf(), globs)))
+    let Some((root, globs)) =
+        root(start).and_then(|root| declared_globs(&root).map(|globs| (root, globs)))
     else {
         return BTreeMap::new();
     };
@@ -174,5 +181,23 @@ mod tests {
                 ("@ws/utils".to_string(), root.join("packages/utils")),
             ])
         );
+    }
+
+    #[test]
+    fn names_the_directory_that_declares_the_workspace() {
+        let dir = tempdir::TempDir::new("envio_subgraph_workspace_root").unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(
+            root.join("pnpm-workspace.yaml"),
+            "packages:\n  - subgraphs/*\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("subgraphs/exchange")).unwrap();
+        std::fs::write(
+            root.join("subgraphs/exchange/package.json"),
+            r#"{"name":"exchange"}"#,
+        )
+        .unwrap();
+        assert_eq!(super::root(&root.join("subgraphs/exchange")), Some(root));
     }
 }
