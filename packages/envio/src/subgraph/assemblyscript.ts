@@ -474,6 +474,25 @@ const search =
   };
 
 /**
+ * AssemblyScript's default comparator (std/assembly/util/sort.ts COMPARATOR):
+ * numbers by value, strings by code unit, and another reference by `a > b`
+ * and `a < b` — graph-ts' BigInt and BigDecimal overload them. A reference
+ * without the overload compares by address, its allocation order; here it
+ * keeps its place, the order the array was built in.
+ */
+function defaultCompare(a: unknown, b: unknown): number {
+  if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
+  const greater = isObject(b) ? overload(a, "gt") : undefined;
+  const less = isObject(b) ? overload(a, "lt") : undefined;
+  if (greater && less) return (greater.call(a, b) ? 1 : 0) - (less.call(a, b) ? 1 : 0);
+  const numeric = (v: unknown) => typeof v === "number" || typeof v === "bigint" || typeof v === "boolean";
+  if (numeric(a) && numeric(b)) return (a as number) > (b as number) ? 1 : (a as number) < (b as number) ? -1 : 0;
+  return 0;
+}
+
+const sort = (receiver: any): unknown => (Array.isArray(receiver) ? receiver.sort(defaultCompare) : receiver.sort());
+
+/**
  * What a graph-ts method on a null receiver computes below apiVersion 0.0.5,
  * where the host reads the null pointer as an empty value: a zero. Which zero
  * follows the argument (`null.plus(decimal)` is a decimal's), and a bytes
@@ -699,6 +718,7 @@ export const operators = {
     const declared = overload(a, "neg");
     return declared ? declared.call(a) : -(a as number);
   },
+  sort,
   indexOf: search("indexOf"),
   lastIndexOf: search("lastIndexOf"),
   includes: search("includes"),

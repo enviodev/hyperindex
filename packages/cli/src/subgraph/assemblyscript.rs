@@ -1495,7 +1495,6 @@ fn search_helper(call: &CallExpression<'_>) -> Option<&'static str> {
     if call.optional
         || member.optional
         || matches!(member.object, Expression::Super(_))
-        || !(1..=2).contains(&call.arguments.len())
         || call
             .arguments
             .iter()
@@ -1503,10 +1502,13 @@ fn search_helper(call: &CallExpression<'_>) -> Option<&'static str> {
     {
         return None;
     }
+    let arguments = call.arguments.len();
     Some(match member.property.name.as_str() {
-        "includes" => "includes",
-        "indexOf" => "indexOf",
-        "lastIndexOf" => "lastIndexOf",
+        "includes" if (1..=2).contains(&arguments) => "includes",
+        "indexOf" if (1..=2).contains(&arguments) => "indexOf",
+        "lastIndexOf" if (1..=2).contains(&arguments) => "lastIndexOf",
+        // With no comparator, AssemblyScript's default one.
+        "sort" if arguments == 0 => "sort",
         _ => return None,
     })
 }
@@ -2892,10 +2894,14 @@ export function f(action, a) {
         assert_eq!(
             js("export function has(resolver: Resolver, coinType: BigInt): bool {
   let at = resolver.coinTypes!.indexOf(coinType, 1);
+  let sorted = resolver.coinTypes!.sort();
+  let byHand = sorted.sort((a: BigInt, b: BigInt): i32 => 0);
   return resolver.coinTypes!.includes(coinType) || names().lastIndexOf(\"a\") > at || list.find(coinType);
 }"),
             "export function has(resolver, coinType) {
 \tlet at = __envio_op.indexOf(resolver.coinTypes, coinType, 1);
+\tlet sorted = __envio_op.sort(resolver.coinTypes);
+\tlet byHand = sorted.sort((a, b) => 0);
 \treturn __envio_op.includes(resolver.coinTypes, coinType) || __envio_op.gt(__envio_op.lastIndexOf(names(), \"a\"), at) || list.find(coinType);
 }
 "
