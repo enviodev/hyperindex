@@ -555,11 +555,13 @@ function parseDecimal(text: string): GraphNodeDecimal.Decimal {
  * number for envio's store, made only when something asks for it.
  */
 export class BigDecimal {
-  readonly decimal: GraphNodeDecimal.Decimal;
+  private _decimal: GraphNodeDecimal.Decimal;
+  /** The two fields as a mapping last assigned them, if it assigned one. */
+  private _fields: GraphNodeDecimal.Decimal | undefined;
   private _value: BigNumber | undefined;
 
   constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
-    this.decimal =
+    this._decimal =
       value instanceof BigInt_
         ? GraphNodeDecimal.fromInteger(value.value)
         : value instanceof BigNumber
@@ -568,6 +570,10 @@ export class BigDecimal {
           : typeof value === "object"
             ? GraphNodeDecimal.normalize(value)
             : parseDecimal(String(value));
+  }
+
+  get decimal(): GraphNodeDecimal.Decimal {
+    return this._decimal;
   }
 
   get value(): BigNumber {
@@ -633,13 +639,26 @@ export class BigDecimal {
   truncate(decimals: number): BigDecimal {
     return new BigDecimal(this.value.decimalPlaces(decimals, BigNumber.ROUND_DOWN));
   }
-  // graph-ts stores a decimal as `digits * 10 ** exp`, in graph-node's
-  // normalized form.
+  // graph-ts stores a decimal as two public fields, `digits * 10 ** exp`, in
+  // graph-node's normalized form. A mapping may assign either — graph-node's
+  // host-exports test lowers `exp` — and every host operation reads them back
+  // through `BigDecimal::new`, which normalizes.
   get digits(): BigInt_ {
-    return new BigInt_(this.decimal.int);
+    return new BigInt_((this._fields ?? this._decimal).int);
+  }
+  set digits(digits: BigInt_) {
+    this.assignFields({ int: digits.value, scale: (this._fields ?? this._decimal).scale });
   }
   get exp(): BigInt_ {
-    return BigInt_.fromI32(-this.decimal.scale);
+    return BigInt_.fromI32(-(this._fields ?? this._decimal).scale);
+  }
+  set exp(exp: BigInt_) {
+    this.assignFields({ int: (this._fields ?? this._decimal).int, scale: -Number(exp.value) });
+  }
+  private assignFields(fields: GraphNodeDecimal.Decimal): void {
+    this._fields = fields;
+    this._decimal = GraphNodeDecimal.normalize(fields);
+    this._value = undefined;
   }
 }
 
