@@ -199,6 +199,112 @@ export const memory = {
   },
 };
 
+const bytesAt = (buffer: unknown, what: string): Uint8Array => {
+  if (isBuffer(buffer)) return new Uint8Array(buffer);
+  if (ArrayBuffer.isView(buffer)) return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  throw new Error(`Envio Subgraph: String.${what} takes an ArrayBuffer, not ${String(buffer)}.`);
+};
+
+/**
+ * AssemblyScript's UTF-8 decoder (std/assembly/string.ts, asc 0.19.10): it
+ * validates nothing and replaces nothing, takes a lead byte's payload bits as
+ * they are, and stops at a sequence the input cuts short.
+ */
+function decodeUtf8(bytes: Uint8Array, nullTerminated: unknown): string {
+  const units: number[] = [];
+  const end = bytes.length;
+  let at = 0;
+  while (at < end) {
+    let u0 = bytes[at++]!;
+    if (!(u0 & 128)) {
+      if (nullTerminated && !u0) break;
+      units.push(u0);
+      continue;
+    }
+    if (at === end) break;
+    const u1 = bytes[at++]! & 63;
+    if ((u0 & 224) === 192) {
+      units.push((((u0 & 31) << 6) | u1) & 0xffff);
+      continue;
+    }
+    if (at === end) break;
+    const u2 = bytes[at++]! & 63;
+    if ((u0 & 240) === 224) {
+      u0 = ((u0 & 15) << 12) | (u1 << 6) | u2;
+    } else {
+      if (at === end) break;
+      u0 = ((u0 & 7) << 18) | (u1 << 12) | (u2 << 6) | (bytes[at++]! & 63);
+    }
+    if (u0 < 0x10000) {
+      units.push(u0);
+    } else {
+      u0 -= 0x10000;
+      units.push(((u0 >> 10) | 0xd800) & 0xffff, (u0 & 0x03ff) | 0xdc00);
+    }
+  }
+  let text = "";
+  for (let from = 0; from < units.length; from += 8192) text += String.fromCharCode(...units.slice(from, from + 8192));
+  return text;
+}
+
+/** AssemblyScript's UTF-8 encoder in its default WTF-8 mode: a lone surrogate is three bytes. */
+function encodeUtf8(text: string, nullTerminated: unknown): ArrayBuffer {
+  const bytes: number[] = [];
+  for (let at = 0; at < text.length; at++) {
+    let c1 = text.charCodeAt(at);
+    if (c1 < 128) {
+      bytes.push(c1);
+    } else if (c1 < 2048) {
+      bytes.push((c1 >> 6) | 192, (c1 & 63) | 128);
+    } else {
+      const c2 = at + 1 < text.length ? text.charCodeAt(at + 1) : 0;
+      if ((c1 & 0xfc00) === 0xd800 && (c2 & 0xfc00) === 0xdc00) {
+        c1 = (0x10000 + ((c1 & 0x03ff) << 10)) | (c2 & 0x03ff);
+        bytes.push((c1 >> 18) | 240, ((c1 >> 12) & 63) | 128, ((c1 >> 6) & 63) | 128, (c1 & 63) | 128);
+        at++;
+        continue;
+      }
+      bytes.push((c1 >> 12) | 224, ((c1 >> 6) & 63) | 128, (c1 & 63) | 128);
+    }
+  }
+  if (nullTerminated) bytes.push(0);
+  return new Uint8Array(bytes).buffer;
+}
+
+/**
+ * The `String.UTF8` and `String.UTF16` namespaces of AssemblyScript's String,
+ * which JavaScript's lacks. A pointer from `x.dataStart` stands in for the
+ * `usize` the unsafe variants take.
+ */
+export const stringEncodings = {
+  UTF8: {
+    byteLength: (text: string, nullTerminated: unknown = false): number =>
+      encodeUtf8(text, nullTerminated).byteLength,
+    encode: (text: string, nullTerminated: unknown = false): ArrayBuffer => encodeUtf8(text, nullTerminated),
+    decode: (buffer: unknown, nullTerminated: unknown = false): string =>
+      decodeUtf8(bytesAt(buffer, "UTF8.decode"), nullTerminated),
+    decodeUnsafe: (at: unknown, length: unknown, nullTerminated: unknown = false): string => {
+      const p = pointer(at, "decode a string");
+      return decodeUtf8(new Uint8Array(p.buffer, p.offset, number(length)), nullTerminated);
+    },
+  },
+  UTF16: {
+    byteLength: (text: string): number => text.length * 2,
+    encode: (text: string): ArrayBuffer => {
+      const view = new DataView(new ArrayBuffer(text.length * 2));
+      for (let at = 0; at < text.length; at++) view.setUint16(at * 2, text.charCodeAt(at), true);
+      return view.buffer;
+    },
+    decode: (buffer: unknown): string => {
+      const bytes = bytesAt(buffer, "UTF16.decode");
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength & ~1);
+      let text = "";
+      for (let at = 0; at < view.byteLength; at += 2) text += String.fromCharCode(view.getUint16(at, true));
+      return text;
+    },
+  },
+};
+
 /** The bit width of an integer builtin's operand: its type, or its value. */
 function bitsOf(type: string, value: unknown): 16 | 32 | 64 {
   if (type === "u16" || type === "i16") return 16;

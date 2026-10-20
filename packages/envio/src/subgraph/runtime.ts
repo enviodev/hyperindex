@@ -80,6 +80,7 @@ import {
   RETAG_EACH_HELPER,
   RETAG_HELPER,
   operators,
+  stringEncodings,
 } from "./assemblyscript.ts";
 import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
 import { createHash } from "node:crypto";
@@ -334,6 +335,8 @@ function installResolveHook(root: string) {
   globals.min ??= builtinMin;
   globals.max ??= builtinMax;
   globals.unchecked ??= (value: unknown) => value;
+  globals.String.UTF8 ??= stringEncodings.UTF8;
+  globals.String.UTF16 ??= stringEncodings.UTF16;
   const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
   if (!Object.getOwnPropertyDescriptor(typedArray, "dataStart")) {
     Object.defineProperty(typedArray, "dataStart", {

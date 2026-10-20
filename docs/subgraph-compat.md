@@ -412,7 +412,8 @@ classes call `DataSource.create`. Consequences:
   wrap), and memory builtins work over buffers: `x.dataStart` and
   `changetype<usize>(x.buffer)` are pointers that `load<T>`, `store<T>`,
   `memory.copy`/`fill`, `bswap`, `rotl`/`rotr`, `min`/`max` take — a raw
-  integer address is refused.
+  integer address is refused. `String.UTF8` and `String.UTF16` encode and
+  decode over ArrayBuffers with asc's own lenient decoder.
   `matchstick-as` (which re-exports graph-ts' `log`) resolves to the shim too.
   A handler's event is built as the generated class it declares, wherever the
   handler is written — the manifest's file may only re-export it.
