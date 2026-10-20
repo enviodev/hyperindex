@@ -517,6 +517,16 @@ pub fn generated_dir(root: &std::path::Path, mapping_files: &[String]) -> std::p
         if scanned > 2_000 {
             break;
         }
+        // A mapping shipped in a dependency (@openzeppelin/subgraphs) imports the
+        // generated code shipped beside it, not the tree `graph codegen` writes.
+        let in_dependency = file.strip_prefix(root).is_ok_and(|relative| {
+            relative
+                .components()
+                .any(|part| part.as_os_str() == "node_modules")
+        });
+        if in_dependency {
+            continue;
+        }
         let Ok(source) = std::fs::read_to_string(&file) else {
             continue;
         };
@@ -1343,6 +1353,32 @@ mod generated_code_tests {
         )
         .unwrap();
         assert!(graph_cli_installed(&root));
+    }
+
+    #[test]
+    fn a_dependency_mapping_does_not_place_the_generated_code() {
+        let dir = project(&[
+            (
+                "node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts",
+                "import { Vote } from \"../../generated/schema\";\n",
+            ),
+            (
+                "node_modules/@openzeppelin/subgraphs/generated/schema.ts",
+                "export class Vote {}\n",
+            ),
+            (
+                "src/locking.ts",
+                "import { Lock } from \"./types/schema\";\n",
+            ),
+        ]);
+        let mapping_files = [
+            "./node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts".to_string(),
+            "./src/locking.ts".to_string(),
+        ];
+        assert_eq!(
+            pathdiff_relative(&generated_dir(dir.path(), &mapping_files), dir.path()),
+            "src/types"
+        );
     }
 
     #[test]

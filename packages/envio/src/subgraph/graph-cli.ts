@@ -278,6 +278,9 @@ function* scanImports(root: string, mappingFiles: string[]): Generator<{ file: s
 
 export function generatedDir(root: string, mappingFiles: string[]): string {
   for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    // A mapping shipped in a dependency (@openzeppelin/subgraphs) imports the
+    // generated code shipped beside it, not the tree `graph codegen` writes.
+    if (inDependency(root, file)) continue;
     for (const specifier of specifiers) {
       const base = path.basename(specifier).replace(/\.ts$/, "");
       if (base === "schema" || base === "templates") {
@@ -286,6 +289,10 @@ export function generatedDir(root: string, mappingFiles: string[]): string {
     }
   }
   return path.join(root, "generated");
+}
+
+function inDependency(root: string, file: string): boolean {
+  return path.relative(root, file).split(path.sep).includes("node_modules");
 }
 
 /**
