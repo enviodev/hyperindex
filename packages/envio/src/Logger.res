@@ -41,6 +41,7 @@ type config = {
 
 type native
 @send external makeNative: (Core.loggerCtor, config) => native = "make"
+@send external makeInMemoryNative: Core.loggerCtor => native = "makeInMemory"
 @send
 external nativeLog: (
   native,
@@ -81,10 +82,7 @@ let wrapNative = native => {
 let make = (config: config) => Core.getAddon().logger->makeNative(config)->wrapNative
 
 // Keeps every line in memory, where a test reads it back as JSON.
-let makeInMemory = () =>
-  Core.getAddon().logger
-  ->makeNative({strategy: "in-memory", logFile: "", level: #trace, fileLevel: #silent})
-  ->wrapNative
+let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative
 
 // Errors serialize to their name, message and stack (and whatever else they
 // carry), which `JSON.stringify` alone would drop as `{}`. The replacer that

@@ -127,11 +127,10 @@ fn open_log_file(path: &str) -> io::Result<File> {
 /// Where a run's logs go and how they read there, as `LOG_STRATEGY` names it.
 #[napi(object)]
 pub struct LoggerConfig {
-    /// One of `LOG_STRATEGIES`, or `in-memory` for a test that reads its logs
-    /// back.
+    /// One of `LOG_STRATEGIES`.
     pub strategy: String,
     pub log_file: String,
-    /// The level for the terminal, or for the in-memory lines.
+    /// The level for the terminal.
     pub level: String,
     pub file_level: String,
 }
@@ -178,11 +177,6 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
             Sink::new(pretty(), Target::Stdout, level),
             Sink::new(Format::Json, file()?, file_level),
         ],
-        "in-memory" => vec![Sink::new(
-            Format::Json,
-            Target::Memory(Mutex::new(Vec::new())),
-            level,
-        )],
         other => {
             return Err(napi::Error::from_reason(format!(
                 "Invalid LOG_STRATEGY \"{other}\". Expected one of: {}.",
@@ -248,6 +242,19 @@ impl Logger {
         })
     }
 
+    /// Keeps every line, trace included, for a test to read back. Not a
+    /// `LOG_STRATEGY`, so a deployment can't swallow its own logs.
+    #[napi(factory)]
+    pub fn make_in_memory() -> Logger {
+        Logger {
+            sinks: Arc::new(vec![Sink::new(
+                Format::Json,
+                Target::Memory(Mutex::new(Vec::new())),
+                Level::TRACE,
+            )]),
+        }
+    }
+
     /// `level` is the numeric one, which the caller already compared against
     /// `minLevel` before serializing anything. `bindings` and `params` are JSON
     /// objects; a key repeated in `bindings` takes its last value.
@@ -280,13 +287,13 @@ impl Logger {
             .unwrap_or(Level::SILENT.value())
     }
 
-    /// Every line an `in-memory` logger has taken, oldest first.
+    /// Every line an in-memory logger has taken, oldest first.
     #[napi]
     pub fn in_memory_lines(&self) -> Vec<Value> {
         self.read_in_memory_lines()
     }
 
-    /// Writes what an `in-memory` logger has taken to `path`, a line of JSON
+    /// Writes what an in-memory logger has taken to `path`, a line of JSON
     /// each.
     #[napi]
     pub fn write_in_memory_lines_to_file(&self, path: String) -> napi::Result<()> {
@@ -308,27 +315,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn in_memory(level: &str) -> Logger {
-        Logger::make(LoggerConfig {
-            strategy: "in-memory".into(),
-            log_file: String::new(),
-            level: level.into(),
-            file_level: "trace".into(),
-        })
-        .unwrap()
-    }
-
     #[test]
-    fn lines_merge_bindings_and_params_and_follow_the_level() {
-        let logger = in_memory("info");
+    fn lines_merge_bindings_and_params() {
+        let logger = Logger::make_in_memory();
         let chain = Some(r#"{"chainId":1,"source":"a","source":"b"}"#.to_string());
         logger
-            .log_js(Level::TRACE.value(), "hidden".into(), chain.clone(), None)
+            .log_js(Level::TRACE.value(), "bound".into(), chain.clone(), None)
             .unwrap();
         logger
             .log_js(
                 Level::WARN.value(),
-                "shown".into(),
+                "overridden".into(),
                 chain,
                 Some(r#"{"chainId":2,"a":1}"#.into()),
             )
@@ -336,8 +333,11 @@ mod tests {
         assert_eq!(
             (logger.in_memory_lines(), logger.min_level()),
             (
-                vec![json!({"level": "warn", "msg": "shown", "chainId": 2, "source": "b", "a": 1})],
-                Level::INFO.value()
+                vec![
+                    json!({"level": "trace", "msg": "bound", "chainId": 1, "source": "b"}),
+                    json!({"level": "warn", "msg": "overridden", "chainId": 2, "source": "b", "a": 1}),
+                ],
+                Level::TRACE.value()
             )
         );
     }
@@ -379,7 +379,7 @@ mod tests {
     fn writes_in_memory_lines_to_a_file_as_json_lines() {
         let dir = tempdir::TempDir::new("envio-logger").unwrap();
         let path = dir.path().join("logs/run.jsonl");
-        let logger = in_memory("trace");
+        let logger = Logger::make_in_memory();
         logger.log(Level::INFO, "one", &Vec::new(), &Vec::new());
         logger.log(
             Level::ERROR,
@@ -398,17 +398,22 @@ mod tests {
 
     #[test]
     fn unknown_strategy_is_refused_by_name() {
-        let error = Logger::make(LoggerConfig {
-            strategy: "nope".into(),
-            log_file: String::new(),
-            level: "info".into(),
-            file_level: "trace".into(),
-        })
-        .err()
-        .unwrap();
+        let refusal = |strategy: &str| {
+            Logger::make(LoggerConfig {
+                strategy: strategy.into(),
+                log_file: String::new(),
+                level: "info".into(),
+                file_level: "trace".into(),
+            })
+            .err()
+            .map(|error| error.reason.clone())
+        };
+        let expected = |strategy: &str| {
+            Some(format!("Invalid LOG_STRATEGY \"{strategy}\". Expected one of: console-pretty, console-raw, ecs-console, ecs-console-multistream, ecs-file, file-only, both-prettyconsole."))
+        };
         assert_eq!(
-            error.reason,
-            "Invalid LOG_STRATEGY \"nope\". Expected one of: console-pretty, console-raw, ecs-console, ecs-console-multistream, ecs-file, file-only, both-prettyconsole."
+            (refusal("nope"), refusal("in-memory")),
+            (expected("nope"), expected("in-memory"))
         );
     }
 }
