@@ -1580,7 +1580,7 @@ const storeImpl = {
       // graph-node overrides whatever id and timestamp the mapping set.
       const sequence = scope.timeseriesSequence ?? 0;
       scope.timeseriesSequence = sequence + 1;
-      row.id = timeseriesId(scope.blockNumber, { logIndex: scope.event?.logIndex, blockRun: scope.blockRun }, sequence);
+      row.id = timeseriesId(scope.blockNumber, (scope.timeseriesBase ?? 0) + sequence);
       row.timestamp = new Date(Number(scope.blockSeconds?.() ?? 0) * 1000);
       return table.set(withUnsetAsNull(scope, entityType, row));
     }

@@ -1217,9 +1217,28 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       : Number(callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"));
   // Aggregations roll up when a block's time passes a bucket's end, so every
   // handler checks first; the timeseries it saves carry the block's time.
+  // graph-node's `SeqGenerator`: one id sequence per block, which its handlers
+  // draw from in the order they run, so a timeseries row gets graph-node's id.
+  // The execute pass runs a chain's handlers one at a time; a run starts where
+  // the block's previous run stopped, and a replayed run starts over there.
+  const idSequences = new Map<number, { block: number; next: number }>();
+  const idSequence = (scope: Scope) => {
+    const chainId = scope.dataSource.chainId;
+    let sequence = idSequences.get(chainId);
+    if (!sequence || sequence.block !== scope.blockNumber) {
+      sequence = { block: scope.blockNumber, next: 0 };
+      idSequences.set(chainId, sequence);
+    }
+    return sequence;
+  };
+  const endRun = (scope: Scope) => {
+    if (scope.timeseriesBase === undefined) return;
+    idSequence(scope).next = scope.timeseriesBase + (scope.timeseriesSequence ?? 0);
+  };
   const startRun = (scope: Scope) => {
     freshModuleState(scope);
     scope.timeseriesSequence = 0;
+    if (!scope.context.isPreload) scope.timeseriesBase ??= idSequence(scope).next;
     // A replayed round creates its file data sources again.
     scope.fileCreates = undefined;
     if (schema.aggregations.length > 0) {
@@ -1317,18 +1336,6 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // register pass of its chain reads the register store.
   const onceHandlers = new Map<number, ((context: any) => Promise<void>)[]>();
 
-  // A block handler run's place among its block's runs, which orders the
-  // timeseries ids its rows get. Counted in the execute pass, the one that
-  // writes, as the runs happen; a replayed run keeps the place it was given.
-  const blockRuns = new Map<number, { block: number; first: number; late: number }>();
-  const nextBlockRun = (chainId: number, blockNumber: number, first: boolean) => {
-    let runs = blockRuns.get(chainId);
-    if (!runs || runs.block !== blockNumber) {
-      runs = { block: blockNumber, first: 0, late: 0 };
-      blockRuns.set(chainId, runs);
-    }
-    return { first, slot: first ? runs.first++ : runs.late++ };
-  };
   const primed = new Map<number, Promise<void>>();
   const primeOnceHandlers = (chainId: number, context: any) => {
     let done = primed.get(chainId);
@@ -1445,6 +1452,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               return fn(makeEvent(event));
             }),
           );
+          endRun(scope);
           await runFileDataSources(scope, context);
         },
       );
@@ -1532,6 +1540,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             return run(event, make(event));
           }),
         );
+        endRun(scope);
         await runFileDataSources(scope, context);
       });
 
@@ -1665,9 +1674,6 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               blockNumber: block.number,
               blockSeconds: secondsOf(block.number, block.timestamp),
               mappingExports: mapping,
-              blockRun: context.isPreload
-                ? undefined
-                : nextBlockRun(block.chainId ?? source.chainId ?? 0, block.number, once && !source.isTemplate),
             };
             await runSyncCounted(context, () =>
               runInScope(scope, () => {
@@ -1675,6 +1681,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
                 return fn(graphBlock);
               }),
             );
+            endRun(scope);
             await runFileDataSources(scope, context);
           }
         },

@@ -4,6 +4,7 @@
 // in insertion order across handlers — which `first` and `last` aggregates
 // order by. Each block handler run here started its sequence at the same
 // value, so three block handlers saving a row in one block wrote one id.
+// graph-node's ids, exactly: the block's sequence counts from 0.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 1.1.0
@@ -111,7 +112,12 @@ describe("timeseries rows saved by several block handlers of one block", () => {
     const indexer = createTestIndexer();
     await indexer.process({ chains: { 1: { startBlock: 18_600_000, endBlock: 18_600_000 } } });
     const rows = (await indexer.Point.getAll()).sort((a: any, b: any) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
-    t.expect(rows.map((row: any) => row.value)).toEqual([1n, 2n, 3n]);
+    const id = (sequence: number) => String((18_600_000n << 32n) + BigInt(sequence));
+    t.expect(rows.map((row: any) => [row.id, row.value])).toEqual([
+      [id(0), 1n],
+      [id(1), 2n],
+      [id(2), 3n],
+    ]);
   });
 });
 `,

@@ -97,27 +97,13 @@ function rollup(scope: Scope, compiled: CompiledAggregation, interval: string, s
   }
 }
 
-const ROWS_PER_RUN = 4096;
-const LOGS_FROM = 2 ** 24;
-const LATE_BLOCK_RUNS_FROM = 2 ** 31;
-
 /**
  * graph-node's `SeqGenerator::id` for an Int8: the block number in the upper 32
- * bits and a sequence shared by the block's handlers below, rising in the order
- * they ran. Here the lower bits are the handler run's place in that order — a
- * `once` handler's run, then the logs by index, then the other block handler
- * runs — and the row's position within the run, so a replayed handler
- * regenerates the same ids.
+ * bits and the block's id sequence below, shared by its handlers in the order
+ * they run.
  */
-export function timeseriesId(
-  blockNumber: number,
-  run: { logIndex?: number; blockRun?: { first: boolean; slot: number } },
-  sequence: number,
-): string {
-  const place = run.blockRun
-    ? (run.blockRun.first ? 0 : LATE_BLOCK_RUNS_FROM) + run.blockRun.slot * ROWS_PER_RUN
-    : LOGS_FROM + Math.max(run.logIndex ?? 0, 0) * ROWS_PER_RUN;
-  return ((BigInt(blockNumber) << 32n) + BigInt(place + sequence)).toString();
+export function timeseriesId(blockNumber: number, sequence: number): string {
+  return ((BigInt(blockNumber) << 32n) + BigInt(sequence)).toString();
 }
 
 export { INTERVAL_MICROS };

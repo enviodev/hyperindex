@@ -68,12 +68,8 @@ export type Scope = {
   blockSeconds?: () => number | string;
   /** Timeseries entities saved so far by this run of the handler. */
   timeseriesSequence?: number;
-  /**
-   * A block handler run's place among its block's: a `once` handler's (`first`)
-   * before the block's logs, the others' after them, each counted in the
-   * order they ran.
-   */
-  blockRun?: { first: boolean; slot: number };
+  /** Where this run's timeseries ids start in its block's id sequence. */
+  timeseriesBase?: number;
   /** Where the event sits in its chain, for what the register pass may read. */
   position?: number;
   /** The register round's own writes, kept only once the round completes. */
