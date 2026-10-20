@@ -252,8 +252,15 @@ impl<'a> Obj<'a> {
         }
     }
 
+    /// graph-node reads the manifest with serde_yaml, which reads a plain
+    /// scalar into a String field as written: `network: 66665` is the network
+    /// "66665".
     fn string(&mut self, key: &str) -> Option<String> {
-        self.typed(key, "a string", |v| v.as_str().map(|s| s.to_string()))
+        self.typed(key, "a string", |v| match v {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(number) => Some(number.to_string()),
+            _ => None,
+        })
     }
 
     fn u64(&mut self, key: &str) -> Option<u64> {

@@ -3502,6 +3502,32 @@ type Renewal implements Event @entity {
         fs::write(dir.join(manifest), GRAVITY_MANIFEST).unwrap();
     }
 
+    // VeltrixaLabs' manifest says `network: 66665` (a chain id). graph-node
+    // reads the manifest with serde_yaml, which reads a plain scalar into a
+    // String field as written: the network "66665". envio refused the number
+    // ("doesn't know the value of network, which has to be a string").
+    #[test]
+    fn reads_a_number_where_the_manifest_has_a_string_as_graph_node_does() {
+        let dir = tempdir::TempDir::new("envio-subgraph-numeric-network").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: 66665"),
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err.lines().next().unwrap_or_default(),
+            "Envio Subgraph doesn't know the network \"66665\"."
+        );
+    }
+
     // burngraph's manifest handles `AnonymousDeposit(indexed
     // address,uint256,string,string)`, and its VoteOption ABI declares that
     // event as ReceivedDeposit: graph-cli refuses it ("Event with signature …
