@@ -545,11 +545,14 @@ classes call `DataSource.create`. Consequences:
     source and ABI depends on the ABI alone (a renamed data source); and a
     `<X>/<X>.ts` from data source X's own ABI under that name (a renamed
     ABI); and from an `<ABI>.json` the manifests' ABI directories still hold
-    (a data source taken out of the manifest). A mapping that imports the
-    generated directory itself (tornado-subgraph's `from '../generated'`,
-    whose manifest script writes an `index.ts` re-exporting one data source's
-    module) gets that `index.ts`, with a warning, when every generated data
-    source module exporting all the names it imports is the same code. A file
+    (a data source taken out of the manifest). Any other missing module the
+    mappings import from the tree — the generated directory itself
+    (tornado-subgraph's `from '../generated'`, whose manifest script writes an
+    `index.ts` re-exporting one data source's module), or `<X>/<Y>.ts` where
+    no manifest has data source X or ABI Y (cow-amm's `Factory/Factory` from
+    when its factory and its ABI were both named Factory) — is written as a
+    re-export of the generated module that exports every name imported from
+    it, with a warning, when all such modules are the same code. A file
     none of them accounts for fails to load with the reason (no data source of
     that name, no such ABI, no `index.ts`), as `graph build` fails on it.
 - **Workspace packages resolve without an install.** A bare import a monorepo's
