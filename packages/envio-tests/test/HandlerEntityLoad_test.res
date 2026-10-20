@@ -39,9 +39,9 @@ type LoaderRun {
 }
 `,
   ~handlers=`
-import { indexer, type Entity } from "envio";
+import { indexer, type User, type LoaderRun } from "envio";
 
-const newUser: Entity<"User"> = {
+const newUser: User = {
   id: "0",
   address: "0x",
   updatesCountOnUserForTesting: 0,
@@ -50,7 +50,7 @@ const newUser: Entity<"User"> = {
 };
 
 let getOrThrowInLoaderCount = 0;
-const loaderRuns: Entity<"LoaderRun">[] = [];
+const loaderRuns: LoaderRun[] = [];
 
 indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
   switch (event.params.testCase) {
@@ -118,9 +118,9 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Entity } from "envio";
+import { createTestIndexer, type User } from "envio";
 
-const existingUser: Entity<"User"> = {
+const existingUser: User = {
   id: "0",
   address: "existing",
   updatesCountOnUserForTesting: 0,

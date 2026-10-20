@@ -1,5 +1,5 @@
-// Entities are reached through `Entity<"Name">`, never as top-level `envio`
-// exports, so an entity may share a name with one of them.
+// An entity is exported from `envio` under its own name unless that name is
+// already an `envio` export; then it is reached only through `Entity<"Name">`.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: envio-export-names
@@ -23,6 +23,9 @@ type Address {
 type enum {
   id: ID!
 }
+type Account {
+  id: ID!
+}
 `,
   ~handlers=`
 import { indexer } from "envio";
@@ -31,13 +34,26 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
   context.Hex.set({ id: event.params.to });
   context.Address.set({ id: event.params.to, value: event.params.value });
   context.Enum.set({ id: event.params.to });
+  context.Account.set({ id: event.params.to });
 });
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Entity, type Hex, TestHelpers } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+import {
+  createTestIndexer,
+  type Account,
+  type Address,
+  type Entity,
+  type Hex,
+  TestHelpers,
+} from "envio";
 
 const { Addresses } = TestHelpers;
+
+expectType<TypeEqual<Account, Entity<"Account">>>(true);
+expectType<TypeEqual<Hex, \`0x\${string}\`>>(true);
+expectType<TypeEqual<Address, \`0x\${string}\`>>(true);
 
 describe("entities named after envio exports", () => {
   it("indexes entities named Hex, Address and enum", async (t) => {

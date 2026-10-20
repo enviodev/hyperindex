@@ -68,7 +68,7 @@ indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async ({ event, co
 `,
   ~test=`
 import { describe, it, expect } from "vitest";
-import { createTestIndexer, type Entity } from "envio";
+import { createTestIndexer, type Token, type NftCollection } from "envio";
 
 const nftFactory = "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC" as const;
 const newNft = "0x1111111111111111111111111111111111111111" as const;
@@ -89,14 +89,14 @@ const transferNft = {
   srcAddress: newNft,
 } as const;
 
-const expectedToken: Entity<"Token"> = {
+const expectedToken: Token = {
   id: \`\${newNft}-7\`,
   tokenId: 7n,
   collection: newNft,
   owner,
 };
 
-const expectedCollection: Entity<"NftCollection"> = {
+const expectedCollection: NftCollection = {
   id: newNft,
   contractAddress: newNft,
   name: "n",

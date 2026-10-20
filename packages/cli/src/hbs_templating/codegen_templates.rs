@@ -2406,12 +2406,26 @@ type testIndexer = {{
             envio_dts_code = parts.join("\n");
         }
 
+        // Per-entity aliases shadow the lookup table for ergonomic imports
+        // (`import type { User } from "envio"`). An entity named like an
+        // envio export (`Hex`, `Address`, …) gets none: a second `export
+        // type Hex` in the augmentation is a duplicate identifier, not a
+        // merge, so that entity is reached through `Entity<"Hex">` only.
+        // Enums skip aliasing altogether and go through `Enum<"Name">`.
+        let envio_exports = envio_export_names();
+        let entity_aliases: Vec<String> = entities
+            .iter()
+            .map(|e| e.name.capitalized.clone())
+            .filter(|name| !envio_exports.contains(name.as_str()))
+            .collect();
+
         Ok(ProjectTemplate {
             chain_configs,
             is_rescript: cfg.is_rescript,
             indexer_code,
             envio_types_dts: Self::wrap_envio_module_augmentation(
                 &envio_dts_code,
+                &entity_aliases,
                 cfg.get_ecosystem(),
                 ConfigBodies {
                     evm_chains: &evm_chains_body,
@@ -2455,12 +2469,13 @@ type testIndexer = {{
     /// `EvmContracts<Config>` and collapse `indexer.onEvent`'s callback to
     /// `any`.
     ///
-    /// Entities and enums get no per-name aliases: a schema name can be any
-    /// identifier, including one envio already exports, and a second
-    /// `export type Hex` in the augmentation is a duplicate identifier rather
-    /// than a merge. Users go through `Entity<"Name">` / `Enum<"Name">`.
+    /// Per-entity aliases are emitted so handlers can `import type { Foo }
+    /// from "envio"`. Enums skip aliasing — schema enum names commonly
+    /// collide with TS reserved words or envio exports — users go through
+    /// `Enum<"Name">` instead.
     fn wrap_envio_module_augmentation(
         file_level_types: &str,
+        entity_aliases: &[String],
         ecosystem: Ecosystem,
         bodies: ConfigBodies<'_>,
     ) -> String {
@@ -2501,6 +2516,12 @@ type testIndexer = {{
         .collect::<Vec<_>>()
         .join("\n");
 
+        let entity_aliases = entity_aliases
+            .iter()
+            .map(|name| format!("{I2}export type {name} = Entities[\"{name}\"];"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let field_not_selected = match ecosystem {
             // SVM selection is handler `fields` in index.d.ts, not codegen.
             Ecosystem::Svm => String::new(),
@@ -2521,11 +2542,55 @@ type testIndexer = {{
              `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, Hex, JSON, SingleOrMultiple }} \
              from \"envio\";\n\n{field_not_selected}{file_level_types}\n\n\
              declare module \"envio\" {{\n{I2}interface Global {{\n{I4}config: \
-             {{\n{config_block}\n{I4}}};\n{I2}}}\n}}\n",
+             {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
             field_not_selected = field_not_selected,
             file_level_types = file_level_types,
+            entity_aliases = entity_aliases,
         )
     }
+}
+
+/// Top-level names `packages/envio/index.d.ts` exports, read from the file
+/// itself so a new export can never be shadowed by an entity alias. Handles
+/// the two forms the file uses: `export [declare] [abstract] <kind> Name` and
+/// `export { default as Name } from "…"`. Indented `export`s belong to
+/// namespaces and aren't top-level.
+fn envio_export_names() -> BTreeSet<&'static str> {
+    const DECLARATION_KEYWORDS: &[&str] = &[
+        "declare",
+        "abstract",
+        "type",
+        "interface",
+        "const",
+        "function",
+        "class",
+        "namespace",
+        "enum",
+    ];
+    let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+
+    include_str!("../../../envio/index.d.ts")
+        .lines()
+        .filter_map(|line| line.strip_prefix("export "))
+        .flat_map(|rest| -> Vec<&'static str> {
+            match rest.strip_prefix('{') {
+                Some(braced) => braced
+                    .split('}')
+                    .next()
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter_map(|item| item.split_whitespace().last())
+                    .collect(),
+                None => rest
+                    .split_whitespace()
+                    .find(|token| !DECLARATION_KEYWORDS.contains(token))
+                    .and_then(|token| token.split(|c| !is_ident_char(c)).next())
+                    .filter(|name| !name.is_empty())
+                    .into_iter()
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 struct ConfigBodies<'a> {
@@ -3828,6 +3893,65 @@ type Swap {
             std::fs::read_to_string(&gitignore).expect("read .gitignore after second run"),
             user_edited,
             "user edits to .envio/.gitignore must be preserved across codegen runs",
+        );
+    }
+
+    /// Regression: only entities get per-name aliases; enum schema names
+    /// often clash with TS reserved words or envio exports, so they're
+    /// only available via `Enum<"Name">`.
+    #[test]
+    fn envio_export_names_cover_every_export_form() {
+        let names = super::envio_export_names();
+        assert_eq!(
+            [
+                "Hex",
+                "Address",
+                "BigDecimal",
+                "Effect",
+                "S",
+                "Global",
+                "indexer",
+                "createEffect",
+                "Output",
+            ]
+            .map(|name| names.contains(name)),
+            [true, true, true, true, true, true, true, true, false],
+        );
+    }
+
+    #[test]
+    fn entities_get_aliases_enums_do_not() {
+        let file_level_types = "type Enums = {\n  \"accountType\": \"ADMIN\" | \
+                                \"USER\";\n};\ntype Entities = {\n  \"User\": { readonly id: \
+                                string };\n};";
+        let entity_aliases = vec!["User".to_string()];
+
+        let out = super::ProjectTemplate::wrap_envio_module_augmentation(
+            file_level_types,
+            &entity_aliases,
+            super::Ecosystem::Evm,
+            super::ConfigBodies {
+                evm_chains: "{}",
+                evm_contracts: "{}",
+                evm_event_filters: "{}",
+                fuel_chains: "{}",
+                fuel_contracts: "{}",
+                fuel_event_filters: "{}",
+                svm_chains: "{}",
+                svm_programs: "{}",
+                entities: "Entities",
+                per_chain_entities: "never".to_string(),
+                enums: "Enums",
+            },
+        );
+
+        assert_eq!(
+            (
+                out.contains("export type User = Entities[\"User\"];"),
+                out.contains("export type AccountType"),
+            ),
+            (true, false),
+            "Got:\n{out}",
         );
     }
 

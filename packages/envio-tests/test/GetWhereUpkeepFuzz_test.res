@@ -28,9 +28,7 @@ type Probe {
 }
 `,
   ~handlers=`
-import { indexer, type Entity } from "envio";
-
-type Item = Entity<"Item">;
+import { indexer, type Item } from "envio";
 
 const makeRandom = (seed: number) => {
   let a = seed >>> 0;

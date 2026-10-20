@@ -29,7 +29,7 @@ indexer.onEvent({ contract: "Token", event: "error" }, async ({ event, context }
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Entity, TestHelpers } from "envio";
+import { createTestIndexer, type Account, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
@@ -48,7 +48,7 @@ describe("error in event signature", () => {
       },
     });
 
-    const expected: Entity<"Account"> = { id: to, balance: 5n };
+    const expected: Account = { id: to, balance: 5n };
     t.expect(await indexer.Account.getOrThrow(to)).toEqual(expected);
   });
 });

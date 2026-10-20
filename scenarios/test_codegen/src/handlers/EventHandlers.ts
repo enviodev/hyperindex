@@ -13,7 +13,8 @@ import {
   indexer,
   type EvmChainId,
   type EvmEvent,
-  type Entity,
+  type NftCollection,
+  type User,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 import { bytesToHex } from "viem";
@@ -214,7 +215,7 @@ indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async ({ 
     >
   >(true);
 
-  let nftCollection: Entity<"NftCollection"> = {
+  let nftCollection: NftCollection = {
     id: event.params.contractAddress,
     contractAddress: event.params.contractAddress,
     name: event.params.name,
@@ -254,7 +255,7 @@ indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async ({ event, co
     if (!existingToken) {
       let currentSupply = Number(nftCollectionUpdated.currentSupply) + 1;
 
-      let nftCollection: Entity<"NftCollection"> = {
+      let nftCollection: NftCollection = {
         ...nftCollectionUpdated,
         currentSupply,
       };
@@ -268,7 +269,7 @@ indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async ({ event, co
   }
 
   if (event.params.from !== zeroAddress) {
-    const userFrom: Entity<"User"> = {
+    const userFrom: User = {
       id: event.params.from,
       address: event.params.from,
       updatesCountOnUserForTesting:
@@ -280,7 +281,7 @@ indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async ({ event, co
   }
 
   if (event.params.to !== zeroAddress) {
-    const userTo: Entity<"User"> = {
+    const userTo: User = {
       id: event.params.to,
       address: event.params.to,
       updatesCountOnUserForTesting:
@@ -650,7 +651,7 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
     }
     case "loaderSetCount": {
       const entity = await context.User.get("0");
-      const newEntity: Entity<"User"> = {
+      const newEntity: User = {
         id: "0",
         address: "0x",
         updatesCountOnUserForTesting: 0,
@@ -744,7 +745,7 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
         gravatar_id: undefined,
         accountType: "USER",
       });
-      expectType<TypeEqual<typeof user, Entity<"User">>>(true);
+      expectType<TypeEqual<typeof user, User>>(true);
       deepEqual(user, {
         id: "0",
         address: "0x",
@@ -763,7 +764,7 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
         gravatar_id: undefined,
         accountType: "USER",
       });
-      expectType<TypeEqual<typeof user, Entity<"User">>>(true);
+      expectType<TypeEqual<typeof user, User>>(true);
       deepEqual(
         user,
         {
@@ -780,7 +781,7 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
 
     case "getOrThrow": {
       const user = await context.User.getOrThrow("0");
-      expectType<TypeEqual<typeof user, Entity<"User">>>(true);
+      expectType<TypeEqual<typeof user, User>>(true);
       deepEqual(user, {
         id: "0",
         address: "existing",

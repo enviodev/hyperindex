@@ -36,4 +36,6 @@ declare module "envio" {
       enums: Enums;
     };
   }
+
+  export type EmptyEntity = Entities["EmptyEntity"];
 }

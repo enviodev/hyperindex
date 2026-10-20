@@ -1,13 +1,13 @@
 /*
  * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-import { indexer, type Entity } from "envio";
+import { indexer, type UniswapV3Pool_Swap } from "envio";
 
 // Handle Swap events emitted by the registered Uniswap V3 pools
 indexer.onEvent(
   { contract: "UniswapV3Pool", event: "Swap" },
   async ({ event, context }) => {
-    const entity: Entity<"UniswapV3Pool_Swap"> = {
+    const entity: UniswapV3Pool_Swap = {
       id: `${event.block.number}_${event.logIndex}`, // Unique swap ID
       sqrtPriceX96: event.params.sqrtPriceX96, // Post-swap sqrt price
       liquidity: event.params.liquidity, // Liquidity after the swap

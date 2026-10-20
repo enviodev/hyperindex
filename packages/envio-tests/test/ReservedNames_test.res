@@ -37,7 +37,7 @@ indexer.onEvent({ contract: "Token", event: "module" }, async ({ event, context 
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer, type Entity, TestHelpers } from "envio";
+import { createTestIndexer, type Lazy, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
@@ -56,7 +56,7 @@ describe("keyword names", () => {
       },
     });
 
-    const expected: Entity<"Lazy"> = { id: to, balance: 5n, kind: "open" };
+    const expected: Lazy = { id: to, balance: 5n, kind: "open" };
     t.expect(await indexer.Lazy.getOrThrow(to)).toEqual(expected);
   });
 });

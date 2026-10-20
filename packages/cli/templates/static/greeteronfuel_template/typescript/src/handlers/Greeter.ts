@@ -1,4 +1,4 @@
-import { indexer, type Entity } from "envio";
+import { indexer, type User } from "envio";
 
 // Handler for the NewGreeting event
 indexer.onEvent(
@@ -6,10 +6,10 @@ indexer.onEvent(
   async ({ event, context }) => {
     const userId = event.params.user.bits;
     const latestGreeting = event.params.greeting.value;
-    const currentUserEntity: Entity<"User"> | undefined = await context.User.get(userId);
+    const currentUserEntity: User | undefined = await context.User.get(userId);
 
     // Update or create a new User entity
-    const userEntity: Entity<"User"> = currentUserEntity
+    const userEntity: User = currentUserEntity
       ? {
           id: userId,
           latestGreeting,
@@ -32,7 +32,7 @@ indexer.onEvent(
   { contract: "Greeter", event: "ClearGreeting" },
   async ({ event, context }) => {
     const userId = event.params.user.bits;
-    const currentUserEntity: Entity<"User"> | undefined = await context.User.get(userId);
+    const currentUserEntity: User | undefined = await context.User.get(userId);
 
     if (currentUserEntity) {
       // Clear the latestGreeting

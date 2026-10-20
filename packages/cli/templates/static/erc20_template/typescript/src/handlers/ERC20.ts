@@ -1,4 +1,4 @@
-import { indexer, type Entity } from "envio";
+import { indexer, type Account, type Approval } from "envio";
 
 indexer.onEvent(
   { contract: "ERC20", event: "Approval" },
@@ -10,7 +10,7 @@ indexer.onEvent(
       // Usually an account that is being approved already has/has had a balance, but it is possible they haven't.
 
       // create the account
-      let accountObject: Entity<"Account"> = {
+      let accountObject: Account = {
         id: event.params.owner,
         balance: 0n,
       };
@@ -19,7 +19,7 @@ indexer.onEvent(
 
     let approvalId = event.params.owner + "-" + event.params.spender;
 
-    let approvalObject: Entity<"Approval"> = {
+    let approvalObject: Approval = {
       id: approvalId,
       amount: event.params.value,
       owner_id: event.params.owner,
@@ -42,7 +42,7 @@ indexer.onEvent(
     if (senderAccount === undefined) {
       // create the account
       // This is likely only ever going to be the zero address in the case of the first mint
-      let accountObject: Entity<"Account"> = {
+      let accountObject: Account = {
         id: event.params.from,
         balance: 0n - event.params.value,
       };
@@ -50,7 +50,7 @@ indexer.onEvent(
       context.Account.set(accountObject);
     } else {
       // subtract the balance from the existing users balance
-      let accountObject: Entity<"Account"> = {
+      let accountObject: Account = {
         id: senderAccount.id,
         balance: senderAccount.balance - event.params.value,
       };
@@ -59,14 +59,14 @@ indexer.onEvent(
 
     if (receiverAccount === undefined) {
       // create new account
-      let accountObject: Entity<"Account"> = {
+      let accountObject: Account = {
         id: event.params.to,
         balance: event.params.value,
       };
       context.Account.set(accountObject);
     } else {
       // update existing account
-      let accountObject: Entity<"Account"> = {
+      let accountObject: Account = {
         id: receiverAccount.id,
         balance: receiverAccount.balance + event.params.value,
       };

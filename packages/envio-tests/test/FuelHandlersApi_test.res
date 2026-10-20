@@ -74,8 +74,8 @@ expectType<TypeEqual<ClearGreeting["params"]["user"]["bits"], \`0x\${string}\`>>
   it("shapes Fuel onEvent / contractRegister options, handlers and contexts", _ =>
     check(`
 import type {
+  Account,
   Address,
-  Entity,
   FuelContractRegisterContext,
   FuelContractRegisterHandler,
   FuelContractRegisterOptions,
@@ -128,7 +128,7 @@ expectType<
 expectType<TypeEqual<FuelOnEventContext["chain"]["id"], 0>>(true);
 expectType<TypeEqual<FuelOnEventContext["chain"]["isRealtime"], boolean>>(true);
 expectType<
-  TypeEqual<FuelOnEventContext["Account"]["set"], (entity: Entity<"Account">) => void>
+  TypeEqual<FuelOnEventContext["Account"]["set"], (entity: Account) => void>
 >(true);
 
 expectType<TypeEqual<FuelContractRegisterContext["chain"]["id"], 0>>(true);
@@ -270,12 +270,13 @@ if (0) {
 
   it("binds schema entities and enums under a Fuel config", _ =>
     check(`
-import type { Entity, EntityName, Enum, EnumName } from "envio";
+import type { Account, Entity, EntityName, Enum, EnumName } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 const _entity: EntityName = "Account";
 // @ts-expect-error - "NotAnEntity" is not in the schema
 const _badEntity: EntityName = "NotAnEntity";
+expectType<TypeEqual<Entity<"Account">, Account>>(true);
 expectType<TypeEqual<Entity<"Account">["accountType"], "ADMIN" | "USER">>(true);
 
 const _enum: EnumName = "AccountType";
