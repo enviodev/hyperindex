@@ -19,6 +19,14 @@ pub enum Finding {
     /// Something we don't recognise at all: a newer subgraph feature, a newer
     /// graph-ts API, or a typo.
     Unknown { thing: String, location: String },
+    /// A `network:` no table names. graph-node takes a network's chain from
+    /// the provider configured for it, so the RPC endpoint is the answer;
+    /// `rpc_failure` is why asking it didn't work, when it was asked.
+    UnknownNetwork {
+        network: String,
+        location: String,
+        rpc_failure: Option<String>,
+    },
 }
 
 impl Finding {
@@ -59,6 +67,29 @@ impl Display for Finding {
                  {UPGRADE_COMMAND}\n\
                  If you're up to date and this is a real subgraph feature, please open an\n\
                  issue so we can add it: {ISSUES_URL}"
+            ),
+            Finding::UnknownNetwork {
+                network,
+                location,
+                rpc_failure: None,
+            } => write!(
+                f,
+                "Envio Subgraph doesn't know the network \"{network}\".\n  \
+                 Found in {location}.\n\
+                 graph-node indexes a network on whatever chain the RPC endpoint configured for it \
+                 serves; set that endpoint and Envio Subgraph asks it which chain it is:\n  \
+                 {RPC_ENV_VAR}=https://..."
+            ),
+            Finding::UnknownNetwork {
+                network,
+                location,
+                rpc_failure: Some(failure),
+            } => write!(
+                f,
+                "Envio Subgraph doesn't know the network \"{network}\".\n  \
+                 Found in {location}.\n\
+                 Envio Subgraph {failure}. Check that {RPC_ENV_VAR} is up and serves this \
+                 subgraph's chain."
             ),
         }
     }

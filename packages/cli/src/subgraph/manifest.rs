@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
-use super::errors::Report;
+use super::errors::{Finding, Report};
 use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
@@ -118,6 +118,41 @@ fn network_to_chain_id(network: &str) -> Option<u64> {
         return Some(chain_id);
     }
     Network::from_str(network).ok().map(|n| n.get_network_id())
+}
+
+/// What the RPC endpoint said about the network names no table knows: the
+/// chain it serves, or why it couldn't be asked.
+pub type NetworksFromRpc = BTreeMap<String, Result<u64, String>>;
+
+/// The `network:` values of the manifest's chain data sources and templates
+/// that neither the tables nor the non-EVM list know.
+pub fn unknown_networks(yaml: &str) -> Vec<String> {
+    let Ok(value) = serde_yaml::from_str::<Value>(yaml) else {
+        return vec![];
+    };
+    let mut names = Vec::new();
+    for key in ["dataSources", "templates"] {
+        let Some(sources) = value.get(key).and_then(Value::as_sequence) else {
+            continue;
+        };
+        for source in sources {
+            let is_chain = matches!(
+                source.get("kind").and_then(Value::as_str),
+                Some("ethereum" | "ethereum/contract")
+            );
+            let Some(network) = source.get("network").and_then(Value::as_str) else {
+                continue;
+            };
+            if is_chain
+                && network_to_chain_id(network).is_none()
+                && !NON_EVM_NETWORKS.iter().any(|(name, _)| *name == network)
+                && !names.iter().any(|name| name == network)
+            {
+                names.push(network.to_string());
+            }
+        }
+    }
+    names
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -453,6 +488,15 @@ impl Manifest {
 /// Parses subgraph.yaml, collecting every unsupported/unknown finding instead of
 /// stopping at the first.
 pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
+    parse_with_networks(yaml, &NetworksFromRpc::new(), report)
+}
+
+/// `parse`, with the chains an RPC endpoint named for networks no table knows.
+pub fn parse_with_networks(
+    yaml: &str,
+    networks: &NetworksFromRpc,
+    report: &mut Report,
+) -> Option<Manifest> {
     let value: Value = match serde_yaml::from_str(yaml) {
         Ok(value) => value,
         Err(err) => {
@@ -536,6 +580,7 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
             &format!("dataSources[{idx}]"),
             false,
             &mut declares_eth_calls,
+            networks,
             report,
         ) {
             data_sources.push(ds);
@@ -549,6 +594,7 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
             &format!("templates[{idx}]"),
             true,
             &mut declares_eth_calls,
+            networks,
             report,
         ) {
             templates.push(ds);
@@ -576,6 +622,7 @@ fn parse_data_source(
     path: &str,
     is_template: bool,
     declares_eth_calls: &mut bool,
+    networks: &NetworksFromRpc,
     report: &mut Report,
 ) -> Option<DataSource> {
     let mut obj = Obj::new(raw, path, report)?;
@@ -611,23 +658,30 @@ fn parse_data_source(
 
     let network = obj.string("network");
     let chain_id = match (&network, kind) {
-        (Some(network), DataSourceKind::Contract) => match network_to_chain_id(network) {
-            Some(id) => Some(id),
-            None => {
-                match NON_EVM_NETWORKS
-                    .iter()
-                    .find(|(name, _)| name == network)
-                    .map(|(_, ecosystem)| *ecosystem)
-                {
-                    Some(ecosystem) => report.unsupported(
-                        format!("{ecosystem} subgraphs — Envio Subgraph indexes EVM chains"),
-                        where_("network"),
-                    ),
-                    None => report.unknown(format!("the network \"{network}\""), where_("network")),
+        (Some(network), DataSourceKind::Contract) => {
+            match (network_to_chain_id(network), networks.get(network)) {
+                (Some(id), _) => Some(id),
+                (None, Some(Ok(id))) => Some(*id),
+                (None, asked) => {
+                    match NON_EVM_NETWORKS
+                        .iter()
+                        .find(|(name, _)| name == network)
+                        .map(|(_, ecosystem)| *ecosystem)
+                    {
+                        Some(ecosystem) => report.unsupported(
+                            format!("{ecosystem} subgraphs — Envio Subgraph indexes EVM chains"),
+                            where_("network"),
+                        ),
+                        None => report.push(Finding::UnknownNetwork {
+                            network: network.clone(),
+                            location: where_("network"),
+                            rpc_failure: asked.and_then(|asked| asked.clone().err()),
+                        }),
+                    }
+                    None
                 }
-                None
             }
-        },
+        }
         _ => None,
     };
 

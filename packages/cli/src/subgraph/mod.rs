@@ -944,6 +944,96 @@ fn rpc_for_chain(rpc: &RpcSelection, chain_id: u64) -> RpcSelection {
     }
 }
 
+/// How long the one `eth_chainId` request per endpoint may take.
+const CHAIN_ID_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The chain `ENVIO_SUBGRAPH_RPC` serves, for each manifest network no table
+/// knows. Only asked when there is such a network.
+fn networks_from_rpc(manifest_yaml: &str, rpc: &RpcSelection) -> manifest::NetworksFromRpc {
+    let unknown = manifest::unknown_networks(manifest_yaml);
+    if unknown.is_empty() {
+        return manifest::NetworksFromRpc::new();
+    }
+    let answer = chain_id_served_by(rpc);
+    unknown
+        .into_iter()
+        .map(|network| (network, answer.clone()))
+        .collect()
+}
+
+/// Asks each endpoint in turn which chain it serves; the first answer wins.
+/// On a thread of its own, since translation also runs inside the CLI's async
+/// runtime, where blocking on another one isn't allowed.
+fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
+    let endpoints: Vec<(String, BTreeMap<String, String>)> = match rpc {
+        RpcSelection::Url(url) => vec![(url.clone(), BTreeMap::new())],
+        RpcSelection::Single(entry) => {
+            vec![(entry.url.clone(), entry.headers.clone().unwrap_or_default())]
+        }
+        RpcSelection::List(entries) => entries
+            .iter()
+            .map(|entry| (entry.url.clone(), entry.headers.clone().unwrap_or_default()))
+            .collect(),
+    };
+    let asked = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("couldn't start a runtime to ask {RPC_ENV_VAR}: {err}"))?;
+        runtime.block_on(async {
+            let mut failure = format!("found no endpoint in {RPC_ENV_VAR}");
+            for (url, headers) in &endpoints {
+                match eth_chain_id(url, headers).await {
+                    Ok(chain_id) => return Ok(chain_id),
+                    Err(err) => failure = unanswered(url, &err),
+                }
+            }
+            Err(failure)
+        })
+    })
+    .join();
+    asked.unwrap_or_else(|_| Err(format!("failed asking {RPC_ENV_VAR} for its chain id")))
+}
+
+fn unanswered(url: &str, err: &anyhow::Error) -> String {
+    let host = endpoint_host(url);
+    format!("asked {host} (eth_chainId) which chain it serves and got no answer: {err:#}")
+}
+
+/// The endpoint without its path or query, where providers put API keys.
+fn endpoint_host(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(parsed) => match (parsed.host_str(), parsed.port()) {
+            (Some(host), Some(port)) => format!("{}://{host}:{port}", parsed.scheme()),
+            (Some(host), None) => format!("{}://{host}", parsed.scheme()),
+            _ => RPC_ENV_VAR.to_string(),
+        },
+        Err(_) => RPC_ENV_VAR.to_string(),
+    }
+}
+
+async fn eth_chain_id(url: &str, headers: &BTreeMap<String, String>) -> Result<u64> {
+    let client = reqwest::Client::builder()
+        .timeout(CHAIN_ID_TIMEOUT)
+        .build()?;
+    let mut request = client.post(url).json(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_chainId",
+        "params": [],
+    }));
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    let body: serde_json::Value = request.send().await?.json().await?;
+    let result = body
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("{body}"))?;
+    u64::from_str_radix(result.trim_start_matches("0x"), 16)
+        .map_err(|_| anyhow!("\"{result}\" isn't a chain id"))
+}
+
 /// Builds the envio config a translated manifest indexes with.
 pub fn translate(
     manifest_yaml: &str,
@@ -957,7 +1047,13 @@ pub fn translate(
     let mut report = Report::new();
     let usage = usage::scan(mapping_sources);
 
-    let Some(manifest) = manifest::parse(manifest_yaml, &mut report) else {
+    let rpc_parsed = rpc_env.map(parse_rpc_env);
+    let networks = match &rpc_parsed {
+        Some(Ok(rpc)) => networks_from_rpc(manifest_yaml, rpc),
+        _ => manifest::NetworksFromRpc::new(),
+    };
+    let Some(manifest) = manifest::parse_with_networks(manifest_yaml, &networks, &mut report)
+    else {
         report.into_result()?;
         return Err(anyhow!("Failed to read subgraph.yaml"));
     };
@@ -980,7 +1076,7 @@ pub fn translate(
 
     // Held back until the manifest and schema have been checked too, so a
     // mistyped endpoint doesn't hide what else this subgraph needs changed.
-    let (rpc, rpc_error) = match rpc_env.map(parse_rpc_env) {
+    let (rpc, rpc_error) = match rpc_parsed {
         Some(Ok(rpc)) => (Some(rpc), None),
         Some(Err(err)) => (None, Some(err)),
         None => (None, None),
@@ -2244,6 +2340,129 @@ type Gravatar @entity {
         )]);
         SystemConfig::parse_subgraph(&yaml, SCHEMA, "gravatar", &env, &files, ".", &ambiguous())
             .expect("filecoin over RPC");
+    }
+
+    /// An RPC endpoint on a thread of its own that answers every request with
+    /// `chain_id`, as `eth_chainId` would.
+    fn rpc_serving_chain(chain_id: u64) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a local port");
+        let url = format!("http://{}", listener.local_addr().expect("a local address"));
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut chunk).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                    let length = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+                let body = format!(r#"{{"jsonrpc":"2.0","id":1,"result":"0x{chain_id:x}"}}"#);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
+    }
+
+    // graph-node never looks a network name up: its operator binds the name to
+    // providers (`[chains.<name>]` in graph-node's config.toml) and the chain is
+    // whichever one they serve, so a self-hosted node can call a chain anything.
+    // A name no table here knows is, the same way, the chain ENVIO_SUBGRAPH_RPC
+    // serves.
+    #[test]
+    fn an_unknown_network_is_the_chain_its_rpc_serves() {
+        let yaml = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace("network: mainnet", "network: risechain");
+
+        let unknown = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .err()
+        .map(|err| format!("{err:#}"))
+        .unwrap_or_default();
+        assert!(
+            unknown.contains("doesn't know the network \"risechain\"")
+                && unknown.contains("ENVIO_SUBGRAPH_RPC=https://"),
+            "unexpected error: {unknown}"
+        );
+
+        let rpc = rpc_serving_chain(11155931);
+        let translation = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            Some(&rpc),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .expect("the network is the chain the RPC serves");
+        let chain = &translation.human_config.chains[0];
+        assert_eq!(
+            (chain.id, chain.rpc.clone()),
+            (11155931, Some(RpcSelection::Url(rpc)))
+        );
+    }
+
+    // An endpoint that doesn't answer leaves the network unknown, and the error
+    // says what was asked.
+    #[test]
+    fn an_unknown_network_names_the_rpc_that_did_not_answer() {
+        let yaml = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace("network: mainnet", "network: risechain");
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a local port");
+        let message = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            Some(&format!("http://{closed}")),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .err()
+        .map(|err| format!("{err:#}"))
+        .unwrap_or_default();
+        assert!(
+            message.contains("doesn't know the network \"risechain\"")
+                && message.contains(&format!(
+                    "asked http://{closed} (eth_chainId) which chain it serves and got no answer"
+                )),
+            "unexpected error: {message}"
+        );
     }
 
     #[test]
