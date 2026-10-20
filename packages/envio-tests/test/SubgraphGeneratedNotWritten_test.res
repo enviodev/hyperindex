@@ -1,10 +1,9 @@
 // graph codegen writes generated/<data source>/<ABI>.ts for each data source of
 // the manifest it runs on, and nothing else. A mapping importing a path it never
-// writes, from an ABI no manifest names — NNS imports
-// generated/NNSController/NNSController after renaming that data source's ABI
-// IController — fails `graph build` too (TS6054), and envio has nothing to write
-// it from. envio reported only Node's "Cannot find module"; it now says what the
-// manifest does declare.
+// writes, from an ABI no manifest names and not under the data source's own name,
+// fails `graph build` too (TS6054), and envio has nothing to write it from.
+// envio reported only Node's "Cannot find module"; it now says what the manifest
+// does declare.
 let manifest = `
 specVersion: 0.0.5
 schema:
@@ -51,7 +50,7 @@ let _ = InternalTestIndexer.fromSubgraph(
     (
       "src/staker.ts",
       `
-import { TokenStaked } from "../generated/NNSController/NNSController";
+import { TokenStaked } from "../generated/NNSController/Controller";
 import { Stake } from "../generated/schema";
 
 export function handleTokenStaked(event: TokenStaked): void {
@@ -73,9 +72,9 @@ describe("a mapping importing generated code graph codegen doesn't write", () =>
 
     t.expect(message).toBe(
       "Envio Subgraph failed to load the mapping ./src/staker.ts.\\n" +
-        "  Cannot find module '<root>/generated/NNSController/NNSController' imported from <root>/src/staker.ts\\n" +
+        "  Cannot find module '<root>/generated/NNSController/Controller' imported from <root>/src/staker.ts\\n" +
         "graph codegen writes generated/<data source>/<ABI>.ts for each data source of the manifest, and " +
-        'its data source "NNSController" has no ABI named "NNSController" (it has IController), so \`graph build\` ' +
+        'its data source "NNSController" has no ABI named "Controller" (it has IController), so \`graph build\` ' +
         "fails on this import as well. A tree generated for an earlier manifest may still have the file.",
     );
   });

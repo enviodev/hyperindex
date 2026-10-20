@@ -573,8 +573,16 @@ function fillFromOtherManifests(root: string, dir: string, manifestFile: string,
   const filled = subgraphFillGenerated(root, path.resolve(root, manifestFile), dir, wanted);
   const shown = (file: string) => path.join(path.relative(root, dir), file);
   const bySource = new Map<string, string[]>();
-  for (const { file, source, abiName } of filled) {
-    if (abiName) {
+  for (const { file, source, abiName, renamedFrom } of filled) {
+    if (renamedFrom) {
+      const name = path.basename(path.dirname(file));
+      warn(
+        `Envio Subgraph wrote ${shown(file)} from data source ${name}'s ABI "${renamedFrom}" (${source}) under the ` +
+          `name ${name}: the mappings import it, and graph codegen writes that ABI to ${name}/${renamedFrom}.ts now, ` +
+          "so `graph build` fails on a clean checkout. The tree this subgraph was built with had it from when the " +
+          "ABI bore the data source's name.",
+      );
+    } else if (abiName) {
       warn(
         `Envio Subgraph wrote ${shown(file)} from the ABI "${abiName}" (${source}): the mappings import it, and no ` +
           `manifest of the project has a data source or template named "${path.basename(path.dirname(file))}" that ` +

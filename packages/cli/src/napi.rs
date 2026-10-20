@@ -180,6 +180,9 @@ pub struct FilledGeneratedFile {
     pub source: String,
     /// Set when the file was written from the ABI of this name.
     pub abi_name: Option<String>,
+    /// Set when the file was written from its data source's ABI, which now has
+    /// this name rather than the data source's.
+    pub renamed_from: Option<String>,
 }
 
 /// The `wanted` generated files that the project's other manifests declare,
@@ -216,6 +219,7 @@ pub fn subgraph_fill_generated(
                 file,
                 source: relative(&manifest),
                 abi_name: None,
+                renamed_from: None,
             })
             .collect();
     let all: Vec<std::path::PathBuf> = std::iter::once(std::path::PathBuf::from(&manifest_file))
@@ -230,6 +234,17 @@ pub fn subgraph_fill_generated(
                     .map(|stem| stem.to_string_lossy().to_string()),
                 file,
                 source: relative(&abi_file),
+                renamed_from: None,
+            }),
+    );
+    filled.extend(
+        crate::subgraph::codegen::fill_from_source_abis(&all, root, output_dir, &wanted)
+            .into_iter()
+            .map(|(file, abi_file, abi_name)| FilledGeneratedFile {
+                file,
+                source: relative(&abi_file),
+                abi_name: None,
+                renamed_from: Some(abi_name),
             }),
     );
     filled
