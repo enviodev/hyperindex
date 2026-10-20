@@ -61,3 +61,24 @@ export function splitTypes(list: string): string[] {
   if (list.length > 0) types.push(list.slice(start));
   return types;
 }
+
+type AbiParam = { type: string; components?: AbiParam[] };
+
+/** An ABI parameter's type as graph codegen spells it: a tuple as `(…)`, keeping its array suffix. */
+function abiTypeString(param: AbiParam): string {
+  if (!param.type.startsWith("tuple")) return param.type;
+  return `(${(param.components ?? []).map(abiTypeString).join(",")})${param.type.slice("tuple".length)}`;
+}
+
+/** The first function named `name` in an ABI, as graph codegen's call signature: `name(inputs):(outputs)`. */
+export function functionSignature(abi: unknown, name: string): string | null {
+  const record = abi as { abi?: unknown; compilerOutput?: { abi?: unknown } } | null;
+  const entries = Array.isArray(abi) ? abi : (record?.abi ?? record?.compilerOutput?.abi);
+  if (!Array.isArray(entries)) return null;
+  const found = entries.find(
+    (entry) => (entry?.type ?? "function") === "function" && entry?.name === name,
+  ) as { inputs?: AbiParam[]; outputs?: AbiParam[] } | undefined;
+  if (!found) return null;
+  const list = (params: AbiParam[] | undefined) => (params ?? []).map(abiTypeString).join(",");
+  return `${name}(${list(found.inputs)}):(${list(found.outputs)})`;
+}

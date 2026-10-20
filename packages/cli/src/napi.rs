@@ -131,11 +131,20 @@ pub fn subgraph_keccak256(
     alloy_primitives::keccak256(&*input).to_vec().into()
 }
 
-/// The handlers of the mapping at `mapping_file` whose code can reach
-/// `DataSourceTemplate.create` — the only ones the register pass reruns.
+/// For each data source (its mapping file and handlers), the handlers the
+/// register pass reruns: those whose code can reach `DataSourceTemplate.create`,
+/// and those that touch an entity type whose loaded state decides a create.
 #[napi_derive::napi]
-pub fn subgraph_creating_handlers(mapping_file: String, handlers: Vec<String>) -> Vec<String> {
-    crate::subgraph::creates::creating_handlers(std::path::Path::new(&mapping_file), &handlers)
+pub fn subgraph_register_handlers(
+    mapping_files: Vec<String>,
+    handlers: Vec<Vec<String>>,
+) -> Vec<Vec<String>> {
+    let sources: Vec<(std::path::PathBuf, Vec<String>)> = mapping_files
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .zip(handlers)
+        .collect();
+    crate::subgraph::creates::register_handlers(&sources)
 }
 
 #[napi_derive::napi(object)]
@@ -169,6 +178,120 @@ pub fn subgraph_bundled_codegen(
         })
     };
     run().map_err(|e| napi::Error::from_reason(format!("{e:#}")))
+}
+
+#[napi_derive::napi(object)]
+pub struct FilledGeneratedFile {
+    /// Relative to the generated directory.
+    pub file: String,
+    /// The project-relative manifest that declares its data source, or the ABI
+    /// file it was written from when no manifest does (`abi_name` set).
+    pub source: String,
+    /// Set when the file was written from the ABI of this name.
+    pub abi_name: Option<String>,
+    /// Set when the file was written from its data source's ABI, which now has
+    /// this name rather than the data source's.
+    pub renamed_from: Option<String>,
+    /// The file was written from an ABI file no manifest names any more.
+    pub undeclared: bool,
+}
+
+/// The `wanted` generated files that the project's other manifests declare,
+/// then those whose ABI some manifest names, written into `output_dir` (see
+/// `codegen::fill_from_manifests` and `codegen::fill_from_abi_names`).
+#[napi_derive::napi]
+pub fn subgraph_fill_generated(
+    root: String,
+    manifest_file: String,
+    output_dir: String,
+    wanted: Vec<String>,
+) -> Vec<FilledGeneratedFile> {
+    let root = std::fs::canonicalize(&root).unwrap_or_else(|_| std::path::PathBuf::from(&root));
+    let root = root.as_path();
+    let output_dir = std::path::Path::new(&output_dir);
+    let own = std::fs::canonicalize(&manifest_file).ok();
+    let others: Vec<std::path::PathBuf> = crate::subgraph::find_manifests(root)
+        .into_iter()
+        .map(|relative| root.join(relative))
+        .chain(crate::subgraph::codegen::data_source_fragments(root))
+        .filter(|manifest| std::fs::canonicalize(manifest).ok() != own)
+        .collect();
+    let relative = |path: &std::path::Path| {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        path.strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string()
+    };
+    let mut filled: Vec<FilledGeneratedFile> =
+        crate::subgraph::codegen::fill_from_manifests(&others, root, output_dir, &wanted)
+            .into_iter()
+            .map(|(file, manifest)| FilledGeneratedFile {
+                file,
+                source: relative(&manifest),
+                abi_name: None,
+                renamed_from: None,
+                undeclared: false,
+            })
+            .collect();
+    let all: Vec<std::path::PathBuf> = std::iter::once(std::path::PathBuf::from(&manifest_file))
+        .chain(others)
+        .collect();
+    filled.extend(
+        crate::subgraph::codegen::fill_from_abi_names(&all, root, output_dir, &wanted)
+            .into_iter()
+            .map(|(file, abi_file)| FilledGeneratedFile {
+                abi_name: std::path::Path::new(&file)
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string()),
+                file,
+                source: relative(&abi_file),
+                renamed_from: None,
+                undeclared: false,
+            }),
+    );
+    filled.extend(
+        crate::subgraph::codegen::fill_from_source_abis(&all, root, output_dir, &wanted)
+            .into_iter()
+            .map(|(file, abi_file, abi_name)| FilledGeneratedFile {
+                file,
+                source: relative(&abi_file),
+                abi_name: None,
+                renamed_from: Some(abi_name),
+                undeclared: false,
+            }),
+    );
+    filled.extend(
+        crate::subgraph::codegen::fill_from_abi_files(&all, root, output_dir, &wanted)
+            .into_iter()
+            .map(|(file, abi_file)| FilledGeneratedFile {
+                abi_name: std::path::Path::new(&file)
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string()),
+                file,
+                source: relative(&abi_file),
+                renamed_from: None,
+                undeclared: true,
+            }),
+    );
+    filled
+}
+
+/// The packages of the workspace `root` sits in, name to directory.
+#[napi_derive::napi]
+pub fn subgraph_workspace_packages(root: String) -> std::collections::HashMap<String, String> {
+    crate::subgraph::workspace::packages(std::path::Path::new(&root))
+        .into_iter()
+        .map(|(name, dir)| (name, dir.display().to_string()))
+        .collect()
+}
+
+#[napi_derive::napi]
+pub fn subgraph_bundled_codegen_current(manifest_file: String, output_dir: String) -> bool {
+    crate::subgraph::codegen::is_current(
+        std::path::Path::new(&manifest_file),
+        std::path::Path::new(&output_dir),
+    )
 }
 
 /// Parses a subgraph project the same way `from_user_api` parses an envio one:
