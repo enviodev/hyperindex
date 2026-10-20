@@ -429,8 +429,10 @@ class BigInt_ extends Uint8Array {
   toHex(): string {
     return this.toHexString();
   }
+  // graph-node's `big_int_to_hex`: the magnitude's bytes in hex, leading
+  // zeros trimmed, the sign dropped.
   toHexString(): string {
-    return toHex(this.value);
+    return `0x${(this.value < 0n ? -this.value : this.value).toString(16)}`;
   }
   toI32(): number {
     return Number(signedFromBytes(this.value, 4, "i32"));
