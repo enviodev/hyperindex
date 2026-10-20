@@ -598,6 +598,13 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 A subgraph.yaml says *what* to index; these two vars are the only
 envio-side *how*.
 
+**Call cache.** Contract calls, `getBalance`/`hasCode` and file data source
+files are cached in Postgres (effect cache tables), keyed by the call and its
+block (a file by its content id), like graph-node's call cache. Those tables
+survive `envio start -r`: the schema is dropped and recreated, they are put
+back, and a resync asks the RPC only for what it never asked. A cache key over
+2 kB is the input's sha256.
+
 `ENVIO_SUBGRAPH_NETWORK=<name>` is `graph build --network <name>`: the
 manifest is rewritten from `networks.json` beside it before translation, as
 graph-cli rewrites it (every data source moves to the network and takes its
