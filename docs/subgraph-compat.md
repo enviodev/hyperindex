@@ -478,7 +478,9 @@ classes call `DataSource.create`. Consequences:
     data source fragment a build script assembles manifests from — that
     declares that data source (or template) and ABI; failing that, from a
     manifest ABI of that name, since what graph codegen writes for a data
-    source and ABI depends on the ABI alone (a renamed data source). A file
+    source and ABI depends on the ABI alone (a renamed data source); and a
+    `<X>/<X>.ts` from data source X's own ABI under that name (a renamed
+    ABI). A file
     none of them accounts for fails to load with the reason (no data source of
     that name, no such ABI, no `index.ts`), as `graph build` fails on it.
 - **Workspace packages resolve without an install.** A bare import a monorepo's
