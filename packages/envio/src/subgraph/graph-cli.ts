@@ -389,7 +389,7 @@ function codegenSteps(root: string, skip: SkippedSteps = {}): string[] | null {
     .split("&&")
     .map((step) => step.trim())
     .filter(Boolean)
-    .filter((step) => !(skip.renderScript !== undefined && runsScript(step, skip.renderScript)))
+    .filter((step) => !(skip.renderScripts ?? []).some((script) => runsScript(step, script)))
     .filter((step) => !skip.ranSteps?.includes(step));
   return steps.some((step) => GRAPH_CODEGEN.test(step)) ? steps : null;
 }
@@ -399,8 +399,8 @@ function codegenSteps(root: string, skip: SkippedSteps = {}): string[] | null {
  * picked: run again, they would write the script's default network over it.
  */
 type SkippedSteps = {
-  /** The package.json script envio rendered the manifest with itself. */
-  renderScript?: string;
+  /** The package.json script envio rendered the manifest with itself, and those it runs. */
+  renderScripts?: string[];
   /** The codegen script's own steps envio ran before translating. */
   ranSteps?: string[];
 };

@@ -134,6 +134,10 @@ pub struct SubgraphRuntimeConfig {
 #[serde(rename_all = "camelCase")]
 pub struct RenderedManifest {
     pub script: String,
+    /// The scripts that one runs through `npm run`: the codegen script
+    /// doesn't run any of them again either.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inlined: Vec<String>,
     pub network: String,
     pub template: String,
     pub view: String,
@@ -3323,6 +3327,89 @@ type Renewal implements Event @entity {
                      can't repeat it:",
                     "  \"manifest\": sh scripts/write.sh manifest",
                 ]
+            )
+        );
+    }
+
+    // Aave's protocol-subgraphs: one script per deployment binds the
+    // variables (`"deploy:hosted:mainnet-v3": "VERSION=v3 BLOCKCHAIN=v3
+    // NETWORK=mainnet env-cmd npm run prepare:subgraph && …"`), and
+    // `prepare:subgraph` renders with them and copies the schema in
+    // (`npm run generate:schema`: `cp ./schemas/${VERSION}.schema.graphql
+    // schema.graphql`).
+    #[test]
+    fn renders_through_the_scripts_a_deployment_script_runs() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-inline").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("schemas")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::rename(
+            root.join("schema.graphql"),
+            root.join("schemas/v3.schema.graphql"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/v3.subgraph.template.yaml"),
+            gravity_template(),
+        )
+        .unwrap();
+        for (name, network, address) in [
+            (
+                "mainnet-v3",
+                "mainnet",
+                "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC",
+            ),
+            (
+                "arbitrum-v3",
+                "arbitrum-one",
+                "0x00000000000014aA86C5d3c41765bb24e11bd701",
+            ),
+        ] {
+            fs::write(
+                root.join(format!("config/{name}.json")),
+                format!(
+                    r#"{{"network": "{network}", "gravity": {{"address": "{address}", "startBlock": 1}}}}"#
+                ),
+            )
+            .unwrap();
+        }
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "generate:schema": "cp ./schemas/${VERSION}.schema.graphql  schema.graphql",
+  "prepare:subgraph": "mustache ./config/${NETWORK}-${VERSION}.json ./templates/${BLOCKCHAIN}.subgraph.template.yaml > subgraph.yaml && rm -rf generated && npm run generate:schema && npm run subgraph:codegen && npm run subgraph:build",
+  "subgraph:codegen": "graph codegen --output-dir ./generated",
+  "subgraph:build": "graph build",
+  "subgraph:deploy": "graph deploy $SLUG",
+  "deploy:hosted:mainnet-v3": "VERSION=v3 BLOCKCHAIN=v3 NETWORK=mainnet env-cmd npm run prepare:subgraph && SLUG=protocol-v3 env-cmd npm run subgraph:deploy",
+  "deploy:hosted:arbitrum-v3": "VERSION=v3 BLOCKCHAIN=v3 NETWORK=arbitrum env-cmd npm run prepare:subgraph && SLUG=protocol-v3-arbitrum env-cmd npm run subgraph:deploy"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let unset = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-v3\n").unwrap();
+        let picked = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                unset.contains("(mainnet-v3, arbitrum-v3)"),
+                chain_of(&picked),
+                root.join("schema.graphql").exists(),
+            ),
+            (
+                true,
+                (
+                    42161,
+                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                ),
+                true,
             )
         );
     }

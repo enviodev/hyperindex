@@ -375,22 +375,46 @@ enum Command {
     Echo(Vec<Word>),
     /// `mkdir`, `true`, `rm`: nothing a render reads.
     NoOp,
+    /// `cp <from> <to>`: Aave copies the schema of its version in.
+    Copy {
+        from: Word,
+        to: Word,
+    },
     /// graph-cli itself: what follows is envio's job, not the render's.
     Graph,
+    /// `npm run <script>` (`yarn <script>`, `pnpm <script>`), with the
+    /// variables set for it: inlined, so its steps are read with them bound.
+    RunScript {
+        name: String,
+        env: Vec<(String, Word)>,
+    },
     Other(String),
 }
 
-fn is_assignment(word: &Word) -> bool {
-    matches!(word.first(), Some(Part::Lit(text)) if text.split_once('=').is_some_and(|(name, _)| {
-        !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            && !name.starts_with(|ch: char| ch.is_ascii_digit())
-    }))
+fn assignment(word: &Word) -> Option<(String, Word)> {
+    let Some(Part::Lit(text)) = word.first() else {
+        return None;
+    };
+    let (name, value) = text.split_once('=')?;
+    let valid = !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !name.starts_with(|ch: char| ch.is_ascii_digit());
+    if !valid {
+        return None;
+    }
+    let mut rest = vec![Part::Lit(value.to_string())];
+    rest.extend(word[1..].iter().cloned());
+    Some((name.to_string(), rest))
 }
 
 fn classify(words: &[Word]) -> Command {
     let mut words: Vec<&Word> = words.iter().collect();
+    let mut env: Vec<(String, Word)> = Vec::new();
     loop {
-        while words.first().is_some_and(|word| is_assignment(word)) {
+        while let Some(pair) = words.first().and_then(|word| assignment(word)) {
+            env.push(pair);
             words.remove(0);
         }
         let Some(first) = words.first().and_then(|word| literal(word)) else {
@@ -412,6 +436,31 @@ fn classify(words: &[Word]) -> Command {
             ("cross-env" | "env", _) => {
                 words.remove(0);
             }
+            // env-cmd loads a .env file of deploy keys; a render reads none.
+            ("env-cmd", _) => {
+                words.remove(0);
+                while let Some(flag) = words.first().and_then(|word| literal(word)) {
+                    if !flag.starts_with('-') {
+                        break;
+                    }
+                    words.remove(0);
+                    if matches!(
+                        flag.as_str(),
+                        "-f" | "--file" | "-e" | "--environments" | "-r" | "--rc-file"
+                    ) {
+                        if words.is_empty() {
+                            break;
+                        }
+                        words.remove(0);
+                    }
+                }
+            }
+            ("npm" | "pnpm" | "yarn" | "bun", Some("run" | "run-script")) => {
+                return match words.get(2).and_then(|word| literal(word)) {
+                    Some(name) => Command::RunScript { name, env },
+                    None => Command::Other(format!("{name} run")),
+                };
+            }
             ("npm" | "pnpm", Some("exec" | "dlx")) | ("yarn", Some("exec")) => {
                 words.drain(..2);
                 if words.first().and_then(|word| literal(word)).as_deref() == Some("--") {
@@ -421,10 +470,32 @@ fn classify(words: &[Word]) -> Command {
             ("yarn" | "pnpm", Some("mustache" | "yaml2json" | "graph")) => {
                 words.remove(0);
             }
+            ("yarn" | "pnpm", Some(script)) if !script.starts_with('-') => {
+                return Command::RunScript {
+                    name: script.to_string(),
+                    env,
+                };
+            }
+            ("cp", _) => {
+                return match &words[1..] {
+                    [from, to]
+                        if [from, to].iter().all(|word| {
+                            literal(word).is_none_or(|text| !text.starts_with('-'))
+                        }) =>
+                    {
+                        Command::Copy {
+                            from: (*from).clone(),
+                            to: (*to).clone(),
+                        }
+                    }
+                    _ => Command::Other("cp".to_string()),
+                };
+            }
             ("mustache", _) => {
                 let args: Vec<&Word> = words[1..].to_vec();
                 if args.iter().any(|word| {
-                    literal(word).is_none_or(|text| text.starts_with('-') && text != "-")
+                    literal(word).is_some_and(|text| text.starts_with('-') && text != "-")
+                        || word.contains(&Part::Opaque)
                 }) {
                     // Partials (`-p`) and options the CLI may grow.
                     return Command::Other(format!(
@@ -502,6 +573,8 @@ fn classify(words: &[Word]) -> Command {
 #[derive(Debug, Clone)]
 struct Plan {
     script: String,
+    /// The scripts it runs through `npm run`, inlined into `steps`.
+    inlined: Vec<String>,
     steps: Vec<Step>,
     /// The variable that picks the view (`config/${NETWORK:-mainnet}.json`),
     /// with the script's own default, and the word it appears in.
@@ -531,9 +604,86 @@ fn same_path(dir: &Path, word: &Word, target: &Path) -> bool {
     literal(word).is_some_and(|text| normalize_path(dir.join(text)) == target)
 }
 
+fn bind(word: &Word, bindings: &BTreeMap<String, String>) -> Word {
+    word.iter()
+        .map(|part| match part {
+            Part::Var { name, .. } if bindings.contains_key(name) => {
+                Part::Lit(bindings[name].clone())
+            }
+            part => part.clone(),
+        })
+        .collect()
+}
+
+/// `steps` with every `npm run <script>` the script itself is replaced by,
+/// read with the variables the call sets — a shell passes them to the
+/// script's own commands, not to the words of the call.
+fn inline_scripts(
+    scripts: &BTreeMap<String, String>,
+    steps: Vec<Step>,
+    bindings: &BTreeMap<String, String>,
+    depth: usize,
+    names: &mut Vec<String>,
+) -> Vec<Step> {
+    let mut inlined = Vec::new();
+    for step in steps {
+        let step = Step {
+            stages: step
+                .stages
+                .iter()
+                .map(|stage| Stage {
+                    words: stage
+                        .words
+                        .iter()
+                        .map(|word| bind(word, bindings))
+                        .collect(),
+                    redirects: stage
+                        .redirects
+                        .iter()
+                        .map(|(kind, word)| (*kind, bind(word, bindings)))
+                        .collect(),
+                })
+                .collect(),
+            after_failure: step.after_failure,
+        };
+        let call = match step.stages.as_slice() {
+            [stage] if stage.redirects.is_empty() && !step.after_failure => {
+                match classify(&stage.words) {
+                    Command::RunScript { name, env } => Some((name, env)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let inner = call.and_then(|(name, env)| {
+            let text = scripts.get(&name).filter(|_| depth < 5)?;
+            let mut scoped = bindings.clone();
+            for (variable, value) in env {
+                if let Some(value) = literal(&value) {
+                    scoped.insert(variable, value);
+                }
+            }
+            let steps = parse_steps(text)?;
+            names.push(name);
+            Some(inline_scripts(scripts, steps, &scoped, depth + 1, names))
+        });
+        match inner {
+            Some(inner) => inlined.extend(inner),
+            None => inlined.push(step),
+        }
+    }
+    inlined
+}
+
 /// How a script relates to the manifest at `target`: a plan when envio can
 /// repeat it, a writer when it can't, or nothing.
-fn analyze(dir: &Path, name: &str, script: &str, target: &Path) -> Option<Result<Plan, Writer>> {
+fn analyze(
+    dir: &Path,
+    name: &str,
+    script: &str,
+    target: &Path,
+    scripts: &BTreeMap<String, String>,
+) -> Option<Result<Plan, Writer>> {
     let mentions = script.contains(
         target
             .file_name()
@@ -549,6 +699,8 @@ fn analyze(dir: &Path, name: &str, script: &str, target: &Path) -> Option<Result
             })
         });
     };
+    let mut inlined = Vec::new();
+    let steps = inline_scripts(scripts, steps, &BTreeMap::new(), 0, &mut inlined);
     let mut unsupported: Option<String> = None;
     let mut writes: Option<(Word, String)> = None;
     let mut holes: Vec<(String, Option<String>, Word)> = Vec::new();
@@ -604,6 +756,20 @@ fn analyze(dir: &Path, name: &str, script: &str, target: &Path) -> Option<Result
                         stdin_view = Some(file.clone());
                     }
                 }
+                Command::Copy { from, to } => {
+                    inputs.push(from.clone());
+                    if writes_target(to) {
+                        match literal(from) {
+                            Some(file) => writes = Some((from.clone(), file)),
+                            None => {
+                                unsupported.get_or_insert_with(|| word_text(from));
+                            }
+                        }
+                    }
+                }
+                Command::RunScript { name, .. } => {
+                    unsupported.get_or_insert_with(|| format!("npm run {name}"));
+                }
                 Command::Echo(_) | Command::NoOp => {}
             }
             for (_, word) in &stage.redirects {
@@ -651,6 +817,7 @@ fn analyze(dir: &Path, name: &str, script: &str, target: &Path) -> Option<Result
     }
     Some(Ok(Plan {
         script: name.to_string(),
+        inlined,
         steps,
         hole: holes.into_iter().next(),
         view,
@@ -988,7 +1155,14 @@ impl Run<'_> {
                 Output::Text(format!("{}\n", parts.join(" ")))
             }
             Command::NoOp => Output::Text(String::new()),
-            Command::Graph | Command::Other(_) => unreachable!("plans hold only these"),
+            Command::Copy { from, to } => {
+                let text = self.read(&from)?;
+                self.write(&to, text, false)?;
+                Output::Text(String::new())
+            }
+            Command::Graph | Command::RunScript { .. } | Command::Other(_) => {
+                unreachable!("plans hold only these")
+            }
         })
     }
 
@@ -1032,6 +1206,8 @@ impl Run<'_> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rendered {
     pub script: String,
+    /// The scripts the one rendering runs through `npm run`.
+    pub inlined: Vec<String>,
     pub network: String,
     pub template: String,
     pub view: String,
@@ -1204,6 +1380,7 @@ fn run_codegen_prelude(
     record(project_root, target, &manifest)?;
     Ok(Some(Rendered {
         script: "codegen".to_string(),
+        inlined: Vec::new(),
         network: picked.unwrap_or_default(),
         template: String::new(),
         view: String::new(),
@@ -1262,8 +1439,10 @@ fn absolute(path: &Path) -> PathBuf {
 fn scan(dir: &Path, target: &Path) -> (Vec<Plan>, Vec<Writer>) {
     let mut plans = Vec::new();
     let mut writers = Vec::new();
-    for (name, script) in package_scripts(dir) {
-        match analyze(dir, &name, &script, target) {
+    let all = package_scripts(dir);
+    let scripts: BTreeMap<String, String> = all.iter().cloned().collect();
+    for (name, script) in all {
+        match analyze(dir, &name, &script, target, &scripts) {
             Some(Ok(plan)) => {
                 // nftx's public repo gitignores the template its mustache
                 // scripts render: a ts-node script writes it first.
@@ -1286,6 +1465,10 @@ fn scan(dir: &Path, target: &Path) -> (Vec<Plan>, Vec<Writer>) {
             None => {}
         }
     }
+    // zora's `codegen` runs `yarn gen-yaml-config`, the script that renders:
+    // the one that writes the manifest itself is the plan.
+    let names: Vec<String> = plans.iter().map(|plan| plan.script.clone()).collect();
+    plans.retain(|plan| !plan.inlined.iter().any(|name| names.contains(name)));
     (plans, writers)
 }
 
@@ -1394,6 +1577,7 @@ pub fn render_manifest(
 
     Ok(Some(Rendered {
         script: choice.plan.script.clone(),
+        inlined: choice.plan.inlined.clone(),
         network: choice.network.clone(),
         template: choice.plan.template.clone(),
         view: choice.view.clone(),

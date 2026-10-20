@@ -158,7 +158,14 @@ type SubgraphConfig = {
   /** Per chain id, the reorg depth a block handler's header reads are held back by. */
   blockHeaderLag?: Record<number, number>;
   /** Set when envio wrote the manifest from the repo's template, or ran the codegen steps that write it. */
-  renderedManifest?: { script: string; network: string; template: string; view: string; steps?: string[] };
+  renderedManifest?: {
+    script: string;
+    inlined?: string[];
+    network: string;
+    template: string;
+    view: string;
+    steps?: string[];
+  };
   /** Files the manifest names, as written and as the repo spells them, differing only in case. */
   pathCaseFixes?: [string, string][];
   /** The network networks.json was applied for when none was picked: the repo build's `--network`. */
@@ -1177,7 +1184,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     config.manifestFile,
     sources.map((source) => source.mappingFile),
     {
-      renderScript: rendered?.steps?.length ? undefined : rendered?.script,
+      renderScripts: rendered && !rendered.steps?.length ? [rendered.script, ...(rendered.inlined ?? [])] : [],
       ranSteps: rendered?.steps,
       pathCaseFixes: config.pathCaseFixes,
     },

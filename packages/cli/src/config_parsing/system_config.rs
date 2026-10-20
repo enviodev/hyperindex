@@ -1709,6 +1709,7 @@ impl SystemConfig {
             subgraph.rendered_manifest =
                 rendered.map(|rendered| crate::subgraph::RenderedManifest {
                     script: rendered.script,
+                    inlined: rendered.inlined,
                     network: rendered.network,
                     template: rendered.template,
                     view: rendered.view,

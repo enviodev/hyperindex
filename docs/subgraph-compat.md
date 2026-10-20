@@ -560,10 +560,17 @@ package.json script: one per network (`"prepare:matic": "mustache
 network from a variable (`yaml2json config/${NETWORK:-zora-testnet}.yaml |
 mustache - subgraph.template.yaml >> subgraph.yaml`). When the manifest is
 missing, envio looks for a script in the manifest's own package.json that
-writes it with the mustache CLI, and repeats it when every step before
-graph-cli is one of `mustache <view> <template> [out]` (also `npx`/`yarn`/
-`pnpm exec`/`cross-env` around it), `yaml2json <file>`, `cat`, `echo`,
-`mkdir`/`rm`, with `|`, `>`, `>>`, `&&` and `;`:
+writes it with the mustache CLI (or `cp`s a committed one into place), and
+repeats it when every step before graph-cli is one of `mustache <view>
+<template> [out]` (also `npx`/`yarn`/`pnpm exec`/`cross-env`/`env-cmd` around
+it), `yaml2json <file>`, `cat`, `cp <from> <to>`, `echo`, `mkdir`/`rm`, with
+`|`, `>`, `>>`, `&&` and `;`. A step that is `npm run <script>` (`yarn
+<script>`, `pnpm <script>`) is read as that script's steps, with the variables
+the call sets bound in them, as a shell passes them on: Aave's
+`"deploy:hosted:mainnet-v3": "VERSION=v3 BLOCKCHAIN=v3 NETWORK=mainnet env-cmd
+npm run prepare:subgraph"` renders `./config/mainnet-v3.json` into
+`./templates/v3.subgraph.template.yaml` and copies `schemas/v3.schema.graphql`
+in. A script that only calls another one that renders is that one.
 
 - The network picks the view: the variable's value (`config/<network>.yaml`,
   `config/<network>/config.json`, every file that matches), or, for one script
