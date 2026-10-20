@@ -55,8 +55,8 @@ impl CodegenMode {
 /// files written, relative to it. Needs only the manifest, its schema and its
 /// ABI files: no install, no network.
 pub fn generate(manifest_file: &Path, output_dir: &Path) -> Result<Vec<String>> {
-    let graph_ts = GraphTs::detect(manifest_file.parent().unwrap_or(Path::new(".")));
-    let files = generate_files(manifest_file, graph_ts)?;
+    let dir = manifest_file.parent().unwrap_or(Path::new("."));
+    let files = generate_files(manifest_file, GraphTs::detect(dir), GraphCli::detect(dir))?;
     let mut written = Vec::new();
     for (relative, text) in files {
         let target = output_dir.join(&relative);
@@ -114,7 +114,7 @@ pub fn fill_from_manifests(
                     };
                     let Some(text) = load_abi(&abi_name, &base.join(&file))
                         .ok()
-                        .and_then(|abi| abi_ts(&abi).ok())
+                        .and_then(|abi| abi_ts(&abi, GraphCli::detect(base)).ok())
                     else {
                         continue;
                     };
@@ -137,8 +137,8 @@ pub fn fill_from_manifests(
 /// Whether `output_dir` holds what `generate` would write there now, file for
 /// file, so it can't be stale.
 pub fn is_current(manifest_file: &Path, output_dir: &Path) -> bool {
-    let graph_ts = GraphTs::detect(manifest_file.parent().unwrap_or(Path::new(".")));
-    generate_files(manifest_file, graph_ts).is_ok_and(|files| {
+    let dir = manifest_file.parent().unwrap_or(Path::new("."));
+    generate_files(manifest_file, GraphTs::detect(dir), GraphCli::detect(dir)).is_ok_and(|files| {
         files.iter().all(|(relative, text)| {
             std::fs::read_to_string(output_dir.join(relative)).is_ok_and(|disk| &disk == text)
         })
@@ -146,7 +146,11 @@ pub fn is_current(manifest_file: &Path, output_dir: &Path) -> bool {
 }
 
 /// The generated tree in memory: relative path to file text.
-pub fn generate_files(manifest_file: &Path, graph_ts: GraphTs) -> Result<BTreeMap<String, String>> {
+pub fn generate_files(
+    manifest_file: &Path,
+    graph_ts: GraphTs,
+    graph_cli: GraphCli,
+) -> Result<BTreeMap<String, String>> {
     let text = std::fs::read_to_string(manifest_file)
         .with_context(|| format!("reading {}", manifest_file.display()))?;
     let manifest: Yaml = serde_yaml::from_str(&text)
@@ -181,7 +185,7 @@ pub fn generate_files(manifest_file: &Path, graph_ts: GraphTs) -> Result<BTreeMa
         };
         for (abi_name, file) in mapping_abis(source) {
             let abi = load_abi(&abi_name, &base.join(&file))?;
-            files.insert(format!("{name}/{}.ts", abi.name), abi_ts(&abi)?);
+            files.insert(format!("{name}/{}.ts", abi.name), abi_ts(&abi, graph_cli)?);
         }
     }
 
@@ -194,7 +198,10 @@ pub fn generate_files(manifest_file: &Path, graph_ts: GraphTs) -> Result<BTreeMa
         };
         for (abi_name, file) in mapping_abis(template) {
             let abi = load_abi(&abi_name, &base.join(&file))?;
-            files.insert(format!("templates/{name}/{}.ts", abi.name), abi_ts(&abi)?);
+            files.insert(
+                format!("templates/{name}/{}.ts", abi.name),
+                abi_ts(&abi, graph_cli)?,
+            );
         }
         if kind.starts_with("ethereum") {
             template_imports.insert("Address");
@@ -297,6 +304,62 @@ impl GraphTs {
             };
         }
         GraphTs::ALL
+    }
+}
+
+/// What the project's own graph-cli names otherwise than the latest does. Its
+/// generated code is what the mappings were written against, so a name it
+/// changed is the old one for a project that pins an older release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphCli {
+    /// A call handler's output tuple class is `…OutputStruct` (graph-cli
+    /// 0.94+), `…Struct` before.
+    pub output_struct_suffix: bool,
+}
+
+impl GraphCli {
+    pub const LATEST: GraphCli = GraphCli {
+        output_struct_suffix: true,
+    };
+
+    /// The graph-cli Node would resolve from the manifest's directory, else the
+    /// one the nearest package.json declares; the latest when neither says.
+    pub fn detect(manifest_dir: &Path) -> GraphCli {
+        let version = |text: &str| -> Option<(u64, u64)> {
+            let digits = regex::Regex::new(r"(\d+)\.(\d+)").ok()?;
+            let found = digits.captures(text)?;
+            Some((found[1].parse().ok()?, found[2].parse().ok()?))
+        };
+        let read = |file: PathBuf| {
+            std::fs::read_to_string(file)
+                .ok()
+                .and_then(|text| serde_json::from_str::<Json>(&text).ok())
+        };
+        let start = std::fs::canonicalize(manifest_dir).unwrap_or_else(|_| manifest_dir.into());
+        let installed = start.ancestors().find_map(|dir| {
+            read(dir.join("node_modules/@graphprotocol/graph-cli/package.json"))?
+                .get("version")?
+                .as_str()
+                .and_then(version)
+        });
+        let declared = || {
+            start.ancestors().find_map(|dir| {
+                let manifest = read(dir.join("package.json"))?;
+                ["dependencies", "devDependencies"].iter().find_map(|key| {
+                    manifest
+                        .get(key)?
+                        .get("@graphprotocol/graph-cli")?
+                        .as_str()
+                        .and_then(version)
+                })
+            })
+        };
+        match installed.or_else(declared) {
+            Some(version) => GraphCli {
+                output_struct_suffix: version >= (0, 94),
+            },
+            None => GraphCli::LATEST,
+        }
     }
 }
 
@@ -707,6 +770,7 @@ struct Generated {
 
 struct AbiGen<'a> {
     abi: &'a Abi,
+    graph_cli: GraphCli,
 }
 
 fn getter(name: &str, return_type: &str, body: &str) -> String {
@@ -796,7 +860,7 @@ impl AbiGen<'_> {
         let identifier = format!("{parent_class}{}", capitalize(&name));
         let class_name = format!(
             "{identifier}{}Struct",
-            if parent_field == "outputValues" {
+            if parent_field == "outputValues" && self.graph_cli.output_struct_suffix {
                 "Output"
             } else {
                 ""
@@ -1280,8 +1344,8 @@ fn indexed_input_type(ty: &str) -> String {
     }
 }
 
-fn abi_ts(abi: &Abi) -> Result<String> {
-    let generator = AbiGen { abi };
+fn abi_ts(abi: &Abi, graph_cli: GraphCli) -> Result<String> {
+    let generator = AbiGen { abi, graph_cli };
     let mut out = String::from(NOTE);
     out.push_str(
         "\nimport { ethereum,JSONValue,TypedMap,Entity,Bytes,Address,BigInt } from \"@graphprotocol/graph-ts\"\n",
@@ -1894,7 +1958,12 @@ mod tests {
 
     #[test]
     fn covers_the_graph_cli_golden() {
-        let ours = generate_files(&fixture().join("subgraph.yaml"), GraphTs::ALL).unwrap();
+        let ours = generate_files(
+            &fixture().join("subgraph.yaml"),
+            GraphTs::ALL,
+            GraphCli::LATEST,
+        )
+        .unwrap();
         let mut missing = Vec::new();
         for (file, golden) in [
             ("schema.ts", "generated/schema.ts"),
@@ -1917,7 +1986,12 @@ mod tests {
     #[test]
     fn bundled_fixture_is_current() {
         let dir = fixture().join("generated-bundled");
-        let ours = generate_files(&fixture().join("subgraph.yaml"), GraphTs::ALL).unwrap();
+        let ours = generate_files(
+            &fixture().join("subgraph.yaml"),
+            GraphTs::ALL,
+            GraphCli::LATEST,
+        )
+        .unwrap();
         if std::env::var("UPDATE_BUNDLED_GOLDENS").is_ok() {
             std::fs::remove_dir_all(&dir).ok();
             for (file, text) in &ours {
@@ -1985,6 +2059,59 @@ mod tests {
         );
     }
 
+    // graph-cli 0.94 renamed a call handler's output tuple class from
+    // `…Struct` to `…OutputStruct` (an input tuple of the same name took the
+    // first); the project's own graph-cli version decides which it imports.
+    #[test]
+    fn call_output_tuples_are_named_as_the_projects_graph_cli_names_them() {
+        let names = |graph_cli: &str| {
+            let dir = tempdir::TempDir::new("envio-codegen-graph-cli").unwrap();
+            let write =
+                |path: &str, text: &str| std::fs::write(dir.path().join(path), text).unwrap();
+            write(
+                "package.json",
+                &format!(r#"{{"devDependencies":{{"@graphprotocol/graph-cli":"{graph_cli}"}}}}"#),
+            );
+            write("schema.graphql", "type T @entity { id: ID! }");
+            write(
+                "Pool.json",
+                r#"[{"type":"function","name":"quote","stateMutability":"nonpayable","inputs":[],
+                "outputs":[{"name":"","type":"tuple","components":[{"name":"amount","type":"uint256"}]}]}]"#,
+            );
+            write(
+                "subgraph.yaml",
+                "specVersion: 0.0.5\nschema:\n  file: ./schema.graphql\ndataSources:\n  - kind: ethereum/contract\n    name: Pool\n    network: mainnet\n    source:\n      abi: Pool\n    mapping:\n      kind: ethereum/events\n      apiVersion: 0.0.7\n      language: wasm/assemblyscript\n      entities: [T]\n      abis:\n        - name: Pool\n          file: ./Pool.json\n      file: ./m.ts\n",
+            );
+            let files = generate_files(
+                &dir.path().join("subgraph.yaml"),
+                GraphTs::ALL,
+                GraphCli::detect(dir.path()),
+            )
+            .unwrap();
+            surface(&files["Pool/Pool.ts"])
+                .into_iter()
+                .filter(|name| name.starts_with("QuoteCall") && !name.contains('.'))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (names("^0.70.0"), names("0.98.1")),
+            (
+                vec![
+                    "QuoteCall".to_string(),
+                    "QuoteCallValue0Struct".to_string(),
+                    "QuoteCall__Inputs".to_string(),
+                    "QuoteCall__Outputs".to_string()
+                ],
+                vec![
+                    "QuoteCall".to_string(),
+                    "QuoteCallValue0OutputStruct".to_string(),
+                    "QuoteCall__Inputs".to_string(),
+                    "QuoteCall__Outputs".to_string()
+                ]
+            )
+        );
+    }
+
     // The runtime warns that a generated tree it can't rebuild may be stale;
     // one the bundled codegen just wrote for this manifest can't be.
     #[test]
@@ -2015,7 +2142,7 @@ mod tests {
             {"type":"function","name":"g","stateMutability":"nonpayable","inputs":[{"name":"v","type":"uint256"}],"outputs":[]}]"#,
         )
         .unwrap();
-        let ts = abi_ts(&load_abi("A", &abi).unwrap()).unwrap();
+        let ts = abi_ts(&load_abi("A", &abi).unwrap(), GraphCli::LATEST).unwrap();
         assert!(ts.contains("export class T extends ethereum.Event"));
         assert!(ts.contains("this._event.parameters[0].value.toAddress()"));
         assert!(ts.contains("export class TParam1Struct extends ethereum.Tuple"));
