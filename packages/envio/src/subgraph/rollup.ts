@@ -58,7 +58,7 @@ export function advanceRollup(scope: Scope, now: bigint): void {
       }
     }
   }
-  state.set({ id: CLOCK_ID, payload: JSON.stringify({ t: now.toString() }) });
+  state.set({ id: CLOCK_ID, aggregation: CLOCK_ID, payload: JSON.stringify({ t: now.toString() }) });
 }
 
 function rollup(scope: Scope, compiled: CompiledAggregation, interval: string, start: bigint, end: bigint) {
@@ -69,21 +69,27 @@ function rollup(scope: Scope, compiled: CompiledAggregation, interval: string, s
   });
   if (rows.length === 0) return;
   const state = scope.context[ROLLUP_STATE_ENTITY];
-  const stateId = (dimKey: string) => `prev|${def.name}|${interval}|${dimKey}`;
+  const group = `${def.name}|${interval}`;
+  const stateId = (dimKey: string) => `prev|${group}|${dimKey}`;
   const hasCumulative = def.aggregates.some((aggregate) => aggregate.cumulative);
+  // Every group's carried values in one read: read one group at a time, the
+  // sync bridge would replay the handler once per group in the bucket.
+  const carried = new Map<string, PrevState>();
+  if (hasCumulative) {
+    for (const row of state.getWhereSync({ aggregation: { _eq: group } })) {
+      carried.set(row.id, JSON.parse(row.payload) as PrevState);
+    }
+  }
   const target = table(scope, aggregationEntity(def.name, interval));
   const timestamp = new Date(Number(start / 1000n));
-  for (const bucket of rollupBucket(compiled, rows, (dimKey) => {
-    const row = state.getSync(stateId(dimKey));
-    return row ? (JSON.parse(row.payload) as PrevState) : null;
-  })) {
+  for (const bucket of rollupBucket(compiled, rows, (dimKey) => carried.get(stateId(dimKey)) ?? null)) {
     const row: Record<string, unknown> = { id: bucket.id.toString(), timestamp, ...bucket.dimensions };
     for (const aggregate of def.aggregates) {
       row[aggregate.field] = storedValue(bucket.values[aggregate.field], aggregate.kind);
     }
     target.set(row);
     if (hasCumulative) {
-      state.set({ id: stateId(bucket.dimKey), payload: JSON.stringify(bucket.next) });
+      state.set({ id: stateId(bucket.dimKey), aggregation: group, payload: JSON.stringify(bucket.next) });
     }
   }
 }

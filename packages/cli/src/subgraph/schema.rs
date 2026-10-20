@@ -777,9 +777,11 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
             report,
         );
     }
+    // `aggregation` names the rollup a row belongs to, so a rollup reads every
+    // group's carried values with one lookup.
     if !translation.aggregations.is_empty() {
         out.push_str(&format!(
-            "type {ROLLUP_STATE_ENTITY} {{\n  id: ID!\n  payload: String!\n}}\n\n"
+            "type {ROLLUP_STATE_ENTITY} {{\n  id: ID!\n  aggregation: String! @index\n  payload: String!\n}}\n\n"
         ));
     }
 
@@ -1442,7 +1444,7 @@ type TradeStats @aggregation(intervals: ["hour", "day"], source: "Trade") {
                    volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
                  type TradeStats_day {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
                    volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
-                 type EnvioSubgraphRollup {\n  id: ID!\n  payload: String!\n}",
+                 type EnvioSubgraphRollup {\n  id: ID!\n  aggregation: String! @index\n  payload: String!\n}",
                 vec!["Trade".to_string()],
                 Some(vec!["hour".to_string(), "day".to_string()]),
                 Some(vec!["token_id".to_string()]),

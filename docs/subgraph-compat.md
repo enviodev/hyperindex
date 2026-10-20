@@ -157,10 +157,13 @@ like any other entity list.
   between the previous block's time and this one, as `Layout::rollup` does.
   Only completed buckets exist; the open bucket is the rows of the timeseries
   since the last rolled-up end (graph-node's `current: include`).
-- Bookkeeping lives in one extra entity, `EnvioSubgraphRollup` (`id`, `payload`):
-  `clock` holds the last block time, `prev|<Aggregation>|<interval>|<dims>` the
-  latest cumulative values of a group. Both are ordinary entities, so reorg
-  rollback and restarts restore them with everything else.
+- Bookkeeping lives in one extra entity, `EnvioSubgraphRollup` (`id`,
+  `aggregation`, `payload`): `clock` holds the last block time,
+  `prev|<Aggregation>|<interval>|<dims>` the latest cumulative values of a
+  group, with `aggregation` = `<Aggregation>|<interval>` (indexed), so a rollup
+  reads every group's carried values in one lookup rather than one sync-bridge
+  round per group. Both are ordinary entities, so reorg rollback and restarts
+  restore them with everything else.
 - A derived list of aggregation rows (`stats: [Stat!] @derivedFrom(field:
   "pool")`) is not an envio field; it is recorded in the runtime config
   (`aggregationDerivedFields`) for the query layer.
