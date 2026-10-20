@@ -12,6 +12,10 @@ export const OPERATORS_HELPER = "__envio_op";
 export const RETAG_HELPER = "__envio_retag";
 export const RETAG_EACH_HELPER = "__envio_retag_each";
 export const EVENT_CLASSES_EXPORT = "__envio_event_classes";
+/** Reruns a project module's top-level code for a new trigger. */
+export const MODULE_INIT = "__envio_init";
+export const AS_MAP = "__envio_Map";
+export const AS_SET = "__envio_Set";
 
 /**
  * AssemblyScript divides two integers as integers; this truncates only when
@@ -76,6 +80,202 @@ const equals = (a: unknown, b: unknown): boolean => {
   const declared = isObject(b) ? overload(a, "equals") : undefined;
   return declared ? (declared.call(a, b) as boolean) : a == b;
 };
+
+/**
+ * A bit operation where either side is an i64 — a bigint here — is a 64-bit
+ * one in AssemblyScript, the i32 side widened; JavaScript refuses to mix the
+ * two. Two numbers keep JavaScript's int32 operation, which is an i32's.
+ */
+const bits64 =
+  (op: (a: bigint, b: bigint) => bigint, numbers: (a: number, b: number) => number) =>
+  (a: unknown, b: unknown): unknown => {
+    if (typeof a !== "bigint" && typeof b !== "bigint") return numbers(a as number, b as number);
+    return op(BigInt(a as bigint | number), BigInt(b as bigint | number));
+  };
+// A u64 stays unsigned through a left shift, an i64 keeps its sign.
+const wrap64 = (from: bigint, value: bigint) => (from < 0n ? BigInt.asIntN(64, value) : BigInt.asUintN(64, value));
+
+/**
+ * AssemblyScript's `===`, which no class can overload: references are the same
+ * object, numbers the same value once converted to a common type — an i64 the
+ * shim holds as a bigint equals the number it was compared with, and a bool is
+ * 0 or 1. Null is one value however the JavaScript side came to read it: a
+ * class field AssemblyScript zero-initializes is `undefined` here.
+ */
+const same = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  const numeric = (v: unknown) => typeof v === "number" || typeof v === "bigint" || typeof v === "boolean";
+  if (numeric(a) && numeric(b) && typeof a !== typeof b) {
+    const n = (v: unknown) => (typeof v === "boolean" ? (v ? 1 : 0) : v);
+    return n(a) == n(b);
+  }
+  return false;
+};
+
+/**
+ * `===` where one side is a string the host has just allocated (the transform
+ * marks it): no other string is that allocation, whatever it reads.
+ */
+const sameFresh = (a: unknown, b: unknown): boolean =>
+  typeof a === "string" && typeof b === "string" ? false : same(a, b);
+
+/**
+ * `changetype<usize>(ref)`: the reference's address. Null is 0 and each object
+ * keeps one nonzero address, which is all a mapping can observe of one — it
+ * tests it against 0, or two of them against each other. A string here is a
+ * value, so equal strings share an address; an integer is itself.
+ */
+const objectAddresses = new WeakMap<object, number>();
+const stringAddresses = new Map<string, number>();
+let lastAddress = 0;
+const nextAddress = () => (lastAddress += 16);
+/**
+ * An AssemblyScript pointer into a buffer — `x.dataStart`,
+ * `changetype<usize>(x.buffer)` — for `load`, `store` and `memory.copy`, and
+ * pointer arithmetic on it. As a number it is a stable address of its own.
+ */
+export class Pointer {
+  constructor(
+    readonly buffer: ArrayBufferLike,
+    readonly offset: number,
+  ) {}
+  at(delta: number): Pointer {
+    return new Pointer(this.buffer, this.offset + delta);
+  }
+  valueOf(): number {
+    return objectAddress(this.buffer as object) + this.offset;
+  }
+}
+
+const isBuffer = (value: unknown): value is ArrayBufferLike =>
+  value instanceof ArrayBuffer || (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer);
+
+function pointer(value: unknown, what: string): Pointer {
+  if (value instanceof Pointer) return value;
+  throw new Error(
+    `Envio Subgraph can't ${what} at a raw memory address (${String(value)}): only a pointer into a buffer, ` +
+      "from x.dataStart or changetype<usize>(x.buffer), addresses memory here.",
+  );
+}
+
+type Width = { size: number; get: (view: DataView, at: number) => unknown; set: (view: DataView, at: number, value: unknown) => void };
+const number = (value: unknown) => Number(typeof value === "boolean" ? Number(value) : value);
+const big = (value: unknown) => (typeof value === "bigint" ? value : BigInt(Math.trunc(number(value))));
+const WIDTHS: Record<string, Width> = {
+  i8: { size: 1, get: (v, at) => v.getInt8(at), set: (v, at, x) => v.setInt8(at, number(x)) },
+  u8: { size: 1, get: (v, at) => v.getUint8(at), set: (v, at, x) => v.setUint8(at, number(x)) },
+  bool: { size: 1, get: (v, at) => v.getUint8(at) !== 0, set: (v, at, x) => v.setUint8(at, number(x) ? 1 : 0) },
+  i16: { size: 2, get: (v, at) => v.getInt16(at, true), set: (v, at, x) => v.setInt16(at, number(x), true) },
+  u16: { size: 2, get: (v, at) => v.getUint16(at, true), set: (v, at, x) => v.setUint16(at, number(x), true) },
+  i32: { size: 4, get: (v, at) => v.getInt32(at, true), set: (v, at, x) => v.setInt32(at, number(x), true) },
+  u32: { size: 4, get: (v, at) => v.getUint32(at, true), set: (v, at, x) => v.setUint32(at, number(x), true) },
+  i64: { size: 8, get: (v, at) => v.getBigInt64(at, true), set: (v, at, x) => v.setBigInt64(at, BigInt.asIntN(64, big(x)), true) },
+  u64: { size: 8, get: (v, at) => v.getBigUint64(at, true), set: (v, at, x) => v.setBigUint64(at, BigInt.asUintN(64, big(x)), true) },
+  f32: { size: 4, get: (v, at) => v.getFloat32(at, true), set: (v, at, x) => v.setFloat32(at, number(x), true) },
+  f64: { size: 8, get: (v, at) => v.getFloat64(at, true), set: (v, at, x) => v.setFloat64(at, number(x), true) },
+};
+WIDTHS.isize = WIDTHS.i32;
+WIDTHS.usize = WIDTHS.u32;
+
+function width(type: string): Width {
+  const found = WIDTHS[type];
+  if (!found) throw new Error(`Envio Subgraph can't load or store a ${type} in memory: only integer, float and bool values.`);
+  return found;
+}
+
+/** AssemblyScript's `memory` builtin, over the buffers pointers address. */
+export const memory = {
+  copy(destination: unknown, source: unknown, length: unknown): void {
+    const to = pointer(destination, "copy memory");
+    const from = pointer(source, "copy memory");
+    const count = number(length);
+    // TypedArray#set copies an overlapping range as memmove does.
+    new Uint8Array(to.buffer, to.offset, count).set(new Uint8Array(from.buffer, from.offset, count));
+  },
+  fill(destination: unknown, value: unknown, length: unknown): void {
+    const to = pointer(destination, "fill memory");
+    new Uint8Array(to.buffer, to.offset, number(length)).fill(number(value));
+  },
+};
+
+/** The bit width of an integer builtin's operand: its type, or its value. */
+function bitsOf(type: string, value: unknown): 16 | 32 | 64 {
+  if (type === "u16" || type === "i16") return 16;
+  if (type === "u64" || type === "i64") return 64;
+  if (type) return 32;
+  return typeof value === "bigint" ? 64 : 32;
+}
+const signed = (type: string) => type.startsWith("i");
+
+const bswap = (value: unknown, type = ""): unknown => {
+  const bits = bitsOf(type, value);
+  if (bits === 64) {
+    let rest = BigInt.asUintN(64, big(value));
+    let out = 0n;
+    for (let i = 0; i < 8; i++) {
+      out = (out << 8n) | (rest & 0xffn);
+      rest >>= 8n;
+    }
+    return signed(type) ? BigInt.asIntN(64, out) : out;
+  }
+  const v = number(value) >>> 0;
+  if (bits === 16) {
+    const swapped = ((v & 0xff) << 8) | ((v >>> 8) & 0xff);
+    return signed(type) ? (swapped << 16) >> 16 : swapped;
+  }
+  const swapped = (((v & 0xff) << 24) | ((v & 0xff00) << 8) | ((v >>> 8) & 0xff00) | (v >>> 24)) >>> 0;
+  return signed(type) ? swapped | 0 : swapped;
+};
+
+const rotate = (left: boolean) => (value: unknown, shift: unknown, type = ""): unknown => {
+  const bits = bitsOf(type, value);
+  if (bits === 64) {
+    const v = BigInt.asUintN(64, big(value));
+    const s = big(shift) & 63n;
+    const out = BigInt.asUintN(64, left ? (v << s) | (v >> ((64n - s) & 63n)) : (v >> s) | (v << ((64n - s) & 63n)));
+    return signed(type) ? BigInt.asIntN(64, out) : out;
+  }
+  const v = number(value) >>> 0;
+  const s = number(shift) & 31;
+  const out = (left ? (v << s) | (v >>> ((32 - s) & 31)) : (v >>> s) | (v << ((32 - s) & 31))) >>> 0;
+  return signed(type) ? out | 0 : out;
+};
+
+const TYPED_ARRAYS: Record<string, new (length: number) => ArrayLike<number>> = {
+  i8: Int8Array,
+  u8: Uint8Array,
+  i16: Int16Array,
+  u16: Uint16Array,
+  i32: Int32Array,
+  u32: Uint32Array,
+  f32: Float32Array,
+  f64: Float64Array,
+};
+
+/** AssemblyScript's generic `min`/`max` builtins. */
+export const builtinMin = (a: any, b: any) => (b < a ? b : a);
+export const builtinMax = (a: any, b: any) => (b > a ? b : a);
+
+const address = (value: unknown): unknown => {
+  if (value === null || value === undefined) return 0;
+  if (isBuffer(value)) return new Pointer(value, 0);
+  if (typeof value === "number" || typeof value === "bigint") return value;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") {
+    if (stringAddresses.size > 100_000) stringAddresses.clear();
+    let at = stringAddresses.get(value);
+    if (at === undefined) stringAddresses.set(value, (at = nextAddress()));
+    return at;
+  }
+  return objectAddress(value as object);
+};
+
+function objectAddress(value: object): number {
+  let at = objectAddresses.get(value);
+  if (at === undefined) objectAddresses.set(value, (at = nextAddress()));
+  return at;
+}
 
 /**
  * `x as i32` and its narrower kin. A number or bigint wraps to the width; a
@@ -165,6 +365,103 @@ nullReceiver.equals = (other) =>
 nullReceiver.notEqual = (other) => !nullReceiver.equals(other);
 
 /**
+ * What a mapping can name on one of these besides a key: the class's own
+ * members, and what Node and the runtime look up on any object.
+ */
+const NOT_KEYS = new Set(["then", "toJSON", "constructor", "valueOf", "toString", "inspect"]);
+
+/**
+ * A property access that stands for `[]` on AssemblyScript's Map or Set: the
+ * key as the collection holds it, a number when its numeric spelling is one.
+ */
+function keyOf(target: Map<unknown, unknown> | Set<unknown>, prop: string): unknown {
+  if (target.has(prop)) return prop;
+  const number = Number(prop);
+  if (prop !== "" && String(number) === prop && (target.has(number) || firstKeyIsNumber(target))) return number;
+  return prop;
+}
+
+function firstKeyIsNumber(target: Map<unknown, unknown> | Set<unknown>): boolean {
+  for (const key of target.keys()) return typeof key === "number";
+  return false;
+}
+
+/**
+ * Serves `collection[key]` and `collection[key] = value` through the class's
+ * `[]` operators; its own members, bound to it, through everything else.
+ */
+function indexedBy<T extends Map<unknown, unknown> | Set<unknown>>(
+  collection: T,
+  read: (target: T, key: unknown) => unknown,
+  write: (target: T, key: unknown, value: unknown) => void,
+): T {
+  const bound = new Map<PropertyKey, Function>();
+  return new Proxy(collection, {
+    get(target, prop) {
+      if (typeof prop === "symbol" || prop in target || NOT_KEYS.has(prop)) {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== "function") return value;
+        let method = bound.get(prop);
+        if (!method) bound.set(prop, (method = value.bind(target)));
+        return method;
+      }
+      return read(target, keyOf(target, prop));
+    },
+    set(target, prop, value) {
+      if (typeof prop === "symbol" || prop in target) return Reflect.set(target, prop, value, target);
+      write(target, keyOf(target, prop), value);
+      return true;
+    },
+  });
+}
+
+/**
+ * AssemblyScript's `Map` (std/assembly/map.ts): `keys()` and `values()` are
+ * arrays, `get` of a missing key throws, and `[]` reads and writes an entry.
+ */
+export class AsMap<K, V> extends Map<K, V> {
+  constructor() {
+    super();
+    return indexedBy(
+      this,
+      (target, key) => target.get(key as K),
+      (target, key, value) => target.set(key as K, value as V),
+    );
+  }
+  get(key: K): V {
+    if (!super.has(key)) throw new Error("Key does not exist");
+    return super.get(key) as V;
+  }
+  keys(): any {
+    return Array.from(super.keys());
+  }
+  values(): any {
+    return Array.from(super.values());
+  }
+}
+
+/**
+ * AssemblyScript's `Set` (std/assembly/set.ts): `values()` is an array, `[]`
+ * reads `has`, and `set[key] = flag` adds or deletes.
+ */
+export class AsSet<T> extends Set<T> {
+  constructor() {
+    super();
+    return indexedBy(
+      this,
+      (target, key) => target.has(key as T),
+      (target, key, value) => (value ? target.add(key as T) : target.delete(key as T)),
+    );
+  }
+  values(): any {
+    return Array.from(super.values());
+  }
+}
+
+const add = binary("plus", widened((a, b) => a + b));
+const sub = binary("minus", widened((a, b) => a - b));
+
+/**
  * graph-ts overloads the arithmetic and comparison operators on `BigInt`,
  * `BigDecimal` and `ByteArray`, and AssemblyScript calls the overload: a
  * JavaScript operator would coerce them, or compare their identity — so
@@ -172,8 +469,26 @@ nullReceiver.notEqual = (other) => !nullReceiver.equals(other);
  */
 export const operators = {
   recv: (receiver: any): any => receiver ?? nullReceiver,
-  add: binary("plus", widened((a, b) => a + b)),
-  sub: binary("minus", widened((a, b) => a - b)),
+  add: (a: unknown, b: unknown): unknown =>
+    a instanceof Pointer ? a.at(number(b)) : b instanceof Pointer ? b.at(number(a)) : add(a, b),
+  sub: (a: unknown, b: unknown): unknown =>
+    a instanceof Pointer
+      ? b instanceof Pointer
+        ? a.offset - b.offset
+        : a.at(-number(b))
+      : sub(a, b),
+  load: (type: string, at: unknown, offset: unknown = 0): unknown => {
+    const p = pointer(at, `load a ${type}`);
+    return width(type).get(new DataView(p.buffer), p.offset + number(offset));
+  },
+  store: (type: string, at: unknown, value: unknown, offset: unknown = 0): void => {
+    const p = pointer(at, `store a ${type}`);
+    width(type).set(new DataView(p.buffer), p.offset + number(offset), value);
+  },
+  static_array: (element: string, length: unknown): unknown => new TYPED_ARRAYS[element](number(length)),
+  bswap,
+  rotl: rotate(true),
+  rotr: rotate(false),
   mul: binary("times", widened((a, b) => a * b)),
   div: binary("div", integerDivision),
   rem: binary("mod", widened((a, b) => a % b)),
@@ -187,10 +502,25 @@ export const operators = {
   },
   eq: equals,
   ne: (a: unknown, b: unknown) => !equals(a, b),
+  same,
+  same_fresh: sameFresh,
+  address,
   lt: binary("lt", (a, b) => a < b),
   le: binary("le", (a, b) => a <= b),
   gt: binary("gt", (a, b) => a > b),
   ge: binary("ge", (a, b) => a >= b),
+  band: bits64((a, b) => a & b, (a, b) => a & b),
+  bor: bits64((a, b) => a | b, (a, b) => a | b),
+  bxor: bits64((a, b) => a ^ b, (a, b) => a ^ b),
+  shl: bits64((a, b) => wrap64(a, a << (b & 63n)), (a, b) => a << b),
+  shr: bits64((a, b) => a >> (b & 63n), (a, b) => a >> b),
+  ushr: bits64((a, b) => BigInt.asUintN(64, a) >> (b & 63n), (a, b) => a >>> b),
+  // A u32's bit operations, which AssemblyScript keeps unsigned.
+  shl_u32: (a: unknown, b: unknown) => (Number(a) << Number(b)) >>> 0,
+  shr_u32: (a: unknown, b: unknown) => Number(a) >>> Number(b),
+  or_u32: (a: unknown, b: unknown) => (Number(a) | Number(b)) >>> 0,
+  and_u32: (a: unknown, b: unknown) => (Number(a) & Number(b)) >>> 0,
+  xor_u32: (a: unknown, b: unknown) => (Number(a) ^ Number(b)) >>> 0,
   as_i8: wrapTo(8, true),
   as_u8: wrapTo(8, false),
   as_i16: wrapTo(16, true),

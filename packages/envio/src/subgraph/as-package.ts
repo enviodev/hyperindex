@@ -74,3 +74,70 @@ function resolveInPackage(packageDir: string, inner: string): string | null {
   }
   return null;
 }
+
+/**
+ * A bare import of a package the workspace declares (`workspaces`, or
+ * pnpm-workspace.yaml), resolved in that package as an install would link it:
+ * enzyme's mappings import `@enzymefinance/subgraph-utils`, its
+ * `packages/utils`, whose `main` is `index.ts`. `workspace` maps package names
+ * to their directories.
+ */
+export function resolveWorkspacePackage(specifier: string, workspace: Map<string, string>): string | null {
+  const split = splitSpecifier(specifier);
+  if (!split) return null;
+  const [name, inner] = split;
+  const packageDir = workspace.get(name);
+  if (!packageDir) return null;
+  if (inner === "") {
+    const { main } = readManifest(packageDir);
+    if (typeof main === "string") {
+      const base = path.join(packageDir, main);
+      const file = [base, `${base}.ts`, `${base}.js`, path.join(base, "index.ts"), path.join(base, "index.js")].find(
+        isFile,
+      );
+      if (file) return pathToFileURL(file).href;
+    }
+  }
+  const found = resolveInPackage(packageDir, inner);
+  return found ? pathToFileURL(found).href : null;
+}
+
+function readManifest(packageDir: string): { main?: unknown; scripts?: Record<string, unknown> } {
+  try {
+    return JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Why a workspace package that `resolveWorkspacePackage` found no entry for
+ * can't load: the `main` its package.json names isn't written yet. sushiswap's
+ * `const` renders its own index.ts per network (`"prepare:mainnet": "mustache
+ * ../../config/mainnet.json index.template.ts > index.ts"`), which the root runs
+ * through `yarn workspaces run prepare:mainnet`.
+ */
+export function unwrittenWorkspaceEntry(
+  specifier: string,
+  workspace: Map<string, string>,
+  workspaceRoot: string | null,
+): Error | null {
+  const split = splitSpecifier(specifier);
+  if (!split || split[1] !== "") return null;
+  const [name] = split;
+  const packageDir = workspace.get(name);
+  if (!packageDir) return null;
+  const { main, scripts } = readManifest(packageDir);
+  if (typeof main !== "string") return null;
+  const writers = Object.entries(scripts ?? {})
+    .filter(([, script]) => typeof script === "string" && script.includes(path.basename(main)))
+    .map(([script]) => script);
+  const where = path.relative(workspaceRoot ?? packageDir, packageDir);
+  return new Error(
+    `${name} is a package of the project's workspace (${where}), and the ${main} its package.json names ` +
+      "doesn't exist: " +
+      (writers.length > 0
+        ? `its scripts ${writers.join(", ")} write it. Run the one for your network, then start envio again.`
+        : "a build step of that package writes it. Run it, then start envio again."),
+  );
+}
