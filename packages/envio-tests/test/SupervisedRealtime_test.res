@@ -89,10 +89,16 @@ let readyAtByChainId = async (~sql, ~pgSchema) => {
   rows->Array.map(row => (row["id"]->ChainId.toString, row["ready_at"]->Null.toOption))
 }
 
-let catchUp = (~source: MockSource.t) => {
-  source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-}
+// The hold keeps the pre-threshold lag in place, and the lag is deeper than
+// this head, so a held chain asks for no items until it is released.
+let catchUpOnRelease = async (~source: MockSource.t) =>
+  await source.expectItemsQueries([
+    {
+      fromBlock: 1,
+      toBlock: Unbounded,
+      reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+    },
+  ])
 
 describe("A supervised worker", () => {
   scenario->Scenario.it(
@@ -101,19 +107,28 @@ describe("A supervised worker", () => {
     ~holdRealtime=true,
     async (~t, ~indexer, ~source) => {
       let {sql, pgSchema} = indexer.pg
-      catchUp(~source=source(1))
-      catchUp(~source=source(137))
+      source(1).resolveGetHeightOrThrow(100)
+      source(137).resolveGetHeightOrThrow(100)
       await indexer.waitUntilIdle()
 
       t.expect(
-        (await readyAtByChainId(~sql, ~pgSchema), await indexer.metric("envio_progress_ready")),
-        ~message="Both chains are at the head, but the run has not said so",
+        (
+          await readyAtByChainId(~sql, ~pgSchema),
+          await indexer.metric("envio_progress_ready"),
+          source(1).pendingItemsQueries,
+          source(137).pendingItemsQueries,
+        ),
+        ~message="Both chains are as far as they can fetch, but the run has not said so",
       ).toEqual((
         [("1", None), ("137", None)],
         [{value: "0", labels: dict{"chainId": "1"}}, {value: "0", labels: dict{"chainId": "137"}}],
+        [],
+        [],
       ))
 
       indexer.releaseRealtime()
+      await catchUpOnRelease(~source=source(1))
+      await catchUpOnRelease(~source=source(137))
       await indexer.waitUntilReady()
 
       let readyAt = await readyAtByChainId(~sql, ~pgSchema)
@@ -139,14 +154,24 @@ describe("A supervised worker at its end block", () => {
     ~holdRealtime=true,
     async (~t, ~indexer, ~source) => {
       let {sql, pgSchema} = indexer.pg
-      catchUp(~source=source(1))
+      // A head past the end block by the pre-threshold lag lets the held chain
+      // fetch all the way to its end block.
+      let source = source(1)
+      source.resolveGetHeightOrThrow(300)
+      await source.expectItemsQueries([
+        {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
       t.expect(
-        (exited.contents, await readyAtByChainId(~sql, ~pgSchema)),
+        (
+          await indexer.metric("envio_progress_block"),
+          exited.contents,
+          await readyAtByChainId(~sql, ~pgSchema),
+        ),
         ~message="Its chain is done, but it still owes the schema the indexes it deferred",
-      ).toEqual((false, [("1", None)]))
+      ).toEqual(([{value: "100", labels: dict{"chainId": "1"}}], false, [("1", None)]))
 
       indexer.releaseRealtime()
       await indexer.waitUntilReady()
@@ -172,8 +197,8 @@ describe("A run whose chains have a reorg depth", () => {
     "Enters the reorg threshold once every chain is at its safe block",
     ~sources=[{chain: 1}, {chain: 137}],
     async (~t, ~indexer, ~source) => {
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=source(1))
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=source(137))
+      await Scenario.enterReorgThreshold(~indexer, ~source=source(1))
+      await Scenario.enterReorgThreshold(~indexer, ~source=source(137))
 
       t.expect(
         await indexer.metric("envio_reorg_threshold"),
@@ -195,12 +220,14 @@ describe("A supervised worker on a chain with a reorg depth", () => {
       let {sql, pgSchema} = indexer.pg
       // Each chain fetches the whole finalized range, which is all it may fetch
       // until the indexer enters the reorg threshold.
-      let catchUpToSafeBlock = (~source: MockSource.t) => {
+      let catchUpToSafeBlock = async (~source: MockSource.t) => {
         source.resolveGetHeightOrThrow(300)
-        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+        await source.expectItemsQueries([
+          {fromBlock: 1, toBlock: Bounded(100), reply: Respond({items: []})},
+        ])
       }
-      catchUpToSafeBlock(~source=source(1))
-      catchUpToSafeBlock(~source=source(137))
+      await catchUpToSafeBlock(~source=source(1))
+      await catchUpToSafeBlock(~source=source(137))
       await indexer.waitUntilIdle()
 
       t.expect(

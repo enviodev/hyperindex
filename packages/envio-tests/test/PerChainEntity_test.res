@@ -132,9 +132,12 @@ describe("Per-chain entities against Postgres", () => {
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
 
-      source1.resolveGetItemsOrThrow([bump(1n)], ~latestFetchedBlockNumber=300)
-      source137.resolveGetItemsOrThrow([bump(10n)], ~latestFetchedBlockNumber=300)
+      let _ = await Promise.all2((
+        source1.expectItemsQueries([{fromBlock: 1, reply: Respond({items: [bump(1n)]})}]),
+        source137.expectItemsQueries([{fromBlock: 1, reply: Respond({items: [bump(10n)]})}]),
+      ))
       await indexer.getBatchWritePromise()
+      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
       await indexer.waitUntilIdle()
 
       let counters: array<counter> = await indexer.query("Counter")
@@ -163,60 +166,83 @@ describe("Chain-scoped rollback", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source137),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1),
+        Scenario.enterReorgThreshold(~indexer, ~source=source137),
+        Scenario.enterReorgThreshold(~indexer, ~source=source1),
       ))
 
       // Chain 137 writes the shared id first, then chain 1 — so chain 137's row
       // sits below the checkpoint chain 1 will roll back to.
-      source137.resolveGetItemsOrThrow(
-        [setEntities(~block=101, ~counter=137n)],
-        ~latestFetchedBlockNumber=101,
-        ~latestFetchedBlockHash="0x0101",
-      )
+      await source137.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setEntities(~block=101, ~counter=137n)],
+            latestFetchedBlockNumber: 101,
+            latestFetchedBlockHash: "0x0101",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source1.resolveGetItemsOrThrow(
-        [setEntities(~block=101, ~counter=1n)],
-        ~latestFetchedBlockNumber=101,
-        ~latestFetchedBlockHash="0x0101",
-      )
+      await source1.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setEntities(~block=101, ~counter=1n)],
+            latestFetchedBlockNumber: 101,
+            latestFetchedBlockHash: "0x0101",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Chain 1 overwrites its row at block 102, which is the change the reorg
       // takes back.
-      source1.resolveGetItemsOrThrow(
-        [setEntities(~block=102, ~counter=2n)],
-        ~latestFetchedBlockNumber=102,
-        ~latestFetchedBlockHash="0x0102",
-      )
+      await source1.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [setEntities(~block=102, ~counter=2n)],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x0102",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Block 102 comes back with a different hash.
-      source1.resolveGetItemsOrThrow(
-        [setEntities(~block=103, ~counter=99n)],
-        ~filter=MockSource.coveringBlock(103),
-        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
-      )
-
-      await Utils.delay(0)
-      await Utils.delay(0)
-      source1.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+      await source1.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({
+            items: [setEntities(~block=103, ~counter=99n)],
+            prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
       ])
+
+      await source1.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
 
       // The rollback diff is written with the next batch, so drive chain 1 once
       // more (with nothing to index) to flush it.
-      source1.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-        ~latestFetchedBlockHash="0x0102",
-      )
+      await source1.expectItemsQueries([
+        {
+          coversBlock: 102,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x0102",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
@@ -246,49 +272,61 @@ describe("Chain-scoped reads and deletes", () => {
       source137.resolveGetHeightOrThrow(300)
 
       // Chain 137 claims the id first and must survive everything chain 1 does.
-      source137.resolveGetItemsOrThrow(
-        [setEntities(~block=5, ~counter=137n)],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source137.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({items: [setEntities(~block=5, ~counter=137n)]}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let loadedByChain1 = ref(None)
       let getWhereByChain1 = ref([])
 
-      source1.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 6,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              // Chain 137's row for this id exists, but is out of scope here.
-              loadedByChain1 := (await context.counter.get("total"))
-              context.counter.set({"id": "total", "count": 1n})
-            },
-          },
-        ],
-        // Below head, so the chain asks for another range and the next resolve
-        // has a call to answer.
-        ~latestFetchedBlockNumber=100,
-      )
+      await source1.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 6,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  // Chain 137's row for this id exists, but is out of scope here.
+                  loadedByChain1 := (await context.counter.get("total"))
+                  context.counter.set({"id": "total", "count": 1n})
+                },
+              },
+            ],
+            // Below head, so the chain asks for another range.
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      source1.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 7,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              getWhereByChain1 := (await context.counter.getWhere({"count": {"_gte": 0n}}))
-              context.counter.deleteUnsafe("total")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source1.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 107,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  getWhereByChain1 := (await context.counter.getWhere({"count": {"_gte": 0n}}))
+                  context.counter.deleteUnsafe("total")
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
+      await source137.respondEmptyUpTo(300)
       await indexer.waitUntilIdle()
 
       let remaining: array<counter> = await indexer.query("Counter")
@@ -318,67 +356,90 @@ describe("Per-chain history and removal", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source137),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1),
+        Scenario.enterReorgThreshold(~indexer, ~source=source137),
+        Scenario.enterReorgThreshold(~indexer, ~source=source1),
       ))
 
       // Both chains hold "shared"; only chain 1 deletes it.
-      source137.resolveGetItemsOrThrow(
-        [setEntities(~block=101, ~counter=137n, ~id="shared")],
-        ~latestFetchedBlockNumber=101,
-        ~latestFetchedBlockHash="0x0101",
-      )
+      await source137.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setEntities(~block=101, ~counter=137n, ~id="shared")],
+            latestFetchedBlockNumber: 101,
+            latestFetchedBlockHash: "0x0101",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source1.resolveGetItemsOrThrow(
-        [setEntities(~block=101, ~counter=1n, ~id="shared")],
-        ~latestFetchedBlockNumber=101,
-        ~latestFetchedBlockHash="0x0101",
-      )
+      await source1.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setEntities(~block=101, ~counter=1n, ~id="shared")],
+            latestFetchedBlockNumber: 101,
+            latestFetchedBlockHash: "0x0101",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      source1.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.counter.deleteUnsafe("shared")
-              // Created after the rollback target with no earlier history, so the
-              // rollback has to remove it — from chain 1 only.
-              context.counter.set({"id": "chain1-only", "count": 5n})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=102,
-        ~latestFetchedBlockHash="0x0102",
-      )
+      await source1.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.counter.deleteUnsafe("shared")
+                  // Created after the rollback target with no earlier history, so the
+                  // rollback has to remove it — from chain 1 only.
+                  context.counter.set({"id": "chain1-only", "count": 5n})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x0102",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let afterDelete: array<counter> = await indexer.query("Counter")
 
       // Chain 1 reorgs back to block 101, taking both the delete and the new id.
-      source1.resolveGetItemsOrThrow(
-        [setEntities(~block=103, ~counter=99n, ~id="ignored")],
-        ~filter=MockSource.coveringBlock(103),
-        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-      source1.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+      await source1.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({
+            items: [setEntities(~block=103, ~counter=99n, ~id="ignored")],
+            prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
       ])
+      await source1.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
-      source1.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-        ~latestFetchedBlockHash="0x0102",
-      )
+      await source1.expectItemsQueries([
+        {
+          coversBlock: 102,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x0102",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
@@ -419,28 +480,35 @@ describe("Per-chain entities with renamed columns", () => {
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
 
-      source137.resolveGetItemsOrThrow(
-        [setEntities(~block=5, ~counter=137n)],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source137.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({items: [setEntities(~block=5, ~counter=137n)]}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let loadedByChain1 = ref(None)
-      source1.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 6,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              loadedByChain1 := (await context.counter.get("total"))
-              context.counter.set({"id": "total", "count": 1n})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source1.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 6,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  loadedByChain1 := (await context.counter.get("total"))
+                  context.counter.set({"id": "total", "count": 1n})
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
+      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
       await indexer.waitUntilIdle()
 
       // Rows are keyed by the API field name whatever the column is called.
@@ -484,8 +552,6 @@ describe("Effect scope under the disabled default", () => {
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       let callEffect = (~block): MockSource.itemMock => {
         blockNumber: block,
@@ -497,10 +563,18 @@ describe("Effect scope under the disabled default", () => {
         },
       }
 
-      source137.resolveGetItemsOrThrow([callEffect(~block=5)], ~latestFetchedBlockNumber=300)
+      await source137.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({items: [callEffect(~block=5)]}),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source1.resolveGetItemsOrThrow([callEffect(~block=6)], ~latestFetchedBlockNumber=300)
+      await source1.expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [callEffect(~block=6)]})},
+      ])
       await indexer.getBatchWritePromise()
+      let _ = await Promise.all2((source1.respondEmptyUpTo(300), source137.respondEmptyUpTo(300)))
       await indexer.waitUntilIdle()
 
       let cache1 = await indexer.queryEffectCache(unscoped, ~scope=Chain(1->ChainId.fromInt))
@@ -541,8 +615,10 @@ describe("Per-chain history prune", () => {
       let source137 = source(137)
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      let _ = await Promise.all2((
+        source1.expectItemsQueries([{fromBlock: 1, reply: LeavePending}]),
+        source137.expectItemsQueries([{fromBlock: 1, reply: LeavePending}]),
+      ))
       await indexer.stop()
 
       let globalEntityConfig =

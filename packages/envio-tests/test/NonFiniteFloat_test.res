@@ -46,19 +46,23 @@ let refusesWith = (~name, ~sample, ~reason) =>
       ~onError=refusal.onError,
       async (~t, ~indexer, ~source) => {
         let sourceMock = source(1337)
-        await Utils.delay(0)
-        await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+        await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
-        sourceMock.resolveGetItemsOrThrow(
-          [
-            {
-              blockNumber: 1,
-              logIndex: 0,
-              handler: async args => (args->contextOf).sample["set"](sample),
-            },
-          ],
-          ~latestFetchedBlockNumber=1,
-        )
+        await sourceMock.expectItemsQueries([
+          {
+            fromBlock: 1,
+            toBlock: Unbounded,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 1,
+                  logIndex: 0,
+                  handler: async args => (args->contextOf).sample["set"](sample),
+                },
+              ],
+            }),
+          },
+        ])
         let failure = await refusal.awaitRefusalReason()
 
         let {sql, pgSchema} = indexer.pg

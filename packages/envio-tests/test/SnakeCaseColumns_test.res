@@ -60,49 +60,54 @@ describe("Snake-case columns", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          at(
-            ~block=1,
-            async context => {
-              context.user.set({id: "user-1"})
-              context.snapshot.set({id: "1", transactionIndex: 5, tokenOwner_id: "user-1"})
-            },
-          ),
-        ],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              at(
+                ~block=1,
+                async context => {
+                  context.user.set({id: "user-1"})
+                  context.snapshot.set({id: "1", transactionIndex: 5, tokenOwner_id: "user-1"})
+                },
+              ),
+            ],
+            latestFetchedBlockNumber: 1,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       sourceMock.setAutoHeight(100)
       let restarted = await indexer.restart()
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          at(
-            ~block=2,
-            async context => {
-              switch await context.snapshot.get("1") {
-              | Some(snapshot) => context.snapshot.set({...snapshot, id: "got"})
-              | None => ()
-              }
-              let found = await context.snapshot.getWhere({"transactionIndex": {"_eq": 5}})
-              found->Array.forEach(snapshot => context.snapshot.set({...snapshot, id: "where"}))
-            },
-          ),
-        ],
-        ~filter=MockSource.coveringBlock(2),
-        ~latestFetchedBlockNumber=2,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 2,
+          reply: Respond({
+            items: [
+              at(
+                ~block=2,
+                async context => {
+                  switch await context.snapshot.get("1") {
+                  | Some(snapshot) => context.snapshot.set({...snapshot, id: "got"})
+                  | None => ()
+                  }
+                  let found = await context.snapshot.getWhere({"transactionIndex": {"_eq": 5}})
+                  found->Array.forEach(snapshot => context.snapshot.set({...snapshot, id: "where"}))
+                },
+              ),
+            ],
+            latestFetchedBlockNumber: 2,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
-      await MockSource.waitItemsQuery(sourceMock)
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(3),
-        ~latestFetchedBlockNumber=100,
-      )
+      await sourceMock.expectItemsQueries([
+        {coversBlock: 3, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await restarted.waitUntilReady()
 
       let {sql, pgSchema} = restarted.pg

@@ -502,7 +502,7 @@ describe("HeightFeed stream state", () => {
     let pollsWhileSleeping = mock.getHeightOrThrowCalls->Array.length
 
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-    await Utils.delay(0)
+    await mock.expectHeightCalls(3)
 
     t.expect((pollsWhileSleeping, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 3))
   })
@@ -860,7 +860,7 @@ describe("HeightFeed poll failures", () => {
     // waiter is already going to fetch the head, and asking twice does not make
     // the endpoint answer sooner.
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
+    await mock.expectHeightCalls(2)
 
     t.expect((pollsBeforeConnect, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 2))
   })
@@ -889,7 +889,7 @@ describe("HeightFeed poll failures", () => {
     // the fallback starts now rather than a minute from now.
     let (_later, _laterSubscription) = feed->watch(~knownHeight=101, ~interval=() => 10_000)
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-    await Utils.delay(0)
+    await mock.expectHeightCalls(2)
 
     t.expect((pollsInBackoff, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 2))
   })

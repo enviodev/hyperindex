@@ -57,29 +57,33 @@ describe("A NUL byte in what a handler stores", () => {
       ->ignore,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 1,
-            logIndex: 0,
-            handler: async args =>
-              (args->contextOf).note.set({
-                id: `note${nul}one`,
-                text: `before${nul}after`,
-                tags: [`tag${nul}one`, "plain"],
-                // Buried in a document, which is where the jsonb refusal comes
-                // from rather than the text one.
-                // The escaped literal is six characters of text, not a NUL,
-                // and stays.
-                payload: %raw(`{"deep": "in\u0000side", "k\u0000ey": ["a\u0000b"], "escaped": "\\u0000"}`),
-              }),
-          },
-        ],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                handler: async args =>
+                  (args->contextOf).note.set({
+                    id: `note${nul}one`,
+                    text: `before${nul}after`,
+                    tags: [`tag${nul}one`, "plain"],
+                    // Buried in a document, which is where the jsonb refusal comes
+                    // from rather than the text one.
+                    // The escaped literal is six characters of text, not a NUL,
+                    // and stays.
+                    payload: %raw(`{"deep": "in\u0000side", "k\u0000ey": ["a\u0000b"], "escaped": "\\u0000"}`),
+                  }),
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let notes: array<note> = await indexer.query("Note")
@@ -107,26 +111,30 @@ describe("A NUL byte in what a handler stores", () => {
     ~onError=surrogate.onError,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
       let lone = String.fromCharCode(0xd800)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 1,
-            logIndex: 0,
-            handler: async args =>
-              (args->contextOf).note.set({
-                id: "lone",
-                text: `a${lone}b`,
-                tags: [`a${lone}b`],
-                payload: JSON.Encode.string(`a${lone}b`),
-              }),
-          },
-        ],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                handler: async args =>
+                  (args->contextOf).note.set({
+                    id: "lone",
+                    text: `a${lone}b`,
+                    tags: [`a${lone}b`],
+                    payload: JSON.Encode.string(`a${lone}b`),
+                  }),
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       let notes: array<note> = await indexer.query("Note")
       t.expect(notes).toEqual([
@@ -159,21 +167,25 @@ describe("A NUL byte in what a handler stores", () => {
       ->ignore,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 1,
-            logIndex: 0,
-            handler: async args => {
-              let _ = await (args->contextOf).effect(cachedLookup, "in")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                handler: async args => {
+                  let _ = await (args->contextOf).effect(cachedLookup, "in")
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect((refused, await indexer.queryEffectCache(cachedLookup, ~scope=CrossChain))).toEqual((

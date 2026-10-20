@@ -189,24 +189,28 @@ describe("Every column type", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 1,
-            logIndex: 0,
-            handler: async args => {
-              let context = args->contextOf
-              context.owner.set({id: "owner"})
-              context.item.set(full)
-              context.item.set(empty)
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args->contextOf
+                  context.owner.set({id: "owner"})
+                  context.item.set(full)
+                  context.item.set(empty)
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
       let stored: array<item> = await indexer.query("Item")
 
@@ -215,31 +219,35 @@ describe("Every column type", () => {
 
       // Copies of what `get` and `getWhere` return: anything they decode
       // differently from how it was written comes back changed.
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 2,
-            logIndex: 0,
-            handler: async args => {
-              let context = args->contextOf
-              switch await context.item.get(full.id) {
-              | Some(item) => context.item.set({...item, id: "got:full", tag: "copy"})
-              | None => ()
-              }
-              switch await context.item.get(empty.id) {
-              | Some(item) => context.item.set({...item, id: "got:empty", tag: "copy"})
-              | None => ()
-              }
-              let found = await context.item.getWhere({"tag": {"_eq": "full"}})
-              found->Array.forEach(
-                item => context.item.set({...item, id: "where:full", tag: "copy"}),
-              )
-            },
-          },
-        ],
-        ~filter=MockSource.coveringBlock(2),
-        ~latestFetchedBlockNumber=2,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 2,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 2,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args->contextOf
+                  switch await context.item.get(full.id) {
+                  | Some(item) => context.item.set({...item, id: "got:full", tag: "copy"})
+                  | None => ()
+                  }
+                  switch await context.item.get(empty.id) {
+                  | Some(item) => context.item.set({...item, id: "got:empty", tag: "copy"})
+                  | None => ()
+                  }
+                  let found = await context.item.getWhere({"tag": {"_eq": "full"}})
+                  found->Array.forEach(
+                    item => context.item.set({...item, id: "where:full", tag: "copy"}),
+                  )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 2,
+          }),
+        },
+      ])
       await restarted.getBatchWritePromise()
       let copies: array<item> = await restarted.query("Item")
       let copyOf = id =>

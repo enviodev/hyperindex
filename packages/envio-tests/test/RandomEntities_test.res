@@ -374,20 +374,25 @@ describe("Entities a handler sets", () => {
           await scenario->Scenario.run(~sources=[{chain: 1}], async (~indexer, ~source) => {
             let source = source(1)
             source.resolveGetHeightOrThrow(100)
-            source.resolveGetItemsOrThrow(
-              [
-                {
-                  blockNumber: 1,
-                  logIndex: 0,
-                  handler: async args => {
-                    let context =
-                      args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                    case.rows->Array.forEach(row => context.rand.set(row))
-                  },
-                },
-              ],
-              ~latestFetchedBlockNumber=1,
-            )
+            await source.expectItemsQueries([
+              {
+                fromBlock: 1,
+                toBlock: Unbounded,
+                reply: Respond({
+                  items: [
+                    {
+                      blockNumber: 1,
+                      logIndex: 0,
+                      handler: async args => {
+                        let context =
+                          args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                        case.rows->Array.forEach(row => context.rand.set(row))
+                      },
+                    },
+                  ],
+                }),
+              },
+            ])
             await indexer.getBatchWritePromise()
             let readBack: array<dict<unknown>> = await indexer.query("Rand")
             let (wrote, read) = (shown(case, case.rows), shown(case, readBack))

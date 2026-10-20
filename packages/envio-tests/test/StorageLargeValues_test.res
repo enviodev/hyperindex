@@ -76,25 +76,34 @@ describe("A value of a size handlers rarely store", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.resolveInitialHeight(~t, ~source=sourceMock, ~head=100)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 1,
-            logIndex: 0,
-            handler: async args => {
-              let context = args->contextOf
-              context.large.set({id: "large", text: bigText, blob: bigBlob, tags: [bigText, ""]})
-              for row in 0 to wideRows - 1 {
-                context.wide.set(wide(row))
-              }
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=1,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args->contextOf
+                  context.large.set({
+                    id: "large",
+                    text: bigText,
+                    blob: bigBlob,
+                    tags: [bigText, ""],
+                  })
+                  for row in 0 to wideRows - 1 {
+                    context.wide.set(wide(row))
+                  }
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let large: array<large> = await indexer.query("Large")
