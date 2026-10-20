@@ -1694,6 +1694,58 @@ impl<'a> Rewrite<'a> {
     }
 
     /// The class `changetype<Foo>` names, if it is one the runtime can reach.
+    /// A cast to `ty`, which `expression` is taken from when it converts.
+    ///
+    /// To a number type it converts: a wider integer wraps, a float truncates
+    /// toward zero, null is 0, and a reference is its address, which JavaScript
+    /// has no number for; to a float, an i64 (a bigint here) is a float. To a
+    /// class — graph-cli before 0.2x's tuple getters and old entity loads cast
+    /// so, not with `changetype` — it is the same reinterpret, except that a
+    /// value already of the class (an upcast) keeps its own.
+    fn cast(
+        &self,
+        span: Span,
+        ty: &TSType<'a>,
+        expression: &mut Expression<'a>,
+    ) -> Option<Expression<'a>> {
+        let number = match ty {
+            TSType::TSTypeReference(reference) => match &reference.type_name {
+                TSTypeName::IdentifierReference(ty) => match ty.name.as_str() {
+                    "i8" => Some("as_i8"),
+                    "u8" => Some("as_u8"),
+                    "i16" => Some("as_i16"),
+                    "u16" => Some("as_u16"),
+                    "i32" => Some("as_i32"),
+                    "u32" => Some("as_u32"),
+                    "f32" => Some("as_f32"),
+                    "f64" => Some("as_f64"),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(method) = number {
+            let value = expression.take_in(&self.ast);
+            return Some(self.operator(span, method, [value]));
+        }
+        let class = match ty {
+            TSType::TSUnionType(union) => union
+                .types
+                .iter()
+                .find_map(|ty| class_ref(ty, &self.classes)),
+            ty => class_ref(ty, &self.classes),
+        }?;
+        let ctor = Expression::new_identifier(
+            class.span,
+            Ident::from_str_in(class.name.as_str(), &self.ast),
+            &self.ast,
+        );
+        let value = expression.take_in(&self.ast);
+        let keep = Expression::new_boolean_literal(span, true, &self.ast);
+        Some(self.call(span, RETAG_HELPER, [ctor, value, keep]))
+    }
+
     fn retag_target(&self, call: &CallExpression<'a>) -> Option<(Span, String)> {
         let Expression::Identifier(callee) = &call.callee else {
             return None;
@@ -1904,52 +1956,28 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 assign.right = self.operator(assign.span, method, [read, right]);
                 assign.operator = AssignmentOperator::Assign;
             }
-            // graph-cli before 0.2x's tuple getters, and old entity loads, cast
-            // with `as` rather than `changetype`: the same reinterpret, except
-            // that a value already of the class (an upcast) keeps its own.
+            // `x as T` and `<T>x` are one cast in AssemblyScript.
             Expression::TSAsExpression(cast) => {
-                // `x as i32` converts: a wider integer wraps, a null is 0, and a
-                // reference is its address, which JavaScript has no number for.
-                let integer = match &cast.type_annotation {
-                    TSType::TSTypeReference(reference) => match &reference.type_name {
-                        TSTypeName::IdentifierReference(ty) => match ty.name.as_str() {
-                            "i8" => Some("as_i8"),
-                            "u8" => Some("as_u8"),
-                            "i16" => Some("as_i16"),
-                            "u16" => Some("as_u16"),
-                            "i32" => Some("as_i32"),
-                            "u32" => Some("as_u32"),
-                            _ => None,
-                        },
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                if let Some(method) = integer {
-                    let span = cast.span;
-                    let value = cast.expression.take_in(&self.ast);
-                    *expr = self.operator(span, method, [value]);
-                    return;
+                let TSAsExpression {
+                    span,
+                    expression,
+                    type_annotation,
+                    ..
+                } = &mut **cast;
+                if let Some(cast) = self.cast(*span, type_annotation, expression) {
+                    *expr = cast;
                 }
-                let class = match &cast.type_annotation {
-                    TSType::TSUnionType(union) => union
-                        .types
-                        .iter()
-                        .find_map(|ty| class_ref(ty, &self.classes)),
-                    ty => class_ref(ty, &self.classes),
-                };
-                let Some(class) = class.map(|class| (class.span, class.name.to_string())) else {
-                    return;
-                };
-                let span = cast.span;
-                let value = cast.expression.take_in(&self.ast);
-                let ctor = Expression::new_identifier(
-                    class.0,
-                    Ident::from_str_in(&class.1, &self.ast),
-                    &self.ast,
-                );
-                let keep = Expression::new_boolean_literal(span, true, &self.ast);
-                *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
+            }
+            Expression::TSTypeAssertion(cast) => {
+                let TSTypeAssertion {
+                    span,
+                    expression,
+                    type_annotation,
+                    ..
+                } = &mut **cast;
+                if let Some(cast) = self.cast(*span, type_annotation, expression) {
+                    *expr = cast;
+                }
             }
             // AssemblyScript's std Map and Set aren't JavaScript's: `keys()`
             // is an array and `map[key]` an operator (std/assembly/map.ts).
@@ -2723,12 +2751,18 @@ export function f(value: ethereum.Tuple, n: i64): void {
   let pair = value as Pair;
   let maybe = value as Pair | null;
   let wide = n as i32;
+  let old = <Pair>value;
+  let byte = <u8>n;
+  let float = n as f64;
 }"),
             "import { Pair } from \"../generated/schema\";
 export function f(value, n) {
 \tlet pair = __envio_retag(Pair, value, true);
 \tlet maybe = __envio_retag(Pair, value, true);
 \tlet wide = __envio_op.as_i32(n);
+\tlet old = __envio_retag(Pair, value, true);
+\tlet byte = __envio_op.as_u8(n);
+\tlet float = __envio_op.as_f64(n);
 }
 "
         );
@@ -2887,7 +2921,7 @@ export const __envio_event_classes = {
 export class Token {
   @inline
   scaled(amount: BigInt, decimals: u8): BigInt {
-    return <BigInt>amount;
+    return amount;
   }
 }"),
             "export class Token {

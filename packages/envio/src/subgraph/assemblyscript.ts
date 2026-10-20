@@ -675,6 +675,8 @@ export const operators = {
   as_u16: wrapTo(16, false),
   as_i32: wrapTo(32, true),
   as_u32: wrapTo(32, false),
+  as_f64: (value: unknown): unknown => (isObject(value) ? value : number(value ?? 0)),
+  as_f32: (value: unknown): unknown => (isObject(value) ? value : Math.fround(number(value ?? 0))),
   neg: (a: unknown) => {
     const declared = overload(a, "neg");
     return declared ? declared.call(a) : -(a as number);
