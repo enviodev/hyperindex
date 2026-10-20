@@ -4109,7 +4109,7 @@ type Renewal implements Event @entity {
     // gnosis' hg-subgraph renders its manifest with `node
     // ops/render-subgraph-conf.js <network>`, which reads truffle artifacts and
     // asks an RPC for start blocks: not something envio repeats, so the error
-    // names the script.
+    // names the script — and not `publish-graph:gnosis`, which only runs it.
     #[test]
     fn names_the_render_script_envio_does_not_run() {
         let dir = tempdir::TempDir::new("envio-subgraph-render-node").unwrap();
@@ -4120,7 +4120,8 @@ type Renewal implements Event @entity {
             r#"{"scripts": {
   "prepare": "husky install",
   "render-subgraph-config:gnosis": "node ops/render-subgraph-conf.js gnosis",
-  "codegen": "graph codegen"
+  "codegen": "graph codegen",
+  "publish-graph:gnosis": "npm run render-subgraph-config:gnosis && graph deploy gnosis/conditional-tokens-gc"
 }}"#,
         )
         .unwrap();

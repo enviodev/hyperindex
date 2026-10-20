@@ -591,6 +591,8 @@ struct Plan {
 struct Writer {
     script: String,
     step: String,
+    /// The scripts it runs through `npm run`.
+    inlined: Vec<String>,
 }
 
 fn vars(word: &Word) -> Vec<(String, Option<String>)> {
@@ -741,6 +743,7 @@ fn analyze(
             Err(Writer {
                 script: name.to_string(),
                 step: script.to_string(),
+                inlined: Vec::new(),
             })
         });
     };
@@ -856,6 +859,7 @@ fn analyze(
             Err(Writer {
                 script: name.to_string(),
                 step: script.to_string(),
+                inlined: inlined.clone(),
             })
         });
     };
@@ -863,6 +867,7 @@ fn analyze(
         return Some(Err(Writer {
             script: name.to_string(),
             step: script.to_string(),
+            inlined,
         }));
     }
     Some(Ok(Plan {
@@ -1742,6 +1747,7 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
             _ => name.to_string(),
         };
         let mut found = Vec::new();
+        let mut raw_writers: Vec<Writer> = Vec::new();
         let all = package_scripts(&dir);
         let scripts: BTreeMap<String, String> = all.iter().cloned().collect();
         for (name, script) in all {
@@ -1755,22 +1761,37 @@ fn scan(target: &Path) -> (Vec<Plan>, Vec<Writer>) {
                         .flatten()
                         .find(|file| file != "-" && !dir.join(file).exists());
                     match absent {
-                        Some(file) => writers.push(Writer {
-                            script: label(&name),
+                        Some(file) => raw_writers.push(Writer {
+                            script: name,
                             step: format!(
                                 "{script} ({file} isn't in the repo: another step writes it)"
                             ),
+                            inlined: plan.inlined,
                         }),
                         None => found.push(plan),
                     }
                 }
-                Some(Err(writer)) => writers.push(Writer {
-                    script: label(&writer.script),
-                    step: writer.step,
-                }),
+                Some(Err(writer)) => raw_writers.push(writer),
                 None => {}
             }
         }
+        // `publish-graph:gnosis` only runs `render-subgraph-config:gnosis`,
+        // the script that writes the manifest: that one is named.
+        let writer_names: Vec<String> = raw_writers.iter().map(|w| w.script.clone()).collect();
+        writers.extend(
+            raw_writers
+                .into_iter()
+                .filter(|writer| {
+                    !writer
+                        .inlined
+                        .iter()
+                        .any(|name| writer_names.contains(name))
+                })
+                .map(|writer| Writer {
+                    script: label(&writer.script),
+                    ..writer
+                }),
+        );
         // zora's `codegen` runs `yarn gen-yaml-config`, the script that
         // renders: the one that writes the manifest itself is the plan.
         let names: Vec<String> = found.iter().map(|plan| plan.script.clone()).collect();
