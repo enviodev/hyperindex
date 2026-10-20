@@ -2622,22 +2622,55 @@ const RECEIPT_SHAPE: Shape<Omit<EthereumTransactionReceipt, "blockHash" | "block
   logsBloom: ["logsBloom", "bytes"],
 };
 
+/** A shaped object's raw payload and the fields read or assigned so far. */
+const SHAPED_FIELDS = Symbol("envio.shapedFields");
+type ShapedFields = { raw: Record<string, unknown> | undefined; values: Record<string, unknown> };
+const shapedPrototypes = new WeakSet<object>();
+
+function shapedField(value: unknown, kind: "bytes" | "address" | "bigint"): unknown {
+  return value === null || value === undefined
+    ? null
+    : kind === "bytes"
+      ? Bytes.fromHexString(value as string)
+      : kind === "address"
+        ? Address.fromString(value as string)
+        : new BigInt_(typeof value === "bigint" ? value : BigInt(value as number));
+}
+
+/**
+ * Each field of `shape` becomes an accessor on the class that converts the
+ * raw value the first time it is read: a handler reads a few of a block's or
+ * transaction's fields, and converting all of them — the roots, the
+ * transaction's whole input as hex — for every event was a large share of
+ * indexing CPU. An assignment, the constructor's included, holds its value.
+ */
+function shapeFields(prototype: object, shape: object): void {
+  shapedPrototypes.add(prototype);
+  for (const [graphName, [rawName, kind]] of Object.entries(shape) as [string, [string, "bytes" | "address" | "bigint"]][]) {
+    Object.defineProperty(prototype, graphName, {
+      configurable: true,
+      get(this: { [SHAPED_FIELDS]?: ShapedFields }) {
+        const fields = this[SHAPED_FIELDS];
+        if (fields === undefined) return undefined;
+        const values = fields.values;
+        if (graphName in values) return values[graphName];
+        return (values[graphName] = shapedField(fields.raw?.[rawName], kind));
+      },
+      set(this: { [SHAPED_FIELDS]?: ShapedFields }, value: unknown) {
+        (this[SHAPED_FIELDS] ??= { raw: undefined, values: {} }).values[graphName] = value;
+      },
+    });
+  }
+}
+
 function shaped<T extends object>(
   into: T,
   shape: Partial<Shape<T>>,
   raw: Record<string, unknown> | undefined,
 ): T {
-  for (const [graphName, [rawName, kind]] of Object.entries(shape) as [string, Shape<T>[keyof T]][]) {
-    const value = raw?.[rawName];
-    (into as Record<string, unknown>)[graphName] =
-      value === null || value === undefined
-        ? null
-        : kind === "bytes"
-          ? Bytes.fromHexString(value as string)
-          : kind === "address"
-            ? Address.fromString(value as string)
-            : new BigInt_(typeof value === "bigint" ? value : BigInt(value as number));
-  }
+  const prototype = Object.getPrototypeOf(into);
+  if (!shapedPrototypes.has(prototype)) shapeFields(prototype, shape);
+  (into as { [SHAPED_FIELDS]?: ShapedFields })[SHAPED_FIELDS] = { raw, values: {} };
   return into;
 }
 
