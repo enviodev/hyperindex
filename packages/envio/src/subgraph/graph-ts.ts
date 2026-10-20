@@ -554,6 +554,17 @@ function parseDecimal(text: string): GraphNodeDecimal.Decimal {
  * what a later operation, `toString` or the store sees. `value` is the same
  * number for envio's store, made only when something asks for it.
  */
+/**
+ * Set for the one `new BigDecimal` that wraps what an operation of
+ * graph-node-decimal returned: normal already, but for `renormalize`'s case.
+ * graph-ts' constructor takes one argument, so the flag says it instead.
+ */
+let constructingOperationResult = false;
+function operationResult(decimal: GraphNodeDecimal.Decimal): BigDecimal {
+  constructingOperationResult = true;
+  return new BigDecimal(decimal);
+}
+
 export class BigDecimal {
   private _decimal: GraphNodeDecimal.Decimal;
   /** The two fields as a mapping last assigned them, if it assigned one. */
@@ -561,8 +572,11 @@ export class BigDecimal {
   private _value: BigNumber | undefined;
 
   constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
-    this._decimal =
-      value instanceof BigInt_
+    const operationResult = constructingOperationResult;
+    constructingOperationResult = false;
+    this._decimal = operationResult
+      ? GraphNodeDecimal.renormalize(value as GraphNodeDecimal.Decimal)
+      : value instanceof BigInt_
         ? GraphNodeDecimal.fromInteger(value.value)
         : value instanceof BigNumber
           ? ((value as BigNumber & { [DECIMAL]?: GraphNodeDecimal.Decimal })[DECIMAL] ??
@@ -602,16 +616,16 @@ export class BigDecimal {
     return BigInt_.fromString(this.value.integerValue(BigNumber.ROUND_DOWN).toFixed());
   }
   plus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.add(this.decimal, decimalOperandOf(other)));
+    return operationResult(GraphNodeDecimal.add(this.decimal, decimalOperandOf(other)));
   }
   minus(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.subtract(this.decimal, decimalOperandOf(other)));
+    return operationResult(GraphNodeDecimal.subtract(this.decimal, decimalOperandOf(other)));
   }
   times(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.multiply(this.decimal, decimalOperandOf(other)));
+    return operationResult(GraphNodeDecimal.multiply(this.decimal, decimalOperandOf(other)));
   }
   div(other: BigDecimal): BigDecimal {
-    return new BigDecimal(GraphNodeDecimal.divide(this.decimal, decimalOperandOf(other)));
+    return operationResult(GraphNodeDecimal.divide(this.decimal, decimalOperandOf(other)));
   }
   equals(other: BigDecimal): boolean {
     return GraphNodeDecimal.compare(this.decimal, decimalOperandOf(other)) === 0;
