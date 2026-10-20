@@ -942,7 +942,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       }
       const path = normalizeIpfsPath(hash);
       if (path === null) throw new Error(`ipfs.map(): "${hash}" is not an IPFS content path`);
-      const encoded: string | null = callSync(hosts.ipfsCat, path, "ipfs.map()");
+      const encoded: string | null = callSync(hosts.ipfsMapFile, path, "ipfs.map()");
       if (encoded === null) return;
       const body = Buffer.from(encoded, "base64").toString("utf8");
       // One JSON value per line, each handed to the callback in turn; a line

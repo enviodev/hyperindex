@@ -11,7 +11,7 @@ import { createEffect } from "../Envio.res.mjs";
 import { configureBlockTimestamps, requestBlockHeader, requestBlockTimestamp } from "./blocks.ts";
 import { configureReceiptLogs, requestReceiptLogs } from "./receipts.ts";
 import { missingRpcMessage } from "./errors.ts";
-import { HttpStatusError, untilAnswered, withDeadline } from "./transient.ts";
+import { HttpStatusError, isTransient, untilAnswered, withDeadline } from "./transient.ts";
 import { warn } from "../Logging.res.mjs";
 
 /**
@@ -168,7 +168,12 @@ async function fetchOnce(url: string, signal: AbortSignal): Promise<string | nul
  * cached as a null for good. With `maxTries`, the last failure is thrown once
  * that many rounds of the gateways have failed.
  */
-function fetchBase64(gateways: string[], path: string, maxTries = Infinity): Promise<string | null> {
+function fetchBase64(
+  gateways: string[],
+  path: string,
+  maxTries = Infinity,
+  budgetMs = Infinity,
+): Promise<string | null> {
   return untilAnswered(
     `the fetch of ${path}`,
     async () => {
@@ -185,8 +190,14 @@ function fetchBase64(gateways: string[], path: string, maxTries = Infinity): Pro
       if (failure !== undefined) throw failure;
       return null;
     },
-    { maxTries, deadline: false },
+    { maxTries, deadline: false, budgetMs },
   );
+}
+
+/** graph-node's `GRAPH_IPFS_TIMEOUT`, 60 s by default (graph/src/env/mappings.rs). */
+function ipfsTimeoutMs(): number {
+  const value = Number(process.env.ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 60_000;
 }
 
 /** At most `limit` of `task`s run at once; the rest queue. */
@@ -230,9 +241,40 @@ export function makeHostEffects(rpcUrls: string[], headerLag: Record<number, num
     return rpcClient(rpcUrls);
   };
 
+  // graph-node's `ipfs.cat` returns null for a file no gateway handed over
+  // within its timeout ("Failed ipfs.cat, returning `null`"); that null isn't
+  // cached, so a later ask fetches anew.
   const ipfsCat = createEffect(
     {
       name: "envio_subgraph_ipfs_cat",
+      input: Sury.string,
+      output: nullableString,
+      rateLimit: false,
+      cache: true,
+    },
+    async ({ input, context }: { input: string; context: { cache: boolean } }) => {
+      const budget = ipfsTimeoutMs();
+      try {
+        return await fetchBase64(ipfsGatewayUrls(), input, Infinity, budget);
+      } catch (error) {
+        if (!isTransient(error)) throw error;
+        context.cache = false;
+        const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+        warn(
+          `Envio Subgraph: ipfs.cat(${input}) got no answer within ${budget}ms (${reason}), so it returns null, ` +
+            "as graph-node's does after GRAPH_IPFS_TIMEOUT. The null isn't cached; ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS " +
+            "sets the wait, ENVIO_SUBGRAPH_IPFS_URL the gateways.",
+        );
+        return null;
+      }
+    },
+  );
+
+  // `ipfs.map` fails its handler where `ipfs.cat` would answer null, and
+  // graph-node retries a block that failed that way, so it waits for the file.
+  const ipfsMapFile = createEffect(
+    {
+      name: "envio_subgraph_ipfs_map",
       input: Sury.string,
       output: nullableString,
       rateLimit: false,
@@ -452,5 +494,5 @@ export function makeHostEffects(rpcUrls: string[], headerLag: Record<number, num
       JSON.stringify(await requestReceiptLogs({ ...JSON.parse(input), chainId: context.chain.id })),
   );
 
-  return { ipfsCat, arweaveData, fileData, ensName, getBalance, hasCode, blockTimestamp, blockHeader, receiptLogs };
+  return { ipfsCat, ipfsMapFile, arweaveData, fileData, ensName, getBalance, hasCode, blockTimestamp, blockHeader, receiptLogs };
 }
