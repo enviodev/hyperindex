@@ -76,6 +76,15 @@ export function handleProposed(event: any): void {
 
   save("uint", ethereum.Value.fromUnsignedBigInt(id));
   save("bytes", ethereum.Value.fromBytes(Bytes.fromHexString("0x01")));
+  // Reserve's encodeAndHash: an array of unlike values encodes element by
+  // element, and past its offset and length that is the tuple's encoding.
+  save("mixed", ethereum.Value.fromArray([
+    ethereum.Value.fromAddressArray([Address.fromString("0x2222222222222222222222222222222222222222")]),
+    ethereum.Value.fromUnsignedBigIntArray([BigInt.fromU64(0)]),
+    ethereum.Value.fromBytesArray([Bytes.fromHexString("0xdeadbeef")]),
+    ethereum.Value.fromUnsignedBigInt(BigInt.fromU64(0)),
+    ethereum.Value.fromFixedBytes(Bytes.fromHexString("0x" + "cd".repeat(32))),
+  ]));
 }
 `,
     ),
@@ -104,6 +113,15 @@ describe("ethereum.encode", () => {
       flat: abiEncode("(uint256,int256,bool,bytes32)", [[42n, -3n, true, "0x" + "ab".repeat(32)]]),
       uint: abiEncode("uint256", [42n]),
       bytes: abiEncode("bytes", ["0x01"]),
+      mixed:
+        abiEncode("uint256,uint256", [32n, 5n]) +
+        abiEncode("address[],uint256[],bytes[],uint256,bytes32", [
+          ["0x2222222222222222222222222222222222222222"],
+          [0n],
+          ["0xdeadbeef"],
+          0n,
+          "0x" + "cd".repeat(32),
+        ]).slice(2),
     });
   });
 });

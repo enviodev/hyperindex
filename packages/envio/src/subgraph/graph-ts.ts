@@ -21,9 +21,7 @@ import {
   toHex,
   hexToBytes,
   decodeAbiParameters,
-  encodeAbiParameters,
   parseAbiParameters,
-  type AbiParameter,
 } from "viem";
 import { subgraphKeccak256 } from "../Core.res.mjs";
 import { currentScope, type Scope } from "./scope.ts";
@@ -1877,34 +1875,104 @@ export function ethereumValueToJs(value: EthereumValue): unknown {
   }
 }
 
-function abiParameterOf(value: EthereumValue): AbiParameter {
+/**
+ * One ABI token's encoding, and whether it is dynamic (encoded after the heads
+ * of the sequence holding it, which points at it) or inline in its head.
+ */
+type EncodedToken = { dynamic: boolean; bytes: Uint8Array };
+
+const WORD = 32;
+const wordOf = (value: bigint): Uint8Array => hexToBytes(toHex(value, { size: WORD }));
+const padded = (bytes: Uint8Array, left: boolean): Uint8Array => {
+  const out = new Uint8Array(Math.ceil(bytes.length / WORD) * WORD || (left ? WORD : 0));
+  out.set(bytes, left ? out.length - bytes.length : 0);
+  return out;
+};
+const joined = (parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+
+function integerWord(value: BigInt_, signed: boolean): Uint8Array {
+  const n = value.valueOf() as bigint;
+  const [min, max] = signed ? [-(2n ** 255n), 2n ** 255n - 1n] : [0n, 2n ** 256n - 1n];
+  if (n < min || n > max) throw new Error(`ethereum.encode: ${n} doesn't fit an ${signed ? "int" : "uint"}256`);
+  return wordOf(BigInt.asUintN(256, n));
+}
+
+/** Heads in order, then the tails of the dynamic tokens the heads point at. */
+function encodedSequence(items: EthereumValue[]): Uint8Array {
+  const tokens = items.map(encodedToken);
+  let offset = tokens.reduce((total, token) => total + (token.dynamic ? WORD : token.bytes.length), 0);
+  const heads: Uint8Array[] = [];
+  const tails: Uint8Array[] = [];
+  for (const token of tokens) {
+    if (!token.dynamic) {
+      heads.push(token.bytes);
+      continue;
+    }
+    heads.push(wordOf(BigInt(offset)));
+    tails.push(token.bytes);
+    offset += token.bytes.length;
+  }
+  return joined([...heads, ...tails]);
+}
+
+/**
+ * Each token encodes by its own kind, the way alloy's `DynSolValue` (and
+ * ethabi's `Token` before it) does. An array of unlike values, which no
+ * Solidity type spells, still encodes element by element: Reserve hashes a
+ * timelock batch as such an array's encoding minus its offset and length.
+ */
+function encodedToken(value: EthereumValue): EncodedToken {
   switch (value.kind) {
     case EthereumValueKind.ADDRESS:
-      return { type: "address" };
     case EthereumValueKind.BOOL:
-      return { type: "bool" };
-    case EthereumValueKind.STRING:
-      return { type: "string" };
-    case EthereumValueKind.BYTES:
-      return { type: "bytes" };
-    case EthereumValueKind.FIXED_BYTES:
-      return { type: `bytes${(value.data as Bytes).length}` };
     case EthereumValueKind.INT:
-      return { type: "int256" };
     case EthereumValueKind.UINT:
-      return { type: "uint256" };
-    case EthereumValueKind.ARRAY:
-    case EthereumValueKind.FIXED_ARRAY: {
-      const items = value.data as EthereumValue[];
-      // An empty array encodes as its length alone, whatever it holds.
-      const element: AbiParameter = items.length > 0 ? abiParameterOf(items[0]) : { type: "uint256" };
-      const suffix = value.kind === EthereumValueKind.ARRAY ? "[]" : `[${items.length}]`;
-      return { ...element, type: `${element.type}${suffix}` } as AbiParameter;
+      return { dynamic: false, bytes: staticWord(value) };
+    case EthereumValueKind.FIXED_BYTES: {
+      const bytes = value.data as Bytes;
+      if (bytes.length > WORD) throw new Error(`ethereum.encode: fixed bytes of ${bytes.length} bytes`);
+      const word = new Uint8Array(WORD);
+      word.set(bytes);
+      return { dynamic: false, bytes: word };
     }
-    case EthereumValueKind.TUPLE:
-      return { type: "tuple", components: (value.data as EthereumValue[]).map(abiParameterOf) };
+    case EthereumValueKind.STRING:
+    case EthereumValueKind.BYTES: {
+      const bytes =
+        value.kind === EthereumValueKind.STRING ? new TextEncoder().encode(value.data as string) : (value.data as Bytes);
+      return { dynamic: true, bytes: joined([wordOf(BigInt(bytes.length)), padded(bytes, false)]) };
+    }
+    case EthereumValueKind.ARRAY: {
+      const items = value.data as EthereumValue[];
+      return { dynamic: true, bytes: joined([wordOf(BigInt(items.length)), encodedSequence(items)]) };
+    }
+    case EthereumValueKind.FIXED_ARRAY:
+    case EthereumValueKind.TUPLE: {
+      const items = value.data as EthereumValue[];
+      return { dynamic: items.some((item) => encodedToken(item).dynamic), bytes: encodedSequence(items) };
+    }
     default:
       throw new Error(`ethereum.encode can't encode a value of kind ${value.kind}`);
+  }
+}
+
+function staticWord(value: EthereumValue): Uint8Array {
+  switch (value.kind) {
+    case EthereumValueKind.ADDRESS:
+      return padded(value.data as Bytes, true);
+    case EthereumValueKind.BOOL:
+      return wordOf(value.data ? 1n : 0n);
+    case EthereumValueKind.INT:
+      return integerWord(value.data as BigInt_, true);
+    default:
+      return integerWord(value.data as BigInt_, false);
   }
 }
 
@@ -2652,13 +2720,12 @@ const ethereumImpl = {
       return null;
     }
   },
-  // graph-node's `ethabi::encode(&[token])`, which is Solidity's `abi.encode`
-  // of the one value. A token carries no integer width and every integer
-  // takes a full word, so 256 bits encodes the same bytes.
+  // graph-node's `DynSolValue::abi_encode` (`ethabi::encode(&[token])` before
+  // alloy), which is Solidity's `abi.encode` of the one value. A token carries
+  // no integer width and every integer takes a full word.
   encode(value: EthereumValue): Bytes | null {
     try {
-      const parameters: readonly AbiParameter[] = [abiParameterOf(value)];
-      return Bytes.fromHexString(encodeAbiParameters(parameters, [ethereumValueToJs(value)] as readonly unknown[]));
+      return new Bytes(encodedSequence([value]));
     } catch {
       return null;
     }
