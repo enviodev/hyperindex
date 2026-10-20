@@ -70,14 +70,84 @@ pub fn generate(manifest_file: &Path, output_dir: &Path) -> Result<Vec<String>> 
     Ok(written)
 }
 
+/// The data sources and templates a YAML file of the project declares, each
+/// with the directory graph codegen writes it under: a manifest's lists, or the
+/// single data source of a fragment a build script assembles manifests from
+/// (DAOhaus' `manifests/baal-summoner-ds.yaml`).
+fn declared_sources(yaml: &Yaml) -> Vec<(&'static str, &Yaml)> {
+    let listed: Vec<(&'static str, &Yaml)> = [("dataSources", ""), ("templates", "templates/")]
+        .into_iter()
+        .flat_map(|(key, prefix)| {
+            yaml.get(key)
+                .and_then(Yaml::as_sequence)
+                .into_iter()
+                .flatten()
+                .map(move |source| (prefix, source))
+        })
+        .collect();
+    if listed.is_empty() && yaml.get("mapping").is_some() && yaml.get("name").is_some() {
+        vec![("", yaml)]
+    } else {
+        listed
+    }
+}
+
+/// An ABI file a manifest (or fragment) names: beside it, as graph-cli reads
+/// it, else from the project root, which a fragment's paths are written for.
+fn abi_file(base: &Path, root: &Path, file: &str) -> PathBuf {
+    let beside = base.join(file);
+    if beside.is_file() {
+        beside
+    } else {
+        root.join(file)
+    }
+}
+
+/// Every YAML data source fragment under `root`: a file holding one data source
+/// (`kind`, `name`, `mapping`) rather than a manifest.
+pub fn data_source_fragments(root: &Path) -> Vec<PathBuf> {
+    const SKIPPED: &[&str] = &["node_modules", "build", "generated", "target"];
+    let mut found = Vec::new();
+    let mut pending = vec![(root.to_path_buf(), 0)];
+    while let Some((dir, depth)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if depth < 3 && !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
+                    pending.push((path, depth + 1));
+                }
+            } else if (name.ends_with(".yaml") || name.ends_with(".yml"))
+                && std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|text| serde_yaml::from_str::<Yaml>(&text).ok())
+                    .is_some_and(|yaml| {
+                        yaml.get("dataSources").is_none()
+                            && yaml.get("mapping").is_some()
+                            && yaml.get("name").is_some()
+                    })
+            {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
 /// Writes the files of `wanted` (relative to `output_dir`: `Pool/Pool.ts`,
 /// `templates/Pair/Pair.ts`) that are missing there and that one of
-/// `manifests` declares, from the first that does, and returns each with that
-/// manifest. graph codegen never cleans its output directory, so a project with
-/// one manifest per network has, in the tree it was built with, the data
-/// sources of every manifest it generated; its mappings may import them.
+/// `manifests` (or data source fragments) declares, from the first that does,
+/// and returns each with that file. graph codegen never cleans its output
+/// directory, so a project with one manifest per network has, in the tree it
+/// was built with, the data sources of every manifest it generated; its
+/// mappings may import them.
 pub fn fill_from_manifests(
     manifests: &[PathBuf],
+    root: &Path,
     output_dir: &Path,
     wanted: &[String],
 ) -> Vec<(String, PathBuf)> {
@@ -97,36 +167,33 @@ pub fn fill_from_manifests(
             continue;
         };
         let base = manifest_file.parent().unwrap_or(Path::new("."));
-        for (key, prefix) in [("dataSources", ""), ("templates", "templates/")] {
-            let sources = manifest.get(key).and_then(Yaml::as_sequence);
-            for source in sources.into_iter().flatten() {
-                let kind = source.get("kind").and_then(Yaml::as_str).unwrap_or("");
-                let Some(name) = source.get("name").and_then(Yaml::as_str) else {
+        for (prefix, source) in declared_sources(&manifest) {
+            let kind = source.get("kind").and_then(Yaml::as_str).unwrap_or("");
+            let Some(name) = source.get("name").and_then(Yaml::as_str) else {
+                continue;
+            };
+            if prefix.is_empty() && !kind.starts_with("ethereum") {
+                continue;
+            }
+            for (abi_name, file) in mapping_abis(source) {
+                let relative = format!("{prefix}{name}/{abi_name}.ts");
+                let Some(&found) = remaining.get(&relative) else {
                     continue;
                 };
-                if prefix.is_empty() && !kind.starts_with("ethereum") {
+                let Some(text) = load_abi(&abi_name, &abi_file(base, root, &file))
+                    .ok()
+                    .and_then(|abi| abi_ts(&abi, GraphCli::detect(base)).ok())
+                else {
                     continue;
-                }
-                for (abi_name, file) in mapping_abis(source) {
-                    let relative = format!("{prefix}{name}/{abi_name}.ts");
-                    let Some(&found) = remaining.get(&relative) else {
-                        continue;
-                    };
-                    let Some(text) = load_abi(&abi_name, &base.join(&file))
-                        .ok()
-                        .and_then(|abi| abi_ts(&abi, GraphCli::detect(base)).ok())
-                    else {
-                        continue;
-                    };
-                    let target = output_dir.join(&relative);
-                    let saved = target
-                        .parent()
-                        .is_some_and(|parent| std::fs::create_dir_all(parent).is_ok())
-                        && std::fs::write(&target, text).is_ok();
-                    if saved {
-                        remaining.remove(found);
-                        written.push((relative, manifest_file.clone()));
-                    }
+                };
+                let target = output_dir.join(&relative);
+                let saved = target
+                    .parent()
+                    .is_some_and(|parent| std::fs::create_dir_all(parent).is_ok())
+                    && std::fs::write(&target, text).is_ok();
+                if saved {
+                    remaining.remove(found);
+                    written.push((relative, manifest_file.clone()));
                 }
             }
         }
@@ -142,6 +209,7 @@ pub fn fill_from_manifests(
 /// each file with the ABI file it came from.
 pub fn fill_from_abi_names(
     manifests: &[PathBuf],
+    root: &Path,
     output_dir: &Path,
     wanted: &[String],
 ) -> Vec<(String, PathBuf)> {
@@ -160,13 +228,11 @@ pub fn fill_from_abi_names(
                 .ok()
                 .and_then(|text| serde_yaml::from_str::<Yaml>(&text).ok())?;
             let base = manifest_file.parent().unwrap_or(Path::new("."));
-            ["dataSources", "templates"]
-                .iter()
-                .filter_map(|key| manifest.get(*key).and_then(Yaml::as_sequence))
-                .flatten()
-                .flat_map(mapping_abis)
+            declared_sources(&manifest)
+                .into_iter()
+                .flat_map(|(_, source)| mapping_abis(source))
                 .find(|(name, _)| name == abi_name)
-                .map(|(_, file)| (base.to_path_buf(), base.join(file)))
+                .map(|(_, file)| (base.to_path_buf(), abi_file(base, root, &file)))
         });
         let Some((base, abi_file)) = found else {
             continue;

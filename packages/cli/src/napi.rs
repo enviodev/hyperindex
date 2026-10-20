@@ -199,6 +199,7 @@ pub fn subgraph_fill_generated(
     let others: Vec<std::path::PathBuf> = crate::subgraph::find_manifests(root)
         .into_iter()
         .map(|relative| root.join(relative))
+        .chain(crate::subgraph::codegen::data_source_fragments(root))
         .filter(|manifest| std::fs::canonicalize(manifest).ok() != own)
         .collect();
     let relative = |path: &std::path::Path| {
@@ -209,7 +210,7 @@ pub fn subgraph_fill_generated(
             .to_string()
     };
     let mut filled: Vec<FilledGeneratedFile> =
-        crate::subgraph::codegen::fill_from_manifests(&others, output_dir, &wanted)
+        crate::subgraph::codegen::fill_from_manifests(&others, root, output_dir, &wanted)
             .into_iter()
             .map(|(file, manifest)| FilledGeneratedFile {
                 file,
@@ -221,7 +222,7 @@ pub fn subgraph_fill_generated(
         .chain(others)
         .collect();
     filled.extend(
-        crate::subgraph::codegen::fill_from_abi_names(&all, output_dir, &wanted)
+        crate::subgraph::codegen::fill_from_abi_names(&all, root, output_dir, &wanted)
             .into_iter()
             .map(|(file, abi_file)| FilledGeneratedFile {
                 abi_name: std::path::Path::new(&file)
