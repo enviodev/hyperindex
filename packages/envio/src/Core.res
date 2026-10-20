@@ -41,7 +41,7 @@ type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
   subgraphFileToJavascript: (string, string, bool) => string,
-  subgraphCreatingHandlers: (string, array<string>) => array<string>,
+  subgraphRegisterHandlers: (array<string>, array<array<string>>) => array<array<string>>,
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
@@ -331,9 +331,9 @@ let subgraphFileToJavascript = (~source, ~path, ~legacyNulls) => {
   addon.subgraphFileToJavascript(source, path, legacyNulls)
 }
 
-let subgraphCreatingHandlers = (~mappingFile, ~handlers) => {
+let subgraphRegisterHandlers = (~mappingFiles, ~handlers) => {
   let addon = getAddon()
-  addon.subgraphCreatingHandlers(mappingFile, handlers)
+  addon.subgraphRegisterHandlers(mappingFiles, handlers)
 }
 
 let subgraphKeccak256 = bytes => getAddon().subgraphKeccak256(bytes)

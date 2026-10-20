@@ -15,7 +15,7 @@ import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
-import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
+import { subgraphFileToJavascript, subgraphRegisterHandlers } from "../Core.res.mjs";
 import { install as installCallSource } from "../sources/CallSource.res.mjs";
 import { fetchCalls, resetCallBackends } from "./calls-source.ts";
 import {
@@ -1097,6 +1097,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // the life of the process, so generating after the import has already failed
   // wouldn't help.
   const sources = [...config.dataSources, ...config.templates];
+  const handlersOf = (source: (typeof sources)[number]): string[] =>
+    [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
+      (handler) => handler.handler,
+    );
+  let registerPassHandlers: Map<(typeof sources)[number], Set<string>> | undefined;
   const generated = generatedDir(
     config.root,
     sources.map((source) => source.mappingFile),
@@ -1215,21 +1220,21 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     const live = (event: any) =>
       source.isTemplate || source.endBlock === undefined || event.block.number <= source.endBlock;
     // After codegen, so the analysis can follow the mapping into
-    // `generated/templates.ts`.
-    const creating = new Set<string>(
+    // `generated/templates.ts`; for every source at once, as a create in one
+    // can hang on what another one's handlers save.
+    registerPassHandlers ??=
       templateNames.size === 0
-        ? []
-        : registerEveryHandler
-          ? [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
-              (handler) => handler.handler,
-            )
-          : subgraphCreatingHandlers(
-              path.resolve(config.root, source.mappingFile),
-              [...source.eventHandlers, ...(source.callHandlers ?? []), ...source.blockHandlers].map(
-                (handler) => handler.handler,
-              ),
-            ),
-    );
+        ? new Map()
+        : new Map(
+            (registerEveryHandler
+              ? sources.map((each) => handlersOf(each))
+              : subgraphRegisterHandlers(
+                  sources.map((each) => path.resolve(config.root, each.mappingFile)),
+                  sources.map((each) => handlersOf(each)),
+                )
+            ).map((names: string[], index: number) => [sources[index], new Set(names)]),
+          );
+    const creating = registerPassHandlers.get(source) ?? new Set<string>();
     // graph-node matches a data source without `source.address` against every
     // contract's logs — ENS's Resolver is one data source for every resolver
     // anyone deploys. Nothing would ever register an address for it here.

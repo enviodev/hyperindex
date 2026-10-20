@@ -131,11 +131,20 @@ pub fn subgraph_keccak256(
     alloy_primitives::keccak256(&*input).to_vec().into()
 }
 
-/// The handlers of the mapping at `mapping_file` whose code can reach
-/// `DataSourceTemplate.create` — the only ones the register pass reruns.
+/// For each data source (its mapping file and handlers), the handlers the
+/// register pass reruns: those whose code can reach `DataSourceTemplate.create`,
+/// and those that touch an entity type whose loaded state decides a create.
 #[napi_derive::napi]
-pub fn subgraph_creating_handlers(mapping_file: String, handlers: Vec<String>) -> Vec<String> {
-    crate::subgraph::creates::creating_handlers(std::path::Path::new(&mapping_file), &handlers)
+pub fn subgraph_register_handlers(
+    mapping_files: Vec<String>,
+    handlers: Vec<Vec<String>>,
+) -> Vec<Vec<String>> {
+    let sources: Vec<(std::path::PathBuf, Vec<String>)> = mapping_files
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .zip(handlers)
+        .collect();
+    crate::subgraph::creates::register_handlers(&sources)
 }
 
 #[napi_derive::napi(object)]

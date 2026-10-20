@@ -272,9 +272,10 @@ register pass's own store, and reads see what an earlier register pass wrote**
 strictly earlier events on its chain, for the 50k most recently used
 entities (an evicted one reads `null` again); a `once` block handler runs in register mode too, at its
 block, before the first register pass of its chain (Venus saves its
-Comptroller there); an entity saved only by a handler that creates nothing —
-which gets no register pass — or by a polling block handler reads `null`, so a
-`create()` conditioned on such state can still mis-register. A mapping that throws in the
+Comptroller there); a change a handler without a register pass makes to an
+entity (it only updates one a create depends on, below) or one a polling block
+handler saves doesn't reach that store, so a `create()` conditioned on such
+state can still mis-register. A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
@@ -288,7 +289,12 @@ functions, classes and variables, relative imports and re-exports, into
 `generated/templates.ts`), and anything it can't see — a file that doesn't
 parse or resolve, another package, a namespace import of graph-ts — counts as
 a create. A pool's swap handler no longer replays its mapping and its contract
-calls at fetch time. Concurrent passes share one in-flight request per op.
+calls at fetch time. A handler that creates an entity a create depends on gets
+the pass too: the analysis notes, in creating code, the entity types whose
+load decides a create (a create under `if (collection)`, after
+`if (!pool) return`, handed `entity.address`), and a handler of any data source
+that constructs one (`new E(…)`, `store.set("E", …)`) has its writes in the
+register store. Concurrent passes share one in-flight request per op.
 `ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` restores the pass for every handler.
 
 ## 5. Sync bridge: try-sync, suspend, replay
