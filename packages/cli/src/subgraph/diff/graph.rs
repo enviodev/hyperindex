@@ -712,8 +712,9 @@ pub mod tests {
         );
     }
 
-    /// graph-node's own answers: spec/GRAPH_DIALECT.md §2.1, and the Aave v3
-    /// and Nouns names checked on the network.
+    /// graph-node's own answers (`camel_cased_names` in
+    /// graph/src/data/graphql/ext.rs, run with Inflector 0.11.4), and the Aave
+    /// v3 and Nouns names checked on the network.
     #[test]
     fn names_collections_as_graph_node_does() {
         let names = [

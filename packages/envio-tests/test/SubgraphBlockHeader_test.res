@@ -1,7 +1,7 @@
 // `block.hash` and `block.parentHash` in a block handler. Live against
 // HyperSync, like SubgraphBlockHandler_test: the header is fetched in the same
 // batched query for every block of a batch, only from below the chain's reorg
-// window (spec/BLOCK_HASH.md). A handler that reads just the timestamp keeps
+// window. A handler that reads just the timestamp keeps
 // its narrow query and doesn't hold its chain back.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
