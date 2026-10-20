@@ -58,6 +58,7 @@ pub fn gather_with_mappings(root: &Path, mapping_files: &[String]) -> Vec<String
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let import =
         regex::Regex::new(r#"(?:from|import)\s*["']([^"']+)["']"#).expect("valid import pattern");
+    let workspace = super::workspace::packages(&root);
     let mut seen = std::collections::HashSet::new();
     let mut queue: std::collections::VecDeque<std::path::PathBuf> = mapping_files
         .iter()
@@ -84,7 +85,7 @@ pub fn gather_with_mappings(root: &Path, mapping_files: &[String]) -> Vec<String
                 .into_iter()
                 .find(|candidate| candidate.is_file())
             } else {
-                package_file(&dir, specifier)
+                package_file(&dir, specifier, &workspace)
             };
             if let Some(found) = found.and_then(|found| std::fs::canonicalize(found).ok()) {
                 queue.push_back(found);
@@ -104,10 +105,15 @@ pub fn gather_with_mappings(root: &Path, mapping_files: &[String]) -> Vec<String
 }
 
 /// The AssemblyScript file a bare import names, found the way `asc` finds it:
-/// the package under the nearest `node_modules`, then its `ascMain`, a `main`
+/// the package under the nearest `node_modules` (or the workspace's package of
+/// that name, which an install would link there), then its `ascMain`, a `main`
 /// or `types` that is TypeScript, `assembly/index.ts` or `index.ts`; a subpath
 /// is a file in the package. graph-ts is the shim's, not the mappings'.
-fn package_file(from: &Path, specifier: &str) -> Option<std::path::PathBuf> {
+fn package_file(
+    from: &Path,
+    specifier: &str,
+    workspace: &std::collections::BTreeMap<String, std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
     if specifier.starts_with("@graphprotocol/") || specifier.starts_with("node:") {
         return None;
     }
@@ -121,7 +127,8 @@ fn package_file(from: &Path, specifier: &str) -> Option<std::path::PathBuf> {
     let package = from
         .ancestors()
         .map(|dir| dir.join("node_modules").join(&name))
-        .find(|dir| dir.is_dir())?;
+        .find(|dir| dir.is_dir())
+        .or_else(|| workspace.get(&name).cloned())?;
     let is_source = |file: &str| {
         file.ends_with(".ts") && !file.ends_with(".d.ts") && package.join(file).is_file()
     };

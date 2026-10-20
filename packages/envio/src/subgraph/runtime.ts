@@ -15,7 +15,7 @@ import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
-import { subgraphCreatingHandlers, subgraphFileToJavascript } from "../Core.res.mjs";
+import { subgraphCreatingHandlers, subgraphFileToJavascript, subgraphWorkspacePackages } from "../Core.res.mjs";
 import { install as installCallSource } from "../sources/CallSource.res.mjs";
 import { fetchCalls, resetCallBackends } from "./calls-source.ts";
 import {
@@ -80,7 +80,7 @@ import { fetchMappingPackages, missingMappingPackages } from "./toolchain.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
-import { resolveAssemblyScriptPackage } from "./as-package.ts";
+import { resolveAssemblyScriptPackage, resolveWorkspacePackage } from "./as-package.ts";
 import { registerSlots } from "./register-slots.ts";
 
 const SHIM_URL = new URL("./graph-ts.ts", import.meta.url).href;
@@ -210,6 +210,8 @@ let projectRoot: string | null = null;
  * packages' own dependencies.
  */
 let fetchedModulesParent: string | null = null;
+/** The packages of the workspace the project sits in, by name, which an install would link. */
+let workspacePackages = new Map<string, string>();
 /** Every project file the load hook has compiled, so their exports can be read back. */
 const projectModules = new Set<string>();
 
@@ -221,6 +223,7 @@ const projectModules = new Set<string>();
  */
 function installResolveHook(root: string) {
   projectRoot = pathToFileURL(path.resolve(root) + path.sep).href;
+  workspacePackages = new Map(Object.entries(subgraphWorkspacePackages(root)));
   if (hooksInstalled) return;
   hooksInstalled = true;
   // The addon's output carries an inline source map back to the mapping, so a
@@ -247,6 +250,10 @@ function installResolveHook(root: string) {
         resolved = nextResolve(specifier, context);
       } catch (error: any) {
         const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
+        // The workspace's own package before any copy fetched from npm, which
+        // may not be it.
+        const workspaceFile = bare ? resolveWorkspacePackage(specifier, workspacePackages) : null;
+        if (workspaceFile) return { url: workspaceFile, format: "module", shortCircuit: true };
         let fetched;
         if (fetchedModulesParent && bare && error?.code === "ERR_MODULE_NOT_FOUND") {
           try {
@@ -1145,7 +1152,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     missingMappingPackages(
       config.root,
       sources.map((source) => source.mappingFile),
-    ),
+    ).filter((name) => !workspacePackages.has(name)),
   );
   fetchedModulesParent = fetchedModules
     ? pathToFileURL(path.join(path.dirname(fetchedModules), "resolve-from.mjs")).href

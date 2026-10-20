@@ -212,6 +212,15 @@ pub fn subgraph_fill_generated(
     .collect()
 }
 
+/// The packages of the workspace `root` sits in, name to directory.
+#[napi_derive::napi]
+pub fn subgraph_workspace_packages(root: String) -> std::collections::HashMap<String, String> {
+    crate::subgraph::workspace::packages(std::path::Path::new(&root))
+        .into_iter()
+        .map(|(name, dir)| (name, dir.display().to_string()))
+        .collect()
+}
+
 #[napi_derive::napi]
 pub fn subgraph_bundled_codegen_current(manifest_file: String, output_dir: String) -> bool {
     crate::subgraph::codegen::is_current(

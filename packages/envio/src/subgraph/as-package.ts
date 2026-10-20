@@ -74,3 +74,30 @@ function resolveInPackage(packageDir: string, inner: string): string | null {
   }
   return null;
 }
+
+/**
+ * A bare import of a package the workspace declares (`workspaces`, or
+ * pnpm-workspace.yaml), resolved in that package as an install would link it:
+ * enzyme's mappings import `@enzymefinance/subgraph-utils`, its
+ * `packages/utils`, whose `main` is `index.ts`. `workspace` maps package names
+ * to their directories.
+ */
+export function resolveWorkspacePackage(specifier: string, workspace: Map<string, string>): string | null {
+  const split = splitSpecifier(specifier);
+  if (!split) return null;
+  const [name, inner] = split;
+  const packageDir = workspace.get(name);
+  if (!packageDir) return null;
+  if (inner === "") {
+    try {
+      const { main } = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+      if (typeof main === "string" && isFile(path.join(packageDir, main))) {
+        return pathToFileURL(path.join(packageDir, main)).href;
+      }
+    } catch {
+      // No readable manifest: AssemblyScript's own candidates still apply.
+    }
+  }
+  const found = resolveInPackage(packageDir, inner);
+  return found ? pathToFileURL(found).href : null;
+}

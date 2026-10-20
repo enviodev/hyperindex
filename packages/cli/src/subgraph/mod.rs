@@ -13,6 +13,7 @@ pub mod errors;
 pub mod manifest;
 pub mod schema;
 pub mod usage;
+pub mod workspace;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
