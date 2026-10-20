@@ -576,6 +576,15 @@ graph-cli is one of `mustache <view> <template> [out]` (also `npx`/`yarn`/
   && graph codegen`) is skipped: it would render the script's default network
   over the one picked.
 
+**Paths that differ only in case.** A manifest written on macOS or Windows
+can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
+(CryptoPunks): it builds there and runs on hosted platforms, and graph-cli on
+Linux fails on it. envio reads a file the manifest names (schema, mapping,
+ABI) from the one entry per path component that differs from it only in case,
+as the author's filesystem does, warns once per path, and hands graph-cli a
+copy of the manifest spelled the repo's way. Two such entries are an error
+that lists both.
+
 A script that runs anything else to write the manifest — `node`, `ts-node`,
 `truffle exec`, a shell script, `jq`, handlebars through a script of its own —
 isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or

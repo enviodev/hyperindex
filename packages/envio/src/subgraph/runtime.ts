@@ -159,6 +159,8 @@ type SubgraphConfig = {
   blockHeaderLag?: Record<number, number>;
   /** Set when envio wrote the manifest from the repo's template. */
   renderedManifest?: { script: string; network: string; template: string; view: string };
+  /** Files the manifest names, as written and as the repo spells them, differing only in case. */
+  pathCaseFixes?: [string, string][];
   isDev: boolean;
 } & SubgraphSchema;
 
@@ -1094,12 +1096,19 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         `"${rendered.script}" does. ENVIO_SUBGRAPH_NETWORK picks another.`,
     );
   }
+  for (const [written, found] of config.pathCaseFixes ?? []) {
+    warn(
+      `Envio Subgraph: ${config.manifestFile ?? "subgraph.yaml"} names ${written}, and the repo has ${found}. ` +
+        "They match only on a filesystem that ignores case (macOS's and Windows' by default), where " +
+        `the subgraph builds; envio reads ${found}.`,
+    );
+  }
   await ensureGeneratedCode(
     config.root,
     generated,
     config.manifestFile,
     sources.map((source) => source.mappingFile),
-    rendered?.script,
+    { renderScript: rendered?.script, pathCaseFixes: config.pathCaseFixes },
   );
 
   if (config.isDev) {

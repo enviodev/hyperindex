@@ -1584,6 +1584,8 @@ impl SystemConfig {
             }
             None => manifest,
         };
+        let (manifest, path_case_fixes) =
+            crate::subgraph::path_case::match_manifest(&manifest_dir, &manifest);
         let (root, manifest) = crate::subgraph::rebase_manifest(&manifest_dir, &manifest)?;
         let root = &root;
 
@@ -1682,6 +1684,7 @@ impl SystemConfig {
             subgraph.manifest_file = file.display().to_string();
         }
         if let Some(subgraph) = config.subgraph.as_mut() {
+            subgraph.path_case_fixes = path_case_fixes;
             subgraph.rendered_manifest =
                 rendered.map(|rendered| crate::subgraph::RenderedManifest {
                     script: rendered.script,

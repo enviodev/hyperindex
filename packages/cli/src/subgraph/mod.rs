@@ -12,6 +12,7 @@ pub mod diff;
 pub mod errors;
 pub mod manifest;
 pub mod mustache;
+pub mod path_case;
 pub mod render;
 pub mod schema;
 pub mod usage;
@@ -118,6 +119,11 @@ pub struct SubgraphRuntimeConfig {
     /// runtime says so and the codegen script doesn't render it over again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rendered_manifest: Option<RenderedManifest>,
+    /// Files the manifest names, as written and as the repo has them, where
+    /// they differ only in case (§6d): graph-cli's copy of the manifest is
+    /// spelled the repo's way too.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub path_case_fixes: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -361,17 +367,27 @@ pub fn missing_abi_files(
             continue;
         };
         let name = name.to_string_lossy().to_lowercase();
-        let found = std::fs::read_dir(dir).ok().and_then(|entries| {
-            entries
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.file_name().to_string_lossy().to_string())
-                .find(|entry| entry.to_lowercase() == name && !wanted.ends_with(entry))
-        });
-        if let Some(found) = found {
-            let hint = format!("\n{path} differs only in case from {found}, which does exist.");
-            if !message.contains(&hint) {
-                message.push_str(&hint);
-            }
+        let mut found: Vec<String> = std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| entry.file_name().to_string_lossy().to_string())
+                    .filter(|entry| entry.to_lowercase() == name && !wanted.ends_with(entry))
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        let hint = match found.as_slice() {
+            [] => continue,
+            [one] => format!("\n{path} differs only in case from {one}, which does exist."),
+            several => format!(
+                "\n{path} differs only in case from {}, which do exist: envio can't tell \
+                 which one the manifest means.",
+                several.join(", ")
+            ),
+        };
+        if !message.contains(&hint) {
+            message.push_str(&hint);
         }
     }
     Some(message)
@@ -1310,6 +1326,7 @@ pub fn translate(
             manifest_file: DEFAULT_MANIFEST.to_string(),
             block_header_lag,
             rendered_manifest: None,
+            path_case_fixes: Vec::new(),
         },
         human_config,
     })
@@ -2787,9 +2804,60 @@ type Renewal implements Event @entity {
         );
     }
 
-    // CryptoPunks names `./abis/WrappedPunks.json` and commits
-    // `abis/wrappedpunks.json`; envio said only `Virtual config file
-    // "./abis/WrappedPunks.json" was not provided`.
+    // CryptoPunks names `./abis/WrappedPunks.json` and `./src/marketplaces/…`
+    // and commits `abis/wrappedpunks.json` and `src/Marketplaces/`: it builds
+    // on macOS, where it was written, and was refused here as a missing ABI.
+    #[test]
+    fn reads_the_files_a_manifest_names_in_another_case() {
+        let dir = tempdir::TempDir::new("envio-subgraph-case").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("./src/gravity.ts", "./src/marketplaces/gravity.ts"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src/Marketplaces")).unwrap();
+        fs::rename(
+            root.join("src/gravity.ts"),
+            root.join("src/Marketplaces/gravity.ts"),
+        )
+        .unwrap();
+        fs::rename(
+            root.join("abis/Gravity.json"),
+            root.join("abis/gravity.json"),
+        )
+        .unwrap();
+
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let subgraph = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap()
+            .subgraph
+            .unwrap();
+
+        assert_eq!(
+            (
+                subgraph.manifest.data_sources[0].mapping_file.as_str(),
+                subgraph.path_case_fixes,
+            ),
+            (
+                "./src/Marketplaces/gravity.ts",
+                vec![
+                    (
+                        "./src/marketplaces/gravity.ts".to_string(),
+                        "./src/Marketplaces/gravity.ts".to_string()
+                    ),
+                    (
+                        "./abis/Gravity.json".to_string(),
+                        "./abis/gravity.json".to_string()
+                    ),
+                ]
+            )
+        );
+    }
+
+    // Two files that differ from the name only in case: neither is read, and
+    // the error names one.
     #[test]
     fn names_a_missing_abi_file_and_a_case_only_match() {
         let dir = tempdir::TempDir::new("envio-subgraph-abi").unwrap();
@@ -2800,6 +2868,7 @@ type Renewal implements Event @entity {
             root.join("abis/gravity.json"),
         )
         .unwrap();
+        fs::write(root.join("abis/GRAVITY.json"), GRAVITY_ABI).unwrap();
 
         let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
         let err = format!(
@@ -2815,7 +2884,8 @@ type Renewal implements Event @entity {
                  The manifest's paths are resolved against its own directory, as graph-cli \
                  resolves them. If a build step writes them (forge build, a git submodule, a \
                  copy script), run it first.\n\
-                 ./abis/Gravity.json differs only in case from gravity.json, which does exist.",
+                 ./abis/Gravity.json differs only in case from GRAVITY.json, gravity.json, \
+                 which do exist: envio can't tell which one the manifest means.",
                 root.display()
             )
         );

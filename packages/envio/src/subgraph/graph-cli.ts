@@ -183,14 +183,24 @@ function outOfMemory(command: string): Error {
  * subgraph says. Codegen reads only the ABIs and the schema, so it is run on a
  * copy beside the manifest with those versions raised.
  */
-async function withCodegenManifest<T>(manifest: string, use: (file: string) => Promise<T>): Promise<T> {
+async function withCodegenManifest<T>(
+  manifest: string,
+  pathCaseFixes: [string, string][],
+  use: (file: string) => Promise<T>,
+): Promise<T> {
   let source: string;
   try {
     source = readFileSync(manifest, "utf8");
   } catch {
     return use(manifest);
   }
-  const patched = source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5");
+  let patched = source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5");
+  // graph-cli on Linux can't read a file the manifest names in another case
+  // than the repo's; the copy names it the repo's way.
+  for (const [written, found] of pathCaseFixes) {
+    const escaped = written.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    patched = patched.replace(new RegExp(`(\\bfile:\\s*["']?)${escaped}(["']?\\s*$)`, "gm"), `$1${found}$2`);
+  }
   if (patched === source) return use(manifest);
   const copy = path.join(path.dirname(manifest), `.envio-codegen-${path.basename(manifest)}`);
   writeFileSync(copy, patched);
@@ -213,13 +223,14 @@ async function runCodegen(
   outputDir: string,
   needed: boolean,
   flags: string[] = [],
+  pathCaseFixes: [string, string][] = [],
 ): Promise<boolean> {
   for (const provider of codegenProviders) {
     if (provider.fetches && !needed) continue;
     const candidates = await provider.locate(root);
     if (candidates.length === 0) continue;
     for (const [index, graphCli] of candidates.entries()) {
-      const outcome = await withCodegenManifest(path.resolve(root, manifestFile), (manifest) =>
+      const outcome = await withCodegenManifest(path.resolve(root, manifestFile), pathCaseFixes, (manifest) =>
         runGraphCli(graphCli, root, "codegen", [manifest, "--output-dir", outputDir, "--skip-migrations", ...flags]),
       );
       if (outcome === "ok") return true;
@@ -468,10 +479,16 @@ export async function ensureGeneratedCode(
   dir: string,
   manifestFile = "subgraph.yaml",
   mappingFiles: string[] = [],
-  // The package.json script envio rendered the manifest with, for the network
-  // picked: run again from the codegen script, it would write the script's
-  // default network over that.
-  renderScript?: string,
+  {
+    renderScript,
+    pathCaseFixes = [],
+  }: {
+    // The package.json script envio rendered the manifest with, for the network
+    // picked: run again from the codegen script, it would write the script's
+    // default network over that.
+    renderScript?: string;
+    pathCaseFixes?: [string, string][];
+  } = {},
 ): Promise<void> {
   const mode = codegenMode();
   if (mode === "bundled") {
@@ -529,7 +546,8 @@ export async function ensureGeneratedCode(
       }
       // With no graph-cli anywhere, the mapping that imports the missing code
       // reports it, naming that mapping.
-      if (!(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir), codegenFlags(root, step)))) return;
+      const needed = importsFrom(root, mappingFiles, dir);
+      if (!(await runCodegen(root, manifestFile, dir, needed, codegenFlags(root, step), pathCaseFixes))) return;
     }
   } catch (error) {
     if (mode === "graph-cli" || bundledFailed) throw error;
