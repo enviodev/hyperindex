@@ -37,8 +37,8 @@ data sources (refused: SQL over an Amp dataset, §2).
 apiVersion (graph-ts): **0.0.5** modern baseline · **0.0.6** `tx.nonce`,
 `block.baseFeePerGas` · **0.0.7** `event.receipt` · **0.0.8** field
 validation on `save()` · **0.0.9** `getBalance`/`hasCode` · **0.0.10**
-`ethereum.decodeParams`, which no graph-ts release exports yet (refused by
-name if a mapping reaches it). No floor: older versions expose a subset, and
+`ethereum.decodeParams` (graph-node v0.45: a top-level tuple's fields read as
+calldata parameters). No floor: older versions expose a subset, and
 what a mapping actually reaches for is refused by name. Newer than 0.0.10,
 graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 

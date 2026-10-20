@@ -2632,6 +2632,22 @@ const ethereumImpl = {
       return null;
     }
   },
+  // graph-node's `ethereum_decode_params` (apiVersion 0.0.10): alloy's
+  // `abi_decode_params`, which reads a top-level tuple's fields as a sequence
+  // of parameters, as calldata holds them, with no offset word before them.
+  decodeParams(types: string, data: Bytes): EthereumValue | null {
+    try {
+      const parameters = parseAbiParameters(types);
+      const [only] = parameters;
+      if (parameters.length !== 1 || only.type !== "tuple" || !("components" in only)) {
+        return ethereumImpl.decode(types, data);
+      }
+      const decoded = decodeAbiParameters(only.components, data.toHexString() as `0x${string}`);
+      return ethereumConverter(types)([...decoded]);
+    } catch {
+      return null;
+    }
+  },
   // graph-node's `ethabi::encode(&[token])`, which is Solidity's `abi.encode`
   // of the one value. A token carries no integer width and every integer
   // takes a full word, so 256 bits encodes the same bytes.
