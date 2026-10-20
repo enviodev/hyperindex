@@ -3648,6 +3648,78 @@ type Renewal implements Event @entity {
         assert_eq!(chain_of(&config).0, 137);
     }
 
+    // dolomite splits the render in two scripts per network:
+    // `mustache-template:<net>` writes subgraph.yaml, `mustache-constants:<net>`
+    // writes src/mappings/generated/constants.ts. The manifest there (here
+    // reformatted, as another renderer leaves it) is one network's render, so
+    // that network's constants are written.
+    #[test]
+    fn writes_the_sibling_companions_of_a_manifest_another_renderer_wrote() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-sibling-companion").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("src/templates")).unwrap();
+        fs::write(
+            root.join("src/templates/constants.template.ts"),
+            "export const NETWORK = \"{{network}}\";\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        for (network, address) in [
+            ("mainnet", "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"),
+            ("base", "0x00000000000014aA86C5d3c41765bb24e11bd701"),
+        ] {
+            fs::write(
+                root.join(format!("config/{network}.json")),
+                format!(
+                    r#"{{"network": "{network}", "gravity": {{"address": "{address}", "startBlock": 6175244}}}}"#
+                ),
+            )
+            .unwrap();
+        }
+        let scripts: Vec<String> = ["mainnet", "base"]
+            .iter()
+            .flat_map(|network| {
+                [
+                    format!(
+                        "\"mustache-template:{network}\": \"mustache config/{network}.json \
+                         subgraph.template.yaml > subgraph.yaml\""
+                    ),
+                    format!(
+                        "\"mustache-constants:{network}\": \"mkdir -p src/mappings/generated && \
+                         mustache config/{network}.json src/templates/constants.template.ts > \
+                         src/mappings/generated/constants.ts\""
+                    ),
+                    format!(
+                        "\"prepare:{network}\": \"yarn mustache-template:{network} && yarn \
+                         mustache-constants:{network}\""
+                    ),
+                ]
+            })
+            .collect();
+        fs::write(
+            root.join("package.json"),
+            format!("{{\"scripts\": {{{}}}}}", scripts.join(", ")),
+        )
+        .unwrap();
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("dataSources:\n", "dataSources:\n\n"),
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config).0,
+                fs::read_to_string(root.join("src/mappings/generated/constants.ts")).ok(),
+            ),
+            (1, Some("export const NETWORK = \"mainnet\";\n".to_string()))
+        );
+    }
+
     // A committed subgraph.yaml is the user's: a render script beside it
     // (GoodCollective's `prepare`) doesn't overwrite it.
     #[test]

@@ -600,7 +600,8 @@ moonwell renders in `make generate-config`.
   or committed beside a render script, is read as it is. networks.json isn't
   applied on top of a rendered manifest.
 - A manifest that is there already, and that one network's render writes
-  byte for byte, proves that network: the files the same script writes beside
+  as the same YAML, proves that network: the files the same script (and the
+  network's sibling render scripts) write beside
   it and that are missing are written (matic commits subgraph.yaml-shaped
   output and gitignores `src/network.ts`). Existing files are never touched.
 - The codegen script's step that runs the same script (`yarn gen-yaml-config

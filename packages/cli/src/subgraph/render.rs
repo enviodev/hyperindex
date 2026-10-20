@@ -1895,6 +1895,20 @@ pub fn unrepeatable_writers(target: &Path) -> Option<String> {
 /// earlier run of the script), the files it writes beside it that are missing
 /// (matic's gitignored `src/network.ts`) are written. Nothing that exists is
 /// touched, and an unproven network writes nothing.
+/// Whether a render is the manifest there: the same YAML, however another
+/// renderer laid it out (the corpus harness' keeps mustache's standalone
+/// lines).
+fn same_manifest(rendered: &str, existing: &str) -> bool {
+    rendered == existing
+        || matches!(
+            (
+                serde_yaml::from_str::<serde_yaml::Value>(rendered),
+                serde_yaml::from_str::<serde_yaml::Value>(existing),
+            ),
+            (Ok(a), Ok(b)) if a == b
+        )
+}
+
 fn write_missing_companions(target: &Path) -> Result<()> {
     let Ok(existing) = std::fs::read_to_string(target) else {
         return Ok(());
@@ -1911,8 +1925,21 @@ fn write_missing_companions(target: &Path) -> Result<()> {
         if let (Some(name), Some(value)) = (hole_name.as_deref(), choice.hole_value.as_deref()) {
             run.hole = Some((name, value));
         }
-        if run.steps(&choice.plan.steps).is_err() || run.files.get(target) != Some(&existing) {
+        let proven = run.steps(&choice.plan.steps).is_ok()
+            && run
+                .files
+                .get(target)
+                .is_some_and(|rendered| same_manifest(rendered, &existing));
+        if !proven {
             continue;
+        }
+        if choice.hole_value.is_none() {
+            for (_, steps) in sibling_renders(choice.plan, &choice.network, target) {
+                let before = run.files.clone();
+                if run.steps(&steps).is_err() {
+                    run.files = before;
+                }
+            }
         }
         for (path, text) in &run.files {
             if path.as_path() == target || path.exists() {
@@ -1928,7 +1955,7 @@ fn write_missing_companions(target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Writes the manifest at `target` (and whatever else its script writes) when/// Writes the manifest at `target` (and whatever else its script writes) when
+/// Writes the manifest at `target` (and whatever else its script writes) when
 /// it is missing, or is one envio rendered before, and a package.json script
 /// beside it renders it in a way envio can repeat. `Ok(None)`: nothing to
 /// render, the manifest is read as it is (or reported missing).
