@@ -1,7 +1,10 @@
-// graph-ts reads a BigInt's minimal two's-complement little-endian bytes,
-// zero-padded, for `toU32()`/`toU64()`: -1 is the byte 0xff, so 255, and only a
-// value whose bytes don't fit overflows. Clober's `(tick.toU32() << 8) >> 8`
-// relies on it; the shim refused every negative.
+// graph-ts' `toU32()`/`toU64()` read a BigInt's own two's-complement bytes,
+// zero-padded (ByteArray.toU32, common/collections.ts), and overflow only when
+// a byte past the width is set. So the answer depends on how many bytes the
+// BigInt holds: a value the host computed has its minimal bytes (-1 is the
+// byte 0xff, so 255), while `BigInt.fromI32(-1)` is the four bytes
+// `ByteArray.fromI32` writes (so 4294967295). Clober's
+// `BigInt.fromI32(tick).toU32()` is the second kind.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
@@ -56,6 +59,9 @@ export function handlePoolInitialized(event: any): void {
     BigInt.fromString("4294967295").toU32().toString(),
     BigInt.fromI32(-1).toU64().toString(),
     BigInt.fromI32(7).toU64().toString(),
+    BigInt.fromString("-1").toU32().toString(),
+    BigInt.fromI32(0).minus(BigInt.fromI32(100)).toU32().toString(),
+    BigInt.fromI64(-1).toU64().toString(),
   ];
   let entity = new Entity();
   entity.setBigInt("back", BigInt.fromI32(0));
@@ -70,7 +76,7 @@ import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
 describe("BigInt.toU32() and toU64()", () => {
-  it("read the minimal two's-complement bytes zero-padded, as graph-ts does", async (t) => {
+  it("read the BigInt's own bytes zero-padded, as graph-ts does", async (t) => {
     const indexer = createTestIndexer();
     await indexer.process({
       chains: {
@@ -88,7 +94,7 @@ describe("BigInt.toU32() and toU64()", () => {
       },
     });
     t.expect(await indexer.Init.getAll()).toEqual([
-      { id: "u", back: 0n, month: "255,65280,156,4294967295,255,7" },
+      { id: "u", back: 0n, month: "4294967295,4294967040,4294967196,4294967295,4294967295,7,255,156,18446744073709551615" },
     ]);
   });
 });

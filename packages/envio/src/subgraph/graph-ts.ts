@@ -77,13 +77,13 @@ function byteWidth(value: bigint): number {
 }
 
 /**
- * graph-ts' `BigInt.toU32()`/`toU64()`: the minimal two's-complement
- * little-endian bytes, zero-padded to the width — so -1 (the byte 0xff) is
- * 255 — overflowing only when a byte past the width is set.
+ * graph-ts' `BigInt.toU32()`/`toU64()`: the BigInt's own `width` bytes of two's
+ * complement, zero-padded to `size` — so the host's -1 (the byte 0xff) is 255
+ * while `BigInt.fromI32(-1)` (four bytes) is 4294967295 — overflowing only when
+ * a byte past `size` is set.
  */
-function unsignedFromSignedBytes(value: bigint, size: number, target: string): bigint {
+function unsignedFromSignedBytes(value: bigint, width: number, size: number, target: string): bigint {
   if (value >= 0n) return fitted(value, 0n, (1n << BigInt(size * 8)) - 1n, target);
-  const width = byteWidth(value);
   if (width > size) {
     throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
   }
@@ -434,7 +434,7 @@ class BigInt_ extends Uint8Array {
     return Number(signedFromBytes(this.value, 4, "i32"));
   }
   toU32(): number {
-    return Number(unsignedFromSignedBytes(this.value, 4, "u32"));
+    return Number(unsignedFromSignedBytes(this.value, this.byteLength, 4, "u32"));
   }
   toI64(): bigint {
     return signedFromBytes(this.value, 8, "i64");
@@ -492,7 +492,7 @@ class BigInt_ extends Uint8Array {
     return this.value >= -2147483648n && this.value <= 2147483647n;
   }
   toU64(): bigint {
-    return unsignedFromSignedBytes(this.value, 8, "u64");
+    return unsignedFromSignedBytes(this.value, this.byteLength, 8, "u64");
   }
   sqrt(): BigInt_ {
     if (this.value < 0n) {
