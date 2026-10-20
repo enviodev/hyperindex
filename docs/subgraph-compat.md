@@ -642,6 +642,14 @@ fetched into envio's cache (`<cache>/abi-packages/`), at the version the
 lockfile pins, else the package.json range, with npm and no scripts; startup
 warns once per file.
 
+**A mapping that imports an undeclared template.** daohaus assembles its
+manifest per network with a script; for some networks it leaves out a
+template (`UberhausMinionTemplate`) that a listed mapping still imports from
+`generated/templates`. graph codegen writes classes only for declared
+templates, so `graph build` fails on the import as well; envio's load error
+names the template and the ones the manifest declares instead of Node's
+"does not provide an export".
+
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
 (CryptoPunks): it builds there and runs on hosted platforms, and graph-cli on

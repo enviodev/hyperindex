@@ -519,8 +519,28 @@ async function loadMapping(
     }
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
-    throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}`);
+    throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${undeclaredTemplate(message) ?? message}`);
   }
+}
+
+let declaredTemplates: string[] = [];
+let manifestName = "subgraph.yaml";
+
+/**
+ * daohaus' per-network manifests leave out templates a listed mapping still
+ * imports; graph codegen writes a class only for a declared template, so
+ * `graph build` fails on the import as well.
+ */
+function undeclaredTemplate(message: string): string | null {
+  const missing = message.match(/requested module '([^']*)' does not provide an export named '([^']+)'/);
+  if (!missing || !/(^|\/)templates(\.ts)?$/.test(missing[1]!) || declaredTemplates.includes(missing[2]!)) return null;
+  const name = missing[2]!;
+  const declared = declaredTemplates.length > 0 ? `it declares ${declaredTemplates.join(", ")}` : "it declares none";
+  return (
+    `It imports ${name} from generated/templates, and ${manifestName} declares no template ${name} (${declared}). ` +
+    "graph codegen writes a class only for a template the manifest declares, so `graph build` fails on this " +
+    "import too: the manifest was likely written for another network or deployment than the mappings."
+  );
 }
 
 /**
@@ -1200,7 +1220,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     ? pathToFileURL(path.join(path.dirname(fetchedModules), "resolve-from.mjs")).href
     : null;
   const rendered = config.renderedManifest;
-  const manifestName = config.manifestFile ?? "subgraph.yaml";
+  manifestName = config.manifestFile ?? "subgraph.yaml";
+  declaredTemplates = config.templates.map((template) => template.name);
   if (rendered?.steps?.length) {
     info(
       `Envio Subgraph ran ${rendered.steps.map((step) => `\`${step}\``).join(", ")} from the codegen script ` +
