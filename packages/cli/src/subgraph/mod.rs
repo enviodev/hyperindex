@@ -5591,6 +5591,44 @@ type Renewal implements Event @entity {
         assert_eq!(chain_of(&config).0, 8453);
     }
 
+    // NFTX v3's `ts-node ./script/build mainnet` copies a template its public
+    // repo lacks, logs the ENOENT, and exits 0 having written an empty
+    // subgraph.yaml. envio then read the empty file ("doesn't know the value
+    // at \"\"").
+    #[test]
+    fn says_a_writer_script_wrote_an_empty_manifest() {
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-empty").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/build.sh"),
+            "echo \"ENOENT: subgraph.template.yaml\" >&2\nprintf '' > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"prepare-build": "sh scripts/build.sh"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            (err, root.join("subgraph.yaml").exists()),
+            (
+                "There is no subgraph.yaml here. envio ran the package.json script \
+                 \"prepare-build\", the one that writes it, and the subgraph.yaml it wrote is \
+                 empty: the script's own output above says why."
+                    .to_string(),
+                false
+            )
+        );
+    }
+
     // A script that fails leaves no manifest behind: the shell had already
     // created the file its `>` names.
     #[test]

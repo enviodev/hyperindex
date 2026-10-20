@@ -894,7 +894,9 @@ build does first.
   ```
 
   A failing command stops envio with the script's own error above it, and
-  leaves no manifest behind (its `>` had created the file). The manifest is
+  leaves no manifest behind (its `>` had created the file); so does a script
+  that exits 0 having written an empty one (NFTX's build logs a missing
+  template and carries on). The manifest is
   recorded as envio's, like a rendered one, so a later start runs the script
   again, for whichever network is picked then; when the script's own `graph
   codegen <manifest>` names the manifest it wrote (stakewise's

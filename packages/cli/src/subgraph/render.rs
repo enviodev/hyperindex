@@ -2594,6 +2594,19 @@ fn run_writer_script(
         ));
     };
     let manifest = std::fs::read_to_string(&written)?;
+    // NFTX's build logs an ENOENT and exits 0 having written nothing into it.
+    if manifest.trim().is_empty() {
+        std::fs::remove_file(&written).ok();
+        return Err(anyhow!(
+            "There is no {manifest_name} here. envio ran the package.json script \"{label}\", \
+             the one that writes it, and the {} it wrote is empty: the script's own output above \
+             says why.",
+            written
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default()
+        ));
+    }
     record(project_root, &written, &manifest)?;
     Ok(Some(Rendered {
         manifest: written,
