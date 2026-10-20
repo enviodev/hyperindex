@@ -90,6 +90,20 @@ function unsignedFromSignedBytes(value: bigint, size: number, target: string): b
   return BigInt.asUintN(width * 8, value);
 }
 
+/**
+ * graph-ts' `ByteArray.toI32()`/`toI64()`, which BigInt's defer to: the bytes
+ * past the width must be the sign padding, and the low bytes are read as two's
+ * complement. So a uint32 of 2^32 - 1 (`ff ff ff ff 00`) is -1: a value fits
+ * from -2^(8·size) to 2^(8·size) - 1 and wraps into the signed range.
+ */
+function signedFromBytes(value: bigint, size: number, target: string): bigint {
+  const bound = 1n << BigInt(size * 8);
+  if (value < -bound || value >= bound) {
+    throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
+  }
+  return BigInt.asIntN(size * 8, value);
+}
+
 function fitted(value: bigint, min: bigint, max: bigint, target: string): bigint {
   if (value < min || value > max) {
     throw new Error(`Envio Subgraph: ${value} does not fit in an ${target}.`);
@@ -202,7 +216,7 @@ export class ByteArray extends Uint8Array {
     return Number(fitted(fromLittleEndian(this, false), 0n, 4294967295n, "u32"));
   }
   toI32(): number {
-    return Number(fitted(fromLittleEndian(this, true), -2147483648n, 2147483647n, "i32"));
+    return Number(signedFromBytes(fromLittleEndian(this, true), 4, "i32"));
   }
   toBigInt(): BigInt_ {
     return new BigInt_(fromLittleEndian(this, true));
@@ -223,7 +237,7 @@ export class ByteArray extends Uint8Array {
     return this.concat(ByteArray.fromI32(other));
   }
   toI64(): bigint {
-    return fitted(fromLittleEndian(this, true), -(2n ** 63n), 2n ** 63n - 1n, "i64");
+    return signedFromBytes(fromLittleEndian(this, true), 8, "i64");
   }
   toU64(): bigint {
     return fitted(fromLittleEndian(this, false), 0n, 2n ** 64n - 1n, "u64");
@@ -416,13 +430,13 @@ class BigInt_ extends Uint8Array {
     return toHex(this.value);
   }
   toI32(): number {
-    return Number(fitted(this.value, -2147483648n, 2147483647n, "i32"));
+    return Number(signedFromBytes(this.value, 4, "i32"));
   }
   toU32(): number {
     return Number(unsignedFromSignedBytes(this.value, 4, "u32"));
   }
   toI64(): bigint {
-    return this.value;
+    return signedFromBytes(this.value, 8, "i64");
   }
   toBigDecimal(): BigDecimal {
     return new BigDecimal(new BigNumber(this.value.toString()));
