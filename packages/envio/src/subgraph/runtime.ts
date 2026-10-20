@@ -64,6 +64,7 @@ import {
   type CallKind,
   commitRegisterWrites,
   resetRegisterStore,
+  setRegisterFrontier,
   POSITION_BLOCK,
   ROUND_SPAN,
   ethereumValueToJs,
@@ -86,6 +87,8 @@ import {
   RETAG_EACH_HELPER,
   RETAG_HELPER,
   operators,
+  resetNullObjects,
+  stringEncodings,
 } from "./assemblyscript.ts";
 import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
 import { createHash } from "node:crypto";
@@ -441,6 +444,8 @@ function installResolveHook(root: string) {
   globals.min ??= builtinMin;
   globals.max ??= builtinMax;
   globals.unchecked ??= (value: unknown) => value;
+  globals.String.UTF8 ??= stringEncodings.UTF8;
+  globals.String.UTF16 ??= stringEncodings.UTF16;
   const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
   if (!Object.getOwnPropertyDescriptor(typedArray, "dataStart")) {
     Object.defineProperty(typedArray, "dataStart", {
@@ -715,6 +720,9 @@ const registerInFlight = new Map<string, Promise<unknown>>();
  */
 const registerCost = { hostOps: 0, passes: 0 };
 const REGISTER_COST_MIN_PASSES = 20;
+// ChainFetching reports each chain's lowest partition frontier after every
+// response it applies; the register store keeps the versions above it.
+(globalThis as any).__envioSubgraphRegisterFrontier = setRegisterFrontier;
 (globalThis as any).__envioSubgraphRegisterCostPerItem = () =>
   registerCost.passes < REGISTER_COST_MIN_PASSES ? undefined : registerCost.hostOps / registerCost.passes;
 
@@ -921,10 +929,14 @@ async function rerunProvisional(scope: Scope): Promise<boolean> {
  */
 let moduleGeneration = 0;
 function freshModuleState(scope: Scope): void {
+  resetNullObjects();
   scope.mappingExports[MODULE_INIT]?.(++moduleGeneration);
 }
 
-const maxRegisterRounds = 100;
+// A round answers the one call the mapping stopped at, so a handler making N
+// calls before its create() takes N rounds; graph-node has no limit at all.
+// The handler pass's own bound (UserContext.maxSyncRounds).
+const maxRegisterRounds = 10_000;
 
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
   for (let round = 1; round <= maxRegisterRounds; round++) {

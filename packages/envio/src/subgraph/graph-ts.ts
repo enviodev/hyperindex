@@ -21,11 +21,11 @@ import {
   toHex,
   hexToBytes,
   decodeAbiParameters,
-  encodeAbiParameters,
   parseAbiParameters,
-  type AbiParameter,
 } from "viem";
 import { subgraphKeccak256 } from "../Core.res.mjs";
+import { warn } from "../Logging.res.mjs";
+import { operators } from "./assemblyscript.ts";
 import { currentScope, type Scope } from "./scope.ts";
 import { timeseriesId } from "./rollup.ts";
 import { Level as LogLevel, ValueKind as EthereumValueKind } from "./graph-ts-enums.ts";
@@ -904,6 +904,7 @@ export class Value {
   toBytes(): Bytes {
     if (this.data instanceof Bytes) return this.data;
     if (this.data instanceof ByteArray) return Bytes.fromByteArray(this.data);
+    if (Array.isArray(this.data)) return pointerBytes(this.data);
     return Bytes.fromHexString(String(this.data));
   }
   toBytesArray(): Bytes[] {
@@ -1084,12 +1085,11 @@ export class Entity extends TypedMap<string, Value> {
  * Tail of the entity prototype chain: instance -> generated prototype ->
  * Entity -> TypedMap -> here.
  *
- * `graph codegen` emits `changetype<Pair | null>(store.get(...))`, and
- * `changetype` erases its type argument, so a loaded entity reaches the mapping
- * without the generated prototype that carries `pair.token0`. Falling through to
- * the stored field — typed by the `Value` kind, which is what the generated
- * getter would have returned — is what makes that code work here. A name the
- * entity doesn't hold is still refused.
+ * `graph codegen`'s `changetype<Pair | null>(store.get(...))` gives a loaded
+ * entity the generated prototype, whose getters read its fields. An entity read
+ * without one — `store.get` called directly, or cast to a class the file can't
+ * reach — falls through to here, to the stored field typed by its `Value` kind.
+ * A name the entity doesn't hold is still refused.
  */
 /**
  * The entity type a loaded row came from. `changetype` erased the generated
@@ -1262,6 +1262,30 @@ function columnOf(schema: Scope["schema"], entityType: string, layout: EntityLay
 }
 
 /** graph-ts `Value`s -> the plain scalars envio stores. */
+let warnedPointerBytes = false;
+
+/**
+ * An Array that AssemblyScript reads as a Uint8Array — `graph init`'s
+ * `changetype<Bytes[]>(event.params.structs)` — is its backing buffer, the
+ * two classes sharing the ArrayBufferView header: one little-endian four-byte
+ * pointer per element. graph-node's allocator picked those addresses; these
+ * are stand-ins, as many bytes, and the run says so once.
+ */
+function pointerBytes(elements: unknown[]): Bytes {
+  if (!warnedPointerBytes) {
+    warnedPointerBytes = true;
+    warn(
+      "Envio Subgraph: a mapping stores an array (an ethereum.Tuple, often) as Bytes, as graph init's " +
+        "`changetype<Bytes[]>(event.params.<structs>)` does. graph-node stores the wasm memory addresses of " +
+        "its elements there; envio stores as many bytes of stand-in addresses, so those values differ.",
+    );
+  }
+  const bytes = new Bytes(elements.length * 4);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  elements.forEach((element, index) => view.setUint32(index * 4, Number(operators.address(element)) >>> 0, true));
+  return bytes;
+}
+
 function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   const { schema } = currentScope();
   // graph-ts holds a relation as the related entity's id under the field's own
@@ -1464,17 +1488,41 @@ export const ROUND_SPAN = 1_000_000;
 export const POSITION_BLOCK = 16 * ROUND_SPAN;
 
 /**
- * Adds one write to an entity's versions, in position order. The newest few
- * versions of earlier blocks stay, and a bounded run of the newest block's own.
+ * Every chain's lowest partition frontier, as a position: no fetch starts
+ * below it, so no register pass still to run reads there. A data source
+ * created at a block gets a partition of its own that starts at that block
+ * while the others fetch ahead, so its passes read versions far below the
+ * newest.
+ */
+const registerFloors = new Map<number, number>();
+export function setRegisterFrontier(chainId: number, block: number): void {
+  registerFloors.set(chainId, block * POSITION_BLOCK);
+}
+/** Versions of one entity above the floor, past which the oldest go anyway. */
+const REGISTER_STORE_MAX_VERSIONS = 512;
+
+/**
+ * Adds one write to an entity's versions, in position order. Above `floor`
+ * every version stays and below it only the newest, which a pass at the floor
+ * reads. Without one, the newest few versions of earlier blocks stay, and a
+ * bounded run of the newest block's own.
  */
 export function addRegisterVersion(
   versions: { position: number; row: Record<string, unknown> | null }[],
   version: { position: number; row: Record<string, unknown> | null },
+  floor?: number,
 ): void {
   const at = versions.findIndex((other) => other.position >= version.position);
   if (at === -1) versions.push(version);
   else if (versions[at].position === version.position) versions[at] = version;
   else versions.splice(at, 0, version);
+  if (floor !== undefined) {
+    let below = 0;
+    while (below + 1 < versions.length && versions[below + 1].position < floor) below++;
+    if (below > 0) versions.splice(0, below);
+    if (versions.length > REGISTER_STORE_MAX_VERSIONS) versions.splice(0, versions.length - REGISTER_STORE_MAX_VERSIONS);
+    return;
+  }
   const newest = Math.floor(versions[versions.length - 1].position / POSITION_BLOCK);
   const blockStart = versions.findIndex((other) => Math.floor(other.position / POSITION_BLOCK) === newest);
   const dropOlder = blockStart - REGISTER_STORE_VERSIONS;
@@ -1501,13 +1549,14 @@ export function commitRegisterWrites(scope: Scope): void {
       }
     }
     registerStore.set(key, versions);
-    addRegisterVersion(versions, { position, row });
+    addRegisterVersion(versions, { position, row }, registerFloors.get(scope.dataSource.chainId));
   }
 }
 
 /** Between test indexers, whose chains restart at block zero. */
 export function resetRegisterStore(): void {
   registerStore.clear();
+  registerFloors.clear();
 }
 
 /**
@@ -1997,34 +2046,104 @@ export function ethereumValueToJs(value: EthereumValue): unknown {
   }
 }
 
-function abiParameterOf(value: EthereumValue): AbiParameter {
+/**
+ * One ABI token's encoding, and whether it is dynamic (encoded after the heads
+ * of the sequence holding it, which points at it) or inline in its head.
+ */
+type EncodedToken = { dynamic: boolean; bytes: Uint8Array };
+
+const WORD = 32;
+const wordOf = (value: bigint): Uint8Array => hexToBytes(toHex(value, { size: WORD }));
+const padded = (bytes: Uint8Array, left: boolean): Uint8Array => {
+  const out = new Uint8Array(Math.ceil(bytes.length / WORD) * WORD || (left ? WORD : 0));
+  out.set(bytes, left ? out.length - bytes.length : 0);
+  return out;
+};
+const joined = (parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+
+function integerWord(value: BigInt_, signed: boolean): Uint8Array {
+  const n = value.valueOf() as bigint;
+  const [min, max] = signed ? [-(2n ** 255n), 2n ** 255n - 1n] : [0n, 2n ** 256n - 1n];
+  if (n < min || n > max) throw new Error(`ethereum.encode: ${n} doesn't fit an ${signed ? "int" : "uint"}256`);
+  return wordOf(BigInt.asUintN(256, n));
+}
+
+/** Heads in order, then the tails of the dynamic tokens the heads point at. */
+function encodedSequence(items: EthereumValue[]): Uint8Array {
+  const tokens = items.map(encodedToken);
+  let offset = tokens.reduce((total, token) => total + (token.dynamic ? WORD : token.bytes.length), 0);
+  const heads: Uint8Array[] = [];
+  const tails: Uint8Array[] = [];
+  for (const token of tokens) {
+    if (!token.dynamic) {
+      heads.push(token.bytes);
+      continue;
+    }
+    heads.push(wordOf(BigInt(offset)));
+    tails.push(token.bytes);
+    offset += token.bytes.length;
+  }
+  return joined([...heads, ...tails]);
+}
+
+/**
+ * Each token encodes by its own kind, the way alloy's `DynSolValue` (and
+ * ethabi's `Token` before it) does. An array of unlike values, which no
+ * Solidity type spells, still encodes element by element: Reserve hashes a
+ * timelock batch as such an array's encoding minus its offset and length.
+ */
+function encodedToken(value: EthereumValue): EncodedToken {
   switch (value.kind) {
     case EthereumValueKind.ADDRESS:
-      return { type: "address" };
     case EthereumValueKind.BOOL:
-      return { type: "bool" };
-    case EthereumValueKind.STRING:
-      return { type: "string" };
-    case EthereumValueKind.BYTES:
-      return { type: "bytes" };
-    case EthereumValueKind.FIXED_BYTES:
-      return { type: `bytes${(value.data as Bytes).length}` };
     case EthereumValueKind.INT:
-      return { type: "int256" };
     case EthereumValueKind.UINT:
-      return { type: "uint256" };
-    case EthereumValueKind.ARRAY:
-    case EthereumValueKind.FIXED_ARRAY: {
-      const items = value.data as EthereumValue[];
-      // An empty array encodes as its length alone, whatever it holds.
-      const element: AbiParameter = items.length > 0 ? abiParameterOf(items[0]) : { type: "uint256" };
-      const suffix = value.kind === EthereumValueKind.ARRAY ? "[]" : `[${items.length}]`;
-      return { ...element, type: `${element.type}${suffix}` } as AbiParameter;
+      return { dynamic: false, bytes: staticWord(value) };
+    case EthereumValueKind.FIXED_BYTES: {
+      const bytes = value.data as Bytes;
+      if (bytes.length > WORD) throw new Error(`ethereum.encode: fixed bytes of ${bytes.length} bytes`);
+      const word = new Uint8Array(WORD);
+      word.set(bytes);
+      return { dynamic: false, bytes: word };
     }
-    case EthereumValueKind.TUPLE:
-      return { type: "tuple", components: (value.data as EthereumValue[]).map(abiParameterOf) };
+    case EthereumValueKind.STRING:
+    case EthereumValueKind.BYTES: {
+      const bytes =
+        value.kind === EthereumValueKind.STRING ? new TextEncoder().encode(value.data as string) : (value.data as Bytes);
+      return { dynamic: true, bytes: joined([wordOf(BigInt(bytes.length)), padded(bytes, false)]) };
+    }
+    case EthereumValueKind.ARRAY: {
+      const items = value.data as EthereumValue[];
+      return { dynamic: true, bytes: joined([wordOf(BigInt(items.length)), encodedSequence(items)]) };
+    }
+    case EthereumValueKind.FIXED_ARRAY:
+    case EthereumValueKind.TUPLE: {
+      const items = value.data as EthereumValue[];
+      return { dynamic: items.some((item) => encodedToken(item).dynamic), bytes: encodedSequence(items) };
+    }
     default:
       throw new Error(`ethereum.encode can't encode a value of kind ${value.kind}`);
+  }
+}
+
+function staticWord(value: EthereumValue): Uint8Array {
+  switch (value.kind) {
+    case EthereumValueKind.ADDRESS:
+      return padded(value.data as Bytes, true);
+    case EthereumValueKind.BOOL:
+      return wordOf(value.data ? 1n : 0n);
+    case EthereumValueKind.INT:
+      return integerWord(value.data as BigInt_, true);
+    default:
+      return integerWord(value.data as BigInt_, false);
   }
 }
 
@@ -2788,13 +2907,12 @@ const ethereumImpl = {
       return null;
     }
   },
-  // graph-node's `ethabi::encode(&[token])`, which is Solidity's `abi.encode`
-  // of the one value. A token carries no integer width and every integer
-  // takes a full word, so 256 bits encodes the same bytes.
+  // graph-node's `DynSolValue::abi_encode` (`ethabi::encode(&[token])` before
+  // alloy), which is Solidity's `abi.encode` of the one value. A token carries
+  // no integer width and every integer takes a full word.
   encode(value: EthereumValue): Bytes | null {
     try {
-      const parameters: readonly AbiParameter[] = [abiParameterOf(value)];
-      return Bytes.fromHexString(encodeAbiParameters(parameters, [ethereumValueToJs(value)] as readonly unknown[]));
+      return new Bytes(encodedSequence([value]));
     } catch {
       return null;
     }

@@ -75,8 +75,37 @@ const binary =
     return declared ? declared.call(a, b) : fallback(a, b);
   };
 
+/**
+ * `let result: JsonResult; result.error = "none"; return result;`: asc gives
+ * the local the null pointer, and the field writes land at that address, so
+ * every such local reads back what any of them wrote (one per class here, as
+ * the code that relies on it writes the fields it reads). It is still null to
+ * a comparison. graph-node's module memory is fresh in every trigger, and so
+ * are these.
+ */
+let nullObjects = new Map<Function, object>();
+let liveNullObjects = new WeakSet<object>();
+export function resetNullObjects(): void {
+  if (nullObjects.size === 0) return;
+  nullObjects = new Map();
+  liveNullObjects = new WeakSet();
+}
+const nullObject = (Class: Function): object => {
+  let object = nullObjects.get(Class);
+  if (!object) {
+    object = Object.create(Class.prototype) as object;
+    nullObjects.set(Class, object);
+    liveNullObjects.add(object);
+  }
+  return object;
+};
+const asNull = (value: unknown): unknown =>
+  nullObjects.size > 0 && isObject(value) && liveNullObjects.has(value as object) ? null : value;
+
 // Against null AssemblyScript compares the reference, overload or not.
 const equals = (a: unknown, b: unknown): boolean => {
+  a = asNull(a);
+  b = asNull(b);
   const declared = isObject(b) ? overload(a, "equals") : undefined;
   return declared ? (declared.call(a, b) as boolean) : a == b;
 };
@@ -103,6 +132,8 @@ const wrap64 = (from: bigint, value: bigint) => (from < 0n ? BigInt.asIntN(64, v
  * class field AssemblyScript zero-initializes is `undefined` here.
  */
 const same = (a: unknown, b: unknown): boolean => {
+  a = asNull(a);
+  b = asNull(b);
   if (a === b) return true;
   if (a == null || b == null) return a == null && b == null;
   const numeric = (v: unknown) => typeof v === "number" || typeof v === "bigint" || typeof v === "boolean";
@@ -199,6 +230,112 @@ export const memory = {
   },
 };
 
+const bytesAt = (buffer: unknown, what: string): Uint8Array => {
+  if (isBuffer(buffer)) return new Uint8Array(buffer);
+  if (ArrayBuffer.isView(buffer)) return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  throw new Error(`Envio Subgraph: String.${what} takes an ArrayBuffer, not ${String(buffer)}.`);
+};
+
+/**
+ * AssemblyScript's UTF-8 decoder (std/assembly/string.ts, asc 0.19.10): it
+ * validates nothing and replaces nothing, takes a lead byte's payload bits as
+ * they are, and stops at a sequence the input cuts short.
+ */
+function decodeUtf8(bytes: Uint8Array, nullTerminated: unknown): string {
+  const units: number[] = [];
+  const end = bytes.length;
+  let at = 0;
+  while (at < end) {
+    let u0 = bytes[at++]!;
+    if (!(u0 & 128)) {
+      if (nullTerminated && !u0) break;
+      units.push(u0);
+      continue;
+    }
+    if (at === end) break;
+    const u1 = bytes[at++]! & 63;
+    if ((u0 & 224) === 192) {
+      units.push((((u0 & 31) << 6) | u1) & 0xffff);
+      continue;
+    }
+    if (at === end) break;
+    const u2 = bytes[at++]! & 63;
+    if ((u0 & 240) === 224) {
+      u0 = ((u0 & 15) << 12) | (u1 << 6) | u2;
+    } else {
+      if (at === end) break;
+      u0 = ((u0 & 7) << 18) | (u1 << 12) | (u2 << 6) | (bytes[at++]! & 63);
+    }
+    if (u0 < 0x10000) {
+      units.push(u0);
+    } else {
+      u0 -= 0x10000;
+      units.push(((u0 >> 10) | 0xd800) & 0xffff, (u0 & 0x03ff) | 0xdc00);
+    }
+  }
+  let text = "";
+  for (let from = 0; from < units.length; from += 8192) text += String.fromCharCode(...units.slice(from, from + 8192));
+  return text;
+}
+
+/** AssemblyScript's UTF-8 encoder in its default WTF-8 mode: a lone surrogate is three bytes. */
+function encodeUtf8(text: string, nullTerminated: unknown): ArrayBuffer {
+  const bytes: number[] = [];
+  for (let at = 0; at < text.length; at++) {
+    let c1 = text.charCodeAt(at);
+    if (c1 < 128) {
+      bytes.push(c1);
+    } else if (c1 < 2048) {
+      bytes.push((c1 >> 6) | 192, (c1 & 63) | 128);
+    } else {
+      const c2 = at + 1 < text.length ? text.charCodeAt(at + 1) : 0;
+      if ((c1 & 0xfc00) === 0xd800 && (c2 & 0xfc00) === 0xdc00) {
+        c1 = (0x10000 + ((c1 & 0x03ff) << 10)) | (c2 & 0x03ff);
+        bytes.push((c1 >> 18) | 240, ((c1 >> 12) & 63) | 128, ((c1 >> 6) & 63) | 128, (c1 & 63) | 128);
+        at++;
+        continue;
+      }
+      bytes.push((c1 >> 12) | 224, ((c1 >> 6) & 63) | 128, (c1 & 63) | 128);
+    }
+  }
+  if (nullTerminated) bytes.push(0);
+  return new Uint8Array(bytes).buffer;
+}
+
+/**
+ * The `String.UTF8` and `String.UTF16` namespaces of AssemblyScript's String,
+ * which JavaScript's lacks. A pointer from `x.dataStart` stands in for the
+ * `usize` the unsafe variants take.
+ */
+export const stringEncodings = {
+  UTF8: {
+    byteLength: (text: string, nullTerminated: unknown = false): number =>
+      encodeUtf8(text, nullTerminated).byteLength,
+    encode: (text: string, nullTerminated: unknown = false): ArrayBuffer => encodeUtf8(text, nullTerminated),
+    decode: (buffer: unknown, nullTerminated: unknown = false): string =>
+      decodeUtf8(bytesAt(buffer, "UTF8.decode"), nullTerminated),
+    decodeUnsafe: (at: unknown, length: unknown, nullTerminated: unknown = false): string => {
+      const p = pointer(at, "decode a string");
+      return decodeUtf8(new Uint8Array(p.buffer, p.offset, number(length)), nullTerminated);
+    },
+  },
+  UTF16: {
+    byteLength: (text: string): number => text.length * 2,
+    encode: (text: string): ArrayBuffer => {
+      const view = new DataView(new ArrayBuffer(text.length * 2));
+      for (let at = 0; at < text.length; at++) view.setUint16(at * 2, text.charCodeAt(at), true);
+      return view.buffer;
+    },
+    decode: (buffer: unknown): string => {
+      const bytes = bytesAt(buffer, "UTF16.decode");
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength & ~1);
+      let text = "";
+      for (let at = 0; at < view.byteLength; at += 2) text += String.fromCharCode(view.getUint16(at, true));
+      return text;
+    },
+  },
+};
+
 /** The bit width of an integer builtin's operand: its type, or its value. */
 function bitsOf(type: string, value: unknown): 16 | 32 | 64 {
   if (type === "u16" || type === "i16") return 16;
@@ -258,6 +395,7 @@ export const builtinMin = (a: any, b: any) => (b < a ? b : a);
 export const builtinMax = (a: any, b: any) => (b > a ? b : a);
 
 const address = (value: unknown): unknown => {
+  value = asNull(value);
   if (value === null || value === undefined) return 0;
   if (isBuffer(value)) return new Pointer(value, 0);
   if (typeof value === "number" || typeof value === "bigint") return value;
@@ -486,6 +624,16 @@ export const operators = {
     width(type).set(new DataView(p.buffer), p.offset + number(offset), value);
   },
   static_array: (element: string, length: unknown): unknown => new TYPED_ARRAYS[element](number(length)),
+  null_object: nullObject,
+  // `reinterpret<T>(x)`: x's bits as a T of x's width, the other of the pair
+  // (std/assembly/builtins.ts: f32 <-> i32/u32, f64 <-> i64/u64).
+  reinterpret: (type: string, value: unknown): unknown => {
+    const view = new DataView(new ArrayBuffer(8));
+    const from = { f32: "i32", f64: "i64", i32: "f32", u32: "f32", i64: "f64", u64: "f64" }[type];
+    if (!from) throw new Error(`Envio Subgraph can't reinterpret a value as a ${type}: only between floats and integers of one width.`);
+    width(from).set(view, 0, value);
+    return width(type).get(view, 0);
+  },
   bswap,
   rotl: rotate(true),
   rotr: rotate(false),
@@ -527,6 +675,8 @@ export const operators = {
   as_u16: wrapTo(16, false),
   as_i32: wrapTo(32, true),
   as_u32: wrapTo(32, false),
+  as_f64: (value: unknown): unknown => (isObject(value) ? value : number(value ?? 0)),
+  as_f32: (value: unknown): unknown => (isObject(value) ? value : Math.fround(number(value ?? 0))),
   neg: (a: unknown) => {
     const declared = overload(a, "neg");
     return declared ? declared.call(a) : -(a as number);

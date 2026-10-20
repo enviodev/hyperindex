@@ -198,6 +198,7 @@ like any other entity list.
 | `new Entity(id)` → `.save()`, `store.remove` | `context.<E>.set` / `deleteUnsafe` via ALS scope — sync both sides. A save merges onto the stored entity, as graph-node's does: a field the instance doesn't set keeps its stored value, an explicit null clears it. A relation is the related id under the field's own name in graph-ts and `<field>_id` in envio, renamed at the boundary |
 | Integer division | AssemblyScript divides two integers as integers and JavaScript doesn't, and the difference travels into ids and `Int` columns. Each `a / b` and `a /= b` in a project file is rewritten as it loads (§6a) to a helper that truncates only when both operands really are integers |
 | `===` / `!==` | AssemblyScript can't overload them: references compare by identity, numbers by value (an i64 the shim holds as a bigint equals the number), null equals the `undefined` a zero-initialized field reads as. A string the host returns (`dataSource.network()`, `toHexString()`, …) is a new allocation, so it is never `===` a literal or another string, while literals equal each other wherever written; any other string compares by value |
+| A local or field declared without a value | asc's zero: 0, false, null. A class-typed local whose first use writes one of its fields (`let result: JsonResult; result.error = "none"; return result;`) is asc's null pointer written through: an object shared by every such local of its class, fresh each trigger, that still compares as null |
 | A handler the mapping doesn't export | skipped, as `graph build` does — it doesn't check either, and Aave's mainnet manifest names one its mappings renamed years ago |
 | A field the schema declares that nothing has set | graph-node's store returns every column, envio's returns what was written — the shim answers `null` rather than refusing, so a mapping's null check reads the same |
 | `Entity.load`, `store.get`, derived loaders | sync try-read; miss → suspend (§5) |
@@ -206,7 +207,8 @@ like any other entity list.
 | `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` = `logIndex`, as graph-node answers it (no Ethereum client sets the per-transaction index; `chain/ethereum/src/trigger.rs`) |
 | `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A call the register pass already made at the same block is answered from its memo. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
-| `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak) |
+| `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak). `encode` ports graph-node's token encoding (alloy's `DynSolValue::abi_encode`): each token by its own kind, so an array of unlike values encodes element by element |
+| `changetype<Bytes[]>(event.params.<structs>)` (`graph init`'s scaffold for a struct array) | each struct is read as the bytes of its element pointers, four per field. (Deviation, with a warning: graph-node's are wasm memory addresses; envio's are stand-ins of the same length) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
 | RPC traffic | contract calls, `getBalance`/`hasCode` and the block-timestamp fallback share one client, which keeps at most 16 requests in flight and queues the rest — preload runs a batch's handlers at once, and unbounded that was one connection per call. A slot is held at most the request deadline, so requests that never settle can't stall every call behind them |
 | Transient host failures | envio exits on a handler error, it has no batch retry, so every host op (calls, balances, timestamps, IPFS, Arweave, ENS) gets a per-attempt deadline and is asked again with exponential backoff on a timeout, a network error, a 429/5xx or a JSON-RPC rate limit — as graph-node does — and only a deterministic answer (a value, a revert, a definite miss) reaches the mapping. Any other failure, such as a 401, still stops the run |
@@ -449,7 +451,9 @@ classes call `DataSource.create`. Consequences:
   wrap), and memory builtins work over buffers: `x.dataStart` and
   `changetype<usize>(x.buffer)` are pointers that `load<T>`, `store<T>`,
   `memory.copy`/`fill`, `bswap`, `rotl`/`rotr`, `min`/`max` take — a raw
-  integer address is refused.
+  integer address is refused. `reinterpret<T>(x)` casts the bits between a
+  float and an integer of one width. `String.UTF8` and `String.UTF16` encode and
+  decode over ArrayBuffers with asc's own lenient decoder.
   `matchstick-as` (which re-exports graph-ts' `log`) resolves to the shim too.
   A handler's event is built as the generated class it declares, wherever the
   handler is written — the manifest's file may only re-export it.

@@ -40,6 +40,20 @@ describe("register store versions", () => {
     expect(versions.map((version) => Math.floor(version.position / graphTs.POSITION_BLOCK))).toEqual([5, 6, 7, 8, 9, 9]);
   });
 
+  // A data source created at a block gets a partition of its own that starts
+  // there, while the others fetch ahead and keep writing: Reserve's Timelock
+  // passes at its creation block read the RToken and RTokenContract the Main
+  // passes wrote there, under many later versions. Below the lowest partition
+  // frontier no pass can read any more, so only there is anything dropped.
+  it("keeps every version a pass at or above the fetch frontier can read", () => {
+    const versions: Version[] = [];
+    const floor = at(50, 0, 0);
+    for (let block = 10; block <= 200; block += 10) graphTs.addRegisterVersion(versions, { position: at(block, 0, 1), row: {} }, floor);
+    expect(versions.map((version) => Math.floor(version.position / graphTs.POSITION_BLOCK))).toEqual([
+      40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200,
+    ]);
+  });
+
   it("bounds the newest block's own versions", () => {
     const versions: Version[] = [];
     add(versions, at(1, 0, 1));
