@@ -167,14 +167,65 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  it("refuses subgraph composition", t => {
-    let manifest =
-      manifestWith(plainEventHandler)->String.replace("kind: ethereum/contract", "kind: subgraph")
-    translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support subgraph composition yet.",
-      ~location=`data source "Token" → kind`,
-    )
+  // graph-node feeds a `kind: subgraph` data source the immutable entities
+  // another deployment writes (graph/src/data_source/subgraph.rs), and that
+  // deployment is published as compiled WASM, which the shim can't run.
+  it("refuses subgraph composition, naming the source deployment", t => {
+    let manifest = `
+specVersion: 1.3.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: subgraph
+    name: Transfers
+    network: mainnet
+    source:
+      address: QmSourceDeployment
+      startBlock: 0
+    mapping:
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      file: ./src/mapping.ts
+      entities: []
+      handlers:
+        - entity: Transfer
+          handler: handleTransfer
+`
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index subgraph composition (\`kind: subgraph\`).
+  Found in data source "Transfers" → kind.
+graph-node feeds this data source the entities deployment QmSourceDeployment writes. That deployment is published as compiled WASM, which Envio Subgraph can't run, and envio doesn't read another indexer's store. Index the source subgraph's contracts in this subgraph instead.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
+  })
+
+  // A substreams-powered subgraph's entities come out of a Substreams
+  // package, which graph-node streams from a Substreams provider.
+  it("refuses a substreams-powered subgraph, naming its package", t => {
+    let manifest = `
+specVersion: 0.0.4
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: substreams
+    name: substream_test
+    network: mainnet
+    source:
+      package:
+        moduleName: graph_out
+        file: substreams-test-v1.0.1.spkg
+    mapping:
+      kind: substreams/graph-entities
+      apiVersion: 0.0.5
+`
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index a substreams-powered subgraph (\`kind: substreams\`).
+  Found in data source "substream_test" → kind.
+Its entities come from the module graph_out of the Substreams package substreams-test-v1.0.1.spkg, which graph-node streams from a Substreams provider. Envio Subgraph runs AssemblyScript mappings over chain data and can't run a Substreams module.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
   })
 
   it("accepts a topic filter on an address", t => {
@@ -374,9 +425,11 @@ describe("subgraph translation: unknown things", () => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,
       ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4840")]),
-      ~manifest=manifestWith(`${plainEventHandler}
+      ~manifest=manifestWith(
+        `${plainEventHandler}
           calls:
-            balance: Token[event.address].balanceOf(event.params.order.owner)`)
+            balance: Token[event.address].balanceOf(event.params.order.owner)`,
+      )
       ->String.replace("specVersion: 0.0.5", "specVersion: 1.4.0")
       ->String.replace(
         "      abis: []",
@@ -523,14 +576,16 @@ describe("subgraph translation: reporting", () => {
   // subgraph project off it.
   it("points an unsupported feature at the subgraph release", t => {
     let message = translate(
-      ~manifest=manifestWith(plainEventHandler)->String.replace(
-        "kind: ethereum/contract",
-        "kind: substreams",
+      ~manifest=manifestWith(
+        `${plainEventHandler}
+          topic0: "0x0000000000000000000000000000000000000000000000000000000000000001"`,
       ),
       ~schema=baseSchema,
     )
-    t.expect(message).toEqual(`Envio Subgraph doesn't support substreams data sources yet.
-  Found in data source "Token" → kind.
+    t.expect(
+      message,
+    ).toEqual(`Envio Subgraph doesn't support event handlers whose topic0 is not the event signature's hash (anonymous events) yet.
+  Found in data source "Token" → eventHandlers → "handleTransfer" → topic0.
 First, make sure you're on the newest Envio Subgraph release — support may have landed:
   pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing
@@ -571,7 +626,7 @@ type Token @entity {
     )
     t.expect((
       message->String.includes(`doesn't know the feature "teleportation"`),
-      message->String.includes("doesn't support substreams data sources"),
+      message->String.includes("can't index a substreams-powered subgraph"),
       message->String.includes("doesn't know the type NotAType"),
     )).toEqual((true, true, true))
   })

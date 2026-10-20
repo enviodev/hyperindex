@@ -66,7 +66,9 @@ graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 | `graft` | **ignored**: envio can't copy another deployment's data, so the subgraph indexes from its data sources' own `startBlock`s — a full re-index. Startup logs a warning saying so, and a louder one naming any data source that starts after the graft block (the base deployment may hold data from before it that a re-index cannot reproduce; lower that `startBlock` to the base's start). The result equals the grafted deployment only if the base's mappings produced the same data as these mappings do up to the graft block. graph-node's docs and source give no rule that can be applied offline (a graft is a store-level copy: `Graft::validate` only checks the base's head and health); the one record of where the base started is its manifest on IPFS, which startup reads best-effort (`ENVIO_SUBGRAPH_GRAFT_CHECK=off` skips it, following `graft.base` up its own grafts) and reports the exact blocks a re-index would miss | ⚠️ |
 | `callHandlers` | an envio event named `__envio_call_<selector>_<function>` on the data source's contract; the source reads **calls** instead of logs for it (§4a). The first handler for a selector wins, as in graph-node | ✅ needs traces (§4a) |
 | Block handler `filter: {kind: call}` | an envio event `__envio_call_any`: one item per call to the address, ordered after the block's logs and calls and before its block handlers | ✅ needs traces (§4a) |
-| Block handlers on a template, composition (1.3.0) | — | ❌ §7 error |
+| Filtered block handlers on a template | — | ❌ §7 error |
+| Subgraph composition (`kind: subgraph`, 1.3.0) | **refused, by design.** graph-node triggers such a data source on the immutable entities its source deployment writes, read from that deployment's store (`graph/src/data_source/subgraph.rs`). The deployment hash names compiled WASM on IPFS, which the shim can't run, and envio doesn't read another indexer's store; indexing the source in-process would need its AssemblyScript source, which a deployment hash doesn't lead to. The error names the source deployment and suggests indexing its contracts directly | ❌ §7 error |
+| Substreams-powered subgraphs (`kind: substreams`) | **refused, by design**: the entities come out of a Substreams module (`.spkg`) graph-node streams from a Substreams provider; there is no mapping over chain data to run. The error names the package and module | ❌ §7 error |
 
 ## 3. Schema → envio schema
 
@@ -579,7 +581,7 @@ report with `schemaVersion: 1`.
 
 ## 7. Unsupported & unknown errors
 
-Two error kinds, one factory each, shared tail. Translation reports **all**
+Three error kinds, one factory each. Translation reports **all**
 findings at once, not just the first.
 
 **Unsupported** — a feature we recognize and deliberately don't implement:
@@ -591,6 +593,18 @@ First, make sure you're on the newest Envio Subgraph release — support may hav
   pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing
 issues welcome a 👍 — demand drives prioritization):
+  https://github.com/enviodev/hyperindex/issues
+```
+
+**Unindexable** — a kind of subgraph whose data doesn't come from mappings
+over chain data, so no release will run it (substreams, composition); the
+third line says where its data comes from instead:
+
+```
+Envio Subgraph can't index <what>.
+  Found in <location>.
+<where its data comes from, and why envio can't get it>
+If you need this, please open an issue so we can look at your use case:
   https://github.com/enviodev/hyperindex/issues
 ```
 
@@ -649,7 +663,7 @@ refuse instead, so behavior never silently diverges:
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `blockHandlers` on a template | translation (manifest) |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
-| Subgraph composition (`kind: subgraph`, `entityHandlers`) | translation (manifest) |
+| Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`) | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
 | Timeseries & aggregations | supported (§3); malformed declarations refused at translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |

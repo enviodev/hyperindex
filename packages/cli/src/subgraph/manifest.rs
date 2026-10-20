@@ -591,7 +591,20 @@ fn parse_data_source(
         "file/ipfs" => DataSourceKind::FileIpfs,
         "file/arweave" => DataSourceKind::FileArweave,
         "substreams" => {
-            report.unsupported("substreams data sources", where_("kind"));
+            let package = |key: &str| {
+                source_str(raw, &["package", key]).unwrap_or_else(|| "(unnamed)".to_string())
+            };
+            report.unindexable(
+                "a substreams-powered subgraph (`kind: substreams`)",
+                format!(
+                    "Its entities come from the module {} of the Substreams package {}, which \
+                     graph-node streams from a Substreams provider. Envio Subgraph runs \
+                     AssemblyScript mappings over chain data and can't run a Substreams module.",
+                    package("moduleName"),
+                    package("file"),
+                ),
+                where_("kind"),
+            );
             return None;
         }
         "near" | "cosmos" | "arweave" | "starknet" => {
@@ -601,8 +614,15 @@ fn parse_data_source(
             );
             return None;
         }
+        // graph-node triggers a `kind: subgraph` data source on the immutable
+        // entities the source deployment writes (graph/src/data_source/subgraph.rs),
+        // reading them from that deployment's store.
         "subgraph" => {
-            report.unsupported("subgraph composition", where_("kind"));
+            report.unindexable(
+                "subgraph composition (`kind: subgraph`)",
+                composition_reason(source_str(raw, &["address"]).as_deref()),
+                where_("kind"),
+            );
             return None;
         }
         other => {
@@ -765,14 +785,6 @@ fn parse_data_source(
                 }
             }
 
-            for (idx, raw) in mapping.seq("entityHandlers").into_iter().enumerate() {
-                let _ = raw;
-                report.unsupported(
-                    "subgraph composition",
-                    format!("data source \"{name}\" → entityHandlers[{idx}]"),
-                );
-            }
-
             // File data sources declare a single `handler` instead of a list.
             if let Some(handler) = mapping.string("handler") {
                 event_handlers.push(EventHandler {
@@ -834,6 +846,24 @@ fn parse_data_source(
         context,
         is_template,
     })
+}
+
+/// A string under the data source's `source`, `path` deep.
+fn source_str(raw: &Value, path: &[&str]) -> Option<String> {
+    let mut value = raw.get("source")?;
+    for key in path {
+        value = value.get(*key)?;
+    }
+    value.as_str().map(|s| s.to_string())
+}
+
+fn composition_reason(deployment: Option<&str>) -> String {
+    format!(
+        "graph-node feeds this data source the entities deployment {} writes. That deployment is \
+         published as compiled WASM, which Envio Subgraph can't run, and envio doesn't read \
+         another indexer's store. Index the source subgraph's contracts in this subgraph instead.",
+        deployment.unwrap_or("(unnamed)")
+    )
 }
 
 /// graph-node's context value types. Anything else is newer than this parser.
