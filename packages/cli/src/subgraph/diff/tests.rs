@@ -221,6 +221,7 @@ fn options(endpoint: &str, ours: Option<&str>) -> Options {
         allow_indexing_errors: false,
         timeout: Duration::from_secs(10),
         wait: Duration::ZERO,
+        manifest: None,
         progress: false,
     }
 }
@@ -469,6 +470,35 @@ async fn refuses_a_reference_behind_ours() {
                     .to_string()
             ]
         )
+    );
+}
+
+// RequestNetwork's payments-subgraph keeps one manifest per network
+// (subgraph.base.yaml, ...) and no subgraph.yaml: `envio start --config
+// subgraph.base.yaml` indexes it, and the diff read only subgraph.yaml.
+#[tokio::test]
+async fn reads_the_manifest_the_config_names() {
+    let reference = graph_node(reference_data(), BLOCK).await;
+    let ours = graph_node(reference_data(), BLOCK).await;
+    let dir = tempdir::TempDir::new("envio-subgraph-diff").unwrap();
+    let manifest = dir.path().join("subgraph.base.yaml");
+    std::fs::write(
+        &manifest,
+        MANIFEST.replace("./schema.graphql", "./schema.base.graphql"),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("schema.base.graphql"), SCHEMA).unwrap();
+    let report = run(
+        dir.path(),
+        &Options {
+            manifest: Some(manifest),
+            ..options(&reference.url, Some(&ours.url))
+        },
+    )
+    .await;
+    assert_eq!(
+        (report.status, report.exit_code, report.errors),
+        (Status::Match, 0, vec![])
     );
 }
 

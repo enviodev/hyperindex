@@ -169,7 +169,7 @@ async fn execute_command(
         }
 
         CommandType::Subgraph(SubgraphSubcommand::Diff(args)) => {
-            let code = subgraph_diff::run(args, &parsed_project_paths.project_root).await;
+            let code = subgraph_diff::run(args, &parsed_project_paths).await;
             Ok(Some(Command::Exit { code }))
         }
 

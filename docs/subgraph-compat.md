@@ -668,7 +668,9 @@ is used when they pass only one (zkBob: `--network sepolia --network-file
 envio subgraph diff <graph-node endpoint> [--json] [--ours <graph endpoint>]
 ```
 
-Run inside the subgraph project. It compares the indexer's Postgres (same
+Run inside the subgraph project; the schema is the one the manifest names,
+and the manifest is the one `envio start` reads (`--config`/`ENVIO_CONFIG`,
+else subgraph.yaml). It compares the indexer's Postgres (same
 `ENVIO_PG_*` settings, one `REPEATABLE READ READ ONLY` snapshot) with the
 endpoint the subgraph ran on before, at the block the indexer has processed
 (`envio_chains.progress_block`): the reference is pinned with
