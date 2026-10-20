@@ -288,6 +288,7 @@ pub fn generate_files(
         .with_context(|| format!("reading the schema {schema_file}"))?;
     let schema_graph_ts = GraphTs {
         related: graph_cli.derived_loaders.unwrap_or(graph_ts.related),
+        unset_only_null: graph_cli.unset_only_null,
         ..graph_ts
     };
     files.insert(
@@ -395,6 +396,10 @@ pub struct GraphTs {
     pub related: bool,
     /// `Value.displayData`, in `save()`'s assertion message.
     pub display: bool,
+    /// Not graph-ts but the project's graph-cli: before 0.22 a nullable
+    /// field's setter cleared it only on null (`value === null`); since, on
+    /// any falsy value (`!value`), which for a string includes "".
+    pub unset_only_null: bool,
 }
 
 impl GraphTs {
@@ -402,6 +407,7 @@ impl GraphTs {
         int8: true,
         related: true,
         display: true,
+        unset_only_null: false,
     };
 
     /// The graph-ts Node would resolve from the manifest's directory.
@@ -429,6 +435,7 @@ impl GraphTs {
                 int8: text.contains("Int8"),
                 related: text.contains("loadRelated"),
                 display: text.contains("displayData"),
+                unset_only_null: false,
             };
         }
         GraphTs::ALL
@@ -446,12 +453,15 @@ pub struct GraphCli {
     /// A derived field is a `…Loader` (graph-cli 0.51+), an array getter and
     /// setter before; unknown without a version, when graph-ts decides.
     pub derived_loaders: Option<bool>,
+    /// A nullable setter clears the field only on null (before 0.22).
+    pub unset_only_null: bool,
 }
 
 impl GraphCli {
     pub const LATEST: GraphCli = GraphCli {
         output_struct_suffix: true,
         derived_loaders: None,
+        unset_only_null: false,
     };
 
     /// The graph-cli Node would resolve from the manifest's directory, else the
@@ -490,6 +500,7 @@ impl GraphCli {
             Some(version) => GraphCli {
                 output_struct_suffix: version >= (0, 94),
                 derived_loaders: Some(version >= (0, 51)),
+                unset_only_null: version < (0, 22),
             },
             None => GraphCli::LATEST,
         }
@@ -1809,7 +1820,12 @@ impl<'a> SchemaGen<'a> {
         };
         let body = if nullable {
             format!(
-                "if (!value) {{\n      this.unset('{name}')\n    }} else {{\n      this.set('{name}', {})\n    }}",
+                "if ({}) {{\n      this.unset('{name}')\n    }} else {{\n      this.set('{name}', {})\n    }}",
+                if self.graph_ts.unset_only_null {
+                    "value === null"
+                } else {
+                    "!value"
+                },
                 value_from_asc(&format!("<{type_string}>value"), &value_type)
             )
         } else {
@@ -2150,6 +2166,7 @@ mod tests {
             int8: false,
             related: false,
             display: false,
+            unset_only_null: false,
         };
         let ts = schema_ts(
             "type Token @entity { id: ID! balances: [Balance!]! @derivedFrom(field: \"token\") } \
@@ -2182,7 +2199,8 @@ mod tests {
             GraphTs {
                 int8: true,
                 related: false,
-                display: false
+                display: false,
+                unset_only_null: false
             }
         );
         std::fs::remove_dir_all(&root).ok();
