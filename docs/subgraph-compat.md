@@ -302,7 +302,11 @@ block, before the first register pass of its chain (Venus saves its
 Comptroller there); a change a handler without a register pass makes to an
 entity (it only updates one a create depends on, below) or one a polling block
 handler saves doesn't reach that store, so a `create()` conditioned on such
-state can still mis-register. A mapping that throws in the
+state can still mis-register. An unfiltered or polling block handler gets no
+register pass at all, so a `create()` it makes registers nothing (the run
+warns once per template and address): envio registers addresses only at fetch
+time, from events. graph-node's own block-handlers integration test and
+centrifuge's tinlake create templates that way. A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
