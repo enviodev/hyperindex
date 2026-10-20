@@ -2638,6 +2638,19 @@ const ethereumImpl = {
 
 export const ethereum = strictNamespace("ethereum", ethereumImpl);
 
+// graph-ts before 0.18 (apiVersion 0.0.3 and older) exported these at the top
+// level, and the mappings and generated code of that age import them so.
+export {
+  EthereumValueKind,
+  EthereumTuple,
+  EthereumBlock,
+  EthereumTransaction,
+  EthereumCall,
+  EthereumEvent,
+  EthereumEventParam,
+  SmartContract,
+};
+
 /**
  * `matchstick-as`' test helper, which also resolves to this module (a mapping
  * file that holds test fixtures imports it beside its handlers — Forta's do).
