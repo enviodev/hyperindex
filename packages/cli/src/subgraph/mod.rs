@@ -992,13 +992,16 @@ fn networks_from_rpc(
         return manifest::NetworksFromRpc::new();
     }
     let answer = chain_id_served_by(rpc);
+    // graph-node runs a subgraph on one network; a manifest naming several
+    // keeps their table chains, and the one endpoint is refused over them.
+    let single = networks.len() == 1;
     let mut resolved = manifest::NetworksFromRpc::new();
     for (network, known) in networks {
         match (known, &answer) {
             (None, answer) => {
                 resolved.insert(network, answer.clone());
             }
-            (Some(known), Ok(served)) if known != *served => {
+            (Some(known), Ok(served)) if single && known != *served => {
                 notices.push(format!(
                     "Envio Subgraph indexes the network \"{network}\" on chain {served}, the chain \
                      {RPC_ENV_VAR} serves, not chain {known}, which The Graph's networks registry \
@@ -2319,6 +2322,27 @@ type Gravatar @entity {
         .expect_err("expected one endpoint over two chains to be refused");
 
         let message = format!("{err:#}");
+        assert!(
+            message.contains("names one endpoint, but this subgraph indexes 2 chains"),
+            "unexpected error: {message}"
+        );
+
+        // An endpoint that answers doesn't fold the two networks into its one
+        // chain: graph-node runs a subgraph on a single network, so the chain
+        // an endpoint decides is that network's alone.
+        let polygon = rpc_serving_chain(137);
+        let message = translate(
+            &two_chains,
+            SCHEMA,
+            "gravatar",
+            Some(&polygon),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .err()
+        .map(|err| format!("{err:#}"))
+        .unwrap_or_default();
         assert!(
             message.contains("names one endpoint, but this subgraph indexes 2 chains"),
             "unexpected error: {message}"
