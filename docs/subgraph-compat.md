@@ -662,8 +662,10 @@ Run inside the subgraph project. It compares the indexer's Postgres (same
 endpoint the subgraph ran on before, at the block the indexer has processed
 (`envio_chains.progress_block`): the reference is pinned with
 `block: {number: N}`. Ours keeps no history, so that block is the only one it
-can answer for — `--block` only asserts it, and a reference that hasn't
-reached it, or reports `hasIndexingErrors`, is refused. `--ours` compares a
+can answer for — `--block` only asserts it. A reference that hasn't reached
+it yet (one at the chain head trails a live indexer by a few blocks) is
+waited for, `--wait` seconds (120 by default), then refused; one that
+reports `hasIndexingErrors` is refused. `--ours` compares a
 Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
 block.
 

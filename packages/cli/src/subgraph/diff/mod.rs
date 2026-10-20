@@ -36,6 +36,7 @@ const MISMATCH_EXAMPLES: usize = 10;
 /// Ids on one side only re-asked by `id_in` per type and side, and per query.
 const RECHECK_CAP: usize = 1000;
 const RECHECK_BATCH: usize = 100;
+const WAIT_POLL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -51,6 +52,7 @@ pub struct Options {
     pub headers: Vec<String>,
     pub allow_indexing_errors: bool,
     pub timeout: Duration,
+    pub wait: Duration,
     pub progress: bool,
 }
 
@@ -157,10 +159,20 @@ async fn compare(project_root: &Path, options: &Options, report: &mut Report) ->
         }
     };
 
-    let meta = reference
+    let mut meta = reference
         .meta()
         .await
         .context("Failed to read the reference's _meta")?;
+    // Ours' block is fixed by its snapshot, so a reference that trails it at
+    // the chain head can only be compared once it gets there.
+    let waiting = Instant::now();
+    while meta.block < ours_block && waiting.elapsed() < options.wait {
+        tokio::time::sleep(WAIT_POLL.min(options.wait.saturating_sub(waiting.elapsed()))).await;
+        meta = reference
+            .meta()
+            .await
+            .context("Failed to read the reference's _meta")?;
+    }
     report.reference.latest_block = Some(meta.block);
     report.reference.deployment = meta.deployment.clone();
     report.reference.has_indexing_errors = Some(meta.has_indexing_errors);
@@ -299,8 +311,9 @@ pub fn pin_block(requested: Option<u64>, ours: u64, reference: u64) -> Result<u6
     if reference < ours {
         bail!(
             "The reference has only indexed up to block {reference}, behind ours at {ours}, and \
-             graph-node can't answer for a block it hasn't reached. Rerun once it has, or \
-             compare an indexer stopped at or before block {reference}."
+             graph-node can't answer for a block it hasn't reached. Rerun once it has (or give \
+             it longer with --wait), or compare an indexer stopped at or before block \
+             {reference}."
         );
     }
     Ok(ours)

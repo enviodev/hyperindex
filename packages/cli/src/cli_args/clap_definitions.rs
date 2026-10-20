@@ -160,6 +160,10 @@ pub struct SubgraphDiffArgs {
     #[arg(long, default_value_t = 60)]
     pub timeout: u64,
 
+    ///How long to wait for a reference behind ours to reach ours' block, in seconds
+    #[arg(long, default_value_t = 120)]
+    pub wait: u64,
+
     ///Print the report as JSON (stable shape, `schemaVersion: 1`) instead of a table
     #[arg(long)]
     pub json: bool,

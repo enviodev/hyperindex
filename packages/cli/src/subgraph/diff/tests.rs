@@ -220,6 +220,7 @@ fn options(endpoint: &str, ours: Option<&str>) -> Options {
         headers: vec![],
         allow_indexing_errors: false,
         timeout: Duration::from_secs(10),
+        wait: Duration::ZERO,
         progress: false,
     }
 }
@@ -462,11 +463,45 @@ async fn refuses_a_reference_behind_ours() {
             2,
             vec![
                 "The reference has only indexed up to block 1233, behind ours at 1234, and \
-                 graph-node can't answer for a block it hasn't reached. Rerun once it has, or \
-                 compare an indexer stopped at or before block 1233."
+                 graph-node can't answer for a block it hasn't reached. Rerun once it has (or \
+                 give it longer with --wait), or compare an indexer stopped at or before block \
+                 1233."
                     .to_string()
             ]
         )
+    );
+}
+
+// A reference indexing at the chain head trails an indexer that has reached it
+// by a few blocks (Studio's arbitrum-sepolia deployment of frytegg/inflexion
+// was 19 blocks behind), so a diff of a live indexer was refused every time.
+#[tokio::test]
+async fn waits_for_a_reference_a_few_blocks_behind() {
+    let data = Arc::new(reference_data());
+    let metas = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reference = mock_graph(move |query| {
+        let latest = query.contains("_meta") && !query.contains("block: {number:");
+        let block = if latest && metas.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            BLOCK - 3
+        } else {
+            BLOCK
+        };
+        serve(&data, block, query)
+    })
+    .await;
+    let ours = graph_node(reference_data(), BLOCK).await;
+    let dir = project();
+    let report = run(
+        dir.path(),
+        &Options {
+            wait: Duration::from_secs(30),
+            ..options(&reference.url, Some(&ours.url))
+        },
+    )
+    .await;
+    assert_eq!(
+        (report.status, report.exit_code, report.block, report.errors),
+        (Status::Match, 0, Some(BLOCK), vec![])
     );
 }
 

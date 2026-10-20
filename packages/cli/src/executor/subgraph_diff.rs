@@ -19,6 +19,7 @@ pub async fn run(args: SubgraphDiffArgs, project_root: &Path) -> i32 {
         headers: args.headers,
         allow_indexing_errors: args.allow_indexing_errors,
         timeout: Duration::from_secs(args.timeout.max(1)),
+        wait: Duration::from_secs(args.wait),
         progress: true,
     };
     let report = diff::run(project_root, &options).await;
