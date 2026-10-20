@@ -678,7 +678,10 @@ endpoint the subgraph ran on before, at the block the indexer has processed
 can answer for — `--block` only asserts it. A reference that hasn't reached
 it yet (one at the chain head trails a live indexer by a few blocks) is
 waited for, `--wait` seconds (120 by default), then refused; one that
-reports `hasIndexingErrors` is refused. `--ours` compares a
+reports `hasIndexingErrors` is refused. A reference that prunes its history
+(`indexerHints.prune: auto`, which `graph init` writes, so most new Studio
+deployments) answers only its last few thousand blocks: index to the chain
+head first (the refusal names the first block it serves). `--ours` compares a
 Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
 block.
 
