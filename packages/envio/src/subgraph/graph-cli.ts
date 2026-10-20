@@ -368,6 +368,56 @@ export function codegenFlags(root: string, step: string): string[] {
   return flags;
 }
 
+const CODEGEN_VALUE_FLAGS = new Set(["-o", "--output-dir", "--uncrashable-config", "--uc", "-i", "--ipfs"]);
+
+/**
+ * The manifest and output directory a `graph codegen` step names, if any:
+ * balancer/gauges-subgraph runs `graph codegen subgraph.yaml -o src/types/ &&
+ * graph codegen subgraph.arbitrum.yaml -o src/types/`, one tree from two
+ * manifests.
+ */
+function codegenTarget(step: string): { manifest?: string; outputDir?: string } {
+  const words = step.split(/\s+/);
+  const target: { manifest?: string; outputDir?: string } = {};
+  for (let index = words.indexOf("codegen") + 1; index > 0 && index < words.length; index++) {
+    const word = words[index].replace(/^["']|["']$/g, "");
+    if (word === "--" || word === "") continue;
+    const [name, inline] = word.split("=", 2);
+    if (CODEGEN_VALUE_FLAGS.has(name)) {
+      const value = inline ?? words[++index]?.replace(/^["']|["']$/g, "");
+      if ((name === "-o" || name === "--output-dir") && value) target.outputDir = value;
+    } else if (!word.startsWith("-")) {
+      target.manifest ??= word;
+    }
+  }
+  return target;
+}
+
+/**
+ * What a `graph codegen` step generates: the manifest it names, into where it
+ * writes, when that is another manifest of the project; envio's own manifest
+ * into `dir` otherwise.
+ */
+function stepTarget(root: string, manifestFile: string, dir: string, step: string) {
+  const { manifest, outputDir } = codegenTarget(step);
+  const named = manifest && path.resolve(root, manifest);
+  if (!named || named === path.resolve(root, manifestFile) || !existsSync(named)) {
+    return { manifest: manifestFile, outputDir: dir, own: true };
+  }
+  return { manifest, outputDir: outputDir ? path.resolve(root, outputDir) : dir, own: false };
+}
+
+/**
+ * Every manifest the codegen script generates into the tree, in its order;
+ * envio's own last when no step names it, so its files win.
+ */
+function codegenPlan(root: string, manifestFile: string, dir: string) {
+  const plan = (codegenSteps(root) ?? [])
+    .filter((step) => GRAPH_CODEGEN.test(step))
+    .map((step) => stepTarget(root, manifestFile, dir, step));
+  return plan.some(({ own }) => own) ? plan : [...plan, { manifest: manifestFile, outputDir: dir, own: true }];
+}
+
 /**
  * The project's `codegen` script, step by step, when it runs `graph codegen`
  * itself. Some do more after it — Lido writes `generated/parserData.ts` with a
@@ -435,7 +485,11 @@ function codegenMode(): "auto" | "bundled" | "graph-cli" {
 
 /** envio's own `graph codegen`: needs no install, only the manifest, schema and ABIs. */
 export function bundledCodegen(root: string, dir: string, manifestFile: string): string[] {
-  const { files } = subgraphBundledCodegen(path.resolve(root, manifestFile), dir);
+  let files: string[] = [];
+  for (const { manifest, outputDir, own } of codegenPlan(root, manifestFile, dir)) {
+    const written = subgraphBundledCodegen(path.resolve(root, manifest), outputDir).files;
+    if (own) files = written;
+  }
   info(`Envio Subgraph wrote ${files.length} generated files to "${path.relative(root, dir)}/" without graph-cli.`);
   return files;
 }
@@ -507,6 +561,7 @@ export async function ensureGeneratedCode(
   }
 
   try {
+    let ranOwn = false;
     for (const step of codegenSteps(root) ?? ["graph codegen"]) {
       if (!GRAPH_CODEGEN.test(step)) {
         try {
@@ -523,10 +578,15 @@ export async function ensureGeneratedCode(
         }
         continue;
       }
+      const { manifest, outputDir, own } = stepTarget(root, manifestFile, dir, step);
+      ranOwn ||= own;
       // With no graph-cli anywhere, the mapping that imports the missing code
       // reports it, naming that mapping.
-      if (!(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir), codegenFlags(root, step)))) return;
+      if (!(await runCodegen(root, manifest, outputDir, importsFrom(root, mappingFiles, dir), codegenFlags(root, step)))) {
+        return;
+      }
     }
+    if (!ranOwn && !(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir)))) return;
   } catch (error) {
     if (mode === "graph-cli" || bundledFailed) throw error;
     warn(
