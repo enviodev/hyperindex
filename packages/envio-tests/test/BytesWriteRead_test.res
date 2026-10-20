@@ -57,6 +57,31 @@ let second = {
   tag: Uint8Array.fromArray([0xbb]),
 }
 
+let setBoth: MockSource.itemMock = {
+  blockNumber: 5,
+  logIndex: 0,
+  handler: async args => {
+    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+    context.blob.set(first)
+    context.blob.set(second)
+  },
+}
+
+let queryByTag = (~blockNumber, ~queried): MockSource.itemMock => {
+  blockNumber,
+  logIndex: 0,
+  handler: async args => {
+    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+    queried->Dict.set("eq", await context.blob.getWhere({tag: {_eq: first.tag}}))
+    queried->Dict.set(
+      "in",
+      await context.blob.getWhere({
+        tag: {_in: [second.tag, Uint8Array.fromArray([0xcc])]},
+      }),
+    )
+  },
+}
+
 describe("Bytes as Uint8Array", () => {
   scenario->Scenario.it(
     "writes raw bytes and reads them back as Uint8Array",
@@ -69,21 +94,7 @@ describe("Bytes as Uint8Array", () => {
         {
           fromBlock: 0,
           toBlock: Unbounded,
-          reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.blob.set(first)
-                  context.blob.set(second)
-                },
-              },
-            ],
-            latestFetchedBlockNumber: 5,
-          }),
+          reply: Respond({items: [setBoth], latestFetchedBlockNumber: 5}),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -94,23 +105,7 @@ describe("Bytes as Uint8Array", () => {
           fromBlock: 6,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 6,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  queried->Dict.set("eq", await context.blob.getWhere({tag: {_eq: first.tag}}))
-                  queried->Dict.set(
-                    "in",
-                    await context.blob.getWhere({
-                      tag: {_in: [second.tag, Uint8Array.fromArray([0xcc])]},
-                    }),
-                  )
-                },
-              },
-            ],
+            items: [queryByTag(~blockNumber=6, ~queried)],
             latestFetchedBlockNumber: 10,
           }),
         },
@@ -132,7 +127,7 @@ describe("Bytes as Uint8Array", () => {
 
       switch IndexerRunner.selectedBackend {
       | #postgres => ()
-      | #clickhouse =>
+      | #clickhouse | #clickhouseOnly =>
         let database = TestClickHouse.currentDatabase()
         let rows = await TestClickHouse.query(
           `SELECT id, hex(data) AS data, hex(optData) AS optData, arrayMap(x -> hex(x), chunks) AS chunks, hex(tag) AS tag FROM \`${database}\`.\`Blob\` ORDER BY id FORMAT JSONEachRow`,
@@ -146,6 +141,40 @@ describe("Bytes as Uint8Array", () => {
           ]`),
         )
       }
+    },
+  )
+
+  scenario->Scenario.it(
+    "are found by their bytes once they come back from storage",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({items: [setBoth], latestFetchedBlockNumber: 10}),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      // Restarted, so the filters are answered by storage rather than memory.
+      source.setAutoHeight(20)
+      let restarted = await indexer.restart()
+      let queried = Dict.make()
+      await source.expectItemsQueries([
+        {
+          coversBlock: 11,
+          reply: Respond({
+            items: [queryByTag(~blockNumber=11, ~queried)],
+            latestFetchedBlockNumber: 11,
+          }),
+        },
+      ])
+      await restarted.getBatchWritePromise()
+
+      t.expect(queried).toEqual(dict{"eq": [first], "in": [second]})
     },
   )
 })

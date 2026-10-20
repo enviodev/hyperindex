@@ -270,7 +270,7 @@ describe("What a refused restart tells the operator", () => {
       }
 
       let clickHouseLine = switch IndexerRunner.selectedBackend {
-      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #clickhouse | #clickhouseOnly => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       | #postgres => ""
       }
       t.expect(
@@ -334,7 +334,7 @@ Pick one:
       }
 
       let clickHouseLine = switch IndexerRunner.selectedBackend {
-      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+      | #clickhouse | #clickhouseOnly => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
       | #postgres => ""
       }
       t.expect(refusal).toEqual(

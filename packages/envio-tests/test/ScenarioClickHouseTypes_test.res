@@ -167,11 +167,10 @@ describe("ClickHouse stores every schema type", () => {
 
     let database = TestClickHouse.currentDatabase()
     let rows = await TestClickHouse.query(
-      `SELECT * FROM \`${database}\`.\`EveryType\` FORMAT JSONEachRow`,
+      `SELECT * FROM ${IndexerRunner.clickHouseEntity(~database, "EveryType")} FORMAT JSONEachRow`,
     )
 
-    t.expect(rows->String.trim->JSON.parseOrThrow).toStrictEqual(
-      %raw(`{
+    let expected: dict<JSON.t> = %raw(`{
           id: "0x5c4f2e1d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
           string: "héllo 😀 and the quick brown fox jumps over the lazy dog",
           optString: null,
@@ -206,7 +205,25 @@ describe("ClickHouse stores every schema type", () => {
           arrayOfJson: ['{"a":1}', "2", "true", "s"],
           enumField: "ADMIN",
           optEnumField: null,
-        }`),
+        }`)
+    // A ClickHouse-only indexer reads its documents back, so a bare string is
+    // stored as the document it is.
+    let expected = switch IndexerRunner.selectedBackend {
+    | #clickhouseOnly =>
+      expected
+      ->Dict.toArray
+      ->Array.map(
+        ((key, value)) => (
+          key,
+          key === "arrayOfJson" ? %raw(`['{"a":1}', "2", "true", '"s"']`) : value,
+        ),
+      )
+      ->Dict.fromArray
+    | #postgres | #clickhouse => expected
+    }
+
+    t.expect(rows->String.trim->JSON.parseOrThrow).toStrictEqual(
+      expected->(Utils.magic: dict<JSON.t> => JSON.t),
     )
   })
 })

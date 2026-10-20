@@ -1562,6 +1562,11 @@ let makeStorageFromEnv = (
   )
 }
 
-let makePersistenceFromConfig = (~config: Config.t, ~storage=makeStorageFromEnv(~config)) => {
+let makePersistenceFromConfig = (
+  ~config: Config.t,
+  ~storage=config.storage.postgres
+    ? makeStorageFromEnv(~config)
+    : ClickHouseStorage.makeFromEnv(~config),
+) => {
   Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage)
 }

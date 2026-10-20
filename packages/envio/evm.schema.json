@@ -39,7 +39,7 @@
       "minimum": 0
     },
     "storage": {
-      "description": "Storage backends the indexer writes data to. Defaults to Postgres when omitted. Set `clickhouse: true` to additionally sync the indexed data to ClickHouse. Mark a backend with `default: true` to store entities that don't have an @storage directive in the schema, e.g. `clickhouse: {default: true}`.",
+      "description": "Storage backends the indexer writes data to. Defaults to Postgres when omitted. Set `clickhouse: true` with `postgres: true` to additionally sync the indexed data to ClickHouse, or with `postgres: false` to use ClickHouse as the only storage. Mark a backend with `default: true` to store entities that don't have an @storage directive in the schema, e.g. `clickhouse: {default: true}`.",
       "anyOf": [
         {
           "$ref": "#/$defs/StorageConfig"
@@ -185,7 +185,7 @@
           ]
         },
         "clickhouse": {
-          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false). Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "description": "Whether to store the indexed data in ClickHouse (default: false). With `postgres: true` the data is stored in both; with `postgres: false` ClickHouse is the indexer's only storage. Accepts a boolean or an options object (the object form implies the backend is enabled).",
           "anyOf": [
             {
               "type": [
@@ -197,7 +197,7 @@
               "type": "object",
               "properties": {
                 "default": {
-                  "description": "Whether entities without an @storage directive are stored in this backend (default: false).",
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when ClickHouse is the only enabled backend, false otherwise).",
                   "type": [
                     "boolean",
                     "null"
@@ -224,7 +224,7 @@
       "additionalProperties": false,
       "allOf": [
         {
-          "not": {
+          "if": {
             "properties": {
               "postgres": {
                 "const": false
@@ -232,6 +232,23 @@
             },
             "required": [
               "postgres"
+            ]
+          },
+          "then": {
+            "properties": {
+              "clickhouse": {
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "clickhouse"
             ]
           }
         },
@@ -256,13 +273,9 @@
           "then": {
             "properties": {
               "postgres": {
-                "anyOf": [
-                  {
-                    "const": true
-                  },
-                  {
-                    "type": "object"
-                  }
+                "type": [
+                  "boolean",
+                  "object"
                 ]
               }
             },

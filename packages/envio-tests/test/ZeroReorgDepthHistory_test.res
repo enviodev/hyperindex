@@ -35,10 +35,18 @@ let chainYaml = (chainId, ~maxReorgDepth) =>
       - name: Token
         address: "0x0000000000000000000000000000000000000001"`
 
+let unsupported: array<Scenario.unsupported> = [
+  {
+    backend: #clickhouseOnly,
+    reason: "ClickHouse-only storage keeps a checkpoint for every batch, on every chain",
+  },
+]
+
 // One chain, and the default cross-chain entities that make its checkpoint
 // sequence a shared one.
 let singleChainScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~schema,
   ~configYaml=`
 name: zero-reorg-depth-history
@@ -55,6 +63,7 @@ chains:${chainYaml(100, ~maxReorgDepth=0)}
 // chain that can be rolled back keeps any.
 let perChainScenario = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~schema,
   ~configYaml=`
 name: zero-reorg-depth-history-per-chain

@@ -31,6 +31,10 @@ type Note {
 
 let nul = String.fromCharCode(0)
 
+let keepsNul: array<Scenario.unsupported> = [
+  {backend: #clickhouseOnly, reason: "ClickHouse stores the NUL byte as is"},
+]
+
 type note = {id: string, text: string, tags: array<string>, payload: JSON.t}
 type noteOps = {set: note => unit}
 type handlerContext = {
@@ -48,6 +52,7 @@ describe("A NUL byte in what a handler stores", () => {
 
   scenario->Scenario.it(
     "is stripped and the row is written",
+    ~unsupported=keepsNul,
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~onError=errHandler =>
       refused
@@ -158,6 +163,7 @@ describe("A NUL byte in what a handler stores", () => {
 
   scenario->Scenario.it(
     "is stripped from a cached effect's output too",
+    ~unsupported=keepsNul,
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~onError=errHandler =>
       refused

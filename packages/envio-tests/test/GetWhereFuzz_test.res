@@ -31,7 +31,10 @@ let scenario = Scenario.make(
   ~supervised=false,
   // getWhere reads Postgres either way, and ClickHouse refuses the nullable
   // list column the grammar has to cover.
-  ~unsupported=[{backend: #clickhouse, reason: "nullable list columns aren't supported there"}],
+  ~unsupported=[
+    {backend: #clickhouse, reason: "nullable list columns aren't supported there"},
+    {backend: #clickhouseOnly, reason: "nullable list columns aren't supported there"},
+  ],
   ~schema=`
 enum Kind {
   ZETA

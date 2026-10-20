@@ -67,16 +67,24 @@ type initializeInput = {
   checkpointColumns: array<columnSpec>,
   replicated: bool,
   databaseEngine?: string,
+  primary?: bool,
 }
 
 // A history table and the column naming the chain its rows belong to. Absent
 // only for a cross-chain entity, which no per-chain sequence can produce.
 type historyTableInput = {name: string, chainIdColumn?: string}
 
+type redoInput = {
+  entity: entitySpec,
+  keepHistory: bool,
+  lookup: bool,
+}
+
 type resumeInput = {
   perChain: bool,
   chainProgress: array<chainProgressInput>,
   historyTables: array<historyTableInput>,
+  primaryEntities?: array<redoInput>,
 }
 
 type registeredTable = {
@@ -97,6 +105,18 @@ external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
 
 @send
 external resume: (t, resumeInput) => promise<unit> = "resume"
+
+@send external query: (t, string) => promise<string> = "query"
+
+@send
+external queryWithIds: (t, string, array<string>) => promise<string> = "queryWithIds"
+
+@send external applyRedo: (t, array<redoInput>) => promise<unit> = "applyRedo"
+
+@send external buildLookup: (t, entitySpec) => promise<unit> = "buildLookup"
+
+let redoTableName = (entityName: string) => "envio_redo_" ++ entityName
+let lookupTableName = (entityName: string) => "envio_kv_" ++ entityName
 
 @send
 external beginStage: (t, ~table: int, ~rows: int) => Staging.begun = "beginStage"

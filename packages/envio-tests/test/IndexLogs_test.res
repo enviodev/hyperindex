@@ -18,8 +18,13 @@ chains:
           - event: "TestEvent()"
 `
 
+let unsupported: array<Scenario.unsupported> = [
+  {backend: #clickhouseOnly, reason: "logs the Postgres indexes it builds"},
+]
+
 let noIndexes = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml,
   ~schema=`
 type Tally {
@@ -30,6 +35,7 @@ type Tally {
 
 let indexed = Scenario.make(
   ~supervised=false,
+  ~unsupported,
   ~configYaml,
   ~schema=`
 type Token {

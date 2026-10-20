@@ -312,6 +312,7 @@ type queryField = {
   // The column a load filters on, which only differs from the API field name
   // keying this entry when column renaming is configured.
   pgDbFieldName: string,
+  clickhouseDbFieldName: string,
   // The chain-id column a per-chain entity's table is partitioned by.
   isChainId: bool,
 }
@@ -327,6 +328,7 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
           isArray: field.isArray,
           fieldSchema: field.fieldSchema,
           pgDbFieldName: field->getPgDbFieldName,
+          clickhouseDbFieldName: field->getClickHouseDbFieldName,
           isChainId: field.isChainId,
         },
       )

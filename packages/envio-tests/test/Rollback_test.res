@@ -49,6 +49,15 @@ import { indexer } from "envio";
 indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
 `
 
+// ClickHouse-only storage writes a checkpoint for every batch, before the reorg
+// threshold too, and prunes neither checkpoints nor history yet.
+let keepsHistory: array<Scenario.unsupported> = [
+  {
+    backend: #clickhouseOnly,
+    reason: "ClickHouse-only storage keeps every checkpoint and prunes no history yet",
+  },
+]
+
 let makeScenario = (~name, ~chains, ~extra="") =>
   Scenario.make(
     ~supervised=false,
@@ -515,6 +524,7 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Rollback of a single chain indexer",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -776,6 +786,7 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Fires onRollbackCommit per affected chain after the rollback write",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -803,6 +814,7 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Stores checkpoints inside of the reorg threshold for batches without items",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -832,6 +844,7 @@ describe("E2E rollback tests", () => {
 
   scenario->Scenario.it(
     "Shouldn't detect reorg for rollbacked block",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -900,6 +913,7 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Single chain rollback should also work for multichain indexer when another chains are stale",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1172,6 +1186,7 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Rollback of multichain indexer (single entity id change)",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -1684,6 +1699,7 @@ describe("E2E rollback tests", () => {
   // Fixes duplicate history bug before 2.31
   multichainScenario->Scenario.it(
     "Rollback of multichain indexer (single entity id change + another entity on non-reorg chain)",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -3138,6 +3154,7 @@ describe("E2E rollback tests", () => {
 
   multichainScenario->Scenario.it(
     "Flushes in-flight batch write before computing rollback diffs (no silent data loss on non-reorg chain)",
+    ~unsupported=keepsHistory,
     ~sources=[{chain: 100, methods, isWildcard: true}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     ~mapStorage=storage => {

@@ -109,14 +109,27 @@ describe("Two entities whose names truncate alike", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      let {sql, pgSchema} = indexer.pg
       let historyTables: array<{
         "name": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT table_name AS "name" FROM information_schema.tables
+      }> = switch IndexerRunner.selectedBackend {
+      | #clickhouseOnly =>
+        (
+          await TestClickHouse.query(
+            `SELECT name FROM system.tables
+              WHERE database = '${TestClickHouse.currentDatabase()}' AND name LIKE 'envio_history_BBB%'
+              ORDER BY name FORMAT JSONEachRow`,
+          )
+        )
+        ->ClickHouseStorage.parseLines
+        ->(Utils.magic: array<JSON.t> => array<{"name": string}>)
+      | #postgres | #clickhouse =>
+        let {sql, pgSchema} = indexer.pg
+        await sql->Sql.queryForTests(
+          `SELECT table_name AS "name" FROM information_schema.tables
           WHERE table_schema = '${pgSchema}' AND table_name LIKE 'envio_history_BBB%'
           ORDER BY table_name`,
-      )
+        )
+      }
       let historyTables =
         historyTables->Array.filter(
           table => table["name"]->String.endsWith("$1") || table["name"]->String.endsWith("$11"),

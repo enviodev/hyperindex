@@ -62,6 +62,13 @@ let scenario = Scenario.make(
   ~configYaml=makeConfigYaml("per-chain-prune", ~laggingChainId=1337),
 )
 
+let noPrune: array<Scenario.unsupported> = [
+  {
+    backend: #clickhouseOnly,
+    reason: "ClickHouse-only storage keeps every checkpoint and prunes no history yet",
+  },
+]
+
 let crossChainSchema =
   schema ++ `
 type Total @crossChain {
@@ -221,6 +228,7 @@ let counterSet = (~checkpointId, ~chain, ~count): Change.t<counter> => Set({
 describe("Per-chain history pruning", () => {
   scenario->Scenario.it(
     "Prunes a chain down to its own safe checkpoint while a sibling's head sits still",
+    ~unsupported=noPrune,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -268,6 +276,7 @@ describe("Per-chain history pruning", () => {
 
   crossChainZeroDepthScenario->Scenario.it(
     "Prunes past an idle chain with no reorg depth under a shared sequence",
+    ~unsupported=noPrune,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -292,6 +301,7 @@ describe("Per-chain history pruning", () => {
   // ids: bounds crossed between chains would survive a symmetric setup.
   manyBoundsScenario->Scenario.it(
     "Holds each chain to its own bound when several chains prune at once",
+    ~unsupported=noPrune,
     ~sources=[{chain: 100, methods}, {chain: 200, methods}, {chain: 300, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -382,6 +392,7 @@ describe("Per-chain history pruning", () => {
   // observed: it sees both chains' committed rows with a fresh interval.
   zeroDepthScenario->Scenario.it(
     "Writes neither history nor checkpoints for a chain with no reorg depth",
+    ~unsupported=noPrune,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {

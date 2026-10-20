@@ -33,7 +33,13 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
+  ~unsupported=[
+    {backend: #postgres, reason: "asserts against a ClickHouse server"},
+    {
+      backend: #clickhouseOnly,
+      reason: "asserts the sink's checkpoint-gated view, which ClickHouse-only storage doesn't build",
+    },
+  ],
 )
 
 type counter = {id: string, count: bigint}

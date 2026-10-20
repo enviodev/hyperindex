@@ -1,4 +1,23 @@
-let clickHouseFieldSchema = (f: Table.field) => {
+// A ClickHouse-only indexer reads its documents back, so a bare string travels
+// as the document it is: the sink stores it as the text itself, which reads
+// back as no document at all.
+%%private(
+  let clickHouseDocument = S.json(~validate=false)->S.preprocess(_ => {
+    serializer: value =>
+      switch value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
+      | None => "null"->(Utils.magic: string => unknown)
+      | Some(json) if typeof(json) === #string =>
+        json
+        ->(Utils.magic: unknown => JSON.t)
+        ->JSON.stringify
+        ->Utils.replaceLoneSurrogateEscapes
+        ->(Utils.magic: string => unknown)
+      | Some(json) => json
+      },
+  })
+)
+
+let clickHouseFieldSchema = (f: Table.field, ~primary=false) => {
   let shaped = baseSchema =>
     if f.isNullable {
       Utils.Schema.nullTolerant(baseSchema)->S.toUnknown
@@ -11,6 +30,8 @@ let clickHouseFieldSchema = (f: Table.field) => {
   | Date => shaped(Utils.Schema.clickHouseDate->S.toUnknown)
   | Bytea => shaped(S.json(~validate=false)->S.toUnknown)
   | ChainId => ChainId.schema->S.toUnknown
+  | Json if primary && f.isArray => S.array(clickHouseDocument)->S.toUnknown
+  | Json if primary => clickHouseDocument->S.toUnknown
   | Json if !f.isArray => Utils.Schema.clickHouseJson->S.toUnknown
   | _ => f.fieldSchema
   }
@@ -46,10 +67,16 @@ let makeColumnSpec = (
   ~fieldType: Table.fieldType,
   ~isNullable=false,
   ~isArray=false,
+  // ClickHouse answers the queries of a ClickHouse-only indexer, so a BigInt
+  // too wide for a Decimal the encoder carries gets Int256, which holds every
+  // value of up to 76 digits, rather than its digits as text. An unbounded one
+  // stays text: a uint256 can outgrow Int256.
+  ~primary=false,
 ): ClickHouseSink.columnSpec => {
   name,
   fieldName,
   fieldType: switch fieldType {
+  | BigInt({precision}) if primary && precision > 38 && precision <= 76 => "Int256"
   | String => "String"
   | Boolean => "Boolean"
   | Uint32 => "Uint32"
@@ -114,7 +141,10 @@ let checkpointColumns = InternalTable.Checkpoints.columns->Array.filterMap(({
 
 let checkpointColumnSpecs = checkpointColumns->Array.map(({spec}) => spec)
 
-let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySpec => {
+let entitySpec = (
+  ~entityConfig: Internal.entityConfig,
+  ~primary=false,
+): ClickHouseSink.entitySpec => {
   let options = entityConfig.storage.clickhouseOptions
   {
     name: entityConfig.name,
@@ -132,6 +162,7 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
             ~fieldType=f.fieldType,
             ~isNullable=f.isNullable,
             ~isArray=f.isArray,
+            ~primary,
           ),
         )
       | DerivedFrom(_) => None
@@ -171,12 +202,16 @@ type registry = {
   entities: dict<ClickHouseSink.table>,
   mutable checkpoints: option<ClickHouseSink.table>,
   converters: dict<converters>,
+  // The column types a write encodes to have to be the ones initialize
+  // created, so a ClickHouse-only registry registers primary specs.
+  primary: bool,
 }
 
-let makeRegistry = () => {
+let makeRegistry = (~primary=false) => {
   entities: Dict.make(),
   checkpoints: None,
   converters: Dict.make(),
+  primary,
 }
 
 @get external changeEntity: Change.t<Internal.entity> => dict<unknown> = "entity"
@@ -195,6 +230,7 @@ let makeRegistry = () => {
     ~entityConfig: Internal.entityConfig,
     ~scope: Internal.chainScope,
     ~table: ClickHouseSink.table,
+    ~primary,
   ): converters => {
     let {name: tableName, columns} = table
     let sourceTable = entityConfig.table
@@ -230,7 +266,7 @@ let makeRegistry = () => {
         switch (chainIdTag, fieldsByColumn->Utils.Dict.dangerouslyGetNonOption(name)) {
         | (Some((column, chainId)), _) if column === name => (_ => chainId, _ => chainId)
         | (_, Some(f)) =>
-          let serialize = compileSerializer(clickHouseFieldSchema(f))
+          let serialize = compileSerializer(clickHouseFieldSchema(f, ~primary))
           let apiName = f->Table.getApiFieldName
           if apiName === Table.idFieldName {
             let cell = change =>
@@ -281,7 +317,12 @@ let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
   switch registry.entities->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
   | Some(table) => table
   | None =>
-    let spec = entitySpec(~entityConfig)
+    let spec = entitySpec(~entityConfig, ~primary=registry.primary)
+    // A ClickHouse-only batch lands in the redo table first and reaches the
+    // history it is shaped like only once committed.
+    let spec = registry.primary
+      ? {...spec, historyTable: ClickHouseSink.redoTableName(entityConfig.name)}
+      : spec
     let table =
       sink
       ->ClickHouseSink.registerEntityTable(spec)
@@ -359,7 +400,7 @@ let stageUpdatesOrThrow = (
       let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
       | Some(cached) => cached
       | None =>
-        let cached = makeConverters(~entityConfig, ~scope, ~table)
+        let cached = makeConverters(~entityConfig, ~scope, ~table, ~primary=registry.primary)
         registry.converters->Dict.set(cacheKey, cached)
         cached
       }

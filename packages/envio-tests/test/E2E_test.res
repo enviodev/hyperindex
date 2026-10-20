@@ -500,19 +500,28 @@ describe("E2E tests", () => {
       [
         {
           value: "2",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
+          labels: dict{
+            "operation": "testEffectWithCache.effect",
+            "storage": IndexerRunner.storageName,
+          },
         },
       ],
       [
         {
           value: "2",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
+          labels: dict{
+            "operation": "testEffectWithCache.effect",
+            "storage": IndexerRunner.storageName,
+          },
         },
       ],
       [
         {
           value: "1",
-          labels: dict{"operation": "testEffectWithCache.effect", "storage": "postgres"},
+          labels: dict{
+            "operation": "testEffectWithCache.effect",
+            "storage": IndexerRunner.storageName,
+          },
         },
       ],
     ))

@@ -78,7 +78,10 @@ describe("ClickHouse sink after a resume", () => {
 
       let database = TestClickHouse.currentDatabase()
       let rows = await TestClickHouse.query(
-        `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
+        `SELECT id, count FROM ${IndexerRunner.clickHouseEntity(
+            ~database,
+            "Counter",
+          )} FORMAT JSONEachRow`,
       )
       t.expect(rows->String.trim).toEqual(`{"id":"total","count":"43"}`)
     },
@@ -100,10 +103,17 @@ describe("ClickHouse sink after a resume", () => {
 
       let database = TestClickHouse.currentDatabase()
       let rows = await TestClickHouse.query(
-        `SELECT id, count FROM \`${database}\`.\`Counter\` ORDER BY id FORMAT JSONEachRow`,
+        `SELECT id, count FROM ${IndexerRunner.clickHouseEntity(
+            ~database,
+            "Counter",
+          )} ORDER BY id FORMAT JSONEachRow`,
       )
       t.expect((checkpoints->Array.length, rows->String.trim->String.split("\n"))).toEqual((
-        0,
+        // ClickHouse-only storage keeps a checkpoint for every batch it writes.
+        switch IndexerRunner.selectedBackend {
+        | #clickhouseOnly => 1
+        | #postgres | #clickhouse => 0
+        },
         [`{"id":"first","count":"1"}`, `{"id":"second","count":"2"}`],
       ))
     },
@@ -126,7 +136,10 @@ describe("ClickHouse sink after a resume", () => {
 
       let database = TestClickHouse.currentDatabase()
       let rows = await TestClickHouse.query(
-        `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
+        `SELECT id, count FROM ${IndexerRunner.clickHouseEntity(
+            ~database,
+            "Counter",
+          )} FORMAT JSONEachRow`,
       )
       t.expect(rows->String.trim).toEqual(`{"id":"total","count":"3"}`)
     },

@@ -25,6 +25,12 @@ use row_binary::{Column, EncodedRows};
 
 const MAX_RETRIES: u32 = 8;
 
+/// A handler load names every id a batch preloads, which outgrows the 256 KiB
+/// ClickHouse parses by default within a few thousand ids. It has to travel as
+/// a request setting: the parser enforces the limit before it reads the
+/// statement's own `SETTINGS`.
+const MAX_QUERY_SIZE: &str = "1073741824";
+
 /// `@clickhouse/client`'s `request_timeout` default, which the JS insert path
 /// ran under. Without it a peer that accepts a connection and then goes silent
 /// — a black-holed socket through a load balancer sends neither RST nor FIN —
@@ -165,6 +171,9 @@ pub struct InitializeInput {
     pub checkpoint_columns: Vec<ColumnSpecInput>,
     pub replicated: bool,
     pub database_engine: Option<String>,
+    /// ClickHouse is the indexer's only storage: each entity gets a current
+    /// table instead of a view, and the internal tables Postgres would hold.
+    pub primary: Option<bool>,
 }
 
 #[napi(object)]
@@ -206,6 +215,19 @@ pub struct ResumeInput {
     /// The history tables this schema owns. A table no entity claims is one an
     /// older schema left behind, and a schema change means a resync anyway.
     pub history_tables: Vec<HistoryTableInput>,
+    /// Set when ClickHouse is the only storage: every entity, whose redo table
+    /// an interrupted batch may have left rows in.
+    pub primary_entities: Option<Vec<RedoInput>>,
+}
+
+/// An entity whose redo table holds a committed batch to apply.
+#[napi(object)]
+pub struct RedoInput {
+    pub entity: EntitySpecInput,
+    /// Whether the batch lands inside the reorg window, where history is kept.
+    pub keep_history: bool,
+    /// Whether the entity has a lookup table to keep in step.
+    pub lookup: bool,
 }
 
 struct ColumnSchema {
@@ -376,6 +398,52 @@ impl ClickHouseSink {
             .map_err(to_napi)
     }
 
+    /// Runs one statement and answers its body as text. A ClickHouse-only
+    /// indexer reads and keeps its internal state through this, on the node the
+    /// writes are pinned to.
+    #[napi]
+    pub async fn query(&self, statement: String) -> napi::Result<String> {
+        self.post_statement_with(statement, &[("max_query_size", MAX_QUERY_SIZE)])
+            .await
+            .map_err(to_napi)
+    }
+
+    /// Applies each entity's committed batch from its redo table. Entities are
+    /// independent, so they run side by side; one entity's statements run in
+    /// order.
+    #[napi]
+    pub async fn apply_redo(&self, entities: Vec<RedoInput>) -> napi::Result<()> {
+        self.apply_redo_inner(entities).await.map_err(to_napi)
+    }
+
+    /// Creates the entity's lookup table and fills it from the current table.
+    /// Run by the writer, between batches, so no committed batch is missed.
+    #[napi]
+    pub async fn build_lookup(&self, entity: EntitySpecInput) -> napi::Result<()> {
+        let entity: ddl::EntitySpec = entity.into();
+        async {
+            for statement in
+                ddl::build_lookup_table(&entity, &self.database, &self.history, self.chain_id_mode)?
+            {
+                self.post_statement(statement).await?;
+            }
+            anyhow::Ok(())
+        }
+        .await
+        .map_err(to_napi)
+    }
+
+    /// Runs a statement that reads the given ids as the table `_ids`, with a
+    /// single `id String` column.
+    #[napi]
+    pub async fn query_with_ids(
+        &self,
+        statement: String,
+        ids: Vec<String>,
+    ) -> napi::Result<String> {
+        self.post_with_ids(statement, &ids).await.map_err(to_napi)
+    }
+
     /// Allocates a batch's columns and lends them to JavaScript as
     /// `ArrayBuffer`s to fill in place, in the order the table was registered.
     /// Returns `{ handle, buffers }`; the handle goes to `commitStage` and then
@@ -535,7 +603,9 @@ impl ClickHouseSink {
             checkpoint_columns,
             replicated: env_replicated,
             database_engine,
+            primary,
         } = input;
+        let primary = primary.unwrap_or(false);
         let entities: Vec<ddl::EntitySpec> = entities.into_iter().map(Into::into).collect();
         let checkpoint_columns =
             self.checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
@@ -573,7 +643,11 @@ impl ClickHouseSink {
             .iter()
             .map(|entity| {
                 ddl::create_history_table(
-                    entity,
+                    &if primary {
+                        entity.without_table_options()
+                    } else {
+                        entity.clone()
+                    },
                     &self.database,
                     &self.history,
                     topology,
@@ -581,6 +655,22 @@ impl ClickHouseSink {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
+        let current_tables = if primary {
+            entities
+                .iter()
+                .map(|entity| {
+                    ddl::create_current_table(
+                        entity,
+                        &self.database,
+                        &self.history,
+                        topology,
+                        self.chain_id_mode,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
 
         if has_replicated_engine {
             // TRUNCATE DATABASE is unsupported on Replicated databases, so a
@@ -647,6 +737,34 @@ impl ClickHouseSink {
             topology,
         ))
         .await?;
+
+        if primary {
+            let redo_tables = entities
+                .iter()
+                .map(|entity| {
+                    ddl::create_redo_table(
+                        entity,
+                        &self.database,
+                        &self.history,
+                        topology,
+                        self.chain_id_mode,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            futures_util::future::try_join_all(
+                current_tables
+                    .into_iter()
+                    .chain(redo_tables)
+                    .chain(ddl::create_primary_internal_tables(
+                        &self.database,
+                        chain_id_type,
+                        topology,
+                    ))
+                    .map(|query| self.post_statement(query)),
+            )
+            .await?;
+            return Ok(());
+        }
 
         futures_util::future::try_join_all(entities.iter().map(|entity| {
             self.post_statement(ddl::create_view(
@@ -804,7 +922,13 @@ impl ClickHouseSink {
             per_chain,
             chain_progress,
             history_tables,
+            primary_entities,
         } = input;
+        let primary_entities: Vec<(ddl::EntitySpec, bool)> = primary_entities
+            .unwrap_or_default()
+            .into_iter()
+            .map(|redo| (redo.entity.into(), redo.lookup))
+            .collect();
         // No chain, no rows to hold to anything. Postgres inserts every chain's
         // row in the transaction that creates the schema, so an empty list here
         // means a config without chains, never a row that went missing with a
@@ -843,16 +967,69 @@ impl ClickHouseSink {
             Some(&self.history.checkpoint_chain_id_column),
             &self.history.id_column,
         )?;
+        let primary_above = primary_entities
+            .iter()
+            .map(|(entity, _)| {
+                bounds.above(
+                    entity.chain_id_column.as_deref(),
+                    &self.history.checkpoint_id_column,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let above_by_table: Vec<(String, String)> = histories_above
             .iter()
             .cloned()
+            .chain(primary_entities.iter().zip(primary_above.iter()).flat_map(
+                |((entity, _), above)| {
+                    [
+                        (entity.name.clone(), above.clone()),
+                        (ddl::redo_table_name(entity), above.clone()),
+                    ]
+                },
+            ))
             .chain(std::iter::once((
                 self.history.checkpoints_table.clone(),
                 checkpoints_above.clone(),
             )))
             .collect();
         let holding = self.tables_holding_rows_above(&above_by_table).await?;
+
+        // A batch whose commit never landed is dropped from its redo table, and
+        // one whose did is applied again from the start. A current table only
+        // holds rows above the checkpoint when a rollback was cut short past
+        // moving its chains back, which happens inside the reorg window, where
+        // history keeps the rows to restore — so the repair runs before
+        // history is trimmed.
+        let holding_ref = &holding;
+        futures_util::future::try_join_all(primary_entities.iter().zip(primary_above.iter()).map(
+            |((entity, lookup), above)| async move {
+                let holding = holding_ref;
+                if holding.contains(ddl::redo_table_name(entity).as_str()) {
+                    self.post_statement(ddl::trim_redo_table(entity, &self.database, above))
+                        .await?;
+                }
+                self.apply_entity_redo(entity, true, *lookup).await?;
+                if holding.contains(entity.name.as_str()) {
+                    let lookup_repair = if *lookup {
+                        ddl::repair_lookup_table(entity, &self.database, &self.history, above)
+                            .to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    for statement in lookup_repair.into_iter().chain(ddl::repair_current_table(
+                        entity,
+                        &self.database,
+                        &self.history,
+                        above,
+                    )) {
+                        self.post_statement(statement).await?;
+                    }
+                }
+                anyhow::Ok(())
+            },
+        ))
+        .await?;
 
         futures_util::future::try_join_all(
             histories_above
@@ -874,6 +1051,30 @@ impl ClickHouseSink {
             ))
             .await?;
         }
+        Ok(())
+    }
+
+    async fn apply_entity_redo(
+        &self,
+        entity: &ddl::EntitySpec,
+        keep_history: bool,
+        lookup: bool,
+    ) -> Result<()> {
+        for statement in
+            ddl::apply_redo(entity, &self.database, &self.history, keep_history, lookup)
+        {
+            self.post_statement(statement).await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_redo_inner(&self, entities: Vec<RedoInput>) -> Result<()> {
+        futures_util::future::try_join_all(entities.into_iter().map(|redo| async move {
+            let entity: ddl::EntitySpec = redo.entity.into();
+            self.apply_entity_redo(&entity, redo.keep_history, redo.lookup)
+                .await
+        }))
+        .await?;
         Ok(())
     }
 
@@ -948,12 +1149,65 @@ impl ClickHouseSink {
     }
 
     async fn post_statement(&self, query: String) -> Result<String> {
-        let response = self
+        self.post_statement_with(query, &[]).await
+    }
+
+    async fn post_statement_with(
+        &self,
+        query: String,
+        settings: &[(&str, &str)],
+    ) -> Result<String> {
+        let mut request = self.client.post(&self.url);
+        if !settings.is_empty() {
+            request = request.query(settings);
+        }
+        self.answer(request.body(query)).await
+    }
+
+    /// Sends the ids as an external table `_ids` rather than spelled into the
+    /// statement: a literal list of a few thousand ids costs the server more to
+    /// parse than the lookup itself.
+    async fn post_with_ids(&self, statement: String, ids: &[String]) -> Result<String> {
+        const BOUNDARY: &str = "envio-external-ids-7f3a9c1e2b";
+        let mut body =
+            String::with_capacity(ids.iter().map(|id| id.len() + 1).sum::<usize>() + 256);
+        body.push_str(&format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"_ids\"; \
+             filename=\"_ids\"\r\nContent-Type: text/tab-separated-values\r\n\r\n"
+        ));
+        for id in ids {
+            for character in id.chars() {
+                match character {
+                    '\\' => body.push_str("\\\\"),
+                    '\t' => body.push_str("\\t"),
+                    '\n' => body.push_str("\\n"),
+                    '\r' => body.push_str("\\r"),
+                    other => body.push(other),
+                }
+            }
+            body.push('\n');
+        }
+        body.push_str(&format!("\r\n--{BOUNDARY}--\r\n"));
+        let request = self
             .client
             .post(&self.url)
+            .query(&[
+                ("query", statement.as_str()),
+                ("_ids_structure", "id String"),
+                ("_ids_format", "TSV"),
+            ])
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            )
+            .body(body);
+        self.answer(request).await
+    }
+
+    async fn answer(&self, request: reqwest::RequestBuilder) -> Result<String> {
+        let response = request
             .timeout(self.tuning.statement_timeout)
             .basic_auth(&self.username, Some(&self.password))
-            .body(query)
             .send()
             .await
             .context("ClickHouse request failed")?;
@@ -1418,6 +1672,7 @@ mod tests {
                     chain_id_column: Some("chain_id".to_string()),
                 })
                 .collect(),
+            primary_entities: None,
         }
     }
 
@@ -1660,6 +1915,7 @@ mod tests {
                     name: "envio_history_a".to_string(),
                     chain_id_column: None,
                 }],
+                primary_entities: None,
             })
             .await
             .unwrap_err();

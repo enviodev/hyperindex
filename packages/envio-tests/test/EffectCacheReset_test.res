@@ -24,6 +24,12 @@ type Note {
   id: ID!
 }
 `,
+  ~unsupported=[
+    {
+      backend: #clickhouseOnly,
+      reason: "ClickHouse-only storage doesn't dump the effect cache yet, so a reset loses it",
+    },
+  ],
 )
 
 type handlerContext = {

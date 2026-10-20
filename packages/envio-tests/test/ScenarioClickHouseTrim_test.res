@@ -99,7 +99,10 @@ describe("ClickHouse sink resuming past its own rows", () => {
       let trimmed = await orphanCounts()
 
       let survivors = await TestClickHouse.query(
-        `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
+        `SELECT id, count FROM ${IndexerRunner.clickHouseEntity(
+            ~database,
+            "Counter",
+          )} FORMAT JSONEachRow`,
       )
 
       t.expect((planted, trimmed, survivors->String.trim)).toEqual((

@@ -734,7 +734,7 @@ chains:
 
   [
     (
-      "rejects ClickHouse without Postgres",
+      "rejects ClickHouse without an explicit postgres",
       `
 name: clickhouse-only
 storage:
@@ -743,7 +743,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "ClickHouse is not supported as a single storage yet. Please enable Postgres alongside ClickHouse in the \`storage\` config.",
+      "Please set \`postgres\` explicitly in the \`storage\` config when ClickHouse is enabled: \`postgres: true\` to store data in both, or \`postgres: false\` to run a ClickHouse-only indexer.",
     ),
     (
       "rejects a config with every storage disabled",

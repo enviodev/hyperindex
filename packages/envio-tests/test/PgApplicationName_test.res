@@ -25,7 +25,10 @@ type Note {
   id: ID!
 }
 `,
-  ~unsupported=[{backend: #clickhouse, reason: "names a Postgres connection"}],
+  ~unsupported=[
+    {backend: #clickhouse, reason: "names a Postgres connection"},
+    {backend: #clickhouseOnly, reason: "names a Postgres connection"},
+  ],
 )
 
 describe("A Postgres connection the indexer opens", () => {

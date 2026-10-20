@@ -1,6 +1,9 @@
 open Vitest
 
 let scenario = Scenario.make(
+  ~unsupported=[
+    {backend: #clickhouseOnly, reason: "ClickHouse-only storage keeps no raw events yet"},
+  ],
   ~configYaml=`
 name: raw-events-migration
 raw_events: true
