@@ -471,11 +471,14 @@ classes call `DataSource.create`. Consequences:
   - graph codegen never cleans its output directory, so a project with one
     manifest per network was built with the data sources of every manifest it
     generated, and its mappings may import one this manifest lacks. Such a
-    missing file is written from the project's other manifest that declares
-    that data source (or template) and ABI, with a warning: `graph build` of
-    this manifest alone fails on a clean checkout. A file no manifest declares
-    fails to load with the reason (no data source of that name, no such ABI, no
-    `index.ts`), as `graph build` fails on it.
+    missing file is written, with a warning (`graph build` of this manifest
+    alone fails on a clean checkout), from the project's other manifest — or
+    data source fragment a build script assembles manifests from — that
+    declares that data source (or template) and ABI; failing that, from a
+    manifest ABI of that name, since what graph codegen writes for a data
+    source and ABI depends on the ABI alone (a renamed data source). A file
+    none of them accounts for fails to load with the reason (no data source of
+    that name, no such ABI, no `index.ts`), as `graph build` fails on it.
 - **Workspace packages resolve without an install.** A bare import a monorepo's
   workspace declares (package.json `workspaces`, pnpm-workspace.yaml) resolves
   to that package, as the install would link it, before anything fetched from
