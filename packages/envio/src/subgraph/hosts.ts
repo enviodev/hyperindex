@@ -53,21 +53,43 @@ export function arweaveGatewayUrls(): string[] {
 }
 
 /**
- * A CID, or a CID and a path under it, as a content path; `null` for anything
- * graph-node would refuse to parse (a data source created with one is ignored).
- * Accepts the `/ipfs/` and `ipfs://` spellings.
+ * graph-node's `ContentPath::new` (graph/src/ipfs/content_path.rs): a CID and
+ * an optional path under it, as `<CID>[/<path>]`, `/ipfs/<CID>…`,
+ * `ipfs://<CID>…`, or an http(s) URL with `/ipfs/<CID>…` in its path or the CID
+ * in its `arg` query parameter. `null` for anything it refuses to parse, which
+ * `ipfs.cat` answers with null and a file data source is ignored for.
  */
 export function normalizeIpfsPath(raw: string): string | null {
-  const path = raw
-    .trim()
-    .replace(/^ipfs:\/\//, "")
-    .replace(/^\/?ipfs\//, "");
-  const [root] = path.split("/");
+  const input = raw.trim();
+  if (input === "") return null;
+  if (/^https?:\/\//.test(input)) {
+    let url: URL;
+    try {
+      url = new URL(input);
+    } catch {
+      return null;
+    }
+    const arg = url.searchParams.get("arg");
+    if (arg !== null) return cidAndPath(arg);
+    const at = url.pathname.indexOf("/ipfs/");
+    return cidAndPath(at >= 0 ? url.pathname.slice(at + "/ipfs/".length) : url.pathname);
+  }
+  return cidAndPath(input);
+}
+
+function cidAndPath(raw: string): string | null {
+  let input = raw.replace(/^\/+|\/+$/g, "");
+  for (const prefix of ["ipfs/", "ipfs://"]) {
+    if (input.startsWith(prefix)) input = input.slice(prefix.length);
+  }
+  const slash = input.indexOf("/");
+  const root = slash < 0 ? input : input.slice(0, slash);
+  if (slash >= 0 && input.includes("?", slash)) return null;
   // CIDv0 is 46 base58 characters; CIDv1 is multibase-prefixed, most often
   // base32 (`b`) or base36 (`k`).
   const v0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
   const v1 = /^(b[a-z2-7]{20,}|k[a-z0-9]{20,}|z[1-9A-HJ-NP-Za-km-z]{20,}|f[0-9a-f]{20,})$/;
-  return v0.test(root) || v1.test(root) ? path : null;
+  return v0.test(root) || v1.test(root) ? input.replace(/\/+$/, "") : null;
 }
 /** graph-node heals a hash from its rainbow table; this is the public one. */
 const ENS_RAINBOW = "https://api.ensrainbow.io/v1/heal/";

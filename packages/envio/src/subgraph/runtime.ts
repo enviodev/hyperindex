@@ -924,7 +924,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   };
 
   installHosts({
-    ipfsCat: (hash) => callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.cat()"),
+    // graph-node's `ipfs.cat` answers null for a path its ContentPath refuses.
+    ipfsCat: (hash) => {
+      const path = normalizeIpfsPath(hash);
+      return path === null ? null : callSync(hosts.ipfsCat, path, "ipfs.cat()");
+    },
     ipfsMap: (hash, callback, userData, flags) => {
       const scope = currentScope();
       // graph-node: `ensure!(flags.contains("json"), "Flags must contain 'json'")`.
@@ -935,7 +939,9 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           `ipfs.map() names the callback "${callback}", which the mapping doesn't export.`,
         );
       }
-      const encoded: string | null = callSync(hosts.ipfsCat, normalizeIpfsPath(hash) ?? hash, "ipfs.map()");
+      const path = normalizeIpfsPath(hash);
+      if (path === null) throw new Error(`ipfs.map(): "${hash}" is not an IPFS content path`);
+      const encoded: string | null = callSync(hosts.ipfsCat, path, "ipfs.map()");
       if (encoded === null) return;
       const body = Buffer.from(encoded, "base64").toString("utf8");
       // One JSON value per line, each handed to the callback in turn; a line
