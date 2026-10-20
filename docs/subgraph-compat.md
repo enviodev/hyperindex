@@ -129,6 +129,14 @@ dropped — graph-node's write-once check is not enforced. It's a safety net
 for buggy mappings: any subgraph that runs cleanly on graph-node never
 trips it, so working subgraphs lose nothing.
 
+`@entity(immutable: true, skipDuplicates: true)` (graph-node v0.43) is the
+exception that a working subgraph can reach: graph-node inserts such a type
+with `ON CONFLICT DO NOTHING`, so a save of an id an earlier block stored is
+skipped and the first block's write stands; saves within one block merge
+first, as for any entity. The shim does the same (the save reads the stored
+row anyway, for the merge). `skipDuplicates` on a mutable type is refused,
+as graph-node refuses it.
+
 **Interfaces** carry through to the entity parser, which folds each one into
 the entities that implement it — the interface itself has no table. A field
 *typed* as an interface with **one** implementor is translated as that

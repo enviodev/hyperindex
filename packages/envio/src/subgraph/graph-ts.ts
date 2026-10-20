@@ -1535,6 +1535,10 @@ const storeImpl = {
     // A file data source's first write of an id is a new entity of its own,
     // whatever a chain handler stored under the same id.
     const stored = own === false ? undefined : table.getSync(id);
+    // graph-node inserts a skipDuplicates type with ON CONFLICT DO NOTHING, so
+    // an id an earlier block stored keeps that block's write; saves within
+    // this block merge in its entity cache first.
+    if (stored && scope.schema.skipDuplicateEntities.includes(entityType) && !table.getInBlockSync(id)) return;
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {

@@ -579,6 +579,22 @@ type Token @entity(sharded: true) {
     )
   })
 
+  // graph/src/schema/mod.rs: "skipDuplicates requires immutable: true".
+  it("refuses skipDuplicates on a mutable type, as graph-node does", t => {
+    translate(
+      ~manifest=manifestWith(plainEventHandler),
+      ~schema=`
+type Token @entity(skipDuplicates: true) {
+  id: ID!
+}
+`,
+    )->expectFindingHelper(
+      t,
+      ~headline=`Envio Subgraph doesn't know skipDuplicates on the mutable type Token, which graph-node refuses as well (it requires immutable: true).`,
+      ~location="schema.graphql → type Token",
+    )
+  })
+
   it("refuses an object type without @entity", t => {
     translate(
       ~manifest=manifestWith(plainEventHandler),

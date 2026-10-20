@@ -17,7 +17,7 @@ use serde::Serialize;
 use super::errors::Report;
 
 /// `@entity` arguments graph-node accepts.
-const KNOWN_ENTITY_ARGS: &[&str] = &["immutable", "timeseries"];
+const KNOWN_ENTITY_ARGS: &[&str] = &["immutable", "timeseries", "skipDuplicates"];
 
 /// Scalars a subgraph schema can use, mapped to what envio stores.
 fn map_scalar(name: &str) -> Option<&'static str> {
@@ -68,6 +68,9 @@ pub struct SchemaTranslation {
     /// `@entity(timeseries: true)` types. The runtime stamps each save with the
     /// block's timestamp and an auto-generated, increasing `Int8` id.
     pub timeseries_entities: BTreeSet<String>,
+    /// `@entity(immutable: true, skipDuplicates: true)` types: a save of an id
+    /// stored in an earlier block is skipped, as graph-node's insert is.
+    pub skip_duplicate_entities: BTreeSet<String>,
     /// `@aggregation` types, rolled up by the runtime into one entity per
     /// interval, named `<Aggregation>_<interval>`.
     pub aggregations: Vec<Aggregation>,
@@ -696,6 +699,24 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                 if timeseries {
                     check_timeseries(object, report);
                     translation.timeseries_entities.insert(object.name.clone());
+                }
+                // graph-node reads `skipDuplicates` only on an immutable type
+                // (a timeseries is one) and refuses it on any other.
+                if bool_arg(entity, "skipDuplicates") == Some(true) {
+                    if timeseries || bool_arg(entity, "immutable") == Some(true) {
+                        translation
+                            .skip_duplicate_entities
+                            .insert(object.name.clone());
+                    } else {
+                        report.unknown(
+                            format!(
+                                "skipDuplicates on the mutable type {}, which graph-node refuses \
+                                 as well (it requires immutable: true)",
+                                object.name
+                            ),
+                            format!("schema.graphql → type {}", object.name),
+                        );
+                    }
                 }
                 // `immutable: true` is validated and dropped: graph-node's
                 // write-once check only ever fires for mappings that are

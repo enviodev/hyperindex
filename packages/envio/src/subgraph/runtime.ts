@@ -148,6 +148,7 @@ type SubgraphConfig = {
   graft?: { base: string; block: number };
   graftNotice?: string;
   timeseriesEntities?: string[];
+  skipDuplicateEntities?: string[];
   aggregations?: SubgraphSchema["aggregations"];
   /** The config's contract name for each data source and template. */
   contractAccessors: Record<string, string>;
@@ -1055,6 +1056,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     entityFieldTypes: config.entityFieldTypes ?? {},
     entityAccessors: config.entityAccessors,
     timeseriesEntities: config.timeseriesEntities ?? [],
+    skipDuplicateEntities: config.skipDuplicateEntities ?? [],
     aggregations: config.aggregations ?? [],
   };
   const secondsOf = (blockNumber: number, given: unknown) => () =>

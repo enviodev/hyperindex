@@ -19,6 +19,8 @@ export type SubgraphSchema = {
   entityAccessors: Record<string, string>;
   /** `@entity(timeseries: true)` types: saved with an automatic id and timestamp. */
   timeseriesEntities: string[];
+  /** `@entity(immutable: true, skipDuplicates: true)` types: an id stored in an earlier block keeps its first write. */
+  skipDuplicateEntities: string[];
   aggregations: AggregationDef[];
 };
 
