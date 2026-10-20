@@ -1158,9 +1158,12 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         (rendered.network ? ` (network "${rendered.network}"; ENVIO_SUBGRAPH_NETWORK picks another).` : "."),
     );
   } else if (rendered) {
+    const how =
+      rendered.template === rendered.view
+        ? `copied ${rendered.template} to ${manifestName}`
+        : `rendered ${manifestName} from ${rendered.template} with ${rendered.view}`;
     info(
-      `Envio Subgraph rendered ${manifestName} from ${rendered.template} with ` +
-        `${rendered.view} for the network "${rendered.network}", as the package.json script ` +
+      `Envio Subgraph ${how} for the network "${rendered.network}", as the package.json script ` +
         `"${rendered.script}" does. ENVIO_SUBGRAPH_NETWORK picks another.`,
     );
   }
