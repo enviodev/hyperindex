@@ -48,6 +48,9 @@ export function advanceRollup(scope: Scope, now: bigint): void {
   if (scope.mode !== "handler" || scope.schema.aggregations.length === 0) return;
   const state = scope.context[ROLLUP_STATE_ENTITY];
   const stored = state.getSync(CLOCK_ID);
+  // Preload drops writes, so every handler there reads the clock the last batch
+  // left and would roll that bucket up again; the execute pass rolls up once.
+  if (scope.context.isPreload) return;
   const last: bigint | null = stored ? BigInt(JSON.parse(stored.payload).t) : null;
   if (last !== null && now <= last) return;
   if (last !== null) {

@@ -156,7 +156,9 @@ like any other entity list.
 - A bucket is rolled up when a block's time passes its end: the first bucket
   between the previous block's time and this one, as `Layout::rollup` does.
   Only completed buckets exist; the open bucket is the rows of the timeseries
-  since the last rolled-up end (graph-node's `current: include`).
+  since the last rolled-up end (graph-node's `current: include`). Rollups run
+  in the execute pass only: preload drops writes, so there every handler would
+  read the clock the last batch left and roll the same bucket up again.
 - Bookkeeping lives in one extra entity, `EnvioSubgraphRollup` (`id`,
   `aggregation`, `payload`): `clock` holds the last block time,
   `prev|<Aggregation>|<interval>|<dims>` the latest cumulative values of a
