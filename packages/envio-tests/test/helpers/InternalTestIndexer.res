@@ -18,6 +18,7 @@ type parsed = {
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
+@module("node:fs") external chmodSync: (string, int) => unit = "chmodSync"
 @module("node:path") @variadic external pathJoin: array<string> => string = "join"
 @module("node:path") external pathDirname: string => string = "dirname"
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
@@ -115,12 +116,19 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 //
 // `projectDir` puts the project in a subdirectory of a workspace, as a
 // monorepo package is; `mappings` are then written relative to the workspace.
+//
+// `fromProjectFiles` parses the project from disk the way `envio start` does
+// inside it — `.env`, a manifest it renders, ABIs read from `abis/` — and
+// `manifest`/`schema` go unused.
 let fromSubgraph = (
   ~env=?,
   ~files=?,
   ~mappings=Dict.make(),
   ~test=?,
   ~projectDir=?,
+  ~fromProjectFiles=false,
+  // What `envio dev` sets: the runtime then type-checks with `graph build`.
+  ~isDev=false,
   ~manifest,
   ~schema,
 ): parsed => {
@@ -141,10 +149,24 @@ let fromSubgraph = (
     let dest = pathJoin([workspace, relativePath])
     mkdirSync(pathDirname(dest), {"recursive": true})
     writeFileSync(dest, source)
+    // A package manager links bins executable.
+    if relativePath->String.includes("node_modules/.bin/") {
+      chmodSync(dest, 0o755)
+    }
   })
 
-  let {config: configJson} = Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)
-  let publicConfigJson = configJson->JSON.parseOrThrow
+  let configJson = if fromProjectFiles {
+    Core.getConfigJson(~directory=root)
+  } else {
+    (Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)).config
+  }
+  let publicConfigJson = switch configJson->JSON.parseOrThrow {
+  | Object(fields) if isDev =>
+    let fields = fields->Dict.copy
+    fields->Dict.set("isDev", JSON.Boolean(true))
+    JSON.Object(fields)
+  | json => json
+  }
   let config = Config.fromPublic(publicConfigJson)
 
   let registrations = () =>

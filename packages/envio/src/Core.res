@@ -55,6 +55,7 @@ type addon = {
   subgraphBundledCodegenCurrent: (string, string) => bool,
   subgraphFillGenerated: (string, string, string, array<string>) => array<filledGeneratedFile>,
   subgraphWorkspacePackages: string => dict<string>,
+  subgraphWorkspaceRoot: string => Null.t<string>,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -361,6 +362,8 @@ let subgraphFillGenerated = (~root, ~manifestFile, ~outputDir, ~wanted) =>
   getAddon().subgraphFillGenerated(root, manifestFile, outputDir, wanted)
 
 let subgraphWorkspacePackages = root => getAddon().subgraphWorkspacePackages(root)
+
+let subgraphWorkspaceRoot = root => getAddon().subgraphWorkspaceRoot(root)
 
 let runCli = args => {
   let addon = getAddon()

@@ -183,14 +183,25 @@ function outOfMemory(command: string): Error {
  * subgraph says. Codegen reads only the ABIs and the schema, so it is run on a
  * copy beside the manifest with those versions raised.
  */
-async function withCodegenManifest<T>(manifest: string, use: (file: string) => Promise<T>): Promise<T> {
+async function withCodegenManifest<T>(
+  manifest: string,
+  pathFixes: [string, string][],
+  use: (file: string) => Promise<T>,
+  { raiseApiVersion = true }: { raiseApiVersion?: boolean } = {},
+): Promise<T> {
   let source: string;
   try {
     source = readFileSync(manifest, "utf8");
   } catch {
     return use(manifest);
   }
-  const patched = source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5");
+  let patched = raiseApiVersion ? source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5") : source;
+  // graph-cli on Linux can't read a file the manifest names in another case
+  // than the repo's; the copy names it the repo's way.
+  for (const [written, found] of pathFixes) {
+    const escaped = written.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    patched = patched.replace(new RegExp(`(\\bfile:\\s*["']?)${escaped}(["']?\\s*$)`, "gm"), `$1${found}$2`);
+  }
   if (patched === source) return use(manifest);
   const copy = path.join(path.dirname(manifest), `.envio-codegen-${path.basename(manifest)}`);
   writeFileSync(copy, patched);
@@ -213,13 +224,14 @@ async function runCodegen(
   outputDir: string,
   needed: boolean,
   flags: string[] = [],
+  pathFixes: [string, string][] = [],
 ): Promise<boolean> {
   for (const provider of codegenProviders) {
     if (provider.fetches && !needed) continue;
     const candidates = await provider.locate(root);
     if (candidates.length === 0) continue;
     for (const [index, graphCli] of candidates.entries()) {
-      const outcome = await withCodegenManifest(path.resolve(root, manifestFile), (manifest) =>
+      const outcome = await withCodegenManifest(path.resolve(root, manifestFile), pathFixes, (manifest) =>
         runGraphCli(graphCli, root, "codegen", [manifest, "--output-dir", outputDir, "--skip-migrations", ...flags]),
       );
       if (outcome === "ok") return true;
@@ -439,7 +451,7 @@ function codegenPlan(root: string, manifestFile: string, dir: string) {
  * itself. Some do more after it — Lido writes `generated/parserData.ts` with a
  * script of its own — and the mappings import what those steps leave.
  */
-function codegenSteps(root: string): string[] | null {
+function codegenSteps(root: string, skip: SkippedSteps = {}): string[] | null {
   let script: unknown;
   try {
     script = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).scripts?.codegen;
@@ -450,8 +462,30 @@ function codegenSteps(root: string): string[] | null {
   const steps = script
     .split("&&")
     .map((step) => step.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((step) => !(skip.renderScripts ?? []).some((script) => runsScript(step, script)))
+    .filter((step) => !skip.ranSteps?.includes(step));
   return steps.some((step) => GRAPH_CODEGEN.test(step)) ? steps : null;
+}
+
+/**
+ * Codegen steps envio already ran to write the manifest, for the network
+ * picked: run again, they would write the script's default network over it.
+ */
+type SkippedSteps = {
+  /** The package.json script envio rendered the manifest with itself, and those it runs. */
+  renderScripts?: string[];
+  /** The codegen script's own steps envio ran before translating. */
+  ranSteps?: string[];
+};
+
+type CodegenOptions = { pathFixes?: [string, string][] } & SkippedSteps;
+
+/** Whether a step runs package.json script `script`: `yarn x`, `npm run x`, `pnpm x`. */
+function runsScript(step: string, script: string): boolean {
+  const words = step.split(/\s+/);
+  const named = words[0] === "npm" || words[1] === "run" ? words[2] : words[1];
+  return ["yarn", "npm", "pnpm", "bun"].includes(words[0]) && named === script;
 }
 
 /** The project's bins and its workspaces', nearest first, as a package manager puts them on PATH. */
@@ -527,8 +561,8 @@ export function bundledCodegen(root: string, dir: string, manifestFile: string):
  * a script of its own), which bundled codegen can't replace. A failure is a
  * warning: the mappings that don't import their output still run.
  */
-async function runOtherSteps(root: string): Promise<void> {
-  for (const step of codegenSteps(root) ?? []) {
+async function runOtherSteps(root: string, skip: SkippedSteps): Promise<void> {
+  for (const step of codegenSteps(root, skip) ?? []) {
     if (GRAPH_CODEGEN.test(step) || isInstall(step)) continue;
     try {
       await runScriptStep(root, step);
@@ -549,8 +583,9 @@ export async function ensureGeneratedCode(
   dir: string,
   manifestFile = "subgraph.yaml",
   mappingFiles: string[] = [],
+  options: CodegenOptions = {},
 ): Promise<void> {
-  await buildGeneratedCode(root, dir, manifestFile, mappingFiles);
+  await buildGeneratedCode(root, dir, manifestFile, mappingFiles, options);
   if (codegenMode() !== "graph-cli") fillFromOtherManifests(root, dir, manifestFile, mappingFiles);
 }
 
@@ -616,11 +651,12 @@ async function buildGeneratedCode(
   dir: string,
   manifestFile: string,
   mappingFiles: string[],
+  { pathFixes = [], ...skip }: CodegenOptions,
 ): Promise<void> {
   const mode = codegenMode();
   if (mode === "bundled") {
     bundledCodegen(root, dir, manifestFile);
-    await runOtherSteps(root);
+    await runOtherSteps(root, skip);
     return;
   }
   const graphCli = graphCliPackage(root);
@@ -637,14 +673,14 @@ async function buildGeneratedCode(
     return;
   }
   let bundledFailed = false;
-  const needsGraphCli = (codegenSteps(root) ?? []).some((step) => codegenFlags(root, step).length > 0);
+  const needsGraphCli = (codegenSteps(root, skip) ?? []).some((step) => codegenFlags(root, step).length > 0);
   if (!graphCli && mode === "auto" && !needsGraphCli) {
     // Nothing to build when no mapping imports a generated file.
     if (missingGeneratedFiles(root, mappingFiles, dir).length === 0) return;
     info("Envio Subgraph found no @graphprotocol/graph-cli in the project; writing the generated code itself.");
     try {
       bundledCodegen(root, dir, manifestFile);
-      await runOtherSteps(root);
+      await runOtherSteps(root, skip);
       return;
     } catch (error) {
       bundledFailed = true;
@@ -657,7 +693,7 @@ async function buildGeneratedCode(
 
   try {
     let ranOwn = false;
-    for (const step of codegenSteps(root) ?? ["graph codegen"]) {
+    for (const step of codegenSteps(root, skip) ?? ["graph codegen"]) {
       if (isInstall(step)) {
         info(
           `Envio Subgraph skipped the codegen script step \`${step}\`: installing the project's dependencies is ` +
@@ -684,11 +720,14 @@ async function buildGeneratedCode(
       ranOwn ||= own;
       // With no graph-cli anywhere, the mapping that imports the missing code
       // reports it, naming that mapping.
-      if (!(await runCodegen(root, manifest, outputDir, importsFrom(root, mappingFiles, dir), codegenFlags(root, step)))) {
-        return;
-      }
+      // The fixes are for paths as envio's manifest writes them; another
+      // manifest's same path may be another file.
+      const fixes = own ? pathFixes : [];
+      const needed = importsFrom(root, mappingFiles, dir);
+      if (!(await runCodegen(root, manifest, outputDir, needed, codegenFlags(root, step), fixes))) return;
     }
-    if (!ranOwn && !(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir)))) return;
+    const needed = importsFrom(root, mappingFiles, dir);
+    if (!ranOwn && !(await runCodegen(root, manifestFile, dir, needed, [], pathFixes))) return;
   } catch (error) {
     if (mode === "graph-cli" || bundledFailed) throw error;
     warn(
@@ -696,7 +735,7 @@ async function buildGeneratedCode(
         "itself. Set ENVIO_SUBGRAPH_CODEGEN=graph-cli to stop at the failure instead.",
     );
     bundledCodegen(root, dir, manifestFile);
-    await runOtherSteps(root);
+    await runOtherSteps(root, skip);
   }
 }
 
@@ -709,7 +748,11 @@ async function buildGeneratedCode(
  * Only in dev, and only when something it reads has changed: it is an
  * AssemblyScript compile, not something to pay on every restart.
  */
-export async function typeCheckMappings(root: string, manifestFile = "subgraph.yaml"): Promise<void> {
+export async function typeCheckMappings(
+  root: string,
+  manifestFile = "subgraph.yaml",
+  pathFixes: [string, string][] = [],
+): Promise<void> {
   const graphCli = graphCliPackage(root);
   if (!graphCli) return;
 
@@ -722,15 +765,23 @@ export async function typeCheckMappings(root: string, manifestFile = "subgraph.y
   const stamp = path.join(root, ".envio", "graph-build.stamp");
   if (existsSync(stamp) && readFileSync(stamp, "utf8") === inputs) return;
 
-  await runOrThrow(
-    graphCli,
-    root,
-    manifestFile,
-    "build",
-    path.resolve(root, "build"),
-    "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
-      "failed — the error above comes from The Graph's own AssemblyScript\n" +
-      "compiler, so fix it there and rerun.",
+  // The manifest spelled the repo's way, as codegen got it; its apiVersion
+  // as written, which is what the compile checks against.
+  await withCodegenManifest(
+    path.resolve(root, manifestFile),
+    pathFixes,
+    (manifest) =>
+      runOrThrow(
+        graphCli,
+        root,
+        manifest,
+        "build",
+        path.resolve(root, "build"),
+        "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
+          "failed — the error above comes from The Graph's own AssemblyScript\n" +
+          "compiler, so fix it there and rerun.",
+      ),
+    { raiseApiVersion: false },
   );
 
   mkdirSync(path.dirname(stamp), { recursive: true });
