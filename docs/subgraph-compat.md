@@ -387,7 +387,12 @@ classes call `DataSource.create`. Consequences:
   generated `try_` binding does). A file's classes and constant-initialized
   globals exist before any top-level code runs, as under asc: inside an import
   cycle, a file evaluated first would otherwise meet them in their temporal
-  dead zone. It emits an inline source map, so stack
+  dead zone. Its other top-level code runs again as each trigger's handler
+  starts, in that trigger's context, after that of the files it imports:
+  graph-node instantiates the module for every trigger, so a global keeps
+  nothing an earlier handler left in it, and `dataSource.context()` at top
+  level reads the current instance's. Globals built only from constants and
+  graph-ts values (`BigInt.fromI32(0)`) are built once. It emits an inline source map, so stack
   traces name the mapping's own lines, and refuses — located — what it can't
   rewrite faithfully. The runtime injects the few AS builtin globals generated
   code uses (`changetype` = identity, `assert`), and covers what AS's standard

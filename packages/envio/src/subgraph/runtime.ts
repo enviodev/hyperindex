@@ -65,6 +65,7 @@ import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
 import { resetRpcClients } from "./rpc.ts";
 import {
   EVENT_CLASSES_EXPORT,
+  MODULE_INIT,
   OPERATORS_HELPER,
   RETAG_EACH_HELPER,
   RETAG_HELPER,
@@ -672,6 +673,19 @@ async function rerunProvisional(scope: Scope): Promise<boolean> {
   return true;
 }
 
+/**
+ * graph-node runs every trigger in a fresh instance of the mapping's module
+ * (runtime/wasm/src/mapping.rs instantiates it before each `handle_trigger`):
+ * the files' top-level code runs again in that trigger's context, and no
+ * global keeps what an earlier trigger left in it. Each project module's
+ * `__envio_init` reruns its top-level code after that of the modules it
+ * imports, once per generation.
+ */
+let moduleGeneration = 0;
+function freshModuleState(scope: Scope): void {
+  scope.mappingExports[MODULE_INIT]?.(++moduleGeneration);
+}
+
 const maxRegisterRounds = 100;
 
 async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
@@ -681,7 +695,10 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
     scope.writes = undefined;
     let suspended = false;
     try {
-      runInScope(scope, fn);
+      runInScope(scope, () => {
+        freshModuleState(scope);
+        fn();
+      });
     } catch (error) {
       if (error !== REGISTER_SUSPEND) {
         // A host op that failed is never forgiven: the mapping was about to
@@ -865,7 +882,10 @@ function makeFileRunner(
               context: create.context,
             },
           }),
-          () => handler(decodeBase64(content)),
+          () => {
+            freshModuleState(ran.scope!);
+            return handler(decodeBase64(content));
+          },
         ),
       );
       if (ran.scope?.fileCreates) queue.push(...ran.scope.fileCreates.values());
@@ -1058,6 +1078,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   // Aggregations roll up when a block's time passes a bucket's end, so every
   // handler checks first; the timeseries it saves carry the block's time.
   const startRun = (scope: Scope) => {
+    freshModuleState(scope);
     scope.timeseriesSequence = 0;
     // A replayed round creates its file data sources again.
     scope.fileCreates = undefined;

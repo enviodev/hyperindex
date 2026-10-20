@@ -245,7 +245,7 @@ fn transform(source: &str, path: &Path, legacy_nulls: bool, hoist: bool) -> Resu
         return Err(describe(path, source, transformed.diagnostics.errors()));
     }
     if hoist {
-        hoist_statics(&mut program, &allocator);
+        module_lifecycle(&mut program, &allocator);
     }
 
     let printed = Codegen::new()
@@ -264,45 +264,56 @@ fn transform(source: &str, path: &Path, legacy_nulls: bool, hoist: bool) -> Resu
 }
 
 const STATIC_INIT: &str = "__envio_static";
+const START: &str = "__envio_start";
+pub const MODULE_INIT: &str = "__envio_init";
 const PLACEHOLDER: &str = "__envio_placeholder";
 
-/// What AssemblyScript has from the start, before any file's top-level code
-/// runs: a class (a compile-time entity) and a global whose initializer is a
-/// constant (asc emits it as the global's initial value; only other
-/// initializers run in the start function). An ES module's class and `const`
-/// are in their temporal dead zone until the module's body reaches them, so in
-/// an import cycle — Opolis' `Token.ts` ⇄ `ERC20/index.ts`, Flaunch's
-/// `addresses/index.ts` ⇄ `base.ts` — a file evaluated first throws where asc's
-/// code reads the value.
+/// The graph-ts classes whose values a mapping never changes in place, so a
+/// global built from them reads the same in every trigger.
+const VALUE_CLASSES: &[&str] = &["BigInt", "BigDecimal", "Address", "Bytes", "ByteArray"];
+
+/// graph-node instantiates a mapping's WASM module for every trigger
+/// (runtime/wasm/src/mapping.rs: `instantiate_module` before each
+/// `handle_trigger`), so a file's top-level code — its start function — runs
+/// again in each trigger's context, and nothing a handler leaves in a global
+/// survives into the next one. And it compiles to more than one stage: a class
+/// and a global whose initializer is a constant exist before any top-level code
+/// runs (asc gives such a global that value as its initial one; only other
+/// initializers run in the start function).
 ///
-/// Each such declaration becomes a `var`, set by a hoisted `__envio_static()`
-/// that first calls the same function of every project file this one imports,
-/// and that a module calls before its own top-level code. A function
-/// declaration exists from the moment the module graph is linked, so a cyclic
-/// importer reaches it while the module itself hasn't run. A class is defined
-/// there only when nothing in its definition runs code (no static initializer
-/// or block, no computed key, a plain `extends` name); if even that throws, it
-/// is defined again at its own place, as before.
-fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Constant {
-        Text,
-        Number,
-    }
-    fn constant(
-        expr: &Expression<'_>,
-        known: &std::collections::HashMap<String, Constant>,
-    ) -> Option<Constant> {
-        let number = |expr: &Expression<'_>| constant(expr, known) == Some(Constant::Number);
+/// An ES module is evaluated once, and its classes and `const`s are in their
+/// temporal dead zone until its body reaches them: in an import cycle (Opolis'
+/// `Token.ts` ⇄ `ERC20/index.ts`, Flaunch's `addresses/index.ts` ⇄ `base.ts`)
+/// the file evaluated first threw where asc reads the value. So the module is
+/// rewritten into those stages:
+///
+/// - `__envio_static()`: the classes whose definition runs no code, the
+///   constant globals, and the globals built from graph-ts values
+///   (`BigInt.fromI32(0)`, `Address.fromString("0x…")`) — the same in every
+///   trigger, so set once. It first calls the same function of each relative
+///   module this one imports or re-exports, and a module calls it before its
+///   own top-level code. A function declaration exists once the module graph is
+///   linked, so a cyclic importer reaches it while the module itself hasn't run.
+/// - `__envio_start()`: every other top-level statement, in order, a
+///   declaration turned into an assignment of its `var` — the start function.
+///   It runs as the module loads, without failing the load: graph-node runs it
+///   in a trigger's context, which the load only stands in for
+///   (`dataSource.context()` of a template instance). And through
+///   `__envio_init(generation)`, which the runtime calls as each trigger's
+///   handler starts, after the same function of every module this one imports.
+fn module_lifecycle<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
+    use std::collections::HashMap;
+
+    fn constant(expr: &Expression<'_>, known: &HashMap<String, bool>) -> Option<bool> {
+        // `Some(true)` for a number-like constant, `Some(false)` for text.
+        let number = |expr: &Expression<'_>| constant(expr, known) == Some(true);
         match expr {
-            Expression::StringLiteral(_) => Some(Constant::Text),
-            Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
-                Some(Constant::Text)
-            }
+            Expression::StringLiteral(_) => Some(false),
+            Expression::TemplateLiteral(template) if template.expressions.is_empty() => Some(false),
             Expression::NumericLiteral(_)
             | Expression::BigIntLiteral(_)
             | Expression::BooleanLiteral(_)
-            | Expression::NullLiteral(_) => Some(Constant::Number),
+            | Expression::NullLiteral(_) => Some(true),
             Expression::ParenthesizedExpression(paren) => constant(&paren.expression, known),
             Expression::UnaryExpression(unary)
                 if matches!(
@@ -313,28 +324,74 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
                         | UnaryOperator::LogicalNot
                 ) && number(&unary.argument) =>
             {
-                Some(Constant::Number)
+                Some(true)
             }
             Expression::BinaryExpression(binary)
                 if number(&binary.left) && number(&binary.right) =>
             {
-                Some(Constant::Number)
+                Some(true)
             }
             // `1 + 2`, `5 as u8`: arithmetic this pass already routed through
             // the operator helper.
             Expression::CallExpression(call)
-                if matches!(&call.callee, Expression::StaticMemberExpression(member)
-                    if matches!(&member.object, Expression::Identifier(id) if id.name == OPERATORS_HELPER))
+                if is_operator_helper(&call.callee)
                     && call
                         .arguments
                         .iter()
                         .all(|argument| argument.as_expression().is_some_and(number)) =>
             {
-                Some(Constant::Number)
+                Some(true)
             }
             Expression::Identifier(id) => known.get(id.name.as_str()).copied(),
             _ => None,
         }
+    }
+    fn is_operator_helper(callee: &Expression<'_>) -> bool {
+        matches!(callee, Expression::StaticMemberExpression(member)
+            if matches!(&member.object, Expression::Identifier(id) if id.name == OPERATORS_HELPER))
+    }
+    /// A graph-ts value built from constants and other such values.
+    fn graph_value(
+        expr: &Expression<'_>,
+        constants: &HashMap<String, bool>,
+        values: &HashSet<String>,
+        value_classes: &HashSet<String>,
+    ) -> bool {
+        let value = |expr: &Expression<'_>| graph_value(expr, constants, values, value_classes);
+        let arguments = |arguments: &ArenaVec<'_, Argument<'_>>| {
+            arguments
+                .iter()
+                .all(|argument| argument.as_expression().is_some_and(value))
+        };
+        match expr {
+            Expression::Identifier(id) if values.contains(id.name.as_str()) => true,
+            Expression::ParenthesizedExpression(paren) => value(&paren.expression),
+            Expression::CallExpression(call) if !call.optional => match &call.callee {
+                callee if is_operator_helper(callee) => arguments(&call.arguments),
+                Expression::StaticMemberExpression(member) => {
+                    let factory = matches!(&member.object, Expression::Identifier(class)
+                        if value_classes.contains(class.name.as_str()));
+                    (factory || value(&member.object)) && arguments(&call.arguments)
+                }
+                _ => false,
+            },
+            Expression::NewExpression(new) => {
+                matches!(&new.callee, Expression::Identifier(class)
+                    if value_classes.contains(class.name.as_str()))
+                    && arguments(&new.arguments)
+            }
+            other => constant(other, constants).is_some(),
+        }
+    }
+    /// oxc's lowering of a TypeScript enum: `let E = function(E) {…}({})`.
+    fn is_enum(expr: &Expression<'_>) -> bool {
+        let Expression::CallExpression(call) = expr else {
+            return false;
+        };
+        matches!(
+            call.callee.without_parentheses(),
+            Expression::FunctionExpression(_)
+        ) && matches!(call.arguments.as_slice(), [Argument::ObjectExpression(object)] if object.properties.is_empty())
     }
     fn plain_name(expr: &Expression<'_>) -> bool {
         match expr {
@@ -343,18 +400,19 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
             _ => false,
         }
     }
+    fn is_literal(value: &Expression<'_>) -> bool {
+        matches!(
+            value,
+            Expression::NumericLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NullLiteral(_)
+                | Expression::StringLiteral(_)
+        )
+    }
     fn runs_nothing(class: &Class<'_>) -> bool {
-        // A static field's zero, which `Rewrite` gives one without an initializer.
-        let literal = |value: &Option<Expression<'_>>| match value {
-            None => true,
-            Some(value) => matches!(
-                value,
-                Expression::NumericLiteral(_)
-                    | Expression::BooleanLiteral(_)
-                    | Expression::NullLiteral(_)
-                    | Expression::StringLiteral(_)
-            ),
-        };
+        // A static field's literal — the zero `Rewrite` gives one without an
+        // initializer — runs nothing; `__envio_start` sets it again.
+        let literal = |value: &Option<Expression<'_>>| value.as_ref().is_none_or(is_literal);
         class.id.is_some()
             && class
                 .heritage
@@ -372,26 +430,6 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
                 _ => true,
             })
     }
-    fn variables<'s, 'a>(statement: &'s Statement<'a>) -> Option<&'s VariableDeclaration<'a>> {
-        match statement {
-            Statement::VariableDeclaration(decl) => Some(decl),
-            Statement::ExportDeclaration(export) => match &export.declaration {
-                Declaration::VariableDeclaration(decl) => Some(decl),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-    fn class<'s, 'a>(statement: &'s Statement<'a>) -> Option<&'s Class<'a>> {
-        match statement {
-            Statement::ClassDeclaration(class) => Some(class),
-            Statement::ExportDeclaration(export) => match &export.declaration {
-                Declaration::ClassDeclaration(class) => Some(class),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
     fn request<'s>(statement: &'s Statement<'_>) -> Option<&'s str> {
         let source = match statement {
             Statement::ImportDeclaration(import) => &import.source,
@@ -405,46 +443,6 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
             .then_some(source.value.as_str())
     }
 
-    // What to hoist, by statement index.
-    let mut known = std::collections::HashMap::new();
-    let mut hoisted: Vec<(usize, Vec<String>, bool)> = vec![];
-    let mut requests: Vec<String> = vec![];
-    for (index, statement) in program.body.iter().enumerate() {
-        if let Some(request) = request(statement) {
-            if !requests.iter().any(|seen| seen == request) {
-                requests.push(request.to_string());
-            }
-        }
-        let exported = matches!(statement, Statement::ExportDeclaration(_));
-        if let Some(decl) = variables(statement) {
-            let found: Option<Vec<(String, Constant)>> = decl
-                .declarations
-                .iter()
-                .map(|declarator| match (&declarator.id, &declarator.init) {
-                    (BindingPattern::BindingIdentifier(id), Some(init)) => {
-                        constant(init, &known).map(|kind| (id.name.to_string(), kind))
-                    }
-                    _ => None,
-                })
-                .collect();
-            if let Some(found) = found.filter(|found| !found.is_empty()) {
-                let names = found.iter().map(|(name, _)| name.clone()).collect();
-                known.extend(found);
-                hoisted.push((index, names, exported));
-            }
-        } else if let Some(class) = class(statement).filter(|class| runs_nothing(class)) {
-            let name = class
-                .id
-                .as_ref()
-                .map(|id| id.name.to_string())
-                .unwrap_or_default();
-            hoisted.push((index, vec![name], exported));
-        }
-    }
-    if hoisted.is_empty() && requests.is_empty() {
-        return;
-    }
-
     // Spans of the parsed text point into it, not into the mapping, and the
     // source map refuses positions past the mapping's end.
     struct Unplaced;
@@ -453,8 +451,8 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
             *span = Span::default();
         }
     }
-    let parse = |text: String| -> ArenaVec<'a, Statement<'a>> {
-        let text = allocator.alloc_str(&text);
+    let parse = |text: &str| -> ArenaVec<'a, Statement<'a>> {
+        let text = allocator.alloc_str(text);
         let mut body = Parser::new(allocator, text, SourceType::mjs())
             .parse()
             .program
@@ -478,7 +476,7 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
             walk_mut::walk_expression(self, expr);
         }
     }
-    let filled = |text: String, value: Expression<'a>| -> ArenaVec<'a, Statement<'a>> {
+    let filled = |text: &str, value: Expression<'a>| -> ArenaVec<'a, Statement<'a>> {
         let mut statements = parse(text);
         let mut fill = Fill { value: Some(value) };
         for statement in statements.iter_mut() {
@@ -487,93 +485,230 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
         statements
     };
 
+    let value_classes: HashSet<String> = program
+        .body
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::ImportDeclaration(import)
+                if import.source.value == "@graphprotocol/graph-ts" =>
+            {
+                Some(import.specifiers.iter().flatten())
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|specifier| match specifier {
+            ImportDeclarationSpecifier::ImportSpecifier(specifier)
+                if VALUE_CLASSES.contains(&specifier.imported.name().as_str()) =>
+            {
+                Some(specifier.local.name.to_string())
+            }
+            _ => None,
+        })
+        .collect();
+
     let ast = AstBuilder::new(allocator);
     let old = std::mem::replace(&mut program.body, ArenaVec::new_in(&ast));
-    let mut body = ArenaVec::new_in(&ast);
-    let mut init = ArenaVec::new_in(&ast);
+    let mut constants: HashMap<String, bool> = HashMap::new();
+    let mut values: HashSet<String> = HashSet::new();
+    let mut declared: Vec<(String, bool)> = vec![];
+    let mut static_init = ArenaVec::new_in(&ast);
     let mut definers = ArenaVec::new_in(&ast);
-    let mut declared = String::new();
-    let mut deps = String::new();
-    let mut aliased: Vec<String> = vec![];
-    let mut hoisted = hoisted.into_iter().peekable();
-    for (index, statement) in old.into_iter().enumerate() {
-        let alias = request(&statement).and_then(|request| {
-            (!aliased.iter().any(|seen| seen == request)).then(|| {
-                aliased.push(request.to_string());
-                (
-                    format!("__envio_dep_{}", aliased.len() - 1),
-                    request.to_string(),
-                )
-            })
-        });
-        if hoisted.peek().is_some_and(|(at, _, _)| *at == index) {
-            let (_, names, exported) = hoisted.next().expect("peeked");
-            let export = if exported { "export " } else { "" };
-            declared.push_str(&format!("{export}var {};\n", names.join(", ")));
-            let declaration = match statement {
-                Statement::VariableDeclaration(decl) => Declaration::VariableDeclaration(decl),
-                Statement::ClassDeclaration(class) => Declaration::ClassDeclaration(class),
-                Statement::ExportDeclaration(export) => export.unbox().declaration,
-                _ => unreachable!("hoisted statements are declarations"),
-            };
-            match declaration {
-                Declaration::VariableDeclaration(mut decl) => {
-                    for declarator in decl.declarations.iter_mut() {
-                        let BindingPattern::BindingIdentifier(id) = &declarator.id else {
-                            continue;
-                        };
-                        let value = declarator.init.take().expect("a constant initializer");
-                        init.extend(filled(format!("{} = {PLACEHOLDER};", id.name), value));
-                    }
-                }
-                Declaration::ClassDeclaration(mut class) => {
-                    let name = &names[0];
-                    class.r#type = ClassType::ClassExpression;
-                    definers.extend(filled(
-                        format!(
-                            "function __envio_define_{name}() {{ if ({name} === undefined) {name} = {PLACEHOLDER}; }}"
-                        ),
-                        Expression::ClassExpression(class),
-                    ));
-                    init.extend(parse(format!(
-                        "try {{ __envio_define_{name}(); }} catch {{}}"
-                    )));
-                    body.extend(parse(format!("__envio_define_{name}();")));
-                }
-                _ => unreachable!("hoisted statements are declarations"),
+    let mut start = ArenaVec::new_in(&ast);
+    let mut body = ArenaVec::new_in(&ast);
+    let mut deps: Vec<String> = vec![];
+    for statement in old {
+        if let Some(request) = request(&statement).map(str::to_string) {
+            body.push(statement);
+            if !deps.contains(&request) {
+                let source = serde_json::to_string(&request).expect("a string");
+                body.extend(parse(&format!(
+                    "import * as __envio_dep_{} from {source};",
+                    deps.len()
+                )));
+                deps.push(request);
             }
             continue;
         }
-        body.push(statement);
-        if let Some((alias, request)) = alias {
-            let request = serde_json::to_string(&request).expect("a string");
-            body.extend(parse(format!("import * as {alias} from {request};")));
-            deps.push_str(&format!("{alias}.{STATIC_INIT}?.();\n"));
+        let plain_variables = |decl: &VariableDeclaration<'_>| {
+            !decl.declare
+                && decl.declarations.iter().all(|declarator| {
+                    matches!(&declarator.id, BindingPattern::BindingIdentifier(id) if id.name != EVENT_CLASSES_EXPORT)
+                })
+        };
+        let named_class = |class: &Class<'_>| class.id.is_some() && !class.declare;
+        let handled = match &statement {
+            Statement::VariableDeclaration(decl) => plain_variables(decl),
+            Statement::ClassDeclaration(class) => named_class(class),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::VariableDeclaration(decl) => plain_variables(decl),
+                Declaration::ClassDeclaration(class) => named_class(class),
+                _ => false,
+            },
+            Statement::ExpressionStatement(_)
+            | Statement::IfStatement(_)
+            | Statement::ForStatement(_)
+            | Statement::ForInStatement(_)
+            | Statement::ForOfStatement(_)
+            | Statement::WhileStatement(_)
+            | Statement::DoWhileStatement(_)
+            | Statement::BlockStatement(_)
+            | Statement::SwitchStatement(_)
+            | Statement::TryStatement(_)
+            | Statement::ThrowStatement(_)
+            | Statement::LabeledStatement(_) => {
+                start.push(statement);
+                continue;
+            }
+            _ => false,
+        };
+        if !handled {
+            body.push(statement);
+            continue;
+        }
+        let (declaration, exported) = match statement {
+            Statement::VariableDeclaration(decl) => (Declaration::VariableDeclaration(decl), false),
+            Statement::ClassDeclaration(class) => (Declaration::ClassDeclaration(class), false),
+            Statement::ExportDeclaration(export) => (export.unbox().declaration, true),
+            _ => unreachable!("only declarations are handled"),
+        };
+        match declaration {
+            Declaration::VariableDeclaration(mut decl) => {
+                let mutable = decl.kind != VariableDeclarationKind::Const;
+                for declarator in decl.declarations.iter_mut() {
+                    let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                        continue;
+                    };
+                    let name = id.name.to_string();
+                    declared.push((name.clone(), exported));
+                    let Some(init) = declarator.init.take() else {
+                        continue;
+                    };
+                    let assign = format!("{name} = {PLACEHOLDER};");
+                    if let Some(kind) = constant(&init, &constants) {
+                        if mutable {
+                            start.extend(filled(&assign, init.clone_in(allocator)));
+                        } else {
+                            constants.insert(name, kind);
+                        }
+                        static_init.extend(filled(&assign, init));
+                    } else if is_enum(&init)
+                        || (!mutable && graph_value(&init, &constants, &values, &value_classes))
+                    {
+                        values.insert(name);
+                        static_init.extend(filled(&assign, init));
+                    } else {
+                        start.extend(filled(&assign, init));
+                    }
+                }
+            }
+            Declaration::ClassDeclaration(mut class) => {
+                let name = class.id.as_ref().expect("a named class").name.to_string();
+                declared.push((name.clone(), exported));
+                let hoisted = runs_nothing(&class);
+                // A mutable static field starts each trigger at its initial value.
+                let resets: Vec<String> = class
+                    .body
+                    .body
+                    .iter()
+                    .filter_map(|element| match element {
+                        ClassElement::PropertyDefinition(property)
+                            if hoisted && property.r#static =>
+                        {
+                            let key = property.key.static_name()?;
+                            let value = literal_text(property.value.as_ref()?)?;
+                            Some(format!("{name}.{key} = {value};"))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                class.r#type = ClassType::ClassExpression;
+                let class = Expression::ClassExpression(class);
+                if hoisted {
+                    definers.extend(filled(
+                        &format!(
+                            "function __envio_define_{name}() {{ if ({name} === undefined) {name} = {PLACEHOLDER}; }}"
+                        ),
+                        class,
+                    ));
+                    static_init.extend(parse(&format!(
+                        "try {{ __envio_define_{name}(); }} catch {{}}"
+                    )));
+                    // Its own place, should the early definition have thrown.
+                    start.extend(parse(&format!("__envio_define_{name}();")));
+                    for reset in resets {
+                        start.extend(parse(&reset));
+                    }
+                } else {
+                    start.extend(filled(&format!("{name} = {PLACEHOLDER};"), class));
+                }
+            }
+            _ => unreachable!("only variables and classes are handled"),
         }
     }
+    if declared.is_empty() && start.is_empty() && deps.is_empty() {
+        program.body = body;
+        return;
+    }
 
-    let mut prelude = parse(format!(
-        "{declared}var {STATIC_INIT}_state;
+    let declarations: String = declared
+        .iter()
+        .map(|(name, exported)| {
+            let export = if *exported { "export " } else { "" };
+            format!("{export}var {name};\n")
+        })
+        .collect();
+    let calls = |function: &str, argument: &str| -> String {
+        (0..deps.len())
+            .map(|index| format!("__envio_dep_{index}.{function}?.({argument});\n"))
+            .collect()
+    };
+    let mut prelude = parse(&format!(
+        "{declarations}var {STATIC_INIT}_state;
 export function {STATIC_INIT}() {{
   if ({STATIC_INIT}_state) return;
   {STATIC_INIT}_state = 1;
-  {deps}}}
-{STATIC_INIT}();"
+  {}}}
+function {START}() {{}}
+var {MODULE_INIT}_generation;
+export function {MODULE_INIT}(generation) {{
+  if ({MODULE_INIT}_generation === generation) return;
+  {MODULE_INIT}_generation = generation;
+  {}{START}();
+}}
+{STATIC_INIT}();
+try {{ {START}(); }} catch {{}}",
+        calls(STATIC_INIT, ""),
+        calls(MODULE_INIT, "generation"),
     ));
-    // The constants and classes go at the end of `__envio_static`'s body.
-    let function = prelude.iter_mut().find_map(|statement| match statement {
+    let mut bodies = prelude.iter_mut().filter_map(|statement| match statement {
         Statement::ExportDeclaration(export) => match &mut export.declaration {
             Declaration::FunctionDeclaration(func) => func.body.as_mut(),
             _ => None,
         },
+        Statement::FunctionDeclaration(func) => func.body.as_mut(),
         _ => None,
     });
-    if let Some(function) = function {
-        function.statements.extend(init);
+    if let Some(function) = bodies.next() {
+        function.statements.extend(static_init);
+    }
+    if let Some(function) = bodies.next() {
+        function.statements.extend(start);
     }
     prelude.extend(definers);
     prelude.extend(body);
     program.body = prelude;
+}
+
+/// A literal's source text, to set a static field to it again.
+fn literal_text(value: &Expression<'_>) -> Option<String> {
+    Some(match value {
+        Expression::NumericLiteral(number) => number.value.to_string(),
+        Expression::BooleanLiteral(boolean) => boolean.value.to_string(),
+        Expression::NullLiteral(_) => "null".to_string(),
+        Expression::StringLiteral(text) => serde_json::to_string(text.value.as_str()).ok()?,
+        _ => return None,
+    })
 }
 
 struct Rewrite<'a> {
@@ -1576,28 +1711,39 @@ mod tests {
         );
     }
 
-    // A class with a static initializer runs code when defined, and a global
-    // with a call for initializer runs in asc's start function too: both stay.
+    // Classes and constant globals once, before anything else; every other
+    // top-level statement in the start function, which runs again per trigger
+    // after the modules it imports. A class whose definition runs code is
+    // defined there, and a hoisted class's static field reset there.
     #[test]
-    fn hoists_classes_and_constant_globals() {
+    fn splits_a_module_into_static_and_per_trigger_stages() {
         assert_eq!(
             hoisted(
-                "import { Token } from \"./token\";
+                "import { BigInt } from \"@graphprotocol/graph-ts\";
+import { Token } from \"./token\";
 export const ethAddress = \"0xEee\";
 const LIMIT: i32 = 10 * 6;
+export let total: i32 = 0;
 const ZERO = BigInt.fromI32(0);
+const seen = new Map<string, bool>();
 export class Mapping {
   bidwall: string;
+  static count: i32;
 }
 class Registry {
   static instance: Registry = new Registry();
 }
+seen.set(\"a\", true);
 export function f(): Token { return new Token(); }
 export * from \"./base\";"
             ),
             "export var ethAddress;
 var LIMIT;
+export var total;
+var ZERO;
+var seen;
 export var Mapping;
+var Registry;
 var __envio_static_state;
 export function __envio_static() {
 \tif (__envio_static_state) return;
@@ -1606,23 +1752,43 @@ export function __envio_static() {
 \t__envio_dep_1.__envio_static?.();
 \tethAddress = \"0xEee\";
 \tLIMIT = __envio_op.mul(10, 6);
+\ttotal = 0;
+\tZERO = BigInt.fromI32(0);
 \ttry {
 \t\t__envio_define_Mapping();
 \t} catch {}
 }
+function __envio_start() {
+\ttotal = 0;
+\tseen = new Map();
+\t__envio_define_Mapping();
+\tMapping.count = 0;
+\tRegistry = class Registry {
+\t\tstatic instance = new Registry();
+\t};
+\tseen.set(\"a\", true);
+}
+var __envio_init_generation;
+export function __envio_init(generation) {
+\tif (__envio_init_generation === generation) return;
+\t__envio_init_generation = generation;
+\t__envio_dep_0.__envio_init?.(generation);
+\t__envio_dep_1.__envio_init?.(generation);
+\t__envio_start();
+}
 __envio_static();
+try {
+\t__envio_start();
+} catch {}
 function __envio_define_Mapping() {
 \tif (Mapping === undefined) Mapping = class Mapping {
 \t\tbidwall = null;
+\t\tstatic count = 0;
 \t};
 }
+import { BigInt } from \"@graphprotocol/graph-ts\";
 import { Token } from \"./token\";
 import * as __envio_dep_0 from \"./token\";
-const ZERO = BigInt.fromI32(0);
-__envio_define_Mapping();
-class Registry {
-\tstatic instance = new Registry();
-}
 export function f() {
 \treturn new Token();
 }
@@ -1632,8 +1798,6 @@ import * as __envio_dep_1 from \"./base\";
         );
     }
 
-    // A type parameter's zero depends on the instantiation, a `declare` field
-    // has no storage, and a `for … of` binding is assigned by the loop.
     #[test]
     fn zero_initializes_fields_and_locals_by_type() {
         assert_eq!(
