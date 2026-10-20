@@ -93,28 +93,29 @@ import { createTestIndexer } from "envio";
 const USES = 16;
 
 let server: Server;
+// Calls being answered at once, whether they came alone or in a batch.
 let inFlight = 0;
 let peak = 0;
 
+// slot(n) answers 2n.
+const answer = (request: any) => ({
+  jsonrpc: "2.0",
+  id: request.id,
+  result: "0x" + (2n * BigInt("0x" + request.params[0].data.slice(10))).toString(16).padStart(64, "0"),
+});
+
 beforeAll(async () => {
   server = createServer((req, res) => {
-    inFlight++;
-    peak = Math.max(peak, inFlight);
     let body = "";
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
-      const request = JSON.parse(body);
-      // slot(n) answers 2n.
-      const n = BigInt("0x" + request.params[0].data.slice(10));
+      const parsed = JSON.parse(body);
+      const calls = Array.isArray(parsed) ? parsed.length : 1;
+      inFlight += calls;
+      peak = Math.max(peak, inFlight);
       setTimeout(() => {
-        inFlight--;
-        res.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: request.id,
-            result: "0x" + (2n * n).toString(16).padStart(64, "0"),
-          }),
-        );
+        inFlight -= calls;
+        res.end(JSON.stringify(Array.isArray(parsed) ? parsed.map(answer) : answer(parsed)));
       }, 40);
     });
   });
