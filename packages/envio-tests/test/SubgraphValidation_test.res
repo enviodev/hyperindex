@@ -372,6 +372,21 @@ describe("subgraph translation: unknown things", () => {
     t.expect(config.chainMap->ChainMap.keys->Array.length).toEqual(1)
   })
 
+  // GRAPH_MAX_API_VERSION defaults to 0.0.10 (graph/src/env/mappings.rs); the
+  // version adds the `ethereum.decodeParams` host function and gates nothing
+  // else.
+  it("accepts apiVersion 0.0.10, the newest graph-node runs", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)->String.replace(
+          "apiVersion: 0.0.7",
+          "apiVersion: 0.0.10",
+        ),
+      ),
+    ).toEqual(accepted)
+  })
+
   it("maps network hyperevm to chain 999", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,

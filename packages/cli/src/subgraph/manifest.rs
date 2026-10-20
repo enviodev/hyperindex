@@ -20,7 +20,7 @@ pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 4, 0);
 /// The newest graph-ts the runtime shim implements. There is no floor: older
 /// versions expose a subset of the same API, and anything genuinely missing from
 /// one is refused by name when the mapping reaches for it.
-pub const MAX_API_VERSION: (u32, u32, u32) = (0, 0, 9);
+pub const MAX_API_VERSION: (u32, u32, u32) = (0, 0, 10);
 
 /// Manifest `features` entries graph-node knows about. Anything else is a typo
 /// or newer than us.
