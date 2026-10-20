@@ -147,6 +147,8 @@ type SubgraphConfig = {
   /** Set when the manifest has a `graft:` block; the indexer ignores it. */
   graft?: { base: string; block: number };
   graftNotice?: string;
+  /** What the translation left out of the config and why, logged at startup. */
+  notices?: string[];
   timeseriesEntities?: string[];
   aggregations?: SubgraphSchema["aggregations"];
   /** The config's contract name for each data source and template. */
@@ -896,6 +898,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   unregisteredCreates.clear();
   announceWhereToQuery();
   if (config.graftNotice) warn(config.graftNotice);
+  for (const notice of config.notices ?? []) warn(notice);
   if (config.graft && process.env.ENVIO_SUBGRAPH_GRAFT_CHECK !== "off") {
     const ownStarts = config.dataSources.flatMap((source) =>
       source.startBlock === undefined ? [] : [source.startBlock],

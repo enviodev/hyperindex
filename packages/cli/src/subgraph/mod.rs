@@ -116,6 +116,9 @@ pub struct SubgraphRuntimeConfig {
     /// and receipts from RPC alone, without first asking a host that has no
     /// such chain.
     pub rpc_only_chains: Vec<u64>,
+    /// Warnings the runtime logs at startup: what the translation left out
+    /// and why.
+    pub notices: Vec<String>,
 }
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
@@ -768,6 +771,7 @@ fn contract_config(
     source: &mut DataSource,
     files: &HashMap<String, String>,
     usage: &usage::FieldUsage,
+    notices: &mut Vec<String>,
     report: &mut Report,
 ) -> ContractConfig {
     let abi_path = source
@@ -782,6 +786,27 @@ fn contract_config(
             .cloned()
     });
     let source_name = source.name.clone();
+
+    // A log holds at most four topics, the first the event signature's hash,
+    // so an event with more than three indexed parameters never decodes from
+    // one and graph-node skips its handler for every log (data_source.rs,
+    // "Skipping handler because the event parameters do not match").
+    source.event_handlers.retain(|handler| {
+        let indexed = abi::event_inputs(&handler.event, abi_json.as_deref())
+            .iter()
+            .filter(|input| input.indexed)
+            .count();
+        if indexed <= 3 {
+            return true;
+        }
+        notices.push(format!(
+            "Envio Subgraph: data source \"{source_name}\" → \"{}\" never runs: its event {} \
+             declares {indexed} indexed parameters, more than the three a log has topics for, so \
+             no log decodes as it. graph-node skips it for the same reason.",
+            handler.handler, handler.event
+        ));
+        false
+    });
 
     // An overloaded name needs a unique envio name as well as a spelled-out
     // signature: the generated routing keys off the name, and the runtime has
@@ -1127,6 +1152,7 @@ pub fn translate(
     let mut manifest = manifest;
     let contract_names = contract_names(&manifest);
     let contract_name = |source: &DataSource| contract_names[&source.name].clone();
+    let mut notices = Vec::new();
     for source in manifest.data_sources.iter_mut() {
         // Refused by the manifest parser: a file data source belongs in `templates`.
         if source.kind.is_file() {
@@ -1134,7 +1160,7 @@ pub fn translate(
         }
         contracts.push(GlobalContract {
             name: contract_name(source),
-            config: contract_config(source, files, &usage, &mut report),
+            config: contract_config(source, files, &usage, &mut notices, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -1192,7 +1218,7 @@ pub fn translate(
         if source.kind.is_file() {
             continue;
         }
-        let config = contract_config(source, files, &usage, &mut report);
+        let config = contract_config(source, files, &usage, &mut notices, &mut report);
         let ids = match source.chain_id {
             Some(id) => vec![id],
             None => template_chain_ids.clone(),
@@ -1432,6 +1458,7 @@ pub fn translate(
             manifest_file: DEFAULT_MANIFEST.to_string(),
             block_header_lag,
             rpc_only_chains,
+            notices,
         },
         human_config,
     })
@@ -2504,6 +2531,88 @@ type Gravatar @entity {
                     "asked http://{closed} (eth_chainId) which chain it serves and got no answer"
                 )),
             "unexpected error: {message}"
+        );
+    }
+
+    // A non-anonymous event with four indexed parameters needs five topics, and
+    // a log holds at most four, so no log decodes as it: graph-node skips the
+    // handler for every log with its topic0 (chain/ethereum/src/data_source.rs,
+    // "Skipping handler because the event parameters do not match the event
+    // signature"). Agentic-Trust-Layer/agent-indexer declares ERC-6909's
+    // Transfer that way, and envio's log decoder refused to start over it.
+    #[test]
+    fn drops_a_handler_for_an_event_no_log_can_carry() {
+        let manifest = MANIFEST
+            .split("templates:")
+            .next()
+            .unwrap()
+            .replace(
+                "        - event: NewGravatar(uint256,address,string,string)\n          handler: handleNewGravatar",
+                "        - event: Transfer(indexed address,indexed address,indexed address,indexed uint256,uint256)\n          handler: handleTransfer\n        - event: NewGravatar(uint256,address,string,string)\n          handler: handleNewGravatar",
+            );
+        let files = HashMap::from([(
+            "./abis/Gravity.json".to_string(),
+            r#"[{"type":"event","name":"Transfer","anonymous":false,"inputs":[
+              {"name":"caller","type":"address","indexed":true},
+              {"name":"from","type":"address","indexed":true},
+              {"name":"to","type":"address","indexed":true},
+              {"name":"id","type":"uint256","indexed":true},
+              {"name":"amount","type":"uint256","indexed":false}]},
+              {"type":"event","name":"NewGravatar","anonymous":false,"inputs":[
+              {"name":"id","type":"uint256","indexed":false},
+              {"name":"owner","type":"address","indexed":false},
+              {"name":"displayName","type":"string","indexed":false},
+              {"name":"imageUrl","type":"string","indexed":false}]},
+              {"type":"event","name":"UpdatedGravatar","anonymous":false,"inputs":[
+              {"name":"id","type":"uint256","indexed":false},
+              {"name":"owner","type":"address","indexed":false},
+              {"name":"displayName","type":"string","indexed":false},
+              {"name":"imageUrl","type":"string","indexed":false}]}]"#
+                .to_string(),
+        )]);
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &files,
+            &ambiguous(),
+        )
+        .unwrap();
+        let events: Vec<String> = translation.human_config.contracts.as_ref().unwrap()[0]
+            .config
+            .events
+            .iter()
+            .map(|event| {
+                event
+                    .event
+                    .split('(')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect();
+        let handlers: Vec<String> = translation.runtime.manifest.data_sources[0]
+            .event_handlers
+            .iter()
+            .map(|handler| handler.handler.clone())
+            .collect();
+        assert_eq!(
+            (events, handlers, translation.runtime.notices.len()),
+            (
+                vec!["NewGravatar".to_string(), "UpdatedGravatar".to_string()],
+                vec![
+                    "handleNewGravatar".to_string(),
+                    "handleUpdatedGravatar".to_string()
+                ],
+                1
+            )
+        );
+        assert!(
+            translation.runtime.notices[0].contains("handleTransfer"),
+            "{}",
+            translation.runtime.notices[0]
         );
     }
 
