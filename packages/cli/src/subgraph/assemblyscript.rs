@@ -1885,8 +1885,10 @@ impl<'a> Rewrite<'a> {
                     "u8" => Some("as_u8"),
                     "i16" => Some("as_i16"),
                     "u16" => Some("as_u16"),
-                    "i32" => Some("as_i32"),
-                    "u32" => Some("as_u32"),
+                    "i32" | "isize" => Some("as_i32"),
+                    "u32" | "usize" => Some("as_u32"),
+                    "i64" => Some("as_i64"),
+                    "u64" => Some("as_u64"),
                     "f32" => Some("as_f32"),
                     "f64" => Some("as_f64"),
                     _ => None,
@@ -2975,6 +2977,7 @@ export function f(value: ethereum.Tuple, n: i64): void {
   let old = <Pair>value;
   let byte = <u8>n;
   let float = n as f64;
+  let long = <u64>n;
 }"),
             "import { Pair } from \"../generated/schema\";
 export function f(value, n) {
@@ -2984,6 +2987,7 @@ export function f(value, n) {
 \tlet old = __envio_retag(Pair, value, true);
 \tlet byte = __envio_op.as_u8(n);
 \tlet float = __envio_op.as_f64(n);
+\tlet long = __envio_op.as_u64(n);
 }
 "
         );

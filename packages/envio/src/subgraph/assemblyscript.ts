@@ -437,6 +437,20 @@ const wrapTo = (bits: number, signed: boolean) => (value: unknown): number => {
 };
 
 /**
+ * `x as i64` and `x as u64`: a bigint of that width. A number truncates toward
+ * zero and an i32 sign-extends before the wrap, as `i64.extend_i32_s` and
+ * `i64.trunc_f64_s` do; a reference, like `as i32`'s, is 0.
+ */
+const wrapTo64 = (signed: boolean) => (value: unknown): bigint => {
+  let n: bigint;
+  if (typeof value === "bigint") n = value;
+  else if (typeof value === "number") n = Number.isFinite(value) ? BigInt(Math.trunc(value)) : 0n;
+  else if (typeof value === "boolean") n = value ? 1n : 0n;
+  else n = 0n;
+  return signed ? BigInt.asIntN(64, n) : BigInt.asUintN(64, n);
+};
+
+/**
  * AssemblyScript's `Array#indexOf`, `lastIndexOf` and `includes` compare each
  * element with `==`, so with graph-ts' overload: ENS's
  * `if (!coinTypes.includes(coinType))` finds a BigInt already there. A
@@ -677,6 +691,8 @@ export const operators = {
   as_u16: wrapTo(16, false),
   as_i32: wrapTo(32, true),
   as_u32: wrapTo(32, false),
+  as_i64: wrapTo64(true),
+  as_u64: wrapTo64(false),
   as_f64: (value: unknown): unknown => (isObject(value) ? value : number(value ?? 0)),
   as_f32: (value: unknown): unknown => (isObject(value) ? value : Math.fround(number(value ?? 0))),
   neg: (a: unknown) => {
