@@ -490,8 +490,20 @@ function codegenMode(): "auto" | "bundled" | "graph-cli" {
 export function bundledCodegen(root: string, dir: string, manifestFile: string): string[] {
   let files: string[] = [];
   for (const { manifest, outputDir, own } of codegenPlan(root, manifestFile, dir)) {
-    const written = subgraphBundledCodegen(path.resolve(root, manifest), outputDir).files;
-    if (own) files = written;
+    if (own) {
+      files = subgraphBundledCodegen(path.resolve(root, manifest), outputDir).files;
+      continue;
+    }
+    // Another manifest's half of the tree is the codegen script's business;
+    // one that can't be generated mustn't stop this manifest's.
+    try {
+      subgraphBundledCodegen(path.resolve(root, manifest), outputDir);
+    } catch (error) {
+      warn(
+        `Envio Subgraph couldn't write the generated code of ${manifest}, which the codegen script also generates: ` +
+          `${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
   info(`Envio Subgraph wrote ${files.length} generated files to "${path.relative(root, dir)}/" without graph-cli.`);
   return files;
