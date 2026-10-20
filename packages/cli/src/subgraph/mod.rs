@@ -995,6 +995,35 @@ fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
     asked.unwrap_or_else(|_| Err(format!("failed asking {RPC_ENV_VAR} for its chain id")))
 }
 
+/// graph-node checks a provider against the chain its network was configured
+/// for and refuses one that serves another; `ENVIO_SUBGRAPH_RPC` gets the same
+/// check. An endpoint that doesn't answer is left to the runtime, which asks it
+/// again — it may only be starting up.
+pub fn verify_rpc_chain(rpc_env: &str, manifest: &Manifest) -> Result<()> {
+    let Some(source) = manifest
+        .all_sources()
+        .into_iter()
+        .find(|source| source.chain_id.is_some())
+    else {
+        return Ok(());
+    };
+    let (Some(chain_id), Some(network)) = (source.chain_id, source.network.as_ref()) else {
+        return Ok(());
+    };
+    let Ok(rpc) = parse_rpc_env(rpc_env) else {
+        return Ok(());
+    };
+    match chain_id_served_by(&rpc) {
+        Ok(served) if served != chain_id => Err(anyhow!(
+            "{RPC_ENV_VAR} serves chain {served}, but the subgraph's network \"{network}\" is \
+             chain {chain_id}.\n\
+             Its contract calls would read another chain's state. Point {RPC_ENV_VAR} at an \
+             endpoint of chain {chain_id}."
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn unanswered(url: &str, err: &anyhow::Error) -> String {
     let host = endpoint_host(url);
     format!("asked {host} (eth_chainId) which chain it serves and got no answer: {err:#}")
@@ -2344,7 +2373,7 @@ type Gravatar @entity {
 
     /// An RPC endpoint on a thread of its own that answers every request with
     /// `chain_id`, as `eth_chainId` would.
-    fn rpc_serving_chain(chain_id: u64) -> String {
+    pub(super) fn rpc_serving_chain(chain_id: u64) -> String {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a local port");
         let url = format!("http://{}", listener.local_addr().expect("a local address"));
@@ -2654,6 +2683,59 @@ dataSources:
             ),
             (true, true, true, true, true, true)
         );
+    }
+
+    /// A Gravity project on disk on `network`, with `.env` holding `env`.
+    fn gravity_project(network: &str, env: &str) -> tempdir::TempDir {
+        let dir = tempdir::TempDir::new("envio-subgraph").unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("abis")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("abis/Gravity.json"), GRAVITY_ABI).unwrap();
+        fs::write(
+            root.join("src/gravity.ts"),
+            "export function handleNewGravatar() {}",
+        )
+        .unwrap();
+        fs::write(
+            root.join("schema.graphql"),
+            "type Gravatar @entity {\n  id: Bytes!\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", &format!("network: {network}")),
+        )
+        .unwrap();
+        fs::write(root.join(".env"), env).unwrap();
+        dir
+    }
+
+    // graph-node checks a provider against the chain it was configured for (its
+    // genesis hash and net version) and refuses one that serves another. An
+    // endpoint of the wrong chain here would answer the mapping's contract calls
+    // with another chain's state, or index another chain outright.
+    #[test]
+    fn refuses_an_rpc_endpoint_of_another_chain() {
+        let mainnet = super::tests::rpc_serving_chain(1);
+        let project = gravity_project("sepolia", &format!("ENVIO_SUBGRAPH_RPC={mainnet}\n"));
+        let project_paths =
+            ParsedProjectPaths::new(project.path().to_str().unwrap(), "config.yaml").unwrap();
+        let message = SystemConfig::parse_from_project_files(&project_paths)
+            .err()
+            .map(|err| format!("{err:#}"))
+            .unwrap_or_default();
+        assert!(
+            message.contains("ENVIO_SUBGRAPH_RPC serves chain 1")
+                && message.contains("network \"sepolia\" is chain 11155111"),
+            "unexpected error: {message}"
+        );
+
+        let sepolia = super::tests::rpc_serving_chain(11155111);
+        let project = gravity_project("sepolia", &format!("ENVIO_SUBGRAPH_RPC={sepolia}\n"));
+        let project_paths =
+            ParsedProjectPaths::new(project.path().to_str().unwrap(), "config.yaml").unwrap();
+        SystemConfig::parse_from_project_files(&project_paths).expect("the endpoint's own chain");
     }
 
     const GRAVITY_ABI: &str = r#"[{"type":"event","name":"NewGravatar","anonymous":false,"inputs":[{"name":"id","type":"uint256","indexed":false}]}]"#;

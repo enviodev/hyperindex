@@ -490,7 +490,10 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
   call effects (`ethereum.call`/`try_`/`getBalance`/`hasCode`) use the same
   entries in order as a viem fallback transport. The entries are fallbacks
   for one chain, not per-chain endpoints: translation refuses a non-empty
-  value when the subgraph indexes more than one chain.
+  value when the subgraph indexes more than one chain. At startup the endpoint
+  is asked its `eth_chainId`, and one that serves another chain than the
+  network's is refused, as graph-node refuses a provider whose chain doesn't
+  match its network; one that doesn't answer is left to the runtime's retries.
 - **`receipt: true` + RPC: envio's standard behavior, inherited.** The
   HyperSync-only receipt scalars aren't servable via RPC —
   they're outside `RpcTransactionField`. Envio's existing validation already
