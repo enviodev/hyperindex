@@ -769,11 +769,13 @@ export class Value {
   static fromString(value: string): Value {
     return new Value(ValueKind.STRING, value);
   }
+  // AssemblyScript compiles a `null` passed as a value type (a nullable
+  // `Timestamp` field's generated `set x(value: i64)`) to 0.
   static fromI32(value: number): Value {
-    return new Value(ValueKind.INT, value);
+    return new Value(ValueKind.INT, value ?? 0);
   }
   static fromI64(value: bigint): Value {
-    return new Value(ValueKind.INT8, value);
+    return new Value(ValueKind.INT8, value ?? 0n);
   }
   static fromBigInt(value: BigInt_): Value {
     return new Value(ValueKind.BIGINT, value);
@@ -782,7 +784,7 @@ export class Value {
     return new Value(ValueKind.BIGDECIMAL, value);
   }
   static fromBoolean(value: boolean): Value {
-    return new Value(ValueKind.BOOL, value);
+    return new Value(ValueKind.BOOL, value ?? false);
   }
   static fromBytes(value: Bytes): Value {
     return new Value(ValueKind.BYTES, value);
@@ -791,7 +793,7 @@ export class Value {
     return new Value(ValueKind.BYTES, value);
   }
   static fromTimestamp(value: bigint): Value {
-    return new Value(ValueKind.TIMESTAMP, value);
+    return new Value(ValueKind.TIMESTAMP, value ?? 0n);
   }
   static fromNull(): Value {
     return new Value(ValueKind.NULL, null);
@@ -1456,6 +1458,39 @@ function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, u
   return row;
 }
 
+/**
+ * graph-node's EntityCache::set validates a save: an update that sets every
+ * non-nullable field passes as it is (a null counts as set), otherwise it is
+ * merged onto the stored entity — where a null removes the field — and the
+ * first non-nullable field still missing, in schema order, fails the handler.
+ * `store.set` supplies the id itself, and a timeseries point's timestamp too.
+ */
+function assertRequiredFields(
+  scope: Scope,
+  entityType: string,
+  id: string,
+  data: Entity,
+  stored: Record<string, unknown> | undefined,
+  supplied?: string,
+) {
+  const declared = scope.schema.entityFieldTypes[entityType] ?? {};
+  const required = (scope.schema.entityFields[entityType] ?? Object.keys(declared)).filter(
+    (field) => field !== "id" && field !== supplied && declared[field]?.required && !declared[field]?.derivedFrom,
+  );
+  const update = new Map(entriesOf(data).map((entry) => [entry.key as string, entry.value]));
+  if (required.every((field) => update.has(field))) return;
+  const refFields = new Set(scope.schema.entityRefFields[entityType] ?? []);
+  const missing = required.find((field) => {
+    const value = update.get(field);
+    if (value !== undefined) return value.kind === ValueKind.NULL;
+    const column = refFields.has(field) ? `${field}_id` : field;
+    return stored?.[column] === undefined || stored[column] === null;
+  });
+  if (missing !== undefined) {
+    throw new Error(`Entity ${entityType}[${id}]: missing value for non-nullable field \`${missing}\``);
+  }
+}
+
 function registerWrite(scope: Scope, entityType: string, id: string, row: Record<string, unknown> | null) {
   scope.writes ??= new Map();
   scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
@@ -1516,11 +1551,13 @@ const storeImpl = {
       scope.timeseriesSequence = sequence + 1;
       row.id = timeseriesId(scope.blockNumber, scope.event?.logIndex ?? -1, sequence);
       row.timestamp = new Date(Number(scope.blockSeconds?.() ?? 0) * 1000);
+      assertRequiredFields(scope, entityType, row.id as string, data, undefined, "timestamp");
       return table.set(withUnsetAsNull(scope, entityType, row));
     }
     // A file data source's first write of an id is a new entity of its own,
     // whatever a chain handler stored under the same id.
     const stored = own === false ? undefined : table.getSync(id);
+    assertRequiredFields(scope, entityType, id, data, stored);
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {

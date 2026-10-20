@@ -71,7 +71,9 @@ pub const AS_SET: &str = "__envio_Set";
 /// generated class graph-node would hand it — the class whose `params` getters
 /// codegen wrote. Types don't survive into JavaScript, so each exported
 /// function's first-parameter class is also exported as a value, keyed by the
-/// function's name, for the runtime to build the event as that class.
+/// function's name, for the runtime to build the event as that class. Each is
+/// a getter: the class may come from a module still evaluating in an import
+/// cycle, whose binding can't be read until it has run.
 fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Option<String> {
     let entries: Vec<String> = program
         .body
@@ -87,7 +89,7 @@ fn event_classes_export(program: &Program<'_>, classes: &HashSet<String>) -> Opt
             let name = func.id.as_ref()?.name;
             let annotation = func.params.items.first()?.type_annotation.as_ref()?;
             let class = class_ref(&annotation.type_annotation, classes)?;
-            Some(format!("{name}: {}", class.name))
+            Some(format!("get {name}() {{ return {}; }}", class.name))
         })
         .collect();
     (!entries.is_empty()).then(|| {
@@ -2536,7 +2538,9 @@ export function handleFarmed(event: Farmed): void {}"),
             "import { Farmed } from \"./a\";
 import \"./b\";
 export function handleFarmed(event) {}
-export const __envio_event_classes = { handleFarmed: Farmed };
+export const __envio_event_classes = { get handleFarmed() {
+\treturn Farmed;
+} };
 "
         );
     }
@@ -2745,8 +2749,12 @@ export function helper(n) {
 \treturn n;
 }
 export const __envio_event_classes = {
-\thandleTransfer: Transfer,
-\thandleApproval: Approval
+\tget handleTransfer() {
+\t\treturn Transfer;
+\t},
+\tget handleApproval() {
+\t\treturn Approval;
+\t}
 };
 "
         );

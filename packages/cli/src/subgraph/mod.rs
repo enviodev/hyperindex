@@ -927,6 +927,7 @@ fn call_event_config(name: &str) -> EventConfig {
             transaction_fields: Some(vec![]),
             block_fields: Some(vec![]),
         }),
+        topic0: None,
     }
 }
 
@@ -982,8 +983,12 @@ fn contract_config(
     // An overloaded name needs a unique envio name as well as a spelled-out
     // signature: the generated routing keys off the name, and the runtime has
     // to register the handler under the same one.
-    let mut resolved: Vec<(String, Option<String>)> = Vec::new();
+    let mut resolved: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     let mut ordinals: HashMap<String, usize> = HashMap::new();
+    // graph-node runs every handler whose event matches a log, in manifest
+    // order (`handlers_for_log`); envio runs every registration on an event,
+    // so a second handler of the same event registers on the first's.
+    let mut by_event: HashMap<(String, Option<String>), (String, usize)> = HashMap::new();
     for handler in source.event_handlers.iter_mut() {
         if handler.name.is_empty() {
             continue;
@@ -998,6 +1003,30 @@ fn contract_config(
             ),
             report,
         );
+        handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
+        if handler.topic0.is_some() {
+            let location = format!(
+                "data source \"{source_name}\" → eventHandlers → \"{}\" → topic0",
+                handler.handler
+            );
+            if !abi::is_anonymous(&handler.event, abi_json.as_deref()) {
+                report.unsupported(
+                    "event handlers whose topic0 is not the event signature's hash on an event \
+                     the ABI doesn't declare anonymous",
+                    location,
+                );
+            } else if !handler.topics.is_empty() {
+                report.unsupported(
+                    "topic1-3 filters on an anonymous event matched on topic0",
+                    location,
+                );
+            }
+        }
+        let key = (event.clone(), handler.topic0.clone());
+        if let Some((name, _)) = by_event.get(&key) {
+            handler.name = name.clone();
+            continue;
+        }
         let ordinal = ordinals.entry(base.clone()).or_insert(0);
         let unique = if *ordinal == 0 {
             base.clone()
@@ -1006,53 +1035,65 @@ fn contract_config(
         };
         *ordinal += 1;
         handler.name = unique.clone();
-        handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
+        by_event.insert(key, (unique.clone(), resolved.len()));
         // The generated config needs the same unique name whenever one was
-        // minted, overloaded or not — two handlers can name the same event, and
-        // the runtime registers under the name the config carries.
+        // minted for an overload: the runtime registers under the name the
+        // config carries.
         let renamed = unique != base;
-        resolved.push((event, renamed.then_some(unique)));
+        resolved.push((event, renamed.then_some(unique), handler.topic0.clone()));
     }
 
-    let events = source
-        .event_handlers
-        .iter()
-        .filter(|handler| !handler.name.is_empty())
-        .zip(resolved)
-        .map(|(handler, (event, name))| {
-            // The runtime turns each filter into a `where` on the indexed
-            // parameter it narrows — except one hashed into its topic, whose
-            // value envio can't match against.
-            let indexed: Vec<_> = handler.inputs.iter().filter(|input| input.indexed).collect();
-            for position in handler.topics.keys() {
-                let location = format!(
-                    "data source \"{}\" → eventHandlers → \"{}\" → topic{position}",
-                    source.name, handler.handler
-                );
-                match indexed.get(position - 1) {
-                    None => report.unknown(
-                        format!("which indexed parameter of \"{}\" topic{position} filters", handler.event),
-                        location,
+    let mut receipts = vec![false; resolved.len()];
+    for handler in source.event_handlers.iter() {
+        if handler.name.is_empty() {
+            continue;
+        }
+        if let Some((_, index)) = by_event.values().find(|(name, _)| *name == handler.name) {
+            receipts[*index] |= handler.receipt;
+        }
+        // The runtime turns each filter into a `where` on the indexed
+        // parameter it narrows — except one hashed into its topic, whose
+        // value envio can't match against.
+        let indexed: Vec<_> = handler
+            .inputs
+            .iter()
+            .filter(|input| input.indexed)
+            .collect();
+        for position in handler.topics.keys() {
+            let location = format!(
+                "data source \"{}\" → eventHandlers → \"{}\" → topic{position}",
+                source.name, handler.handler
+            );
+            match indexed.get(position - 1) {
+                None => report.unknown(
+                    format!(
+                        "which indexed parameter of \"{}\" topic{position} filters",
+                        handler.event
                     ),
-                    Some(input) if input.is_hashed_in_topic() => report.unsupported(
-                        format!(
-                            "topic filters on a {} indexed parameter, which the log carries only as a hash",
-                            input.abi_type
-                        ),
-                        location,
+                    location,
+                ),
+                Some(input) if input.is_hashed_in_topic() => report.unsupported(
+                    format!(
+                        "topic filters on a {} indexed parameter, which the log carries only as a hash",
+                        input.abi_type
                     ),
-                    Some(_) => {}
-                }
+                    location,
+                ),
+                Some(_) => {}
             }
-            EventConfig {
-                event,
-                name,
-                field_selection: Some(field_selection_for(handler.receipt, usage)),
-            }
+        }
+    }
+
+    let mut events: Vec<EventConfig> = resolved
+        .into_iter()
+        .zip(receipts)
+        .map(|((event, name, topic0), receipt)| EventConfig {
+            event,
+            name,
+            field_selection: Some(field_selection_for(receipt, usage)),
+            topic0,
         })
         .collect();
-
-    let mut events: Vec<EventConfig> = events;
 
     // graph-node runs the first call handler whose selector matches.
     let mut selectors = HashSet::new();
@@ -2080,7 +2121,17 @@ type Gravatar @entity {
                 &ambiguous(),
             )
         };
-        assert_eq!((with(&own).is_ok(), with("0x").is_ok()), (true, false));
+        // Another word is only a selector on an anonymous event, which
+        // NewGravatar isn't.
+        let selector = format!("0x4bb278f3{}", "00".repeat(28));
+        assert_eq!(
+            (
+                with(&own).is_ok(),
+                with("0x").is_ok(),
+                with(&selector).is_ok()
+            ),
+            (true, false, false)
+        );
     }
 
     #[test]
@@ -2181,6 +2232,35 @@ type Gravatar @entity {
             .runtime
             .entity_accessors
             .contains_key(FILE_DATA_SOURCE_ENTITY));
+    }
+
+    // Heesho/stickrnet-monorepo spells its file template's mapping kind as the
+    // data source's own. graph-node's offchain `UnresolvedMapping` has no
+    // `kind` and doesn't deny unknown fields, so it reads the same as any.
+    #[test]
+    fn reads_a_file_template_whose_mapping_kind_is_the_file_kind() {
+        let manifest = format!(
+            "{MANIFEST}{}",
+            FILE_TEMPLATE.replace("kind: ethereum/events", "kind: file/ipfs")
+        );
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        let file = translation
+            .runtime
+            .manifest
+            .templates
+            .iter()
+            .find(|template| template.name == "Metadata")
+            .map(|template| template.kind);
+        assert_eq!(file, Some(manifest::DataSourceKind::FileIpfs));
     }
 
     #[test]

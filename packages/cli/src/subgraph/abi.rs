@@ -205,6 +205,14 @@ pub fn event_inputs(manifest_signature: &str, abi_json: Option<&str>) -> Vec<Eve
         .collect()
 }
 
+/// Whether the ABI declares the event anonymous: no signature topic, its
+/// indexed params from topic0 on.
+pub fn is_anonymous(manifest_signature: &str, abi_json: Option<&str>) -> bool {
+    matching_entry(manifest_signature, abi_json)
+        .and_then(|entry| entry.get("anonymous").and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
 fn abi_entries(abi_json: Option<&str>) -> Vec<Value> {
     let Some(abi_json) = abi_json else {
         return vec![];

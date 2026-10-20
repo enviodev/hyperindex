@@ -265,6 +265,9 @@ pub struct EventHandler {
     pub handler: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub receipt: bool,
+    /// A `topic0` other than the signature's hash, lowercase.
+    #[serde(skip)]
+    pub topic0: Option<String>,
     /// `topic1`/`topic2`/`topic3` values, keyed by indexed-parameter position.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<usize, Vec<String>>,
@@ -675,6 +678,9 @@ fn parse_data_source(
         if let Some(mut mapping) = Obj::new(mapping, &format!("{path}.mapping"), report) {
             match mapping.string("kind").as_deref() {
                 Some("ethereum/events") | Some("ethereum/contract") | Some("ethereum") | None => {}
+                // graph-node's offchain mapping has no `kind` to check.
+                Some(file_kind)
+                    if kind != DataSourceKind::Contract && file_kind == kind_raw.as_str() => {}
                 Some(other) => report.unknown(
                     format!("the mapping kind \"{other}\""),
                     where_("mapping → kind"),
@@ -778,6 +784,7 @@ fn parse_data_source(
                     name: String::new(),
                     handler,
                     receipt: false,
+                    topic0: None,
                     topics: BTreeMap::new(),
                     inputs: Vec::new(),
                 });
@@ -936,19 +943,26 @@ fn parse_event_handler(
 
     // graph-node matches a log on `topic0` instead of the signature's hash
     // when one is given (`MappingEventHandler::topic0`). Spelling out the
-    // signature's own hash changes nothing; any other value selects logs envio
-    // can't ask for by event, Balancer's anonymous LOG_CALL among them.
+    // signature's own hash changes nothing; any other value is kept, and the
+    // translation accepts it on an anonymous event (Balancer's LOG_CALL, keyed
+    // on the called function's selector).
+    let mut custom_topic0 = None;
     if let Some(topic0) = obj.string("topic0") {
+        let topic0 = topic0.trim().to_lowercase();
         let own = canonical_event_hash(&event);
-        if own
-            .as_deref()
-            .is_some_and(|own| !own.eq_ignore_ascii_case(topic0.trim()))
-        {
-            report.unsupported(
-                "event handlers whose topic0 is not the event signature's hash (anonymous \
-                 events)",
+        let is_word = topic0.len() == 66
+            && topic0.starts_with("0x")
+            && topic0[2..].bytes().all(|b| b.is_ascii_hexdigit());
+        if !is_word {
+            report.unknown(
+                format!("the topic0 \"{topic0}\", which isn't a 32-byte hex value"),
                 format!("data source \"{data_source}\" → eventHandlers → \"{handler}\" → topic0"),
             );
+        } else if own
+            .as_deref()
+            .is_some_and(|own| !own.eq_ignore_ascii_case(&topic0))
+        {
+            custom_topic0 = Some(topic0);
         }
     }
 
@@ -974,6 +988,7 @@ fn parse_event_handler(
         name,
         handler,
         receipt,
+        topic0: custom_topic0,
         topics,
         inputs: Vec::new(),
     })
@@ -1787,18 +1802,30 @@ dataSources:
     }
 
     // Balancer's cow-amm matches its anonymous LOG_CALL on topic0, the called
-    // selector: not an event envio can select by signature.
+    // selector. Whether the event is anonymous is the ABI's to say, so the
+    // translation decides; the manifest keeps the value.
     #[test]
-    fn refuses_a_topic0_other_than_the_signature_hash() {
+    fn keeps_a_topic0_other_than_the_signature_hash() {
         let yaml = TOPIC0_MANIFEST.replace(
             "TOPIC0",
-            "0x4bb278f300000000000000000000000000000000000000000000000000000000",
+            "0x4BB278F300000000000000000000000000000000000000000000000000000000",
         );
+        let (manifest, report) = parse_ok(&yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            manifest.unwrap().data_sources[0].event_handlers[0].topic0,
+            Some("0x4bb278f300000000000000000000000000000000000000000000000000000000".to_string())
+        );
+    }
+
+    #[test]
+    fn refuses_a_topic0_that_is_not_a_word() {
+        let yaml = TOPIC0_MANIFEST.replace("TOPIC0", "0x4bb278f3");
         let (_, report) = parse_ok(&yaml);
         assert_eq!(
             report.findings(),
-            &[crate::subgraph::errors::Finding::unsupported(
-                "event handlers whose topic0 is not the event signature's hash (anonymous events)",
+            &[crate::subgraph::errors::Finding::unknown(
+                "the topic0 \"0x4bb278f3\", which isn't a 32-byte hex value",
                 "data source \"Token\" → eventHandlers → \"handleTransfer\" → topic0",
             )]
         );

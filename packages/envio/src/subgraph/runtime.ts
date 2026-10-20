@@ -269,6 +269,18 @@ function isOutsideSource(url: string): boolean {
   );
 }
 
+/** A bare import Node resolved to a dependency's JavaScript, which has no AssemblyScript entry at all. */
+function isJavaScriptPackage(specifier: string, url: string | undefined, parentUrl: string): boolean {
+  const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
+  return (
+    bare &&
+    url !== undefined &&
+    url.includes("/node_modules/") &&
+    /\.[cm]?js$/.test(url) &&
+    resolveAssemblyScriptPackage(specifier, parentUrl) === null
+  );
+}
+
 let hooksInstalled = false;
 /**
  * Some mapping is below apiVersion 0.0.5, where graph-node reads through a null
@@ -362,6 +374,22 @@ function installResolveHook(root: string) {
           if (!asFile) throw error;
           return { url: asFile, shortCircuit: true };
         }
+      }
+      const parentUrl: string | undefined = context?.parentURL;
+      const fromProject =
+        projectRoot !== null &&
+        typeof parentUrl === "string" &&
+        (parentUrl.startsWith(projectRoot) || isOutsideSource(parentUrl)) &&
+        !parentUrl.includes("/node_modules/");
+      // Packages envio fetched for the mappings resolve from a parent of their own.
+      const forProject = fromProject || (parentUrl !== undefined && parentUrl === fetchedModulesParent);
+      if (forProject && isJavaScriptPackage(specifier, resolved?.url, parentUrl!)) {
+        const importer = fromProject ? path.relative(fileURLToPath(projectRoot!), fileURLToPath(parentUrl!)) : "A mapping";
+        throw new Error(
+          `${importer} imports the JavaScript package "${specifier}", which AssemblyScript can't compile: ` +
+            "asc reads a package's `ascMain`, assembly/index.ts or a .ts entry, and this one has none, so " +
+            "`graph build` fails on this mapping too.",
+        );
       }
       // A subgraph project's package.json has no `type`, so its mappings and
       // its `generated/` would load as CommonJS and reach the shim — a real ES

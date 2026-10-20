@@ -1381,6 +1381,7 @@ impl SystemConfig {
                                 sighash: normalized_discriminator.unwrap_or_default(),
                                 event_signature: String::new(),
                                 field_selection: None,
+                                anonymous: false,
                             }
                         })
                         .collect();
@@ -2698,6 +2699,9 @@ pub struct Event {
     /// Only set for EVM events; empty for Fuel events.
     pub event_signature: String,
     pub field_selection: Option<FieldSelection>,
+    /// An anonymous EVM event matched on its first topic: `sighash` is that
+    /// topic's value, and every topic is an indexed param.
+    pub anonymous: bool,
 }
 
 impl Event {
@@ -2805,7 +2809,17 @@ impl Event {
             let alloy_event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
             // Use alloy's selector() method which computes keccak256 of the signature
             // Note: selector() returns B256 which formats as lowercase hex with 0x prefix
-            let sighash = alloy_event.selector().to_string();
+            let (sighash, anonymous) = match &event_config.topic0 {
+                None => (alloy_event.selector().to_string(), false),
+                Some(topic0) if alloy_event.anonymous => (topic0.to_lowercase(), true),
+                Some(_) => {
+                    return Err(anyhow!(
+                        "The event \"{}\" is matched on a topic0 of its own, which only an \
+                         anonymous event carries in place of its signature hash.",
+                        event_config.event
+                    ))
+                }
+            };
 
             let abi_name = alloy_event.name.clone();
             let name = event_config.name.clone().unwrap_or(abi_name.clone());
@@ -2832,6 +2846,7 @@ impl Event {
                     ),
                     None => None,
                 },
+                anonymous,
             })
         }
 
@@ -2911,6 +2926,7 @@ impl Event {
                         sighash: log.id,
                         event_signature: String::new(),
                         field_selection: None,
+                        anonymous: false,
                     }
                 }
                 EventType::Mint => Event {
@@ -2919,6 +2935,7 @@ impl Event {
                     sighash: "mint".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
                 EventType::Burn => Event {
                     name: event_config.name.clone(),
@@ -2926,6 +2943,7 @@ impl Event {
                     sighash: "burn".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
                 EventType::Transfer => Event {
                     name: event_config.name.clone(),
@@ -2933,6 +2951,7 @@ impl Event {
                     sighash: "transfer".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),
@@ -2940,6 +2959,7 @@ impl Event {
                     sighash: "call".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
             };
 
