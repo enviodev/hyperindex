@@ -549,6 +549,9 @@ Exit code: 0 when everything matches within the tolerances, 1 on a mismatch, 2 w
 * `--timeout <TIMEOUT>` — Per-request timeout, in seconds
 
   Default value: `60`
+* `--wait <WAIT>` — How long to wait for a reference behind ours to reach ours' block, in seconds
+
+  Default value: `120`
 * `--json` — Print the report as JSON (stable shape, `schemaVersion: 1`) instead of a table
 
 
