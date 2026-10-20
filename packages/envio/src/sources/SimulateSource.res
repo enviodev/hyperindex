@@ -48,10 +48,9 @@ let make = (
       | Some(toBlock) => toBlock
       | None => reportedHeight
       }
-      // By registration index, not `eventConfig.id`: two registrations of the
-      // same event are independent and may sit in different partitions, so
-      // matching on the shared event id would let a sibling's items leak into
-      // this query.
+      // By registration index, not by event: two registrations of the same
+      // event are independent and may sit in different partitions, so matching
+      // on the shared event would let a sibling's items leak into this query.
       let selectionRegistrationIndexes = Utils.Set.make()
       selection.onEventRegistrations->Array.forEach(reg =>
         selectionRegistrationIndexes->Utils.Set.add(reg.index)->ignore
