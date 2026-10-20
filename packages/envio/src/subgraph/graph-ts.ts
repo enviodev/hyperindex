@@ -2964,6 +2964,42 @@ export enum JSONValueKind {
   OBJECT = 5,
 }
 
+// graph-node's serde_json is built with `arbitrary_precision` and without
+// `preserve_order` (its Cargo.toml; no indexmap in Cargo.lock): a number's
+// payload is its literal text (`to_from/external.rs`), and an object is a
+// BTreeMap, so its entries come in key order.
+class JsonNumberText {
+  constructor(readonly text: string) {}
+}
+
+const keepNumberText = (_key: string, value: unknown, context?: { source?: string }) =>
+  typeof value === "number" ? new JsonNumberText(context?.source ?? String(value)) : value;
+
+/** Rust's `String` order: UTF-8 bytes, which is code point order. */
+function codePointOrder(a: string, b: string): number {
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index++) {
+    const x = a.codePointAt(index)!;
+    const y = b.codePointAt(index)!;
+    if (x !== y) return x - y;
+    if (x > 0xffff) index++;
+  }
+  return a.length - b.length;
+}
+
+const I64_MIN = -(2n ** 63n);
+const I64_MAX = 2n ** 63n - 1n;
+const U64_MAX = 2n ** 64n - 1n;
+
+/** Rust's `from_str` for an integer type: decimal digits only, in range. */
+function parseInteger(decimal: string, type: string, min: bigint, max: bigint): bigint {
+  const parsed = /^[+-]?\d+$/.test(decimal) ? BigInt(decimal) : null;
+  if (parsed === null || parsed < min || parsed > max) {
+    throw new Error(`JSON \`${decimal}\` cannot be parsed as ${type}`);
+  }
+  return parsed;
+}
+
 export class JSONValue {
   constructor(
     public kind: JSONValueKind,
@@ -2979,25 +3015,24 @@ export class JSONValue {
     return this.kind === JSONValueKind.NULL;
   }
   toU64(): bigint {
-    return this.toI64();
+    return jsonImpl.toU64(String(this.data));
   }
   toI64(): bigint {
-    return BigInt(this.data);
+    return jsonImpl.toI64(String(this.data));
   }
   toF64(): number {
-    return Number(this.data);
+    return jsonImpl.toF64(String(this.data));
   }
   toBigInt(): BigInt_ {
-    return BigInt_.fromString(String(this.data));
+    return jsonImpl.toBigInt(String(this.data));
   }
   toArray(): JSONValue[] {
     return (this.data as unknown[]).map(fromJson);
   }
   toObject(): TypedMap<string, JSONValue> {
     const map = new TypedMap<string, JSONValue>();
-    for (const [key, value] of Object.entries(this.data as object)) {
-      map.set(key, fromJson(value));
-    }
+    const keys = Object.keys(this.data as object).sort(codePointOrder);
+    map.entries = keys.map((key) => new TypedMapEntry(key, fromJson((this.data as any)[key])));
     return map;
   }
 }
@@ -3005,29 +3040,34 @@ export class JSONValue {
 function fromJson(value: unknown): JSONValue {
   if (value === null) return new JSONValue(JSONValueKind.NULL, null);
   if (typeof value === "boolean") return new JSONValue(JSONValueKind.BOOL, value);
-  if (typeof value === "number") return new JSONValue(JSONValueKind.NUMBER, value);
+  if (value instanceof JsonNumberText) return new JSONValue(JSONValueKind.NUMBER, value.text);
+  if (typeof value === "number") return new JSONValue(JSONValueKind.NUMBER, String(value));
   if (typeof value === "string") return new JSONValue(JSONValueKind.STRING, value);
   if (Array.isArray(value)) return new JSONValue(JSONValueKind.ARRAY, value);
   return new JSONValue(JSONValueKind.OBJECT, value);
 }
 
+// serde_json's `from_slice` refuses invalid UTF-8 and a byte order mark.
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 const jsonImpl = {
   fromBytes(bytes: Bytes): JSONValue {
-    return fromJson(JSON.parse(new TextDecoder().decode(bytes)));
+    return jsonImpl.fromString(strictUtf8.decode(bytes));
   },
   fromString(input: string): JSONValue {
-    return fromJson(JSON.parse(input));
+    return fromJson(JSON.parse(input, keepNumberText));
   },
   toI64(decimal: string): bigint {
-    return BigInt(decimal);
+    return parseInteger(decimal, "i64", I64_MIN, I64_MAX);
   },
   toU64(decimal: string): bigint {
-    return BigInt(decimal);
+    return parseInteger(decimal, "u64", 0n, U64_MAX);
   },
   toF64(decimal: string): number {
     return Number(decimal);
   },
   toBigInt(decimal: string): BigInt_ {
+    if (!/^[+-]?\d+$/.test(decimal)) throw new Error(`JSON \`${decimal}\` is not a decimal string`);
     return BigInt_.fromString(decimal);
   },
   try_fromString(input: string): Result<JSONValue, boolean> {
