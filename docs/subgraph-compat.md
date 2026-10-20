@@ -614,8 +614,9 @@ issues welcome a 👍 — demand drives prioritization):
 ```
 
 **Unindexable** — a kind of subgraph whose data doesn't come from mappings
-over chain data, so no release will run it (substreams, composition); the
-third line says where its data comes from instead:
+over EVM chain data, so no release will run it (substreams, composition, Amp,
+NEAR/Cosmos/Arweave/Starknet); the third line says where its data comes from
+instead:
 
 ```
 Envio Subgraph can't index <what>.

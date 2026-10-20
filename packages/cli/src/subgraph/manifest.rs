@@ -622,8 +622,15 @@ fn parse_data_source(
             return None;
         }
         "near" | "cosmos" | "arweave" | "starknet" => {
-            report.unsupported(
-                format!("{kind_raw} subgraphs — Envio Subgraph indexes EVM chains"),
+            let ecosystem = match kind_raw.as_str() {
+                "near" => "NEAR",
+                "cosmos" => "Cosmos",
+                "arweave" => "Arweave",
+                _ => "Starknet",
+            };
+            report.unindexable(
+                format!("a {ecosystem} subgraph (`kind: {kind_raw}`)"),
+                non_evm_reason(ecosystem),
                 where_("kind"),
             );
             return None;
@@ -655,8 +662,9 @@ fn parse_data_source(
                     .find(|(name, _)| name == network)
                     .map(|(_, ecosystem)| *ecosystem)
                 {
-                    Some(ecosystem) => report.unsupported(
-                        format!("{ecosystem} subgraphs — Envio Subgraph indexes EVM chains"),
+                    Some(ecosystem) => report.unindexable(
+                        format!("the {ecosystem} network \"{network}\""),
+                        non_evm_reason(ecosystem),
                         where_("network"),
                     ),
                     None => report.unknown(format!("the network \"{network}\""), where_("network")),
@@ -870,6 +878,13 @@ fn source_str(raw: &Value, path: &[&str]) -> Option<String> {
         value = value.get(*key)?;
     }
     value.as_str().map(|s| s.to_string())
+}
+
+fn non_evm_reason(ecosystem: &str) -> String {
+    format!(
+        "Envio Subgraph runs subgraphs on EVM chains, whose blocks and logs it reads; \
+         {ecosystem}'s aren't among them."
+    )
 }
 
 fn composition_reason(deployment: Option<&str>) -> String {
@@ -1544,8 +1559,7 @@ dataSources:
         let rendered = report.to_string();
         assert_eq!(
             (
-                rendered
-                    .contains("doesn't support near subgraphs — Envio Subgraph indexes EVM chains"),
+                rendered.contains("can't index a NEAR subgraph (`kind: near`)"),
                 rendered.contains("doesn't know"),
             ),
             (true, false)
@@ -1572,7 +1586,7 @@ dataSources:
             parse_ok(&yaml)
                 .1
                 .to_string()
-                .contains("doesn't support Arweave subgraphs"),
+                .contains("can't index the Arweave network \"arweave-mainnet\""),
             "expected an Arweave finding"
         );
     }

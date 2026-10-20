@@ -270,6 +270,20 @@ If you need this, please open an issue so we can look at your use case:
     ).toEqual(accepted)
   })
 
+  it("refuses a NEAR subgraph as one it can't index", t => {
+    let manifest =
+      manifestWith(plainEventHandler)
+      ->String.replace("kind: ethereum/contract", "kind: near")
+      ->String.replace("network: mainnet", "network: near-mainnet")
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index a NEAR subgraph (\`kind: near\`).
+  Found in data source "Token" → kind.
+Envio Subgraph runs subgraphs on EVM chains, whose blocks and logs it reads; NEAR's aren't among them.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
+  })
+
   it("accepts a topic filter on an address", t => {
     let message = translate(
       ~schema=baseSchema,
