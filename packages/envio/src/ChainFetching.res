@@ -110,6 +110,13 @@ let registerCallsPerItem: unit => option<float> = %raw(`() => {
   return value === undefined ? undefined : value
 }`)
 
+// A subgraph's register store keeps an entity's past versions for the passes
+// still to read them, and none starts below the lowest partition frontier.
+let reportRegisterFrontier: (int, int) => unit = %raw(`(chainId, block) => {
+  const report = globalThis.__envioSubgraphRegisterFrontier
+  if (report) report(chainId, block)
+}`)
+
 let registerCallsPerChunk = 3000.
 let unknownCostChunk = 100
 let minRegisterChunk = 100
@@ -358,6 +365,14 @@ and applyQueryResponse = (
     ~newRegistrations,
     ~knownHeight,
   )
+
+  if Env.subgraphMode.contents {
+    switch (chainState->ChainState.fetchState).optimizedPartitions
+    ->FetchState.OptimizedPartitions.getLatestFullyFetchedBlock {
+    | Some(frontier) => reportRegisterFrontier(chainId->ChainId.toInt, frontier)
+    | None => ()
+    }
+  }
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
   if state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0 {

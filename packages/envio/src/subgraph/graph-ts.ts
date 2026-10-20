@@ -1420,17 +1420,41 @@ export const ROUND_SPAN = 1_000_000;
 export const POSITION_BLOCK = 16 * ROUND_SPAN;
 
 /**
- * Adds one write to an entity's versions, in position order. The newest few
- * versions of earlier blocks stay, and a bounded run of the newest block's own.
+ * Every chain's lowest partition frontier, as a position: no fetch starts
+ * below it, so no register pass still to run reads there. A data source
+ * created at a block gets a partition of its own that starts at that block
+ * while the others fetch ahead, so its passes read versions far below the
+ * newest.
+ */
+const registerFloors = new Map<number, number>();
+export function setRegisterFrontier(chainId: number, block: number): void {
+  registerFloors.set(chainId, block * POSITION_BLOCK);
+}
+/** Versions of one entity above the floor, past which the oldest go anyway. */
+const REGISTER_STORE_MAX_VERSIONS = 512;
+
+/**
+ * Adds one write to an entity's versions, in position order. Above `floor`
+ * every version stays and below it only the newest, which a pass at the floor
+ * reads. Without one, the newest few versions of earlier blocks stay, and a
+ * bounded run of the newest block's own.
  */
 export function addRegisterVersion(
   versions: { position: number; row: Record<string, unknown> | null }[],
   version: { position: number; row: Record<string, unknown> | null },
+  floor?: number,
 ): void {
   const at = versions.findIndex((other) => other.position >= version.position);
   if (at === -1) versions.push(version);
   else if (versions[at].position === version.position) versions[at] = version;
   else versions.splice(at, 0, version);
+  if (floor !== undefined) {
+    let below = 0;
+    while (below + 1 < versions.length && versions[below + 1].position < floor) below++;
+    if (below > 0) versions.splice(0, below);
+    if (versions.length > REGISTER_STORE_MAX_VERSIONS) versions.splice(0, versions.length - REGISTER_STORE_MAX_VERSIONS);
+    return;
+  }
   const newest = Math.floor(versions[versions.length - 1].position / POSITION_BLOCK);
   const blockStart = versions.findIndex((other) => Math.floor(other.position / POSITION_BLOCK) === newest);
   const dropOlder = blockStart - REGISTER_STORE_VERSIONS;
@@ -1457,13 +1481,14 @@ export function commitRegisterWrites(scope: Scope): void {
       }
     }
     registerStore.set(key, versions);
-    addRegisterVersion(versions, { position, row });
+    addRegisterVersion(versions, { position, row }, registerFloors.get(scope.dataSource.chainId));
   }
 }
 
 /** Between test indexers, whose chains restart at block zero. */
 export function resetRegisterStore(): void {
   registerStore.clear();
+  registerFloors.clear();
 }
 
 /**

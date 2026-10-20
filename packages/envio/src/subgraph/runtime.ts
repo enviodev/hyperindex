@@ -63,6 +63,7 @@ import {
   type CallKind,
   commitRegisterWrites,
   resetRegisterStore,
+  setRegisterFrontier,
   POSITION_BLOCK,
   ROUND_SPAN,
   ethereumValueToJs,
@@ -689,6 +690,9 @@ const registerInFlight = new Map<string, Promise<unknown>>();
  */
 const registerCost = { hostOps: 0, passes: 0 };
 const REGISTER_COST_MIN_PASSES = 20;
+// ChainFetching reports each chain's lowest partition frontier after every
+// response it applies; the register store keeps the versions above it.
+(globalThis as any).__envioSubgraphRegisterFrontier = setRegisterFrontier;
 (globalThis as any).__envioSubgraphRegisterCostPerItem = () =>
   registerCost.passes < REGISTER_COST_MIN_PASSES ? undefined : registerCost.hostOps / registerCost.passes;
 
