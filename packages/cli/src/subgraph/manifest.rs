@@ -120,9 +120,34 @@ fn network_to_chain_id(network: &str) -> Option<u64> {
     Network::from_str(network).ok().map(|n| n.get_network_id())
 }
 
-/// What the RPC endpoint said about the network names no table knows: the
-/// chain it serves, or why it couldn't be asked.
+/// The chains the network names no table knows were resolved to — by asking
+/// the RPC endpoint, or by the name they spell — or why asking failed.
 pub type NetworksFromRpc = BTreeMap<String, Result<u64, String>>;
+
+/// The known network a name spells in another case or with other separators
+/// (`hyperEVM`, `base_sepolia`, `baseSepolia`), with its chain id.
+pub fn network_spelled(network: &str) -> Option<(String, u64)> {
+    let mut kebab = String::new();
+    let mut previous: Option<char> = None;
+    for c in network.chars() {
+        if c.is_ascii_uppercase()
+            && previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit())
+        {
+            kebab.push('-');
+        }
+        kebab.push(if c == '_' {
+            '-'
+        } else {
+            c.to_ascii_lowercase()
+        });
+        previous = Some(c);
+    }
+    // `hyperEVM` is `hyperevm`, not `hyper-evm`; try the plain lowercase first.
+    [network.to_ascii_lowercase().replace('_', "-"), kebab]
+        .into_iter()
+        .filter(|candidate| candidate != network)
+        .find_map(|candidate| network_to_chain_id(&candidate).map(|id| (candidate, id)))
+}
 
 /// The `network:` values of the manifest's chain data sources and templates
 /// that neither the tables nor the non-EVM list know.

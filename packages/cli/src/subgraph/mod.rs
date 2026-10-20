@@ -1113,10 +1113,25 @@ pub fn translate(
     let usage = usage::scan(mapping_sources);
 
     let rpc_parsed = rpc_env.map(parse_rpc_env);
-    let networks = match &rpc_parsed {
+    let mut networks = match &rpc_parsed {
         Some(Ok(rpc)) => networks_from_rpc(manifest_yaml, rpc),
         _ => manifest::NetworksFromRpc::new(),
     };
+    // With no endpoint to ask, a name that spells a known network another way
+    // is read as that network, and startup says so.
+    let mut notices = Vec::new();
+    if rpc_parsed.is_none() {
+        for network in manifest::unknown_networks(manifest_yaml) {
+            if let Some((known, chain_id)) = manifest::network_spelled(&network) {
+                notices.push(format!(
+                    "Envio Subgraph reads the network \"{network}\" as \"{known}\" (chain \
+                     {chain_id}). graph-node matches network names exactly; if \"{network}\" \
+                     is another chain, set {RPC_ENV_VAR} to an endpoint of it."
+                ));
+                networks.insert(network, Ok(chain_id));
+            }
+        }
+    }
     let Some(manifest) = manifest::parse_with_networks(manifest_yaml, &networks, &mut report)
     else {
         report.into_result()?;
@@ -1159,7 +1174,6 @@ pub fn translate(
     let mut manifest = manifest;
     let contract_names = contract_names(&manifest);
     let contract_name = |source: &DataSource| contract_names[&source.name].clone();
-    let mut notices = Vec::new();
     for source in manifest.data_sources.iter_mut() {
         // Refused by the manifest parser: a file data source belongs in `templates`.
         if source.kind.is_file() {
@@ -2506,6 +2520,39 @@ type Gravatar @entity {
             (chain.id, chain.rpc.clone()),
             (11155931, Some(RpcSelection::Url(rpc)))
         );
+    }
+
+    // graph-node matches a network name exactly, against the names its operator
+    // chose, and self-hosted nodes spell the registry's names their own way
+    // (`hyperEVM`, `base_sepolia`, `baseSepolia`, `polygon_amoy`). With no RPC
+    // to ask, such a name is read as the one it spells, and startup says so.
+    #[test]
+    fn reads_a_registry_name_spelled_another_way_as_that_network() {
+        let read: Vec<(u64, usize)> = ["hyperEVM", "base_sepolia", "baseSepolia", "polygon_amoy"]
+            .iter()
+            .map(|written| {
+                let yaml = MANIFEST
+                    .split("templates:")
+                    .next()
+                    .unwrap()
+                    .replace("network: mainnet", &format!("network: {written}"));
+                let translation = translate(
+                    &yaml,
+                    SCHEMA,
+                    "gravatar",
+                    None,
+                    ".",
+                    &HashMap::new(),
+                    &ambiguous(),
+                )
+                .unwrap();
+                (
+                    translation.human_config.chains[0].id,
+                    translation.runtime.notices.len(),
+                )
+            })
+            .collect();
+        assert_eq!(read, vec![(999, 1), (84532, 1), (84532, 1), (80002, 1)]);
     }
 
     // An endpoint that doesn't answer leaves the network unknown, and the error
