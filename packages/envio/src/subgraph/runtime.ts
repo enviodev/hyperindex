@@ -1410,7 +1410,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
       const start = source.startBlock ?? 0;
-      if (handler.filter === "once" && templateNames.size > 0 && source.chainId !== undefined) {
+      if (handler.filter === "once" && !source.isTemplate && templateNames.size > 0 && source.chainId !== undefined) {
         const location = `data source "${source.name}" → "${handler.handler}"`;
         const runs = onceHandlers.get(source.chainId) ?? [];
         runs.push((context) =>
@@ -1444,12 +1444,20 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         .filter((other) => other.chainId === source.chainId)
         .map((other) => other.startBlock ?? 0);
       const first = source.isTemplate ? Math.min(...chainStarts, 0 + (chainStarts.length === 0 ? 0 : Number.MAX_SAFE_INTEGER)) : start;
-      const blocks =
-        handler.filter === "once"
+      // An instance's creation block is its start block (graph-node), so a
+      // template's `once` and `polling` schedules differ by instance: every
+      // block is visited and each instance checked.
+      const blocks = source.isTemplate
+        ? { _gte: first, _every: 1 }
+        : handler.filter === "once"
           ? { _gte: start, _lte: start }
           : source.endBlock === undefined
             ? { _gte: first, _every: handler.filter.every }
             : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
+      const once = handler.filter === "once";
+      const every = typeof handler.filter === "object" ? handler.filter.every : 1;
+      const scheduled = (created: number, blockNumber: number) =>
+        once ? blockNumber === created : (blockNumber - created) % every === 0;
       indexer.onBlock(
         {
           name: `${source.name}_${handler.handler}`,
@@ -1462,7 +1470,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
             block.number,
             `data source "${source.name}" → "${handler.handler}"`,
           );
-          const addresses = source.isTemplate ? instancesAt(block.chainId ?? source.chainId, source.name, block.number) : [source.address ?? ""];
+          const addresses = source.isTemplate
+            ? instancesAt(block.chainId ?? source.chainId, source.name, block.number)
+                .filter((instance) => scheduled(instance.block, block.number))
+                .map((instance) => instance.address)
+            : [source.address ?? ""];
           for (const address of addresses) {
             const scope: Scope = {
               context,

@@ -111,9 +111,8 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  // A filtered handler counts from its instance's creation block, which
-  // chain-wide filters don't know.
-  it("refuses a filtered block handler on a template", t => {
+  // The trace source follows static addresses, not every instance's.
+  it("refuses a call-filtered block handler on a template", t => {
     let manifest =
       manifestWith(plainEventHandler) ++ `templates:
   - kind: ethereum/contract
@@ -130,13 +129,12 @@ describe("subgraph translation: unsupported features", () => {
       blockHandlers:
         - handler: handlePoolBlock
           filter:
-            kind: polling
-            every: 5
+            kind: call
       file: ./src/pool.ts
 `
     translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support filtered block handlers on templates yet.",
+      ~headline="Envio Subgraph doesn't support call-filtered block handlers on templates yet.",
       ~location=`data source "Pool" → blockHandlers → "handlePoolBlock"`,
     )
   })

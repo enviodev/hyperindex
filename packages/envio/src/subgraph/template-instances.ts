@@ -59,12 +59,10 @@ export function rememberInstance(chainId: number, template: string, address: str
   }
 }
 
-/** The instances of `template` created at or before `block`. */
-export function instancesAt(chainId: number, template: string, block: number): string[] {
+/** The instances of `template` created at or before `block`, with their creation blocks. */
+export function instancesAt(chainId: number, template: string, block: number): Instance[] {
   load();
-  return (instances.get(keyOf(chainId, template)) ?? [])
-    .filter((instance) => instance.block <= block)
-    .map((instance) => instance.address);
+  return (instances.get(keyOf(chainId, template)) ?? []).filter((instance) => instance.block <= block);
 }
 
 export function forgetInstances() {
