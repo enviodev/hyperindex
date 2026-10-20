@@ -78,6 +78,31 @@ const equals = (a: unknown, b: unknown): boolean => {
 };
 
 /**
+ * AssemblyScript's `===`, which no class can overload: references are the same
+ * object, numbers the same value once converted to a common type — an i64 the
+ * shim holds as a bigint equals the number it was compared with, and a bool is
+ * 0 or 1. Null is one value however the JavaScript side came to read it: a
+ * class field AssemblyScript zero-initializes is `undefined` here.
+ */
+const same = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  const numeric = (v: unknown) => typeof v === "number" || typeof v === "bigint" || typeof v === "boolean";
+  if (numeric(a) && numeric(b) && typeof a !== typeof b) {
+    const n = (v: unknown) => (typeof v === "boolean" ? (v ? 1 : 0) : v);
+    return n(a) == n(b);
+  }
+  return false;
+};
+
+/**
+ * `===` where one side is a string the host has just allocated (the transform
+ * marks it): no other string is that allocation, whatever it reads.
+ */
+const sameFresh = (a: unknown, b: unknown): boolean =>
+  typeof a === "string" && typeof b === "string" ? false : same(a, b);
+
+/**
  * `x as i32` and its narrower kin. A number or bigint wraps to the width; a
  * boolean is 0 or 1; null is 0. Anything else is a reference, and an
  * AssemblyScript cast of one reads its address, which is garbage the mapping
@@ -187,6 +212,8 @@ export const operators = {
   },
   eq: equals,
   ne: (a: unknown, b: unknown) => !equals(a, b),
+  same,
+  same_fresh: sameFresh,
   lt: binary("lt", (a, b) => a < b),
   le: binary("le", (a, b) => a <= b),
   gt: binary("gt", (a, b) => a > b),

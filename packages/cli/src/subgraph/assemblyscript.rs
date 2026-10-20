@@ -11,6 +11,11 @@
 //!   JavaScript. Every such operator, compound assignment included, goes through
 //!   a runtime helper that calls the overload when there is one and otherwise
 //!   computes what AssemblyScript does.
+//! - `===` can't be overloaded in AssemblyScript: it compares two references by
+//!   identity and two numbers by value. JavaScript compares strings by value,
+//!   so a string the host just allocated — `dataSource.network() === 'mainnet'`
+//!   — is marked at the comparison, where it can never be identical; a literal
+//!   is one static segment wherever it is written, so literals stay equal.
 //! - `changetype<Foo>(x)` reinterprets a pointer. Nothing in JavaScript gives `x`
 //!   the generated class's getters, so a class argument goes to a helper that
 //!   sets the prototype.
@@ -210,6 +215,8 @@ pub fn to_javascript(source: &str, path: &Path, legacy_nulls: bool) -> Result<St
         classes: value_bindings(&program),
         refused: None,
         legacy_nulls,
+        literal_consts: literal_consts(&program),
+        strings: vec![],
     };
     rewrite.visit_program(&mut program);
     if let Some((span, message)) = rewrite.refused {
@@ -256,6 +263,164 @@ struct Rewrite<'a> {
     /// The mapping is below apiVersion 0.0.5, where graph-node reads through a
     /// null pointer instead of trapping.
     legacy_nulls: bool,
+    /// Top-level `const`s bound to a string literal.
+    literal_consts: HashSet<String>,
+    /// What each enclosing function's names hold, for `===` (`Strings`).
+    strings: Vec<Strings>,
+}
+
+/// What `===` can know of a string without types. AssemblyScript compares two
+/// strings' addresses: a literal is one static segment wherever it is written
+/// (asc deduplicates them), and a string the host returns is a new allocation
+/// every time — graph-node writes it into the module's memory per call.
+#[derive(Default)]
+struct Strings {
+    /// Locals initialized with an `allocates` call and never assigned again.
+    fresh: HashSet<String>,
+    /// Names that read a literal: the module's literal `const`s this function
+    /// doesn't rebind.
+    literal: HashSet<String>,
+}
+
+enum StringKind<'s> {
+    /// Allocated by this very expression: identical to nothing else.
+    Allocated,
+    /// A local holding an allocation of its own, which another local may alias.
+    Fresh(&'s str),
+    Literal,
+    Unknown,
+}
+
+/// A call whose string graph-ts gets from the host: `dataSource.network()`,
+/// `typeConversion.bytesToHex` behind `toHexString()`.
+fn allocates(expr: &Expression<'_>) -> bool {
+    let Expression::CallExpression(call) = expr.without_parentheses() else {
+        return false;
+    };
+    if !call.arguments.is_empty() || call.optional {
+        return false;
+    }
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return false;
+    };
+    match member.property.name.as_str() {
+        "toHexString" | "toHex" | "toBase58" => true,
+        "network" | "stringParam" => {
+            matches!(&member.object, Expression::Identifier(id) if id.name == "dataSource")
+        }
+        _ => false,
+    }
+}
+
+fn is_string_literal(expr: &Expression<'_>) -> bool {
+    match expr.without_parentheses() {
+        Expression::StringLiteral(_) => true,
+        Expression::TemplateLiteral(template) => template.expressions.is_empty(),
+        _ => false,
+    }
+}
+
+impl Strings {
+    fn kind<'e>(&self, expr: &'e Expression<'_>) -> StringKind<'e> {
+        if allocates(expr) {
+            return StringKind::Allocated;
+        }
+        if is_string_literal(expr) {
+            return StringKind::Literal;
+        }
+        match expr.without_parentheses() {
+            Expression::Identifier(id) if self.fresh.contains(id.name.as_str()) => {
+                StringKind::Fresh(id.name.as_str())
+            }
+            Expression::Identifier(id) if self.literal.contains(id.name.as_str()) => {
+                StringKind::Literal
+            }
+            _ => StringKind::Unknown,
+        }
+    }
+
+    /// Whether `left === right` compares a host allocation with something that
+    /// can't be that allocation.
+    fn distinct(&self, left: &Expression<'_>, right: &Expression<'_>) -> bool {
+        use StringKind::*;
+        match (self.kind(left), self.kind(right)) {
+            (Allocated, _) | (_, Allocated) => true,
+            (Fresh(a), Fresh(b)) => a != b,
+            (Fresh(_), Literal) | (Literal, Fresh(_)) => true,
+            _ => false,
+        }
+    }
+}
+
+/// The module's top-level `const`s bound to a string literal.
+fn literal_consts(program: &Program<'_>) -> HashSet<String> {
+    let declarations = program.body.iter().filter_map(|statement| match statement {
+        Statement::VariableDeclaration(decl) => Some(decl),
+        Statement::ExportDeclaration(export) => match &export.declaration {
+            Declaration::VariableDeclaration(decl) => Some(decl),
+            _ => None,
+        },
+        _ => None,
+    });
+    declarations
+        .filter(|decl| decl.kind == VariableDeclarationKind::Const)
+        .flat_map(|decl| decl.declarations.iter())
+        .filter_map(|declarator| match (&declarator.id, &declarator.init) {
+            (BindingPattern::BindingIdentifier(id), Some(init)) if is_string_literal(init) => {
+                Some(id.name.to_string())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a function's names hold. A name bound twice anywhere in the function —
+/// a parameter, a nested block's own `let` — is left out rather than told apart.
+fn strings(func: &Function<'_>, literal_consts: &HashSet<String>) -> Strings {
+    use oxc::ast_visit::{walk, Visit};
+
+    #[derive(Default)]
+    struct Scan {
+        bound: std::collections::HashMap<String, usize>,
+        fresh: HashSet<String>,
+        assigned: HashSet<String>,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_binding_identifier(&mut self, id: &BindingIdentifier<'a>) {
+            *self.bound.entry(id.name.to_string()).or_default() += 1;
+        }
+        fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+            if let (BindingPattern::BindingIdentifier(id), Some(init)) =
+                (&declarator.id, &declarator.init)
+            {
+                if allocates(init) {
+                    self.fresh.insert(id.name.to_string());
+                }
+            }
+            walk::walk_variable_declarator(self, declarator);
+        }
+        fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(id) = target {
+                self.assigned.insert(id.name.to_string());
+            }
+            walk::walk_simple_assignment_target(self, target);
+        }
+    }
+
+    let mut scan = Scan::default();
+    scan.visit_function(func, ScopeFlags::Function);
+    let fresh = scan
+        .fresh
+        .iter()
+        .filter(|name| scan.bound.get(*name) == Some(&1) && !scan.assigned.contains(*name))
+        .cloned()
+        .collect();
+    let literal = literal_consts
+        .iter()
+        .filter(|name| !scan.bound.contains_key(*name))
+        .cloned()
+        .collect();
+    Strings { fresh, literal }
 }
 
 /// graph-ts methods whose receiver goes to the host as a pointer, or whose
@@ -539,6 +704,33 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
         }
         walk_mut::walk_expression(self, expr);
         match expr {
+            Expression::BinaryExpression(binary)
+                if matches!(
+                    binary.operator,
+                    BinaryOperator::StrictEquality | BinaryOperator::StrictInequality
+                ) =>
+            {
+                let distinct = match self.strings.last() {
+                    Some(strings) => strings.distinct(&binary.left, &binary.right),
+                    None => allocates(&binary.left) || allocates(&binary.right),
+                };
+                let method = if distinct { "same_fresh" } else { "same" };
+                let span = binary.span;
+                let negate = binary.operator == BinaryOperator::StrictInequality;
+                let left = binary.left.take_in(&self.ast);
+                let right = binary.right.take_in(&self.ast);
+                let same = self.operator(span, method, [left, right]);
+                *expr = if negate {
+                    Expression::new_unary_expression(
+                        span,
+                        UnaryOperator::LogicalNot,
+                        same,
+                        &self.ast,
+                    )
+                } else {
+                    same
+                };
+            }
             Expression::BinaryExpression(binary) => {
                 let Some(method) = binary_helper(binary.operator) else {
                     return;
@@ -725,7 +917,9 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
     }
 
     fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
+        self.strings.push(strings(func, &self.literal_consts));
         walk_mut::walk_function(self, func, flags);
+        self.strings.pop();
         let params: Vec<&str> = func
             .params
             .items
@@ -902,6 +1096,27 @@ mod tests {
 \t\treturn -1;
 \t}
 \treturn __envio_op.rem(bucket, 7);
+}
+"
+        );
+    }
+
+    #[test]
+    fn marks_a_host_string_in_a_strict_comparison() {
+        assert_eq!(
+            js("const MAINNET = 'mainnet';
+export function f(action: string, a: Address): bool {
+  let network = dataSource.network();
+  let other = network;
+  return dataSource.network() === 'mainnet' || network !== MAINNET
+    || a.toHexString() === ZERO || action === 'add' || network === network || other === network
+    || UNKNOWN === network;
+}"),
+            "const MAINNET = \"mainnet\";
+export function f(action, a) {
+\tlet network = dataSource.network();
+\tlet other = network;
+\treturn __envio_op.same_fresh(dataSource.network(), \"mainnet\") || !__envio_op.same_fresh(network, MAINNET) || __envio_op.same_fresh(a.toHexString(), ZERO) || __envio_op.same(action, \"add\") || __envio_op.same(network, network) || __envio_op.same(other, network) || __envio_op.same(UNKNOWN, network);
 }
 "
         );
