@@ -17,7 +17,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
     let addresses = []
     let addressStore = TestAddresses.makeStore(~onEventRegistrations)
     let fetchState = FetchState.make(
-      ~logger=Logging.capture(),
+      ~onNotice=ignore,
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
@@ -34,7 +34,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~fetchState,
       ~addressStore,
       ~sourceManager=SourceManager.make(
-        ~logger=Logging.capture(),
+        ~logger=Logging.makeInMemory(),
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
@@ -45,13 +45,13 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~shouldRollbackOnReorg=true,
       ~isInReorgThreshold=true,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.capture(),
+      ~logger=Logging.makeInMemory(),
     )
     chainStates->ChainId.Dict.set(chainConfig.id, chainState)
   })
 
   IndexerState.make(
-    ~logger=Logging.capture(),
+    ~logger=Logging.makeInMemory(),
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
@@ -109,7 +109,7 @@ describe("Indexer loop", () => {
     let state = makeState(~onError=_ => reportedErrors := reportedErrors.contents + 1, ())
 
     state->IndexerState.errorExit(
-      ErrorHandling.make(~logger=Logging.capture(), Utils.Error.make("boom")),
+      ErrorHandling.make(~logger=Logging.makeInMemory(), Utils.Error.make("boom")),
     )
 
     t.expect(

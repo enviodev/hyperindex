@@ -83,7 +83,7 @@ let makeSource = (~url) => {
     enableQueryCaching: false,
     logLevel: #error,
     addressStore,
-    logger: Logging.capture(),
+    logger: Logging.makeInMemory(),
   })
   let addressSet =
     addressStore
@@ -106,7 +106,7 @@ let fetch = (source: Source.t, ~addressSet) =>
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,
-    ~logger=Logging.capture()->Logging.child({"test": "shared address routing"}),
+    ~logger=Logging.makeInMemory()->Logging.withFields({"test": "shared address routing"}),
   )
 
 let log = (~address, ~logIndex, ~topic0, ~topics=[fromAddress, toAddress]) =>

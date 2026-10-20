@@ -58,7 +58,7 @@ Pick the highest rung that reproduces:
 3. **End to end** — `scenarios/e2e_test`. For what the rungs above can't mock: ClickHouse, Hasura, and the CLI itself. CI runs it against real services, so anything beyond the local smoke test lands here.
    `cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test`
 
-Logs never reach the test output. A run's logger is passed in explicitly (there is no global one) and captures every line in memory: assert on them with `indexer.logs()` (info and above, as `{msg, params}`) or `indexer.jsonLogs()` (every line as JSON). A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file holding all of them. Read it only when the failure needs it.
+Logs never reach the test output. A run's logger is passed in explicitly (there is no global one) and captures every line in memory: assert on them with `indexer.infoAndAboveLogs()` (as `{msg, params}`) or `indexer.allLogsAsJson()` (every line, trace included). Domain modules such as `FetchState` don't log: they report typed notices through `~onNotice`, and the chain that owns them logs. A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file holding all of them. Read it only when the failure needs it.
 
 Link the issue above the case when there is one: `// https://github.com/enviodev/hyperindex/issues/N`
 

@@ -14,7 +14,7 @@ let makeChain = (~startBlock, ~endBlock=?, ~sources): Config.chain => {
 
 let resolveAll = (chains, ~getHeightRetryInterval=(~retry as _) => 1) =>
   chains->StartBlockResolver.resolveAllOrThrow(
-    ~logger=Logging.capture(),
+    ~logger=Logging.makeInMemory(),
     ~lowercaseAddresses=false,
     ~getHeightRetryInterval,
   )
@@ -103,7 +103,7 @@ describe("StartBlockResolver", () => {
     let chain = makeChain(~startBlock=Config.Latest, ~sources=[primary.source, fallback.source])
 
     let resolved = await [chain]->StartBlockResolver.resolveAllOrThrow(
-      ~logger=Logging.capture(),
+      ~logger=Logging.makeInMemory(),
       ~lowercaseAddresses=false,
       ~getHeightRetryInterval=(~retry as _) => 1,
       // The window the primary gets to itself before a fallback is recruited.
@@ -124,7 +124,7 @@ describe("StartBlockResolver", () => {
     let resolving =
       [chain]
       ->StartBlockResolver.resolveAllOrThrow(
-        ~logger=Logging.capture(),
+        ~logger=Logging.makeInMemory(),
         ~lowercaseAddresses=false,
         ~retry=StartBlockResolver.Once,
       )
@@ -163,7 +163,7 @@ describe("StartBlockResolver", () => {
 
     let error = await [chain]
     ->StartBlockResolver.resolveAllOrThrow(
-      ~logger=Logging.capture(),
+      ~logger=Logging.makeInMemory(),
       ~lowercaseAddresses=false,
       ~retry=StartBlockResolver.Once,
     )
@@ -187,7 +187,7 @@ describe("StartBlockResolver", () => {
 
     let resolving =
       [chain]->StartBlockResolver.resolveAllOrThrow(
-        ~logger=Logging.capture(),
+        ~logger=Logging.makeInMemory(),
         ~lowercaseAddresses=false,
         ~retry=StartBlockResolver.Once,
       )

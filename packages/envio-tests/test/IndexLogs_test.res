@@ -64,7 +64,9 @@ describe("Index logs", () => {
       // nothing marks the end of one that never comes, so this is a lower bound.
       await Utils.delay(10)
 
-      t.expect(indexer.logs()->Array.filter(fromStorage)->Array.map(entry => entry.msg)).toEqual([])
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filter(fromStorage)->Array.map(entry => entry.msg),
+      ).toEqual([])
     },
   )
 
@@ -90,7 +92,9 @@ describe("Index logs", () => {
       source.setAutoHeight(100)
       let restarted = await indexer.restart()
       let failed = () =>
-        restarted.logs()->Array.filter(entry => entry.params->Dict.get("code")->Option.isSome)
+        restarted.infoAndAboveLogs()->Array.filter(
+          entry => entry.params->Dict.get("code")->Option.isSome,
+        )
       await Scenario.waitUntil(
         () => failed()->Utils.Array.notEmpty,
         ~message="the failed build to be logged",

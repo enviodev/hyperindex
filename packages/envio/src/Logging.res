@@ -1,12 +1,3 @@
-type logStrategyType =
-  | @as("ecs-file") EcsFile
-  | @as("ecs-console") EcsConsole
-  | @as("ecs-console-multistream") EcsConsoleMultistream
-  | @as("file-only") FileOnly
-  | @as("console-raw") ConsoleRaw
-  | @as("console-pretty") ConsolePretty
-  | @as("both-prettyconsole") Both
-
 type level = [
   | #trace
   | #debug
@@ -21,8 +12,9 @@ type level = [
   | #silent
 ]
 
-// Mirrors the Rust `Level` values, so the level check happens on this side.
-let levelValue = (level: level) =>
+// The level check happens here, before a line crosses into Rust, so these are
+// Rust's numbers; `LoggingLevels_test` holds the two in step.
+let levelNumber = (level: level) =>
   switch level {
   | #trace => 10
   | #debug => 20
@@ -37,64 +29,71 @@ let levelValue = (level: level) =>
   | #silent => 2147483647
   }
 
-type native
-type options = {
+// Where the lines go: a `LOG_STRATEGY` value, which Rust validates, with the
+// terminal's level and the log file's.
+type config = {
   strategy: string,
   logFile: string,
   level: level,
   fileLevel: level,
 }
-@send external makeNative: (Core.loggerCtor, options) => native = "make"
-@send external nativeLog: (native, int, string, Null.t<string>, Null.t<string>) => unit = "log"
+
+type native
+@send external makeNative: (Core.loggerCtor, config) => native = "make"
+@send
+external nativeLog: (
+  native,
+  ~level: int,
+  ~message: string,
+  ~boundFieldsJson: Null.t<string>,
+  ~paramsJson: Null.t<string>,
+) => unit = "log"
 // Answers with the new minimum level.
 @send external nativeSetLevel: (native, level) => int = "setLevel"
 @send external nativeMinLevel: native => int = "minLevel"
-@send external nativeCaptured: native => array<dict<JSON.t>> = "captured"
-@send external nativeWriteCaptured: (native, string) => unit = "writeCaptured"
+@send external nativeInMemoryLines: native => array<dict<JSON.t>> = "inMemoryLines"
+@send
+external nativeWriteInMemoryLinesToFile: (native, string) => unit = "writeInMemoryLinesToFile"
 
-// Shared by a logger and every child of it, the way their sinks are, so a line
-// no sink takes is dropped before its params are serialized.
+// Shared by a logger and every logger derived from it, the way their sinks are,
+// so a line no sink takes is dropped before its params are serialized.
 type threshold = {mutable minLevel: int}
 
 // A logger per query and per event is made whether or not it ever writes, so a
-// child is only a record of its fields. They are serialized, joined to its
-// parent's and kept the first time a line passes the level, and Rust merges
+// derived logger is only a record of its fields. They are serialized, joined to
+// its parent's and kept the first time a line passes the level, and Rust merges
 // them into each line it writes.
 type rec t = {
   native: native,
   threshold: threshold,
   parent: option<t>,
   fields: unknown,
-  mutable resolved: bool,
-  mutable bindings: Null.t<string>,
+  mutable isBoundFieldsJsonReady: bool,
+  mutable boundFieldsJson: Null.t<string>,
 }
 
-let fromNative = native => {
+let wrapNative = native => {
   native,
   threshold: {minLevel: native->nativeMinLevel},
   parent: None,
   fields: %raw(`undefined`),
-  resolved: true,
-  bindings: Null.Null,
+  isBoundFieldsJsonReady: true,
+  boundFieldsJson: Null.Null,
 }
 
-let make = (~strategy: logStrategyType, ~logFile, ~level, ~fileLevel) =>
-  Core.getAddon().logger
-  ->makeNative({strategy: (strategy :> string), logFile, level, fileLevel})
-  ->fromNative
+let make = (config: config) => Core.getAddon().logger->makeNative(config)->wrapNative
 
-// Keeps every line in memory for a test to read back as JSON, instead of
-// writing it anywhere.
-let capture = () =>
+// Keeps every line in memory, where a test reads it back as JSON.
+let makeInMemory = () =>
   Core.getAddon().logger
-  ->makeNative({strategy: "capture", logFile: "", level: #trace, fileLevel: #silent})
-  ->fromNative
+  ->makeNative({strategy: "in-memory", logFile: "", level: #trace, fileLevel: #silent})
+  ->wrapNative
 
 // Errors serialize to their name, message and stack (and whatever else they
 // carry), which `JSON.stringify` alone would drop as `{}`. The replacer that
 // does it runs on every key, so params of plain values skip it. Params come
 // from anywhere, so a value JSON can't hold says so rather than losing the line.
-let serialize: 'a => string = %raw(`function (value) {
+let paramsToJson: 'a => string = %raw(`function (value) {
   function replacer(_key, value) {
     if (typeof value === "bigint") return value.toString();
     if (value instanceof Error) {
@@ -120,7 +119,7 @@ let serialize: 'a => string = %raw(`function (value) {
 
 // Two JSON objects as one; a key in both is sent twice, and Rust keeps the
 // later value.
-let joinObjects = (parent: string, own: string) =>
+let concatJsonObjects = (parent: string, own: string) =>
   switch (parent, own) {
   | ("{}", _) => own
   | (_, "{}") => parent
@@ -130,62 +129,65 @@ let joinObjects = (parent: string, own: string) =>
     own->String.slice(~start=1)
   }
 
-let rec bindingsOf = (logger: t) => {
-  if !logger.resolved {
-    let own = logger.fields->serialize
+let rec getBoundFieldsJson = (logger: t) => {
+  if !logger.isBoundFieldsJsonReady {
+    let own = logger.fields->paramsToJson
     let own = own->String.startsWith("{") ? own : `{"params":${own}}`
-    logger.bindings = switch logger.parent->Option.map(bindingsOf) {
-    | Some(Null.Value(parent)) => Null.Value(joinObjects(parent, own))
+    logger.boundFieldsJson = switch logger.parent->Option.map(getBoundFieldsJson) {
+    | Some(Null.Value(parent)) => Null.Value(concatJsonObjects(parent, own))
     | Some(Null.Null) | None => Null.Value(own)
     }
-    logger.resolved = true
+    logger.isBoundFieldsJsonReady = true
   }
-  logger.bindings
+  logger.boundFieldsJson
 }
 
-let child = (logger: t, fields: 'a) => {
+// A logger adding `fields` to every line it writes.
+let withFields = (logger: t, fields: 'a) => {
   native: logger.native,
   threshold: logger.threshold,
   parent: Some(logger),
   fields: fields->(Utils.magic: 'a => unknown),
-  resolved: false,
-  bindings: Null.Null,
+  isBoundFieldsJsonReady: false,
+  boundFieldsJson: Null.Null,
 }
 
 // Every line about one chain names it, so the run's lines can be told apart.
-let forChain = (logger: t, chainId: ChainId.t) => logger->child({"chainId": chainId})
+let withChainId = (logger: t, chainId: ChainId.t) => logger->withFields({"chainId": chainId})
 
 let setLevel = (logger: t, level: level) =>
   logger.threshold.minLevel = logger.native->nativeSetLevel(level)
 
-let log = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
-  if levelValue(level) >= logger.threshold.minLevel {
+let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
+  if levelNumber(level) >= logger.threshold.minLevel {
     logger.native->nativeLog(
-      levelValue(level),
-      message,
-      logger->bindingsOf,
-      switch params {
-      | Some(params) => Null.Value(params->serialize)
+      ~level=levelNumber(level),
+      ~message,
+      ~boundFieldsJson=logger->getBoundFieldsJson,
+      ~paramsJson=switch params {
+      | Some(params) => Null.Value(params->paramsToJson)
       | None => Null.Null
       },
     )
   }
 
-let trace = (logger, message, ~params=?) => logger->log(#trace, message, ~params?)
-let info = (logger, message, ~params=?) => logger->log(#info, message, ~params?)
-let warn = (logger, message, ~params=?) => logger->log(#warn, message, ~params?)
-let error = (logger, message, ~params=?) => logger->log(#error, message, ~params?)
+let trace = (logger, message, ~params=?) => logger->logAt(#trace, message, ~params?)
+let info = (logger, message, ~params=?) => logger->logAt(#info, message, ~params?)
+let warn = (logger, message, ~params=?) => logger->logAt(#warn, message, ~params?)
+let error = (logger, message, ~params=?) => logger->logAt(#error, message, ~params?)
 
 let errorWithExn = (logger, message, exn) =>
-  logger->log(#error, message, ~params={"err": exn->Utils.prettifyExn})
+  logger->logAt(#error, message, ~params={"err": exn->Utils.prettifyExn})
 
-// Every line a `capture` logger has taken, oldest first: `level` and `msg`,
+// Every line an in-memory logger has taken, oldest first: `level` and `msg`,
 // then the fields the logger and the call added.
-let captured = (logger: t) => logger.native->nativeCaptured
+let inMemoryLines = (logger: t) => logger.native->nativeInMemoryLines
 
-let writeCaptured = (logger: t, ~path) => logger.native->nativeWriteCaptured(path)
+let writeInMemoryLinesToFile = (logger: t, ~path) =>
+  logger.native->nativeWriteInMemoryLinesToFile(path)
 
-let noopLogger: Envio.logger = {
+// `context.log` while a handler is only being preloaded, which must not log.
+let silentContextLog: Envio.logger = {
   info: (_message: string, ~params as _=?) => (),
   debug: (_message: string, ~params as _=?) => (),
   warn: (_message: string, ~params as _=?) => (),
@@ -193,13 +195,13 @@ let noopLogger: Envio.logger = {
   errorWithExn: (_message: string, _exn) => (),
 }
 
-// The user-facing `context.log`, on the `u*` levels a user's log level filters
+// The handler's `context.log`, on the `u*` levels a user's log level filters
 // separately from the indexer's own.
-let userLogger = (logger: t): Envio.logger => {
-  info: (message: string, ~params=?) => logger->log(#uinfo, message, ~params?),
-  debug: (message: string, ~params=?) => logger->log(#udebug, message, ~params?),
-  warn: (message: string, ~params=?) => logger->log(#uwarn, message, ~params?),
-  error: (message: string, ~params=?) => logger->log(#uerror, message, ~params?),
+let asContextLog = (logger: t): Envio.logger => {
+  info: (message: string, ~params=?) => logger->logAt(#uinfo, message, ~params?),
+  debug: (message: string, ~params=?) => logger->logAt(#udebug, message, ~params?),
+  warn: (message: string, ~params=?) => logger->logAt(#uwarn, message, ~params?),
+  error: (message: string, ~params=?) => logger->logAt(#uerror, message, ~params?),
   errorWithExn: (message: string, exn) =>
-    logger->log(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+    logger->logAt(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
 }

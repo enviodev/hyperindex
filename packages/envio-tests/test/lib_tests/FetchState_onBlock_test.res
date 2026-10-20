@@ -53,7 +53,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBloc
   ]
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   FetchState.make(
-    ~logger=Logging.capture(),
+    ~onNotice=ignore,
     ~onEventRegistrations,
     ~addressStore,
     ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),

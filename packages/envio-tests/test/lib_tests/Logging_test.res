@@ -11,14 +11,14 @@ describe("Logging", () => {
         {"chainId": 1}
       },
     }
-    let logger = Logging.capture()
+    let logger = Logging.makeInMemory()
     logger->Logging.setLevel(#info)
-    let child = logger->Logging.child(fields)
+    let child = logger->Logging.withFields(fields)
     child->Logging.trace("skipped")
     let beforeWriting = serialized.contents
     child->Logging.info("first")
     child->Logging.info("second")
-    t.expect((beforeWriting, serialized.contents, logger->Logging.captured)).toEqual((
+    t.expect((beforeWriting, serialized.contents, logger->Logging.inMemoryLines)).toEqual((
       0,
       1,
       [
@@ -33,13 +33,13 @@ describe("Logging", () => {
   })
 
   it("Lets a child's field and a line's param replace what was bound before", t => {
-    let logger = Logging.capture()
+    let logger = Logging.makeInMemory()
     logger
-    ->Logging.forChain(1->ChainId.fromInt)
-    ->Logging.child({"source": "a"})
-    ->Logging.child({"source": "b"})
+    ->Logging.withChainId(1->ChainId.fromInt)
+    ->Logging.withFields({"source": "a"})
+    ->Logging.withFields({"source": "b"})
     ->Logging.info("x", ~params={"chainId": 2})
-    t.expect(logger->Logging.captured->Array.map(line => line->Dict.toArray)).toEqual([
+    t.expect(logger->Logging.inMemoryLines->Array.map(line => line->Dict.toArray)).toEqual([
       [
         ("level", JSON.String("info")),
         ("msg", JSON.String("x")),
@@ -50,13 +50,13 @@ describe("Logging", () => {
   })
 
   it("Keeps an error's message and stack, and a bigint as a string", t => {
-    let logger = Logging.capture()
+    let logger = Logging.makeInMemory()
     let error = JsError.make("boom")
     logger->Logging.info(
       "x",
       ~params={"err": error, "big": 12345678901234567890n, "nested": {"deep": 1n}},
     )
-    t.expect(logger->Logging.captured).toEqual([
+    t.expect(logger->Logging.inMemoryLines).toEqual([
       dict{
         "level": JSON.String("info"),
         "msg": JSON.String("x"),

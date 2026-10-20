@@ -100,8 +100,8 @@ let make = (): Ecosystem.t => {
   // The payload carries `transaction` by batch prep (HyperSync) or inline
   // (RPC/simulate), so the event is the payload as-is.
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
-  toEventLogger: (eventItem, ~logger) =>
-    logger->Logging.child({
+  withEventFields: (eventItem, ~logger) =>
+    logger->Logging.withFields({
       "contract": eventItem.onEventRegistration.eventConfig.contractName,
       "event": eventItem.onEventRegistration.eventConfig.name,
       "chainId": eventItem.chainId,

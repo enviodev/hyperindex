@@ -72,7 +72,7 @@ let runContractRegistersOrThrow = async (
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(
               ~msg=errorMessage,
-              ~logger=params->ContractRegisterContext.itemLogger,
+              ~logger=params->ContractRegisterContext.loggerForItem,
             )
           }),
         )
@@ -83,7 +83,7 @@ let runContractRegistersOrThrow = async (
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg=errorMessage,
-        ~logger=params->ContractRegisterContext.itemLogger,
+        ~logger=params->ContractRegisterContext.loggerForItem,
       )
     }
   }
@@ -157,22 +157,26 @@ let rec onQueryResponse = async (
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockStore, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
-    | ReorgDetected(reorgDetected) => {
+    | ReorgDetected({scannedBlock, receivedBlock}) => {
         chainState
         ->ChainState.logger
-        ->ReorgDetection.logReorgDetected(
-          reorgDetected,
-          ~shouldRollbackOnReorg=chainState->ChainState.shouldRollbackOnReorg,
+        ->Logging.info(
+          `Blockchain reorg detected. ${chainState->ChainState.shouldRollbackOnReorg
+              ? "Initiating indexer rollback"
+              : "NOT initiating indexer rollback due to configuration"}.`,
+          ~params={
+            "blockNumber": scannedBlock.blockNumber,
+            "indexedBlockHash": scannedBlock.blockHash,
+            "receivedBlockHash": receivedBlock.blockHash,
+          },
         )
-        chainState->ChainState.recordReorgDetected(
-          ~blockNumber=reorgDetected.scannedBlock.blockNumber,
-        )
+        chainState->ChainState.recordReorgDetected(~blockNumber=scannedBlock.blockNumber)
 
         // Must agree with the `reportOnly` flag registerReorgGuard passed to
         // the merge: a discarded page (rollback mode) needs the rollback to
         // actually happen, or the stale stored hash re-reports forever.
         if chainState->ChainState.shouldRollbackOnReorg {
-          Some(reorgDetected.scannedBlock.blockNumber)
+          Some(scannedBlock.blockNumber)
         } else {
           None
         }

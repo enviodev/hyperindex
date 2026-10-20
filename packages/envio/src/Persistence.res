@@ -333,7 +333,7 @@ let init = {
           }
         ) {
           let resumeLevel = announceResume ? #info : #trace
-          logger->Logging.log(
+          logger->Logging.logAt(
             resumeLevel,
             `Found existing indexer storage. Resuming indexing state...`,
           )
@@ -389,7 +389,7 @@ let init = {
           initialState.chains->Array.forEach(c => {
             progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
-          logger->Logging.log(
+          logger->Logging.logAt(
             resumeLevel,
             `Successfully resumed indexing state! Continuing from the last checkpoint.`,
             ~params={"progress": progress},

@@ -148,7 +148,7 @@ let respond = (run: run, ~rng, ~index) => {
       q.fromBlock + (rng() *. (latest - q.fromBlock + 1)->Int.toFloat)->Float.toInt
     run.fetchState =
       run.fetchState->FetchState.registerDynamicContracts(
-        ~logger=Logging.capture(),
+        ~onNotice=ignore,
         ~addressStore=run.addressStore,
         ~claimCeiling=Pervasives.max(run.knownHeight, latest),
         [
@@ -218,7 +218,7 @@ let runSeed = (~seed, ~ops) => {
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let run = {
     fetchState: FetchState.make(
-      ~logger=Logging.capture(),
+      ~onNotice=ignore,
       ~onEventRegistrations,
       ~addressStore,
       ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),

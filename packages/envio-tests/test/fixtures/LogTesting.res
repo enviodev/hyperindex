@@ -9,7 +9,12 @@ switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 
 open! Logging
 
-let logger = Env.makeLogger()
+let logger = Logging.make({
+  strategy: Env.Logging.strategy,
+  logFile: Env.Logging.file,
+  level: Env.Logging.level->Option.getOr(#info),
+  fileLevel: Env.Logging.fileLevel,
+})
 
 // Per-item loggers are built by the ecosystem (the runtime gets it from
 // `config.ecosystem`); this standalone fixture constructs one directly.
@@ -17,21 +22,21 @@ let ecosystem = Evm.make()
 
 // Testing usage:
 logger->trace("By default - This trace message should only be seen in the log file.")
-logger->log(#debug, "By default - This debug message should only be seen in the log file.")
+logger->logAt(#debug, "By default - This debug message should only be seen in the log file.")
 
 exception SomethingWrong({myMessage: string})
 
 let logAtEveryLevel = (~shown) => {
   logger->info(`##Current log level: ${shown}`)
   logger->trace("This is an trace message. (printed at trace only)")
-  logger->log(#debug, "This is a debug message. (printed at debug and below)")
+  logger->logAt(#debug, "This is a debug message. (printed at debug and below)")
   logger->info("This is an info message.")
   logger->warn("This is a warning message.")
   logger->errorWithExn(
     "This is an error message.",
     SomethingWrong({myMessage: "example exception"}),
   )
-  logger->log(#fatal, "This is a fatal message.", ~params={"extra": "another"})
+  logger->logAt(#fatal, "This is a fatal message.", ~params={"extra": "another"})
 }
 
 logAtEveryLevel(~shown="info")
@@ -57,7 +62,7 @@ let item = Internal.Event({
   }->(Utils.magic: {..} => Internal.eventPayload),
 })
 
-let userLogger = item->Ecosystem.getItemLogger(~ecosystem, ~logger)->userLogger
+let userLogger = item->Ecosystem.loggerForItem(~ecosystem, ~logger)->asContextLog
 
 let logUserLevels = (~shown, ~child) => {
   logger->info(`##Current log level: ${shown}`)
@@ -93,7 +98,7 @@ logger->setLevel(#error)
 logAtEveryLevel(~shown="error")
 
 // Logging also works with params of all shapes and sizes
-logger->log(
+logger->logAt(
   #fatal,
   "A fatal message with nested params.",
   ~params={

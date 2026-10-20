@@ -191,6 +191,50 @@ let make = (
   }
 }
 
+let logFetchStateNotice = (logger, notice: FetchState.notice) =>
+  switch notice {
+  | SwitchedToClientSideFiltering({contractName, addressCount, threshold}) =>
+    logger->Logging.trace(
+      "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
+      ~params={"contractName": contractName, "addressCount": addressCount, "threshold": threshold},
+    )
+  | SkippedReRegistration({
+      contractName,
+      contractAddress,
+      registeredFromBlock,
+      requestedFromBlock,
+    }) =>
+    logger->Logging.warn(
+      "Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.",
+      ~params={
+        "contractName": contractName,
+        "contractAddress": contractAddress,
+        "registeredFromBlock": registeredFromBlock,
+        "requestedFromBlock": requestedFromBlock,
+      },
+    )
+  | SkippedInvalidAddress({contractName, contractAddress}) =>
+    logger->Logging.warn(
+      "Skipping contract registration: Not a valid address for this chain's ecosystem.",
+      ~params={"contractName": contractName, "contractAddress": contractAddress},
+    )
+  | SkippedStoredDuplicate({
+      contractName,
+      contractAddress,
+      registeredFromBlock,
+      requestedFromBlock,
+    }) =>
+    logger->Logging.warn(
+      "Skipping a stored address: it is already registered for this contract.",
+      ~params={
+        "contractName": contractName,
+        "contractAddress": contractAddress,
+        "registeredFromBlock": registeredFromBlock,
+        "requestedFromBlock": requestedFromBlock,
+      },
+    )
+  }
+
 let makeInternal = (
   ~chainConfig: Config.chain,
   ~addressRows: AddressRows.seedRows,
@@ -255,7 +299,7 @@ let makeInternal = (
     ~maxOnBlockBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
-    ~logger,
+    ~onNotice=notice => logger->logFetchStateNotice(notice),
     // FIXME: Shouldn't set with full history
     // The resumed depth, not the config one: the pre-threshold lag must match
     // the window reorg detection compares, or a reduced config depth would let
@@ -375,7 +419,7 @@ let makeFromDbState = (
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
 ) => {
-  let logger = logger->Logging.forChain(chainConfig.id)
+  let logger = logger->Logging.withChainId(chainConfig.id)
 
   let progressBlockNumber =
     // Can be -1 when not set
@@ -946,7 +990,7 @@ let handleQueryResult = (
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
       ~addressStore=cs.addressStore,
-      ~logger=cs.logger,
+      ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
       // This response is applied below, after the addresses land. It was routed
       // before they existed, so whatever it claims has to be inside the
       // catch-up range - and an unbounded query can reach past the height that

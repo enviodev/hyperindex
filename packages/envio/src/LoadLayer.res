@@ -39,7 +39,7 @@ let loadById = (
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(
-        ~logger=indexerState->IndexerState.itemLogger(item),
+        ~logger=indexerState->IndexerState.loggerForItem(item),
         ~msg=message,
       )
     }
@@ -260,7 +260,7 @@ let loadEffect = (
       } catch {
       | exn =>
         indexerState
-        ->IndexerState.itemLogger(item)
+        ->IndexerState.loggerForItem(item)
         ->Logging.warn(
           `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
           ~params={"err": exn->Utils.prettifyExn, "effect": effectName},
@@ -281,7 +281,7 @@ let loadEffect = (
         | S.Raised(error) =>
           inMemTable->EffectState.recordInvalidation
           indexerState
-          ->IndexerState.itemLogger(item)
+          ->IndexerState.loggerForItem(item)
           ->Logging.trace(
             "Invalidated effect cache",
             ~params={"input": dbEntity.id, "effect": effectName, "err": error->S.Error.message},
@@ -402,8 +402,8 @@ let loadByParsedFilter = (
           // placeholders, instead of an internal filter representation they
           // never constructed.
           ~logger=indexerState
-          ->IndexerState.itemLogger(item)
-          ->Logging.child({
+          ->IndexerState.loggerForItem(item)
+          ->Logging.withFields({
             "operation": key,
             "params": filter->EntityFilter.getParams,
           }),

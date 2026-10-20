@@ -27,8 +27,8 @@ let rejectionOf: promise<unit> => promise<option<rejection>> = %raw(`promise =>
 
 // A failure ends with where its run's logs were written; the path differs per
 // run, so the report before it is what the exact cases compare.
-let withoutLogsLink = (rejection: option<rejection>) =>
-  rejection->Option.map(rejection => rejection.message->Nullable.map(IndexerRunner.withoutLogsLink))
+let stripLogsLink = (rejection: option<rejection>) =>
+  rejection->Option.map(rejection => rejection.message->Nullable.map(IndexerRunner.stripLogsLink))
 
 let logsLinkOf = (rejection: option<rejection>) =>
   rejection
@@ -75,7 +75,7 @@ describe("A failing scenario body", () => {
         },
       ),
     )
-    t.expect(rejection->withoutLogsLink).toEqual(
+    t.expect(rejection->stripLogsLink).toEqual(
       Some(
         Nullable.make(`the body failed
 
@@ -100,7 +100,7 @@ Mock source for chain 1 at the failure:
         },
       ),
     )
-    t.expect(rejection->withoutLogsLink).toEqual(
+    t.expect(rejection->stripLogsLink).toEqual(
       Some(
         Nullable.make(`Not_found
 
@@ -161,7 +161,7 @@ describe("A passing scenario body", () => {
         mock.resolveGetHeightOrThrow(300)
         await mock.expectItemsQueries([{reply: LeavePending}])
         t.expect(
-          indexer.jsonLogs()->Array.find(
+          indexer.allLogsAsJson()->Array.find(
             line => line->Dict.get("msg") == Some(JSON.String("Started querying")),
           ),
         ).toEqual(

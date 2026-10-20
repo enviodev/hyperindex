@@ -103,7 +103,7 @@ describe("A supervised worker released at the head", () => {
       await indexer.waitUntilReady()
 
       t.expect(
-        indexer.logs()->reportedFinishAndPause,
+        indexer.infoAndAboveLogs()->reportedFinishAndPause,
         ~message="Released, nothing holds the process back, and its chains finish together",
       ).toStrictEqual(["Finished backfill.", "Finished backfill.", indexesMessage])
     },
@@ -132,7 +132,7 @@ describe("A supervised worker resumed at the head", () => {
       await resumed.waitUntilReady()
 
       t.expect(
-        resumed.logs()->reportedFinishAndPause,
+        resumed.infoAndAboveLogs()->reportedFinishAndPause,
         ~message="Both runs' chains speak while the hold is on, so both runs say they are waiting",
       ).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
@@ -175,7 +175,7 @@ describe("A chain resumed already ready", () => {
       await resumed.getBatchWritePromise()
 
       t.expect(
-        resumed.logs()->reportedFinishAndPause,
+        resumed.infoAndAboveLogs()->reportedFinishAndPause,
         ~message="Both chains caught up and were stamped ready in the first run, and the resumed one repeats neither",
       ).toStrictEqual(["Finished backfill.", "Finished backfill.", indexesMessage])
     },
@@ -220,7 +220,7 @@ describe("A chain resumed already at its end block", () => {
       await resumed.waitUntilIdle()
 
       t.expect(
-        resumed.logs()->Array.filter(({msg}) =>
+        resumed.infoAndAboveLogs()->Array.filter(({msg}) =>
           msg === "Indexed to the end block. This chain is done."
         ),
         ~message="Said once by each run",
@@ -260,7 +260,7 @@ describe("A process whose chains finish at different times", () => {
       ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->finishLines).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->finishLines).toStrictEqual([
         {
           msg: "Finished backfill. Waiting for the other chains.",
           params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
@@ -285,7 +285,7 @@ describe("A process whose chains finish at different times", () => {
       ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->finishLines).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->finishLines).toStrictEqual([
         {
           msg: "Finished backfill.",
           params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
@@ -328,7 +328,7 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
       indexer.releaseRealtime()
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->reportedFinishAndPause).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
         indexesMessage,
       ])
@@ -354,7 +354,7 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
       ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->reportedFinishAndPause).toStrictEqual([
         "Finished backfill.",
         indexesMessage,
       ])
@@ -373,9 +373,9 @@ describe("A process driving one chain", () => {
       ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->Array.filter(({msg}) => msg === indexesMessage)).toStrictEqual([
-        {msg: indexesMessage, params: dict{"chainId": JSON.Number(1.)}},
-      ])
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filter(({msg}) => msg === indexesMessage),
+      ).toStrictEqual([{msg: indexesMessage, params: dict{"chainId": JSON.Number(1.)}}])
     },
   )
 })

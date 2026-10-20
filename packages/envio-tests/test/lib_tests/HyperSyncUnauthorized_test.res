@@ -14,7 +14,7 @@ let rethrown = (exn, ~warned) =>
   try {
     let _ =
       exn->HyperSync.rethrowLoggingUnauthorized(
-        ~logger=Logging.capture(),
+        ~logger=Logging.makeInMemory(),
         ~warned,
         ~product="HyperSync",
       )

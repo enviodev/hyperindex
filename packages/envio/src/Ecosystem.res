@@ -38,7 +38,7 @@ type t = {
   /** Build the per-item child logger for an event item, with
       ecosystem-specific log fields (EVM/Fuel: contract/event/address; SVM:
       program/instruction/programId), on top of the logger it's given. */
-  toEventLogger: (Internal.eventItem, ~logger: Logging.t) => Logging.t,
+  withEventFields: (Internal.eventItem, ~logger: Logging.t) => Logging.t,
   /** Build a raw event row for the `raw_events` table. Unsupported on SVM,
       where the implementation throws. */
   toRawEvent: Internal.eventItem => Internal.rawEvent,
@@ -61,7 +61,7 @@ let getItemEvent = {
   }
 }
 
-let getItemLogger = {
+let loggerForItem = {
   let cacheKey = "_logger"
   (item: Internal.item, ~ecosystem: t, ~logger: Logging.t): Logging.t => {
     let cache = item->(Utils.magic: Internal.item => dict<Logging.t>)
@@ -69,9 +69,9 @@ let getItemLogger = {
     | Some(logger) => logger
     | None =>
       let logger = switch item {
-      | Internal.Event(_) => ecosystem.toEventLogger(item->Internal.castUnsafeEventItem, ~logger)
+      | Internal.Event(_) => ecosystem.withEventFields(item->Internal.castUnsafeEventItem, ~logger)
       | Block({blockNumber, onBlockRegistration}) =>
-        logger->Logging.child({
+        logger->Logging.withFields({
           "onBlock": onBlockRegistration.name,
           "chainId": onBlockRegistration.chainId,
           "block": blockNumber,

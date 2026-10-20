@@ -678,12 +678,13 @@ let getRegistrations = (~config, ~logger) =>
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
-  let logger = Env.makeLogger()
-  // Silent unless LOG_LEVEL asks otherwise: a test's output is its assertions.
-  switch Env.userLogLevel {
-  | None => logger->Logging.setLevel(#silent)
-  | Some(_) => ()
-  }
+  let logger = Logging.make({
+    strategy: Env.Logging.strategy,
+    logFile: Env.Logging.file,
+    // Silent unless LOG_LEVEL asks otherwise: a test's output is its assertions.
+    level: Env.Logging.level->Option.getOr(#silent),
+    fileLevel: Env.Logging.fileLevel,
+  })
   let allEntities = config.userEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()

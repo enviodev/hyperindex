@@ -15,41 +15,46 @@ impl Level {
     pub const WARN: Level = Level(40);
     pub const ERROR: Level = Level(50);
     pub const FATAL: Level = Level(60);
-    pub const SILENT: Level = Level(u32::MAX);
+    // The largest number ReScript's 32-bit int holds, so the level check there
+    // compares against the same value.
+    pub const SILENT: Level = Level(2_147_483_647);
 
-    const NAMED: [(&'static str, Level); 11] = [
-        ("trace", Level::TRACE),
-        ("debug", Level::DEBUG),
-        ("info", Level::INFO),
-        ("udebug", Level::UDEBUG),
-        ("uinfo", Level::UINFO),
-        ("uwarn", Level::UWARN),
-        ("uerror", Level::UERROR),
-        ("warn", Level::WARN),
-        ("error", Level::ERROR),
-        ("fatal", Level::FATAL),
-        ("silent", Level::SILENT),
+    pub const ALL: [Level; 11] = [
+        Level::TRACE,
+        Level::DEBUG,
+        Level::INFO,
+        Level::UDEBUG,
+        Level::UINFO,
+        Level::UWARN,
+        Level::UERROR,
+        Level::WARN,
+        Level::ERROR,
+        Level::FATAL,
+        Level::SILENT,
     ];
 
+    pub fn name(self) -> &'static str {
+        match self {
+            Level::TRACE => "trace",
+            Level::DEBUG => "debug",
+            Level::INFO => "info",
+            Level::UDEBUG => "udebug",
+            Level::UINFO => "uinfo",
+            Level::UWARN => "uwarn",
+            Level::UERROR => "uerror",
+            Level::WARN => "warn",
+            Level::ERROR => "error",
+            Level::FATAL => "fatal",
+            _ => "silent",
+        }
+    }
+
     pub fn parse(name: &str) -> Option<Level> {
-        Self::NAMED
-            .iter()
-            .find(|(named, _)| *named == name)
-            .map(|(_, level)| *level)
+        Level::ALL.into_iter().find(|level| level.name() == name)
     }
 
     pub fn from_value(value: u32) -> Option<Level> {
-        Self::NAMED
-            .iter()
-            .find(|(_, level)| level.0 == value)
-            .map(|(_, level)| *level)
-    }
-
-    pub fn name(self) -> &'static str {
-        Self::NAMED
-            .iter()
-            .find(|(_, level)| *level == self)
-            .map_or("unknown", |(name, _)| name)
+        Level::ALL.into_iter().find(|level| level.0 == value)
     }
 
     pub fn value(self) -> u32 {

@@ -58,7 +58,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
           apiToken: Some(apiToken),
           onEventRegistrations: [],
           addressStore,
-          logger: Logging.capture(),
+          logger: Logging.makeInMemory(),
         })
         let {height} = await source.getHeightOrThrow()
 
@@ -85,7 +85,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
           apiToken: None,
           onEventRegistrations: [],
           addressStore,
-          logger: Logging.capture(),
+          logger: Logging.makeInMemory(),
         })->ignore,
       `An Envio API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
@@ -110,7 +110,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
           apiToken: Some(apiToken),
           onEventRegistrations: [],
           addressStore,
-          logger: Logging.capture(),
+          logger: Logging.makeInMemory(),
         })
         // Generous, so a slow debug build of the native client can't pass this by
         // failing to answer inside the window.

@@ -2,7 +2,7 @@ open Vitest
 
 let makeFeed = (
   mock: MockSource.t,
-  ~logger=Logging.capture(),
+  ~logger=Logging.makeInMemory(),
   ~getHeightRetryInterval=(~retry as _) => 1_000,
 ) => {
   let stats = []
@@ -927,7 +927,7 @@ describe("HeightFeed operator warnings", () => {
   // The reason each warning an operator was told gives.
   let warningReasons = logger =>
     logger
-    ->Logging.captured
+    ->Logging.inMemoryLines
     ->Array.filterMap(line =>
       switch (line->Dict.get("level"), line->Dict.get("reason")) {
       | (Some(String("warn")), Some(String(reason))) => Some(reason)
@@ -940,7 +940,7 @@ describe("HeightFeed operator warnings", () => {
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
-    let logger = Logging.capture()
+    let logger = Logging.makeInMemory()
     let (feed, _stats) = makeFeed(mock, ~logger)
     feed->HeightFeed.enableStream
 
@@ -958,7 +958,7 @@ describe("HeightFeed operator warnings", () => {
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
-    let logger = Logging.capture()
+    let logger = Logging.makeInMemory()
     let (feed, _stats) = makeFeed(mock, ~logger)
     feed->HeightFeed.enableStream
 

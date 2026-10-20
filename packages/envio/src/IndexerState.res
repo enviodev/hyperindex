@@ -159,7 +159,7 @@ let make = (
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
       ~intervalMillis,
-      ~logger=logger->Logging.child({
+      ~logger=logger->Logging.withFields({
         "context": "Throttler for chain metadata writes",
         "intervalMillis": intervalMillis,
       }),
@@ -370,8 +370,8 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
   }
 
 // Built on the item's chain logger, so the chain id leads every item's line.
-let itemLogger = (state: t, item: Internal.item) =>
-  item->Ecosystem.getItemLogger(
+let loggerForItem = (state: t, item: Internal.item) =>
+  item->Ecosystem.loggerForItem(
     ~ecosystem=state.config.ecosystem,
     ~logger=state->getChainState(~chainId=item->Internal.getItemChainId)->ChainState.logger,
   )

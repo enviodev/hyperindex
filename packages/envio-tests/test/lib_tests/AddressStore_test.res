@@ -324,7 +324,7 @@ describe("AddressStore", () => {
       ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
     )
     let fetchState = FetchState.make(
-      ~logger=Logging.capture(),
+      ~onNotice=ignore,
       ~onEventRegistrations,
       ~addressStore=store,
       ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),

@@ -86,10 +86,10 @@ type rec t = {
   dumpEffectCache: unit => promise<unit>,
   // What an operator sees by default: every line at info and above this run has
   // logged so far, in order — the run's own and its chains'.
-  logs: unit => array<logEntry>,
+  infoAndAboveLogs: unit => array<logEntry>,
   // Every line this run has logged so far, trace included, as the JSON objects
   // the logger wrote: `level` and `msg`, then the fields.
-  jsonLogs: unit => array<dict<JSON.t>>,
+  allLogsAsJson: unit => array<dict<JSON.t>>,
   // Stands in for the supervisor's go-ahead in a run started with
   // `~holdRealtime`.
   releaseRealtime: unit => unit,
@@ -103,11 +103,11 @@ type rec t = {
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
-let toLogEntry = (line: dict<JSON.t>) =>
+let toInfoLogEntry = (line: dict<JSON.t>) =>
   switch (line->Dict.get("level"), line->Dict.get("msg")) {
   | (Some(String(level)), Some(String(msg)))
-    if level->(Utils.magic: string => Logging.level)->Logging.levelValue >=
-      Logging.levelValue(#info) =>
+    if level->(Utils.magic: string => Logging.level)->Logging.levelNumber >=
+      Logging.levelNumber(#info) =>
     Some({
       msg,
       params: line
@@ -124,7 +124,7 @@ type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
 // Adds to what a failure says without replacing it: vitest still gets the
 // AssertionError itself to diff, and a ReScript exception still matches as the
 // same exception.
-let appendToMessage = (exn, text) =>
+let appendToFailureMessage = (exn, text) =>
   switch exn {
   | JsExn(error) => error->setErrorMessage(error->JsExn.message->Option.getOr("") ++ text)
   | exn =>
@@ -135,7 +135,7 @@ let appendToMessage = (exn, text) =>
 let logsLinkPrefix = "\n\nLogs: "
 
 // What a failure said before the link to its run's logs, which differs per run.
-let withoutLogsLink = message =>
+let stripLogsLink = message =>
   switch message->String.lastIndexOf(logsLinkPrefix) {
   | -1 => message
   | index => message->String.slice(~start=0, ~end=index)
@@ -146,7 +146,7 @@ external vitestState: unit => {"currentTestName": Nullable.t<string>} = "getStat
 
 // A failed run's logs go to a file its failure names, rather than into the test
 // output: most failures don't need them, and the ones that do need all of them.
-let writeFailureLogs = (logger, ~pgSchema) => {
+let writeLogsForFailure = (logger, ~pgSchema) => {
   let testName =
     vitestState()["currentTestName"]
     ->Nullable.toOption
@@ -157,7 +157,7 @@ let writeFailureLogs = (logger, ~pgSchema) => {
       ".test-logs",
       `${testName->String.slice(~start=0, ~end=120)}${pgSchema}.jsonl`,
     ])->NodeJs.Path.toString
-  logger->Logging.writeCaptured(~path)
+  logger->Logging.writeInMemoryLinesToFile(~path)
   path
 }
 
@@ -173,7 +173,7 @@ let run = async (
   ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
   // One capture for the whole run, `restart` and siblings included, so a test
   // reads the resumed indexer's lines after the ones that led to them.
-  ~logger=Logging.capture(),
+  ~logger=Logging.makeInMemory(),
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
@@ -626,8 +626,8 @@ let run = async (
       },
       pg,
       stop,
-      logs: () => logger->Logging.captured->Array.filterMap(toLogEntry),
-      jsonLogs: () => logger->Logging.captured,
+      infoAndAboveLogs: () => logger->Logging.inMemoryLines->Array.filterMap(toInfoLogEntry),
+      allLogsAsJson: () => logger->Logging.inMemoryLines,
       sibling: (~chains) => make(~reset=false, ~config=baseConfig, ~chains),
       restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
@@ -720,7 +720,7 @@ let run = async (
   | (None, Some(exn), _)
   | (None, None, Some(exn)) =>
     // Written after the teardown, which is still this run's to log.
-    exn->appendToMessage(logsLinkPrefix ++ logger->writeFailureLogs(~pgSchema))
+    exn->appendToFailureMessage(logsLinkPrefix ++ logger->writeLogsForFailure(~pgSchema))
     switch exn {
     // Rethrown as caught, so vitest gets the AssertionError itself and can diff
     // it, not a ReScript wrapper it prints as a plain object.

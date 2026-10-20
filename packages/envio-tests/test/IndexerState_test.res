@@ -42,7 +42,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let addresses = []
     let addressStore = TestAddresses.makeStore(~onEventRegistrations)
     let fetcherStateInit: FetchState.t = FetchState.make(
-      ~logger=Logging.capture(),
+      ~onNotice=ignore,
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
@@ -127,7 +127,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~fetchState=fetchState.contents,
       ~addressStore,
       ~sourceManager=SourceManager.make(
-        ~logger=Logging.capture(),
+        ~logger=Logging.makeInMemory(),
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
@@ -135,14 +135,14 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~maxReorgDepth=200,
       ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.capture(),
+      ~logger=Logging.makeInMemory(),
     )
 
     chainStates->ChainId.Dict.set(id, mockChainState)
   })
 
   let state = IndexerState.make(
-    ~logger=Logging.capture(),
+    ~logger=Logging.makeInMemory(),
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
@@ -251,7 +251,7 @@ describe("IndexerState", () => {
           let addressStore = TestAddresses.makeStore(~onEventRegistrations)
           let fetchState = ref(
             FetchState.make(
-              ~logger=Logging.capture(),
+              ~onNotice=ignore,
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
               ~onEventRegistrations,
@@ -312,20 +312,20 @@ describe("IndexerState", () => {
                 ~fetchState,
                 ~addressStore,
                 ~sourceManager=SourceManager.make(
-                  ~logger=Logging.capture(),
+                  ~logger=Logging.makeInMemory(),
                   ~sources=[mockSource.source],
                   ~isRealtime=false,
                 ),
                 ~maxReorgDepth=200,
                 ~shouldRollbackOnReorg=false,
                 ~committedProgressBlockNumber=-1,
-                ~logger=Logging.capture(),
+                ~logger=Logging.makeInMemory(),
               )
               chainStates->ChainId.Dict.set(chainConfig.id, chainState)
             },
           )
           IndexerState.make(
-            ~logger=Logging.capture(),
+            ~logger=Logging.makeInMemory(),
             ~config,
             ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,

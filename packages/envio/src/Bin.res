@@ -3,7 +3,13 @@ let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; 
 
 // Crash on unhandled promise rejections with a readable error.
 // ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
-let logger = Env.makeLogger()
+// The process's root logger, handed down to everything it starts.
+let logger = Logging.make({
+  strategy: Env.Logging.strategy,
+  logFile: Env.Logging.file,
+  level: Env.Logging.level->Option.getOr(#info),
+  fileLevel: Env.Logging.fileLevel,
+})
 
 NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
   logger->Logging.errorWithExn("Unhandled promise rejection", reason)

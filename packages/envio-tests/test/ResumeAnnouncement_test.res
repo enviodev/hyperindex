@@ -28,7 +28,7 @@ type Tally {
 )
 
 let resumeLines = (indexer: IndexerRunner.t) =>
-  indexer.logs()
+  indexer.infoAndAboveLogs()
   ->Array.map(entry => entry.msg)
   ->Array.filter(msg => msg->String.toLowerCase->String.includes("resum"))
 

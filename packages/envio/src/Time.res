@@ -14,7 +14,7 @@ let rec retryAsyncWithExponentialBackOff = async (
   | exn =>
     if retryCount < maxRetries {
       let nextRetryCount = retryCount + 1
-      logger->Logging.log(
+      logger->Logging.logAt(
         retryCount === 0 ? #trace : #warn,
         `Retrying query ${nextRetryCount->Int.toString}/${maxRetries->Int.toString} in ${backOffMillis->Int.toString}ms - waiting for correct result.`,
         ~params={"err": exn->Utils.prettifyExn},

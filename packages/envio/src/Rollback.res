@@ -109,7 +109,7 @@ and executeRollback = async (
   let logger =
     state
     ->IndexerState.logger
-    ->Logging.child({
+    ->Logging.withFields({
       "action": "Rollback",
       "reorgChain": reorgChain,
       "targetBlockNumber": rollbackTargetBlockNumber,

@@ -23,7 +23,7 @@ fn parse(raw: &RawValue) -> Value {
 
 /// The fields a format writes, minus any named like a key the format writes
 /// itself: the line's own level, time and message win over a param's.
-fn fields_except<'a>(
+fn fields_not_written_by_format<'a>(
     record: &'a Record,
     reserved: &'a [&str],
 ) -> impl Iterator<Item = &'a (&'a str, &'a RawValue)> {
@@ -38,14 +38,14 @@ const ECS_KEYS: [&str; 4] = ["log.level", "@timestamp", "ecs.version", "message"
 const CAPTURED_KEYS: [&str; 2] = ["level", "msg"];
 
 /// What pino writes: the line a log shipper or `jq` reads.
-pub fn json(record: &Record, out: &mut Vec<u8>) {
+pub fn write_json_line(record: &Record, out: &mut Vec<u8>) {
     let _ = write!(
         out,
         "{{\"level\":{},\"time\":{}",
         record.level.value(),
         record.millis
     );
-    for (key, value) in fields_except(record, &JSON_KEYS) {
+    for (key, value) in fields_not_written_by_format(record, &JSON_KEYS) {
         out.push(b',');
         push_str(out, key);
         out.push(b':');
@@ -57,7 +57,7 @@ pub fn json(record: &Record, out: &mut Vec<u8>) {
 }
 
 /// Elastic Common Schema, as `@elastic/ecs-pino-format` wrote it.
-pub fn ecs(record: &Record, out: &mut Vec<u8>) {
+pub fn write_ecs_line(record: &Record, out: &mut Vec<u8>) {
     let timestamp = DateTime::from_timestamp_millis(record.millis)
         .unwrap_or_default()
         .to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -66,7 +66,7 @@ pub fn ecs(record: &Record, out: &mut Vec<u8>) {
         "{{\"log.level\":\"{}\",\"@timestamp\":\"{timestamp}\",\"ecs.version\":\"1.6.0\"",
         record.level.name()
     );
-    for (key, value) in fields_except(record, &ECS_KEYS) {
+    for (key, value) in fields_not_written_by_format(record, &ECS_KEYS) {
         out.push(b',');
         match (*key == "err")
             .then(|| error_fields(&parse(value)))
@@ -106,11 +106,11 @@ fn error_fields(value: &Value) -> Option<Value> {
 
 /// What a test reads back: the level by name and no timestamp, so a whole
 /// line can be compared at once.
-pub fn captured(record: &Record) -> Value {
+pub fn to_captured_line(record: &Record) -> Value {
     let mut line = Map::with_capacity(record.fields.len() + 2);
     line.insert("level".into(), record.level.name().into());
     line.insert("msg".into(), record.msg.into());
-    for (key, value) in fields_except(record, &CAPTURED_KEYS) {
+    for (key, value) in fields_not_written_by_format(record, &CAPTURED_KEYS) {
         line.insert(key.to_string(), parse(value));
     }
     Value::Object(line)
@@ -144,7 +144,7 @@ fn level_color(level: Level) -> (&'static str, &'static str) {
 /// For a person at a terminal, laid out the way `pino-pretty` laid it out.
 /// Ends with a blank line, as `pino-pretty` through `console.log` printed it,
 /// which keeps multi-line params apart.
-pub fn pretty(record: &Record, colorize: bool, out: &mut Vec<u8>) {
+pub fn write_pretty_line(record: &Record, colorize: bool, out: &mut Vec<u8>) {
     let paint = |color: &str, reset: &str, text: &str| {
         if colorize {
             format!("{color}{text}{reset}")
@@ -219,7 +219,7 @@ fn pretty_error(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::fields::{merge, parse as parse_fields, Fields};
+    use super::super::fields::{merge_later_wins, parse_object_fields, Fields};
     use super::*;
 
     const AT_EPOCH: i64 = 1_700_000_000_123;
@@ -230,7 +230,7 @@ mod tests {
         fields: &Fields,
         format: fn(&Record, &mut Vec<u8>),
     ) -> String {
-        let merged = merge(&[fields]);
+        let merged = merge_later_wins(&[fields]);
         let mut out = Vec::new();
         format(
             &Record {
@@ -245,13 +245,13 @@ mod tests {
     }
 
     fn fields(json: &str) -> Fields {
-        parse_fields(json).unwrap()
+        parse_object_fields(json).unwrap()
     }
 
     #[test]
     fn json_line_puts_level_and_time_first_and_msg_last() {
         assert_eq!(
-            render(Level::INFO, "hello \"you\"", &fields(r#"{"chainId":1,"block":5}"#), json),
+            render(Level::INFO, "hello \"you\"", &fields(r#"{"chainId":1,"block":5}"#), write_json_line),
             "{\"level\":30,\"time\":1700000000123,\"chainId\":1,\"block\":5,\"msg\":\"hello \\\"you\\\"\"}\n"
         );
     }
@@ -263,7 +263,7 @@ mod tests {
                 Level::ERROR,
                 "failed",
                 &fields(r#"{"chainId":1,"err":{"type":"Error","message":"boom","stack":"Error: boom\n    at x"}}"#),
-                ecs
+                write_ecs_line
             ),
             "{\"log.level\":\"error\",\"@timestamp\":\"2023-11-14T22:13:20.123Z\",\"ecs.version\":\"1.6.0\",\"chainId\":1,\"error\":{\"type\":\"Error\",\"message\":\"boom\",\"stack_trace\":\"Error: boom\\n    at x\"},\"message\":\"failed\"}\n"
         );
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn a_field_named_like_a_lines_own_key_gives_way_to_it() {
         let params = fields(r#"{"level":"x","time":"x","msg":"x","message":"x","n":1}"#);
-        let merged = merge(&[&params]);
+        let merged = merge_later_wins(&[&params]);
         let record = Record {
             level: Level::INFO,
             millis: AT_EPOCH,
@@ -281,9 +281,9 @@ mod tests {
         };
         assert_eq!(
             (
-                render(Level::INFO, "hi", &params, json),
-                render(Level::INFO, "hi", &params, ecs),
-                captured(&record)
+                render(Level::INFO, "hi", &params, write_json_line),
+                render(Level::INFO, "hi", &params, write_ecs_line),
+                to_captured_line(&record)
             ),
             (
                 "{\"level\":30,\"time\":1700000000123,\"message\":\"x\",\"n\":1,\"msg\":\"hi\"}\n"
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn ecs_line_keeps_a_thrown_value_that_isnt_an_error() {
         assert_eq!(
-            render(Level::ERROR, "failed", &fields(r#"{"err":{"RE_EXN_ID":"Foo"}}"#), ecs),
+            render(Level::ERROR, "failed", &fields(r#"{"err":{"RE_EXN_ID":"Foo"}}"#), write_ecs_line),
             "{\"log.level\":\"error\",\"@timestamp\":\"2023-11-14T22:13:20.123Z\",\"ecs.version\":\"1.6.0\",\"err\":{\"RE_EXN_ID\":\"Foo\"},\"message\":\"failed\"}\n"
         );
     }
@@ -306,9 +306,9 @@ mod tests {
     #[test]
     fn captured_line_has_no_timestamp() {
         let fields = fields(r#"{"chainId":1}"#);
-        let merged = merge(&[&fields]);
+        let merged = merge_later_wins(&[&fields]);
         assert_eq!(
-            captured(&Record {
+            to_captured_line(&Record {
                 level: Level::UWARN,
                 millis: AT_EPOCH,
                 msg: "careful",
@@ -326,7 +326,7 @@ mod tests {
             &fields(
                 r#"{"data":{"blockHash":"0x1"},"err":{"type":"Error","message":"boom","stack":"Error: boom\n    at x"}}"#,
             ),
-            |record, out| pretty(record, false, out),
+            |record, out| write_pretty_line(record, false, out),
         );
         let (_, after_time) = rendered.split_once("] ").unwrap();
         assert_eq!(
@@ -353,7 +353,7 @@ mod tests {
             Level::UINFO,
             "hi",
             &fields(r#"{"chainId":1}"#),
-            |record, out| pretty(record, true, out),
+            |record, out| write_pretty_line(record, true, out),
         );
         let (_, after_time) = rendered.split_once("] ").unwrap();
         assert_eq!(

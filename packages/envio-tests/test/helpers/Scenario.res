@@ -235,7 +235,7 @@ let run = async (
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
   // already cached.
-  let logger = Logging.capture()
+  let logger = Logging.makeInMemory()
   let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
 
@@ -269,7 +269,7 @@ let run = async (
       // A failure says what the mocks were left holding, so finding out what
       // the indexer asked for doesn't take a probe of its own.
       | exception exn if mocks->Array.length > 0 =>
-        exn->IndexerRunner.appendToMessage(
+        exn->IndexerRunner.appendToFailureMessage(
           mocks
           ->Array.map(((_, mock)) => "\n\n" ++ mock.describeState())
           ->Array.join(""),

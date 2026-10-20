@@ -166,7 +166,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
 let toPersistence = (storageMock: t, ~config: Config.t) => {
   {
     ...PgStorage.makePersistenceFromConfig(
-      ~logger=Logging.capture(),
+      ~logger=Logging.makeInMemory(),
       ~config,
       ~storage=storageMock.storage,
     ),

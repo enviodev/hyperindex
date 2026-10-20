@@ -54,19 +54,19 @@ impl Sink {
     fn write(&self, record: &Record, line: &mut Vec<u8>) {
         if let Target::Memory(lines) = &self.target {
             if let Ok(mut lines) = lines.lock() {
-                lines.push(format::captured(record));
+                lines.push(format::to_captured_line(record));
             }
             return;
         }
         line.clear();
         match self.format {
-            Format::Pretty { colorize } => format::pretty(record, colorize, line),
-            Format::Json => format::json(record, line),
-            Format::Ecs => format::ecs(record, line),
+            Format::Pretty { colorize } => format::write_pretty_line(record, colorize, line),
+            Format::Json => format::write_json_line(record, line),
+            Format::Ecs => format::write_ecs_line(record, line),
         };
         // A failed write has nowhere to be reported but the log itself.
         let _ = match &self.target {
-            Target::Stdout => write_stdout(line),
+            Target::Stdout => write_to_stdout_or_above_display(line),
             Target::File(file) => file
                 .lock()
                 .map_err(|_| io::Error::other("log file lock poisoned"))
@@ -79,7 +79,7 @@ impl Sink {
 /// Stdout through a descriptor of the logger's own: Node may switch the
 /// terminal or pipe to non-blocking mode, and a line that would block waits
 /// instead of being dropped with `EAGAIN`.
-fn write_stdout(line: &[u8]) -> io::Result<()> {
+fn write_to_stdout_or_above_display(line: &[u8]) -> io::Result<()> {
     if crate::tui::print_above_stdout(String::from_utf8_lossy(line).trim_end_matches('\n')) {
         return Ok(());
     }
@@ -129,37 +129,48 @@ fn open_log_file(path: &str) -> io::Result<File> {
 
 /// Where a run's logs go and how they read there, as `LOG_STRATEGY` names it.
 #[napi(object)]
-pub struct LoggerOptions {
-    /// One of `LOG_STRATEGY`'s values, or `capture` for a test that reads its
-    /// logs back.
+pub struct LoggerConfig {
+    /// One of `LOG_STRATEGIES`, or `in-memory` for a test that reads its logs
+    /// back.
     pub strategy: String,
     pub log_file: String,
-    /// The level for the terminal, or for the capture.
+    /// The level for the terminal, or for the in-memory lines.
     pub level: String,
     pub file_level: String,
 }
+
+/// The values `LOG_STRATEGY` takes, in the order an error lists them.
+const LOG_STRATEGIES: [&str; 7] = [
+    "console-pretty",
+    "console-raw",
+    "ecs-console",
+    "ecs-console-multistream",
+    "ecs-file",
+    "file-only",
+    "both-prettyconsole",
+];
 
 fn parse_level(name: &str) -> napi::Result<Level> {
     Level::parse(name).ok_or_else(|| napi::Error::from_reason(format!("Unknown log level: {name}")))
 }
 
-fn sinks_for(options: &LoggerOptions) -> napi::Result<Vec<Sink>> {
-    let level = parse_level(&options.level)?;
-    let file_level = parse_level(&options.file_level)?;
+fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
+    let level = parse_level(&config.level)?;
+    let file_level = parse_level(&config.file_level)?;
     let file = || -> napi::Result<Target> {
-        open_log_file(&options.log_file)
+        open_log_file(&config.log_file)
             .map(|file| Target::File(Mutex::new(file)))
             .map_err(|error| {
                 napi::Error::from_reason(format!(
                     "Failed to open the log file {}: {error}",
-                    options.log_file
+                    config.log_file
                 ))
             })
     };
     let pretty = || Format::Pretty {
         colorize: stdout_supports_color(),
     };
-    Ok(match options.strategy.as_str() {
+    Ok(match config.strategy.as_str() {
         "ecs-file" => vec![Sink::new(Format::Ecs, file()?, file_level)],
         "ecs-console" | "ecs-console-multistream" => {
             vec![Sink::new(Format::Ecs, Target::Stdout, level)]
@@ -170,21 +181,22 @@ fn sinks_for(options: &LoggerOptions) -> napi::Result<Vec<Sink>> {
             Sink::new(pretty(), Target::Stdout, level),
             Sink::new(Format::Json, file()?, file_level),
         ],
-        "capture" => vec![Sink::new(
+        "in-memory" => vec![Sink::new(
             Format::Json,
             Target::Memory(Mutex::new(Vec::new())),
             level,
         )],
         other => {
             return Err(napi::Error::from_reason(format!(
-                "Unknown log strategy: {other}"
+                "Invalid LOG_STRATEGY \"{other}\". Expected one of: {}.",
+                LOG_STRATEGIES.join(", ")
             )))
         }
     })
 }
 
-fn fields_or_error(json: &str) -> napi::Result<Fields> {
-    fields::parse(json)
+fn parse_fields_or_napi_error(json: &str) -> napi::Result<Fields> {
+    fields::parse_object_fields(json)
         .map_err(|error| napi::Error::from_reason(format!("Log fields aren't JSON: {error}")))
 }
 
@@ -203,7 +215,7 @@ impl Logger {
         if !self.sinks.iter().any(|sink| sink.accepts(level)) {
             return;
         }
-        let merged = fields::merge(&[bindings, params]);
+        let merged = fields::merge_later_wins(&[bindings, params]);
         let record = Record {
             level,
             millis: SystemTime::now()
@@ -218,7 +230,7 @@ impl Logger {
         }
     }
 
-    fn captured_lines(&self) -> Vec<Value> {
+    fn read_in_memory_lines(&self) -> Vec<Value> {
         self.sinks
             .iter()
             .filter_map(|sink| match &sink.target {
@@ -233,9 +245,9 @@ impl Logger {
 #[napi]
 impl Logger {
     #[napi(factory)]
-    pub fn make(options: LoggerOptions) -> napi::Result<Logger> {
+    pub fn make(config: LoggerConfig) -> napi::Result<Logger> {
         Ok(Logger {
-            sinks: Arc::new(sinks_for(&options)?),
+            sinks: Arc::new(sinks_for_strategy(&config)?),
         })
     }
 
@@ -252,7 +264,10 @@ impl Logger {
     ) -> napi::Result<()> {
         let level = Level::from_value(level)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown log level: {level}")))?;
-        let parse = |json: Option<String>| json.as_deref().map_or(Ok(Vec::new()), fields_or_error);
+        let parse = |json: Option<String>| {
+            json.as_deref()
+                .map_or(Ok(Vec::new()), parse_fields_or_napi_error)
+        };
         self.log(level, &msg, &parse(bindings)?, &parse(params)?);
         Ok(())
     }
@@ -281,17 +296,18 @@ impl Logger {
             .unwrap_or(Level::SILENT.value())
     }
 
-    /// Every line a `capture` logger has taken, oldest first.
+    /// Every line an `in-memory` logger has taken, oldest first.
     #[napi]
-    pub fn captured(&self) -> Vec<Value> {
-        self.captured_lines()
+    pub fn in_memory_lines(&self) -> Vec<Value> {
+        self.read_in_memory_lines()
     }
 
-    /// Writes what a `capture` logger has taken to `path`, a line of JSON each.
+    /// Writes what an `in-memory` logger has taken to `path`, a line of JSON
+    /// each.
     #[napi]
-    pub fn write_captured(&self, path: String) -> napi::Result<()> {
+    pub fn write_in_memory_lines_to_file(&self, path: String) -> napi::Result<()> {
         let mut out = String::new();
-        for line in self.captured_lines() {
+        for line in self.read_in_memory_lines() {
             out.push_str(&line.to_string());
             out.push('\n');
         }
@@ -303,14 +319,35 @@ impl Logger {
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
+#[napi(object)]
+pub struct LogLevel {
+    pub name: String,
+    pub value: u32,
+}
+
+/// Every level by name and number. ReScript checks levels before a line
+/// crosses over, and its contract test holds its numbers to these.
+#[cfg_attr(test, allow(dead_code))]
+#[napi]
+pub fn log_levels() -> Vec<LogLevel> {
+    Level::ALL
+        .iter()
+        .map(|level| LogLevel {
+            name: level.name().to_string(),
+            value: level.value(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    fn capture(level: &str) -> Logger {
-        Logger::make(LoggerOptions {
-            strategy: "capture".into(),
+    fn in_memory(level: &str) -> Logger {
+        Logger::make(LoggerConfig {
+            strategy: "in-memory".into(),
             log_file: String::new(),
             level: level.into(),
             file_level: "trace".into(),
@@ -320,7 +357,7 @@ mod tests {
 
     #[test]
     fn lines_merge_bindings_and_params_and_follow_the_level() {
-        let logger = capture("info");
+        let logger = in_memory("info");
         let chain = Some(r#"{"chainId":1,"source":"a","source":"b"}"#.to_string());
         logger
             .log_js(Level::TRACE.value(), "hidden".into(), chain.clone(), None)
@@ -338,7 +375,7 @@ mod tests {
             .log_js(Level::TRACE.value(), "now shown".into(), None, None)
             .unwrap();
         assert_eq!(
-            (logger.captured(), min_level),
+            (logger.in_memory_lines(), min_level),
             (
                 vec![
                     json!({"level": "warn", "msg": "shown", "chainId": 2, "source": "b", "a": 1}),
@@ -353,7 +390,7 @@ mod tests {
     fn file_sink_appends_json_lines_at_its_own_level() {
         let dir = tempdir::TempDir::new("envio-logger").unwrap();
         let path = dir.path().join("nested/envio.log");
-        let logger = Logger::make(LoggerOptions {
+        let logger = Logger::make(LoggerConfig {
             strategy: "file-only".into(),
             log_file: path.to_string_lossy().into(),
             level: "silent".into(),
@@ -365,7 +402,7 @@ mod tests {
         logger.log(
             Level::DEBUG,
             "kept",
-            &fields::parse(r#"{"chainId":1}"#).unwrap(),
+            &fields::parse_object_fields(r#"{"chainId":1}"#).unwrap(),
             &Vec::new(),
         );
         let lines: Vec<Value> = fs::read_to_string(&path)
@@ -384,19 +421,19 @@ mod tests {
     }
 
     #[test]
-    fn write_captured_dumps_json_lines() {
+    fn writes_in_memory_lines_to_a_file_as_json_lines() {
         let dir = tempdir::TempDir::new("envio-logger").unwrap();
         let path = dir.path().join("logs/run.jsonl");
-        let logger = capture("trace");
+        let logger = in_memory("trace");
         logger.log(Level::INFO, "one", &Vec::new(), &Vec::new());
         logger.log(
             Level::ERROR,
             "two",
             &Vec::new(),
-            &fields::parse(r#"{"x":1}"#).unwrap(),
+            &fields::parse_object_fields(r#"{"x":1}"#).unwrap(),
         );
         logger
-            .write_captured(path.to_string_lossy().into())
+            .write_in_memory_lines_to_file(path.to_string_lossy().into())
             .unwrap();
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
@@ -406,7 +443,7 @@ mod tests {
 
     #[test]
     fn unknown_strategy_is_refused_by_name() {
-        let error = Logger::make(LoggerOptions {
+        let error = Logger::make(LoggerConfig {
             strategy: "nope".into(),
             log_file: String::new(),
             level: "info".into(),
@@ -414,6 +451,9 @@ mod tests {
         })
         .err()
         .unwrap();
-        assert_eq!(error.reason, "Unknown log strategy: nope");
+        assert_eq!(
+            error.reason,
+            "Invalid LOG_STRATEGY \"nope\". Expected one of: console-pretty, console-raw, ecs-console, ecs-console-multistream, ecs-file, file-only, both-prettyconsole."
+        );
     }
 }

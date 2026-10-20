@@ -255,7 +255,7 @@ let stopRateLimitTimeout = sourceManager => {
 let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) => {
   let waitMs = Pervasives.min(resetMs, 300_000)
   let level = retry >= 2 ? #warn : #trace
-  logger->Logging.log(
+  logger->Logging.logAt(
     level,
     `HyperSync source is rate-limited - not critical, the indexer will retry in ${(waitMs / 1000)
         ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
@@ -664,7 +664,7 @@ let retryBehindHead = async (
       `${source} is still catching up to block ${block}. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.`,
     )
   }
-  logger->Logging.log(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
+  logger->Logging.logAt(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
   await sourceManager->backoffBeforeRetry(
     sourceState,
     ~retry,
@@ -712,7 +712,7 @@ let retryInconsistentResponse = async (
     ~msg,
     ~stalled=" It has disagreed with itself on every attempt for several minutes now, so this chain has stopped making progress - the endpoint is likely serving blocks and logs from nodes on different chains.",
   )
-  logger->Logging.log(
+  logger->Logging.logAt(
     level,
     msg,
     ~params={
@@ -758,7 +758,7 @@ let retryFailedPage = async (
     ~msg,
     ~stalled=" No source available to this chain has served this query on any attempt since, so indexing has stopped making progress.",
   )
-  logger->Logging.log(
+  logger->Logging.logAt(
     level,
     msg,
     ~params={
@@ -787,7 +787,7 @@ cancelling the rest.
 let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
-  let logger = sourceManager.logger->Logging.child({
+  let logger = sourceManager.logger->Logging.withFields({
     "knownHeight": knownHeight,
   })
   if !sourceManager.waitingLogged {
@@ -841,7 +841,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         sourceManager.activeSource = source
         // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
         let level = stalled.contents ? #info : #trace
-        logger->Logging.log(
+        logger->Logging.logAt(
           level,
           `New blocks successfully found.`,
           ~params={"source": source.name, "newBlockHeight": height},
@@ -1023,7 +1023,7 @@ let executeQuery = async (
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
 
-    let logger = sourceManager.logger->Logging.child({
+    let logger = sourceManager.logger->Logging.withFields({
       "logType": "Block Range Query",
       "partitionId": query.partitionId,
       "source": source.name,
@@ -1207,7 +1207,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     let source = sourceState.source
     let retry = retryRef.contents
 
-    let logger = sourceManager.logger->Logging.child({
+    let logger = sourceManager.logger->Logging.withFields({
       "logType": "Block Hash Query",
       "source": source.name,
       "retry": retry,
@@ -1252,7 +1252,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     | exn =>
       let backoffMillis = retry->retryBackoffMillis
       let level = retry >= 4 ? #warn : #trace
-      logger->Logging.log(
+      logger->Logging.logAt(
         level,
         "Failed to fetch block hashes. Retrying.",
         ~params={

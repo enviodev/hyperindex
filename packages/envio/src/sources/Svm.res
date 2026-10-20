@@ -63,12 +63,12 @@ let make = (): Ecosystem.t => {
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
-  toEventLogger: (eventItem, ~logger) => {
+  withEventFields: (eventItem, ~logger) => {
     let eventConfig =
       eventItem.onEventRegistration.eventConfig->(
         Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
       )
-    logger->Logging.child({
+    logger->Logging.withFields({
       "program": eventConfig.contractName,
       "instruction": eventConfig.name,
       "chainId": eventItem.chainId,

@@ -74,7 +74,7 @@ describe("Supervisor.fork", () => {
       // share rather than the whole of each.
       bufferSize: (CrossChainState.calculateTargetBufferSize() / 4)->Int.toString,
       objectsTarget: (Env.inMemoryObjectsTarget->Float.toInt / 4)->Int.toString,
-      logFile: Supervisor.logFilePath(~workerIndex=1),
+      logFile: Supervisor.workerLogFilePath(~workerIndex=1),
       // Proof the channel clones rather than stringifies: a JSON round trip
       // would have turned this into a string.
       startTime: Date.fromTime(1700000000000.),
@@ -85,7 +85,7 @@ describe("Supervisor.fork", () => {
 
 describe("Supervisor.awaitExit", () => {
   let outcome = async group =>
-    switch await group->Supervisor.awaitExit(~logger=Logging.capture()) {
+    switch await group->Supervisor.awaitExit(~logger=Logging.makeInMemory()) {
     | outcome => Ok(outcome)
     | exception _ => Error()
     }
@@ -191,7 +191,7 @@ describe("Supervisor.fork output", () => {
       stopping: false,
       holdingRealtime: false,
     }
-    let _ = await group->Supervisor.awaitExit(~logger=Logging.capture())
+    let _ = await group->Supervisor.awaitExit(~logger=Logging.makeInMemory())
 
     t.expect(lines->Array.toSorted(((_, a), (_, b)) => String.compare(a, b))).toStrictEqual([
       ("stdout", "first line"),
@@ -245,7 +245,7 @@ describe("Supervisor.isRunAtHead", () => {
       []->Supervisor.isRunAtHead,
     )
     group->Supervisor.stop
-    let _ = await group->Supervisor.awaitExit(~logger=Logging.capture())
+    let _ = await group->Supervisor.awaitExit(~logger=Logging.makeInMemory())
 
     t.expect(readings).toStrictEqual((false, true, false))
   })
@@ -294,7 +294,7 @@ describe("Supervisor.isRunAtHead", () => {
       )
 
     t.expect((
-      await group->Supervisor.awaitExit(~logger=Logging.capture()),
+      await group->Supervisor.awaitExit(~logger=Logging.makeInMemory()),
       group.holdingRealtime,
     )).toStrictEqual((Supervisor.Finished, false))
   })

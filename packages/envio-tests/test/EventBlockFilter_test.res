@@ -390,7 +390,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       },
     ]
     FetchState.make(
-      ~logger=Logging.capture(),
+      ~onNotice=ignore,
       ~onEventRegistrations,
       ~addressStore=TestAddresses.makeStore(~onEventRegistrations),
       ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),

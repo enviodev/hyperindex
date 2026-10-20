@@ -708,7 +708,7 @@ let registerOnBlock = (
     let config = registration.config
     let ecosystem = config.ecosystem
     let chainsDict = getChainsObject(config)
-    let logger = registration.logger->Logging.child({"onBlock": name})
+    let logger = registration.logger->Logging.withFields({"onBlock": name})
 
     // `where` must be a function (unlike onEvent, which also accepts a static
     // value). A static value would have to be evaluated against every chain

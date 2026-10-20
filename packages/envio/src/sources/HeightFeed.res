@@ -102,7 +102,7 @@ type t = {
 
 let make = (~source: Source.t, ~logger, ~recordRequestStats, ~getHeightRetryInterval): t => {
   source,
-  logger: logger->Logging.child({"source": source.name}),
+  logger: logger->Logging.withFields({"source": source.name}),
   recordRequestStats,
   getHeightRetryInterval,
   knownHeight: 0,
@@ -492,7 +492,7 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
     | _ => #trace
     }
     let label = reason->Source.downReasonLabel
-    feed.logger->Logging.log(
+    feed.logger->Logging.logAt(
       level,
       `Height subscription for ${feed.source.name} source went down (${label}). Polling for the height until it reconnects.`,
       ~params={"reason": label, "detail": down.detail},

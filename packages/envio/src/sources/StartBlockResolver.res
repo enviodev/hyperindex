@@ -143,7 +143,7 @@ let resolveAllOrThrow = async (
     let chainConfig = switch chainConfig.startBlock {
     | Config.Block(_) => chainConfig
     | Config.Latest =>
-      let logger = logger->Logging.forChain(chainConfig.id)
+      let logger = logger->Logging.withChainId(chainConfig.id)
       let head = await chainConfig->resolveHeadOrThrow(
         ~logger,
         ~lowercaseAddresses,

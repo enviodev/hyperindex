@@ -70,7 +70,7 @@ let indexesOn = async (indexer: IndexerRunner.t, ~tableName) => {
 // What the storage told the operator about its indexes, with build timings
 // left out.
 let storageMessages = (indexer: IndexerRunner.t) =>
-  indexer.logs()
+  indexer.infoAndAboveLogs()
   ->Array.filter(entry => entry.params->Dict.get("storage") === Some(JSON.String("postgres")))
   ->Array.map(entry => entry.msg->String.replaceRegExp(/[0-9.]+s\b/g, "Ns"))
 

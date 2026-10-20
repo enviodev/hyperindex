@@ -148,7 +148,7 @@ let makeInitial = (
   let configContractNames = ["UnknownContract", "AnotherUnknownContract"]
   let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~configContractNames)
   let fetchState = FetchState.make(
-    ~logger=Logging.capture(),
+    ~onNotice=ignore,
     ~onEventRegistrations,
     ~addressStore,
     ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations, ~configContractNames),
@@ -194,7 +194,7 @@ let makeFs = (
 ) => {
   let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~configContractNames?)
   let fetchState = FetchState.make(
-    ~logger=Logging.capture(),
+    ~onNotice=ignore,
     ~onEventRegistrations,
     ~addressStore,
     ~addressRows=TestAddresses.addressRows(
@@ -253,8 +253,8 @@ let makeIndexingContractsWithDynamics = (
   dict
 }
 
-// Nothing here reads what a fetch state logs.
-let registerDynamicContracts = FetchState.registerDynamicContracts(~logger=Logging.capture(), ...)
+// Nothing here reads what a fetch state reports.
+let registerDynamicContracts = FetchState.registerDynamicContracts(~onNotice=ignore, ...)
 
 describe("FetchState.make", () => {
   it("Creates FetchState with a single static address", t => {
@@ -1176,6 +1176,33 @@ describe("FetchState.registerDynamicContracts", () => {
       hasAddress2,
       ~message="Address2 should be registered even though Address1 (which came before it) was skipped",
     ).toBe(true)
+  })
+
+  // Fetch state decides nothing from a skipped registration, so it reports one
+  // as a fact for the chain to log rather than logging it itself.
+  it("Reports a re-registration it skips as a notice", t => {
+    let (fetchState, addressStore) = makeInitial()
+    let notices = []
+    let register = (fetchState, ~blockNumber) =>
+      fetchState->FetchState.registerDynamicContracts(
+        ~addressStore,
+        ~onNotice=notice => notices->Array.push(notice),
+        [
+          makeDynContractRegistration(
+            ~blockNumber,
+            ~contractAddress=mockAddress1,
+          )->dcToRegistration,
+        ],
+      )
+    let _ = fetchState->register(~blockNumber=10)->register(~blockNumber=5)
+    t.expect(notices).toEqual([
+      FetchState.SkippedReRegistration({
+        contractName: "Gravatar",
+        contractAddress: mockAddress1,
+        registeredFromBlock: 10,
+        requestedFromBlock: 5,
+      }),
+    ])
   })
 
   it(

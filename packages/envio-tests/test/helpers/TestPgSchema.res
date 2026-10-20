@@ -88,7 +88,7 @@ let write = async (
   ~items: array<unknown>,
   ~create=false,
 ) => {
-  let sql = PgStorage.makeClient(~logger=Logging.capture(), ~pgSchema, ~maxConnections=1)
+  let sql = PgStorage.makeClient(~logger=Logging.makeInMemory(), ~pgSchema, ~maxConnections=1)
   let registered = sql->PgStorage.register(~table, ~itemSchema)
   try {
     await sql->PgClient.writeBatch(

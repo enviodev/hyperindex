@@ -10,10 +10,10 @@ let defaultPersistence = (~config=config) =>
   | Some((memoizedConfig, persistence)) if memoizedConfig === config => persistence
   | _ =>
     let persistence = PgStorage.makePersistenceFromConfig(
-      ~logger=Logging.capture(),
+      ~logger=Logging.makeInMemory(),
       ~config,
       ~storage=PgStorage.makeStorageFromEnv(
-        ~logger=Logging.capture(),
+        ~logger=Logging.makeInMemory(),
         ~config,
         ~pgSchema=TestPgSchema.make(),
         ~isHasuraEnabled=false,
@@ -26,7 +26,7 @@ let defaultPersistence = (~config=config) =>
 // A persistence over `storage` that reports itself already initialized, so the
 // state writes through it instead of stalling on the init handshake.
 let readyPersistence = (~config=config, ~storage) => {
-  ...PgStorage.makePersistenceFromConfig(~logger=Logging.capture(), ~config, ~storage),
+  ...PgStorage.makePersistenceFromConfig(~logger=Logging.makeInMemory(), ~config, ~storage),
   storageStatus: Persistence.Ready({
     cleanRun: false,
     contractMapping: config.contractMapping,
@@ -57,7 +57,7 @@ let setEntity = (
 
 let make = (~config=config, ~persistence=?, ~entities=[]) => {
   let indexerState = IndexerState.make(
-    ~logger=Logging.capture(),
+    ~logger=Logging.makeInMemory(),
     ~config,
     ~persistence=switch persistence {
     | Some(persistence) => persistence
