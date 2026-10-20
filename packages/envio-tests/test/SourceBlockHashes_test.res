@@ -11,16 +11,14 @@ let chainId = 1->ChainId.fromInt
 // Uniswap V2 Factory's PairCreated event (topic0 = keccak("PairCreated(address,address,address,uint256)"))
 // 2 indexed args (token0, token1) ⇒ topicCount = 3.
 let pairCreatedTopic0 = "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
-let pairCreatedEventId = pairCreatedTopic0 ++ "_3"
 
 // Lowercase address so routing lookups match regardless of whether the
 // source returns checksummed or lowercase addresses.
-let uniswapV2FactoryAddress =
-  "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
+let uniswapV2FactoryAddress = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
 
-// Build the event config by hand so topic0 stays the bare sighash. MockIndexer's
-// evmEventConfig embeds its `id` (sighash_topicCount) directly as topic0, which
-// is fine for unit tests against mocked sources but breaks real HyperSync queries.
+// Build the event config by hand so topic0 stays the bare sighash. The shared
+// `EventRegistration` helper defaults topic0 to a placeholder that isn't a real
+// sighash, which is fine against mocked sources but breaks real HyperSync queries.
 // Block number and hash are needed so HyperSync returns block data for each item;
 // otherwise blockHashes harvested from items would crash on undefined `block`.
 let pairCreatedSelectedBlockFields = Utils.Set.fromArray(
@@ -38,7 +36,6 @@ let pairCreatedAbi: array<Internal.paramMeta> = [
 ]
 
 let pairCreatedEventConfig: Internal.evmEventConfig = {
-  id: pairCreatedEventId,
   contractName: "UniswapV2Factory",
   name: "PairCreated",
   paramsRawEventSchema: S.literal(%raw(`null`))
@@ -224,10 +221,8 @@ describe("Source.blockHashes integration - single-log range", () => {
   // the Uniswap V2 Factory. Confirmed by hand against eth.rpc.hypersync.xyz.
   let fromBlock = 17915919
   let toBlock = 17915919
-  let expectedBlockHash =
-    "0xfae821f07390dab171f9487d9c25e7289c5d363fcc24f03b98de295aa621dca5"
-  let expectedParentHash =
-    "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
+  let expectedBlockHash = "0xfae821f07390dab171f9487d9c25e7289c5d363fcc24f03b98de295aa621dca5"
+  let expectedParentHash = "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
 
   Async.itWithOptions(
     "HyperSync: returns exactly one parsed item and a block-page entry for the matching block",

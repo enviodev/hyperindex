@@ -786,7 +786,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 
   let contractDataByName: dict<{
     "abi": EvmTypes.Abi.t,
-    "eventSignatures": array<string>,
     "events": option<array<_>>,
     "svmAbi": option<{
       "definedTypes": JSON.t,
@@ -800,10 +799,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ->Array.forEach(((contractName, contractConfig)) => {
       let capitalizedName = contractName->Utils.String.capitalize
       let abi = contractConfig["abi"]->(Utils.magic: JSON.t => EvmTypes.Abi.t)
-      let eventSignatures = switch contractConfig["events"] {
-      | Some(events) => events->Array.map(eventItem => eventItem["sighash"])
-      | None => []
-      }
       let widened =
         contractConfig->(
           Utils.magic: _ => {"svmAbi": option<{"definedTypes": JSON.t, "source": string}>}
@@ -812,7 +807,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         capitalizedName,
         {
           "abi": abi,
-          "eventSignatures": eventSignatures,
           "events": contractConfig["events"],
           "svmAbi": widened["svmAbi"],
         },

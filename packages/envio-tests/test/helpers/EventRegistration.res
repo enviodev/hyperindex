@@ -2,10 +2,10 @@
 // real one. Tests that drive fetch state, address stores or sources need
 // registrations without needing an ABI behind them.
 
-let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
+let placeholderSighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
 
 let evmOnEventRegistration = (
-  ~id=eventId,
+  ~id=placeholderSighash,
   ~contractName="ERC20",
   ~blockFieldNames: array<Internal.evmBlockField>=[],
   ~transactionFieldNames: array<Internal.evmTransactionField>=[],
@@ -23,7 +23,6 @@ let evmOnEventRegistration = (
   ~topicCount=paramsMetadata->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc),
 ): Internal.evmOnEventRegistration => {
   let eventConfig: Internal.evmEventConfig = {
-    id,
     contractName,
     name: "EventWithoutFields",
     paramsRawEventSchema: EventConfigBuilder.buildParamsSchema(paramsMetadata),
