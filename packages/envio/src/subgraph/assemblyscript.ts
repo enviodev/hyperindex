@@ -14,6 +14,8 @@ export const RETAG_EACH_HELPER = "__envio_retag_each";
 export const EVENT_CLASSES_EXPORT = "__envio_event_classes";
 /** Reruns a project module's top-level code for a new trigger. */
 export const MODULE_INIT = "__envio_init";
+export const AS_MAP = "__envio_Map";
+export const AS_SET = "__envio_Set";
 
 /**
  * AssemblyScript divides two integers as integers; this truncates only when
@@ -215,6 +217,100 @@ nullReceiver.equals = (other) =>
       ? other.length === 0
       : zeroFor(other).equals(other);
 nullReceiver.notEqual = (other) => !nullReceiver.equals(other);
+
+/**
+ * What a mapping can name on one of these besides a key: the class's own
+ * members, and what Node and the runtime look up on any object.
+ */
+const NOT_KEYS = new Set(["then", "toJSON", "constructor", "valueOf", "toString", "inspect"]);
+
+/**
+ * A property access that stands for `[]` on AssemblyScript's Map or Set: the
+ * key as the collection holds it, a number when its numeric spelling is one.
+ */
+function keyOf(target: Map<unknown, unknown> | Set<unknown>, prop: string): unknown {
+  if (target.has(prop)) return prop;
+  const number = Number(prop);
+  if (prop !== "" && String(number) === prop && (target.has(number) || firstKeyIsNumber(target))) return number;
+  return prop;
+}
+
+function firstKeyIsNumber(target: Map<unknown, unknown> | Set<unknown>): boolean {
+  for (const key of target.keys()) return typeof key === "number";
+  return false;
+}
+
+/**
+ * Serves `collection[key]` and `collection[key] = value` through the class's
+ * `[]` operators; its own members, bound to it, through everything else.
+ */
+function indexedBy<T extends Map<unknown, unknown> | Set<unknown>>(
+  collection: T,
+  read: (target: T, key: unknown) => unknown,
+  write: (target: T, key: unknown, value: unknown) => void,
+): T {
+  const bound = new Map<PropertyKey, Function>();
+  return new Proxy(collection, {
+    get(target, prop) {
+      if (typeof prop === "symbol" || prop in target || NOT_KEYS.has(prop)) {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== "function") return value;
+        let method = bound.get(prop);
+        if (!method) bound.set(prop, (method = value.bind(target)));
+        return method;
+      }
+      return read(target, keyOf(target, prop));
+    },
+    set(target, prop, value) {
+      if (typeof prop === "symbol" || prop in target) return Reflect.set(target, prop, value, target);
+      write(target, keyOf(target, prop), value);
+      return true;
+    },
+  });
+}
+
+/**
+ * AssemblyScript's `Map` (std/assembly/map.ts): `keys()` and `values()` are
+ * arrays, `get` of a missing key throws, and `[]` reads and writes an entry.
+ */
+export class AsMap<K, V> extends Map<K, V> {
+  constructor() {
+    super();
+    return indexedBy(
+      this,
+      (target, key) => target.get(key as K),
+      (target, key, value) => target.set(key as K, value as V),
+    );
+  }
+  get(key: K): V {
+    if (!super.has(key)) throw new Error("Key does not exist");
+    return super.get(key) as V;
+  }
+  keys(): any {
+    return Array.from(super.keys());
+  }
+  values(): any {
+    return Array.from(super.values());
+  }
+}
+
+/**
+ * AssemblyScript's `Set` (std/assembly/set.ts): `values()` is an array, `[]`
+ * reads `has`, and `set[key] = flag` adds or deletes.
+ */
+export class AsSet<T> extends Set<T> {
+  constructor() {
+    super();
+    return indexedBy(
+      this,
+      (target, key) => target.has(key as T),
+      (target, key, value) => (value ? target.add(key as T) : target.delete(key as T)),
+    );
+  }
+  values(): any {
+    return Array.from(super.values());
+  }
+}
 
 /**
  * graph-ts overloads the arithmetic and comparison operators on `BigInt`,

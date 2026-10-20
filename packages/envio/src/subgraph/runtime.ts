@@ -64,6 +64,10 @@ import {
 import { encodeArg, decodeArg, makeCallEffect } from "./calls.ts";
 import { resetRpcClients } from "./rpc.ts";
 import {
+  AS_MAP,
+  AS_SET,
+  AsMap,
+  AsSet,
   EVENT_CLASSES_EXPORT,
   MODULE_INIT,
   OPERATORS_HELPER,
@@ -303,6 +307,8 @@ function installResolveHook(root: string) {
   globals[OPERATORS_HELPER] ??= operators;
   globals[RETAG_HELPER] ??= retagChangetype;
   globals[RETAG_EACH_HELPER] ??= retagEach;
+  globals[AS_MAP] ??= AsMap;
+  globals[AS_SET] ??= AsSet;
   globals.assert ??= (value: unknown, message?: string) => {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;

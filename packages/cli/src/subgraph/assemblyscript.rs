@@ -60,6 +60,9 @@ pub const OPERATORS_HELPER: &str = "__envio_op";
 pub const RETAG_HELPER: &str = "__envio_retag";
 pub const RETAG_EACH_HELPER: &str = "__envio_retag_each";
 pub const EVENT_CLASSES_EXPORT: &str = "__envio_event_classes";
+/// AssemblyScript's own `Map` and `Set`, which a mapping's `new Map` builds.
+pub const AS_MAP: &str = "__envio_Map";
+pub const AS_SET: &str = "__envio_Set";
 
 /// `export function handleTransfer(event: Transfer)` names, in a type, the
 /// generated class graph-node would hand it — the class whose `params` getters
@@ -1361,6 +1364,21 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 let keep = Expression::new_boolean_literal(span, true, &self.ast);
                 *expr = self.call(span, RETAG_HELPER, [ctor, value, keep]);
             }
+            // AssemblyScript's std Map and Set aren't JavaScript's: `keys()`
+            // is an array and `map[key]` an operator (std/assembly/map.ts).
+            Expression::NewExpression(new) => {
+                let Expression::Identifier(callee) = &mut new.callee else {
+                    return;
+                };
+                let builtin = match callee.name.as_str() {
+                    "Map" => AS_MAP,
+                    "Set" => AS_SET,
+                    _ => return,
+                };
+                if !self.classes.contains(callee.name.as_str()) {
+                    callee.name = Ident::from_str_in(builtin, &self.ast);
+                }
+            }
             Expression::CallExpression(call) => {
                 if self.legacy_nulls {
                     if let Expression::StaticMemberExpression(member) = &mut call.callee {
@@ -1760,7 +1778,7 @@ export function __envio_static() {
 }
 function __envio_start() {
 \ttotal = 0;
-\tseen = new Map();
+\tseen = new __envio_Map();
 \t__envio_define_Mapping();
 \tMapping.count = 0;
 \tRegistry = class Registry {
@@ -1833,6 +1851,26 @@ export function f(xs) {
 \t\ttotal = __envio_op.add(total, x);
 \t}
 \treturn total;
+}
+"
+        );
+    }
+
+    // A mapping's own `Map` class, imported or declared, is left alone.
+    #[test]
+    fn builds_assemblyscript_maps_and_sets() {
+        assert_eq!(
+            js("import { Map as Dict } from \"./dict\";
+export function f(): void {
+  let totals = new Map<string, i32>();
+  let seen = new Set<string>();
+  let own = new Dict();
+}"),
+            "import { Map as Dict } from \"./dict\";
+export function f() {
+\tlet totals = new __envio_Map();
+\tlet seen = new __envio_Set();
+\tlet own = new Dict();
 }
 "
         );
