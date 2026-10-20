@@ -784,6 +784,10 @@ fn contract_config(
     // to register the handler under the same one.
     let mut resolved: Vec<(String, Option<String>)> = Vec::new();
     let mut ordinals: HashMap<String, usize> = HashMap::new();
+    // graph-node runs every handler whose event matches a log, in manifest
+    // order (`handlers_for_log`); envio runs every registration on an event,
+    // so a second handler of the same event registers on the first's.
+    let mut by_event: HashMap<String, (String, usize)> = HashMap::new();
     for handler in source.event_handlers.iter_mut() {
         if handler.name.is_empty() {
             continue;
@@ -798,6 +802,11 @@ fn contract_config(
             ),
             report,
         );
+        handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
+        if let Some((name, _)) = by_event.get(&event) {
+            handler.name = name.clone();
+            continue;
+        }
         let ordinal = ordinals.entry(base.clone()).or_insert(0);
         let unique = if *ordinal == 0 {
             base.clone()
@@ -806,53 +815,64 @@ fn contract_config(
         };
         *ordinal += 1;
         handler.name = unique.clone();
-        handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
+        by_event.insert(event.clone(), (unique.clone(), resolved.len()));
         // The generated config needs the same unique name whenever one was
-        // minted, overloaded or not — two handlers can name the same event, and
-        // the runtime registers under the name the config carries.
+        // minted for an overload: the runtime registers under the name the
+        // config carries.
         let renamed = unique != base;
         resolved.push((event, renamed.then_some(unique)));
     }
 
-    let events = source
-        .event_handlers
-        .iter()
-        .filter(|handler| !handler.name.is_empty())
-        .zip(resolved)
-        .map(|(handler, (event, name))| {
-            // The runtime turns each filter into a `where` on the indexed
-            // parameter it narrows — except one hashed into its topic, whose
-            // value envio can't match against.
-            let indexed: Vec<_> = handler.inputs.iter().filter(|input| input.indexed).collect();
-            for position in handler.topics.keys() {
-                let location = format!(
-                    "data source \"{}\" → eventHandlers → \"{}\" → topic{position}",
-                    source.name, handler.handler
-                );
-                match indexed.get(position - 1) {
-                    None => report.unknown(
-                        format!("which indexed parameter of \"{}\" topic{position} filters", handler.event),
-                        location,
+    let mut receipts = vec![false; resolved.len()];
+    for handler in source.event_handlers.iter() {
+        if handler.name.is_empty() {
+            continue;
+        }
+        if let Some((_, index)) = by_event.values().find(|(name, _)| *name == handler.name) {
+            receipts[*index] |= handler.receipt;
+        }
+        // The runtime turns each filter into a `where` on the indexed
+        // parameter it narrows — except one hashed into its topic, whose
+        // value envio can't match against.
+        let indexed: Vec<_> = handler
+            .inputs
+            .iter()
+            .filter(|input| input.indexed)
+            .collect();
+        for position in handler.topics.keys() {
+            let location = format!(
+                "data source \"{}\" → eventHandlers → \"{}\" → topic{position}",
+                source.name, handler.handler
+            );
+            match indexed.get(position - 1) {
+                None => report.unknown(
+                    format!(
+                        "which indexed parameter of \"{}\" topic{position} filters",
+                        handler.event
                     ),
-                    Some(input) if input.is_hashed_in_topic() => report.unsupported(
-                        format!(
-                            "topic filters on a {} indexed parameter, which the log carries only as a hash",
-                            input.abi_type
-                        ),
-                        location,
+                    location,
+                ),
+                Some(input) if input.is_hashed_in_topic() => report.unsupported(
+                    format!(
+                        "topic filters on a {} indexed parameter, which the log carries only as a hash",
+                        input.abi_type
                     ),
-                    Some(_) => {}
-                }
+                    location,
+                ),
+                Some(_) => {}
             }
-            EventConfig {
-                event,
-                name,
-                field_selection: Some(field_selection_for(handler.receipt, usage)),
-            }
+        }
+    }
+
+    let mut events: Vec<EventConfig> = resolved
+        .into_iter()
+        .zip(receipts)
+        .map(|((event, name), receipt)| EventConfig {
+            event,
+            name,
+            field_selection: Some(field_selection_for(receipt, usage)),
         })
         .collect();
-
-    let mut events: Vec<EventConfig> = events;
 
     // graph-node runs the first call handler whose selector matches.
     let mut selectors = HashSet::new();
