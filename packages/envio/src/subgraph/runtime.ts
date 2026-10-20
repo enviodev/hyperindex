@@ -434,6 +434,29 @@ function notGenerated(root: string, generated: string, message: string, sources:
   );
 }
 
+/**
+ * Why a generated file lacks a name a mapping imports from it: graph codegen
+ * writes a class per entity, event and ABI type it knows, and `graph build`
+ * fails on any other name too.
+ */
+function notExported(root: string, generated: string, mappingFile: string, message: string): string | undefined {
+  const found = /The requested module '([^']+)' does not provide an export named '([^']+)'/.exec(message);
+  if (!found) return undefined;
+  const [, specifier, name] = found;
+  if (!specifier.startsWith(".")) return undefined;
+  const target = path.resolve(path.dirname(path.resolve(root, mappingFile)), specifier);
+  const file = [target, `${target}.ts`].find((candidate) => existsSync(candidate) && candidate.endsWith(".ts"));
+  if (!file || !file.startsWith(path.resolve(generated) + path.sep)) return undefined;
+  const exported = [...readFileSync(file, "utf8").matchAll(/^export class (\w+)/gm)].map(([, klass]) => klass);
+  const lower = name.toLowerCase();
+  const similar = exported.filter((klass) => klass.toLowerCase().includes(lower) || lower.includes(klass.toLowerCase()));
+  const listed = (similar.length > 0 ? similar : exported.slice(0, 8)).sort();
+  return (
+    `${path.relative(root, file)} is graph codegen's output for this project and has no ${name}` +
+    `${listed.length > 0 ? ` (it exports ${listed.join(", ")})` : ""}, so \`graph build\` fails on this import as well.`
+  );
+}
+
 async function loadMapping(
   root: string,
   generated: string,
@@ -464,7 +487,7 @@ async function loadMapping(
     }
     // An unknown named import fails at Node's ESM link step, before any Proxy
     // in the shim can see it — rewrap it with the mapping that caused it.
-    const why = notGenerated(root, generated, message, sources);
+    const why = notGenerated(root, generated, message, sources) ?? notExported(root, generated, mappingFile, message);
     throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}${why ? `\n${why}` : ""}`);
   }
 }
