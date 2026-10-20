@@ -31,7 +31,8 @@ specVersion (manifest): **0.0.4** feature declarations · **0.0.5**
 **0.0.8** polling/once block handlers · **0.0.9** `endBlock` · **1.0.0**
 `indexerHints.prune` · **1.1.0** timeseries/aggregations, `Int8`, `Timestamp`
 · **1.2.0** topic filters, declared eth_calls · **1.3.0** subgraph
-composition · **1.4.0** struct fields in declared eth_calls.
+composition · **1.4.0** struct fields in declared eth_calls · **1.5.0** Amp
+data sources (refused: SQL over an Amp dataset, §2).
 
 apiVersion (graph-ts): **0.0.5** modern baseline · **0.0.6** `tx.nonce`,
 `block.baseFeePerGas` · **0.0.7** `event.receipt` · **0.0.8** field
@@ -68,6 +69,7 @@ graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 | Block handler `filter: {kind: call}` | an envio event `__envio_call_any`: one item per call to the address, ordered after the block's logs and calls and before its block handlers | ✅ needs traces (§4a) |
 | Filtered block handlers on a template | — | ❌ §7 error |
 | Subgraph composition (`kind: subgraph`, 1.3.0) | **refused, by design.** graph-node triggers such a data source on the immutable entities its source deployment writes, read from that deployment's store (`graph/src/data_source/subgraph.rs`). The deployment hash names compiled WASM on IPFS, which the shim can't run, and envio doesn't read another indexer's store; indexing the source in-process would need its AssemblyScript source, which a deployment hash doesn't lead to. The error names the source deployment and suggests indexing its contracts directly | ❌ §7 error |
+| Amp data sources (`kind: amp`, 1.5.0) | **refused, by design**: their tables are SQL over an Amp dataset, answered by an Amp server. The error names the dataset | ❌ §7 error |
 | Substreams-powered subgraphs (`kind: substreams`) | **refused, by design**: the entities come out of a Substreams module (`.spkg`) graph-node streams from a Substreams provider; there is no mapping over chain data to run. The error names the package and module | ❌ §7 error |
 
 ## 3. Schema → envio schema
@@ -663,7 +665,7 @@ refuse instead, so behavior never silently diverges:
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `blockHandlers` on a template | translation (manifest) |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
-| Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`) | translation (manifest), as unindexable |
+| Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`) | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
 | Timeseries & aggregations | supported (§3); malformed declarations refused at translation (schema) |
 | `event.receipt.logs` | runtime, on access (receipt scalars keep working) |

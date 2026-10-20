@@ -228,6 +228,50 @@ If you need this, please open an issue so we can look at your use case:
   https://github.com/enviodev/hyperindex/issues`)
   })
 
+  // graph-node's SPEC_VERSION_1_5_0 enables Amp data sources, whose tables
+  // are SQL over an Amp dataset (graph/src/amp/manifest/data_source).
+  it("refuses an Amp data source, naming its dataset", t => {
+    let manifest = `
+specVersion: 1.5.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - name: GRT
+    kind: amp
+    network: ethereum-mainnet
+    source:
+      address: "0xc944E90C64B2c07662A292be6244BDf05Cda44a7"
+      dataset: edgeandnode/ethereum_mainnet
+      tables:
+        - logs
+      startBlock: 11446769
+    transformer:
+      apiVersion: 0.0.1
+      tables:
+        - name: Token
+          file: Token.sql
+`
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index an Amp data source (\`kind: amp\`).
+  Found in data source "GRT" → kind.
+Its tables are SQL queries over the Amp dataset edgeandnode/ethereum_mainnet, which only an Amp server answers. Envio Subgraph runs AssemblyScript mappings over chain data.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
+  })
+
+  it("accepts specVersion 1.5.0 on an ethereum data source", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)->String.replace(
+          "specVersion: 0.0.5",
+          "specVersion: 1.5.0",
+        ),
+      ),
+    ).toEqual(accepted)
+  })
+
   it("accepts a topic filter on an address", t => {
     let message = translate(
       ~schema=baseSchema,

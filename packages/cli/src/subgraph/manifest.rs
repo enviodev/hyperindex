@@ -16,7 +16,7 @@ use super::errors::Report;
 use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
-pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 4, 0);
+pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 5, 0);
 /// The newest graph-ts the runtime shim implements. There is no floor: older
 /// versions expose a subset of the same API, and anything genuinely missing from
 /// one is refused by name when the mapping reaches for it.
@@ -602,6 +602,20 @@ fn parse_data_source(
                      AssemblyScript mappings over chain data and can't run a Substreams module.",
                     package("moduleName"),
                     package("file"),
+                ),
+                where_("kind"),
+            );
+            return None;
+        }
+        // graph-node's Amp data sources (SPEC_VERSION_1_5_0,
+        // graph/src/amp/manifest/data_source) fill their tables with SQL.
+        "amp" => {
+            report.unindexable(
+                "an Amp data source (`kind: amp`)",
+                format!(
+                    "Its tables are SQL queries over the Amp dataset {}, which only an Amp \
+                     server answers. Envio Subgraph runs AssemblyScript mappings over chain data.",
+                    source_str(raw, &["dataset"]).unwrap_or_else(|| "(unnamed)".to_string()),
                 ),
                 where_("kind"),
             );
