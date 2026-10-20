@@ -222,8 +222,8 @@ fn transform(source: &str, path: &Path, legacy_nulls: bool, hoist: bool) -> Resu
         classes: value_bindings(&program),
         refused: None,
         legacy_nulls,
-        literal_consts: literal_consts(&program),
-        strings: vec![],
+        module_names: module_names(&program),
+        locals: vec![],
         generics: vec![],
         in_for_head: false,
     };
@@ -723,10 +723,9 @@ struct Rewrite<'a> {
     /// The mapping is below apiVersion 0.0.5, where graph-node reads through a
     /// null pointer instead of trapping.
     legacy_nulls: bool,
-    /// Top-level `const`s bound to a string literal.
-    literal_consts: HashSet<String>,
-    /// What each enclosing function's names hold, for `===` (`Strings`).
-    strings: Vec<Strings>,
+    module_names: ModuleNames,
+    /// What each enclosing function's names hold (`Locals`).
+    locals: Vec<Locals>,
     /// The type parameters in scope: a `T` field has no zero this pass knows.
     generics: Vec<HashSet<String>>,
     /// Visiting a `for (let x of …)` head, whose binding has no initializer.
@@ -784,12 +783,32 @@ fn type_parameter_names(
 /// (asc deduplicates them), and a string the host returns is a new allocation
 /// every time — graph-node writes it into the module's memory per call.
 #[derive(Default)]
-struct Strings {
+struct Locals {
     /// Locals initialized with an `allocates` call and never assigned again.
     fresh: HashSet<String>,
     /// Names that read a literal: the module's literal `const`s this function
     /// doesn't rebind.
     literal: HashSet<String>,
+    /// Names declared `u32`: its own parameters and locals, and the module's
+    /// globals this function doesn't rebind.
+    unsigned: HashSet<String>,
+}
+
+/// What the module's top level declares, for every function in it.
+#[derive(Default)]
+struct ModuleNames {
+    /// `const`s bound to a string literal.
+    literal_consts: HashSet<String>,
+    /// Globals declared `u32`.
+    unsigned: HashSet<String>,
+    /// Functions declared to return a `u32`.
+    unsigned_functions: HashSet<String>,
+}
+
+fn is_u32(annotation: Option<&TSTypeAnnotation<'_>>) -> bool {
+    matches!(annotation.map(|annotation| &annotation.type_annotation),
+        Some(TSType::TSTypeReference(reference))
+            if matches!(&reference.type_name, TSTypeName::IdentifierReference(name) if name.name == "u32"))
 }
 
 enum StringKind<'s> {
@@ -830,7 +849,7 @@ fn is_string_literal(expr: &Expression<'_>) -> bool {
     }
 }
 
-impl Strings {
+impl Locals {
     fn kind<'e>(&self, expr: &'e Expression<'_>) -> StringKind<'e> {
         if allocates(expr) {
             return StringKind::Allocated;
@@ -862,31 +881,49 @@ impl Strings {
     }
 }
 
-/// The module's top-level `const`s bound to a string literal.
-fn literal_consts(program: &Program<'_>) -> HashSet<String> {
-    let declarations = program.body.iter().filter_map(|statement| match statement {
-        Statement::VariableDeclaration(decl) => Some(decl),
-        Statement::ExportDeclaration(export) => match &export.declaration {
-            Declaration::VariableDeclaration(decl) => Some(decl),
-            _ => None,
-        },
-        _ => None,
-    });
-    declarations
-        .filter(|decl| decl.kind == VariableDeclarationKind::Const)
-        .flat_map(|decl| decl.declarations.iter())
-        .filter_map(|declarator| match (&declarator.id, &declarator.init) {
-            (BindingPattern::BindingIdentifier(id), Some(init)) if is_string_literal(init) => {
-                Some(id.name.to_string())
+/// What the module's top level declares, for every function in it.
+fn module_names(program: &Program<'_>) -> ModuleNames {
+    let mut names = ModuleNames::default();
+    for statement in &program.body {
+        let declaration = match statement {
+            Statement::ExportDeclaration(export) => &export.declaration,
+            other => match other.as_declaration() {
+                Some(declaration) => declaration,
+                None => continue,
+            },
+        };
+        match declaration {
+            Declaration::VariableDeclaration(decl) => {
+                for declarator in &decl.declarations {
+                    let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                        continue;
+                    };
+                    if decl.kind == VariableDeclarationKind::Const
+                        && declarator.init.as_ref().is_some_and(is_string_literal)
+                    {
+                        names.literal_consts.insert(id.name.to_string());
+                    }
+                    if is_u32(declarator.type_annotation.as_deref()) {
+                        names.unsigned.insert(id.name.to_string());
+                    }
+                }
             }
-            _ => None,
-        })
-        .collect()
+            Declaration::FunctionDeclaration(func) => {
+                if let Some(id) = &func.id {
+                    if is_u32(func.return_type.as_deref()) {
+                        names.unsigned_functions.insert(id.name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 /// What a function's names hold. A name bound twice anywhere in the function —
 /// a parameter, a nested block's own `let` — is left out rather than told apart.
-fn strings(func: &Function<'_>, literal_consts: &HashSet<String>) -> Strings {
+fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
     use oxc::ast_visit::{walk, Visit};
 
     #[derive(Default)]
@@ -894,17 +931,27 @@ fn strings(func: &Function<'_>, literal_consts: &HashSet<String>) -> Strings {
         bound: std::collections::HashMap<String, usize>,
         fresh: HashSet<String>,
         assigned: HashSet<String>,
+        unsigned: HashSet<String>,
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_binding_identifier(&mut self, id: &BindingIdentifier<'a>) {
             *self.bound.entry(id.name.to_string()).or_default() += 1;
         }
+        fn visit_formal_parameter(&mut self, param: &FormalParameter<'a>) {
+            if let BindingPattern::BindingIdentifier(id) = &param.pattern {
+                if is_u32(param.type_annotation.as_deref()) {
+                    self.unsigned.insert(id.name.to_string());
+                }
+            }
+            walk::walk_formal_parameter(self, param);
+        }
         fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
-            if let (BindingPattern::BindingIdentifier(id), Some(init)) =
-                (&declarator.id, &declarator.init)
-            {
-                if allocates(init) {
+            if let BindingPattern::BindingIdentifier(id) = &declarator.id {
+                if declarator.init.as_ref().is_some_and(allocates) {
                     self.fresh.insert(id.name.to_string());
+                }
+                if is_u32(declarator.type_annotation.as_deref()) {
+                    self.unsigned.insert(id.name.to_string());
                 }
             }
             walk::walk_variable_declarator(self, declarator);
@@ -925,12 +972,26 @@ fn strings(func: &Function<'_>, literal_consts: &HashSet<String>) -> Strings {
         .filter(|name| scan.bound.get(*name) == Some(&1) && !scan.assigned.contains(*name))
         .cloned()
         .collect();
-    let literal = literal_consts
-        .iter()
-        .filter(|name| !scan.bound.contains_key(*name))
-        .cloned()
-        .collect();
-    Strings { fresh, literal }
+    let module_level = |names: &HashSet<String>| -> HashSet<String> {
+        names
+            .iter()
+            .filter(|name| !scan.bound.contains_key(*name))
+            .cloned()
+            .collect()
+    };
+    let literal = module_level(&module.literal_consts);
+    let mut unsigned = module_level(&module.unsigned);
+    unsigned.extend(
+        scan.unsigned
+            .iter()
+            .filter(|name| scan.bound.get(*name) == Some(&1))
+            .cloned(),
+    );
+    Locals {
+        fresh,
+        literal,
+        unsigned,
+    }
 }
 
 /// graph-ts methods whose receiver goes to the host as a pointer, or whose
@@ -1006,6 +1067,37 @@ fn search_helper(call: &CallExpression<'_>) -> Option<&'static str> {
         "lastIndexOf" => "lastIndexOf",
         _ => return None,
     })
+}
+
+/// The `OPERATORS_HELPER` method for a bit operation on a `u32`, whose
+/// result AssemblyScript keeps unsigned where JavaScript's is an int32.
+fn unsigned_helper(operator: BinaryOperator) -> Option<&'static str> {
+    Some(match operator {
+        BinaryOperator::ShiftLeft => "shl_u32",
+        BinaryOperator::ShiftRight => "shr_u32",
+        BinaryOperator::BitwiseOR => "or_u32",
+        BinaryOperator::BitwiseAnd => "and_u32",
+        BinaryOperator::BitwiseXOR => "xor_u32",
+        _ => return None,
+    })
+}
+
+fn unsigned_assignment_helper(operator: AssignmentOperator) -> Option<&'static str> {
+    Some(match operator {
+        AssignmentOperator::ShiftLeft => "shl_u32",
+        AssignmentOperator::ShiftRight => "shr_u32",
+        AssignmentOperator::BitwiseOR => "or_u32",
+        AssignmentOperator::BitwiseAnd => "and_u32",
+        AssignmentOperator::BitwiseXOR => "xor_u32",
+        _ => return None,
+    })
+}
+
+fn is_shift(operator: BinaryOperator) -> bool {
+    matches!(
+        operator,
+        BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight
+    )
 }
 
 fn assignment_helper(operator: AssignmentOperator) -> Option<&'static str> {
@@ -1093,6 +1185,36 @@ impl<'a> Rewrite<'a> {
         let callee = Expression::new_identifier(span, helper, &self.ast);
         let args = ArenaVec::from_iter_in(args.into_iter().map(Argument::from), &self.ast);
         Expression::new_call_expression(span, callee, None, args, false, &self.ast)
+    }
+
+    fn unsigned_name(&self, name: &str) -> bool {
+        match self.locals.last() {
+            Some(locals) => locals.unsigned.contains(name),
+            None => self.module_names.unsigned.contains(name),
+        }
+    }
+
+    /// An expression whose AssemblyScript type is `u32`, as far as its names
+    /// and graph-ts' signatures say: a name declared so, `x.toU32()`,
+    /// `x as u32`, a call of a function returning one, a bit operation on one.
+    fn unsigned(&self, expr: &Expression<'a>) -> bool {
+        match expr.without_parentheses() {
+            Expression::Identifier(id) => self.unsigned_name(id.name.as_str()),
+            Expression::CallExpression(call) => match &call.callee {
+                Expression::StaticMemberExpression(member) => {
+                    let name = member.property.name.as_str();
+                    (name == "toU32" && call.arguments.is_empty())
+                        || (matches!(&member.object, Expression::Identifier(id) if id.name == OPERATORS_HELPER)
+                            && (name == "as_u32" || name.ends_with("_u32")))
+                }
+                Expression::Identifier(callee) => self
+                    .module_names
+                    .unsigned_functions
+                    .contains(callee.name.as_str()),
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     fn zero(&self, span: Span, annotation: &TSTypeAnnotation<'a>) -> Option<Expression<'a>> {
@@ -1258,7 +1380,7 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                     BinaryOperator::StrictEquality | BinaryOperator::StrictInequality
                 ) =>
             {
-                let distinct = match self.strings.last() {
+                let distinct = match self.locals.last() {
                     Some(strings) => strings.distinct(&binary.left, &binary.right),
                     None => allocates(&binary.left) || allocates(&binary.right),
                 };
@@ -1278,6 +1400,18 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 } else {
                     same
                 };
+            }
+            Expression::BinaryExpression(binary)
+                if unsigned_helper(binary.operator).is_some_and(|_| {
+                    self.unsigned(&binary.left)
+                        || (!is_shift(binary.operator) && self.unsigned(&binary.right))
+                }) =>
+            {
+                let method = unsigned_helper(binary.operator).expect("checked");
+                let span = binary.span;
+                let left = binary.left.take_in(&self.ast);
+                let right = binary.right.take_in(&self.ast);
+                *expr = self.operator(span, method, [left, right]);
             }
             Expression::BinaryExpression(binary) => {
                 let Some(method) = binary_helper(binary.operator) else {
@@ -1299,6 +1433,19 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                 let span = unary.span;
                 let argument = unary.argument.take_in(&self.ast);
                 *expr = self.operator(span, "neg", [argument]);
+            }
+            Expression::AssignmentExpression(assign)
+                if unsigned_assignment_helper(assign.operator).is_some()
+                    && matches!(&assign.left, AssignmentTarget::AssignmentTargetIdentifier(id)
+                        if self.unsigned_name(id.name.as_str())) =>
+            {
+                let method = unsigned_assignment_helper(assign.operator).expect("checked");
+                let read = self
+                    .read_of(&assign.left)
+                    .expect("an identifier reads again");
+                let right = assign.right.take_in(&self.ast);
+                assign.right = self.operator(assign.span, method, [read, right]);
+                assign.operator = AssignmentOperator::Assign;
             }
             Expression::AssignmentExpression(assign) => {
                 let Some(method) = assignment_helper(assign.operator) else {
@@ -1540,9 +1687,9 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
     fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
         self.generics
             .push(type_parameter_names(&func.type_parameters));
-        self.strings.push(strings(func, &self.literal_consts));
+        self.locals.push(locals(func, &self.module_names));
         walk_mut::walk_function(self, func, flags);
-        self.strings.pop();
+        self.locals.pop();
         self.generics.pop();
         let params: Vec<&str> = func
             .params
@@ -1851,6 +1998,34 @@ export function f(xs) {
 \t\ttotal = __envio_op.add(total, x);
 \t}
 \treturn total;
+}
+"
+        );
+    }
+
+    // An i32's bit operations are JavaScript's own.
+    #[test]
+    fn keeps_a_u32_unsigned_through_bit_operations() {
+        assert_eq!(
+            js("function word(b: u8[]): u32 {
+  return ((b[0] as u32) << 24) | (b[1] as u32);
+}
+export function f(tick: BigInt, signed: i32): void {
+  let mask: u32 = 0xff;
+  let id = (tick.toU32() << 8) >> 8;
+  let low = word([]) & mask;
+  mask >>= 1;
+  let plain = signed >> 4;
+}"),
+            "function word(b) {
+\treturn __envio_op.or_u32(__envio_op.shl_u32(__envio_op.as_u32(b[0]), 24), __envio_op.as_u32(b[1]));
+}
+export function f(tick, signed) {
+\tlet mask = 255;
+\tlet id = __envio_op.shr_u32(__envio_op.shl_u32(tick.toU32(), 8), 8);
+\tlet low = __envio_op.and_u32(word([]), mask);
+\tmask = __envio_op.shr_u32(mask, 1);
+\tlet plain = signed >> 4;
 }
 "
         );

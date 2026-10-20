@@ -342,6 +342,12 @@ export const operators = {
   le: binary("le", (a, b) => a <= b),
   gt: binary("gt", (a, b) => a > b),
   ge: binary("ge", (a, b) => a >= b),
+  // A u32's bit operations, which AssemblyScript keeps unsigned.
+  shl_u32: (a: unknown, b: unknown) => (Number(a) << Number(b)) >>> 0,
+  shr_u32: (a: unknown, b: unknown) => Number(a) >>> Number(b),
+  or_u32: (a: unknown, b: unknown) => (Number(a) | Number(b)) >>> 0,
+  and_u32: (a: unknown, b: unknown) => (Number(a) & Number(b)) >>> 0,
+  xor_u32: (a: unknown, b: unknown) => (Number(a) ^ Number(b)) >>> 0,
   as_i8: wrapTo(8, true),
   as_u8: wrapTo(8, false),
   as_i16: wrapTo(16, true),

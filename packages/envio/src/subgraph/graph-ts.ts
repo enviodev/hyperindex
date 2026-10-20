@@ -357,8 +357,9 @@ class BigInt_ extends Uint8Array {
     }
     return BigInt_.withWidth(raw, 4);
   }
+  // A u32 parameter: the bits of whatever 32-bit integer the mapping passed.
   static fromU32(value: number): BigInt_ {
-    const made = new BigInt_(BigInt(Math.trunc(value)));
+    const made = new BigInt_(BigInt(Math.trunc(value) >>> 0));
     made.width = 5;
     return made;
   }
