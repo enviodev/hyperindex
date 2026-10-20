@@ -181,6 +181,7 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 bytes_type: None,
+                hex_type: None,
                 address_format: None,
             })
         }
@@ -322,6 +323,7 @@ pub mod fuel {
                 contracts: None,
                 raw_events: None,
                 bytes_type: None,
+                hex_type: None,
                 chains: network_configs,
             }
         }

@@ -240,6 +240,17 @@ pub enum BytesType {
     Uint8Array,
 }
 
+/// The TypeScript type of `0x`-prefixed hex values. ReScript types are unaffected.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HexType {
+    /// Plain `string`.
+    #[default]
+    String,
+    /// The stricter `Hex` (`` `0x${string}` ``) type.
+    Hex,
+}
+
 // Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
 // errors from inside the variants, so a typo like `{defautl: true}` would
 // surface as "data did not match any variant" instead of the precise
@@ -508,6 +519,14 @@ impl HumanConfig {
             HumanConfig::Svm(_) => BytesType::Uint8Array,
         }
     }
+
+    pub fn hex_type(&self) -> HexType {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.hex_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.hex_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => HexType::String,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -526,7 +545,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract, StartBlock};
-    use crate::config_parsing::human_config::{BaseConfig, BytesType};
+    use crate::config_parsing::human_config::{BaseConfig, BytesType, HexType};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -596,6 +615,15 @@ pub mod evm {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "TypeScript type of 0x-prefixed hex values — `bytes`/`bytesN` event \
+                           params, block and transaction hashes and other hex fields, and \
+                           `Bytes` entity fields with `bytes_type: hex`. `string` (default) or \
+                           `hex` for the stricter `Hex` (`0x${string}`) type. ReScript types are \
+                           unaffected."
+        )]
+        pub hex_type: Option<HexType>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -950,7 +978,7 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use crate::config_parsing::human_config::{BaseConfig, BytesType};
+    use crate::config_parsing::human_config::{BaseConfig, BytesType, HexType};
 
     use super::{ChainContract, ChainId, GlobalContract, StartBlock};
     use schemars::JsonSchema;
@@ -995,6 +1023,15 @@ pub mod fuel {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "TypeScript type of 0x-prefixed hex values — `bytes`/`bytesN` event \
+                           params, block and transaction hashes and other hex fields, and \
+                           `Bytes` entity fields with `bytes_type: hex`. `string` (default) or \
+                           `hex` for the stricter `Hex` (`0x${string}`) type. ReScript types are \
+                           unaffected."
+        )]
+        pub hex_type: Option<HexType>,
     }
 
     impl Display for HumanConfig {
@@ -1966,6 +2003,58 @@ mod tests {
     }
 
     #[test]
+    fn hex_type_is_string_unless_evm_or_fuel_opt_in() {
+        let evm = |extra: &str| {
+            serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                .map(super::HumanConfig::Evm)
+                .map(|config| config.hex_type())
+                .map_err(|error| error.to_string())
+        };
+        let fuel = |extra: &str| {
+            serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                "name: t\necosystem: fuel\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Fuel)
+            .map(|config| config.hex_type())
+            .map_err(|error| error.to_string())
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config| config.hex_type())
+            .map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            [
+                evm(""),
+                evm("hex_type: string"),
+                evm("hex_type: hex"),
+                evm("hex_type: Hex"),
+                fuel(""),
+                fuel("hex_type: hex"),
+                svm(""),
+                svm("hex_type: hex"),
+            ],
+            [
+                Ok(super::HexType::String),
+                Ok(super::HexType::String),
+                Ok(super::HexType::Hex),
+                Err(
+                    "hex_type: unknown variant `Hex`, expected `string` or `hex` at line 3 \
+                     column 11"
+                        .to_string()
+                ),
+                Ok(super::HexType::String),
+                Ok(super::HexType::Hex),
+                Ok(super::HexType::String),
+                Err("unknown field `hex_type`".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn test_flatten_deserialize_local_contract() {
         let yaml = r#"
 name: Contract1
@@ -2172,6 +2261,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            hex_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -2226,6 +2316,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            hex_type: None,
             chains: vec![],
         };
 

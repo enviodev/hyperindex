@@ -53,7 +53,7 @@ programs:
 
 let expectBytesTyped = bytesType =>
   `
-import type { Blob, Hex } from "envio";
+import type { Blob } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 expectType<
@@ -79,7 +79,7 @@ let check = (~files=?, ~configYaml, ~bytesType) =>
 
 describe("bytes_type", () => {
   it("evm keeps Bytes as a hex string by default", _ =>
-    check(~configYaml=`name: bytes-hex${evmChains}`, ~bytesType="Hex")
+    check(~configYaml=`name: bytes-hex${evmChains}`, ~bytesType="string")
   )
 
   it("evm types Bytes as Uint8Array with bytes_type: uint8array", _ =>
@@ -90,11 +90,11 @@ describe("bytes_type", () => {
   )
 
   it("evm accepts bytes_type: hex explicitly", _ =>
-    check(~configYaml=`name: bytes-hex-explicit\nbytes_type: hex${evmChains}`, ~bytesType="Hex")
+    check(~configYaml=`name: bytes-hex-explicit\nbytes_type: hex${evmChains}`, ~bytesType="string")
   )
 
   it("fuel keeps Bytes as a hex string by default", _ =>
-    check(~files=fuelFiles, ~configYaml=`name: fuel-bytes-hex${fuelChains}`, ~bytesType="Hex")
+    check(~files=fuelFiles, ~configYaml=`name: fuel-bytes-hex${fuelChains}`, ~bytesType="string")
   )
 
   it("fuel types Bytes as Uint8Array with bytes_type: uint8array", _ =>

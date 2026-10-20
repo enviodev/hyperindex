@@ -339,6 +339,9 @@ pub enum TypeIdent {
     /// A `0x`-prefixed hex string that isn't an address (a hash, an asset id,
     /// a signature): `string` in ReScript, `Hex` from "envio" in TypeScript.
     Hex,
+    /// Like `Hex`, but `HexString` from "envio" in TypeScript: `Hex` only when
+    /// config.yaml sets `hex_type: hex`, plain `string` otherwise.
+    HexString,
     Bytes,
     Json,
     Bool,
@@ -385,7 +388,7 @@ impl TypeIdent {
             Self::Unknown => "unknown".to_string(),
             Self::BigDecimal => "BigDecimal.t".to_string(),
             Self::Address => "Address.t".to_string(),
-            Self::String | Self::Hex => "string".to_string(),
+            Self::String | Self::Hex | Self::HexString => "string".to_string(),
             Self::Bytes => "Uint8Array.t".to_string(),
             Self::Json => "JSON.t".to_string(),
             Self::ID => "id".to_string(),
@@ -522,6 +525,7 @@ impl TypeIdent {
             Self::Address => "Address".to_string(),
             Self::String => "string".to_string(),
             Self::Hex => "Hex".to_string(),
+            Self::HexString => "HexString".to_string(),
             Self::Bytes => "Uint8Array".to_string(),
             Self::Json => "JSON".to_string(),
             Self::ID => "string".to_string(),
@@ -601,7 +605,7 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal.zero".to_string(),
             Self::Address => "Envio.TestHelpers.Addresses.defaultAddress".to_string(),
             Self::String => "\"default string value\"".to_string(),
-            Self::Hex => "\"0x\"".to_string(),
+            Self::Hex | Self::HexString => "\"0x\"".to_string(),
             Self::Bytes => "Uint8Array.fromLength(0)".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
@@ -688,7 +692,7 @@ impl TypeIdent {
                 .to_string(),
             Self::Address => "TestHelpers.Addresses.defaultAddress".to_string(),
             Self::String => "\"default string value\"".to_string(),
-            Self::Hex => "\"0x\"".to_string(),
+            Self::Hex | Self::HexString => "\"0x\"".to_string(),
             Self::Bytes => "new Uint8Array(0)".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
@@ -1029,6 +1033,7 @@ mod tests {
         assert_eq!(TypeIdent::Address.to_ts_type_string(), "Address");
         assert_eq!(TypeIdent::String.to_ts_type_string(), "string");
         assert_eq!(TypeIdent::Hex.to_ts_type_string(), "Hex");
+        assert_eq!(TypeIdent::HexString.to_ts_type_string(), "HexString");
         assert_eq!(TypeIdent::Json.to_ts_type_string(), "JSON");
         assert_eq!(TypeIdent::ID.to_ts_type_string(), "string");
         assert_eq!(TypeIdent::Bool.to_ts_type_string(), "boolean");

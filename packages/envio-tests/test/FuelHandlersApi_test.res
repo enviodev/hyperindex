@@ -42,7 +42,7 @@ const _bad: FuelContractName = "NotAContract";
 
   it("looks up FuelEvent and its Fuel-specific block/transaction", _ =>
     check(`
-import type { FuelChainId, FuelEvent, Hex } from "envio";
+import type { FuelChainId, FuelEvent } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type AllEvents = FuelEvent;
@@ -57,9 +57,9 @@ expectType<TypeEqual<NewGreeting["srcAddress"], \`0x\${string}\`>>(true);
 
 // Fuel blocks are keyed by height (not number) and carry an id + time.
 expectType<TypeEqual<NewGreeting["block"]["height"], number>>(true);
-expectType<TypeEqual<NewGreeting["block"]["id"], Hex>>(true);
+expectType<TypeEqual<NewGreeting["block"]["id"], string>>(true);
 expectType<TypeEqual<NewGreeting["block"]["time"], number>>(true);
-expectType<TypeEqual<NewGreeting["transaction"]["id"], Hex>>(true);
+expectType<TypeEqual<NewGreeting["transaction"]["id"], string>>(true);
 
 // Log params decode to the ABI's Sway struct shapes; b256 to a 0x hex string.
 expectType<TypeEqual<NewGreeting["params"]["user"]["bits"], \`0x\${string}\`>>(true);

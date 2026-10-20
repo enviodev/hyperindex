@@ -15,6 +15,11 @@ export type Address = `0x${string}`;
 /** A `0x`-prefixed hex string: a hash, a `bytes`/`bytesN` value, raw calldata. */
 export type Hex = `0x${string}`;
 
+/** The type of `bytes`/`bytesN` event params, block and transaction hashes and
+ * other hex fields, and `Bytes` entity fields: plain `string` by default, the
+ * stricter {@link Hex} with `hex_type: hex` in config.yaml. */
+export type HexString = GlobalConfig extends { readonly hexType: "hex" } ? Hex : string;
+
 /** A value a `Json` entity field can hold. A `bigint` isn't JSON — store its
  * decimal string with `.toString()`. Shadows the global `JSON` interface only
  * where imported; the `JSON` object itself is unaffected. */
@@ -521,6 +526,7 @@ type IndexerConfigTypes = {
   // Union of the entity names whose rows belong to a single chain, or `never`.
   perChainEntities?: string;
   enums?: Record<string, string>;
+  hexType?: "hex";
 };
 
 // ============== onEvent / contractRegister Types ==============
@@ -751,36 +757,36 @@ export type FieldNotSelected<Message extends string> = { readonly __fieldNotSele
 export type EvmAllBlockFields = {
   readonly number: number;
   readonly timestamp: number;
-  readonly hash: Hex;
-  readonly parentHash: Hex;
+  readonly hash: HexString;
+  readonly parentHash: HexString;
   readonly nonce: bigint | undefined;
-  readonly sha3Uncles: Hex;
-  readonly logsBloom: Hex;
-  readonly transactionsRoot: Hex;
-  readonly stateRoot: Hex;
-  readonly receiptsRoot: Hex;
+  readonly sha3Uncles: HexString;
+  readonly logsBloom: HexString;
+  readonly transactionsRoot: HexString;
+  readonly stateRoot: HexString;
+  readonly receiptsRoot: HexString;
   readonly miner: Address;
   readonly difficulty: bigint | undefined;
   readonly totalDifficulty: bigint | undefined;
-  readonly extraData: Hex;
+  readonly extraData: HexString;
   readonly size: bigint;
   readonly gasLimit: bigint;
   readonly gasUsed: bigint;
-  readonly uncles: readonly Hex[] | undefined;
+  readonly uncles: readonly HexString[] | undefined;
   readonly baseFeePerGas: bigint | undefined;
   readonly blobGasUsed: bigint | undefined;
   readonly excessBlobGas: bigint | undefined;
-  readonly parentBeaconBlockRoot: Hex | undefined;
-  readonly withdrawalsRoot: Hex | undefined;
+  readonly parentBeaconBlockRoot: HexString | undefined;
+  readonly withdrawalsRoot: HexString | undefined;
   readonly l1BlockNumber: number | undefined;
-  readonly sendCount: Hex | undefined;
-  readonly sendRoot: Hex | undefined;
-  readonly mixHash: Hex | undefined;
+  readonly sendCount: HexString | undefined;
+  readonly sendRoot: HexString | undefined;
+  readonly mixHash: HexString | undefined;
 };
 
 export type EvmAllTransactionFields = {
   readonly transactionIndex: number;
-  readonly hash: Hex;
+  readonly hash: HexString;
   readonly from: Address | undefined;
   readonly to: Address | undefined;
   readonly gas: bigint;
@@ -790,20 +796,20 @@ export type EvmAllTransactionFields = {
   readonly cumulativeGasUsed: bigint;
   readonly effectiveGasPrice: bigint;
   readonly gasUsed: bigint;
-  readonly input: Hex;
+  readonly input: HexString;
   readonly nonce: bigint;
   readonly value: bigint;
-  readonly v: Hex | undefined;
-  readonly r: Hex | undefined;
-  readonly s: Hex | undefined;
+  readonly v: HexString | undefined;
+  readonly r: HexString | undefined;
+  readonly s: HexString | undefined;
   readonly contractAddress: Address | undefined;
-  readonly logsBloom: Hex;
-  readonly root: Hex | undefined;
+  readonly logsBloom: HexString;
+  readonly root: HexString | undefined;
   readonly status: number | undefined;
-  readonly yParity: Hex | undefined;
+  readonly yParity: HexString | undefined;
   readonly accessList: readonly unknown[] | undefined;
   readonly maxFeePerBlobGas: bigint | undefined;
-  readonly blobVersionedHashes: readonly Hex[] | undefined;
+  readonly blobVersionedHashes: readonly HexString[] | undefined;
   readonly type: number | undefined;
   readonly l1Fee: bigint | undefined;
   readonly l1GasPrice: bigint | undefined;

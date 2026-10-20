@@ -137,7 +137,7 @@ expectType<
 >(true);
 expectType<TypeEqual<TransferEvent["block"]["number"], number>>(true);
 expectType<TypeEqual<TransferEvent["block"]["timestamp"], number>>(true);
-expectType<TypeEqual<TransferEvent["block"]["hash"], \`0x\${string}\`>>(true);
+expectType<TypeEqual<TransferEvent["block"]["hash"], string>>(true);
 `)
   )
 
@@ -274,7 +274,7 @@ type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
 // [to, from, hash]; defaults (number/timestamp/hash) stay included.
 type ApprovalEvent = EvmEvent<"Token", "Approval">;
 expectType<TypeEqual<ApprovalEvent["block"]["number"], number>>(true);
-expectType<TypeEqual<ApprovalEvent["block"]["parentHash"], \`0x\${string}\`>>(true);
+expectType<TypeEqual<ApprovalEvent["block"]["parentHash"], string>>(true);
 expectType<IsNotSelected<ApprovalEvent["block"]["nonce"]>>(true);
 expectType<
   TypeEqual<ApprovalEvent["transaction"]["to"], \`0x\${string}\` | undefined>
@@ -282,13 +282,13 @@ expectType<
 expectType<
   TypeEqual<ApprovalEvent["transaction"]["from"], \`0x\${string}\` | undefined>
 >(true);
-expectType<TypeEqual<ApprovalEvent["transaction"]["hash"], \`0x\${string}\`>>(true);
+expectType<TypeEqual<ApprovalEvent["transaction"]["hash"], string>>(true);
 expectType<IsNotSelected<ApprovalEvent["transaction"]["gas"]>>(true);
 
 // Transfer inherits the global selection: transaction [transactionIndex, hash].
 type TransferEvent = EvmEvent<"Token", "Transfer">;
 expectType<TypeEqual<TransferEvent["transaction"]["transactionIndex"], number>>(true);
-expectType<TypeEqual<TransferEvent["transaction"]["hash"], \`0x\${string}\`>>(true);
+expectType<TypeEqual<TransferEvent["transaction"]["hash"], string>>(true);
 expectType<IsNotSelected<TransferEvent["transaction"]["from"]>>(true);
 expectType<IsNotSelected<TransferEvent["block"]["parentHash"]>>(true);
 `)
@@ -309,9 +309,9 @@ type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
   ? true
   : false;
 
-expectType<TypeEqual<EvmAllBlockFields["parentHash"], \`0x\${string}\`>>(true);
+expectType<TypeEqual<EvmAllBlockFields["parentHash"], string>>(true);
 expectType<TypeEqual<EvmAllBlockFields["nonce"], bigint | undefined>>(true);
-expectType<TypeEqual<EvmAllTransactionFields["hash"], \`0x\${string}\`>>(true);
+expectType<TypeEqual<EvmAllTransactionFields["hash"], string>>(true);
 expectType<TypeEqual<EvmAllTransactionFields["to"], \`0x\${string}\` | undefined>>(true);
 
 const _selection: EvmFieldsSelection = { block: ["parentHash"], transaction: ["to"] };
@@ -329,7 +329,7 @@ if (0) {
       fields: { block: ["parentHash"], transaction: ["to"] },
     },
     async ({ event }) => {
-      expectType<TypeEqual<typeof event.block.parentHash, \`0x\${string}\`>>(true);
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
       expectType<TypeEqual<typeof event.transaction.to, \`0x\${string}\` | undefined>>(true);
       // number is always included, without listing it.
       expectType<TypeEqual<typeof event.block.number, number>>(true);
@@ -366,8 +366,8 @@ if (0) {
   // Without the option the config selection applies, unchanged.
   indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ event }) => {
     expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
-    expectType<TypeEqual<typeof event.block.parentHash, \`0x\${string}\`>>(true);
-    expectType<TypeEqual<typeof event.transaction.hash, \`0x\${string}\`>>(true);
+    expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+    expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
   });
 
   indexer.onEvent(
@@ -397,7 +397,7 @@ if (0) {
   indexer.onEvent(
     { contract: "Token", event: "Transfer", fields: { block: ["parentHash"] } },
     async ({ event }) => {
-      expectType<TypeEqual<typeof event.block.parentHash, \`0x\${string}\`>>(true);
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
     },
   );
   // As does an \`as const\` variable, which keeps the literal element types.
@@ -405,7 +405,7 @@ if (0) {
   indexer.onEvent(
     { contract: "Token", event: "Transfer", fields: pinned },
     async ({ event }) => {
-      expectType<TypeEqual<typeof event.block.parentHash, \`0x\${string}\`>>(true);
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
       expectType<IsNotSelected<typeof event.block.nonce>>(true);
     },
   );
@@ -447,7 +447,7 @@ if (0) {
       fields: { transaction: ["hash", "from"], block: ["timestamp"] },
     },
     async ({ event }) => {
-      expectType<TypeEqual<typeof event.transaction.hash, \`0x\${string}\`>>(true);
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
       expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
       expectType<TypeEqual<typeof event.block.number, number>>(true);
       // @ts-expect-error - gasUsed is not selected
@@ -460,7 +460,7 @@ if (0) {
   indexer.onEvent(
     { contract: "Token", event: "Transfer", fields: txFields },
     async ({ event }) => {
-      expectType<TypeEqual<typeof event.transaction.hash, \`0x\${string}\`>>(true);
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
       expectType<TypeEqual<typeof event.transaction.from, \`0x\${string}\` | undefined>>(true);
     },
   );
@@ -474,7 +474,7 @@ if (0) {
       fields: { transaction: ["hash"] },
     },
     async ({ event }) => {
-      expectType<TypeEqual<typeof event.transaction.hash, \`0x\${string}\`>>(true);
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
     },
   );
 }
@@ -934,7 +934,7 @@ import { expectType, type TypeEqual } from "ts-expect";
 
 const pinned: { block?: readonly ["parentHash"] } = { block: ["parentHash"] };
 indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async ({ event }) => {
-  expectType<TypeEqual<typeof event.block.parentHash, \`0x\${string}\`>>(true);
+  expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
   expectType<TypeEqual<typeof event.block.number, number>>(true);
 });
 `)
@@ -942,7 +942,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async 
 })
 
 describe("Hex type", () => {
-  it("types hex-string values as Hex and rejects a plain string", _ =>
+  it("types hex-string values as Hex and rejects a plain string with hex_type: hex", _ =>
     InternalTestIndexer.fromUserApi(
       ~schema=`
 type Blob {
@@ -952,6 +952,7 @@ type Blob {
 `,
       ~configYaml=`
 name: hex-types
+hex_type: hex
 contracts:
   - name: Registry
     events:

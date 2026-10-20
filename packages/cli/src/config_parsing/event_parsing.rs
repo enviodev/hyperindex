@@ -36,9 +36,9 @@ fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
         AbiType::Int(_) => TypeIdent::BigInt,
         AbiType::Bool => TypeIdent::Bool,
         AbiType::Address => TypeIdent::Address,
-        AbiType::Bytes => TypeIdent::Hex,
+        AbiType::Bytes => TypeIdent::HexString,
         AbiType::String => TypeIdent::String,
-        AbiType::FixedBytes(_) => TypeIdent::Hex,
+        AbiType::FixedBytes(_) => TypeIdent::HexString,
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
@@ -64,9 +64,9 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
         AbiType::Int(_) => TypeIdent::BigInt,
         AbiType::Bool => TypeIdent::Bool,
         AbiType::Address => TypeIdent::Address,
-        AbiType::Bytes => TypeIdent::Hex,
+        AbiType::Bytes => TypeIdent::HexString,
         AbiType::String => TypeIdent::String,
-        AbiType::FixedBytes(_) => TypeIdent::Hex,
+        AbiType::FixedBytes(_) => TypeIdent::HexString,
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bytes_params_are_hex() {
+    fn test_bytes_params_are_hex_strings() {
         let tuple_type = AbiType::Tuple(vec![
             AbiTupleField {
                 name: Some("data".to_string()),
@@ -159,7 +159,8 @@ mod tests {
             (parsed.to_string(), parsed.to_ts_type_string()),
             (
                 "{\"data\": string, \"key\": string, \"label\": string}".to_string(),
-                "{ readonly data: Hex; readonly key: Hex; readonly label: string }".to_string()
+                "{ readonly data: HexString; readonly key: HexString; readonly label: string }"
+                    .to_string()
             )
         );
     }
