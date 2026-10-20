@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { subgraphBundledCodegen } from "../Core.res.mjs";
+import { subgraphBundledCodegen, subgraphBundledCodegenCurrent, subgraphFillGenerated } from "../Core.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
 import { fetchGraphCli, graphCliVersions } from "./toolchain.ts";
 
@@ -278,6 +278,9 @@ function* scanImports(root: string, mappingFiles: string[]): Generator<{ file: s
 
 export function generatedDir(root: string, mappingFiles: string[]): string {
   for (const { file, specifiers } of scanImports(root, mappingFiles)) {
+    // A mapping shipped in a dependency (@openzeppelin/subgraphs) imports the
+    // generated code shipped beside it, not the tree `graph codegen` writes.
+    if (inDependency(root, file)) continue;
     for (const specifier of specifiers) {
       const base = path.basename(specifier).replace(/\.ts$/, "");
       if (base === "schema" || base === "templates") {
@@ -285,7 +288,11 @@ export function generatedDir(root: string, mappingFiles: string[]): string {
       }
     }
   }
-  return path.join(root, "generated");
+  return path.resolve(root, "generated");
+}
+
+function inDependency(root: string, file: string): boolean {
+  return path.relative(root, file).split(path.sep).includes("node_modules");
 }
 
 /**
@@ -293,6 +300,8 @@ export function generatedDir(root: string, mappingFiles: string[]): string {
  * exists isn't enough: Envio Cloud recreates generated/ empty before the build.
  */
 export function missingGeneratedFiles(root: string, mappingFiles: string[], dir: string): string[] {
+  // Imports resolve to absolute paths; `envio start` passes the root as ".".
+  dir = path.resolve(dir);
   const missing = new Set<string>();
   for (const { file, specifiers } of scanImports(root, mappingFiles)) {
     for (const specifier of specifiers) {
@@ -311,6 +320,7 @@ const MAX_SCANNED_FILES = 2_000;
 
 /** Whether any file the mappings reach imports something from `dir`. */
 function importsFrom(root: string, mappingFiles: string[], dir: string): boolean {
+  dir = path.resolve(dir);
   for (const { file, specifiers } of scanImports(root, mappingFiles)) {
     for (const specifier of specifiers) {
       if (path.resolve(path.dirname(file), specifier).startsWith(dir + path.sep)) return true;
@@ -329,6 +339,19 @@ export function missingGeneratedCode(root: string, dir: string): Error {
       "Or generate manually:\n" +
       `  pnpm exec graph codegen --output-dir ${relative}`,
   );
+}
+
+/**
+ * A package install (`yarn`, `npm ci`, `pnpm install --frozen-lockfile`), which
+ * graphprotocol/block-oracle's `"codegen": "yarn && graph codegen"` begins with:
+ * the developer installs before envio starts, and envio runs no installer, whose
+ * lifecycle scripts would run with it.
+ */
+const INSTALL_STEP =
+  /^(?:(?:npx|corepack)\s+)?(?:yarn(?:\s+install)?|npm\s+(?:i|install|ci)|pnpm\s+(?:i|install)|bun\s+(?:i|install))(?:\s+--?[\w-]+(?:=\S+)?)*$/;
+
+function isInstall(step: string): boolean {
+  return INSTALL_STEP.test(step.trim());
 }
 
 const GRAPH_CODEGEN = /^(?:(?:npx|pnpm exec|pnpm|yarn|bunx)\s+)?graph\s+codegen\b/;
@@ -359,6 +382,56 @@ export function codegenFlags(root: string, step: string): string[] {
     flags.push("--uncrashable-config", fallback);
   }
   return flags;
+}
+
+const CODEGEN_VALUE_FLAGS = new Set(["-o", "--output-dir", "--uncrashable-config", "--uc", "-i", "--ipfs"]);
+
+/**
+ * The manifest and output directory a `graph codegen` step names, if any:
+ * balancer/gauges-subgraph runs `graph codegen subgraph.yaml -o src/types/ &&
+ * graph codegen subgraph.arbitrum.yaml -o src/types/`, one tree from two
+ * manifests.
+ */
+function codegenTarget(step: string): { manifest?: string; outputDir?: string } {
+  const words = step.split(/\s+/);
+  const target: { manifest?: string; outputDir?: string } = {};
+  for (let index = words.indexOf("codegen") + 1; index > 0 && index < words.length; index++) {
+    const word = words[index].replace(/^["']|["']$/g, "");
+    if (word === "--" || word === "") continue;
+    const [name, inline] = word.split("=", 2);
+    if (CODEGEN_VALUE_FLAGS.has(name)) {
+      const value = inline ?? words[++index]?.replace(/^["']|["']$/g, "");
+      if ((name === "-o" || name === "--output-dir") && value) target.outputDir = value;
+    } else if (!word.startsWith("-")) {
+      target.manifest ??= word;
+    }
+  }
+  return target;
+}
+
+/**
+ * What a `graph codegen` step generates: the manifest it names, into where it
+ * writes, when that is another manifest of the project; envio's own manifest
+ * into `dir` otherwise.
+ */
+function stepTarget(root: string, manifestFile: string, dir: string, step: string) {
+  const { manifest, outputDir } = codegenTarget(step);
+  const named = manifest && path.resolve(root, manifest);
+  if (!named || named === path.resolve(root, manifestFile) || !existsSync(named)) {
+    return { manifest: manifestFile, outputDir: dir, own: true };
+  }
+  return { manifest, outputDir: outputDir ? path.resolve(root, outputDir) : dir, own: false };
+}
+
+/**
+ * Every manifest the codegen script generates into the tree, in its order;
+ * envio's own last when no step names it, so its files win.
+ */
+function codegenPlan(root: string, manifestFile: string, dir: string) {
+  const plan = (codegenSteps(root) ?? [])
+    .filter((step) => GRAPH_CODEGEN.test(step))
+    .map((step) => stepTarget(root, manifestFile, dir, step));
+  return plan.some(({ own }) => own) ? plan : [...plan, { manifest: manifestFile, outputDir: dir, own: true }];
 }
 
 /**
@@ -428,7 +501,23 @@ function codegenMode(): "auto" | "bundled" | "graph-cli" {
 
 /** envio's own `graph codegen`: needs no install, only the manifest, schema and ABIs. */
 export function bundledCodegen(root: string, dir: string, manifestFile: string): string[] {
-  const { files } = subgraphBundledCodegen(path.resolve(root, manifestFile), dir);
+  let files: string[] = [];
+  for (const { manifest, outputDir, own } of codegenPlan(root, manifestFile, dir)) {
+    if (own) {
+      files = subgraphBundledCodegen(path.resolve(root, manifest), outputDir).files;
+      continue;
+    }
+    // Another manifest's half of the tree is the codegen script's business;
+    // one that can't be generated mustn't stop this manifest's.
+    try {
+      subgraphBundledCodegen(path.resolve(root, manifest), outputDir);
+    } catch (error) {
+      warn(
+        `Envio Subgraph couldn't write the generated code of ${manifest}, which the codegen script also generates: ` +
+          `${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
   info(`Envio Subgraph wrote ${files.length} generated files to "${path.relative(root, dir)}/" without graph-cli.`);
   return files;
 }
@@ -440,7 +529,7 @@ export function bundledCodegen(root: string, dir: string, manifestFile: string):
  */
 async function runOtherSteps(root: string): Promise<void> {
   for (const step of codegenSteps(root) ?? []) {
-    if (GRAPH_CODEGEN.test(step)) continue;
+    if (GRAPH_CODEGEN.test(step) || isInstall(step)) continue;
     try {
       await runScriptStep(root, step);
     } catch (error) {
@@ -461,6 +550,73 @@ export async function ensureGeneratedCode(
   manifestFile = "subgraph.yaml",
   mappingFiles: string[] = [],
 ): Promise<void> {
+  await buildGeneratedCode(root, dir, manifestFile, mappingFiles);
+  if (codegenMode() !== "graph-cli") fillFromOtherManifests(root, dir, manifestFile, mappingFiles);
+}
+
+/**
+ * graph codegen never cleans its output directory, so the tree a project with
+ * one manifest per network was built with holds the data sources of every
+ * manifest it generated, and its mappings may import them: WOOFi's bsc mappings
+ * import generated/WooRouterV1_3/ (avax.yaml), DODO's generated/DVMFactory/
+ * (mainnet). `graph build` of the one manifest fails on a clean checkout, but the
+ * deployed subgraph was compiled against that tree. The missing files are
+ * written from the other manifest that declares them, with a warning.
+ */
+function fillFromOtherManifests(root: string, dir: string, manifestFile: string, mappingFiles: string[]): void {
+  const missing = missingGeneratedFiles(root, mappingFiles, dir);
+  if (missing.length === 0) return;
+  const wanted = missing.map((file) => {
+    const relative = path.relative(dir, path.resolve(root, file));
+    return relative.endsWith(".ts") ? relative : `${relative}.ts`;
+  });
+  const filled = subgraphFillGenerated(root, path.resolve(root, manifestFile), dir, wanted);
+  const shown = (file: string) => path.join(path.relative(root, dir), file);
+  const bySource = new Map<string, string[]>();
+  for (const { file, source, abiName, renamedFrom, undeclared } of filled) {
+    if (undeclared) {
+      warn(
+        `Envio Subgraph wrote ${shown(file)} from ${source}, an ABI file no manifest of the project names any more: ` +
+          `the mappings import it, and no manifest has a data source or template named ` +
+          `"${path.basename(path.dirname(file))}" or an ABI named "${abiName}", so \`graph build\` fails on a clean ` +
+          "checkout. The tree this subgraph was built with had it from when one did.",
+      );
+    } else if (renamedFrom) {
+      const name = path.basename(path.dirname(file));
+      warn(
+        `Envio Subgraph wrote ${shown(file)} from data source ${name}'s ABI "${renamedFrom}" (${source}) under the ` +
+          `name ${name}: the mappings import it, and graph codegen writes that ABI to ${name}/${renamedFrom}.ts now, ` +
+          "so `graph build` fails on a clean checkout. The tree this subgraph was built with had it from when the " +
+          "ABI bore the data source's name.",
+      );
+    } else if (abiName) {
+      warn(
+        `Envio Subgraph wrote ${shown(file)} from the ABI "${abiName}" (${source}): the mappings import it, and no ` +
+          `manifest of the project has a data source or template named "${path.basename(path.dirname(file))}" that ` +
+          "graph codegen would write it for, so `graph build` fails on a clean checkout. The tree this subgraph was " +
+          "built with had it from an earlier manifest; graph codegen writes the same file for every data source with " +
+          "that ABI.",
+      );
+    } else {
+      bySource.set(source, [...(bySource.get(source) ?? []), shown(file)]);
+    }
+  }
+  for (const [manifest, files] of bySource) {
+    const it = files.length === 1 ? "it" : "them";
+    warn(
+      `Envio Subgraph wrote ${files.join(", ")} from ${manifest}: the mappings import ${it}, and ` +
+        `\`graph codegen ${manifestFile}\` doesn't write ${it}, so \`graph build\` of ${manifestFile} fails on a ` +
+        `clean checkout. The tree this subgraph was built with had ${it} from an earlier \`graph codegen ${manifest}\`.`,
+    );
+  }
+}
+
+async function buildGeneratedCode(
+  root: string,
+  dir: string,
+  manifestFile: string,
+  mappingFiles: string[],
+): Promise<void> {
   const mode = codegenMode();
   if (mode === "bundled") {
     bundledCodegen(root, dir, manifestFile);
@@ -470,7 +626,8 @@ export async function ensureGeneratedCode(
   const graphCli = graphCliPackage(root);
   const complete = existsSync(dir) && missingGeneratedFiles(root, mappingFiles, dir).length === 0;
   if (complete) {
-    if (!graphCli) {
+    // `envio start` writes the bundled tree before the runtime loads.
+    if (!graphCli && !subgraphBundledCodegenCurrent(path.resolve(root, manifestFile), dir)) {
       warn(
         `Envio Subgraph is running the generated code in "${path.relative(root, dir)}/" as it is: ` +
           "@graphprotocol/graph-cli isn't installed, so it can't be rebuilt. If subgraph.yaml, the " +
@@ -499,7 +656,15 @@ export async function ensureGeneratedCode(
   }
 
   try {
+    let ranOwn = false;
     for (const step of codegenSteps(root) ?? ["graph codegen"]) {
+      if (isInstall(step)) {
+        info(
+          `Envio Subgraph skipped the codegen script step \`${step}\`: installing the project's dependencies is ` +
+            "done before envio starts.",
+        );
+        continue;
+      }
       if (!GRAPH_CODEGEN.test(step)) {
         try {
           await runScriptStep(root, step);
@@ -515,10 +680,15 @@ export async function ensureGeneratedCode(
         }
         continue;
       }
+      const { manifest, outputDir, own } = stepTarget(root, manifestFile, dir, step);
+      ranOwn ||= own;
       // With no graph-cli anywhere, the mapping that imports the missing code
       // reports it, naming that mapping.
-      if (!(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir), codegenFlags(root, step)))) return;
+      if (!(await runCodegen(root, manifest, outputDir, importsFrom(root, mappingFiles, dir), codegenFlags(root, step)))) {
+        return;
+      }
     }
+    if (!ranOwn && !(await runCodegen(root, manifestFile, dir, importsFrom(root, mappingFiles, dir)))) return;
   } catch (error) {
     if (mode === "graph-cli" || bundledFailed) throw error;
     warn(

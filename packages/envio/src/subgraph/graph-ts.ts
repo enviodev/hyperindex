@@ -372,8 +372,7 @@ class BigInt_ extends Uint8Array {
     }
     return BigInt_.withWidth(raw, 4);
   }
-  // An AssemblyScript u32 holds the bits a JavaScript expression like
-  // `1 << 31` leaves signed.
+  // A u32 parameter: the bits of whatever 32-bit integer the mapping passed.
   static fromU32(value: number): BigInt_ {
     const made = new BigInt_(BigInt(Math.trunc(value) >>> 0));
     made.width = 5;
@@ -1808,17 +1807,45 @@ class SmartContract {
     public _address: Address,
   ) {}
 
-  call(_returnTypes: string, functionSignature: string, params: EthereumValue[]): EthereumValue[] {
-    return callContract(this, functionSignature, params, false) as EthereumValue[];
+  call(name: string, functionSignature: string | EthereumValue[], params?: EthereumValue[]): EthereumValue[] {
+    const [signature, values] = signatureAndParams(this, name, functionSignature, params);
+    return callContract(this, signature, values, false) as EthereumValue[];
   }
 
   tryCall(
-    _returnTypes: string,
-    functionSignature: string,
-    params: EthereumValue[],
+    name: string,
+    functionSignature: string | EthereumValue[],
+    params?: EthereumValue[],
   ): CallResult<EthereumValue[]> {
-    return callContract(this, functionSignature, params, true) as CallResult<EthereumValue[]>;
+    const [signature, values] = signatureAndParams(this, name, functionSignature, params);
+    return callContract(this, signature, values, true) as CallResult<EthereumValue[]>;
   }
+}
+
+/**
+ * Bindings from graph-cli before 0.18 call by name alone,
+ * `super.call("ownerOf", [params])`, and graph-node takes the first function of
+ * that name in the ABI (chain/ethereum/src/runtime/runtime_adapter.rs,
+ * `contract.function(name)` when the call has no signature). Only the runtime
+ * has the manifest's ABIs, so it installs the lookup.
+ */
+let legacySignatureHook: ((abiName: string, functionName: string) => string) | null = null;
+
+export function installLegacySignatureHook(hook: typeof legacySignatureHook) {
+  legacySignatureHook = hook;
+}
+
+function signatureAndParams(
+  contract: SmartContract,
+  name: string,
+  functionSignature: string | EthereumValue[],
+  params: EthereumValue[] | undefined,
+): [string, EthereumValue[]] {
+  if (typeof functionSignature === "string") return [functionSignature, params ?? []];
+  if (!legacySignatureHook) {
+    throw unsupported("contract calls by function name without the manifest's ABIs", `${contract._name}.${name}`);
+  }
+  return [legacySignatureHook(contract._name, name), functionSignature];
 }
 
 /**
@@ -1994,6 +2021,11 @@ class EthereumTransaction {
   declare to: Address | null;
   declare value: BigInt_;
   declare gasLimit: BigInt_;
+  /**
+   * graph-ts before 0.22's name for the slot graph-node fills with the gas
+   * limit (`gas_limit` in every `AscEthereumTransaction_0_0_*`).
+   */
+  declare gasUsed: BigInt_;
   declare gasPrice: BigInt_;
   declare input: Bytes;
   declare nonce: BigInt_;
@@ -2011,14 +2043,6 @@ class EthereumTransaction {
   ) {
     if (arguments.length === 0) return;
     Object.assign(this, { hash, index, from, to, value, gasLimit, gasPrice, input, nonce });
-  }
-
-  /**
-   * graph-ts up to 0.21 named this slot `gasUsed`, and graph-node has always
-   * filled it with the gas limit (`AscEthereumTransaction_0_0_1.gas_limit`).
-   */
-  get gasUsed(): BigInt_ {
-    return this.gasLimit;
   }
 }
 
@@ -2330,13 +2354,14 @@ const BLOCK_SHAPE: Shape<EthereumBlock> = {
   baseFeePerGas: ["baseFeePerGas", "bigint"],
 };
 
-const TRANSACTION_SHAPE: Shape<Omit<EthereumTransaction, "gasUsed">> = {
+const TRANSACTION_SHAPE: Shape<EthereumTransaction> = {
   hash: ["hash", "bytes"],
   index: ["transactionIndex", "bigint"],
   from: ["from", "address"],
   to: ["to", "address"],
   value: ["value", "bigint"],
   gasLimit: ["gas", "bigint"],
+  gasUsed: ["gas", "bigint"],
   gasPrice: ["gasPrice", "bigint"],
   input: ["input", "bytes"],
   nonce: ["nonce", "bigint"],
@@ -2706,6 +2731,19 @@ const ethereumImpl = {
 };
 
 export const ethereum = strictNamespace("ethereum", ethereumImpl);
+
+// graph-ts before 0.18 (apiVersion 0.0.3 and older) exported these at the top
+// level, and the mappings and generated code of that age import them so.
+export {
+  EthereumValueKind,
+  EthereumTuple,
+  EthereumBlock,
+  EthereumTransaction,
+  EthereumCall,
+  EthereumEvent,
+  EthereumEventParam,
+  SmartContract,
+};
 
 /**
  * `matchstick-as`' test helper, which also resolves to this module (a mapping

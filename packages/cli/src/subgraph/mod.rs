@@ -13,6 +13,7 @@ pub mod errors;
 pub mod manifest;
 pub mod schema;
 pub mod usage;
+pub mod workspace;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -517,6 +518,16 @@ pub fn generated_dir(root: &std::path::Path, mapping_files: &[String]) -> std::p
         if scanned > 2_000 {
             break;
         }
+        // A mapping shipped in a dependency (@openzeppelin/subgraphs) imports the
+        // generated code shipped beside it, not the tree `graph codegen` writes.
+        let in_dependency = file.strip_prefix(root).is_ok_and(|relative| {
+            relative
+                .components()
+                .any(|part| part.as_os_str() == "node_modules")
+        });
+        if in_dependency {
+            continue;
+        }
         let Ok(source) = std::fs::read_to_string(&file) else {
             continue;
         };
@@ -567,14 +578,12 @@ pub fn npm_on_path(path: Option<&std::ffi::OsStr>) -> bool {
 /// directory behind empty). `ENVIO_SUBGRAPH_CODEGEN=bundled` always writes it;
 /// `graph-cli` mode falls back only to the graph-cli the runtime fetches with
 /// npm when the project has none (`subgraph/toolchain.ts`); without npm it refuses.
-pub fn check_generated_code(
-    runtime: &SubgraphRuntimeConfig,
-    manifest_file: &std::path::Path,
-) -> Result<()> {
+pub fn check_generated_code(runtime: &SubgraphRuntimeConfig) -> Result<()> {
     // Absolute, so its ancestors are the directories above the project.
     let root = std::fs::canonicalize(&runtime.root)
         .unwrap_or_else(|_| std::path::PathBuf::from(&runtime.root));
     let root = root.as_path();
+    let manifest_file = &root.join(&runtime.manifest_file);
     let mapping_files: Vec<String> = runtime
         .manifest
         .all_sources()
@@ -1343,6 +1352,32 @@ mod generated_code_tests {
         )
         .unwrap();
         assert!(graph_cli_installed(&root));
+    }
+
+    #[test]
+    fn a_dependency_mapping_does_not_place_the_generated_code() {
+        let dir = project(&[
+            (
+                "node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts",
+                "import { Vote } from \"../../generated/schema\";\n",
+            ),
+            (
+                "node_modules/@openzeppelin/subgraphs/generated/schema.ts",
+                "export class Vote {}\n",
+            ),
+            (
+                "src/locking.ts",
+                "import { Lock } from \"./types/schema\";\n",
+            ),
+        ]);
+        let mapping_files = [
+            "./node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts".to_string(),
+            "./src/locking.ts".to_string(),
+        ];
+        assert_eq!(
+            pathdiff_relative(&generated_dir(dir.path(), &mapping_files), dir.path()),
+            "src/types"
+        );
     }
 
     #[test]
@@ -2719,6 +2754,39 @@ type Renewal implements Event @entity {
                 subgraph.manifest.data_sources[0].mapping_file.as_str(),
             ),
             (true, "subgraphs/polygon.yaml", "./src/gravity.ts")
+        );
+    }
+
+    // Without graph-cli, codegen writes generated/ from the manifest --config
+    // names; it read `subgraph.yaml` beside the project instead, which a
+    // per-network layout (`subgraph-<network>.yaml`, `subgraphs/<network>.yaml`)
+    // doesn't have.
+    #[tokio::test]
+    async fn writes_the_generated_code_of_the_manifest_config_names() {
+        let dir = tempdir::TempDir::new("envio-subgraph-codegen-config").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        fs::create_dir_all(root.join("subgraphs")).unwrap();
+        fs::write(
+            root.join("subgraphs/polygon.yaml"),
+            GRAVITY_MANIFEST
+                .replace("./schema.graphql", "../schema.graphql")
+                .replace("./abis/", "../abis/")
+                .replace("./src/", "../src/"),
+        )
+        .unwrap();
+
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "subgraphs/polygon.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let result = crate::commands::codegen::run_codegen(&config)
+            .await
+            .map_err(|err| format!("{err:#}"));
+
+        assert_eq!(
+            (result, root.join("generated/Gravity/Gravity.ts").is_file()),
+            (Ok(()), true)
         );
     }
 

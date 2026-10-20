@@ -56,8 +56,9 @@ pub fn gather(root: &Path) -> Vec<String> {
 pub fn gather_with_mappings(root: &Path, mapping_files: &[String]) -> Vec<String> {
     let mut sources = gather(root);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let import = regex::Regex::new(r#"(?:from|import)\s*["'](\.\.?/[^"']+)["']"#)
-        .expect("valid import pattern");
+    let import =
+        regex::Regex::new(r#"(?:from|import)\s*["']([^"']+)["']"#).expect("valid import pattern");
+    let workspace = super::workspace::packages(&root);
     let mut seen = std::collections::HashSet::new();
     let mut queue: std::collections::VecDeque<std::path::PathBuf> = mapping_files
         .iter()
@@ -72,27 +73,92 @@ pub fn gather_with_mappings(root: &Path, mapping_files: &[String]) -> Vec<String
         };
         let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
         for capture in import.captures_iter(&source) {
-            let base = dir.join(&capture[1]);
-            let candidates = [
-                base.clone(),
-                base.with_extension("ts"),
-                std::path::PathBuf::from(format!("{}.ts", base.display())),
-                base.join("index.ts"),
-            ];
-            if let Some(found) = candidates
-                .iter()
+            let specifier = &capture[1];
+            let found = if specifier.starts_with("./") || specifier.starts_with("../") {
+                let base = dir.join(specifier);
+                [
+                    base.clone(),
+                    base.with_extension("ts"),
+                    std::path::PathBuf::from(format!("{}.ts", base.display())),
+                    base.join("index.ts"),
+                ]
+                .into_iter()
                 .find(|candidate| candidate.is_file())
-                .and_then(|candidate| std::fs::canonicalize(candidate).ok())
-            {
+            } else {
+                package_file(&dir, specifier, &workspace)
+            };
+            if let Some(found) = found.and_then(|found| std::fs::canonicalize(found).ok()) {
                 queue.push_back(found);
             }
         }
-        // Inside the project directory `gather` has read it already.
-        if !file.starts_with(&root) {
+        // `gather` has read the project directory already, all but node_modules.
+        let gathered = file.strip_prefix(&root).is_ok_and(|relative| {
+            !relative
+                .components()
+                .any(|part| part.as_os_str() == "node_modules")
+        });
+        if !gathered {
             sources.push(source);
         }
     }
     sources
+}
+
+/// The AssemblyScript file a bare import names, found the way `asc` finds it:
+/// the package under the nearest `node_modules` (or the workspace's package of
+/// that name, which an install would link there), then its `ascMain`, a `main`
+/// or `types` that is TypeScript, `assembly/index.ts` or `index.ts`; a subpath
+/// is a file in the package. graph-ts is the shim's, not the mappings'.
+fn package_file(
+    from: &Path,
+    specifier: &str,
+    workspace: &std::collections::BTreeMap<String, std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    if specifier.starts_with("@graphprotocol/") || specifier.starts_with("node:") {
+        return None;
+    }
+    let parts: Vec<&str> = specifier.split('/').collect();
+    let name_length = if specifier.starts_with('@') { 2 } else { 1 };
+    if parts.len() < name_length || parts[..name_length].iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    let name = parts[..name_length].join("/");
+    let inner = parts[name_length..].join("/");
+    let package = from
+        .ancestors()
+        .map(|dir| dir.join("node_modules").join(&name))
+        .find(|dir| dir.is_dir())
+        .or_else(|| workspace.get(&name).cloned())?;
+    let is_source = |file: &str| {
+        file.ends_with(".ts") && !file.ends_with(".d.ts") && package.join(file).is_file()
+    };
+    let candidates: Vec<String> = if inner.is_empty() {
+        let manifest = std::fs::read_to_string(package.join("package.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        let field = |key: &str| {
+            manifest
+                .as_ref()
+                .and_then(|manifest| manifest.get(key)?.as_str().map(str::to_string))
+        };
+        ["ascMain", "main", "types"]
+            .into_iter()
+            .filter_map(field)
+            .chain(["assembly/index.ts".to_string(), "index.ts".to_string()])
+            .collect()
+    } else {
+        vec![
+            inner.clone(),
+            format!("{inner}.ts"),
+            format!("{inner}/index.ts"),
+            format!("assembly/{inner}.ts"),
+            format!("assembly/{inner}/index.ts"),
+        ]
+    };
+    candidates
+        .into_iter()
+        .find(|file| is_source(file))
+        .map(|file| package.join(file))
 }
 
 /// `None` means the mappings do something this scan can't account for, so the
@@ -111,7 +177,7 @@ fn transaction_field(name: &str) -> Option<TransactionField> {
         "from" => TransactionField::From,
         "to" => TransactionField::To,
         "value" => TransactionField::Value,
-        // graph-ts up to 0.21 called the gas limit `gasUsed`.
+        // graph-ts before 0.22 called the gas limit `gasUsed`.
         "gasLimit" | "gasUsed" => TransactionField::Gas,
         "gasPrice" => TransactionField::GasPrice,
         "input" => TransactionField::Input,
@@ -373,6 +439,56 @@ mod gather_tests {
             Some(vec![TransactionField::Hash])
         );
     }
+
+    // Enzyme builds every event id with `uniqueEventId(event)` from its
+    // workspace package `@enzymefinance/subgraph-utils`, imported by name and
+    // linked into node_modules; OpenZeppelin's subgraphs ship their mappings in
+    // node_modules. Neither was scanned, so no transaction field was selected
+    // and `event.transaction.hash` read null.
+    #[test]
+    fn reads_packages_the_mappings_import() {
+        let dir = TempDir::new("envio_subgraph_usage_packages").unwrap();
+        let write = |path: &str, source: &str| {
+            let file = dir.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        };
+        write(
+            "packages/utils/package.json",
+            r#"{"name":"@enzymefinance/subgraph-utils","main":"index.ts"}"#,
+        );
+        write("packages/utils/index.ts", "export * from './utils/id';\n");
+        write(
+            "packages/utils/utils/id.ts",
+            "export function uniqueEventId(event: ethereum.Event): string { return event.transaction.hash.toHex(); }",
+        );
+        write(
+            "subgraph/src/feed.ts",
+            "import { uniqueEventId } from '@enzymefinance/subgraph-utils';\nexport function handle(event: any): void { uniqueEventId(event); }",
+        );
+        write(
+            "subgraph/node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts",
+            "export function handleVote(event: any): void { let from = event.transaction.from; }",
+        );
+        std::fs::create_dir_all(dir.path().join("subgraph/node_modules/@enzymefinance")).unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("packages/utils"),
+            dir.path()
+                .join("subgraph/node_modules/@enzymefinance/subgraph-utils"),
+        )
+        .unwrap();
+        let sources = gather_with_mappings(
+            &dir.path().join("subgraph"),
+            &[
+                "./src/feed.ts".to_string(),
+                "./node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts".to_string(),
+            ],
+        );
+        assert_eq!(
+            scan(&sources).transaction,
+            Some(vec![TransactionField::From, TransactionField::Hash])
+        );
+    }
 }
 
 #[cfg(test)]
@@ -405,9 +521,9 @@ mod tests {
     }
 
     #[test]
-    fn reads_an_old_mappings_transaction_gas_used_as_the_gas_limit() {
+    fn selects_the_gas_limit_for_a_pre_0_22_gas_used() {
         assert_eq!(
-            scan_one("entity.gasUsed = event.transaction.gasUsed;").transaction,
+            scan_one("transaction.gasUsed = event.transaction.gasUsed").transaction,
             Some(vec![TransactionField::Gas])
         );
     }
