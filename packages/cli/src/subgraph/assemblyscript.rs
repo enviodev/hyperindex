@@ -1414,10 +1414,11 @@ impl<'a> Rewrite<'a> {
         Expression::new_call_expression(span, callee, None, args, false, &self.ast)
     }
 
-    /// `load<T>(p)`, `store<T>(p, v)`, `bswap(x)`, `rotr(x, n)`, `rotl(x, n)`:
-    /// AssemblyScript builtins of a type, which the call names or its operand
-    /// has. The helper method and its arguments, the type as a string — for
-    /// `load` and `store` first, after the operands for the others.
+    /// `load<T>(p)`, `store<T>(p, v)`, `reinterpret<T>(x)`, `bswap(x)`,
+    /// `rotr(x, n)`, `rotl(x, n)`: AssemblyScript builtins of a type, which the
+    /// call names or its operand has. The helper method and its arguments, the
+    /// type as a string — for `load`, `store` and `reinterpret` first, after the
+    /// operands for the others.
     fn memory_builtin(
         &self,
         call: &mut CallExpression<'a>,
@@ -1428,6 +1429,7 @@ impl<'a> Rewrite<'a> {
         let method = match callee.name.as_str() {
             "load" => "load",
             "store" => "store",
+            "reinterpret" => "reinterpret",
             "bswap" => "bswap",
             "rotl" => "rotl",
             "rotr" => "rotr",
@@ -1450,7 +1452,8 @@ impl<'a> Rewrite<'a> {
                 TSType::TSBooleanKeyword(_) => Some("bool".to_string()),
                 _ => None,
             });
-        if matches!(method, "load" | "store") && named.is_none() {
+        let typed_first = matches!(method, "load" | "store" | "reinterpret");
+        if typed_first && named.is_none() {
             return None;
         }
         let ty = named.or_else(|| {
@@ -1466,7 +1469,7 @@ impl<'a> Rewrite<'a> {
             .iter_mut()
             .map(|argument| argument.to_expression_mut().take_in(&self.ast))
             .collect();
-        if matches!(method, "load" | "store") {
+        if typed_first {
             args.insert(0, ty);
         } else {
             while args.len() < if method == "bswap" { 1 } else { 2 } {
@@ -2444,6 +2447,7 @@ export function f(tick, signed) {
   let r = rotr(v, 7);
   let words = new StaticArray<u32>(16);
   let names = new StaticArray<string>(2);
+  let d = reinterpret<f64>(u);
 }"),
             "export function f(x, u, v) {
 \tlet w = __envio_op.bswap(__envio_op.load(\"u32\", __envio_op.add(__envio_op.address(x.buffer), 4)), \"u32\");
@@ -2451,6 +2455,7 @@ export function f(tick, signed) {
 \tlet r = __envio_op.rotr(v, 7, \"u32\");
 \tlet words = __envio_op.static_array(\"u32\", 16);
 \tlet names = new StaticArray(2);
+\tlet d = __envio_op.reinterpret(\"f64\", u);
 }
 "
         );

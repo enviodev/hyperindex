@@ -592,6 +592,15 @@ export const operators = {
     width(type).set(new DataView(p.buffer), p.offset + number(offset), value);
   },
   static_array: (element: string, length: unknown): unknown => new TYPED_ARRAYS[element](number(length)),
+  // `reinterpret<T>(x)`: x's bits as a T of x's width, the other of the pair
+  // (std/assembly/builtins.ts: f32 <-> i32/u32, f64 <-> i64/u64).
+  reinterpret: (type: string, value: unknown): unknown => {
+    const view = new DataView(new ArrayBuffer(8));
+    const from = { f32: "i32", f64: "i64", i32: "f32", u32: "f32", i64: "f64", u64: "f64" }[type];
+    if (!from) throw new Error(`Envio Subgraph can't reinterpret a value as a ${type}: only between floats and integers of one width.`);
+    width(from).set(view, 0, value);
+    return width(type).get(view, 0);
+  },
   bswap,
   rotl: rotate(true),
   rotr: rotate(false),
