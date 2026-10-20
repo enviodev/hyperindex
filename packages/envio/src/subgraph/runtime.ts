@@ -1268,7 +1268,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   );
 
   if (config.isDev) {
-    await typeCheckMappings(config.root, config.manifestFile);
+    await typeCheckMappings(config.root, config.manifestFile, config.pathFixes);
   }
 
   // A file template has no contract: nothing is registered for it, so it takes

@@ -127,6 +127,8 @@ let fromSubgraph = (
   ~test=?,
   ~projectDir=?,
   ~fromProjectFiles=false,
+  // What `envio dev` sets: the runtime then type-checks with `graph build`.
+  ~isDev=false,
   ~manifest,
   ~schema,
 ): parsed => {
@@ -158,7 +160,13 @@ let fromSubgraph = (
   } else {
     (Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)).config
   }
-  let publicConfigJson = configJson->JSON.parseOrThrow
+  let publicConfigJson = switch configJson->JSON.parseOrThrow {
+  | Object(fields) if isDev =>
+    let fields = fields->Dict.copy
+    fields->Dict.set("isDev", JSON.Boolean(true))
+    JSON.Object(fields)
+  | json => json
+  }
   let config = Config.fromPublic(publicConfigJson)
 
   let registrations = () =>

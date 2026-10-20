@@ -187,6 +187,7 @@ async function withCodegenManifest<T>(
   manifest: string,
   pathFixes: [string, string][],
   use: (file: string) => Promise<T>,
+  { raiseApiVersion = true }: { raiseApiVersion?: boolean } = {},
 ): Promise<T> {
   let source: string;
   try {
@@ -194,7 +195,7 @@ async function withCodegenManifest<T>(
   } catch {
     return use(manifest);
   }
-  let patched = source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5");
+  let patched = raiseApiVersion ? source.replace(/(\bapiVersion:\s*["']?)0\.0\.[0-4]\b/g, "$10.0.5") : source;
   // graph-cli on Linux can't read a file the manifest names in another case
   // than the repo's; the copy names it the repo's way.
   for (const [written, found] of pathFixes) {
@@ -572,7 +573,11 @@ export async function ensureGeneratedCode(
  * Only in dev, and only when something it reads has changed: it is an
  * AssemblyScript compile, not something to pay on every restart.
  */
-export async function typeCheckMappings(root: string, manifestFile = "subgraph.yaml"): Promise<void> {
+export async function typeCheckMappings(
+  root: string,
+  manifestFile = "subgraph.yaml",
+  pathFixes: [string, string][] = [],
+): Promise<void> {
   const graphCli = graphCliPackage(root);
   if (!graphCli) return;
 
@@ -585,15 +590,23 @@ export async function typeCheckMappings(root: string, manifestFile = "subgraph.y
   const stamp = path.join(root, ".envio", "graph-build.stamp");
   if (existsSync(stamp) && readFileSync(stamp, "utf8") === inputs) return;
 
-  await runOrThrow(
-    graphCli,
-    root,
-    manifestFile,
-    "build",
-    path.resolve(root, "build"),
-    "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
-      "failed — the error above comes from The Graph's own AssemblyScript\n" +
-      "compiler, so fix it there and rerun.",
+  // The manifest spelled the repo's way, as codegen got it; its apiVersion
+  // as written, which is what the compile checks against.
+  await withCodegenManifest(
+    path.resolve(root, manifestFile),
+    pathFixes,
+    (manifest) =>
+      runOrThrow(
+        graphCli,
+        root,
+        manifest,
+        "build",
+        path.resolve(root, "build"),
+        "Envio Subgraph ran `graph build` to type-check the mappings, and it\n" +
+          "failed — the error above comes from The Graph's own AssemblyScript\n" +
+          "compiler, so fix it there and rerun.",
+      ),
+    { raiseApiVersion: false },
   );
 
   mkdirSync(path.dirname(stamp), { recursive: true });
