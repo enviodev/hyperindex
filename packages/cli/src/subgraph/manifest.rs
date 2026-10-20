@@ -1216,6 +1216,9 @@ templates:
                 network_to_chain_id("apechain"),
                 network_to_chain_id("pulsechain"),
                 network_to_chain_id("pulse"),
+                // Aliases the registry added in 0.8.7.
+                network_to_chain_id("arctest"),
+                network_to_chain_id("basesepolia"),
                 network_to_chain_id("not-a-chain"),
             ],
             [
@@ -1231,6 +1234,8 @@ templates:
                 Some(33139),
                 Some(369),
                 Some(369),
+                Some(5042002),
+                Some(84532),
                 None,
             ]
         );
