@@ -456,7 +456,12 @@ fn abi_build_step(root: &std::path::Path, path: &str) -> Option<String> {
     if let Some(dir) = &missing_dir {
         let name = dir.file_name()?.to_string_lossy().to_string();
         let shown = format!("{}/", dir.display());
-        if let Some((script, text)) = render::scripts_mentioning(root, &name).into_iter().next() {
+        // kleros-v2's manifest is in subgraph/core, its scripts in subgraph/.
+        let found = root
+            .ancestors()
+            .take(4)
+            .find_map(|dir| render::scripts_mentioning(dir, &name).into_iter().next());
+        if let Some((script, text)) = found {
             let run = if text.chars().count() <= 60 {
                 format!(" ({text})")
             } else {
@@ -3097,14 +3102,15 @@ type Renewal implements Event @entity {
             GRAVITY_MANIFEST.replace("./abis/Gravity.json", "../abis/mainnet/Gravity.json"),
         )
         .unwrap();
-        fs::create_dir_all(subgraph.join("scripts")).unwrap();
+        // As in kleros-v2, the scripts are the parent package's.
+        fs::create_dir_all(root.join("scripts")).unwrap();
         fs::write(
-            subgraph.join("scripts/sync-abis.sh"),
-            "jq .abi \"$DEPLOYMENTS/$1/$name.json\" > \"../abis/$1/$name.json\"\n",
+            root.join("scripts/sync-abis.sh"),
+            "jq .abi \"$DEPLOYMENTS/$1/$name.json\" > \"abis/$1/$name.json\"\n",
         )
         .unwrap();
         fs::write(
-            subgraph.join("package.json"),
+            root.join("package.json"),
             r#"{"scripts": {"sync-abis": "./scripts/sync-abis.sh", "codegen": "graph codegen"}}"#,
         )
         .unwrap();
