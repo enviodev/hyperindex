@@ -710,6 +710,12 @@ export const operators = {
   as_u16: wrapTo(16, false),
   as_i32: wrapTo(32, true),
   as_u32: wrapTo(32, false),
+  // AssemblyScript's dtoa writes what JavaScript does, but a whole number
+  // with ".0" (JavaScript already writes -0 as "0").
+  ftoa: (value: unknown): string => {
+    const text = String(isObject(value) ? value : number(value));
+    return /^-?\d+$/.test(text) ? `${text}.0` : text;
+  },
   as_i64: wrapTo64(true),
   as_u64: wrapTo64(false),
   as_f64: (value: unknown): unknown => (isObject(value) ? value : number(value ?? 0)),

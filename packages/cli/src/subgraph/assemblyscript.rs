@@ -2210,6 +2210,21 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                         }
                     }
                 }
+                // A float's `toString()` is AssemblyScript's dtoa, which
+                // writes a whole number with ".0".
+                let plain_call = call.arguments.is_empty() && !call.optional;
+                let span = call.span;
+                if let Expression::StaticMemberExpression(member) = &mut call.callee {
+                    if plain_call
+                        && member.property.name == "toString"
+                        && !member.optional
+                        && self.float(&member.object)
+                    {
+                        let object = member.object.take_in(&self.ast);
+                        *expr = self.operator(span, "ftoa", [object]);
+                        return;
+                    }
+                }
                 if let Some(method) = search_helper(call) {
                     let span = call.span;
                     let Expression::StaticMemberExpression(member) = &mut call.callee else {
@@ -2728,6 +2743,7 @@ export function f(n: i32, big: i64): void {
   let h = n / RATE + n / ONE + half(n) / 2;
   g /= 2;
   a /= 2;
+  let text = x.toString() + a.toString();
 }"),
             "const RATE = 4;
 const ONE = 1;
@@ -2746,6 +2762,7 @@ export function f(n, big) {
 \tlet h = __envio_op.add(__envio_op.add(__envio_op.fdiv(n, RATE), __envio_op.fdiv(n, ONE)), __envio_op.fdiv(half(n), 2));
 \tg = __envio_op.fdiv(g, 2);
 \ta = __envio_op.div(a, 2);
+\tlet text = __envio_op.add(__envio_op.ftoa(x), a.toString());
 }
 "
         );
