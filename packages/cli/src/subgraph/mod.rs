@@ -5515,6 +5515,51 @@ type Renewal implements Event @entity {
         );
     }
 
+    // beefy's `"postinstall": "yarn run --silent configure linea && …"`: a
+    // package manager passes the words after the script's name on to it, so
+    // `configure` (`./bin/prepare.sh`) runs as `./bin/prepare.sh linea`.
+    // envio read `--silent` as the script's name, and dropped the arguments of
+    // a script it read through.
+    #[test]
+    fn passes_a_script_call_s_arguments_to_the_script() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-call-args").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(
+            root.join("subgraph.template.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(
+            root.join("bin/prepare.sh"),
+            "#!/bin/sh\n[ -n \"$1\" ] || { echo \"Usage: $0 <chain>\"; exit 1; }\nsed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            root.join("bin/prepare.sh"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"configure": "./bin/prepare.sh", "prepare:base": "yarn run --silent configure base && yarn codegen", "codegen": "graph codegen"}}"#,
+        )
+        .unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config).0,
+                config.subgraph.unwrap().rendered_manifest.unwrap().commands
+            ),
+            (8453, vec!["./bin/prepare.sh base".to_string()])
+        );
+    }
+
     // envio runs each of a script's `&&` commands in a shell of its own, so
     // `export NETWORK=… && node build.js` and `cd subgraph && …` would lose
     // what the shell they ran in carries to the next command.

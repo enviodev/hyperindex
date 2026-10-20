@@ -877,7 +877,9 @@ build does first.
   Any other case is the error above, saying why none ran.
 - *What runs:* the script's commands up to its first graph-cli step, with
   `npm run <script>` (`yarn <script>`, a workspace-wide run) read as that
-  script's commands and the variables the call sets, and package installs
+  script's commands, the variables the call sets, and the words it passes on
+  appended as the package manager appends them (beefy's `yarn run --silent
+  configure linea` runs `./bin/prepare.sh linea`), and package installs
   skipped as in §6a; each in a shell (a `cd` or `export` before it carries
   over, as in one shell), in its package, with the project's bins
   on PATH, stdin closed, and without envio's own `ENVIO_*` settings (the

@@ -391,9 +391,12 @@ enum Command {
     Graph,
     /// `npm run <script>` (`yarn <script>`, `pnpm <script>`), with the
     /// variables set for it: inlined, so its steps are read with them bound.
+    /// The words after the name are passed on to the script, which the
+    /// package manager appends to its last command.
     RunScript {
         name: String,
         env: Vec<(String, Word)>,
+        args: Vec<Word>,
     },
     /// `yarn workspaces run <script>` (`npm run <script> --workspaces`, `pnpm
     /// -r run <script>`, `lerna run`, `turbo run`): that script of every
@@ -452,6 +455,27 @@ fn fan_out_script(tool: &str, words: &[&Word]) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// A script's text with the words its call passes on appended, as the
+/// package manager runs it; `None` when one of them has a value envio can't
+/// know.
+fn with_args(script: &str, args: &[Word]) -> Option<String> {
+    let mut text = script.to_string();
+    for arg in args {
+        text.push(' ');
+        text.push_str(&shell_word(&literal(arg)?));
+    }
+    Some(text)
+}
+
+/// The words a script call passes on to the script, past npm's `--`.
+fn script_args(words: &[&Word]) -> Vec<Word> {
+    let words = match words.first().and_then(|word| literal(word)).as_deref() {
+        Some("--") => &words[1..],
+        _ => words,
+    };
+    words.iter().map(|word| (*word).clone()).collect()
 }
 
 fn classify(words: &[Word]) -> Command {
@@ -519,8 +543,18 @@ fn classify(words: &[Word]) -> Command {
                 };
             }
             ("npm" | "pnpm" | "yarn" | "bun", Some("run" | "run-script")) => {
-                return match words.get(2).and_then(|word| literal(word)) {
-                    Some(name) => Command::RunScript { name, env },
+                // `yarn run --silent configure linea`: flags before the name.
+                let at = words
+                    .iter()
+                    .skip(2)
+                    .position(|word| literal(word).is_none_or(|text| !text.starts_with('-')))
+                    .map(|at| at + 2);
+                return match at.and_then(|at| Some((at, literal(words[at])?))) {
+                    Some((at, name)) => Command::RunScript {
+                        name,
+                        env,
+                        args: script_args(&words[at + 1..]),
+                    },
                     None => Command::Other(format!("{name} run")),
                 };
             }
@@ -537,6 +571,7 @@ fn classify(words: &[Word]) -> Command {
                 return Command::RunScript {
                     name: script.to_string(),
                     env,
+                    args: script_args(&words[2..]),
                 };
             }
             ("cp", _) => {
@@ -742,8 +777,8 @@ fn inline_scripts(
         let call = match step.stages.as_slice() {
             [stage] if stage.redirects.is_empty() && !step.after_failure && depth < 5 => {
                 match classify(&stage.words) {
-                    Command::RunScript { name, env } => Some((name, env, false)),
-                    Command::FanOut { name, env } => Some((name, env, true)),
+                    Command::RunScript { name, env, args } => Some((name, env, args, false)),
+                    Command::FanOut { name, env } => Some((name, env, Vec::new(), true)),
                     _ => None,
                 }
             }
@@ -758,11 +793,11 @@ fn inline_scripts(
             }
             scoped
         };
-        let inner = call.and_then(|(name, env, fan_out)| {
+        let inner = call.and_then(|(name, env, args, fan_out)| {
             let scoped = scoped(env);
             if !fan_out {
-                let text = scripts.get(&name)?;
-                let steps = parse_steps(text)?;
+                let text = with_args(scripts.get(&name)?, &args)?;
+                let steps = parse_steps(&text)?;
                 names.push(name);
                 return Some(inline_scripts(
                     scripts,
@@ -2002,10 +2037,15 @@ fn collect_commands(
                 env
             };
             match classify(&stage.words) {
-                Command::RunScript { name, env: call } if depth < 5 => {
-                    if let Some(inner) = scripts.get(&name) {
+                Command::RunScript {
+                    name,
+                    env: call,
+                    args,
+                } if depth < 5 => {
+                    if let Some(inner) = scripts.get(&name).and_then(|text| with_args(text, &args))
+                    {
                         out.inlined.push(name.clone());
-                        if !collect_commands(dir, scripts, inner, &bound(call), depth + 1, out) {
+                        if !collect_commands(dir, scripts, &inner, &bound(call), depth + 1, out) {
                             return false;
                         }
                         continue;
