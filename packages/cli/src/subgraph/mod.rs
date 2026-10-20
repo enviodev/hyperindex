@@ -3314,8 +3314,10 @@ type Renewal implements Event @entity {
     // inverse-governance's manifest names `mainnet.schema.graphql`, which
     // OpenZeppelin's graph-compiler writes (`"prepare:subgraph":
     // "graph-compiler --config config/mainnet.json … --export-schema
-    // --export-subgraph"`). The error was "Failed to read …"; it names the
-    // script.
+    // --export-subgraph"`). inverse-governance's subgraph.yaml is a copy of
+    // what it writes to generated/, so its paths are `../src/…`, and the
+    // error was "Failed to read …"; it names the script, and the manifest the
+    // repo's own build uses.
     #[test]
     fn names_the_script_that_writes_a_missing_schema() {
         let dir = tempdir::TempDir::new("envio-subgraph-schema-build").unwrap();
@@ -3323,13 +3325,19 @@ type Renewal implements Event @entity {
         write_gravity(root, "subgraph.yaml");
         fs::write(
             root.join("subgraph.yaml"),
-            GRAVITY_MANIFEST.replace("./schema.graphql", "./mainnet.schema.graphql"),
+            GRAVITY_MANIFEST
+                .replace("./schema.graphql", "mainnet.schema.graphql")
+                .replace("./abis/", "../abis/")
+                .replace("./src/", "../src/"),
         )
         .unwrap();
         fs::write(
             root.join("package.json"),
             r#"{"scripts": {
+  "prepublish": "rimraf artifacts build cache generated",
+  "prepare": "mkdir -p generated artifacts && npm run prepare:subgraph",
   "prepare:subgraph": "graph-compiler --config config/mainnet.json --include src/datasources --export-schema --export-subgraph",
+  "build:codegen": "graph codegen generated/mainnet.subgraph.yaml",
   "codegen": "graph codegen"
 }}"#,
         )
@@ -3342,10 +3350,12 @@ type Renewal implements Event @entity {
 
         assert_eq!(
             err,
-            "The schema ./mainnet.schema.graphql the manifest names doesn't exist. The \
+            "The schema mainnet.schema.graphql the manifest names doesn't exist. The \
              package.json script \"prepare:subgraph\" looks like it writes it: graph-compiler \
              --config config/mainnet.json --include src/datasources --export-schema \
-             --export-subgraph. Run it, then start envio again."
+             --export-subgraph. Run it, then start envio with --config \
+             generated/mainnet.subgraph.yaml, the manifest the script \"build:codegen\" \
+             builds."
         );
     }
 

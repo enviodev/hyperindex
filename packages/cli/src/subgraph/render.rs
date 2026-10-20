@@ -1811,19 +1811,7 @@ fn run_codegen_prelude(
     }
     // balancer-v2's steps write subgraph.<network>.yaml, and its codegen step
     // names the one it builds: `graph codegen subgraph.mainnet.yaml`.
-    let named = steps[first_codegen]
-        .split_whitespace()
-        .skip_while(|word| *word != "codegen")
-        .skip(1)
-        .scan(false, |takes_value, word| {
-            let value = std::mem::replace(
-                takes_value,
-                matches!(word, "-o" | "--output-dir" | "-u" | "--uncrashable-config"),
-            );
-            Some((value, word))
-        })
-        .find(|(value, word)| !value && (word.ends_with(".yaml") || word.ends_with(".yml")))
-        .map(|(_, word)| absolute(&dir.join(word)));
+    let named = codegen_manifest_arg(&steps[first_codegen]).map(|word| absolute(&dir.join(word)));
     let written = [Some(target.to_path_buf()), named]
         .into_iter()
         .flatten()
@@ -1992,6 +1980,40 @@ fn makefile_targets(makefile: &str) -> Vec<(String, String)> {
         }
     }
     targets
+}
+
+/// The manifest a `graph codegen` command line names, if it names one.
+fn codegen_manifest_arg(step: &str) -> Option<&str> {
+    step.split_whitespace()
+        .skip_while(|word| *word != "codegen")
+        .skip(1)
+        .scan(false, |takes_value, word| {
+            let value = std::mem::replace(
+                takes_value,
+                matches!(word, "-o" | "--output-dir" | "-u" | "--uncrashable-config"),
+            );
+            Some((value, word))
+        })
+        .find(|(value, word)| !value && (word.ends_with(".yaml") || word.ends_with(".yml")))
+        .map(|(_, word)| word)
+}
+
+/// A package.json script in `dir` whose `graph codegen` builds a manifest
+/// other than `manifest`: its name and that manifest.
+pub fn other_codegen_manifest(dir: &Path, manifest: &Path) -> Option<(String, PathBuf)> {
+    let manifest = absolute(manifest);
+    package_scripts(dir).into_iter().find_map(|(name, script)| {
+        script
+            .split(['&', '|', ';'])
+            .filter(|step| {
+                let words: Vec<&str> = step.split_whitespace().collect();
+                words.windows(2).any(|pair| pair == ["graph", "codegen"])
+            })
+            .find_map(codegen_manifest_arg)
+            .map(|word| absolute(&dir.join(word)))
+            .filter(|built| *built != manifest)
+            .map(|built| (name, built))
+    })
 }
 
 fn absolute(path: &Path) -> PathBuf {

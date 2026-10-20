@@ -734,7 +734,11 @@ directory or mentions the file (kleros-v2's `sync-abis`, GoodCollective's
 `build:copyabi`, inverse-governance's `graph-compiler … --export-schema`), an
 empty git submodule, the Foundry (`out/`) or Hardhat (`artifacts/`) project
 the path runs through (liquity's `../contracts/out/`), or the npm package
-under node_modules the install didn't provide.
+under node_modules the install didn't provide. When another script runs
+`graph codegen` on a different manifest (inverse-governance's `build:codegen`
+builds `generated/mainnet.subgraph.yaml`, and its committed `subgraph.yaml`
+is a copy naming `../src/…`), the error names that manifest to point
+`--config` at once the step has run.
 
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
