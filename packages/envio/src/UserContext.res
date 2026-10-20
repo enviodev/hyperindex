@@ -23,7 +23,7 @@ Utils.Object.defineProperty(
     // Wrap with toMethod so `this` binds to the EffectContext instance.
     get: Utils.toMethod(() => {
       let params = paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))
-      params.indexerState->IndexerState.loggerForItem(params.item)->Logging.asContextLog
+      params.indexerState->IndexerState.loggerForItem(params.item)->Logger.asContextLog
     }),
   },
 )
@@ -297,8 +297,8 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
     | "log" =>
       (
         params.isPreload
-          ? Logging.silentContextLog
-          : params.indexerState->IndexerState.loggerForItem(params.item)->Logging.asContextLog
+          ? Logger.silentContextLog
+          : params.indexerState->IndexerState.loggerForItem(params.item)->Logger.asContextLog
       )->(Utils.magic: Envio.logger => unknown)
 
     | "effect" =>

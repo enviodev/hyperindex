@@ -75,7 +75,7 @@ type workerMessage =
 let bindToSupervisor = (~logger) => {
   NodeJs.Process.onSignal("SIGINT", () => ())
   NodeJs.Process.onDisconnect(() => {
-    logger->Logging.error("The indexer supervisor is gone. Stopping this chain's process.")
+    logger->Logger.error("The indexer supervisor is gone. Stopping this chain's process.")
     NodeJs.process->NodeJs.exitWithCode(Failure)
   })
 }

@@ -68,7 +68,7 @@ let make = (): Ecosystem.t => {
       eventItem.onEventRegistration.eventConfig->(
         Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
       )
-    logger->Logging.withFields({
+    logger->Logger.withFields({
       "program": eventConfig.contractName,
       "instruction": eventConfig.name,
       "chainId": eventItem.chainId,

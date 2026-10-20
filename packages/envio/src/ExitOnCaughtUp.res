@@ -13,7 +13,7 @@ let run = async (state: IndexerState.t) => {
       switch state->IndexerState.onExit {
       | Some(onExit) => onExit()
       | None =>
-        state->IndexerState.logger->Logging.info("Exiting with success")
+        state->IndexerState.logger->Logger.info("Exiting with success")
         if Worker.isEnabled {
           Worker.exitAfterReporting(~metrics=state->IndexerState.toMetrics)
         } else {

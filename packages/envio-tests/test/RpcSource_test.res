@@ -183,7 +183,7 @@ describe("RpcSource - field selection end to end", () => {
       },
       ~itemsTarget=Some(5000),
       ~retry=0,
-      ~logger=Logging.makeInMemory()->Logging.withFields({"test": "RpcSource field selection"}),
+      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource field selection"}),
     )
     // The spelling is the chain's, read where the stores are materialised —
     // which is `ChainState.shouldChecksum` in production.
@@ -633,7 +633,7 @@ describe("RpcSource - empty selection", () => {
         ~selection={dependsOnAddresses: true, onEventRegistrations: []},
         ~itemsTarget=Some(5000),
         ~retry=0,
-        ~logger=Logging.makeInMemory()->Logging.withFields({"test": "RpcSource empty selection"}),
+        ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource empty selection"}),
       )
       None
     } catch {
@@ -724,7 +724,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             },
             ~itemsTarget=Some(5000),
             ~retry=0,
-            ~logger=Logging.makeInMemory()->Logging.withFields({"test": "RpcSource re-grow"}),
+            ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource re-grow"}),
           )
         } catch {
         | Source.GetItemsError(_) => ()
@@ -850,7 +850,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
           },
           ~itemsTarget=Some(5000),
           ~retry=0,
-          ~logger=Logging.makeInMemory()->Logging.withFields({"test": "RpcSource classify"}),
+          ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource classify"}),
         )
         None
       } catch {
@@ -973,7 +973,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         },
         ~itemsTarget=Some(5000),
         ~retry=0,
-        ~logger=Logging.makeInMemory()->Logging.withFields({"test": "RpcSource selection e2e"}),
+        ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource selection e2e"}),
       )
       let filters =
         mock.requests
@@ -1054,7 +1054,7 @@ describe("RpcSource - height subscription", () => {
 
     let source = makeSource(~url=mock.url)
     let sourceManager = SourceManager.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~isRealtime=true,
       ~sources=[source],
     )

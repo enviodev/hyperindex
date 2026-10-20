@@ -1,6 +1,6 @@
 open Vitest
 
-let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) => {
+let makeState = (~onError=errHandler => errHandler->ErrorHandling.toExn->throw, ()) => {
   let config = TestConfig.default
 
   let chainStates = Dict.make()
@@ -34,7 +34,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~fetchState,
       ~addressStore,
       ~sourceManager=SourceManager.make(
-        ~logger=Logging.makeInMemory(),
+        ~logger=Logger.makeInMemory(),
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
@@ -45,13 +45,13 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~shouldRollbackOnReorg=true,
       ~isInReorgThreshold=true,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
     )
     chainStates->ChainId.Dict.set(chainConfig.id, chainState)
   })
 
   IndexerState.make(
-    ~logger=Logging.makeInMemory(),
+    ~logger=Logger.makeInMemory(),
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
@@ -109,7 +109,7 @@ describe("Indexer loop", () => {
     let state = makeState(~onError=_ => reportedErrors := reportedErrors.contents + 1, ())
 
     state->IndexerState.errorExit(
-      ErrorHandling.make(~logger=Logging.makeInMemory(), Utils.Error.make("boom")),
+      ErrorHandling.make(~logger=Logger.makeInMemory(), Utils.Error.make("boom")),
     )
 
     t.expect(

@@ -65,7 +65,7 @@ type requestStatSample = {
 type t = {
   sourcesState: array<sourceState>,
   // The chain's logger.
-  logger: Logging.t,
+  logger: Logger.t,
   mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
   // Cumulative time spent in each status, rendered into the
@@ -210,8 +210,6 @@ let getRateLimitTimeMs = sourceManager =>
   | None => 0.0
   }
 
-let isRateLimited = sourceManager => sourceManager.activeRateLimitStartMs->Option.isSome
-
 let getRateLimitResetInMs = sourceManager =>
   switch sourceManager.activeRateLimitResetAtMs {
   | Some(resetAt) =>
@@ -255,7 +253,7 @@ let stopRateLimitTimeout = sourceManager => {
 let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) => {
   let waitMs = Pervasives.min(resetMs, 300_000)
   let level = retry >= 2 ? #warn : #trace
-  logger->Logging.logAt(
+  logger->Logger.logAt(
     level,
     `HyperSync source is rate-limited - not critical, the indexer will retry in ${(waitMs / 1000)
         ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
@@ -343,7 +341,7 @@ let makeGetHeightRetryInterval = (
 
 let make = (
   ~sources: array<Source.t>,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
   ~isRealtime,
   ~newBlockStallTimeout=60_000,
   ~newBlockStallTimeoutRealtime=20_000,
@@ -644,7 +642,7 @@ let retryBehindHead = async (
   sourceState: sourceState,
   ~retry,
   ~isRealtime,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
   ~blockNumber: int,
   ~excludedSources=?,
 ) => {
@@ -664,7 +662,7 @@ let retryBehindHead = async (
       `${source} is still catching up to block ${block}. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.`,
     )
   }
-  logger->Logging.logAt(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
+  logger->Logger.logAt(level, msg, ~params={"retry": retry, "backOffMilliseconds": backoffMillis})
   await sourceManager->backoffBeforeRetry(
     sourceState,
     ~retry,
@@ -699,7 +697,7 @@ let retryInconsistentResponse = async (
   sourceState: sourceState,
   ~retry,
   ~isRealtime,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
   ~method: string,
   ~err: exn,
   ~excludedSources=?,
@@ -712,7 +710,7 @@ let retryInconsistentResponse = async (
     ~msg,
     ~stalled=" It has disagreed with itself on every attempt for several minutes now, so this chain has stopped making progress - the endpoint is likely serving blocks and logs from nodes on different chains.",
   )
-  logger->Logging.logAt(
+  logger->Logger.logAt(
     level,
     msg,
     ~params={
@@ -744,7 +742,7 @@ let retryFailedPage = async (
   sourceState: sourceState,
   ~retry,
   ~isRealtime,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
   ~msg: string,
   ~attemptedToBlock: int,
   ~backoffMillis: int,
@@ -758,7 +756,7 @@ let retryFailedPage = async (
     ~msg,
     ~stalled=" No source available to this chain has served this query on any attempt since, so indexing has stopped making progress.",
   )
-  logger->Logging.logAt(
+  logger->Logger.logAt(
     level,
     msg,
     ~params={
@@ -787,11 +785,11 @@ cancelling the rest.
 let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
-  let logger = sourceManager.logger->Logging.withFields({
+  let logger = sourceManager.logger->Logger.withFields({
     "knownHeight": knownHeight,
   })
   if !sourceManager.waitingLogged {
-    logger->Logging.trace(
+    logger->Logger.trace(
       reducedPolling
         ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
               ->Int.toString}s) until the indexer enters realtime mode.`
@@ -841,7 +839,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         sourceManager.activeSource = source
         // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
         let level = stalled.contents ? #info : #trace
-        logger->Logging.logAt(
+        logger->Logger.logAt(
           level,
           `New blocks successfully found.`,
           ~params={"source": source.name, "newBlockHeight": height},
@@ -940,12 +938,12 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
 
                 switch fallbackSources {
                 | [] =>
-                  logger->Logging.warn(
+                  logger->Logger.warn(
                     `No new blocks detected within ${(stallTimeout / 1000)
                         ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
                   )
                 | _ =>
-                  logger->Logging.warn(
+                  logger->Logger.warn(
                     `No new blocks detected within ${(stallTimeout / 1000)
                         ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
                   )
@@ -1004,7 +1002,7 @@ let executeQuery = async (
     | Some(s) =>
       if s.source !== sourceManager.activeSource {
         let logger = sourceManager.logger
-        logger->Logging.info(
+        logger->Logger.info(
           "Switching data-source",
           ~params={
             "source": s.source.name,
@@ -1023,7 +1021,7 @@ let executeQuery = async (
     let toBlock = toBlockRef.contents
     let retry = retryRef.contents
 
-    let logger = sourceManager.logger->Logging.withFields({
+    let logger = sourceManager.logger->Logger.withFields({
       "logType": "Block Range Query",
       "partitionId": query.partitionId,
       "source": source.name,
@@ -1103,10 +1101,10 @@ let executeQuery = async (
             switch error {
             | UnsupportedSelection({message}) =>
               sourceManager.disableReason = Some(message)
-              logger->Logging.error(message)
+              logger->Logger.error(message)
             | FailedGettingFieldSelection({?exn, message, blockNumber}) =>
               sourceManager.disableReason = Some(message)
-              logger->Logging.error(
+              logger->Logger.error(
                 message,
                 ~params={"err": exn->Option.map(Utils.prettifyExn), "blockNumber": blockNumber},
               )
@@ -1137,7 +1135,7 @@ let executeQuery = async (
         retryRef := retryRef.contents + 1
 
       | FailedGettingItems({attemptedToBlock, retry: WithSuggestedToBlock({toBlock})}) =>
-        logger->Logging.trace(
+        logger->Logger.trace(
           "Failed getting data for the block range. Immediately retrying with the suggested block range from response.",
           ~params={"toBlock": attemptedToBlock, "suggestedToBlock": toBlock},
         )
@@ -1156,7 +1154,7 @@ let executeQuery = async (
         }
         excludedSources->Utils.Set.add(sourceState)->ignore
 
-        logger->Logging.warn(
+        logger->Logger.warn(
           message ++ " - Attempting another source",
           ~params={"toBlock": attemptedToBlock, "err": exn->Option.map(Utils.prettifyExn)},
         )
@@ -1207,7 +1205,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     let source = sourceState.source
     let retry = retryRef.contents
 
-    let logger = sourceManager.logger->Logging.withFields({
+    let logger = sourceManager.logger->Logger.withFields({
       "logType": "Block Hash Query",
       "source": source.name,
       "retry": retry,
@@ -1252,7 +1250,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     | exn =>
       let backoffMillis = retry->retryBackoffMillis
       let level = retry >= 4 ? #warn : #trace
-      logger->Logging.logAt(
+      logger->Logger.logAt(
         level,
         "Failed to fetch block hashes. Retrying.",
         ~params={

@@ -71,8 +71,6 @@ type pgIndexInput = {
   method: string,
 }
 
-type logLevel = {name: string, value: int}
-
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
@@ -105,9 +103,6 @@ type addon = {
   tui: tuiCtor,
   @as("Logger")
   logger: loggerCtor,
-  // The Rust logger's levels, for the contract test `Logging.levelNumber` has
-  // to pass.
-  logLevels: unit => array<logLevel>,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,

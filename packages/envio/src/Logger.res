@@ -13,7 +13,8 @@ type level = [
 ]
 
 // The level check happens here, before a line crosses into Rust, so these are
-// Rust's numbers; `LoggingLevels_test` holds the two in step.
+// Rust's numbers. `Logging.test.ts` runs a process at every level and compares
+// what it printed, which is where the two would be seen to disagree.
 let levelNumber = (level: level) =>
   switch level {
   | #trace => 10
@@ -48,16 +49,10 @@ external nativeLog: (
   ~boundFieldsJson: Null.t<string>,
   ~paramsJson: Null.t<string>,
 ) => unit = "log"
-// Answers with the new minimum level.
-@send external nativeSetLevel: (native, level) => int = "setLevel"
 @send external nativeMinLevel: native => int = "minLevel"
 @send external nativeInMemoryLines: native => array<dict<JSON.t>> = "inMemoryLines"
 @send
 external nativeWriteInMemoryLinesToFile: (native, string) => unit = "writeInMemoryLinesToFile"
-
-// Shared by a logger and every logger derived from it, the way their sinks are,
-// so a line no sink takes is dropped before its params are serialized.
-type threshold = {mutable minLevel: int}
 
 // A logger per query and per event is made whether or not it ever writes, so a
 // derived logger is only a record of its fields. They are serialized, joined to
@@ -65,7 +60,9 @@ type threshold = {mutable minLevel: int}
 // them into each line it writes.
 type rec t = {
   native: native,
-  threshold: threshold,
+  // The lowest level any sink takes, fixed when the logger is made, so a line no
+  // sink takes is dropped before its params are serialized.
+  minLevel: int,
   parent: option<t>,
   fields: unknown,
   mutable isBoundFieldsJsonReady: bool,
@@ -74,7 +71,7 @@ type rec t = {
 
 let wrapNative = native => {
   native,
-  threshold: {minLevel: native->nativeMinLevel},
+  minLevel: native->nativeMinLevel,
   parent: None,
   fields: %raw(`undefined`),
   isBoundFieldsJsonReady: true,
@@ -145,7 +142,7 @@ let rec getBoundFieldsJson = (logger: t) => {
 // A logger adding `fields` to every line it writes.
 let withFields = (logger: t, fields: 'a) => {
   native: logger.native,
-  threshold: logger.threshold,
+  minLevel: logger.minLevel,
   parent: Some(logger),
   fields: fields->(Utils.magic: 'a => unknown),
   isBoundFieldsJsonReady: false,
@@ -155,11 +152,8 @@ let withFields = (logger: t, fields: 'a) => {
 // Every line about one chain names it, so the run's lines can be told apart.
 let withChainId = (logger: t, chainId: ChainId.t) => logger->withFields({"chainId": chainId})
 
-let setLevel = (logger: t, level: level) =>
-  logger.threshold.minLevel = logger.native->nativeSetLevel(level)
-
 let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
-  if levelNumber(level) >= logger.threshold.minLevel {
+  if levelNumber(level) >= logger.minLevel {
     logger.native->nativeLog(
       ~level=levelNumber(level),
       ~message,

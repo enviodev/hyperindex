@@ -106,8 +106,8 @@ let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
 let toInfoLogEntry = (line: dict<JSON.t>) =>
   switch (line->Dict.get("level"), line->Dict.get("msg")) {
   | (Some(String(level)), Some(String(msg)))
-    if level->(Utils.magic: string => Logging.level)->Logging.levelNumber >=
-      Logging.levelNumber(#info) =>
+    if level->(Utils.magic: string => Logger.level)->Logger.levelNumber >=
+      Logger.levelNumber(#info) =>
     Some({
       msg,
       params: line
@@ -157,7 +157,7 @@ let writeLogsForFailure = (logger, ~pgSchema) => {
       ".test-logs",
       `${testName->String.slice(~start=0, ~end=120)}${pgSchema}.jsonl`,
     ])->NodeJs.Path.toString
-  logger->Logging.writeInMemoryLinesToFile(~path)
+  logger->Logger.writeInMemoryLinesToFile(~path)
   path
 }
 
@@ -173,7 +173,7 @@ let run = async (
   ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
   // One capture for the whole run, `restart` and siblings included, so a test
   // reads the resumed indexer's lines after the ones that led to them.
-  ~logger=Logging.makeInMemory(),
+  ~logger=Logger.makeInMemory(),
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
@@ -626,8 +626,8 @@ let run = async (
       },
       pg,
       stop,
-      infoAndAboveLogs: () => logger->Logging.inMemoryLines->Array.filterMap(toInfoLogEntry),
-      allLogsAsJson: () => logger->Logging.inMemoryLines,
+      infoAndAboveLogs: () => logger->Logger.inMemoryLines->Array.filterMap(toInfoLogEntry),
+      allLogsAsJson: () => logger->Logger.inMemoryLines,
       sibling: (~chains) => make(~reset=false, ~config=baseConfig, ~chains),
       restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the

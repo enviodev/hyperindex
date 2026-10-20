@@ -19,7 +19,7 @@ type registrationsByChainId = dict<chainRegistrations>
 type activeRegistration = {
   config: Config.t,
   // What registering itself has to say, e.g. an `onBlock` matching no chain.
-  logger: Logging.t,
+  logger: Logger.t,
   registrationsByChainId: dict<chainRegistrations>,
   mutable finished: bool,
 }
@@ -609,7 +609,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
           )
           ->Array.joinUnsafe(", ")
-        r.logger->Logging.info(`Events without a handler, skipped for indexing: ${groups}`)
+        r.logger->Logger.info(`Events without a handler, skipped for indexing: ${groups}`)
       }
 
       registrationsByChainId
@@ -618,13 +618,6 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
     JsError.throwWithMessage(
       "The indexer has not started registering handlers, so can't finish it.",
     )
-  }
-}
-
-let isPendingRegistration = () => {
-  switch getActiveRegistration() {
-  | Some(r) => !r.finished
-  | None => false
   }
 }
 
@@ -708,7 +701,7 @@ let registerOnBlock = (
     let config = registration.config
     let ecosystem = config.ecosystem
     let chainsDict = getChainsObject(config)
-    let logger = registration.logger->Logging.withFields({"onBlock": name})
+    let logger = registration.logger->Logger.withFields({"onBlock": name})
 
     // `where` must be a function (unlike onEvent, which also accepts a static
     // value). A static value would have to be evaluated against every chain
@@ -806,7 +799,7 @@ let registerOnBlock = (
     // Includes the ecosystem-specific method name so SVM users see "onSlot"
     // and don't get confused looking for a "Block handler" they never wrote.
     if !matchedAny.contents {
-      logger->Logging.warn(
+      logger->Logger.warn(
         `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
       )
     }

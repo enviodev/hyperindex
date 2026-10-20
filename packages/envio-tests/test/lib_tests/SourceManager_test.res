@@ -86,7 +86,7 @@ let onNewBlockMock = () => {
 }
 
 // Nothing here but the log tests reads what the manager logs.
-let makeSourceManager = SourceManager.make(~logger=Logging.makeInMemory(), ...)
+let makeSourceManager = SourceManager.make(~logger=Logger.makeInMemory(), ...)
 
 describe("native request failures", () => {
   it("keeps timings and maps a wrapped HyperSync rate limit", t => {
@@ -1483,7 +1483,7 @@ Give each query its own entry, told apart by partitionId:
     let lookUp = blockNumbers =>
       mock.source.getBlockHashes(
         ~blockNumbers,
-        ~logger=Logging.makeInMemory()->Logging.withFields({"test": "block hashes"}),
+        ~logger=Logger.makeInMemory()->Logger.withFields({"test": "block hashes"}),
       )->ignore
     lookUp([10])
     let expectation = mock.expectBlockHashLookup({blockNumbers: [10], reply: []})
@@ -1824,7 +1824,7 @@ Give each query its own entry, told apart by partitionId:
   // logger the test reads back.
   let errorMessages = logger =>
     logger
-    ->Logging.inMemoryLines
+    ->Logger.inMemoryLines
     ->Array.filterMap(line =>
       switch (line->Dict.get("level"), line->Dict.get("msg")) {
       | (Some(String("error")), Some(String(msg))) => Some(msg)
@@ -1835,7 +1835,7 @@ Give each query its own entry, told apart by partitionId:
   Async.it("Tells the user a source behind the head is catching up, not failing", async t => {
     Vi.useFakeTimers()
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let logger = Logging.makeInMemory()
+    let logger = Logger.makeInMemory()
     let sourceManager = SourceManager.make(~logger, ~isRealtime=false, ~sources=[sourceMock.source])
 
     let p =
@@ -1860,7 +1860,7 @@ Give each query its own entry, told apart by partitionId:
 
     let behindHead =
       logger
-      ->Logging.inMemoryLines
+      ->Logger.inMemoryLines
       ->Array.filter(line => line->Dict.get("backOffMilliseconds")->Option.isSome)
     t.expect((behindHead->Array.get(0), behindHead->Array.get(12))).toEqual((
       Some(
@@ -1894,7 +1894,7 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("Reports a query every source has failed for minutes as an error", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
-    let logger = Logging.makeInMemory()
+    let logger = Logger.makeInMemory()
     let sourceManager = SourceManager.make(~logger, ~isRealtime=false, ~sources=[sourceMock.source])
 
     let p =

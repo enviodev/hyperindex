@@ -59,7 +59,7 @@ describe("Durably caught up", () => {
     // run that has processed nothing carries clear it.
     let chainConfig = {...baseChainConfig, blockLag: 10}
     let cs = ChainState.makeFromDbState(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       chainConfig,
       ~resumedChainState={
         ...makeResumedChainState(
@@ -89,7 +89,7 @@ let makeChainState = (
   ~isInReorgThreshold=false,
 ) =>
   ChainState.makeFromDbState(
-    ~logger=Logging.makeInMemory(),
+    ~logger=Logger.makeInMemory(),
     baseChainConfig,
     ~resumedChainState,
     ~reorgCheckpoints,

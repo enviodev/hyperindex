@@ -239,7 +239,7 @@ type t = {
   allEnums: array<Table.enumConfig<Table.enum>>,
   mutable storageStatus: storageStatus,
   mutable storage: storage,
-  logger: Logging.t,
+  logger: Logger.t,
 }
 
 exception StorageError({message: string, reason: exn})
@@ -305,7 +305,7 @@ let init = {
               ),
             )
           }
-          logger->Logging.info(`Initializing the indexer storage...`)
+          logger->Logger.info(`Initializing the indexer storage...`)
           // Only runs once per schema (this branch is the "first deploy or
           // reset" gate), which is exactly when a `latest` start block must be
           // resolved: every later resume reads `envio_chains.start_block` back
@@ -322,7 +322,7 @@ let init = {
             ~contractMapping,
             ~envioInfo,
           )
-          logger->Logging.info(`The indexer storage is ready. Starting indexing!`)
+          logger->Logger.info(`The indexer storage is ready. Starting indexing!`)
           persistence.storageStatus = Ready(initialState)
         } else if (
           // In case of a race condition,
@@ -333,7 +333,7 @@ let init = {
           }
         ) {
           let resumeLevel = announceResume ? #info : #trace
-          logger->Logging.logAt(
+          logger->Logger.logAt(
             resumeLevel,
             `Found existing indexer storage. Resuming indexing state...`,
           )
@@ -359,7 +359,7 @@ let init = {
               ),
             )
           | AddChain(chainConfig) =>
-            logger->Logging.info(
+            logger->Logger.info(
               `Adding the chain to the existing indexer storage...`,
               ~params={"chainId": chainConfig.id},
             )
@@ -389,7 +389,7 @@ let init = {
           initialState.chains->Array.forEach(c => {
             progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
-          logger->Logging.logAt(
+          logger->Logger.logAt(
             resumeLevel,
             `Successfully resumed indexing state! Continuing from the last checkpoint.`,
             ~params={"progress": progress},

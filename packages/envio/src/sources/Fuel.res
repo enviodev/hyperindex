@@ -58,7 +58,7 @@ let make = (): Ecosystem.t => {
   ),
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   withEventFields: (eventItem, ~logger) =>
-    logger->Logging.withFields({
+    logger->Logger.withFields({
       "contract": eventItem.onEventRegistration.eventConfig.contractName,
       "event": eventItem.onEventRegistration.eventConfig.name,
       "chainId": eventItem.chainId,

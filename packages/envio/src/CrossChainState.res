@@ -182,7 +182,7 @@ let enterReorgThreshold = (crossChainState: t) => {
     let liftsCeiling = cs->ChainState.reorgThresholdLiftsCeiling
     cs->ChainState.enterReorgThreshold
     if liftsCeiling {
-      cs->ChainState.logger->Logging.info(ChainState.reorgThresholdEntryMessage)
+      cs->ChainState.logger->Logger.info(ChainState.reorgThresholdEntryMessage)
     }
   }
 }
@@ -278,7 +278,7 @@ let markReady = (crossChainState: t, ~readyAt) => {
     if !wasReady {
       cs
       ->ChainState.logger
-      ->Logging.info("Ready. Fully indexed for queries.")
+      ->Logger.info("Ready. Fully indexed for queries.")
     }
   }
   crossChainState.isRealtime = true
@@ -304,11 +304,11 @@ let reportFinished = (crossChainState: t) =>
     | Some(EndBlock(block)) =>
       cs
       ->ChainState.logger
-      ->Logging.info("Indexed to the end block. This chain is done.", ~params={"block": block})
+      ->Logger.info("Indexed to the end block. This chain is done.", ~params={"block": block})
     | Some(Backfill(block)) =>
       cs
       ->ChainState.logger
-      ->Logging.info(
+      ->Logger.info(
         crossChainState->isWaitingOnOthers(cs)
           ? "Finished backfill. Waiting for the other chains."
           : "Finished backfill.",
@@ -485,7 +485,7 @@ let checkAndFetch = async (
           )
           cs
           ->ChainState.logger
-          ->Logging.trace("Started querying", ~params={"partitions": partitions})
+          ->Logger.trace("Started querying", ~params={"partitions": partitions})
 
           actionByChain->ChainId.Dict.set(chainId, FetchState.Ready(queries))
           // Mark the queries in flight and reserve their size against the

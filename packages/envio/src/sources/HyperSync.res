@@ -26,7 +26,7 @@ let isUnauthorizedError = (message: string) => message->String.includes("401 Una
 // would bury everything else in the log.
 let rethrowLoggingUnauthorized = (
   exn: exn,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
   ~warned: ref<bool>,
   ~product: string,
 ): 'a => {
@@ -36,7 +36,7 @@ let rethrowLoggingUnauthorized = (
     | Some(message) if message->isUnauthorizedError =>
       if !warned.contents {
         warned := true
-        logger->Logging.error(
+        logger->Logger.error(
           `Your ENVIO_API_TOKEN was rejected by ${product} (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`,
         )
       }

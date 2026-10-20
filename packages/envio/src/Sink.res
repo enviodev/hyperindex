@@ -20,9 +20,9 @@ let makeClickHouse = (
   ~password,
   ~sequence: CheckpointSequence.t,
   ~chainIdMode: ChainId.mode=Int32,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
 ): t => {
-  let logger = logger->Logging.withFields({"context": "ClickHouse"})
+  let logger = logger->Logger.withFields({"context": "ClickHouse"})
   let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode, ~logger)
   let registry = ClickHouse.makeRegistry()
   let mirrored = (entities: array<Internal.entityConfig>) =>

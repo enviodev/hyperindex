@@ -235,7 +235,7 @@ let run = async (
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
   // already cached.
-  let logger = Logging.makeInMemory()
+  let logger = Logger.makeInMemory()
   let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
 

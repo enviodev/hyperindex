@@ -79,7 +79,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       onReorg: () => reorgCalls := reorgCalls.contents + 1,
     }
     let sourceManager = SourceManager.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~sources=[source],
       ~isRealtime=false,
     )
@@ -93,7 +93,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     // 500ms resetMs * 2 rate-limited calls = ~1s minimum total wait
     let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)
     let sourceManager = SourceManager.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~sources=[source],
       ~isRealtime=false,
     )
@@ -110,7 +110,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
   Async.it("succeeds immediately when no rate limit", async t => {
     let source = makeMockSource(~rateLimitedCalls=0, ~resetMs=100)
     let sourceManager = SourceManager.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~sources=[source],
       ~isRealtime=false,
     )
@@ -129,7 +129,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     async t => {
       let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=500)
       let sourceManager = SourceManager.make(
-        ~logger=Logging.makeInMemory(),
+        ~logger=Logger.makeInMemory(),
         ~sources=[source],
         ~isRealtime=false,
       )

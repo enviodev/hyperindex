@@ -293,7 +293,7 @@ expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
     let config = InternalTestIndexer.fromUserApi(~files, ~configYaml).config
     let message = try {
       HandlerRegister.resetOnEventRegistrations()
-      HandlerRegister.startRegistration(~logger=Logging.makeInMemory(), ~config)
+      HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
       HandlerRegister.setHandler(
         ~contractName="Greeter",
         ~eventName="NewGreeting",

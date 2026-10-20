@@ -13,7 +13,7 @@ type options = {
   logLevel: HyperSyncClient.logLevel,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
-  logger: Logging.t,
+  logger: Logger.t,
 }
 
 let make = (

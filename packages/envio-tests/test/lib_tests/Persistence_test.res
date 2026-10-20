@@ -8,7 +8,7 @@ describe("Test Persistence layer init", () => {
     let storageMock = MockStorage.make([#isInitialized, #resumeInitialState, #initialize])
 
     let persistence = Persistence.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~userEntities=[],
       ~allEnums=[],
       ~storage=storageMock.storage,
@@ -158,7 +158,7 @@ describe("Test Persistence layer init", () => {
     let storageMock = MockStorage.make([#isInitialized, #readStoredConfig, #resumeInitialState])
 
     let persistence = Persistence.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~userEntities=[],
       ~allEnums=[],
       ~storage=storageMock.storage,
@@ -232,7 +232,7 @@ Although it should load effect caches metadata.`,
       ~stored={envioInfo: storedEnvioInfo, chains: [], contractMapping: ContractMapping.empty},
     )
     let persistence = Persistence.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~userEntities=[],
       ~allEnums=[],
       ~storage=storageMock.storage,

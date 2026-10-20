@@ -4,7 +4,7 @@ type t = {
   mutable isAwaitingInterval: bool,
   mutable scheduled: option<unit => promise<unit>>,
   intervalMillis: float,
-  logger: Logging.t,
+  logger: Logger.t,
 }
 
 let make = (~intervalMillis: int, ~logger) => {
@@ -33,7 +33,7 @@ let rec startInternal = (throttler: t) => {
           async () => {
             switch await fn() {
             | exception exn =>
-              throttler.logger->Logging.errorWithExn("Scheduled action failed in throttler", exn)
+              throttler.logger->Logger.errorWithExn("Scheduled action failed in throttler", exn)
             | _ => ()
             }
             throttler.isRunning = false

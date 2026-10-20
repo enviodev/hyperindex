@@ -10,10 +10,10 @@ let defaultPersistence = (~config=config) =>
   | Some((memoizedConfig, persistence)) if memoizedConfig === config => persistence
   | _ =>
     let persistence = PgStorage.makePersistenceFromConfig(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~config,
       ~storage=PgStorage.makeStorageFromEnv(
-        ~logger=Logging.makeInMemory(),
+        ~logger=Logger.makeInMemory(),
         ~config,
         ~pgSchema=TestPgSchema.make(),
         ~isHasuraEnabled=false,
@@ -26,7 +26,7 @@ let defaultPersistence = (~config=config) =>
 // A persistence over `storage` that reports itself already initialized, so the
 // state writes through it instead of stalling on the init handshake.
 let readyPersistence = (~config=config, ~storage) => {
-  ...PgStorage.makePersistenceFromConfig(~logger=Logging.makeInMemory(), ~config, ~storage),
+  ...PgStorage.makePersistenceFromConfig(~logger=Logger.makeInMemory(), ~config, ~storage),
   storageStatus: Persistence.Ready({
     cleanRun: false,
     contractMapping: config.contractMapping,
@@ -57,7 +57,7 @@ let setEntity = (
 
 let make = (~config=config, ~persistence=?, ~entities=[]) => {
   let indexerState = IndexerState.make(
-    ~logger=Logging.makeInMemory(),
+    ~logger=Logger.makeInMemory(),
     ~config,
     ~persistence=switch persistence {
     | Some(persistence) => persistence
@@ -67,7 +67,7 @@ let make = (~config=config, ~persistence=?, ~entities=[]) => {
     ~chainStates=Dict.make(),
     ~isRealtime=false,
     // The cycle never runs here, so a write only means a test is wired wrong.
-    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+    ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
   )
   entities->Array.forEach(((entityConfig, items)) => {
     items->Array.forEach(entity => {

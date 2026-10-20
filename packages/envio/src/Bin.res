@@ -1,18 +1,18 @@
 @val external processChdir: string => unit = "process.chdir"
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
 
-// Crash on unhandled promise rejections with a readable error.
-// ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
 // The process's root logger, handed down to everything it starts.
-let logger = Logging.make({
-  strategy: Env.Logging.strategy,
-  logFile: Env.Logging.file,
-  level: Env.Logging.level->Option.getOr(#info),
-  fileLevel: Env.Logging.fileLevel,
+let logger = Logger.make({
+  strategy: Env.Logger.strategy,
+  logFile: Env.Logger.file,
+  level: Env.Logger.level->Option.getOr(#info),
+  fileLevel: Env.Logger.fileLevel,
 })
 
+// Crash on unhandled promise rejections with a readable error.
+// ReScript exceptions compile to plain objects, not Error instances, so Node.js prints "#<Object>".
 NodeJs.globalProcess->NodeJs.onUnhandledRejection(reason => {
-  logger->Logging.errorWithExn("Unhandled promise rejection", reason)
+  logger->Logger.errorWithExn("Unhandled promise rejection", reason)
   NodeJs.process->NodeJs.exitWithCode(Failure)
 })
 
@@ -97,7 +97,7 @@ let run = async args => {
     | JsExn(e) => e->JsExn.message->Option.getOr("Failed at initialization")
     | _ => "Failed at initialization"
     }
-    logger->Logging.error(message)
+    logger->Logger.error(message)
     NodeJs.process->NodeJs.exitWithCode(Failure)
   }
 }

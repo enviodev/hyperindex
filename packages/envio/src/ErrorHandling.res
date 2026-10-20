@@ -1,15 +1,9 @@
-type t = {logger: Logging.t, exn: exn, msg: option<string>}
+type t = {logger: Logger.t, exn: exn, msg: option<string>}
 
-let make = (exn, ~logger, ~msg=?) => {
-  {logger, msg, exn}
-}
+let make = (exn, ~logger, ~msg=?) => {logger, msg, exn}
 
-let log = (self: t) => {
-  switch self {
-  | {exn, msg: Some(msg), logger} => logger->Logging.errorWithExn(msg, exn)
-  | {exn, msg: None, logger} => logger->Logging.errorWithExn("Unexpected error", exn)
-  }
-}
+let log = ({logger, exn, msg}: t) =>
+  logger->Logger.errorWithExn(msg->Option.getOr("Unexpected error"), exn)
 
 // The exception to hand to whoever is outside the indexer. A failure raised
 // from a message alone carries no exception of its own, so rethrowing or
@@ -22,24 +16,8 @@ let toExn = (self: t) =>
   | None => Utils.Error.make(self.msg->Option.getOr("Indexer has failed with an unexpected error"))
   }
 
-let raiseExn = (self: t) => {
-  self->toExn->throw
-}
-
 let mkLogAndRaise = (~logger, ~msg=?, exn) => {
   let self = exn->Utils.prettifyExn->make(~logger, ~msg?)
   self->log
-  self->raiseExn
-}
-
-let unwrapLogAndRaise = (~logger, ~msg=?, result) => {
-  switch result {
-  | Ok(v) => v
-  | Error(exn) => exn->mkLogAndRaise(~logger, ~msg?)
-  }
-}
-
-let logAndRaise = self => {
-  self->log
-  self->raiseExn
+  self->toExn->throw
 }

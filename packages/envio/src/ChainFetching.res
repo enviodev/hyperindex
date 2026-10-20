@@ -130,7 +130,7 @@ let rec onQueryResponse = async (
     if numContractRegisterEvents === 0 {
       chainState
       ->ChainState.logger
-      ->Logging.trace(
+      ->Logger.trace(
         "Finished querying",
         ~params={
           "partitionId": query.partitionId,
@@ -142,7 +142,7 @@ let rec onQueryResponse = async (
     } else {
       chainState
       ->ChainState.logger
-      ->Logging.trace(
+      ->Logger.trace(
         "Finished querying",
         ~params={
           "partitionId": query.partitionId,
@@ -160,7 +160,7 @@ let rec onQueryResponse = async (
     | ReorgDetected({scannedBlock, receivedBlock}) => {
         chainState
         ->ChainState.logger
-        ->Logging.info(
+        ->Logger.info(
           `Blockchain reorg detected. ${chainState->ChainState.shouldRollbackOnReorg
               ? "Initiating indexer rollback"
               : "NOT initiating indexer rollback due to configuration"}.`,

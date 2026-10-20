@@ -68,7 +68,7 @@ let makeChainState = (
     ~onEventRegistrations,
     ~addressStore,
     ~sourceManager=SourceManager.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~sources=[mockSource.source],
       ~isRealtime=false,
     ),
@@ -76,7 +76,7 @@ let makeChainState = (
     ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
-    ~logger=Logging.makeInMemory(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 
@@ -142,7 +142,7 @@ let makeFetchingChainState = (
     ~fetchState,
     ~addressStore,
     ~sourceManager=SourceManager.make(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~sources=[mockSource.source],
       ~isRealtime=false,
     ),
@@ -151,7 +151,7 @@ let makeFetchingChainState = (
     ~committedProgressBlockNumber=-1,
     ~chainDensity,
     ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
-    ~logger=Logging.makeInMemory(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 
@@ -550,14 +550,14 @@ describe("CrossChainState fetch control", () => {
       ~fetchState=fetchState1,
       ~addressStore=addressStore1,
       ~sourceManager=SourceManager.make(
-        ~logger=Logging.makeInMemory(),
+        ~logger=Logger.makeInMemory(),
         ~sources=[mockSource1.source],
         ~isRealtime=false,
       ),
       ~maxReorgDepth=200,
       ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
     )
 
     // Chain 2 (less behind, visited second): its density-bearing partition

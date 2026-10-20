@@ -12,10 +12,7 @@ use std::{
     io::{self, IsTerminal, Write},
     os::fd::FromRawFd,
     path::Path,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc, Mutex, OnceLock,
-    },
+    sync::{Arc, Mutex, OnceLock},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -35,7 +32,7 @@ enum Target {
 struct Sink {
     format: Format,
     target: Target,
-    level: AtomicU32,
+    level: Level,
 }
 
 impl Sink {
@@ -43,12 +40,12 @@ impl Sink {
         Sink {
             format,
             target,
-            level: AtomicU32::new(level.value()),
+            level,
         }
     }
 
     fn accepts(&self, level: Level) -> bool {
-        level.value() >= self.level.load(Ordering::Relaxed)
+        level >= self.level
     }
 
     fn write(&self, record: &Record, line: &mut Vec<u8>) {
@@ -272,26 +269,13 @@ impl Logger {
         Ok(())
     }
 
-    /// Sets the level of every sink but a file, which keeps its own, and
-    /// answers with the new `minLevel`.
-    #[napi]
-    pub fn set_level(&self, level: String) -> napi::Result<u32> {
-        let level = parse_level(&level)?;
-        for sink in self.sinks.iter() {
-            if !matches!(sink.target, Target::File(_)) {
-                sink.level.store(level.value(), Ordering::Relaxed);
-            }
-        }
-        Ok(self.min_level())
-    }
-
-    /// The lowest level any sink writes, so a caller can skip a line no sink
-    /// would take before building it.
+    /// The lowest level any sink writes, read once when the logger is made so
+    /// the caller can skip a line no sink would take before building it.
     #[napi]
     pub fn min_level(&self) -> u32 {
         self.sinks
             .iter()
-            .map(|sink| sink.level.load(Ordering::Relaxed))
+            .map(|sink| sink.level.value())
             .min()
             .unwrap_or(Level::SILENT.value())
     }
@@ -317,27 +301,6 @@ impl Logger {
         fs::write(&path, out)
             .map_err(|e| napi::Error::from_reason(format!("Failed to write {path}: {e}")))
     }
-}
-
-#[cfg_attr(test, allow(dead_code))]
-#[napi(object)]
-pub struct LogLevel {
-    pub name: String,
-    pub value: u32,
-}
-
-/// Every level by name and number. ReScript checks levels before a line
-/// crosses over, and its contract test holds its numbers to these.
-#[cfg_attr(test, allow(dead_code))]
-#[napi]
-pub fn log_levels() -> Vec<LogLevel> {
-    Level::ALL
-        .iter()
-        .map(|level| LogLevel {
-            name: level.name().to_string(),
-            value: level.value(),
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -370,18 +333,11 @@ mod tests {
                 Some(r#"{"chainId":2,"a":1}"#.into()),
             )
             .unwrap();
-        let min_level = logger.set_level("trace".into()).unwrap();
-        logger
-            .log_js(Level::TRACE.value(), "now shown".into(), None, None)
-            .unwrap();
         assert_eq!(
-            (logger.in_memory_lines(), min_level),
+            (logger.in_memory_lines(), logger.min_level()),
             (
-                vec![
-                    json!({"level": "warn", "msg": "shown", "chainId": 2, "source": "b", "a": 1}),
-                    json!({"level": "trace", "msg": "now shown"}),
-                ],
-                Level::TRACE.value()
+                vec![json!({"level": "warn", "msg": "shown", "chainId": 2, "source": "b", "a": 1})],
+                Level::INFO.value()
             )
         );
     }
@@ -397,7 +353,6 @@ mod tests {
             file_level: "debug".into(),
         })
         .unwrap();
-        logger.set_level("silent".into()).unwrap();
         logger.log(Level::TRACE, "skipped", &Vec::new(), &Vec::new());
         logger.log(
             Level::DEBUG,

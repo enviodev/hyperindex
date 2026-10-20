@@ -2,19 +2,24 @@
 switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 | None =>
   JsError.throwWithMessage(
-    "LogTesting.res should only be run via Logging.test.ts. " ++ "Set ENVIO_TEST_LOGGING_FORMAT=1 to run directly.",
+    "LogTesting.res should only be run via Logging.test.ts." ++ "Set ENVIO_TEST_LOGGING_FORMAT=1 to run directly.",
   )
 | Some(_) => ()
 }
 
-open! Logging
+open! Logger
 
-let logger = Logging.make({
-  strategy: Env.Logging.strategy,
-  logFile: Env.Logging.file,
-  level: Env.Logging.level->Option.getOr(#info),
-  fileLevel: Env.Logging.fileLevel,
-})
+// A logger's level is fixed when it is made, so each level gets its own, all
+// writing where the run's environment says.
+let loggerAt = level =>
+  Logger.make({
+    strategy: Env.Logger.strategy,
+    logFile: Env.Logger.file,
+    level,
+    fileLevel: Env.Logger.fileLevel,
+  })
+
+let logger = loggerAt(Env.Logger.level->Option.getOr(#info))
 
 // Per-item loggers are built by the ecosystem (the runtime gets it from
 // `config.ecosystem`); this standalone fixture constructs one directly.
@@ -27,7 +32,8 @@ logger->logAt(#debug, "By default - This debug message should only be seen in th
 exception SomethingWrong({myMessage: string})
 
 let logAtEveryLevel = (~shown) => {
-  logger->info(`##Current log level: ${shown}`)
+  let logger = loggerAt(shown)
+  logger->info(`##Current log level: ${(shown :> string)}`)
   logger->trace("This is an trace message. (printed at trace only)")
   logger->logAt(#debug, "This is a debug message. (printed at debug and below)")
   logger->info("This is an info message.")
@@ -39,17 +45,14 @@ let logAtEveryLevel = (~shown) => {
   logger->logAt(#fatal, "This is a fatal message.", ~params={"extra": "another"})
 }
 
-logAtEveryLevel(~shown="info")
-
-logger->setLevel(#debug)
-logAtEveryLevel(~shown="debug")
-
-logger->setLevel(#info)
-logAtEveryLevel(~shown="info")
+logAtEveryLevel(~shown=#info)
+logAtEveryLevel(~shown=#debug)
+logAtEveryLevel(~shown=#info)
 
 // The per-item logger reads the contract and event names off the registration
 // and the address off the payload; nothing else about the item is logged.
-let item = Internal.Event({
+// A new item each time: an item keeps the logger first built for it.
+let makeItem = () => Internal.Event({
   chainId: 1337->ChainId.fromInt,
   blockNumber: 1,
   logIndex: 11,
@@ -62,10 +65,10 @@ let item = Internal.Event({
   }->(Utils.magic: {..} => Internal.eventPayload),
 })
 
-let userLogger = item->Ecosystem.loggerForItem(~ecosystem, ~logger)->asContextLog
-
 let logUserLevels = (~shown, ~child) => {
-  logger->info(`##Current log level: ${shown}`)
+  let logger = loggerAt(shown)
+  let userLogger = makeItem()->Ecosystem.loggerForItem(~ecosystem, ~logger)->asContextLog
+  logger->info(`##Current log level: ${(shown :> string)}`)
   userLogger.debug("This is a user debug message.", ~params={"child": child})
   userLogger.info("This is a user info message.", ~params={"child": child})
   userLogger.warn(
@@ -79,26 +82,16 @@ let logUserLevels = (~shown, ~child) => {
   )
 }
 
-logger->setLevel(#udebug)
-logUserLevels(~shown="udebug", ~child="userLogs debug")
+logUserLevels(~shown=#udebug, ~child="userLogs debug")
+logUserLevels(~shown=#uinfo, ~child="userLogs info")
+logUserLevels(~shown=#uwarn, ~child="userLogs warn")
+logUserLevels(~shown=#uerror, ~child="userLogs error")
 
-logger->setLevel(#uinfo)
-logUserLevels(~shown="uinfo", ~child="userLogs info")
-
-logger->setLevel(#uwarn)
-logUserLevels(~shown="uwarn", ~child="userLogs warn")
-
-logger->setLevel(#uerror)
-logUserLevels(~shown="uerror", ~child="userLogs error")
-
-logger->setLevel(#warn)
-logAtEveryLevel(~shown="warn")
-
-logger->setLevel(#error)
-logAtEveryLevel(~shown="error")
+logAtEveryLevel(~shown=#warn)
+logAtEveryLevel(~shown=#error)
 
 // Logging also works with params of all shapes and sizes
-logger->logAt(
+loggerAt(#error)->logAt(
   #fatal,
   "A fatal message with nested params.",
   ~params={

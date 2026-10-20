@@ -128,7 +128,7 @@ let start = (~config: Config.t, ~logger, ~getMetrics: unit => Metrics.t) => {
   }
   switch Core.getAddon().tui->make(info) {
   | exception exn =>
-    logger->Logging.warn(
+    logger->Logger.warn(
       "Failed to start the TUI. Continuing without it.",
       ~params={"err": exn->Utils.prettifyExn},
     )
@@ -157,7 +157,7 @@ let start = (~config: Config.t, ~logger, ~getMetrics: unit => Metrics.t) => {
       switch result {
       | Ok(messages) => tui->setMessages(Null.Value(messages))
       | Error(exn) =>
-        logger->Logging.error(
+        logger->Logger.error(
           "Failed to load messages from envio server",
           ~params={"err": exn->Utils.prettifyExn},
         )

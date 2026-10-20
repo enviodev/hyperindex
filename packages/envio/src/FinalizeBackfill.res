@@ -27,8 +27,8 @@ let runOnce = async (state: IndexerState.t) => {
   // single chain.
   let msg = "Building database indexes. Indexing is paused until they are ready, which can take a while on a large database."
   switch chainIds {
-  | [chainId] => state->IndexerState.logger->Logging.info(msg, ~params={"chainId": chainId})
-  | chainIds => state->IndexerState.logger->Logging.info(msg, ~params={"chainIds": chainIds})
+  | [chainId] => state->IndexerState.logger->Logger.info(msg, ~params={"chainId": chainId})
+  | chainIds => state->IndexerState.logger->Logger.info(msg, ~params={"chainIds": chainIds})
   }
 
   await Writing.flush(state)

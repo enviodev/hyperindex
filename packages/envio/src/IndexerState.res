@@ -50,7 +50,7 @@ type historyPruneStat = {
 
 type t = {
   config: Config.t,
-  logger: Logging.t,
+  logger: Logger.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
@@ -142,7 +142,7 @@ type t = {
 
 let make = (
   ~config: Config.t,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
@@ -159,7 +159,7 @@ let make = (
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
       ~intervalMillis,
-      ~logger=logger->Logging.withFields({
+      ~logger=logger->Logger.withFields({
         "context": "Throttler for chain metadata writes",
         "intervalMillis": intervalMillis,
       }),
@@ -231,7 +231,7 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
 
 let makeFromDbState = (
   ~config: Config.t,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId,

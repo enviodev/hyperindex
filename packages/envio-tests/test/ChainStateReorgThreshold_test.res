@@ -52,7 +52,7 @@ describe("ChainState reorg threshold", () => {
       ~fetchState,
       ~addressStore,
       ~sourceManager=SourceManager.make(
-        ~logger=Logging.makeInMemory(),
+        ~logger=Logger.makeInMemory(),
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
@@ -60,7 +60,7 @@ describe("ChainState reorg threshold", () => {
       ~maxReorgDepth,
       ~committedProgressBlockNumber=-1,
       ~blockStore,
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
     )
     (cs, fetchState)
   }

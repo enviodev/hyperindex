@@ -175,7 +175,7 @@ let fromUserApi = (
     let site = callSite()
     claimProcess(~site)
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~logger=Logging.makeInMemory(), ~config)
+    HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
     mkdirSync(tmpDir, {"recursive": true})
     let handlersFile = writeModule(~kind="handlers", ~site, ~source=handlers)
     let collected = ref(false)
@@ -203,7 +203,7 @@ let fromUserApi = (
       // Makes `Config.load()` resolve to this fixture, which is what lets the
       // real `createTestIndexer` from "envio" run with no project on disk.
       Config.prime(publicConfigJson)
-      HandlerRegister.startRegistration(~logger=Logging.makeInMemory(), ~config)
+      HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
 
       mkdirSync(tmpDir, {"recursive": true})
       Ok((

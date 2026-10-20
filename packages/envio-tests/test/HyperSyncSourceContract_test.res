@@ -103,7 +103,7 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
     enableQueryCaching: false,
     logLevel: #error,
     addressStore,
-    logger: Logging.makeInMemory(),
+    logger: Logger.makeInMemory(),
   })
   (source, addressStore->AddressStore.makeSet(~contractName="Token"))
 }
@@ -130,7 +130,7 @@ let fetch = (
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,
-    ~logger=Logging.makeInMemory()->Logging.withFields({"test": "HyperSync source contract"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "HyperSync source contract"}),
   )
 
 // A Transfer in block 10 and an Approval in block 11, each with its own
@@ -737,7 +737,7 @@ describe("HyperSync source responses", () => {
         })
         let {result} = await source.getBlockHashes(
           ~blockNumbers=[10, 12],
-          ~logger=Logging.makeInMemory()->Logging.withFields({"test": "block hashes"}),
+          ~logger=Logger.makeInMemory()->Logger.withFields({"test": "block hashes"}),
         )
         let missing = switch result {
         | Ok(store) =>
@@ -768,7 +768,7 @@ describe("HyperSync source responses", () => {
           nextBlock: 11,
         })
         let sourceManager = SourceManager.make(
-          ~logger=Logging.makeInMemory(),
+          ~logger=Logger.makeInMemory(),
           ~isRealtime=false,
           ~sources=[source],
         )

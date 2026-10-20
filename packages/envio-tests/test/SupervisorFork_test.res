@@ -85,7 +85,7 @@ describe("Supervisor.fork", () => {
 
 describe("Supervisor.awaitExit", () => {
   let outcome = async group =>
-    switch await group->Supervisor.awaitExit(~logger=Logging.makeInMemory()) {
+    switch await group->Supervisor.awaitExit(~logger=Logger.makeInMemory()) {
     | outcome => Ok(outcome)
     | exception _ => Error()
     }
@@ -191,7 +191,7 @@ describe("Supervisor.fork output", () => {
       stopping: false,
       holdingRealtime: false,
     }
-    let _ = await group->Supervisor.awaitExit(~logger=Logging.makeInMemory())
+    let _ = await group->Supervisor.awaitExit(~logger=Logger.makeInMemory())
 
     t.expect(lines->Array.toSorted(((_, a), (_, b)) => String.compare(a, b))).toStrictEqual([
       ("stdout", "first line"),
@@ -245,7 +245,7 @@ describe("Supervisor.isRunAtHead", () => {
       []->Supervisor.isRunAtHead,
     )
     group->Supervisor.stop
-    let _ = await group->Supervisor.awaitExit(~logger=Logging.makeInMemory())
+    let _ = await group->Supervisor.awaitExit(~logger=Logger.makeInMemory())
 
     t.expect(readings).toStrictEqual((false, true, false))
   })
@@ -294,7 +294,7 @@ describe("Supervisor.isRunAtHead", () => {
       )
 
     t.expect((
-      await group->Supervisor.awaitExit(~logger=Logging.makeInMemory()),
+      await group->Supervisor.awaitExit(~logger=Logger.makeInMemory()),
       group.holdingRealtime,
     )).toStrictEqual((Supervisor.Finished, false))
   })

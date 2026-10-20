@@ -35,7 +35,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
 
 let makeSink = (~host, ~username, ~password, ~database, ~chainIdMode, ~logger) =>
   ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~chainIdMode, ~onWarning=msg =>
-    logger->Logging.warn(msg)
+    logger->Logger.warn(msg)
   )
 
 let makeColumnSpec = (
@@ -398,10 +398,10 @@ let initialize = async (sink, ~logger, ~entities: array<Internal.entityConfig>) 
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })
 
-    logger->Logging.trace("ClickHouse storage initialization completed successfully")
+    logger->Logger.trace("ClickHouse storage initialization completed successfully")
   } catch {
   | exn => {
-      logger->Logging.errorWithExn("Failed to initialize ClickHouse storage", exn)
+      logger->Logger.errorWithExn("Failed to initialize ClickHouse storage", exn)
       throw(
         Persistence.StorageError({
           message: "Failed to initialize ClickHouse storage",
@@ -437,7 +437,7 @@ let resume = async (
     }),
   }) catch {
   | exn => {
-      logger->Logging.errorWithExn("Failed to resume ClickHouse storage", exn)
+      logger->Logger.errorWithExn("Failed to resume ClickHouse storage", exn)
       throw(
         Persistence.StorageError({
           message: "Failed to resume ClickHouse storage",

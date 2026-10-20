@@ -218,7 +218,7 @@ let selections = (registrations: HandlerRegister.registrationsByChainId, ~chain=
 // asserted above have to be read first.
 let register = (~config, fn) => {
   HandlerRegister.resetOnEventRegistrations()
-  HandlerRegister.startRegistration(~logger=Logging.makeInMemory(), ~config)
+  HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
   fn()
   HandlerRegister.finishRegistration(~config)
 }

@@ -8,7 +8,7 @@ type options = {
   onEventRegistrations: array<Internal.fuelOnEventRegistration>,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
-  logger: Logging.t,
+  logger: Logger.t,
 }
 
 let make = (
@@ -118,7 +118,7 @@ let make = (
         let eventConfig = (
           onEventRegistrations->Array.getUnsafe(rejected.onEventRegistrationIndex)
         ).eventConfig
-        logger->Logging.warn(
+        logger->Logger.warn(
           `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
           ~params={
             "chainId": chainId,

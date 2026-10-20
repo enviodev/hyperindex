@@ -261,7 +261,7 @@ let loadEffect = (
       | exn =>
         indexerState
         ->IndexerState.loggerForItem(item)
-        ->Logging.warn(
+        ->Logger.warn(
           `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
           ~params={"err": exn->Utils.prettifyExn, "effect": effectName},
         )
@@ -282,7 +282,7 @@ let loadEffect = (
           inMemTable->EffectState.recordInvalidation
           indexerState
           ->IndexerState.loggerForItem(item)
-          ->Logging.trace(
+          ->Logger.trace(
             "Invalidated effect cache",
             ~params={"input": dbEntity.id, "effect": effectName, "err": error->S.Error.message},
           )
@@ -403,7 +403,7 @@ let loadByParsedFilter = (
           // never constructed.
           ~logger=indexerState
           ->IndexerState.loggerForItem(item)
-          ->Logging.withFields({
+          ->Logger.withFields({
             "operation": key,
             "params": filter->EntityFilter.getParams,
           }),

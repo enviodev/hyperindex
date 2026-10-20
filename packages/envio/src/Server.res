@@ -143,7 +143,7 @@ let startServer = (
       // same `false` a disabled console does. Leaving it unanswered would hold
       // the request open for as long as the indexer runs.
       ->Promise.catch(exn => {
-        logger->Logging.errorWithExn("Failed to sync the effect cache", exn)
+        logger->Logger.errorWithExn("Failed to sync the effect cache", exn)
         res->json(Boolean(false))
         Promise.resolve()
       })
@@ -167,12 +167,12 @@ let startServer = (
   server->Express.onError(err => {
     let code = (err->(Utils.magic: JsExn.t => {..}))["code"]
     if code === "EADDRINUSE" {
-      logger->Logging.error(
+      logger->Logger.error(
         `Port ${Env.serverPort->Int.toString} is already in use. To fix this either:` ++
         `\n  1. Kill the process using the port: lsof -ti :${Env.serverPort->Int.toString} | xargs kill -9` ++ `\n  2. Use a different port by setting the ENVIO_INDEXER_PORT environment variable: ENVIO_INDEXER_PORT=9899 envio start`,
       )
     } else {
-      logger->Logging.errorWithExn("Failed to start indexer server", err)
+      logger->Logger.errorWithExn("Failed to start indexer server", err)
     }
     NodeJs.process->NodeJs.exitWithCode(Failure)
   })

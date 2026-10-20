@@ -118,7 +118,7 @@ describe("ClickHouse staging", () => {
     let registry = ClickHouse.makeRegistry()
     let table =
       ClickHouse.makeSink(
-        ~logger=Logging.makeInMemory(),
+        ~logger=Logger.makeInMemory(),
         ~host="http://127.0.0.1:1",
         ~username="default",
         ~password="",
@@ -261,7 +261,7 @@ describe("ClickHouse staging", () => {
 describe("Staged buffer checks", () => {
   let staged = () => {
     let sink = ClickHouse.makeSink(
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
       ~host="http://127.0.0.1:1",
       ~username="default",
       ~password="",

@@ -4,7 +4,7 @@
 
 type t = {
   // Names the chain on every line.
-  logger: Logging.t,
+  logger: Logger.t,
   // The registrations used to build this chain's sources and route native items.
   onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
@@ -151,7 +151,7 @@ let make = (
   ~shouldChecksum=false,
   ~reorgThresholdReadyTolerance=100,
   ~perChainEntities: array<Internal.entityConfig>=[],
-  ~logger: Logging.t,
+  ~logger: Logger.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
   {
@@ -194,7 +194,7 @@ let make = (
 let logFetchStateNotice = (logger, notice: FetchState.notice) =>
   switch notice {
   | SwitchedToClientSideFiltering({contractName, addressCount, threshold}) =>
-    logger->Logging.trace(
+    logger->Logger.trace(
       "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
       ~params={"contractName": contractName, "addressCount": addressCount, "threshold": threshold},
     )
@@ -204,7 +204,7 @@ let logFetchStateNotice = (logger, notice: FetchState.notice) =>
       registeredFromBlock,
       requestedFromBlock,
     }) =>
-    logger->Logging.warn(
+    logger->Logger.warn(
       "Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.",
       ~params={
         "contractName": contractName,
@@ -214,7 +214,7 @@ let logFetchStateNotice = (logger, notice: FetchState.notice) =>
       },
     )
   | SkippedInvalidAddress({contractName, contractAddress}) =>
-    logger->Logging.warn(
+    logger->Logger.warn(
       "Skipping contract registration: Not a valid address for this chain's ecosystem.",
       ~params={"contractName": contractName, "contractAddress": contractAddress},
     )
@@ -224,7 +224,7 @@ let logFetchStateNotice = (logger, notice: FetchState.notice) =>
       registeredFromBlock,
       requestedFromBlock,
     }) =>
-    logger->Logging.warn(
+    logger->Logger.warn(
       "Skipping a stored address: it is already registered for this contract.",
       ~params={
         "contractName": contractName,
@@ -419,7 +419,7 @@ let makeFromDbState = (
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
 ) => {
-  let logger = logger->Logging.withChainId(chainConfig.id)
+  let logger = logger->Logger.withChainId(chainConfig.id)
 
   let progressBlockNumber =
     // Can be -1 when not set

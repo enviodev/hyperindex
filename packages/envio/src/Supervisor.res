@@ -75,7 +75,7 @@ let label = (worker: worker) => `[chain ${worker->name}]`
 
 // Workers append to files of their own. The logger writes a line per call, and
 // several processes appending to one file can still tear a long line apart.
-let workerLogFilePath = (~workerIndex, ~path=Env.Logging.file) => {
+let workerLogFilePath = (~workerIndex, ~path=Env.Logger.file) => {
   let suffix = `.worker-${workerIndex->Int.toString}`
   // A dot in a directory name isn't an extension, and a path with no dot at
   // all has none either: `./logs/envio` takes the suffix at the end.
@@ -324,7 +324,7 @@ let awaitExit = async (group, ~logger): outcome => {
       )
       r.child->NodeJs.ChildProcess.Child.onError(
         exn => {
-          logger->Logging.errorWithExn(`${r.worker->label} failed to start`, exn)
+          logger->Logger.errorWithExn(`${r.worker->label} failed to start`, exn)
           r->onGone(~ending=Failed)
         },
       )
@@ -459,7 +459,7 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   // The counts ride as fields rather than in the sentence: the connection limit
   // is the only setting that decides any of this, and a reader who wants to
   // change it has nothing else to go on.
-  logger->Logging.info(
+  logger->Logger.info(
     "Indexing will be split across multiple processes for faster and more reliable indexing.",
     ~params={
       "chains": config.chainMap->ChainMap.values->Array.length,
@@ -546,7 +546,7 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   switch outcome {
   | Stopped => NodeJs.process->NodeJs.exitWithCode(Success)
   | Finished if !shouldUseTui =>
-    logger->Logging.info("Exiting with success")
+    logger->Logger.info("Exiting with success")
     NodeJs.process->NodeJs.exitWithCode(Success)
   | Finished =>
     // With nothing left to stop, the stop signals end the display instead.

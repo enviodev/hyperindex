@@ -127,7 +127,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~fetchState=fetchState.contents,
       ~addressStore,
       ~sourceManager=SourceManager.make(
-        ~logger=Logging.makeInMemory(),
+        ~logger=Logger.makeInMemory(),
         ~sources=[mockSource.source],
         ~isRealtime=false,
       ),
@@ -135,19 +135,19 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~maxReorgDepth=200,
       ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.makeInMemory(),
+      ~logger=Logger.makeInMemory(),
     )
 
     chainStates->ChainId.Dict.set(id, mockChainState)
   })
 
   let state = IndexerState.make(
-    ~logger=Logging.makeInMemory(),
+    ~logger=Logger.makeInMemory(),
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
     ~isRealtime=false,
-    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+    ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
   )
 
   (state, numberOfMockEventsCreated.contents, allEvents)
@@ -312,25 +312,25 @@ describe("IndexerState", () => {
                 ~fetchState,
                 ~addressStore,
                 ~sourceManager=SourceManager.make(
-                  ~logger=Logging.makeInMemory(),
+                  ~logger=Logger.makeInMemory(),
                   ~sources=[mockSource.source],
                   ~isRealtime=false,
                 ),
                 ~maxReorgDepth=200,
                 ~shouldRollbackOnReorg=false,
                 ~committedProgressBlockNumber=-1,
-                ~logger=Logging.makeInMemory(),
+                ~logger=Logger.makeInMemory(),
               )
               chainStates->ChainId.Dict.set(chainConfig.id, chainState)
             },
           )
           IndexerState.make(
-            ~logger=Logging.makeInMemory(),
+            ~logger=Logger.makeInMemory(),
             ~config,
             ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,
             ~isRealtime=false,
-            ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+            ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
           )
         }
 

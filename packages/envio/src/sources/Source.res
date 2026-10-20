@@ -209,10 +209,7 @@ type t = {
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
-  getBlockHashes: (
-    ~blockNumbers: array<int>,
-    ~logger: Logging.t,
-  ) => promise<getBlockHashesResponse>,
+  getBlockHashes: (~blockNumbers: array<int>, ~logger: Logger.t) => promise<getBlockHashesResponse>,
   getHeightOrThrow: unit => promise<getHeightResponse>,
   getItemsOrThrow: (
     ~fromBlock: int,
@@ -240,7 +237,7 @@ type t = {
     // expected, so client-side-filtered items can't truncate the range short.
     ~itemsTarget: option<int>,
     ~retry: int,
-    ~logger: Logging.t,
+    ~logger: Logger.t,
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (
     ~onHeight: int => unit,

@@ -143,7 +143,7 @@ let resolveAllOrThrow = async (
     let chainConfig = switch chainConfig.startBlock {
     | Config.Block(_) => chainConfig
     | Config.Latest =>
-      let logger = logger->Logging.withChainId(chainConfig.id)
+      let logger = logger->Logger.withChainId(chainConfig.id)
       let head = await chainConfig->resolveHeadOrThrow(
         ~logger,
         ~lowercaseAddresses,
@@ -171,7 +171,7 @@ let resolveAllOrThrow = async (
         | _ => ()
         }
       )
-      logger->Logging.info(
+      logger->Logger.info(
         `Resolved the "latest" start block for chain ${chainId} to block ${head->Int.toString}.`,
         ~params={"startBlock": head},
       )

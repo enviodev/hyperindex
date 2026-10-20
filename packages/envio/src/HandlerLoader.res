@@ -43,7 +43,7 @@ let registerContractHandlers = async (~logger, ~contractName, ~handler: option<s
     } catch {
     | exn =>
       let cause = exn->Utils.prettifyExn->Obj.magic
-      logger->Logging.errorWithExn(
+      logger->Logger.errorWithExn(
         `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
         exn,
       )
@@ -92,7 +92,7 @@ let typeCheck = async (~config: Config.t, ~logger, ~autoLoadFiles) => {
       JsError.throwWithMessage(
         `The handler type check found errors. Fix them to start the indexer:\n\n${errors}`,
       )
-    | Skipped(warning) => logger->Logging.warn(warning)
+    | Skipped(warning) => logger->Logger.warn(warning)
     | Passed => ()
     }
   }
@@ -115,7 +115,7 @@ let registerAllHandlers = async (
   ->Array.map(file => {
     importHandler(file)->Promise.catch(exn => {
       let cause = exn->Utils.prettifyExn->Obj.magic
-      logger->Logging.errorWithExn(`Failed to auto-load handler file: ${file}`, exn)
+      logger->Logger.errorWithExn(`Failed to auto-load handler file: ${file}`, exn)
       JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
     })
   })

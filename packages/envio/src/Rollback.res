@@ -73,7 +73,7 @@ let rec rollback = async (
     | FoundReorgDepth(_) if state->IndexerState.isProcessing =>
       state
       ->IndexerState.logger
-      ->Logging.trace("Waiting for batch to finish processing before executing rollback")
+      ->Logger.trace("Waiting for batch to finish processing before executing rollback")
     | FoundReorgDepth({chainId: reorgChain, rollbackTargetBlockNumber}) =>
       await executeRollback(
         state,
@@ -109,12 +109,12 @@ and executeRollback = async (
   let logger =
     state
     ->IndexerState.logger
-    ->Logging.withFields({
+    ->Logger.withFields({
       "action": "Rollback",
       "reorgChain": reorgChain,
       "targetBlockNumber": rollbackTargetBlockNumber,
     })
-  logger->Logging.info("Started rollback on reorg")
+  logger->Logger.info("Started rollback on reorg")
   state
   ->IndexerState.getChainState(~chainId=reorgChain)
   ->ChainState.setRollbackTargetBlock(~blockNumber=rollbackTargetBlockNumber)
@@ -214,7 +214,7 @@ and executeRollback = async (
         totalEventsProcessed: cs->ChainState.numEventsProcessed,
       })
       ->ignore
-      logger->Logging.info(
+      logger->Logger.info(
         "Rollbacked",
         ~params={
           "chainId": chainId,
@@ -232,7 +232,7 @@ and executeRollback = async (
     ~rolledBackAddresses,
   )
 
-  logger->Logging.trace(
+  logger->Logger.trace(
     "Rollback entity changes",
     ~params={"deleted": diff["deletedEntities"], "upserted": diff["setEntities"]},
   )

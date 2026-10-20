@@ -7,7 +7,7 @@ type contractRegisterParams = {
   onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
   config: Config.t,
   // The chain's logger, which the item's own is built on.
-  logger: Logging.t,
+  logger: Logger.t,
   mutable isResolved: bool,
 }
 
@@ -70,7 +70,7 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
       )->ErrorHandling.mkLogAndRaise(~logger=params->loggerForItem)
     }
     switch prop {
-    | "log" => params->loggerForItem->Logging.asContextLog->(Utils.magic: Envio.logger => unknown)
+    | "log" => params->loggerForItem->Logger.asContextLog->(Utils.magic: Envio.logger => unknown)
 
     | "chain" =>
       params

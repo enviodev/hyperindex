@@ -8,7 +8,7 @@ let make = (
   ~lowercaseAddresses: bool,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
-  ~logger: Logging.t,
+  ~logger: Logger.t,
 ): array<Source.t> => {
   let chainId = chainConfig.id
   switch chainConfig.sourceConfig {

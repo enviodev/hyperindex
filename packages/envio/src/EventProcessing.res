@@ -278,7 +278,7 @@ let registerProcessEventBatchMetrics = (
   ~handlerDuration,
 ) => {
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
-    logger->Logging.trace(
+    logger->Logger.trace(
       "Finished processing",
       ~params={
         "chainId": chainId,
@@ -341,7 +341,7 @@ let processEventBatch = async (
   let logger = indexerState->IndexerState.logger
 
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
-    logger->Logging.trace(
+    logger->Logger.trace(
       "Started processing",
       ~params={"chainId": chainId, "batchSize": chainAfterBatch.batchSize},
     )
