@@ -575,13 +575,72 @@ function operationResult(decimal: GraphNodeDecimal.Decimal): BigDecimal {
   return new BigDecimal(decimal);
 }
 
+/**
+ * Powers of a value built by multiplying by it one step at a time, which is
+ * how Uniswap v3's `bigDecimalExponated` computes `1.0001^tick` in createTick
+ * — up to 887k steps for a full-range tick, every pool's first such position
+ * repeating the same ones, and every replay of the handler again. Each step's
+ * product is kept: `[base, base·base, (base^2)·base, …]` as `multiply`
+ * returned it, so a later step is the same product, rounded the same way,
+ * without the work. Bounded in all; past the bound a step is computed as any
+ * other product.
+ */
+type PowerChain = { key: string; products: GraphNodeDecimal.Decimal[] };
+const powerChains = new Map<string, PowerChain>();
+const POWER_CHAIN_LIMIT = 1_000_000;
+const CHAIN_KEPT_FROM = 64;
+let chainedProducts = 0;
+const sameDecimal = (x: GraphNodeDecimal.Decimal, y: GraphNodeDecimal.Decimal) =>
+  x.int === y.int && x.scale === y.scale;
+
+/** `a · b` when one is a step of a chain the other is the base of, or `a` is `b`. */
+function chainedProduct(a: BigDecimal, b: BigDecimal): BigDecimal | undefined {
+  let chain: PowerChain;
+  let step: number;
+  let at: GraphNodeDecimal.Decimal;
+  const aPower = a._power;
+  const bPower = b._power;
+  if (aPower !== undefined && sameDecimal(b.decimal, aPower.chain.products[0])) {
+    ({ chain, step } = aPower);
+    at = a.decimal;
+  } else if (bPower !== undefined && sameDecimal(a.decimal, bPower.chain.products[0])) {
+    ({ chain, step } = bPower);
+    at = b.decimal;
+  } else if (sameDecimal(a.decimal, b.decimal)) {
+    const key = `${a.decimal.int}e${a.decimal.scale}`;
+    chain = powerChains.get(key) ?? { key, products: [a.decimal] };
+    step = 0;
+    at = a.decimal;
+  } else {
+    return undefined;
+  }
+  const next = step + 1;
+  let product = chain.products[next];
+  if (product === undefined) {
+    product = GraphNodeDecimal.multiply(at, chain.products[0]);
+    if (next === chain.products.length && chainedProducts < POWER_CHAIN_LIMIT) {
+      chain.products.push(product);
+      chainedProducts++;
+      // A square on its own is no chain: only one that keeps going is kept
+      // for the next computation of the same powers.
+      if (next === CHAIN_KEPT_FROM) powerChains.set(chain.key, chain);
+    }
+  }
+  const made = operationResult(product);
+  made._power = { chain, step: next };
+  return made;
+}
+
 export class BigDecimal {
   private _decimal: GraphNodeDecimal.Decimal;
   /** The two fields as a mapping last assigned them, if it assigned one. */
   private _fields: GraphNodeDecimal.Decimal | undefined;
   private _value: BigNumber | undefined;
+  /** This value's place in a power chain, if a chained product made it. */
+  _power: { chain: PowerChain; step: number } | undefined;
 
   constructor(value: GraphNodeDecimal.Decimal | BigNumber | BigInt_ | string | number) {
+    this._power = undefined;
     const operationResult = constructingOperationResult;
     constructingOperationResult = false;
     this._decimal = operationResult
@@ -632,6 +691,10 @@ export class BigDecimal {
     return operationResult(GraphNodeDecimal.subtract(this.decimal, decimalOperandOf(other)));
   }
   times(other: BigDecimal): BigDecimal {
+    if (other instanceof BigDecimal) {
+      const chained = chainedProduct(this, other);
+      if (chained !== undefined) return chained;
+    }
     return operationResult(GraphNodeDecimal.multiply(this.decimal, decimalOperandOf(other)));
   }
   div(other: BigDecimal): BigDecimal {
@@ -683,6 +746,7 @@ export class BigDecimal {
     this._fields = fields;
     this._decimal = GraphNodeDecimal.normalize(fields);
     this._value = undefined;
+    this._power = undefined;
   }
 }
 
