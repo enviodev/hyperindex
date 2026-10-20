@@ -305,8 +305,12 @@ handler saves doesn't reach that store, so a `create()` conditioned on such
 state can still mis-register. An unfiltered or polling block handler gets no
 register pass at all, so a `create()` it makes registers nothing (the run
 warns once per template and address): envio registers addresses only at fetch
-time, from events. graph-node's own block-handlers integration test and
-centrifuge's tinlake create templates that way. A mapping that throws in the
+time, from events. graph-node's own block-handlers integration test,
+centrifuge's tinlake and beefy-balances (a `polling` handler on a one-block
+data source) create templates that way. A `once` handler's `create()` is
+registered by the first register pass of its chain, at that event's block —
+on a chain with no template-creating event at all (yieldyak's strategies,
+whose only data source is the `once` handler) never. A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
