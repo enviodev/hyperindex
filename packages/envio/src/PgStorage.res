@@ -99,11 +99,13 @@ let getSchemaIndexes = (
         derivedSchema
         ->Utils.Dict.dangerouslyGetNonOption(derivedFromField.derivedFromEntity)
         ->Option.flatMap(table => table->Table.getFieldByName(derivedFromField.derivedFromField))
-        ->Option.mapOr(false, field =>
-          switch field {
-          | Table.Field({isArray}) => isArray
-          | DerivedFrom(_) => false
-          }
+        ->Option.mapOr(
+          false,
+          field =>
+            switch field {
+            | Table.Field({isArray}) => isArray
+            | DerivedFrom(_) => false
+            },
         )
       all
       ->Array.push(
@@ -945,6 +947,27 @@ type cacheRowCount = {
 // Matches both the cross-chain (`envio_effect_<name>`) and chain-scoped
 // (`envio_<chainId>_effect_<name>`) cache-table formats. Kept in sync with
 // Internal.EffectCache.
+// The subgraph runtime's caches whose rows can't go stale: a contract call, a
+// balance or code at a block number, and a file by its content id. graph-node
+// keeps its call cache when a subgraph is synced again from scratch; so does a
+// reset here, and a resync asks an RPC only for what it never asked before.
+let resetSurvivingEffects = [
+  "envio_subgraph_eth_call",
+  "envio_subgraph_eth_balance",
+  "envio_subgraph_has_code",
+  "envio_subgraph_file",
+  "envio_subgraph_ipfs_cat",
+  "envio_subgraph_arweave",
+]
+
+let resetSurvivingTables = (tableNames: array<schemaTableName>) =>
+  tableNames->Array.filterMap(({tableName}) =>
+    switch Internal.EffectCache.fromTableName(tableName) {
+    | Some((effectName, _)) if resetSurvivingEffects->Array.includes(effectName) => Some(tableName)
+    | _ => None
+    }
+  )
+
 let makeEffectCacheTableNamesQuery = (~pgSchema) => {
   // The column guard requires the effect-cache shape (exactly an `id` + `output`
   // pair) so a user entity table that happens to match the name pattern is never
@@ -1994,6 +2017,21 @@ let make = (
     | None => ()
     }
 
+    // Kept aside while the schema is dropped, and put back after. A run that
+    // died in between left them aside: they are put back all the same.
+    let keptSchema = `envio_kept_${pgSchema}`
+    let kept = schemaTableNames->resetSurvivingTables
+    if kept->Utils.Array.notEmpty {
+      let _ = await sql->Postgres.unsafe(
+        `CREATE SCHEMA IF NOT EXISTS "${keptSchema}";` ++
+        kept
+        ->Array.map(tableName =>
+          `DROP TABLE IF EXISTS "${keptSchema}"."${tableName}"; ALTER TABLE "${pgSchema}"."${tableName}" SET SCHEMA "${keptSchema}";`
+        )
+        ->Array.joinUnsafe(""),
+      )
+    }
+
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
@@ -2037,6 +2075,19 @@ let make = (
         )
       }
     })
+
+    let keptTables: array<schemaTableName> = await sql->Postgres.unsafe(
+      makeSchemaTableNamesQuery(~pgSchema=keptSchema),
+    )
+    if keptTables->Utils.Array.notEmpty {
+      let _ = await sql->Postgres.unsafe(
+        keptTables
+        ->Array.map(({tableName}) =>
+          `ALTER TABLE "${keptSchema}"."${tableName}" SET SCHEMA "${pgSchema}";`
+        )
+        ->Array.joinUnsafe("") ++ `DROP SCHEMA IF EXISTS "${keptSchema}";`,
+      )
+    }
 
     let cache = await restoreEffectCache(~withUpload=true)
 

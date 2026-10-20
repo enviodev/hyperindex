@@ -139,6 +139,87 @@ let runHandlerOrThrow = async (
   }
 }
 
+// On the first run of loaders, we don't care about the result,
+// whether it's an error or a return type.
+// We'll rerun the loader again right before the handler run,
+// to avoid having a stale data returned from the loader.
+let preloadItem = (
+  item: Internal.item,
+  ~checkpointId,
+  ~loadManager,
+  ~persistence,
+  ~config: Config.t,
+  ~indexerState,
+  ~chains: Internal.chains,
+): option<promise<unit>> =>
+  switch item {
+  | Event(_) =>
+    let {handler, eventConfig: {contractName, name: eventName}} = (
+      item->Internal.castUnsafeEventItem
+    ).onEventRegistration
+    switch handler {
+    | None => None
+    | Some(handler) =>
+      try {
+        let timerRef =
+          indexerState->IndexerState.startPreloadHandler(~contract=contractName, ~event=eventName)
+        Some(
+          handler({
+            event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
+            context: UserContext.getHandlerContext({
+              item,
+              indexerState,
+              loadManager,
+              persistence,
+              checkpointId,
+              isPreload: true,
+              chains,
+              sync: UserContext.makeSyncState(),
+              config,
+            }),
+          })
+          ->Promise.thenResolve(_ => {
+            indexerState->IndexerState.endPreloadHandler(
+              timerRef,
+              ~contract=contractName,
+              ~event=eventName,
+            )
+          })
+          ->Utils.Promise.silentCatch,
+          // Must have Promise.catch as well as normal catch,
+          // because if user throws an error before await in the handler,
+          // it won't create a rejected promise
+        )
+      } catch {
+      | _ => None
+      }
+    }
+  | Block({onBlockRegistration: {handler}, blockNumber}) =>
+    try {
+      Some(
+        handler({
+          Ecosystem.makeOnBlockArgs(
+            ~blockNumber,
+            ~ecosystem=config.ecosystem,
+            ~context=UserContext.getHandlerContext({
+              item,
+              indexerState,
+              loadManager,
+              persistence,
+              checkpointId,
+              isPreload: true,
+              chains,
+              sync: UserContext.makeSyncState(),
+              config,
+            }),
+          )
+        })->Utils.Promise.silentCatch,
+      )
+    } catch {
+    | _ => None
+    }
+  }
+
 let preloadBatchOrThrow = async (
   batch: Batch.t,
   ~loadManager,
@@ -147,11 +228,6 @@ let preloadBatchOrThrow = async (
   ~indexerState,
   ~chains: Internal.chains,
 ) => {
-  // On the first run of loaders, we don't care about the result,
-  // whether it's an error or a return type.
-  // We'll rerun the loader again right before the handler run,
-  // to avoid having a stale data returned from the loader.
-
   let promises = []
   let itemIdx = ref(0)
 
@@ -161,75 +237,16 @@ let preloadBatchOrThrow = async (
 
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
-      switch item {
-      | Event(_) =>
-        let {handler, eventConfig: {contractName, name: eventName}} = (
-          item->Internal.castUnsafeEventItem
-        ).onEventRegistration
-        switch handler {
-        | None => ()
-        | Some(handler) =>
-          try {
-            let timerRef =
-              indexerState->IndexerState.startPreloadHandler(
-                ~contract=contractName,
-                ~event=eventName,
-              )
-            promises->Array.push(
-              handler({
-                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
-                context: UserContext.getHandlerContext({
-                  item,
-                  indexerState,
-                  loadManager,
-                  persistence,
-                  checkpointId,
-                  isPreload: true,
-                  chains,
-                  sync: UserContext.makeSyncState(),
-                  config,
-                }),
-              })
-              ->Promise.thenResolve(_ => {
-                indexerState->IndexerState.endPreloadHandler(
-                  timerRef,
-                  ~contract=contractName,
-                  ~event=eventName,
-                )
-              })
-              ->Utils.Promise.silentCatch,
-              // Must have Promise.catch as well as normal catch,
-              // because if user throws an error before await in the handler,
-              // it won't create a rejected promise
-            )
-          } catch {
-          | _ => ()
-          }
-        }
-      | Block({onBlockRegistration: {handler}, blockNumber}) =>
-        try {
-          promises->Array.push(
-            handler({
-              Ecosystem.makeOnBlockArgs(
-                ~blockNumber,
-                ~ecosystem=config.ecosystem,
-                ~context=UserContext.getHandlerContext({
-                  item,
-                  indexerState,
-                  loadManager,
-                  persistence,
-                  checkpointId,
-                  isPreload: true,
-                  chains,
-                  sync: UserContext.makeSyncState(),
-                  config,
-                }),
-              )
-            })->Utils.Promise.silentCatch,
-          )
-        } catch {
-        | _ => ()
-        }
+      switch item->preloadItem(
+        ~checkpointId,
+        ~loadManager,
+        ~persistence,
+        ~config,
+        ~indexerState,
+        ~chains,
+      ) {
+      | Some(promise) => promises->Array.push(promise)
+      | None => ()
       }
     }
 
@@ -248,13 +265,27 @@ let runBatchHandlersOrThrow = async (
   ~chains: Internal.chains,
 ) => {
   let itemIdx = ref(0)
+  let lookahead = PreloadLookahead.active.contents
+  // Only read by the lookahead, which preloads items out of checkpoint order.
+  let checkpointIdOf = switch lookahead {
+  | Some(_) =>
+    let ids = []
+    batch.checkpointIds->Array.forEachWithIndex((checkpointId, checkpointIdx) => {
+      for _ in 1 to batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx) {
+        ids->Array.push(checkpointId)
+      }
+    })
+    ids
+  | None => []
+  }
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
     let checkpointItemsCount = batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx)
 
     for idx in 0 to checkpointItemsCount - 1 {
-      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
+      let index = itemIdx.contents + idx
+      let item = batch.items->Array.getUnsafe(index)
 
       await runHandlerOrThrow(
         item,
@@ -265,6 +296,23 @@ let runBatchHandlersOrThrow = async (
         ~config,
         ~chains,
       )
+
+      switch lookahead {
+      | Some(lookahead) =>
+        lookahead->PreloadLookahead.afterItem(~index, ~preload=(ahead, aheadIdx) =>
+          ahead
+          ->preloadItem(
+            ~checkpointId=checkpointIdOf->Array.getUnsafe(aheadIdx),
+            ~loadManager,
+            ~persistence,
+            ~config,
+            ~indexerState,
+            ~chains,
+          )
+          ->ignore
+        )
+      | None => ()
+      }
     }
     itemIdx := itemIdx.contents + checkpointItemsCount
   }
@@ -356,6 +404,7 @@ let processEventBatch = async (
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
       await materializeBatchEvents(batch, ~chainStates)
+      PreloadLookahead.start(~items=batch.items)
       await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
     }
 
@@ -370,6 +419,7 @@ let processEventBatch = async (
         ~chains,
       )
     }
+    PreloadLookahead.stop()
 
     let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince
 

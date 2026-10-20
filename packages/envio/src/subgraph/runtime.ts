@@ -15,6 +15,7 @@ import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
+import { cached as storedEffectOutput, resetStartupTables } from "../EffectCacheLookup.res.mjs";
 import {
   subgraphFileToJavascript,
   subgraphRegisterHandlers,
@@ -731,6 +732,10 @@ const REGISTER_COST_MIN_PASSES = 20;
   registerCost.passes < REGISTER_COST_MIN_PASSES ? undefined : registerCost.hostOps / registerCost.passes;
 
 async function runRegisterHost(effect: Effect, input: unknown, chainId: number): Promise<unknown> {
+  // A resync after `envio start -r` keeps the stored call answers; the handler
+  // pass reads them through the effect machinery, this pass reads them here.
+  const stored = await storedEffectOutput(effect as any, chainId, input as any);
+  if (stored !== undefined) return stored;
   return effect.handler({
     input,
     // Only `blockTimestamp` reads the context, and only for the chain id, which
@@ -1170,6 +1175,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   setLegacyNullOperands(legacyNulls);
   installResolveHook(config.root);
   resetRpcClients();
+  resetStartupTables();
   resetCallBackends();
   // The chain's sources read calls only when a handler wants them.
   installCallSource(fetchCalls, config.rpcUrls ?? []);
