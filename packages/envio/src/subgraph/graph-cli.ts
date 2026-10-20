@@ -288,7 +288,7 @@ export function generatedDir(root: string, mappingFiles: string[]): string {
       }
     }
   }
-  return path.join(root, "generated");
+  return path.resolve(root, "generated");
 }
 
 function inDependency(root: string, file: string): boolean {
@@ -300,6 +300,8 @@ function inDependency(root: string, file: string): boolean {
  * exists isn't enough: Envio Cloud recreates generated/ empty before the build.
  */
 export function missingGeneratedFiles(root: string, mappingFiles: string[], dir: string): string[] {
+  // Imports resolve to absolute paths; `envio start` passes the root as ".".
+  dir = path.resolve(dir);
   const missing = new Set<string>();
   for (const { file, specifiers } of scanImports(root, mappingFiles)) {
     for (const specifier of specifiers) {
@@ -318,6 +320,7 @@ const MAX_SCANNED_FILES = 2_000;
 
 /** Whether any file the mappings reach imports something from `dir`. */
 function importsFrom(root: string, mappingFiles: string[], dir: string): boolean {
+  dir = path.resolve(dir);
   for (const { file, specifiers } of scanImports(root, mappingFiles)) {
     for (const specifier of specifiers) {
       if (path.resolve(path.dirname(file), specifier).startsWith(dir + path.sep)) return true;
