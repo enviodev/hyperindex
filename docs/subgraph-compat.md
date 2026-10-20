@@ -647,7 +647,9 @@ load error. An ABI the manifest reads from a package under `node_modules`
 (`../../node_modules/@sushiswap/core/build/abi/…`) comes from that package
 fetched into envio's cache (`<cache>/abi-packages/`), at the version the
 lockfile pins, else the package.json range, with npm and no scripts; startup
-warns once per file.
+warns once per file. A package of the repo's own workspace (linked into
+node_modules by pnpm or yarn) is read from its directory instead, never
+fetched.
 
 **A mapping that imports an undeclared template.** daohaus assembles its
 manifest per network with a script; for some networks it leaves out a

@@ -217,6 +217,20 @@ pub fn fetched_file(dir: &Path, path: &str) -> Option<PathBuf> {
     let dir = &crate::project_paths::path_utils::normalize_path(
         std::env::current_dir().unwrap_or_default().join(dir),
     );
+    // A workspace package (pnpm and yarn link them into node_modules) is the
+    // repo's own: read from its directory, never fetched.
+    if let Some(package) = dir.ancestors().find_map(|root| {
+        super::render::workspace_package_dirs(root)
+            .into_iter()
+            .find(|package| {
+                read_json(&package.join("package.json"))
+                    .and_then(|manifest| manifest.get("name")?.as_str().map(str::to_string))
+                    .is_some_and(|package_name| package_name == name)
+            })
+    }) {
+        let file = package.join(&rest);
+        return file.is_file().then_some(file);
+    }
     let specs = match declared_version(dir, &name) {
         Some(version) => vec![format!("{name}@{version}"), name.clone()],
         None => vec![name.clone()],

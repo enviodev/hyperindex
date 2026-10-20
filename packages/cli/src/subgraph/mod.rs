@@ -3261,6 +3261,56 @@ type Renewal implements Event @entity {
         );
     }
 
+    // An ABI under node_modules can be a workspace package's own file
+    // (kleros-v2 reads `node_modules/@kleros/kleros-v2-contracts/…`, linked
+    // from contracts/): with nothing installed it is read from the
+    // workspace, never fetched from the registry, whose copy is another
+    // version.
+    #[test]
+    fn reads_an_abi_from_the_workspace_package_node_modules_would_link() {
+        let dir = tempdir::TempDir::new("envio-subgraph-abi-workspace").unwrap();
+        let root = dir.path();
+        let subgraph = root.join("subgraph");
+        write_gravity(&subgraph, "subgraph.yaml");
+        fs::write(
+            subgraph.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace(
+                "./abis/Gravity.json",
+                "../node_modules/@acme/contracts/abi/Gravity.json",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"workspaces": ["contracts", "subgraph"]}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("contracts/abi")).unwrap();
+        fs::write(
+            root.join("contracts/package.json"),
+            r#"{"name": "@acme/contracts"}"#,
+        )
+        .unwrap();
+        fs::write(root.join("contracts/abi/Gravity.json"), GRAVITY_ABI).unwrap();
+        fs::write(subgraph.join("package.json"), r#"{"name": "subgraph"}"#).unwrap();
+        let project_paths =
+            ParsedProjectPaths::new(subgraph.to_str().unwrap(), "config.yaml").unwrap();
+        let subgraph_config = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap()
+            .subgraph
+            .unwrap();
+
+        assert_eq!(
+            subgraph_config.path_fixes,
+            vec![(
+                "../node_modules/@acme/contracts/abi/Gravity.json".to_string(),
+                root.join("contracts/abi/Gravity.json")
+                    .display()
+                    .to_string()
+            )]
+        );
+    }
+
     // Two files that differ from the name only in case: neither is read, and
     // the error names one.
     #[test]

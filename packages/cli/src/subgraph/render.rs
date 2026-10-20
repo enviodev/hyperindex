@@ -780,7 +780,7 @@ fn inline_scripts(
 /// The directories of the workspace whose root is `dir`: package.json
 /// `workspaces` (npm, yarn) or pnpm-workspace.yaml globs, as the runtime
 /// reads them.
-fn workspace_package_dirs(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn workspace_package_dirs(dir: &Path) -> Vec<PathBuf> {
     let manifest = std::fs::read_to_string(dir.join("package.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok());
