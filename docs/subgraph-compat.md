@@ -31,7 +31,7 @@ specVersion (manifest): **0.0.4** feature declarations · **0.0.5**
 **0.0.8** polling/once block handlers · **0.0.9** `endBlock` · **1.0.0**
 `indexerHints.prune` · **1.1.0** timeseries/aggregations, `Int8`, `Timestamp`
 · **1.2.0** topic filters, declared eth_calls · **1.3.0** subgraph
-composition.
+composition · **1.4.0** struct fields in declared eth_calls.
 
 apiVersion (graph-ts): **0.0.5** modern baseline · **0.0.6** `tx.nonce`,
 `block.baseFeePerGas` · **0.0.7** `event.receipt` · **0.0.8** field

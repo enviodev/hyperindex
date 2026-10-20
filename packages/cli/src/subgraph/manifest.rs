@@ -16,7 +16,7 @@ use super::errors::Report;
 use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
-pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 3, 0);
+pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 4, 0);
 /// The newest graph-ts the runtime shim implements. There is no floor: older
 /// versions expose a subset of the same API, and anything genuinely missing from
 /// one is refused by name when the mapping reaches for it.

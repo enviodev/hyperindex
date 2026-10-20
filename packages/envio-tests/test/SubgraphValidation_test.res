@@ -351,6 +351,27 @@ describe("subgraph translation: unknown things", () => {
     t.expect(config.chainMap->ChainMap.keys->Array.length).toEqual(1)
   })
 
+  // graph-node's SPEC_VERSION_1_4_0 (graph/src/data/subgraph/api_version.rs)
+  // only lets a declared call read a struct field of an event parameter.
+  // Declared calls warm graph-node's call cache ahead of the handler; the
+  // handler's own calls give the same answers without that cache.
+  it("accepts specVersion 1.4.0, whose declared calls may read a struct field", t => {
+    let {config} = InternalTestIndexer.fromSubgraph(
+      ~schema=baseSchema,
+      ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4840")]),
+      ~manifest=manifestWith(`${plainEventHandler}
+          calls:
+            balance: Token[event.address].balanceOf(event.params.order.owner)`)
+      ->String.replace("specVersion: 0.0.5", "specVersion: 1.4.0")
+      ->String.replace(
+        "      abis: []",
+        "      abis:\n        - name: Token\n          file: ./abis/Token.json",
+      ),
+      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+    )
+    t.expect(config.chainMap->ChainMap.keys->Array.length).toEqual(1)
+  })
+
   it("maps network hyperevm to chain 999", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,
