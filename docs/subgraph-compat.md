@@ -533,7 +533,11 @@ manifest is rewritten from `networks.json` beside it before translation, as
 graph-cli rewrites it (every data source moves to the network and takes its
 `source` fields from its entry; every template moves to the network; a data
 source without an entry is an error). It also picks the network of a manifest
-envio renders from a template (§6d).
+envio renders from a template (§6d). `ENVIO_SUBGRAPH_NETWORK_FILE=<path>` is
+`--network-file <path>`, for a networks file not named networks.json; unset,
+and with no networks.json, the file the repo's scripts pass with that network
+is used when they pass only one (zkBob: `--network sepolia --network-file
+./networks-bob-sepolia.json`).
 
 ## 6d. Repo shapes: what runs before graph-cli would
 

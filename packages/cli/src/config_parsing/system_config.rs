@@ -1590,10 +1590,21 @@ impl SystemConfig {
             Some(network) => {
                 // graph-cli's `--network-file` defaults to the directory it
                 // runs in; a manifest in a subfolder may keep its own.
-                let networks_path = [&project_paths.project_root, &manifest_dir]
-                    .iter()
-                    .map(|dir| dir.join("networks.json"))
-                    .find(|path| path.exists())
+                let networks_path = env
+                    .var(crate::subgraph::NETWORK_FILE_ENV_VAR)
+                    .map(|file| project_paths.project_root.join(file))
+                    .or_else(|| {
+                        [&project_paths.project_root, &manifest_dir]
+                            .iter()
+                            .map(|dir| dir.join("networks.json"))
+                            .find(|path| path.exists())
+                    })
+                    .or_else(|| {
+                        crate::subgraph::render::network_file_for(
+                            &[&manifest_dir, &project_paths.project_root],
+                            &network,
+                        )
+                    })
                     .unwrap_or_else(|| manifest_dir.join("networks.json"));
                 let networks = std::fs::read_to_string(&networks_path).context(format!(
                     "{} is set, so the manifest's addresses come from {}, which can't be read",

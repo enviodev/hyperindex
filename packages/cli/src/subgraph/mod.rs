@@ -259,6 +259,10 @@ pub fn rebase_manifest(manifest_dir: &std::path::Path, yaml: &str) -> Result<(Pa
 /// is built for.
 pub const NETWORK_ENV_VAR: &str = "ENVIO_SUBGRAPH_NETWORK";
 
+/// `graph build --network-file <path>`: the networks file, project-relative,
+/// when it isn't networks.json.
+pub const NETWORK_FILE_ENV_VAR: &str = "ENVIO_SUBGRAPH_NETWORK_FILE";
+
 /// The manifest `graph build --network <network>` writes from `networks.json`
 /// (graph-cli `updateSubgraphNetwork`): every data source moves to the network
 /// and takes its `source` fields from its entry there, and every template moves
@@ -2957,6 +2961,70 @@ type Renewal implements Event @entity {
                 42161,
                 crate::config_parsing::human_config::StartBlock::Number(416469410),
                 vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()],
+            )
+        );
+    }
+
+    // zkBob keeps a networks file per deployment: `graph build --network
+    // sepolia --network-file ./networks-bob-sepolia.json`, and one for usdc.
+    // `ENVIO_SUBGRAPH_NETWORK_FILE` is `--network-file`; a network the
+    // scripts pair with a single file takes that file.
+    #[test]
+    fn builds_the_manifest_from_the_network_file_picked() {
+        let dir = tempdir::TempDir::new("envio-subgraph-network-file").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        for (file, address) in [
+            (
+                "networks-bob-sepolia.json",
+                "0x00000000000014aA86C5d3c41765bb24e11bd701",
+            ),
+            (
+                "networks-usdc-sepolia.json",
+                "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC",
+            ),
+            (
+                "networks-bob-base.json",
+                "0x1111111111111111111111111111111111111111",
+            ),
+        ] {
+            let network = if file.contains("sepolia") {
+                "sepolia"
+            } else {
+                "base"
+            };
+            fs::write(
+                root.join(file),
+                format!(
+                    r#"{{"{network}": {{"Gravity": {{"address": "{address}", "startBlock": 1}}}}}}"#
+                ),
+            )
+            .unwrap();
+        }
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "build-sepolia-bob": "graph build --network sepolia --network-file ./networks-bob-sepolia.json",
+  "build-sepolia-usdc": "graph build --network sepolia --network-file ./networks-usdc-sepolia.json",
+  "build-base-bob": "graph build --network base --network-file ./networks-bob-base.json"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+        let inferred = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        fs::write(
+            root.join(".env"),
+            "ENVIO_SUBGRAPH_NETWORK=sepolia\nENVIO_SUBGRAPH_NETWORK_FILE=./networks-usdc-sepolia.json\n",
+        )
+        .unwrap();
+        let named = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (chain_of(&inferred).1, chain_of(&named).1),
+            (
+                vec!["0x1111111111111111111111111111111111111111".to_string()],
+                vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()]
             )
         );
     }

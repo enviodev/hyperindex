@@ -1589,6 +1589,44 @@ pub fn build_network_default(dirs: &[&Path]) -> Option<String> {
 
 /// The scripts a package runs: package.json's, then its Makefile's targets
 /// (`make <target>`).
+/// The networks file the repo's scripts pass graph-cli with `--network
+/// <network>` (zkBob: `--network sepolia --network-file
+/// ./networks-bob-sepolia.json`), when they pair the network with one file.
+pub fn network_file_for(dirs: &[&Path], network: &str) -> Option<PathBuf> {
+    let flag = |name: &str| {
+        regex::Regex::new(&format!(
+            r#"--{name}(?:=|\s+)["']?(?:\$\{{\w+:-([^}}"'\s]+)\}}|([^\s"'&;|]+))"#
+        ))
+        .expect("a valid regex")
+    };
+    let (network_flag, file_flag) = (flag("network"), flag("network-file"));
+    let value = |captures: regex::Captures| {
+        captures
+            .get(1)
+            .or_else(|| captures.get(2))
+            .map(|value| value.as_str().to_string())
+    };
+    let mut files: BTreeSet<PathBuf> = BTreeSet::new();
+    for dir in dirs {
+        let dir = absolute(dir);
+        for (_, script) in package_scripts(&dir) {
+            for command in script.split("&&") {
+                let file = file_flag.captures(command).and_then(value);
+                let named = network_flag.captures(command).and_then(value);
+                if let (Some(file), Some(named)) = (file, named) {
+                    if named == network {
+                        files.insert(normalize_path(dir.join(file)));
+                    }
+                }
+            }
+        }
+    }
+    match files.into_iter().collect::<Vec<_>>().as_slice() {
+        [file] => Some(file.clone()),
+        _ => None,
+    }
+}
+
 fn package_scripts(dir: &Path) -> Vec<(String, String)> {
     let mut scripts: Vec<(String, String)> = std::fs::read_to_string(dir.join("package.json"))
         .ok()
