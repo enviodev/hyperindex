@@ -3329,6 +3329,57 @@ type Renewal implements Event @entity {
         );
     }
 
+    // A file under node_modules the install did provide is read where it is:
+    // mento's manifest names mappings shipped in @openzeppelin/subgraphs, and
+    // the copy in envio's cache (here already there, so no network) may be
+    // another version.
+    #[test]
+    fn reads_a_node_modules_file_the_install_provided_in_place() {
+        let dir = tempdir::TempDir::new("envio-subgraph-abi-installed").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace(
+                "./abis/Gravity.json",
+                "./node_modules/@acme/abis/Gravity.json",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"devDependencies": {"@acme/abis": "1.0.0"}}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("node_modules/@acme/abis")).unwrap();
+        fs::write(
+            root.join("node_modules/@acme/abis/Gravity.json"),
+            GRAVITY_ABI,
+        )
+        .unwrap();
+        let cache = root.join("cache");
+        let fetched = cache.join("abi-packages/@acme+abis@1.0.0");
+        fs::create_dir_all(fetched.join("node_modules/@acme/abis")).unwrap();
+        fs::write(
+            fetched.join("node_modules/@acme/abis/Gravity.json"),
+            GRAVITY_ABI,
+        )
+        .unwrap();
+        fs::write(fetched.join(".envio-installed"), "@acme/abis@1.0.0").unwrap();
+        fs::write(
+            root.join(".env"),
+            format!("ENVIO_SUBGRAPH_CACHE_DIR={}\n", cache.display()),
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let subgraph = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap()
+            .subgraph
+            .unwrap();
+
+        assert_eq!(subgraph.path_fixes, Vec::<(String, String)>::new());
+    }
+
     // An ABI under node_modules can be a workspace package's own file
     // (kleros-v2 reads `node_modules/@kleros/kleros-v2-contracts/…`, linked
     // from contracts/): with nothing installed it is read from the

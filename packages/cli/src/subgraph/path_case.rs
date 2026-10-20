@@ -67,6 +67,9 @@ pub fn match_manifest(dir: &Path, yaml: &str) -> (String, Vec<(String, String)>)
         let Some(path) = value.as_str() else {
             return;
         };
+        if dir.join(path).exists() {
+            return;
+        }
         let found = on_disk(dir, path).or_else(|| {
             super::npm_fetch::fetched_file(dir, path).map(|file| file.display().to_string())
         });
