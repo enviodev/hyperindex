@@ -337,7 +337,7 @@ pub enum TypeIdent {
     Address,
     String,
     /// A `0x`-prefixed hex string that isn't an address (a hash, an asset id,
-    /// a signature): `string` in ReScript, `` `0x${string}` `` in TypeScript.
+    /// a signature): `string` in ReScript, `Hex` from "envio" in TypeScript.
     Hex,
     Bytes,
     Json,
@@ -521,7 +521,7 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal".to_string(),
             Self::Address => "Address".to_string(),
             Self::String => "string".to_string(),
-            Self::Hex => "`0x${string}`".to_string(),
+            Self::Hex => "Hex".to_string(),
             Self::Bytes => "Uint8Array".to_string(),
             Self::Json => "JSON".to_string(),
             Self::ID => "string".to_string(),
@@ -1028,6 +1028,7 @@ mod tests {
         assert_eq!(TypeIdent::BigDecimal.to_ts_type_string(), "BigDecimal");
         assert_eq!(TypeIdent::Address.to_ts_type_string(), "Address");
         assert_eq!(TypeIdent::String.to_ts_type_string(), "string");
+        assert_eq!(TypeIdent::Hex.to_ts_type_string(), "Hex");
         assert_eq!(TypeIdent::Json.to_ts_type_string(), "JSON");
         assert_eq!(TypeIdent::ID.to_ts_type_string(), "string");
         assert_eq!(TypeIdent::Bool.to_ts_type_string(), "boolean");

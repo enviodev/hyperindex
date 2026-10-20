@@ -188,7 +188,9 @@ if (0) {
       fields: { block: ["parentHash"], transaction: ["to"] },
     },
     async ({ event }) => {
-      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+      expectType<TypeEqual<typeof event.block.parentHash, `0x${string}`>>(
+        true,
+      );
       expectType<TypeEqual<typeof event.block.number, number>>(true);
       expectType<
         TypeEqual<typeof event.transaction.to, `0x${string}` | undefined>

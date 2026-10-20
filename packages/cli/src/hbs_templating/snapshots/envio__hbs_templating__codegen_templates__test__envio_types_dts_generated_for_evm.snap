@@ -9,7 +9,7 @@ expression: project_template.envio_types_dts
  * (or your package manager's `codegen` script, e.g. `pnpm codegen`).
  */
 
-import type { Address, BigDecimal, JSON, SingleOrMultiple } from "envio";
+import type { Address, BigDecimal, Hex, JSON, SingleOrMultiple } from "envio";
 
 /** Marks a block/transaction field that this event's `field_selection` doesn't include.
  * Reading such a field is a type error; the message tells you which field to add to
@@ -22,7 +22,7 @@ type EvmBlock = {
   /** The timestamp field. */
   readonly timestamp: number;
   /** The hash field. */
-  readonly hash: string;
+  readonly hash: Hex;
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
    * ```yaml
