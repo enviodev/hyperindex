@@ -406,9 +406,10 @@ pub fn generate_files(
 ) -> Result<BTreeMap<String, String>> {
     let text = std::fs::read_to_string(manifest_file)
         .with_context(|| format!("reading {}", manifest_file.display()))?;
+    let base = manifest_file.parent().unwrap_or(Path::new("."));
+    let (text, _) = super::path_case::match_manifest(base, &text);
     let manifest: Yaml = serde_yaml::from_str(&text)
         .with_context(|| format!("parsing {}", manifest_file.display()))?;
-    let base = manifest_file.parent().unwrap_or(Path::new("."));
     let mut files = BTreeMap::new();
 
     let schema_file = manifest
