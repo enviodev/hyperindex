@@ -1939,6 +1939,7 @@ fn collect_commands(
     out: &mut Commands,
 ) -> bool {
     let mut cwd = dir.to_path_buf();
+    let mut env = env.to_vec();
     for part in split_and(text) {
         let parsed = parse_steps(&part).unwrap_or_default();
         if parsed
@@ -1958,19 +1959,33 @@ fn collect_commands(
         };
         if let Some(stage) = single {
             let texts: Vec<Option<String>> = stage.words.iter().map(literal).collect();
-            // Each command runs in a shell of its own, so a `cd` carries over
-            // by hand.
+            // Each command runs in a shell of its own, so a `cd` and an
+            // `export` carry over by hand.
             if let [Some(cd), Some(target)] = texts.as_slice() {
                 if cd == "cd" {
                     cwd = normalize_path(cwd.join(target));
                     continue;
                 }
             }
+            let exported: Option<Vec<(String, String)>> = match texts.first() {
+                Some(Some(first)) if first == "export" && stage.words.len() > 1 => stage.words[1..]
+                    .iter()
+                    .map(|word| {
+                        let (name, value) = assignment(word)?;
+                        Some((name, literal(&value)?))
+                    })
+                    .collect(),
+                _ => None,
+            };
+            if let Some(exported) = exported {
+                env.extend(exported);
+                continue;
+            }
             if is_install(&stage.words) {
                 continue;
             }
             let bound = |call: Vec<(String, Word)>| {
-                let mut env = env.to_vec();
+                let mut env = env.clone();
                 env.extend(
                     call.into_iter()
                         .filter_map(|(name, value)| Some((name, literal(&value)?))),
@@ -2013,7 +2028,7 @@ fn collect_commands(
         }
         out.leaves.push(Leaf {
             cwd: cwd.clone(),
-            env: env.to_vec(),
+            env: env.clone(),
             text: part,
         });
     }

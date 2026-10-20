@@ -5399,6 +5399,36 @@ type Renewal implements Event @entity {
         );
     }
 
+    // envio runs each of a script's `&&` commands in a shell of its own, so
+    // `export NETWORK=… && node build.js` and `cd subgraph && …` would lose
+    // what the shell they ran in carries to the next command.
+    #[test]
+    fn carries_a_scripts_cd_and_export_to_its_next_commands() {
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-export").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(
+            root.join("subgraph.template.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/write.sh"),
+            "[ -n \"$CHAIN\" ] || exit 1\nsed \"s/network: NETWORK/network: $CHAIN/\" ../subgraph.template.yaml > ../subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"build-manifest": "export CHAIN=base && cd scripts && sh write.sh"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(chain_of(&config).0, 8453);
+    }
+
     // A script that fails leaves no manifest behind: the shell had already
     // created the file its `>` names.
     #[test]

@@ -872,7 +872,8 @@ build does first.
 - *What runs:* the script's commands up to its first graph-cli step, with
   `npm run <script>` (`yarn <script>`, a workspace-wide run) read as that
   script's commands and the variables the call sets, and package installs
-  skipped as in §6a; each in a shell, in its package, with the project's bins
+  skipped as in §6a; each in a shell (a `cd` or `export` before it carries
+  over, as in one shell), in its package, with the project's bins
   on PATH, stdin closed, and without envio's own `ENVIO_*` settings (the
   HyperSync token, the database password) in its environment. No command
   after graph-cli runs, and no other script.
