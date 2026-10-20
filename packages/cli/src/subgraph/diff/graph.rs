@@ -27,6 +27,7 @@ pub struct GraphClient {
     /// Spacing between request starts once the endpoint has rate-limited:
     /// zero until the first 429, then doubled by each one (100 ms to 5 s).
     pace: std::sync::Mutex<Pace>,
+    pace_floor: Duration,
     max_retries: u32,
     requests: AtomicU64,
 }
@@ -35,6 +36,8 @@ pub struct GraphClient {
 struct Pace {
     interval: Duration,
     next_start: Option<Instant>,
+    /// Answers since the spacing last changed.
+    answered: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +97,7 @@ impl GraphClient {
             permits: Arc::new(Semaphore::new(concurrency.max(1))),
             in_flight_limit: AtomicUsize::new(concurrency.max(1)),
             pace: std::sync::Mutex::new(Pace::default()),
+            pace_floor: Duration::from_millis(100),
             // With the backoff capped at 30s this waits out about a minute and a
             // half, which shared-key public endpoints' rate windows need.
             max_retries: 8,
@@ -163,7 +167,10 @@ impl GraphClient {
                             Err(GraphError::Transient(message) | GraphError::Fatal(message)) => {
                                 return Err(anyhow!("{} answered: {message}", self.url))
                             }
-                            Ok(data) => return Ok(data),
+                            Ok(data) => {
+                                self.speed_up();
+                                return Ok(data);
+                            }
                         }
                     }
                 }
@@ -196,8 +203,24 @@ impl GraphClient {
 
     fn slow_down(&self) {
         let mut pace = self.pace.lock().expect("never poisoned");
-        pace.interval =
-            (pace.interval * 2).clamp(Duration::from_millis(100), Duration::from_secs(5));
+        pace.interval = (pace.interval * 2).clamp(self.pace_floor, Duration::from_secs(5));
+        pace.answered = 0;
+    }
+
+    /// Every tenth answer since the last 429 halves the spacing, down to none.
+    fn speed_up(&self) {
+        let mut pace = self.pace.lock().expect("never poisoned");
+        if pace.interval.is_zero() {
+            return;
+        }
+        pace.answered += 1;
+        if pace.answered >= 10 {
+            pace.answered = 0;
+            pace.interval /= 2;
+            if pace.interval < self.pace_floor {
+                pace.interval = Duration::ZERO;
+            }
+        }
     }
 
     /// One fewer request in flight, unless only one is left.
@@ -789,6 +812,41 @@ pub mod tests {
                 .collect::<Vec<_>>(),
             vec![Ok(json!({"ok": true})); 10]
         );
+    }
+
+    // A gateway that refused a burst once mustn't slow a listing of
+    // thousands of pages for good: the spacing halves after every ten answers.
+    // Checked on the policy itself: the mock's own ~40 ms per request hides
+    // spacings that small in wall-clock time.
+    #[tokio::test]
+    async fn relaxes_the_spacing_once_answers_come_back() {
+        let refused = Arc::new(Mutex::new(0));
+        let counter = refused.clone();
+        let mock = mock_graph(move |_| {
+            let mut refused = counter.lock().unwrap();
+            if *refused < 3 {
+                *refused += 1;
+                return (429, "<html>429 Too Many Requests</html>".to_string());
+            }
+            (200, json!({"data": {"ok": true}}).to_string())
+        })
+        .await;
+        let mut client = GraphClient::new(&mock.url, &[], 1, Duration::from_secs(5)).unwrap();
+        client.max_retries = 3;
+        client.pace_floor = Duration::from_millis(1);
+        let spacing = |client: &GraphClient| client.pace.lock().unwrap().interval;
+        let mut seen = vec![];
+        for round in 0..4 {
+            for i in 0..10 {
+                client
+                    .query(&format!("{{ ok{round}{i}: ok }}"))
+                    .await
+                    .unwrap();
+            }
+            seen.push(spacing(&client));
+        }
+        let ms = Duration::from_millis;
+        assert_eq!(seen, vec![ms(2), ms(1), Duration::ZERO, Duration::ZERO]);
     }
 
     #[tokio::test]
