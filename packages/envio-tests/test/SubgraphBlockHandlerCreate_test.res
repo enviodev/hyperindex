@@ -1,10 +1,13 @@
 // centrifuge/tinlake's unfiltered block handler creates the Coordinator, Pile,
-// … templates of each pool it preloads. envio registers a template's instances
-// only in a register pass, and a block handler other than a `once` one gets
-// none, so those instances never had their events indexed: 1 Pool of the
-// deployment's 4, 0 Loans of 46, and only a warning per create. The create is
-// refused where it runs, naming the handler; the `once` handler's, made in
-// register mode, is not.
+// … templates of each pool it preloads, and graph-node indexes their events from
+// that block on: 4 Pools and 46 Loans on the live deployment, 1 and 0 when a
+// block handler's create registered nothing. graph-node runs a data source
+// created in block N for the triggers of N that match it, after the rest of the
+// block (core/src/subgraph/runner/mod.rs, `process_dynamic_data_sources`:
+// "Reprocess the triggers from this block that match the new data sources"),
+// and from N + 1 on as any other. So the instance's event logged in its creation
+// block runs after the handler that created it. (An event before that block
+// can't be simulated: it never reaches a handler, which simulate refuses.)
 let manifest = `
 specVersion: 0.0.5
 schema:
@@ -16,7 +19,7 @@ dataSources:
     source:
       address: "0x1111111111111111111111111111111111111111"
       abi: Events
-      startBlock: 0
+      startBlock: 1
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -58,6 +61,7 @@ let abi = `[{"type":"event","name":"Epoch","anonymous":false,"inputs":[{"name":"
 let schema = `
 type Pool @entity {
   id: ID!
+  createdAt: Int!
   epochs: Int!
 }
 `
@@ -73,11 +77,16 @@ let _ = InternalTestIndexer.fromSubgraph(
     (
       "src/pools.ts",
       `
-import { Address } from "@graphprotocol/graph-ts";
+import { Address, Entity, Value, store } from "@graphprotocol/graph-ts";
 import { Coordinator as CoordinatorTemplate } from "../generated/templates";
 
-export function createPoolHandlers(coordinator: string): void {
+export function createPoolHandlers(coordinator: string, createdAt: i32): void {
   CoordinatorTemplate.create(Address.fromString(coordinator));
+  let pool = new Entity();
+  pool.set("id", Value.fromString(coordinator));
+  pool.set("createdAt", Value.fromI32(createdAt));
+  pool.set("epochs", Value.fromI32(0));
+  store.set("Pool", coordinator, pool);
 }
 `,
     ),
@@ -88,20 +97,32 @@ import { ethereum } from "@graphprotocol/graph-ts";
 import { createPoolHandlers } from "./pools";
 
 export function handleSetup(block: ethereum.Block): void {
-  createPoolHandlers("0x2222222222222222222222222222222222222222");
+  createPoolHandlers("0x2222222222222222222222222222222222222222", block.number.toI32());
 }
 
 export function handleBlock(block: ethereum.Block): void {
-  if (block.number.toI32() == 5) createPoolHandlers("0x3333333333333333333333333333333333333333");
+  if (block.number.toI32() == 5) createPoolHandlers("0x3333333333333333333333333333333333333333", 5);
 }
 `,
     ),
     (
       "src/coordinator.ts",
       `
-import { ethereum } from "@graphprotocol/graph-ts";
+import { Entity, Value, ethereum, store } from "@graphprotocol/graph-ts";
 
-export function handleEpoch(event: ethereum.Event): void {}
+// A Pool its creator hasn't saved yet reads createdAt -1.
+export function handleEpoch(event: ethereum.Event): void {
+  let id = event.address.toHexString();
+  let pool = store.get("Pool", id);
+  if (pool == null) {
+    pool = new Entity();
+    pool.set("id", Value.fromString(id));
+    pool.set("createdAt", Value.fromI32(-1));
+    pool.set("epochs", Value.fromI32(0));
+  }
+  pool.set("epochs", Value.fromI32(pool.getI32("epochs") + 1));
+  store.set("Pool", id, pool);
+}
 `,
     ),
   ]),
@@ -109,20 +130,61 @@ export function handleEpoch(event: ethereum.Event): void {}
 import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
-describe("a block handler that creates a contract template", () => {
-  it("is refused at the create, naming the handler", async (t) => {
-    const indexer = createTestIndexer();
+const epoch = (address, block, logIndex = 0) => ({
+  contract: "Coordinator",
+  event: "Epoch",
+  params: { id: 1n },
+  srcAddress: address,
+  block: { number: block },
+  logIndex,
+});
 
-    await t
-      .expect(indexer.process({ chains: { 1: { startBlock: 0, endBlock: 10, simulate: [] } } }))
-      .rejects.toThrow(
-        "Envio Subgraph doesn't support creating contract templates from a block handler yet: envio " +
-          "registers a template's instances in a register pass ahead of the handlers, and only event " +
-          "handlers, call handlers and a data source's \`once\` block handlers get one, so the instances a " +
-          "block handler creates would never have their events indexed.\\n" +
-          '  Found in data source "Block" → blockHandlers → "handleBlock", which created Coordinator ' +
-          "0x3333333333333333333333333333333333333333 at block 5.",
-      );
+describe("a block handler that creates a contract template", () => {
+  it("indexes the instance's events from its creation block on, after its creator", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 10,
+          simulate: [
+            epoch("0x2222222222222222222222222222222222222222", 1),
+            epoch("0x2222222222222222222222222222222222222222", 3),
+            epoch("0x3333333333333333333333333333333333333333", 5),
+            epoch("0x3333333333333333333333333333333333333333", 8),
+          ],
+        },
+      },
+    });
+    t.expect(await indexer.Pool.getAll()).toEqual([
+      { id: "0x2222222222222222222222222222222222222222", createdAt: 1, epochs: 2 },
+      { id: "0x3333333333333333333333333333333333333333", createdAt: 5, epochs: 2 },
+    ]);
+  });
+
+  it("keeps the instance registered when indexing resumes past its creation block", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 6,
+          simulate: [epoch("0x3333333333333333333333333333333333333333", 5)],
+        },
+      },
+    });
+    await indexer.process({
+      chains: {
+        1: {
+          endBlock: 12,
+          simulate: [epoch("0x3333333333333333333333333333333333333333", 9)],
+        },
+      },
+    });
+    t.expect(await indexer.Pool.getAll()).toEqual([
+      { id: "0x2222222222222222222222222222222222222222", createdAt: 1, epochs: 0 },
+      { id: "0x3333333333333333333333333333333333333333", createdAt: 5, epochs: 2 },
+    ]);
   });
 });
 `,

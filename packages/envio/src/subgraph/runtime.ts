@@ -1029,19 +1029,28 @@ const REGISTERED_TEMPLATES_LIMIT = 100_000;
 const unregisteredCreates = new Set<string>();
 
 /**
- * A `call` block handler is a call handler, and a data source's `once` one
- * runs in register mode first; a template's runs per instance, as a handler only.
+ * A `call` block handler is a call handler, and a data source's other block
+ * handlers get a register pass of their own for each of their blocks. A
+ * template's run per instance, as a handler only: its instances are known only
+ * as register passes register them, so no pass of one block can list them.
  */
 function hasRegisterPass(source: DataSource, handler: BlockHandler): boolean {
-  return handler.filter === "call" || (handler.filter === "once" && !source.isTemplate);
+  return handler.filter === "call" || !source.isTemplate;
 }
 
-// Core registers no contract from onBlock, so graph-node's create from a block
-// handler (centrifuge/tinlake's preloaded pools) can't be matched.
 const BLOCK_HANDLER_CREATE =
-  "envio registers a template's instances in a register pass ahead of the handlers, and only event " +
-  "handlers, call handlers and a data source's `once` block handlers get one, so the instances a block " +
-  "handler creates would never have their events indexed";
+  "envio registers a template's instances in a register pass ahead of the handlers, and a template's " +
+  "block handlers get none, so the instances one creates would never have their events indexed";
+
+/**
+ * Where a block handler sits in its block for the register pass's store: a
+ * `once` handler ahead of the block's logs (graph-node's
+ * `EthereumBlockTriggerType::Start`), any other after its logs and calls, ahead
+ * of the data sources the block creates.
+ */
+function blockHandlerPosition(blockNumber: number, once: boolean): number {
+  return once ? blockNumber * POSITION_BLOCK - 1 : blockNumber * POSITION_BLOCK + ROUND_SPAN - 0.5;
+}
 
 /**
  * The block and round each registered address was created in, by the same key.
@@ -1306,8 +1315,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
 
   // Only the register pass registers an address, at fetch time. A create it
   // didn't make (it threw on an entity no register pass saved) loses that
-  // template's events; one from a block handler that has no register pass is
-  // refused.
+  // template's events; one from a template's block handler, which has no
+  // register pass, is refused.
   installHandlerCreateHook((templateName, address) => {
     const scope = currentScope();
     if (scope.context.isPreload) return;
@@ -1315,7 +1324,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     if (registeredTemplates.has(key) || unregisteredCreates.has(key)) return;
     if (scope.blockHandler) {
       throw unsupported(
-        "creating contract templates from a block handler",
+        "creating contract templates from a template's block handler",
         `data source "${scope.dataSource.name}" → blockHandlers → "${scope.blockHandler}", which created ` +
           `${templateName} ${address.toLowerCase()} at block ${scope.blockNumber}`,
         BLOCK_HANDLER_CREATE,
@@ -1502,11 +1511,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const templateNames = new Set(
     config.templates.filter((template) => !isFile(template)).map((template) => template.name),
   );
-  // A block handler's create is refused when it runs (the create hook above).
-  // Whether one will run depends on data — moonwell's Feed handler creates
-  // only at the blocks its network's config lists, none on base — so the
-  // creates the analysis is sure the code reaches are named up front, as a
-  // warning.
+  // A template's block handler's create is refused when it runs (the create
+  // hook above). Whether one will run depends on data — moonwell's Feed
+  // handler creates only at the blocks its network's config lists, none on
+  // base — so the creates the analysis is sure the code reaches are named up
+  // front, as a warning.
   if (templateNames.size > 0) {
     for (const source of sources) {
       const handlers = source.blockHandlers
@@ -1564,25 +1573,6 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     if (!addresses) return () => true;
     return (event: any) =>
       addresses.has(`${event.chainId}:${String(event.srcAddress).toLowerCase()}`) !== source.isTemplate;
-  };
-
-  // A `once` block handler sets up what the event handlers then load — Venus
-  // saves its Comptroller there, and getOrCreateMarket reads it before it
-  // creates the VToken template. Block handlers get no register pass of their
-  // own, so each runs once in register mode, at its block, before the first
-  // register pass of its chain reads the register store.
-  const onceHandlers = new Map<number, ((context: any) => Promise<void>)[]>();
-
-  const primed = new Map<number, Promise<void>>();
-  const primeOnceHandlers = (chainId: number, context: any) => {
-    let done = primed.get(chainId);
-    if (!done) {
-      done = (async () => {
-        for (const run of onceHandlers.get(chainId) ?? []) await run(context);
-      })();
-      primed.set(chainId, done);
-    }
-    return done;
   };
 
   for (const source of sources) {
@@ -1704,7 +1694,6 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           { contract: config.contractAccessors[source.name], event: handler.name, where, wildcard },
           async ({ event, context }: any) => {
             if (!owns(event) || !live(event)) return;
-            await primeOnceHandlers(event.chainId, context);
             const scope = makeScope(event, context, "register");
             scope.slot = await registerSlots.acquire(scope.position ?? 0);
             const { pass, settle } = startRegisterPass(event.chainId, scope.position ?? 0);
@@ -1785,7 +1774,6 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
         indexer.contractRegister(target, async ({ event, context }: any) => {
           if (!owns(event) || !live(event)) return;
           if (kind !== null && !callInputDecodes(kind, event.params.callInput)) return;
-          await primeOnceHandlers(event.chainId, context);
           const scope = callScope(event, context, "register");
           scope.slot = await registerSlots.acquire(scope.position ?? 0);
           const { pass, settle } = startRegisterPass(event.chainId, scope.position ?? 0);
@@ -1828,34 +1816,47 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       const fn = mapping[handler.handler];
       if (typeof fn !== "function") continue;
       const start = source.startBlock ?? 0;
-      if (handler.filter === "once" && !source.isTemplate && templateNames.size > 0 && source.chainId !== undefined) {
-        const location = `data source "${source.name}" → "${handler.handler}"`;
-        const runs = onceHandlers.get(source.chainId) ?? [];
-        runs.push((context) =>
-          runRegisterRounds(
-            {
-              context,
-              event: { number: start },
-              mode: "register",
-              schema,
-              dataSource: {
-                name: source.name,
-                address: source.address ?? "",
-                chainId: source.chainId ?? 0,
-                network: source.network ?? "",
-                context: source.context ?? {},
-              },
-              registered: new Set(),
-              blockNumber: start,
-              // Ahead of every log of its block, as graph-node runs it.
-              position: start * POSITION_BLOCK - 1,
-              mappingExports: mapping,
-            },
-            () => fn(makeBlockHandlerBlock(start, location)),
-          ),
-        );
-        onceHandlers.set(source.chainId, runs);
-      }
+      const once = handler.filter === "once";
+      const location = `data source "${source.name}" → "${handler.handler}"`;
+      // graph-node creates a data source from any handler, a block handler's
+      // included, and runs it from that block on. A data source's block handler
+      // that can reach a create runs in register mode at each of its blocks,
+      // ahead of them, as an event's does; so does every `once` one when there
+      // are templates at all: Venus's saves the Comptroller that
+      // getOrCreateMarket's register pass reads before it creates a VToken.
+      const contractRegister =
+        !source.isTemplate && templateNames.size > 0 && (once || creating.has(handler.handler))
+          ? async ({ block, context }: any) => {
+              const blockNumber: number = block.number;
+              const position = blockHandlerPosition(blockNumber, once);
+              const scope: Scope = {
+                context,
+                event: block,
+                mode: "register",
+                schema,
+                dataSource: {
+                  name: source.name,
+                  address: source.address ?? "",
+                  chainId: source.chainId ?? 0,
+                  network: source.network ?? "",
+                  context: source.context ?? {},
+                },
+                registered: new Set(),
+                blockNumber,
+                position,
+                mappingExports: mapping,
+              };
+              scope.slot = await registerSlots.acquire(position);
+              const { pass, settle } = startRegisterPass(source.chainId ?? 0, position);
+              scope.pass = pass;
+              try {
+                await runRegisterRounds(scope, () => fn(makeBlockHandlerBlock(blockNumber, location)));
+              } finally {
+                settle();
+                scope.slot?.release();
+              }
+            }
+          : undefined;
       // A template's instances all exist from the first static source on its
       // chain, and the handler runs once per instance from its creation block.
       const chainStarts = config.dataSources
@@ -1872,7 +1873,6 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           : source.endBlock === undefined
             ? { _gte: first, _every: handler.filter.every }
             : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
-      const once = handler.filter === "once";
       const every = typeof handler.filter === "object" ? handler.filter.every : 1;
       const scheduled = (created: number, blockNumber: number) =>
         once ? blockNumber === created : (blockNumber - created) % every === 0;
@@ -1882,13 +1882,11 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           where: ({ chain }: { chain: { id: number } }) =>
             chain.id === source.chainId && { block: { number: blocks } },
           runsFirst: once && !source.isTemplate,
+          contractRegister,
         } as any,
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;
-          const graphBlock = makeBlockHandlerBlock(
-            block.number,
-            `data source "${source.name}" → "${handler.handler}"`,
-          );
+          const graphBlock = makeBlockHandlerBlock(block.number, location);
           const addresses = source.isTemplate
             ? instancesAt(block.chainId ?? source.chainId, source.name, block.number)
                 .filter((instance) => scheduled(instance.block, block.number))

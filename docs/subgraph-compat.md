@@ -301,20 +301,34 @@ mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
 register pass's own store, and reads see what an earlier register pass wrote**
 (no envio entity state exists at fetch time). A read sees only writes from
 strictly earlier events on its chain, for the 50k most recently used
-entities (an evicted one reads `null` again); a `once` block handler runs in register mode too, at its
-block, before the first register pass of its chain (Venus saves its
-Comptroller there); a change a handler without a register pass makes to an
-entity (it only updates one a create depends on, below) or one a polling block
-handler saves doesn't reach that store, so a `create()` conditioned on such
-state can still mis-register. An unfiltered or polling block handler gets no
-register pass at all (envio registers addresses only at fetch time, from
-events), so a contract template's `create()` it makes is refused when it runs
-(§7). graph-node's own block-handlers integration test, centrifuge's tinlake
-and beefy-balances (a `polling` handler on a one-block data source) create
-templates that way. A `once` handler's `create()` is registered by the first
-register pass of its chain, at that event's block — on a chain with no
-template-creating event at all (yieldyak's strategies, whose only data source
-is the `once` handler) never. A mapping that throws in the
+entities (an evicted one reads `null` again); a change a handler without a
+register pass makes to an entity (it only updates one a create depends on,
+below) doesn't reach that store, so a `create()` conditioned on such state can
+still mis-register.
+
+**Block handlers' register pass.** graph-node creates a data source from any
+handler, a block handler's included, and runs it for the rest of its creation
+block and from the next block on (`process_dynamic_data_sources` in
+`core/src/subgraph/runner/mod.rs`). A data source's unfiltered, `polling` and
+`once` block handlers whose code can reach a create — and every `once` one when
+the subgraph has templates (Venus saves its Comptroller there, and an event's
+pass reads it) — run in register mode at each of their blocks, as an `onBlock`
+`contractRegister` (subgraph mode only). Core runs a block's passes with the
+fetch response that first reaches it, among that response's events in
+graph-node's trigger order (a `once` handler ahead of the block's logs, the
+others after its logs and calls), a chain's register work one response at a
+time; blocks no response covers (no partition yet, as for yieldyak's strategies,
+whose only data source is a `once` handler) are passed up to where every
+partition has fetched. No block item is processed before its block's passes
+ran and what they created is fetched. What a block's passes register is
+registered at that block, so a reorg below it removes it and the new fork's
+passes run again, and a restart resumes it from storage without passing the
+block again. centrifuge's tinlake (unfiltered, preloaded pools), beefy-balances
+(a `polling` handler on a one-block data source) and yieldyak's strategies
+create templates this way. Not matched: an event pass of a partition behind the
+one that ran a block's passes reads the store after them, whatever its block. A
+template's block handlers have no pass (its instances are known only as passes
+register them), so a `create()` in one is refused when it runs (§7). A mapping that throws in the
 pass (usually on a `null` it would never see on graph-node) keeps whatever it
 registered before the throw; the handler pass surfaces its real errors. Host
 ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
@@ -962,7 +976,7 @@ refuse instead, so behavior never silently diverges:
 | A call handler on a data source with no `source.address`, or whose function the ABI lacks | translation (manifest) |
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `call`-filtered `blockHandlers` on a template | translation (manifest) |
-| A contract template's `create()` from a block handler other than a data source's `filter: once` one (a `call` one runs as a call handler; a template's `once` one runs per instance as a handler only), which no register pass registers | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
+| A contract template's `create()` from a template's block handler (unfiltered, `polling` or `once`), which no register pass registers; a data source's block handlers have one (§4) | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
 | Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`) | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
