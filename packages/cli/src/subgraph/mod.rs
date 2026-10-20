@@ -5150,6 +5150,75 @@ type Renewal implements Event @entity {
         );
     }
 
+    // beefy's `"configure": "./bin/prepare.sh"` takes its chain as its first
+    // argument (`CHAIN=$1`; its README: `yarn configure <chain>`), and NFTX's
+    // `ts-node ./script/build` its network (`const network =
+    // process.argv[2]`). envio ran them without one, and they exited on their
+    // usage message. The network picked is passed as that argument, as `npm
+    // run <script> -- <network>` passes it; a script whose first argument is
+    // something else (an output path) isn't given it.
+    #[test]
+    fn passes_the_network_to_a_script_that_takes_it_as_its_first_argument() {
+        use std::os::unix::fs::PermissionsExt;
+        let project = |script: &str, body: &str| {
+            let dir = tempdir::TempDir::new("envio-subgraph-writer-argument").unwrap();
+            write_gravity(dir.path(), "subgraph.template.yaml");
+            fs::write(
+                dir.path().join("subgraph.template.yaml"),
+                GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+            )
+            .unwrap();
+            fs::create_dir_all(dir.path().join("bin")).unwrap();
+            fs::write(dir.path().join("bin/prepare.sh"), body).unwrap();
+            fs::set_permissions(
+                dir.path().join("bin/prepare.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            fs::write(
+                dir.path().join("package.json"),
+                format!(
+                    r#"{{"scripts": {{"configure": "{script}", "codegen": "graph codegen"}}}}"#
+                ),
+            )
+            .unwrap();
+            fs::write(dir.path().join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+            dir
+        };
+        let outcome = |dir: &tempdir::TempDir| {
+            let project_paths =
+                ParsedProjectPaths::new(dir.path().to_str().unwrap(), "config.yaml").unwrap();
+            match SystemConfig::parse_from_project_files(&project_paths) {
+                Ok(config) => format!(
+                    "{} {:?}",
+                    chain_of(&config).0,
+                    config.subgraph.unwrap().rendered_manifest.unwrap().commands
+                ),
+                Err(err) => format!("{err:#}")
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+            }
+        };
+        let chain = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nCHAIN=$1\n[ -n \"$CHAIN\" ] || { echo \"Usage: $0 <chain>\"; exit 1; }\nsed \"s/network: NETWORK/network: $CHAIN/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
+        let output_path = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nOUT=${1:-subgraph.yaml}\nsed \"s/network: NETWORK/network: mainnet/\" subgraph.template.yaml > $OUT\n",
+        );
+
+        assert_eq!(
+            (outcome(&chain), outcome(&output_path)),
+            (
+                "8453 [\"./bin/prepare.sh base\"]".to_string(),
+                "There is no subgraph.yaml here.".to_string()
+            )
+        );
+    }
+
     // A script that fails leaves no manifest behind: the shell had already
     // created the file its `>` names.
     #[test]

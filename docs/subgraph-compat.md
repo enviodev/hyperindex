@@ -853,7 +853,13 @@ build does first.
   the one that runs the fewest commands (Polymarket's `templatify:matic`, not
   `prepare:matic`, which runs codegen after it); else none. Scripts that run
   the same commands (euler's `build:mainnet` runs `prepare:mainnet`, then
-  `graph build`) count once. With no network picked, a writer runs only when it is the only one.
+  `graph build`) count once. A writer that takes its network as its first
+  argument and is passed none (beefy's `"configure": "./bin/prepare.sh"`,
+  whose file starts `CHAIN=$1`; NFTX's `ts-node ./script/build`, `const
+  network = process.argv[2]`) builds for whichever is picked: envio passes
+  it, as `npm run configure -- base` does. Only a first argument the file
+  assigns to a `network` or `chain` variable counts. With no network picked,
+  a writer runs only when it is the only one.
   Any other case is the error above, saying why none ran.
 - *What runs:* the script's commands up to its first graph-cli step, with
   `npm run <script>` (`yarn <script>`, a workspace-wide run) read as that

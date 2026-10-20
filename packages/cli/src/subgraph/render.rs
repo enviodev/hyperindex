@@ -2063,10 +2063,17 @@ fn runs_more_than_a_render(leaf: &Leaf) -> bool {
     runs_tool || runs_a_file_mentioning(&leaf.cwd, &steps, &["graph deploy", "subgraph deploy"])
 }
 
-/// The repo file a command runs (`node ops/render-subgraph-conf.js`,
-/// `./build.sh`, `yarn ts-node config/index.ts`) isn't there. Its other
-/// arguments may well be files an earlier step writes.
-fn runs_a_missing_file(leaf: &Leaf) -> bool {
+/// A repo file a stage runs (`node ops/render-subgraph-conf.js`, `./build.sh`,
+/// `yarn ts-node config/index.ts`, `ts-node ./script/build`), as written,
+/// where it is (when it is there), and whether anything follows it on the
+/// command line.
+struct Program {
+    written: String,
+    found: Option<PathBuf>,
+    has_arguments: bool,
+}
+
+fn program_files(leaf: &Leaf) -> Vec<Program> {
     const EXTENSIONS: &[&str] = &[".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".sh"];
     const RUNNERS: &[&str] = &[
         "node",
@@ -2083,17 +2090,86 @@ fn runs_a_missing_file(leaf: &Leaf) -> bool {
         "env",
     ];
     let steps = parse_steps(&leaf.text).unwrap_or_default();
-    steps.iter().flat_map(|step| &step.stages).any(|stage| {
-        let words = command_words(stage);
-        let program = words.iter().find(|word| !RUNNERS.contains(&word.as_str()));
-        let file = match program {
-            Some(program) if program.contains('/') && !program.starts_with('-') => Some(program),
-            _ => words.iter().find(|word| {
-                !word.contains("://") && EXTENSIONS.iter().any(|ext| word.ends_with(ext))
-            }),
-        };
-        file.is_some_and(|file| !Path::new(file).is_absolute() && !leaf.cwd.join(file).exists())
-    })
+    steps
+        .iter()
+        .flat_map(|step| &step.stages)
+        .filter_map(|stage| {
+            let words = command_words(stage);
+            let program = words
+                .iter()
+                .position(|word| !RUNNERS.contains(&word.as_str()))?;
+            let at = if words[program].contains('/') && !words[program].starts_with('-') {
+                program
+            } else {
+                words.iter().position(|word| {
+                    !word.contains("://") && EXTENSIONS.iter().any(|ext| word.ends_with(ext))
+                })?
+            };
+            let written = words[at].clone();
+            if Path::new(&written).is_absolute() {
+                return None;
+            }
+            let found = ["", ".ts", ".js", ".mjs", ".cjs", ".sh"]
+                .iter()
+                .map(|ext| leaf.cwd.join(format!("{written}{ext}")))
+                .find(|path| path.is_file());
+            Some(Program {
+                written,
+                found,
+                has_arguments: at + 1 < words.len(),
+            })
+        })
+        .collect()
+}
+
+/// The repo file a command runs isn't there. Its other arguments may well be
+/// files an earlier step writes.
+fn runs_a_missing_file(leaf: &Leaf) -> bool {
+    program_files(leaf)
+        .iter()
+        .any(|program| program.found.is_none() && !program.written.is_empty())
+}
+
+/// The command runs a repo file that takes its network as its first argument
+/// (beefy's `CHAIN=$1`, NFTX's `const network = process.argv[2]`) and passes
+/// it none.
+fn takes_network_argument(leaf: &Leaf) -> bool {
+    let first_argument = regex::Regex::new(
+        r#"(?i)\b\w*(?:network|chain)\w*\s*=\s*(?:process\.argv\[2\]|"?\$\{?1\b)"#,
+    )
+    .expect("a valid regex");
+    match program_files(leaf).as_slice() {
+        [program] if !program.has_arguments => program.found.as_ref().is_some_and(|file| {
+            std::fs::read_to_string(file).is_ok_and(|text| first_argument.is_match(&text))
+        }),
+        _ => false,
+    }
+}
+
+/// `candidate` with the network passed to each command that takes it as its
+/// first argument, as `npm run <script> -- <network>` passes it.
+fn with_network_argument(candidate: &Candidate, network: &str) -> Option<Candidate> {
+    if !candidate.commands.leaves.iter().any(takes_network_argument) {
+        return None;
+    }
+    let mut candidate = candidate.clone();
+    for leaf in candidate.commands.leaves.iter_mut() {
+        if takes_network_argument(leaf) {
+            leaf.text = format!("{} {}", leaf.text, shell_word(network));
+        }
+    }
+    Some(candidate)
+}
+
+fn shell_word(text: &str) -> String {
+    if text
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+    {
+        text.to_string()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
 }
 
 /// Whether a script builds for `network`: its name ends with it
@@ -2220,13 +2296,17 @@ fn pick_writer(target: &Path, network: Option<&str>) -> Pick {
             )),
         },
         Some(network) => {
-            let matching: Vec<&Candidate> = all
+            let matching: Vec<Candidate> = all
                 .iter()
-                .copied()
-                .filter(|candidate| {
-                    builds_for(&candidate.writer.name, &candidate.commands, network)
+                .filter_map(|candidate| {
+                    if builds_for(&candidate.writer.name, &candidate.commands, network) {
+                        Some((*candidate).clone())
+                    } else {
+                        with_network_argument(candidate, network)
+                    }
                 })
                 .collect();
+            let matching: Vec<&Candidate> = matching.iter().collect();
             // The Graph's network subgraph: `prepare:mainnet` writes the
             // manifest (`mustache … > subgraph.yaml`) after
             // `prep:addresses:mainnet`, which writes only addresses.ts. Then
