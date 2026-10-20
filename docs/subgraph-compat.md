@@ -820,7 +820,11 @@ variable such a step reads is set to `ENVIO_SUBGRAPH_NETWORK` when it is set
 like a rendered one, and codegen doesn't run those steps again. Only the
 `codegen` script's steps run here, split on `&&` exactly as §6a splits them.
 Each step logs a line naming it (and the variables set) before it runs, and
-a failing step stops envio with the script's own error above it.
+a failing step stops envio with the script's own error above it. The same
+steps run first when the manifest is there but ABI files it names aren't,
+provided one of them mentions an ABI and none a `.yaml` (the manifest there is
+the user's): FilOzone's dealbot, `"codegen": "pnpm run sync-abis && graph
+codegen"`, writes abis/ from its installed @filoz/synapse-core.
 
 **The one script that writes the manifest.** When the manifest is missing, no
 standard render writes it and the codegen script's steps don't either, envio

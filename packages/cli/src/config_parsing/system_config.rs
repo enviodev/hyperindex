@@ -1639,6 +1639,7 @@ impl SystemConfig {
         let root = &root;
 
         crate::subgraph::render::write_missing_inputs(root, &manifest)?;
+        crate::subgraph::render::write_missing_abis_with_codegen_steps(root, &manifest)?;
         let schema_path = manifest_dir.join(&schema_file);
         if !schema_path.exists() {
             // inverse-governance's schema is OpenZeppelin graph-compiler output.

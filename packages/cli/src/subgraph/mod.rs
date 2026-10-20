@@ -4920,6 +4920,68 @@ type Renewal implements Event @entity {
         );
     }
 
+    // FilOzone's dealbot commits its manifest but not its ABIs: `"codegen":
+    // "pnpm run sync-abis && graph codegen"`, and `sync-abis` writes abis/
+    // from the installed @filoz/synapse-core. envio runs those steps at
+    // codegen anyway (§6a), but the translation needs the ABIs before that,
+    // and stopped at "These ABI files the manifest names don't exist". A
+    // codegen step that writes the manifest itself doesn't run for them: the
+    // manifest there is the user's.
+    #[test]
+    fn runs_the_codegen_steps_that_write_the_missing_abis() {
+        let project = |codegen: &str| {
+            let dir = tempdir::TempDir::new("envio-subgraph-codegen-abis").unwrap();
+            write_gravity(dir.path(), "subgraph.yaml");
+            fs::remove_file(dir.path().join("abis/Gravity.json")).unwrap();
+            fs::create_dir_all(dir.path().join("scripts")).unwrap();
+            fs::write(
+                dir.path().join("scripts/sync-abis.sh"),
+                format!("mkdir -p abis && printf '%s' '{GRAVITY_ABI}' > abis/Gravity.json\n"),
+            )
+            .unwrap();
+            fs::write(
+                dir.path().join("package.json"),
+                format!(
+                    r#"{{"scripts": {{"sync-abis": "sh scripts/sync-abis.sh", "codegen": "{codegen}"}}}}"#
+                ),
+            )
+            .unwrap();
+            dir
+        };
+        let outcome = |dir: &tempdir::TempDir| {
+            let project_paths =
+                ParsedProjectPaths::new(dir.path().to_str().unwrap(), "config.yaml").unwrap();
+            match SystemConfig::parse_from_project_files(&project_paths) {
+                Ok(config) => format!("{}", chain_of(&config).0),
+                Err(err) => format!("{err:#}")
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+            }
+        };
+        let dealbot = project("npm run sync-abis && graph codegen");
+        let rewrites_manifest = project(
+            "sh scripts/sync-abis.sh && cp subgraph.yaml subgraph.yaml.bak && graph codegen",
+        );
+
+        assert_eq!(
+            (
+                outcome(&dealbot),
+                outcome(&rewrites_manifest),
+                rewrites_manifest.path().join("subgraph.yaml.bak").exists()
+            ),
+            (
+                "1".to_string(),
+                format!(
+                    "These ABI files the manifest names don't exist under {}:",
+                    rewrites_manifest.path().canonicalize().unwrap().display()
+                ),
+                false
+            )
+        );
+    }
+
     // balancer-v2's `"codegen": "npm run generate-manifests && graph codegen
     // subgraph.mainnet.yaml --output-dir src/types/"`: the steps before
     // `graph codegen` write subgraph.<network>.yaml, and the codegen step

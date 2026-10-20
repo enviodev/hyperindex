@@ -2521,6 +2521,107 @@ fn run_writer_script(
     }))
 }
 
+/// The ABI files a manifest names that aren't there, when the project's
+/// `codegen` script writes them before `graph codegen` (FilOzone's dealbot:
+/// `"codegen": "pnpm run sync-abis && graph codegen"` writes abis/ from an
+/// installed package). envio runs those steps at codegen anyway (§6a), but the
+/// translation reads the ABIs first, so they run now, each logged first. They
+/// don't when a step writes the manifest (it is the user's) or none mentions
+/// an ABI.
+pub fn write_missing_abis_with_codegen_steps(manifest_dir: &Path, manifest: &str) -> Result<()> {
+    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(manifest) else {
+        return Ok(());
+    };
+    let dir = absolute(manifest_dir);
+    let mut missing: Vec<String> = Vec::new();
+    for key in ["dataSources", "templates"] {
+        for source in yaml
+            .get(key)
+            .and_then(|list| list.as_sequence())
+            .into_iter()
+            .flatten()
+        {
+            for abi in source
+                .get("mapping")
+                .and_then(|mapping| mapping.get("abis"))
+                .and_then(|abis| abis.as_sequence())
+                .into_iter()
+                .flatten()
+            {
+                if let Some(file) = abi.get("file").and_then(|file| file.as_str()) {
+                    if !dir.join(file).exists() && !missing.contains(&file.to_string()) {
+                        missing.push(file.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let graph_codegen =
+        regex::Regex::new(r"^(?:(?:npx|pnpm exec|pnpm|yarn|bunx)\s+)?graph\s+codegen\b")
+            .expect("a valid regex");
+    let Some(script) = package_scripts(&dir)
+        .into_iter()
+        .find(|(name, _)| name == "codegen")
+        .map(|(_, script)| script)
+    else {
+        return Ok(());
+    };
+    let steps: Vec<String> = script
+        .split("&&")
+        .map(|step| step.trim().to_string())
+        .filter(|step| !step.is_empty())
+        .collect();
+    let Some(first_codegen) = steps.iter().position(|step| graph_codegen.is_match(step)) else {
+        return Ok(());
+    };
+    let prelude = &steps[..first_codegen];
+    let mentions_abi = prelude
+        .iter()
+        .any(|step| step.to_lowercase().contains("abi"));
+    let writes_manifest = prelude
+        .iter()
+        .any(|step| step.contains(".yaml") || step.contains(".yml"));
+    if !mentions_abi || writes_manifest {
+        return Ok(());
+    }
+    for step in prelude {
+        let mut command = std::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg(step)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null());
+        pass_output(&mut command);
+        scrub_envio_env(&mut command);
+        command.env("PATH", bin_path(&dir));
+        eprintln!(
+            "Envio Subgraph is running `{step}` from the project's codegen script: the ABI files \
+             {} the manifest names aren't there, and the script's steps before `graph codegen` \
+             write them.",
+            missing.join(", ")
+        );
+        let status = command
+            .status()
+            .context(format!("Failed to run `{step}`"))?;
+        if !status.success() {
+            return Err(anyhow!(
+                "The ABI files {} the manifest names aren't there, and the project's codegen \
+                 script writes them: envio ran `{step}` from it, and it exited with {} — the \
+                 error above is the script's own.",
+                missing.join(", "),
+                status
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "a signal".to_string())
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The network the repo's own build passes `graph build --network`, when its
 /// scripts agree on one (`--network ${NETWORK_NAME:-arbitrum-sepolia}`, or a
 /// literal): what graph-cli builds with when nothing else is set.
