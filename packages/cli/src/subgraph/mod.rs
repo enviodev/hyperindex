@@ -3732,6 +3732,38 @@ type Renewal implements Event @entity {
         );
     }
 
+    // balancer-v2's `"codegen": "npm run generate-manifests && graph codegen
+    // subgraph.mainnet.yaml --output-dir src/types/"`: the steps before
+    // `graph codegen` write subgraph.<network>.yaml, and the codegen step
+    // names which one it builds. envio looked only for subgraph.yaml.
+    #[test]
+    fn runs_the_manifest_the_codegen_step_names() {
+        let dir = tempdir::TempDir::new("envio-subgraph-codegen-names").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/generate-manifests.sh"),
+            "cp subgraph.template.yaml subgraph.mainnet.yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "generate-manifests": "sh scripts/generate-manifests.sh",
+  "codegen": "npm run generate-manifests && graph codegen subgraph.mainnet.yaml --output-dir src/types/"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (chain_of(&config).0, config.subgraph.unwrap().manifest_file,),
+            (1, "subgraph.mainnet.yaml".to_string())
+        );
+    }
+
     // beefy's `"codegen": "rm -Rf generated && graph codegen"`: a step before
     // `graph codegen` that can't write a manifest isn't the manifest's
     // writer. envio ran it and blamed it; the error is about the script that

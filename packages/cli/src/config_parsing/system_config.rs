@@ -1768,6 +1768,9 @@ impl SystemConfig {
             let network = env.var(crate::subgraph::NETWORK_ENV_VAR);
             let rendered =
                 crate::subgraph::render::render_manifest(root, &manifest_path, network.as_deref())?;
+            if let Some(written) = rendered.as_ref().map(|rendered| rendered.manifest.clone()) {
+                manifest_path = written;
+            }
             if rendered.is_some() || from_template {
                 let manifest = std::fs::read_to_string(&manifest_path)
                     .context(format!("Failed to read {}", manifest_path.display()))?;

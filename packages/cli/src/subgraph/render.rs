@@ -1344,6 +1344,9 @@ impl Run<'_> {
 /// What envio rendered, for the log and for the codegen script to skip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rendered {
+    /// The manifest written: the one looked for, or the one the codegen
+    /// script's `graph codegen <manifest>` builds.
+    pub manifest: PathBuf,
     pub script: String,
     /// The scripts the one rendering runs through `npm run`.
     pub inlined: Vec<String>,
@@ -1518,18 +1521,39 @@ fn run_codegen_prelude(
             ));
         }
     }
+    // balancer-v2's steps write subgraph.<network>.yaml, and its codegen step
+    // names the one it builds: `graph codegen subgraph.mainnet.yaml`.
+    let named = steps[first_codegen]
+        .split_whitespace()
+        .skip_while(|word| *word != "codegen")
+        .skip(1)
+        .scan(false, |takes_value, word| {
+            let value = std::mem::replace(
+                takes_value,
+                matches!(word, "-o" | "--output-dir" | "-u" | "--uncrashable-config"),
+            );
+            Some((value, word))
+        })
+        .find(|(value, word)| !value && (word.ends_with(".yaml") || word.ends_with(".yml")))
+        .map(|(_, word)| absolute(&dir.join(word)));
+    let written = [Some(target.to_path_buf()), named]
+        .into_iter()
+        .flatten()
+        .find(|manifest| manifest.is_file());
     // Steps that wrote no manifest leave the error to what does write one.
-    let Ok(manifest) = std::fs::read_to_string(target) else {
+    let Some(written) = written else {
         return Ok(None);
     };
-    record(project_root, target, &manifest)?;
+    let manifest = std::fs::read_to_string(&written)?;
+    record(project_root, &written, &manifest)?;
     Ok(Some(Rendered {
+        manifest: written.clone(),
         script: "codegen".to_string(),
         inlined: Vec::new(),
         network: picked.unwrap_or_default(),
         template: String::new(),
         view: String::new(),
-        files: vec![target.to_path_buf()],
+        files: vec![written],
         steps: prelude.to_vec(),
     }))
 }
@@ -1937,6 +1961,7 @@ pub fn render_manifest(
     record(project_root, &target, &manifest)?;
 
     Ok(Some(Rendered {
+        manifest: target.clone(),
         script: choice.plan.script.clone(),
         inlined,
         network: choice.network.clone(),

@@ -608,7 +608,10 @@ moonwell renders in `make generate-config`.
 in-process, every other step in a shell. When the manifest is missing and no
 mustache script renders it, the steps before `graph codegen` run first, before
 translation — cope-market's `"codegen": "node scripts/build-manifest.mjs
-${NETWORK:-arc-testnet} && graph codegen"` writes subgraph.yaml there. Each
+${NETWORK:-arc-testnet} && graph codegen"` writes subgraph.yaml there. When
+the codegen step names its manifest (balancer-v2's `npm run
+generate-manifests && graph codegen subgraph.mainnet.yaml`), that is the
+manifest envio runs. Steps that are only `rm`/`mkdir` don't run early. Each
 variable such a step reads is set to `ENVIO_SUBGRAPH_NETWORK` when it is set
 (unset, the script's default applies), the manifest is recorded as envio's
 like a rendered one, and codegen doesn't run those steps again. This is the
