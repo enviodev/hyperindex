@@ -85,21 +85,31 @@ let make = (config: config) => Core.getAddon().logger->makeNative(config)->wrapN
 let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative
 
 // Errors serialize to their name, message and stack (and whatever else they
-// carry), which `JSON.stringify` alone would drop as `{}`. The replacer that
-// does it runs on every key, so params of plain values skip it. Params come
-// from anywhere, so a value JSON can't hold says so rather than losing the line.
+// carry), which `JSON.stringify` alone would drop as `{}`; an Error passed as the
+// params lands under `err`. The replacer that does it runs on every key, so
+// params of plain values skip it. Params come from anywhere, so a value that
+// refers to itself says so, and one JSON can't hold says so rather than losing
+// the line.
 let paramsToJson: 'a => string = %raw(`function (value) {
+  var ancestors = [];
   function replacer(_key, value) {
     if (typeof value === "bigint") return value.toString();
+    if (typeof value !== "object" || value === null) return value;
+    while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
+    if (ancestors.includes(value)) return "[Circular]";
+    ancestors.push(value);
     if (value instanceof Error) {
       var out = {type: value.name, message: value.message, stack: value.stack};
       for (var key of Object.keys(value)) out[key] = value[key];
       if (value.cause !== undefined) out.cause = value.cause;
+      ancestors.push(out);
       return out;
     }
     return value;
   }
   try {
+    if (value instanceof Error) value = {err: value};
+    else if (typeof value === "bigint") return JSON.stringify(value, replacer);
     for (var key in value) {
       var field = value[key];
       if (typeof field === "bigint" || (typeof field === "object" && field !== null)) {
@@ -188,12 +198,17 @@ let silentContextLog: Envio.logger = {
 }
 
 // The handler's `context.log`, on the `u*` levels a user's log level filters
-// separately from the indexer's own.
+// separately from the indexer's own. A plain-JS handler can pass a message
+// that isn't a string, which must not throw out of the handler.
 let asContextLog = (logger: t): Envio.logger => {
-  info: (message: string, ~params=?) => logger->logAt(#uinfo, message, ~params?),
-  debug: (message: string, ~params=?) => logger->logAt(#udebug, message, ~params?),
-  warn: (message: string, ~params=?) => logger->logAt(#uwarn, message, ~params?),
-  error: (message: string, ~params=?) => logger->logAt(#uerror, message, ~params?),
-  errorWithExn: (message: string, exn) =>
-    logger->logAt(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+  let logAt = (level, message, ~params=?) =>
+    logger->logAt(level, message->(Utils.magic: string => unknown)->String.make, ~params?)
+  {
+    info: (message: string, ~params=?) => logAt(#uinfo, message, ~params?),
+    debug: (message: string, ~params=?) => logAt(#udebug, message, ~params?),
+    warn: (message: string, ~params=?) => logAt(#uwarn, message, ~params?),
+    error: (message: string, ~params=?) => logAt(#uerror, message, ~params?),
+    errorWithExn: (message: string, exn) =>
+      logAt(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
+  }
 }

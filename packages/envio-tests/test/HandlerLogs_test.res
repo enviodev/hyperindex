@@ -96,4 +96,88 @@ describe("context.log", () => {
       },
     )
   })
+
+  // Plain-JS handlers pass whatever they hold: an Error as the params, a
+  // message that isn't a string, an object that refers to itself.
+  Async.it("keeps what a handler passes when it isn't plain JSON", async t => {
+    let error = JsError.make("boom")
+    let circular = Dict.make()
+    circular->Dict.set("kept", JSON.Number(1.))
+    circular->Dict.set("self", circular->(Utils.magic: dict<JSON.t> => JSON.t))
+    await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      async (~indexer, ~source) => {
+        let mock = source(1)
+        mock.resolveGetHeightOrThrow(300)
+        await mock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 5,
+                  logIndex: 2,
+                  handler: async args => {
+                    let context =
+                      args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                    context.log.error("as params", ~params=error->(Utils.magic: JsError.t => {..}))
+                    context.log.info(5->(Utils.magic: int => string))
+                    context.log.info(
+                      "circular",
+                      ~params=circular->(Utils.magic: dict<JSON.t> => {..}),
+                    )
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        t.expect(
+          indexer.allLogsAsJson()
+          ->Array.filter(isHandlerLine)
+          ->Array.map(
+            line =>
+              line
+              ->Dict.toArray
+              ->Array.filter(
+                ((key, _)) =>
+                  !(
+                    [
+                      "chainId",
+                      "contract",
+                      "event",
+                      "block",
+                      "logIndex",
+                      "address",
+                    ]->Array.includes(key)
+                  ),
+              ),
+          ),
+        ).toEqual([
+          [
+            ("level", JSON.String("uerror")),
+            ("msg", JSON.String("as params")),
+            (
+              "err",
+              JSON.Object(
+                dict{
+                  "type": JSON.String("Error"),
+                  "message": JSON.String("boom"),
+                  "stack": JSON.String(error->JsError.stack->Option.getOr("")),
+                },
+              ),
+            ),
+          ],
+          [("level", JSON.String("uinfo")), ("msg", JSON.String("5"))],
+          [
+            ("level", JSON.String("uinfo")),
+            ("msg", JSON.String("circular")),
+            ("kept", JSON.Number(1.)),
+            ("self", JSON.String("[Circular]")),
+          ],
+        ])
+      },
+    )
+  })
 })

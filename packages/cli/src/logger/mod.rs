@@ -12,7 +12,7 @@ use std::{
     io::{self, IsTerminal, Write},
     os::fd::FromRawFd,
     path::Path,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Mutex, OnceLock},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -104,14 +104,30 @@ fn write_to_stdout_or_above_display(line: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// Colors as the `colorette` package pino-pretty used decided them.
-fn stdout_supports_color() -> bool {
-    if let Ok(value) = std::env::var("FORCE_COLOR") {
-        return value != "0" && value != "false";
+/// `NO_COLOR` wins over `FORCE_COLOR`, which the supervisor sets for workers
+/// whose output it pipes to a terminal.
+fn supports_color(
+    force_color: Option<&str>,
+    no_color: bool,
+    term: Option<&str>,
+    is_terminal: bool,
+) -> bool {
+    if no_color {
+        return false;
     }
-    std::env::var_os("NO_COLOR").is_none()
-        && std::env::var("TERM").map_or(true, |term| term != "dumb")
-        && io::stdout().is_terminal()
+    match force_color {
+        Some(value) => value != "0" && value != "false",
+        None => term != Some("dumb") && is_terminal,
+    }
+}
+
+fn stdout_supports_color() -> bool {
+    supports_color(
+        std::env::var("FORCE_COLOR").ok().as_deref(),
+        std::env::var_os("NO_COLOR").is_some(),
+        std::env::var("TERM").ok().as_deref(),
+        io::stdout().is_terminal(),
+    )
 }
 
 fn open_log_file(path: &str) -> io::Result<File> {
@@ -167,7 +183,9 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
         colorize: stdout_supports_color(),
     };
     Ok(match config.strategy.as_str() {
-        "ecs-file" => vec![Sink::new(Format::Ecs, file()?, file_level)],
+        // pino gated these at the logger before the file's own level: info
+        // for `ecs-file`, the terminal's level for `both-prettyconsole`.
+        "ecs-file" => vec![Sink::new(Format::Ecs, file()?, file_level.max(Level::INFO))],
         "ecs-console" | "ecs-console-multistream" => {
             vec![Sink::new(Format::Ecs, Target::Stdout, level)]
         }
@@ -175,7 +193,7 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
         "console-raw" | "console-pretty" => vec![Sink::new(pretty(), Target::Stdout, level)],
         "both-prettyconsole" => vec![
             Sink::new(pretty(), Target::Stdout, level),
-            Sink::new(Format::Json, file()?, file_level),
+            Sink::new(Format::Json, file()?, file_level.max(level)),
         ],
         other => {
             return Err(napi::Error::from_reason(format!(
@@ -186,9 +204,15 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
     })
 }
 
-fn parse_fields_or_napi_error(json: &str) -> napi::Result<Fields> {
-    fields::parse_object_fields(json)
-        .map_err(|error| napi::Error::from_reason(format!("Log fields aren't JSON: {error}")))
+/// JS's `JSON.stringify` writes some text serde refuses, such as a lone
+/// surrogate; a log call never throws over its fields, so the line keeps them
+/// as text.
+fn parse_fields_or_keep_as_text(json: &str) -> Fields {
+    fields::parse_object_fields(json).unwrap_or_else(|_| {
+        serde_json::value::to_raw_value(json)
+            .map(|raw| vec![("unparsedFields".to_string(), raw)])
+            .unwrap_or_default()
+    })
 }
 
 /// Where a run's lines go. Holds no fields of its own: a caller's bound fields
@@ -196,7 +220,7 @@ fn parse_fields_or_napi_error(json: &str) -> napi::Result<Fields> {
 /// on the caller's side that costs nothing until it writes.
 #[napi]
 pub struct Logger {
-    sinks: Arc<Vec<Sink>>,
+    sinks: Vec<Sink>,
 }
 
 impl Logger {
@@ -238,7 +262,7 @@ impl Logger {
     #[napi(factory)]
     pub fn make(config: LoggerConfig) -> napi::Result<Logger> {
         Ok(Logger {
-            sinks: Arc::new(sinks_for_strategy(&config)?),
+            sinks: sinks_for_strategy(&config)?,
         })
     }
 
@@ -247,11 +271,11 @@ impl Logger {
     #[napi(factory)]
     pub fn make_in_memory() -> Logger {
         Logger {
-            sinks: Arc::new(vec![Sink::new(
+            sinks: vec![Sink::new(
                 Format::Json,
                 Target::Memory(Mutex::new(Vec::new())),
                 Level::TRACE,
-            )]),
+            )],
         }
     }
 
@@ -270,9 +294,9 @@ impl Logger {
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown log level: {level}")))?;
         let parse = |json: Option<String>| {
             json.as_deref()
-                .map_or(Ok(Vec::new()), parse_fields_or_napi_error)
+                .map_or_else(Vec::new, parse_fields_or_keep_as_text)
         };
-        self.log(level, &msg, &parse(bindings)?, &parse(params)?);
+        self.log(level, &msg, &parse(bindings), &parse(params));
         Ok(())
     }
 
@@ -343,6 +367,37 @@ mod tests {
     }
 
     #[test]
+    fn file_level_is_capped_by_the_terminal_level_where_pino_capped_it() {
+        let dir = tempdir::TempDir::new("envio-logger").unwrap();
+        let min_level = |strategy: &str, level: &str, file_level: &str| {
+            Logger::make(LoggerConfig {
+                strategy: strategy.into(),
+                log_file: dir.path().join("envio.log").to_string_lossy().into(),
+                level: level.into(),
+                file_level: file_level.into(),
+            })
+            .unwrap()
+            .min_level()
+        };
+        assert_eq!(
+            [
+                min_level("ecs-file", "trace", "trace"),
+                min_level("ecs-file", "info", "warn"),
+                min_level("both-prettyconsole", "info", "trace"),
+                min_level("both-prettyconsole", "warn", "error"),
+                min_level("file-only", "info", "trace"),
+            ],
+            [
+                Level::INFO.value(),
+                Level::WARN.value(),
+                Level::INFO.value(),
+                Level::WARN.value(),
+                Level::TRACE.value(),
+            ]
+        );
+    }
+
+    #[test]
     fn file_sink_appends_json_lines_at_its_own_level() {
         let dir = tempdir::TempDir::new("envio-logger").unwrap();
         let path = dir.path().join("nested/envio.log");
@@ -393,6 +448,39 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "{\"level\":\"info\",\"msg\":\"one\"}\n{\"level\":\"error\",\"msg\":\"two\",\"x\":1}\n"
+        );
+    }
+
+    #[test]
+    fn fields_serde_rejects_still_log_the_line() {
+        let logger = Logger::make_in_memory();
+        let lone_surrogate_key = r#"{"\ud800":1}"#.to_string();
+        let result = logger.log_js(
+            Level::INFO.value(),
+            "kept".into(),
+            None,
+            Some(lone_surrogate_key.clone()),
+        );
+        assert_eq!(
+            (result.is_ok(), logger.in_memory_lines()),
+            (
+                true,
+                vec![json!({"level": "info", "msg": "kept", "unparsedFields": lone_surrogate_key})]
+            )
+        );
+    }
+
+    #[test]
+    fn no_color_wins_over_force_color() {
+        assert_eq!(
+            [
+                supports_color(Some("1"), true, None, true),
+                supports_color(Some("1"), false, None, false),
+                supports_color(Some("0"), false, None, true),
+                supports_color(None, false, Some("dumb"), true),
+                supports_color(None, false, None, true),
+            ],
+            [false, true, false, false, true]
         );
     }
 

@@ -676,15 +676,21 @@ let getRegistrations = (~config, ~logger) =>
     promise
   }
 
-let createTestIndexer = (): t<'processConfig> => {
-  let config = Config.load()
-  let logger = Logger.make({
+// One per process: a file strategy opens its file once, not per test indexer.
+// Silent everywhere unless LOG_LEVEL asks otherwise: a test's output is its
+// assertions.
+let logger = Lazy.make(() =>
+  Logger.make({
     strategy: Env.Logger.strategy,
     logFile: Env.Logger.file,
-    // Silent unless LOG_LEVEL asks otherwise: a test's output is its assertions.
     level: Env.Logger.level->Option.getOr(#silent),
-    fileLevel: Env.Logger.fileLevel,
+    fileLevel: Env.Logger.level->Option.mapOr(#silent, _ => Env.Logger.fileLevel),
   })
+)
+
+let createTestIndexer = (): t<'processConfig> => {
+  let config = Config.load()
+  let logger = logger->Lazy.get
   let allEntities = config.userEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()

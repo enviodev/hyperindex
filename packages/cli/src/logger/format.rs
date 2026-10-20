@@ -17,8 +17,10 @@ fn push_str(out: &mut Vec<u8>, value: &str) {
     let _ = serde_json::to_writer(&mut *out, value);
 }
 
+/// A value serde wrote but won't read back, such as one nested past its depth
+/// limit, is shown as its text.
 fn parse(raw: &RawValue) -> Value {
-    serde_json::from_str(raw.get()).unwrap_or(Value::Null)
+    serde_json::from_str(raw.get()).unwrap_or_else(|_| Value::String(raw.get().to_owned()))
 }
 
 /// The fields a format writes, minus any named like a key the format writes
