@@ -1031,7 +1031,6 @@ fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
 pub fn verify_rpc_chain(rpc_env: &str, manifest: &Manifest) -> Result<()> {
     let Some(source) = manifest
         .all_sources()
-        .into_iter()
         .find(|source| source.chain_id.is_some())
     else {
         return Ok(());
@@ -1083,7 +1082,15 @@ async fn eth_chain_id(url: &str, headers: &BTreeMap<String, String>) -> Result<u
     for (name, value) in headers {
         request = request.header(name, value);
     }
-    let body: serde_json::Value = request.send().await?.json().await?;
+    // reqwest's errors name the URL, path and query included, where providers
+    // put API keys; the host is named by the caller instead.
+    let body: serde_json::Value = request
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)?
+        .json()
+        .await
+        .map_err(reqwest::Error::without_url)?;
     let result = body
         .get("result")
         .and_then(serde_json::Value::as_str)
@@ -2517,7 +2524,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            Some(&format!("http://{closed}")),
+            Some(&format!("http://{closed}/v2/sekret-api-key")),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2525,11 +2532,13 @@ type Gravatar @entity {
         .err()
         .map(|err| format!("{err:#}"))
         .unwrap_or_default();
+        // The path is where providers put API keys, so it stays out of the error.
         assert!(
             message.contains("doesn't know the network \"risechain\"")
                 && message.contains(&format!(
                     "asked http://{closed} (eth_chainId) which chain it serves and got no answer"
-                )),
+                ))
+                && !message.contains("sekret-api-key"),
             "unexpected error: {message}"
         );
     }
