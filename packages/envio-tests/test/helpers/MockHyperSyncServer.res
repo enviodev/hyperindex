@@ -10,10 +10,11 @@
 type t
 
 @send
-external classNew: (Core.mockHyperSyncServerCtor, Null.t<int>) => t = "new"
+external classNew: (Core.mockHyperSyncServerCtor, Null.t<int>, Null.t<int>) => t = "new"
 @send external url: t => string = "url"
 @send external setHeight: (t, int) => unit = "setHeight"
 @send external pushResponseJson: (t, string) => unit = "pushResponse"
+@send external serveChainJson: (t, string) => unit = "serveChain"
 @send external takeQueriesJson: t => array<string> = "takeQueries"
 @send external close: t => unit = "close"
 
@@ -32,13 +33,27 @@ type page = {
   rollbackGuard?: JSON.t,
 }
 
-let make = (~height=?) =>
-  Core.getAddon().mockHyperSyncServer->classNew(height->Null.fromOption)
+// A fixed `~port` is for a url that has to be known before the server starts,
+// such as one written into a config.yaml parsed while vitest collects.
+let make = (~height=?, ~port=?) =>
+  Core.getAddon().mockHyperSyncServer->classNew(height->Null.fromOption, port->Null.fromOption)
 
 /// Queue the page answering the next query. Queries past the last queued page
 /// are answered with an empty page covering the range they asked for.
 let pushResponse = (server, page: page) =>
   server->pushResponseJson(page->JSON.stringifyAny->Option.getOrThrow)
+
+type chain = {
+  blocks?: array<JSON.t>,
+  transactions?: array<JSON.t>,
+  logs?: array<JSON.t>,
+}
+
+/// Hold `chain`'s rows the way HyperSync holds a chain: a query no queued page
+/// answers gets the logs its selection matches, with their blocks and
+/// transactions, up to the server's height.
+let serveChain = (server, chain: chain) =>
+  server->serveChainJson(chain->JSON.stringifyAny->Option.getOrThrow)
 
 // A reply given at the HTTP level instead of as a page — the statuses the
 // client acts on itself (429 rate limited, 413 payload too large).

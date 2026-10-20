@@ -112,25 +112,35 @@ let make = (
 //
 // The runner starts every chain in the config, so a chain left unmocked would
 // query the source its YAML names — a live URL. Requiring the two sets to match
-// exactly turns that into a failure at setup rather than a hanging test.
-let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) => {
+// exactly turns that into a failure at setup rather than a hanging test. A
+// chain in `~servedChains` is the exception: its YAML names a local server the
+// test runs, so the real source fetches from it.
+let withMockSources = (
+  config: Config.t,
+  ~sources: array<(int, MockSource.t)>,
+  ~servedChains: array<int>=[],
+) => {
   let configured = config.chainMap->ChainMap.keys
   let mocked = sources->Array.map(((chain, _)) => chain->ChainId.fromInt)
+  let served = servedChains->Array.map(ChainId.fromInt)
 
   let missing =
     configured
-    ->Array.filter(chainId => !(mocked->Array.some(mock => mock == chainId)))
+    ->Array.filter(chainId =>
+      !(mocked->Array.some(mock => mock == chainId)) && !(served->Array.some(s => s == chainId))
+    )
     ->Array.map(ChainId.toString)
   if missing->Utils.Array.notEmpty {
     JsError.throwWithMessage(
       `Chains ${missing->Array.join(
           ", ",
-        )} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
+        )} are configured but have no mock source. Add them to \`~sources\` or \`~servedChains\`, or drop them from the scenario's YAML.`,
     )
   }
 
   let unknown =
     mocked
+    ->Array.concat(served)
     ->Array.filter(chainId => !(configured->Array.some(configured => configured == chainId)))
     ->Array.map(ChainId.toString)
   if unknown->Utils.Array.notEmpty {
@@ -138,6 +148,17 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
       `Mock sources given for chains ${unknown->Array.join(
           ", ",
         )}, which the scenario's YAML doesn't configure.`,
+    )
+  }
+
+  let both = mocked->Array.filter(chainId => served->Array.some(s => s == chainId))
+  if both->Utils.Array.notEmpty {
+    JsError.throwWithMessage(
+      `Chains ${both
+        ->Array.map(ChainId.toString)
+        ->Array.join(
+          ", ",
+        )} are both mocked and served. Pick one of \`~sources\` or \`~servedChains\`.`,
     )
   }
 
@@ -180,6 +201,7 @@ type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
+  ~servedChains=?,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
@@ -216,7 +238,7 @@ let run = async (
 
   let config =
     scenario.config
-    ->withMockSources(~sources=mocks)
+    ->withMockSources(~sources=mocks, ~servedChains?)
     ->withInternalOverrides(
       ~maxAddrInPartition,
       ~clientFilterAddressThreshold,
@@ -305,6 +327,7 @@ let it = (
   scenario: t,
   name,
   ~sources: array<sourceMock>=[],
+  ~servedChains=?,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
@@ -339,6 +362,7 @@ let it = (
       async (t: Vitest.testContext) =>
         await scenario->run(
           ~sources,
+          ~servedChains?,
           ~reducedPollingInterval?,
           ~newBlockStallTimeoutRealtime?,
           ~targetBufferSize?,
