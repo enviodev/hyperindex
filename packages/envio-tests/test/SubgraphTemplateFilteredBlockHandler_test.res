@@ -31,10 +31,10 @@ dataSources:
       file: ./src/deployer.ts
 templates:
   - kind: ethereum/contract
-    name: Feed
+    name: Oracle
     network: mainnet
     source:
-      abi: Feed
+      abi: Oracle
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -42,7 +42,7 @@ templates:
       entities:
         - Tick
       abis:
-        - name: Feed
+        - name: Oracle
           file: ./abis/Feed.json
       eventHandlers:
         - event: Updated(uint256)
@@ -55,7 +55,7 @@ templates:
           filter:
             kind: polling
             every: 3
-      file: ./src/feed.ts
+      file: ./src/oracle.ts
 `,
   ~schema=`
 type Tick @entity {
@@ -68,7 +68,7 @@ type Tick @entity {
       `[{"type":"event","name":"Deployed","anonymous":false,"inputs":[{"name":"feed","type":"address","indexed":false}]}]`,
     ),
     (
-      "abis/Feed.json",
+      "abis/Oracle.json",
       `[{"type":"event","name":"Updated","anonymous":false,"inputs":[{"name":"value","type":"uint256","indexed":false}]}]`,
     ),
   ]),
@@ -80,12 +80,12 @@ import { Address, DataSourceTemplate } from "@graphprotocol/graph-ts";
 
 export function handleDeployed(event: any): void {
   let feed: Address = event.params.feed;
-  DataSourceTemplate.create("Feed", [feed.toHexString()]);
+  DataSourceTemplate.create("Oracle", [feed.toHexString()]);
 }
 `,
     ),
     (
-      "src/feed.ts",
+      "src/oracle.ts",
       `
 import { dataSource, Entity, store, Value } from "@graphprotocol/graph-ts";
 
@@ -126,21 +126,21 @@ describe("once and polling block handlers on a template", () => {
           startBlock: 0,
           endBlock: 17,
           simulate: [
-            deployed("0x2222222222222222222222222222222222222222", 10),
-            deployed("0x3333333333333333333333333333333333333333", 11),
+            deployed("0x4444444444444444444444444444444444444444", 10),
+            deployed("0x5555555555555555555555555555555555555555", 11),
           ],
         },
       },
     });
     t.expect((await indexer.Tick.getAll()).map((tick: any) => tick.id).sort()).toEqual([
-      "once:0x22:10",
-      "once:0x33:11",
-      "poll:0x22:10",
-      "poll:0x22:13",
-      "poll:0x22:16",
-      "poll:0x33:11",
-      "poll:0x33:14",
-      "poll:0x33:17",
+      "once:0x44:10",
+      "once:0x55:11",
+      "poll:0x44:10",
+      "poll:0x44:13",
+      "poll:0x44:16",
+      "poll:0x55:11",
+      "poll:0x55:14",
+      "poll:0x55:17",
     ]);
   });
 });
