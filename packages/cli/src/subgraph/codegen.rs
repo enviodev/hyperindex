@@ -265,7 +265,8 @@ fn locked_or_declared_graph_cli(dir: &Path) -> Option<[u64; 3]> {
     let declared = ["dependencies", "devDependencies"]
         .iter()
         .find_map(|key| package.get(key)?.get(GRAPH_CLI)?.as_str())?;
-    if let Some(locked) = locked_graph_cli(dir) {
+    // A workspace keeps one lockfile at its root.
+    if let Some(locked) = dir.ancestors().find_map(locked_graph_cli) {
         return Some(locked);
     }
     let version = parse_version(declared)?;
@@ -2095,7 +2096,7 @@ mod tests {
         .map(declare)
         .collect();
         std::fs::write(
-            project.join("yarn.lock"),
+            root.join("yarn.lock"),
             "\"@graphprotocol/graph-cli@^0.28.0\":\n  version \"0.28.1\"\n  resolved \"x\"\n",
         )
         .unwrap();
