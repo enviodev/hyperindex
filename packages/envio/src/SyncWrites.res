@@ -72,13 +72,23 @@ let overlayFilter = (
 
 // How a change lands in the in-memory store, whether written directly or
 // committed at the end of a round.
-let write = (indexerState, ~entityConfig, ~scope, change) =>
+let write = (indexerState, ~entityConfig: Internal.entityConfig, ~scope, change) => {
+  switch change {
+  | Change.Set({entityId}) =>
+    PreloadLookahead.onSet(
+      ~entityName=entityConfig.name,
+      ~scope,
+      ~entityId=entityId->EntityId.toKey,
+    )
+  | Delete(_) => ()
+  }
   indexerState
   ->InMemoryStore.getInMemTable(~entityConfig, ~scope)
   ->InMemoryTable.Entity.set(
     ~committedCheckpointId=indexerState->IndexerState.committedCheckpointIdFor(~scope),
     change,
   )
+}
 
 let commit = (writes: t, ~indexerState) =>
   writes->Utils.Dict.forEach(({entityConfig, scope, changes}) =>

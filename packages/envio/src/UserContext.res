@@ -330,7 +330,16 @@ let getSyncHandler = (params: entityContextParams, entityId: string) =>
       ~indexerState=params.indexerState,
       ~entityId,
     ) {
-    | Some(entity) => entity
+    | Some(entity) =>
+      if params.isPreload && entity->Option.isNone {
+        PreloadLookahead.recordAbsent(
+          ~item=params.item,
+          ~entityName=params.entityConfig.name,
+          ~scope=params->entityScope,
+          ~entityId,
+        )
+      }
+      entity
     | None =>
       (params :> contextParams)->missOrSuspend(
         ~absent=None,
@@ -575,9 +584,11 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
   params.sync.speculated = 0
   let writes = SyncWrites.make()
   params.sync.writes = Some(writes)
+  let startedAt = PreloadLookahead.roundStarted(~isPreload=params.isPreload)
 
   let suspended = switch fn() {
   | () =>
+    PreloadLookahead.roundEnded(~item=params.item, ~startedAt)
     params.sync.writes = None
     switch params.sync.status {
     // The body caught the suspend and returned anyway, so it didn't see the
@@ -590,8 +601,11 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
       false
     }
   | exception exn =>
+    PreloadLookahead.roundEnded(~item=params.item, ~startedAt)
+
     // Neither a suspended round nor a failed one keeps what it wrote.
     params.sync.writes = None
+
     // A round handed a speculated absence may well throw on it: the replay
     // that sees the real value decides whether the error is the handler's.
     if exn->isSuspend || params.sync.speculated > 0 {

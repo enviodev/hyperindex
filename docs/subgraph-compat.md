@@ -480,6 +480,7 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 | Contract-call progress log interval | `ENVIO_SUBGRAPH_PROGRESS_LOG_MS` | optional, default 30000: while contract calls are outstanding, how often answered/waiting counts are logged (a batch is written only once its calls are all in) |
 | Register pass for every handler | `ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` | escape hatch: rerun every handler at fetch time, not only those whose code can reach `DataSourceTemplate.create` (§4) |
 | Host op retry backoff | `ENVIO_SUBGRAPH_RETRY_BACKOFF_MS` | optional, default 500: the first wait before asking again after a transient failure, doubling up to 30 s |
+| Preload lookahead | `ENVIO_SUBGRAPH_PRELOAD_LOOKAHEAD` | optional, default 256; 0 turns it off. A handler whose preload read an entity as absent is preloaded again once an earlier event of the batch creates it, while it is at most this many events ahead of the one executing, so its contract calls go out together instead of one event at a time (a v3 pool's Mint after its PoolCreated). Preload never writes, so results are the same either way |
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
   `<url>` | `{...}` (JSON object matching the config `rpc` entry schema —
