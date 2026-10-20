@@ -439,9 +439,11 @@ classes call `DataSource.create`. Consequences:
   steps — Lido's `graph codegen && node genParserData.js` writes
   `generated/parserData.ts` — every step runs in order: `graph codegen`
   in-process as above, the rest in a shell with the project's
-  `node_modules/.bin` on `PATH`, as the package manager would. graph-cli
-  before 0.93 ships CommonJS, whose command class an ES import finds one
-  level down; both shapes load.
+  `node_modules/.bin` on `PATH`, as the package manager would. A step that
+  is only a package install (`yarn && graph codegen`) is skipped: the
+  developer installs before envio starts, and envio runs no installer.
+  graph-cli before 0.93 ships CommonJS, whose command class an ES import
+  finds one level down; both shapes load.
 
   `envio dev`'s `graph build` type check runs the same way. The failure modes
   get explicit messages:
@@ -473,6 +475,48 @@ classes call `DataSource.create`. Consequences:
   quarters of this machine's memory, and it ran out. Run it on a machine
   with more memory, then start envio again.
   ```
+- **Without graph-cli, envio writes the tree itself.** `ENVIO_SUBGRAPH_CODEGEN`:
+  `auto` (default) uses a complete committed tree as it is, else the project's
+  graph-cli, else (missing or failing) envio's bundled port of graph-cli's
+  generators; `bundled` always writes it; `graph-cli` never falls back. The
+  bundled output follows the project's toolchain where graph-cli releases
+  differ: the installed or declared graph-cli (a derived field is a `…Loader`
+  from 0.51, an array getter and setter before; a call output tuple is
+  `…OutputStruct` from 0.94, `…Struct` before) and the installed graph-ts
+  (Int8, `displayData`; derived loaders when no graph-cli is named). A committed tree that differs from what the bundled
+  codegen would write gets a "running the generated code as it is" warning; one
+  it wrote itself doesn't.
+- **Where the tree goes, and what it holds**, as graph codegen would leave it:
+  - the directory the project's own mappings import `schema`/`templates`
+    from; a mapping shipped in a dependency (@openzeppelin/subgraphs) imports
+    the tree shipped with it, and doesn't count;
+  - each `graph codegen <manifest> -o <dir>` step of the `codegen` script
+    generates its own manifest into its own directory (one tree from two
+    manifests); envio's manifest last when no step names it;
+  - graph codegen never cleans its output directory, so a project with one
+    manifest per network was built with the data sources of every manifest it
+    generated, and its mappings may import one this manifest lacks. Such a
+    missing file is written, with a warning (`graph build` of this manifest
+    alone fails on a clean checkout), from the project's other manifest — or
+    data source fragment a build script assembles manifests from — that
+    declares that data source (or template) and ABI; failing that, from a
+    manifest ABI of that name, since what graph codegen writes for a data
+    source and ABI depends on the ABI alone (a renamed data source); and a
+    `<X>/<X>.ts` from data source X's own ABI under that name (a renamed
+    ABI); and from an `<ABI>.json` the manifests' ABI directories still hold
+    (a data source taken out of the manifest). A file
+    none of them accounts for fails to load with the reason (no data source of
+    that name, no such ABI, no `index.ts`), as `graph build` fails on it.
+- **Workspace packages resolve without an install.** A bare import a monorepo's
+  workspace declares (package.json `workspaces`, pnpm-workspace.yaml) resolves
+  to that package, as the install would link it, before anything fetched from
+  npm; the field-usage scan follows it, and every other package the mappings
+  import, too.
+- **graph-ts before 0.18** (apiVersion 0.0.3 and older): the top-level
+  `EthereumBlock`, `EthereumEvent`, `EthereumValue`, `SmartContract`, … are the
+  same classes as `ethereum.*`, and a binding's `super.call("name", [params])`
+  without a signature calls the ABI's first function of that name, as
+  graph-node does.
 - **Conformance is tested two ways:** (a) golden fixtures — `generated/`
   outputs of real `graph codegen` across pinned graph-cli versions, executed
   against the shim in `envio-tests`, since users' local versions vary; (b) a
@@ -558,7 +602,12 @@ envio-side *how*.
 manifest is rewritten from `networks.json` beside it before translation, as
 graph-cli rewrites it (every data source moves to the network and takes its
 `source` fields from its entry; every template moves to the network; a data
-source without an entry is an error).
+source without an entry is an error). It also picks the network of a manifest
+envio renders from a template (§6d). `ENVIO_SUBGRAPH_NETWORK_FILE=<path>` is
+`--network-file <path>`, for a networks file not named networks.json; unset,
+and with no networks.json, the file the repo's scripts pass with that network
+is used when they pass only one (zkBob: `--network sepolia --network-file
+./networks-bob-sepolia.json`).
 
 ## 6c. Proving a migration: `envio subgraph diff`
 
@@ -600,6 +649,179 @@ Exit 1: a mismatch. Exit 2: couldn't compare (`status: error`), or a type
 was only partly compared (`status: incomplete`: `--max-entities` capped the
 reference listing and nothing seen so far differs). `--json` prints the same
 report with `schemaVersion: 1`.
+
+## 6d. Repo shapes: what runs before graph-cli would
+
+graph-cli reads a finished manifest. What a hosting user hands it is the
+manifest's path and a network — `graph build --network <name> <manifest>` —
+and envio takes the same two: `--config` (or `ENVIO_CONFIG`) and
+`ENVIO_SUBGRAPH_NETWORK`. Everything a repo does *before* graph-cli runs is its
+own build, and envio repeats a step of it only when the step is a standard
+tool invocation over files in the repo, so that its output is a function of
+committed files and the network picked, nothing else.
+
+**networks.json with no network picked.** A manifest that leaves a data
+source's network to `graph build --network` (iExec's PoCo names none) takes
+the network the repo's own scripts pass graph-cli, when they agree on one:
+`graph build --network ${NETWORK_NAME:-arbitrum-sepolia}` (the default) or a
+literal `--network base`, found in networks.json. Scripts that pass several
+leave the choice to `ENVIO_SUBGRAPH_NETWORK`, and the error lists the
+networks. Startup logs which network was built.
+
+**Rendered manifests.** Many repos commit `subgraph.template.yaml` (or
+`template.yaml`) and a per-network config, and write the manifest with a
+package.json script: one per network (`"prepare:matic": "mustache
+../../config/matic.json template.yaml > subgraph.yaml"`) or one taking the
+network from a variable (`yaml2json config/${NETWORK:-zora-testnet}.yaml |
+mustache - subgraph.template.yaml >> subgraph.yaml`). When the manifest is
+missing, envio looks for a script in the package.json of the manifest's own
+package, or of a package above it up to the repository root, that
+writes it with the mustache CLI (or `cp`s or `cat`s a committed one into
+place, as defi.money's `cat ./subgraph/arbitrum/prod.yaml > subgraph.yaml`), and
+repeats it when every step before graph-cli is one of `mustache <view>
+<template> [out]` (also `npx`/`yarn`/`pnpm exec`/`cross-env`/`env-cmd` around
+it), `yaml2json <file>`, `cat`, `cp <from> <to>`, `echo`, `mkdir`/`rm`, with
+`|`, `>`, `>>`, `&&` and `;`. A step that is `npm run <script>` (`yarn
+<script>`, `pnpm <script>`) is read as that script's steps, with the variables
+the call sets bound in them, as a shell passes them on: Aave's
+`"deploy:hosted:mainnet-v3": "VERSION=v3 BLOCKCHAIN=v3 NETWORK=mainnet env-cmd
+npm run prepare:subgraph"` renders `./config/mainnet-v3.json` into
+`./templates/v3.subgraph.template.yaml` and copies `schemas/v3.schema.graphql`
+in. A workspace-wide step (`yarn workspaces run <script>`, `npm run <script>
+--workspaces`, `pnpm -r run <script>`, `lerna run`, `turbo run`) is read as
+that script of every workspace package that has it, each in its own
+directory; such a plan is preferred, since it also renders what the mappings
+import from other packages (sushiswap's root `prepare:matic` renders
+`packages/constants/index.ts` with the manifest). A script that only calls
+another one that renders is that one. A Makefile's targets count as scripts too (`make <target>`, recipe lines
+chained with `&&`, `$(network)` read as the variable `make target
+network=base` sets, with the Makefile's `network ?= …` as its default):
+moonwell renders in `make generate-config`.
+
+- The network picks the view: the variable's value (`config/<network>.yaml`,
+  `config/<network>/config.json`, every file that matches), or, for one script
+  per network, what tells the scripts' names apart past their common prefix
+  (`prepare:<network>`, `generate-manifest-<network>`), else the path
+  component their views differ in. A network that names none of these is
+  matched against the network each rendered manifest indexes
+  (`ENVIO_SUBGRAPH_NETWORK=arbitrum-one` for defi.money's `codegen:arb`).
+  The chosen network's other scripts that
+  are standard renders run too (Seamless' `generate-addresses-base` writes
+  `src/constants/addresses.ts` beside `generate-manifest-base`). Unset, it is the script's own default
+  (`${NETWORK:-zora-testnet}`), else the only network there is; else the error
+  lists them.
+- The rendering is mustache.js 4.x's, standalone-line stripping and HTML
+  escaping included (a `{{path}}` with a `/` renders `&#x2F;`, as it does for
+  the repo's author); `yaml2json` is read as YAML 1.2.
+- Every file the script writes is written, where it writes it (zora-creator's
+  `src/constants/chainid.ts` too), and only inside the package. envio records
+  the manifest it wrote (`.envio/rendered-manifests.json`), so a later start
+  renders it again — for another network — while a manifest the user wrote,
+  or committed beside a render script, is read as it is. networks.json isn't
+  applied on top of a rendered manifest.
+- A manifest that is there already, and that one network's render writes
+  as the same YAML, proves that network: the files the same script (and the
+  network's sibling render scripts) write beside
+  it and that are missing are written (matic commits subgraph.yaml-shaped
+  output and gitignores `src/network.ts`). Existing files are never touched.
+- The codegen script's step that runs the same script (`yarn gen-yaml-config
+  && graph codegen`) is skipped: it would render the script's default network
+  over the one picked.
+
+A script that runs anything else to write the manifest — `node`, `ts-node`,
+`truffle exec`, a shell script, `jq`, handlebars through a script of its own —
+isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or
+compute addresses; the error names each script and what it runs (a script is
+named when it writes the manifest, mentions a template, or runs a repo file
+whose source mentions one — Uniswap's `ts-node ./script/build`). `--config`
+naming the template itself renders what a repeatable script renders from it,
+else says it is a template:
+
+```
+There is no subgraph.yaml here.
+The project writes its manifest with a package.json script, and envio can't repeat it:
+  "render-subgraph-config:gnosis": node ops/render-subgraph-conf.js gnosis
+envio renders a manifest itself only when every step of the script is a standard tool
+over files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`,
+`cat`), so that the network you pick is its only input. Run the script for your
+network, then start envio again.
+```
+
+**The codegen script's own steps.** envio already runs the project's
+`codegen` script to build the generated code (§6a): `graph codegen`
+in-process, every other step in a shell. When the manifest is missing and no
+mustache script renders it, the steps before `graph codegen` run first, before
+translation — cope-market's `"codegen": "node scripts/build-manifest.mjs
+${NETWORK:-arc-testnet} && graph codegen"` writes subgraph.yaml there. When
+the codegen step names its manifest (balancer-v2's `npm run
+generate-manifests && graph codegen subgraph.mainnet.yaml`), that is the
+manifest envio runs. Steps that are only `rm`/`mkdir` don't run early. Each
+variable such a step reads is set to `ENVIO_SUBGRAPH_NETWORK` when it is set
+(unset, the script's default applies), the manifest is recorded as envio's
+like a rendered one, and codegen doesn't run those steps again. This is the
+one place envio runs a repo's own script to get a manifest, and only because
+it runs that script anyway: only the `codegen` script's steps, split on `&&`
+exactly as §6a splits them; no other package.json script and no lifecycle
+hook (`preinstall`, `install`, `postinstall`, `prepare`) ever runs, even one
+that would write the manifest — that one is named in the error instead.
+Each step logs a line naming it (and the variables set) before it runs, and
+a failing step stops envio with the script's own error above it.
+
+**A workspace with nothing installed.** When the repo's install fails (graph-cli
+0.2x's vanished git dependencies), §6a's fetch supplies graph-cli and the npm
+packages the mappings import. A package of the repo's own workspace (package.json
+`workspaces`, or pnpm-workspace.yaml) is never fetched — the registry's
+package of that name is someone else's, as sushiswap's `const` is — and a
+mapping's import of it loads from the workspace: its `main`, else the file
+asc reads (`ascMain`, `assembly/index.ts`, `index.ts`), as the package
+manager's link would. A
+workspace package whose `main` a script of its own writes (sushiswap's
+`const` renders `index.ts` per network) is named, with that script, in the
+load error. An ABI the manifest reads from a package under `node_modules`
+(`../../node_modules/@sushiswap/core/build/abi/…`) comes from that package
+fetched into envio's cache (`<cache>/abi-packages/`), at the version the
+lockfile pins, else the package.json range, with npm and no scripts; startup
+warns once per file. A package of the repo's own workspace (linked into
+node_modules by pnpm or yarn) is read from its directory instead, never
+fetched.
+
+**A mapping that imports an undeclared template.** daohaus assembles its
+manifest per network with a script; for some networks it leaves out a
+template (`UberhausMinionTemplate`) that a listed mapping still imports from
+`generated/templates`. graph codegen writes classes only for declared
+templates, so `graph build` fails on the import as well; envio's load error
+names the template and the ones the manifest declares instead of Node's
+"does not provide an export".
+
+**Missing ABIs and schemas.** A file the manifest needs (schema, mapping,
+ABI) that isn't there, and that a package.json script of standard tools
+writes, is written by repeating that script with its variables at their
+defaults: FilOzone's `"generate:schema": "cp
+./schemas/schema.${VERSION:-v1}.graphql schema.graphql"`. Otherwise
+envio invents no ABI and builds no contracts.
+An ABI or schema the manifest names that isn't there is an error naming the
+step that writes it, when the repo says: a package.json script that writes its
+directory or mentions the file (kleros-v2's `sync-abis`, GoodCollective's
+`build:copyabi`, inverse-governance's `graph-compiler … --export-schema`), an
+empty git submodule, the Foundry (`out/`) or Hardhat (`artifacts/`) project
+the path runs through (liquity's `../contracts/out/`), or the npm package
+under node_modules the install didn't provide. When another script runs
+`graph codegen` on a different manifest (inverse-governance's `build:codegen`
+builds `generated/mainnet.subgraph.yaml`, and its committed `subgraph.yaml`
+is a copy naming `../src/…`), the error names that manifest to point
+`--config` at once the step has run.
+
+**Paths that differ only in case.** A manifest written on macOS or Windows
+can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
+(CryptoPunks): it builds there and runs on hosted platforms, and graph-cli on
+Linux fails on it. envio reads a file the manifest names (schema, mapping,
+ABI) from the one entry per path component that differs from it only in case,
+as the author's filesystem does, warns once per path, and hands graph-cli a
+copy of the manifest spelled the repo's way. Two such entries are an error
+that lists both. A mapping's relative import gets the same match when Node
+can't find it as written (Omni-DeFi imports `../generated/staking/staking`;
+graph codegen writes `generated/Staking/Staking.ts`), with one warning per
+import.
 
 ## 7. Unsupported & unknown errors
 
