@@ -37,6 +37,14 @@ type fromSubgraphOptions = {
 
 type bundledCodegenResult = {outputDir: string, files: array<string>}
 
+type filledGeneratedFile = {
+  file: string,
+  source: string,
+  abiName?: string,
+  renamedFrom?: string,
+  undeclared: bool,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
@@ -44,6 +52,9 @@ type addon = {
   subgraphRegisterHandlers: (array<string>, array<array<string>>) => array<array<string>>,
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
+  subgraphBundledCodegenCurrent: (string, string) => bool,
+  subgraphFillGenerated: (string, string, string, array<string>) => array<filledGeneratedFile>,
+  subgraphWorkspacePackages: string => dict<string>,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -342,6 +353,14 @@ let subgraphBundledCodegen = (~manifestFile, ~outputDir: option<string>) => {
   let addon = getAddon()
   addon.subgraphBundledCodegen(manifestFile, outputDir->Null.fromOption)
 }
+
+let subgraphBundledCodegenCurrent = (~manifestFile, ~outputDir) =>
+  getAddon().subgraphBundledCodegenCurrent(manifestFile, outputDir)
+
+let subgraphFillGenerated = (~root, ~manifestFile, ~outputDir, ~wanted) =>
+  getAddon().subgraphFillGenerated(root, manifestFile, outputDir, wanted)
+
+let subgraphWorkspacePackages = root => getAddon().subgraphWorkspacePackages(root)
 
 let runCli = args => {
   let addon = getAddon()

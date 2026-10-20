@@ -439,9 +439,11 @@ classes call `DataSource.create`. Consequences:
   steps — Lido's `graph codegen && node genParserData.js` writes
   `generated/parserData.ts` — every step runs in order: `graph codegen`
   in-process as above, the rest in a shell with the project's
-  `node_modules/.bin` on `PATH`, as the package manager would. graph-cli
-  before 0.93 ships CommonJS, whose command class an ES import finds one
-  level down; both shapes load.
+  `node_modules/.bin` on `PATH`, as the package manager would. A step that
+  is only a package install (`yarn && graph codegen`) is skipped: the
+  developer installs before envio starts, and envio runs no installer.
+  graph-cli before 0.93 ships CommonJS, whose command class an ES import
+  finds one level down; both shapes load.
 
   `envio dev`'s `graph build` type check runs the same way. The failure modes
   get explicit messages:
@@ -473,6 +475,48 @@ classes call `DataSource.create`. Consequences:
   quarters of this machine's memory, and it ran out. Run it on a machine
   with more memory, then start envio again.
   ```
+- **Without graph-cli, envio writes the tree itself.** `ENVIO_SUBGRAPH_CODEGEN`:
+  `auto` (default) uses a complete committed tree as it is, else the project's
+  graph-cli, else (missing or failing) envio's bundled port of graph-cli's
+  generators; `bundled` always writes it; `graph-cli` never falls back. The
+  bundled output follows the project's toolchain where graph-cli releases
+  differ: the installed or declared graph-cli (a derived field is a `…Loader`
+  from 0.51, an array getter and setter before; a call output tuple is
+  `…OutputStruct` from 0.94, `…Struct` before) and the installed graph-ts
+  (Int8, `displayData`; derived loaders when no graph-cli is named). A committed tree that differs from what the bundled
+  codegen would write gets a "running the generated code as it is" warning; one
+  it wrote itself doesn't.
+- **Where the tree goes, and what it holds**, as graph codegen would leave it:
+  - the directory the project's own mappings import `schema`/`templates`
+    from; a mapping shipped in a dependency (@openzeppelin/subgraphs) imports
+    the tree shipped with it, and doesn't count;
+  - each `graph codegen <manifest> -o <dir>` step of the `codegen` script
+    generates its own manifest into its own directory (one tree from two
+    manifests); envio's manifest last when no step names it;
+  - graph codegen never cleans its output directory, so a project with one
+    manifest per network was built with the data sources of every manifest it
+    generated, and its mappings may import one this manifest lacks. Such a
+    missing file is written, with a warning (`graph build` of this manifest
+    alone fails on a clean checkout), from the project's other manifest — or
+    data source fragment a build script assembles manifests from — that
+    declares that data source (or template) and ABI; failing that, from a
+    manifest ABI of that name, since what graph codegen writes for a data
+    source and ABI depends on the ABI alone (a renamed data source); and a
+    `<X>/<X>.ts` from data source X's own ABI under that name (a renamed
+    ABI); and from an `<ABI>.json` the manifests' ABI directories still hold
+    (a data source taken out of the manifest). A file
+    none of them accounts for fails to load with the reason (no data source of
+    that name, no such ABI, no `index.ts`), as `graph build` fails on it.
+- **Workspace packages resolve without an install.** A bare import a monorepo's
+  workspace declares (package.json `workspaces`, pnpm-workspace.yaml) resolves
+  to that package, as the install would link it, before anything fetched from
+  npm; the field-usage scan follows it, and every other package the mappings
+  import, too.
+- **graph-ts before 0.18** (apiVersion 0.0.3 and older): the top-level
+  `EthereumBlock`, `EthereumEvent`, `EthereumValue`, `SmartContract`, … are the
+  same classes as `ethereum.*`, and a binding's `super.call("name", [params])`
+  without a signature calls the ABI's first function of that name, as
+  graph-node does.
 - **Conformance is tested two ways:** (a) golden fixtures — `generated/`
   outputs of real `graph codegen` across pinned graph-cli versions, executed
   against the shim in `envio-tests`, since users' local versions vary; (b) a
