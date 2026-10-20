@@ -327,37 +327,48 @@ let getSyncHandler = (params: entityContextParams, entityId: string) =>
   switch params->getRoundWrite(entityId) {
   | Some(entity) => entity
   | None =>
-    switch LoadLayer.getByIdInMemory(
-      ~entityConfig=params.entityConfig,
-      ~scope=params->entityScope,
-      ~indexerState=params.indexerState,
-      ~entityId,
-    ) {
-    | Some(entity) =>
-      if params.isPreload && entity->Option.isNone {
-        PreloadLookahead.recordAbsent(
+    switch params.isPreload
+      ? PreloadLookahead.overlayGet(
           ~item=params.item,
           ~entityName=params.entityConfig.name,
           ~scope=params->entityScope,
           ~entityId,
         )
-      }
-      entity
+      : None {
+    | Some(entity) => entity
     | None =>
-      (params :> contextParams)->missOrSuspend(
-        ~absent=None,
-        LoadLayer.loadById(
-          ~loadManager=params.loadManager,
-          ~persistence=params.persistence,
-          ~entityConfig=params.entityConfig,
-          ~scope=params->entityScope,
-          ~indexerState=params.indexerState,
-          ~shouldGroup=params.isPreload,
-          ~item=params.item,
-          ~ecosystem=params.config.ecosystem,
-          ~entityId,
-        ),
-      )
+      switch LoadLayer.getByIdInMemory(
+        ~entityConfig=params.entityConfig,
+        ~scope=params->entityScope,
+        ~indexerState=params.indexerState,
+        ~entityId,
+      ) {
+      | Some(entity) =>
+        if params.isPreload && entity->Option.isNone {
+          PreloadLookahead.recordAbsent(
+            ~item=params.item,
+            ~entityName=params.entityConfig.name,
+            ~scope=params->entityScope,
+            ~entityId,
+          )
+        }
+        entity
+      | None =>
+        (params :> contextParams)->missOrSuspend(
+          ~absent=None,
+          LoadLayer.loadById(
+            ~loadManager=params.loadManager,
+            ~persistence=params.persistence,
+            ~entityConfig=params.entityConfig,
+            ~scope=params->entityScope,
+            ~indexerState=params.indexerState,
+            ~shouldGroup=params.isPreload,
+            ~item=params.item,
+            ~ecosystem=params.config.ecosystem,
+            ~entityId,
+          ),
+        )
+      }
     }
   }
 
@@ -422,8 +433,23 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
 
+    // Preload's writes are kept only within a round, for the batch's later
+    // preloads to read (PreloadLookahead); never in the store.
     let set = params.isPreload
-      ? noopSet
+      ? (entity: Internal.entity) =>
+          switch params.sync.writes {
+          | Some(writes) if PreloadLookahead.isActive() =>
+            writes->SyncWrites.record(
+              ~entityConfig=params.entityConfig,
+              ~scope=params->entityScope,
+              Set({
+                entityId: entity.id->EntityId.unsafeOfString,
+                checkpointId: params.checkpointId,
+                entity,
+              }),
+            )
+          | _ => noopSet(entity)
+          }
       : (entity: Internal.entity) => {
           // The check lives inside the closure too: a handler that grabbed
           // `context.X.set` before a suspend must not keep writing.
@@ -550,7 +576,16 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
     | "deleteUnsafe" =>
       if params.isPreload {
-        noopDeleteUnsafe
+        entityId =>
+          switch params.sync.writes {
+          | Some(writes) if PreloadLookahead.isActive() =>
+            writes->SyncWrites.record(
+              ~entityConfig=params.entityConfig,
+              ~scope=params->entityScope,
+              Delete({entityId, checkpointId: params.checkpointId}),
+            )
+          | _ => noopDeleteUnsafe(entityId)
+          }
       } else {
         entityId => {
           (params :> contextParams)->checkStatusOrThrow(
@@ -600,7 +635,19 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
     // Ran on reads it was told were absent.
     | Active | Resolved if params.sync.speculated > 0 => true
     | Active | Resolved =>
-      writes->SyncWrites.commit(~indexerState=params.indexerState)
+      if params.isPreload {
+        writes->SyncWrites.forEachChange((~entityConfig, ~scope, change) =>
+          PreloadLookahead.overlaySet(
+            ~item=params.item,
+            ~entityName=entityConfig.name,
+            ~scope,
+            ~entityId=change->Change.getEntityId->EntityId.toKey,
+            ~entity=change->InMemoryTable.Entity.mapChangeToEntity,
+          )
+        )
+      } else {
+        writes->SyncWrites.commit(~indexerState=params.indexerState)
+      }
       false
     }
   | exception exn =>

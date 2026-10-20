@@ -90,6 +90,11 @@ let write = (indexerState, ~entityConfig: Internal.entityConfig, ~scope, change)
   )
 }
 
+let forEachChange = (writes: t, fn) =>
+  writes->Utils.Dict.forEach(({entityConfig, scope, changes}) =>
+    changes->Utils.Dict.forEach(change => fn(~entityConfig, ~scope, change))
+  )
+
 let commit = (writes: t, ~indexerState) =>
   writes->Utils.Dict.forEach(({entityConfig, scope, changes}) =>
     changes->Utils.Dict.forEach(change => indexerState->write(~entityConfig, ~scope, change))
