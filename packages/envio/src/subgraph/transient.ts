@@ -56,6 +56,24 @@ function transientStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
+const RATE_LIMIT_TEXT = /rate.?limit|too many requests|request limit|limit exceeded/i;
+
+/**
+ * The endpoint saying "slow down" — HTTP 429, or a JSON-RPC rate-limit error —
+ * on an error or on a JSON-RPC error object, anywhere down its cause chain.
+ */
+export function isRateLimit(error: unknown): boolean {
+  let current: any = error;
+  for (let depth = 0; current && depth < 10; depth++) {
+    if (current.status === 429 || current.code === 429 || RATE_LIMIT_CODES.has(current.code)) return true;
+    for (const text of [current.shortMessage, current.details, current.message]) {
+      if (typeof text === "string" && RATE_LIMIT_TEXT.test(text)) return true;
+    }
+    current = current.cause;
+  }
+  return false;
+}
+
 /**
  * Whether asking again could get a different answer. A status decides it when
  * there is one; otherwise the error's own words do, down its cause chain.

@@ -11,7 +11,7 @@
 
 import { createPublicClient, createTransport, fallback, RpcRequestError, type Transport } from "viem";
 import { getHttpRpcClient } from "viem/utils";
-import { requestTimeoutMs, withDeadline } from "./transient.ts";
+import { isRateLimit, requestTimeoutMs, withDeadline } from "./transient.ts";
 
 /**
  * Requests in flight at once, per set of endpoints. A handler's calls run one
@@ -95,25 +95,59 @@ const MAX_MISSING = 3;
  * again by `untilAnswered`. An endpoint that refuses a batch — HTTP 4xx, an
  * error in place of the array, or a "batch too large" answer per item — gets
  * smaller ones from then on, down to plain single requests.
+ *
+ * A public endpoint answers 429 past the few requests it serves at once, and
+ * at 48 in flight most of every wave was refused, each refused call backing
+ * off alone for longer and longer. So the requests in flight, and the calls a
+ * batch carries, are halved when the endpoint says "slow down" — once per
+ * wave: refusals of requests sent before the last cut don't cut again — and
+ * grow back by one per full round of answers (a batch: per answered batch), up
+ * to `maxInFlight` and the batch size the endpoint takes.
  */
 function batchingTransport(url: string, maxInFlight: number, maxBatch: number): Transport {
   const client = getHttpRpcClient(url, { timeout: requestTimeoutMs() });
+  // What the endpoint takes in one batch, and what is sent for now.
+  let batchCap = maxBatch;
   let batchSize = maxBatch;
+  let limit = maxInFlight;
+  let wave = 0;
+  let answeredSinceGrowth = 0;
   let inFlight = 0;
   let pumpScheduled = false;
   let nextId = 1;
   const queue: Waiting[] = [];
 
   const shrink = (to?: number) => {
-    batchSize = Math.max(1, Math.min(to ?? Math.floor(batchSize / 2), batchSize - 1));
+    batchCap = Math.max(1, Math.min(to ?? Math.floor(batchCap / 2), batchCap - 1));
+    batchSize = Math.min(batchSize, batchCap);
+  };
+
+  const slowDown = (sentIn: number) => {
+    if (sentIn !== wave) return;
+    wave++;
+    limit = Math.max(1, Math.floor(limit / 2));
+    batchSize = Math.max(1, Math.floor(batchSize / 2));
+    answeredSinceGrowth = 0;
+  };
+
+  const answered = () => {
+    if (limit < maxInFlight && ++answeredSinceGrowth >= limit) {
+      limit++;
+      answeredSinceGrowth = 0;
+    }
   };
 
   const send = async (items: Waiting[]) => {
+    const sentIn = wave;
     if (items.length === 1) {
       const [item] = items;
       try {
-        item.resolve((await client.request({ body: item.body as any })) as Answer);
+        const answer = (await client.request({ body: item.body as any })) as Answer;
+        if (answer.error && isRateLimit(answer.error)) slowDown(sentIn);
+        else answered();
+        item.resolve(answer);
       } catch (error) {
+        if (isRateLimit(error)) slowDown(sentIn);
         item.reject(error);
       }
       return;
@@ -123,6 +157,7 @@ function batchingTransport(url: string, maxInFlight: number, maxBatch: number): 
     try {
       data = await client.request({ body: items.map((item, i) => ({ ...item.body, id: ids[i] })) as any });
     } catch (error) {
+      if (isRateLimit(error)) slowDown(sentIn);
       const status = (error as { status?: unknown }).status;
       if (typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 429) {
         shrink();
@@ -138,6 +173,8 @@ function batchingTransport(url: string, maxInFlight: number, maxBatch: number): 
       queue.unshift(...items);
       return;
     }
+    answered();
+    if (batchSize < batchCap) batchSize++;
     const byId = new Map<unknown, Answer>();
     for (const answer of data) if (answer && typeof answer === "object") byId.set((answer as any).id, answer as Answer);
     const again: Waiting[] = [];
@@ -154,14 +191,22 @@ function batchingTransport(url: string, maxInFlight: number, maxBatch: number): 
         again.push(item);
         return;
       }
+      if (answer.error && isRateLimit(answer.error)) slowDown(sentIn);
       item.resolve(answer);
     });
     if (again.length > 0) queue.unshift(...again);
   };
 
+  const schedule = () => {
+    if (!pumpScheduled) {
+      pumpScheduled = true;
+      setImmediate(pump);
+    }
+  };
+
   const pump = () => {
     pumpScheduled = false;
-    while (inFlight < maxInFlight && queue.length > 0) {
+    while (inFlight < limit && queue.length > 0) {
       const items = queue.splice(0, batchSize);
       inFlight++;
       void send(items).finally(() => {
@@ -184,10 +229,7 @@ function batchingTransport(url: string, maxInFlight: number, maxBatch: number): 
           queue.push({ body, resolve, reject, missing: 0 });
           // Requests made in the same turn — preload's calls, a batch's
           // timestamps — leave together.
-          if (!pumpScheduled) {
-            pumpScheduled = true;
-            setImmediate(pump);
-          }
+          schedule();
         });
         if (answer.error) throw new RpcRequestError({ body, error: answer.error, url });
         return answer.result;
