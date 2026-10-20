@@ -221,6 +221,8 @@ fn transform(source: &str, path: &Path, legacy_nulls: bool, hoist: bool) -> Resu
         legacy_nulls,
         literal_consts: literal_consts(&program),
         strings: vec![],
+        generics: vec![],
+        in_for_head: false,
     };
     rewrite.visit_program(&mut program);
     if let Some((span, message)) = rewrite.refused {
@@ -342,6 +344,17 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
         }
     }
     fn runs_nothing(class: &Class<'_>) -> bool {
+        // A static field's zero, which `Rewrite` gives one without an initializer.
+        let literal = |value: &Option<Expression<'_>>| match value {
+            None => true,
+            Some(value) => matches!(
+                value,
+                Expression::NumericLiteral(_)
+                    | Expression::BooleanLiteral(_)
+                    | Expression::NullLiteral(_)
+                    | Expression::StringLiteral(_)
+            ),
+        };
         class.id.is_some()
             && class
                 .heritage
@@ -350,10 +363,10 @@ fn hoist_statics<'a>(program: &mut Program<'a>, allocator: &'a Allocator) {
             && class.body.body.iter().all(|element| match element {
                 ClassElement::StaticBlock(_) => false,
                 ClassElement::PropertyDefinition(property) => {
-                    !property.computed && !(property.r#static && property.value.is_some())
+                    !property.computed && !(property.r#static && !literal(&property.value))
                 }
                 ClassElement::AccessorProperty(property) => {
-                    !property.computed && !(property.r#static && property.value.is_some())
+                    !property.computed && !(property.r#static && !literal(&property.value))
                 }
                 ClassElement::MethodDefinition(method) => !method.computed,
                 _ => true,
@@ -576,6 +589,56 @@ struct Rewrite<'a> {
     literal_consts: HashSet<String>,
     /// What each enclosing function's names hold, for `===` (`Strings`).
     strings: Vec<Strings>,
+    /// The type parameters in scope: a `T` field has no zero this pass knows.
+    generics: Vec<HashSet<String>>,
+    /// Visiting a `for (let x of …)` head, whose binding has no initializer.
+    in_for_head: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Zero {
+    Number,
+    False,
+    Null,
+}
+
+/// What AssemblyScript gives a field or local of this type that has no
+/// initializer (asc's `makeZero`): 0 for an integer or float, false for a
+/// bool, null for a reference.
+fn zero_of(ty: &TSType<'_>, generics: &[HashSet<String>]) -> Option<Zero> {
+    match ty {
+        TSType::TSNumberKeyword(_) => Some(Zero::Number),
+        TSType::TSBooleanKeyword(_) => Some(Zero::False),
+        TSType::TSStringKeyword(_) | TSType::TSArrayType(_) | TSType::TSTupleType(_) => {
+            Some(Zero::Null)
+        }
+        TSType::TSTypeReference(reference) => match &reference.type_name {
+            TSTypeName::IdentifierReference(name) => match name.name.as_str() {
+                "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+                | "f32" | "f64" => Some(Zero::Number),
+                "bool" | "boolean" => Some(Zero::False),
+                name if generics.iter().any(|scope| scope.contains(name)) => None,
+                _ => Some(Zero::Null),
+            },
+            _ => Some(Zero::Null),
+        },
+        TSType::TSUnionType(union) => union
+            .types
+            .iter()
+            .any(|ty| matches!(ty, TSType::TSNullKeyword(_)))
+            .then_some(Zero::Null),
+        _ => None,
+    }
+}
+
+fn type_parameter_names(
+    parameters: &Option<oxc::allocator::Box<'_, TSTypeParameterDeclaration<'_>>>,
+) -> HashSet<String> {
+    parameters
+        .iter()
+        .flat_map(|declaration| declaration.params.iter())
+        .map(|parameter| parameter.name.name.to_string())
+        .collect()
 }
 
 /// What `===` can know of a string without types. AssemblyScript compares two
@@ -892,6 +955,22 @@ impl<'a> Rewrite<'a> {
         let callee = Expression::new_identifier(span, helper, &self.ast);
         let args = ArenaVec::from_iter_in(args.into_iter().map(Argument::from), &self.ast);
         Expression::new_call_expression(span, callee, None, args, false, &self.ast)
+    }
+
+    fn zero(&self, span: Span, annotation: &TSTypeAnnotation<'a>) -> Option<Expression<'a>> {
+        Some(
+            match zero_of(&annotation.type_annotation, &self.generics)? {
+                Zero::Number => Expression::new_numeric_literal(
+                    span,
+                    0.0,
+                    None,
+                    oxc::syntax::number::NumberBase::Decimal,
+                    &self.ast,
+                ),
+                Zero::False => Expression::new_boolean_literal(span, false, &self.ast),
+                Zero::Null => Expression::new_null_literal(span, &self.ast),
+            },
+        )
     }
 
     /// `OPERATORS_HELPER.method(args)`.
@@ -1253,10 +1332,65 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
         }
     }
 
+    fn visit_class(&mut self, class: &mut Class<'a>) {
+        self.generics
+            .push(type_parameter_names(&class.type_parameters));
+        walk_mut::walk_class(self, class);
+        self.generics.pop();
+    }
+
+    fn visit_property_definition(&mut self, property: &mut PropertyDefinition<'a>) {
+        walk_mut::walk_property_definition(self, property);
+        if property.value.is_none()
+            && !property.declare
+            && property.r#type == PropertyDefinitionType::PropertyDefinition
+        {
+            if let Some(annotation) = &property.type_annotation {
+                property.value = self.zero(property.span, annotation);
+            }
+        }
+    }
+
+    fn visit_for_in_statement(&mut self, statement: &mut ForInStatement<'a>) {
+        self.in_for_head = true;
+        self.visit_for_statement_left(&mut statement.left);
+        self.in_for_head = false;
+        self.visit_expression(&mut statement.right);
+        self.visit_statement(&mut statement.body);
+    }
+
+    fn visit_for_of_statement(&mut self, statement: &mut ForOfStatement<'a>) {
+        self.in_for_head = true;
+        self.visit_for_statement_left(&mut statement.left);
+        self.in_for_head = false;
+        self.visit_expression(&mut statement.right);
+        self.visit_statement(&mut statement.body);
+    }
+
+    fn visit_variable_declaration(&mut self, decl: &mut VariableDeclaration<'a>) {
+        walk_mut::walk_variable_declaration(self, decl);
+        if self.in_for_head || decl.declare || decl.kind == VariableDeclarationKind::Const {
+            return;
+        }
+        for declarator in decl.declarations.iter_mut() {
+            if declarator.init.is_some()
+                || !matches!(declarator.id, BindingPattern::BindingIdentifier(_))
+            {
+                continue;
+            }
+            if let Some(annotation) = &declarator.type_annotation {
+                declarator.init = self.zero(declarator.span, annotation);
+            }
+        }
+    }
+
     fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
+        self.generics
+            .push(type_parameter_names(&func.type_parameters));
         self.strings.push(strings(func, &self.literal_consts));
         walk_mut::walk_function(self, func, flags);
         self.strings.pop();
+        self.generics.pop();
         let params: Vec<&str> = func
             .params
             .items
@@ -1479,7 +1613,7 @@ export function __envio_static() {
 __envio_static();
 function __envio_define_Mapping() {
 \tif (Mapping === undefined) Mapping = class Mapping {
-\t\tbidwall;
+\t\tbidwall = null;
 \t};
 }
 import { Token } from \"./token\";
@@ -1494,6 +1628,48 @@ export function f() {
 }
 export * from \"./base\";
 import * as __envio_dep_1 from \"./base\";
+"
+        );
+    }
+
+    // A type parameter's zero depends on the instantiation, a `declare` field
+    // has no storage, and a `for … of` binding is assigned by the loop.
+    #[test]
+    fn zero_initializes_fields_and_locals_by_type() {
+        assert_eq!(
+            js("class Totals<T> {
+  count: i32;
+  flag: bool;
+  label: string | null;
+  value: T;
+  static instances: u64;
+  declare ambient: i32;
+}
+export function f(xs: i32[]): i32 {
+  let total: i32;
+  let owner: Address;
+  let untyped;
+  for (let x: i32 of xs) {
+    total += x;
+  }
+  return total;
+}"),
+            "class Totals {
+\tcount = 0;
+\tflag = false;
+\tlabel = null;
+\tvalue;
+\tstatic instances = 0;
+}
+export function f(xs) {
+\tlet total = 0;
+\tlet owner = null;
+\tlet untyped;
+\tfor (let x of xs) {
+\t\ttotal = __envio_op.add(total, x);
+\t}
+\treturn total;
+}
 "
         );
     }
