@@ -20,6 +20,7 @@ dataSources:
       apiVersion: 0.0.7
       language: wasm/assemblyscript
       entities:
+        - Seed
         - Check
       abis:
         - name: Registry
@@ -30,6 +31,10 @@ dataSources:
       file: ./src/registry.ts
 `,
   ~schema=`
+type Seed @entity {
+  id: ID!
+}
+
 type Check @entity {
   id: ID!
   foundIsSet: Boolean!
@@ -53,12 +58,10 @@ type Check @entity {
 import { Entity, store } from "@graphprotocol/graph-ts";
 
 export function handleNewOwner(event: any): void {
-  let seed = new Entity();
-  seed.setBoolean("foundIsSet", false);
-  store.set("Check", "seed", seed);
+  store.set("Seed", "seed", new Entity());
 
-  let found = store.get("Check", "seed");
-  let missing = store.get("Check", "nope");
+  let found = store.get("Seed", "seed");
+  let missing = store.get("Seed", "nope");
   let other = new Entity();
   let n: u32 = 7;
 

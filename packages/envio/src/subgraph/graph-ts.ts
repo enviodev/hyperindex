@@ -1455,6 +1455,22 @@ function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, u
   return row;
 }
 
+/**
+ * graph-node validates a save merged onto the stored entity against the schema
+ * (`EntityCache::set` → `Entity::validate`, an explicit null merged away): a
+ * non-null field left unset fails the handler.
+ */
+function assertRequiredFields(scope: Scope, entityType: string, id: string, row: Record<string, unknown>) {
+  const refFields = scope.schema.entityRefFields[entityType] ?? [];
+  for (const [field, declared] of Object.entries(scope.schema.entityFieldTypes[entityType] ?? {})) {
+    if (!declared.required || declared.derivedFrom || field === "id") continue;
+    const value = row[refFields.includes(field) ? `${field}_id` : field];
+    if (value === undefined || value === null) {
+      throw new Error(`Entity ${entityType}[${id}]: missing value for non-nullable field \`${field}\``);
+    }
+  }
+}
+
 function registerWrite(scope: Scope, entityType: string, id: string, row: Record<string, unknown> | null) {
   scope.writes ??= new Map();
   scope.writes.set(registerStoreKey(scope.dataSource.chainId, entityType, id), row);
@@ -1520,7 +1536,9 @@ const storeImpl = {
     // A file data source's first write of an id is a new entity of its own,
     // whatever a chain handler stored under the same id.
     const stored = own === false ? undefined : table.getSync(id);
-    table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
+    const merged = stored ? { ...stored, ...row } : row;
+    assertRequiredFields(scope, entityType, id, merged);
+    table.set(stored ? merged : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
     id = withoutNul(id);

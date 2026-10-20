@@ -73,7 +73,8 @@ export function handleTransfer(event: any): void {
   // elsewhere: keys compare by value.
   const parsers = new TypedMap<Bytes, string>();
   parsers.set(Bytes.fromHexString("0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"), "Sync");
-  seen.setString("lastName", parsers.get(last.topics[0])!);
+  const lastName = parsers.get(last.topics[0]);
+  seen.setString("lastName", lastName ? lastName : "unparsed");
   store.set("Seen", event.logIndex.toString(), seen);
 }
 `,
