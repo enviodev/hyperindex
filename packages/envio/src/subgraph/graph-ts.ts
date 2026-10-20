@@ -187,8 +187,9 @@ export class ByteArray extends Uint8Array {
   static fromU64(value: bigint): ByteArray {
     return ByteArray.fromI64(value);
   }
+  // graph-ts builds it as `ByteArray.fromI32(0)`: four zero bytes.
   static empty(): ByteArray {
-    return new ByteArray(0);
+    return ByteArray.fromI32(0);
   }
   toHex(): string {
     return this.toHexString();
@@ -273,7 +274,7 @@ export class Bytes extends ByteArray {
     return new Bytes(ByteArray.fromBigInt(value));
   }
   static empty(): Bytes {
-    return new Bytes(0);
+    return new Bytes(ByteArray.empty());
   }
 }
 
