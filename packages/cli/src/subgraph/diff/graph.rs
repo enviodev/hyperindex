@@ -2,7 +2,7 @@
 //! `_meta`, its collection names, every id of a type, and entities by id.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +21,9 @@ pub struct GraphClient {
     pub url: String,
     headers: reqwest::header::HeaderMap,
     permits: Arc<Semaphore>,
+    /// Requests allowed in flight: `--concurrency`, one fewer after each 429
+    /// down to one.
+    in_flight_limit: AtomicUsize,
     max_retries: u32,
     requests: AtomicU64,
 }
@@ -80,6 +83,7 @@ impl GraphClient {
             url: url.to_string(),
             headers: header_map,
             permits: Arc::new(Semaphore::new(concurrency.max(1))),
+            in_flight_limit: AtomicUsize::new(concurrency.max(1)),
             // With the backoff capped at 30s this waits out about a minute and a
             // half, which shared-key public endpoints' rate windows need.
             max_retries: 8,
@@ -94,9 +98,10 @@ impl GraphClient {
     /// Runs one query and returns its `data`. Rate limits, gateway hiccups and
     /// timeouts are retried with backoff; a GraphQL error is returned as is.
     pub async fn query(&self, query: &str) -> Result<Value> {
-        let _permit = self.permits.acquire().await.expect("never closed");
         let mut attempt = 0;
         loop {
+            let permit = self.permits.acquire().await.expect("never closed");
+            let mut forget_permit = false;
             self.requests.fetch_add(1, Ordering::Relaxed);
             let response = self
                 .http
@@ -121,8 +126,13 @@ impl GraphClient {
                         .and_then(|value| value.trim().parse::<u64>().ok())
                         .map(Duration::from_secs);
                     let body = response.text().await.unwrap_or_default();
-                    let transient = status.as_u16() == 429 || status.is_server_error();
+                    let rate_limited = status.as_u16() == 429;
+                    let transient = rate_limited || status.is_server_error();
                     if transient && attempt < self.max_retries {
+                        // A rate limit on requests in parallel refuses them
+                        // again when they retry together: keep one fewer in
+                        // flight from now on.
+                        forget_permit = rate_limited && self.shrink_in_flight_limit();
                         retry_after
                     } else if !status.is_success() && !looks_like_graphql(&body) {
                         return Err(anyhow!(
@@ -141,12 +151,27 @@ impl GraphClient {
                     }
                 }
             };
+            // Waiting out the backoff doesn't hold a request's place.
+            if forget_permit {
+                permit.forget();
+            } else {
+                drop(permit);
+            }
             let backoff = retry_after
                 .unwrap_or_else(|| Duration::from_millis(500 * 2u64.pow(attempt)))
                 .min(Duration::from_secs(30));
             tokio::time::sleep(backoff).await;
             attempt += 1;
         }
+    }
+
+    /// One fewer request in flight, unless only one is left.
+    fn shrink_in_flight_limit(&self) -> bool {
+        self.in_flight_limit
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |limit| {
+                (limit > 1).then(|| limit - 1)
+            })
+            .is_ok()
     }
 
     pub async fn meta(&self) -> Result<Meta> {
@@ -657,6 +682,47 @@ pub mod tests {
             .await
             .unwrap();
         assert_eq!((ids.ids.len(), ids.complete), (2000, false));
+    }
+
+    // openPetition's self-hosted graph-node sits behind an nginx rate limit
+    // that answers 429 to requests in parallel: a client keeping four in
+    // flight retried them in lockstep until a type gave up ("couldn't
+    // compare"). After a 429 the client asks one fewer at a time.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn asks_fewer_at_a_time_once_rate_limited() {
+        use std::sync::atomic::AtomicUsize;
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let counter = in_flight.clone();
+        let mock = mock_graph(move |_| {
+            let concurrent = counter.fetch_add(1, Ordering::SeqCst) > 0;
+            if !concurrent {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            counter.fetch_sub(1, Ordering::SeqCst);
+            if concurrent {
+                (429, "<html>429 Too Many Requests</html>".to_string())
+            } else {
+                (200, json!({"data": {"ok": true}}).to_string())
+            }
+        })
+        .await;
+        let mut client = GraphClient::new(&mock.url, &[], 4, Duration::from_secs(5)).unwrap();
+        client.max_retries = 3;
+        let queries: Vec<String> = (0..8).map(|i| format!("{{ ok{i}: ok }}")).collect();
+        let answers =
+            futures_util::future::join_all(queries.iter().map(|query| client.query(query))).await;
+        // Three of the first four are refused; from then on one is asked at a
+        // time, so nothing else is.
+        assert_eq!(
+            (
+                answers
+                    .into_iter()
+                    .map(|answer| answer.map_err(|err| err.to_string()))
+                    .collect::<Vec<_>>(),
+                client.requests()
+            ),
+            (vec![Ok(json!({"ok": true})); 8], 11)
+        );
     }
 
     #[tokio::test]

@@ -139,7 +139,7 @@ pub struct SubgraphDiffArgs {
     #[arg(long, default_value_t = 0)]
     pub max_field_mismatches: usize,
 
-    ///Requests in flight per endpoint
+    ///Requests in flight per endpoint (one fewer after each HTTP 429, down to one)
     #[arg(long, default_value_t = 4)]
     pub concurrency: usize,
 

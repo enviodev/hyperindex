@@ -538,7 +538,7 @@ Exit code: 0 when everything matches within the tolerances, 1 on a mismatch, 2 w
 * `--max-field-mismatches <MAX_FIELD_MISMATCHES>` — Allowed sampled field mismatches, across all types
 
   Default value: `0`
-* `--concurrency <CONCURRENCY>` — Requests in flight per endpoint
+* `--concurrency <CONCURRENCY>` — Requests in flight per endpoint (one fewer after each HTTP 429, down to one)
 
   Default value: `4`
 * `--max-entities <MAX_ENTITIES>` — Stop listing a type's reference ids after this many (the count is then a lower bound and the type is inconclusive unless ours falls short of it). 0 lists them all
