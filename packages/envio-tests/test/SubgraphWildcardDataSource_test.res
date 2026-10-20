@@ -2,7 +2,9 @@
 // on graph-node — ENS's `Resolver` is the case: one data source for every
 // resolver anyone deploys. Translated as an address-less contract with nothing
 // to register its addresses, it never matched anything, and every one of its
-// handlers silently ran zero times.
+// handlers silently ran zero times. Its `dataSource.address()` is empty, as
+// graph-node's DataSourceDetails holds `ds.address().unwrap_or_default()`; the
+// emitter is `event.address`.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
@@ -122,12 +124,12 @@ describe("a data source without an address", () => {
     t.expect((await indexer.Addr.getAll()).sort((x, y) => x.id.localeCompare(y.id))).toEqual([
       {
         id: "any:0x4444444444444444444444444444444444444444",
-        resolver: "0x4444444444444444444444444444444444444444",
+        resolver: "0x",
         a,
       },
       {
         id: "any:0x5555555555555555555555555555555555555555",
-        resolver: "0x5555555555555555555555555555555555555555",
+        resolver: "0x",
         a,
       },
     ]);

@@ -49,6 +49,8 @@ export type Scope = {
     network: string;
     /** The manifest's `context` entries, as `dataSource.context()` serves them. */
     context: Record<string, { type: string; data: string }>;
+    /** A static data source without `source.address`: `address` is the emitter's, `dataSource.address()` none. */
+    wildcard?: boolean;
   };
   /** Addresses already registered this round, so replays stay idempotent. */
   registered: Set<string>;

@@ -1245,6 +1245,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           chainId: event.chainId,
           network: source.network ?? "",
           context: contextOf(event.chainId, source.name, event.srcAddress) ?? source.context ?? {},
+          wildcard: !source.isTemplate && !source.address,
         },
         registered: new Set(),
         blockNumber: event.block.number,

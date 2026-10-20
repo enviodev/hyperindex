@@ -2883,11 +2883,13 @@ function contextValue(kind: string, data: string, key: string): Value {
 }
 
 const dataSourceImpl = {
+  // graph-node's DataSourceDetails holds `ds.address().unwrap_or_default()`:
+  // nothing for a data source without `source.address`, and a file data
+  // source's source text (offchain.rs `Source::address`).
   address(): Address {
     const scope = currentScope();
-    if (scope.file) {
-      throw unsupported("dataSource.address() in a file data source, which has no contract", scope.dataSource.name);
-    }
+    if (scope.file) return new Address(ByteArray.fromUTF8(scope.dataSource.address));
+    if (scope.dataSource.wildcard) return new Address(new Uint8Array(0));
     return Address.fromString(scope.dataSource.address);
   },
   network(): string {
