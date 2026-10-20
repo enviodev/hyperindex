@@ -5,7 +5,9 @@
 // DailyActivity's swapCount — saves those zeros on graph-node, and a fresh
 // instance saved over a stored entity resets the fields it didn't set. Its
 // graph-cli no longer installs (a dead git dependency), so envio writes the
-// generated code itself, and has to write it the way that version did.
+// generated code itself, and has to write it the way that version did. A
+// Bytes field's zero is `Bytes.empty()`, which graph-ts 0.22.1 already builds
+// as `ByteArray.fromI32(0)`: four zero bytes.
 
 let manifest = `
 specVersion: 0.0.4
@@ -112,11 +114,11 @@ describe("an entity constructor from graph-cli 0.22-0.29", () => {
     t.expect([shape(first), shape(second)]).toEqual([
       {
         id: "a", pool_id: "", name: "first", swapCount: 0, volume: 0n, fees: "0",
-        owner: "", active: false, tokens: [], sponsor: null,
+        owner: "00000000", active: false, tokens: [], sponsor: null,
       },
       {
         id: "a", pool_id: "", name: "", swapCount: 2, volume: 0n, fees: "0",
-        owner: "", active: false, tokens: [], sponsor: null,
+        owner: "00000000", active: false, tokens: [], sponsor: null,
       },
     ]);
   });
