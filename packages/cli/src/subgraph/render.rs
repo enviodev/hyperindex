@@ -953,6 +953,11 @@ fn stem(path: &str) -> String {
 /// differs in from the other scripts' (`config/<network>.json`,
 /// `config/<network>/config.json`), else its view's file name.
 fn literal_networks(plans: &[&Plan]) -> Vec<String> {
+    // Seamless renders every network from one view (`generate-manifest-base`,
+    // `generate-manifest-ethereum`): the scripts' names tell them apart.
+    if let Some(suffixes) = script_suffixes(plans) {
+        return suffixes;
+    }
     let views: Vec<Vec<String>> = plans
         .iter()
         .map(|plan| {
@@ -976,6 +981,87 @@ fn literal_networks(plans: &[&Plan]) -> Vec<String> {
         .map(|view| match differing.as_slice() {
             [index] => stem(&view[*index]),
             _ => stem(&view.join("/")),
+        })
+        .collect()
+}
+
+/// What tells per-network scripts apart once their common prefix, up to a
+/// `:` or `-`, is gone (`prepare:matic` → `matic`), when that is distinct
+/// for each.
+fn script_suffixes(plans: &[&Plan]) -> Option<Vec<String>> {
+    if plans.len() < 2 {
+        return None;
+    }
+    let first = plans[0].script.as_str();
+    let mut common = first.len();
+    for plan in &plans[1..] {
+        common = common.min(
+            first
+                .chars()
+                .zip(plan.script.chars())
+                .take_while(|(a, b)| a == b)
+                .count(),
+        );
+    }
+    let prefix_end = first[..common].rfind([':', '-'])? + 1;
+    let suffixes: Vec<String> = plans
+        .iter()
+        .map(|plan| plan.script[prefix_end..].to_string())
+        .collect();
+    let distinct: BTreeSet<&String> = suffixes.iter().collect();
+    (distinct.len() == suffixes.len() && suffixes.iter().all(|suffix| !suffix.is_empty()))
+        .then_some(suffixes)
+}
+
+/// The other scripts of the chosen network that are standard renders too
+/// (Seamless' `generate-addresses-base` beside `generate-manifest-base`):
+/// their steps, inlined. A script with any other step is left out.
+fn sibling_renders(plan: &Plan, network: &str, target: &Path) -> Vec<(String, Vec<Step>)> {
+    let all = package_scripts(&plan.dir);
+    let scripts: BTreeMap<String, String> = all.iter().cloned().collect();
+    all.iter()
+        .filter(|(name, _)| {
+            *name != plan.script
+                && [":", "-"]
+                    .iter()
+                    .any(|separator| name.ends_with(&format!("{separator}{network}")))
+        })
+        .filter_map(|(name, script)| {
+            let mut inlined = Vec::new();
+            let steps = inline_scripts(
+                &scripts,
+                parse_steps(script)?,
+                &BTreeMap::new(),
+                0,
+                &mut inlined,
+            );
+            let mut writes = false;
+            for stage in steps.iter().flat_map(|step| &step.stages) {
+                match classify(&stage.words) {
+                    Command::Graph => break,
+                    Command::Mustache { .. }
+                    | Command::Yaml2Json(_)
+                    | Command::Cat(_)
+                    | Command::Echo(_)
+                    | Command::Copy { .. }
+                    | Command::NoOp => {}
+                    Command::RunScript { .. } | Command::Other(_) => return None,
+                }
+                for (_, word) in &stage.redirects {
+                    if same_path(&plan.dir, word, target) {
+                        return None;
+                    }
+                    writes = true;
+                }
+                if let Command::Mustache {
+                    output: Some(_), ..
+                }
+                | Command::Copy { .. } = classify(&stage.words)
+                {
+                    writes = true;
+                }
+            }
+            writes.then(|| (name.clone(), steps))
         })
         .collect()
 }
@@ -1826,6 +1912,19 @@ pub fn render_manifest(
             choice.plan.script
         )
     })?;
+    let mut inlined = choice.plan.inlined.clone();
+    if choice.hole_value.is_none() {
+        for (name, steps) in sibling_renders(choice.plan, &choice.network, &target) {
+            // A sibling that can't render (its template isn't there) is the
+            // user's to run; the manifest is rendered either way.
+            let before = run.files.clone();
+            if run.steps(&steps).is_ok() {
+                inlined.push(name);
+            } else {
+                run.files = before;
+            }
+        }
+    }
     let Some(manifest) = run.files.get(&target).cloned() else {
         return Ok(None);
     };
@@ -1839,7 +1938,7 @@ pub fn render_manifest(
 
     Ok(Some(Rendered {
         script: choice.plan.script.clone(),
-        inlined: choice.plan.inlined.clone(),
+        inlined,
         network: choice.network.clone(),
         template: choice.plan.template.clone(),
         view: choice.view.clone(),

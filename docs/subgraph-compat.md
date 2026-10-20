@@ -579,8 +579,11 @@ moonwell renders in `make generate-config`.
 
 - The network picks the view: the variable's value (`config/<network>.yaml`,
   `config/<network>/config.json`, every file that matches), or, for one script
-  per network, the path component their views differ in (`prepare:<network>`
-  also matches by name). Unset, it is the script's own default
+  per network, what tells the scripts' names apart past their common prefix
+  (`prepare:<network>`, `generate-manifest-<network>`), else the path
+  component their views differ in. The chosen network's other scripts that
+  are standard renders run too (Seamless' `generate-addresses-base` writes
+  `src/constants/addresses.ts` beside `generate-manifest-base`). Unset, it is the script's own default
   (`${NETWORK:-zora-testnet}`), else the only network there is; else the error
   lists them.
 - The rendering is mustache.js 4.x's, standalone-line stripping and HTML

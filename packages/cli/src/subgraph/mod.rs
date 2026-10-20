@@ -3659,6 +3659,79 @@ type Renewal implements Event @entity {
         );
     }
 
+    // Seamless' leverage-tokens subgraph: `"generate-manifest-base": "mustache
+    // ./networks.json ./templates/8453/subgraph.template.yaml > ./subgraph.yaml"`
+    // and `"generate-addresses-base": "mustache ./networks.json
+    // ./templates/8453/addresses.template.ts > ./src/constants/addresses.ts"`,
+    // the same per network. One view for every network, so the networks are
+    // the scripts' names; and the network's other render script writes what
+    // the mappings import beside the manifest.
+    #[test]
+    fn names_networks_after_their_scripts_and_runs_their_sibling_renders() {
+        let dir = tempdir::TempDir::new("envio-subgraph-render-siblings").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::remove_file(root.join("subgraph.yaml")).unwrap();
+        for (chain, network) in [("8453", "base"), ("1", "ethereum")] {
+            fs::create_dir_all(root.join(format!("templates/{chain}"))).unwrap();
+            fs::write(
+                root.join(format!("templates/{chain}/subgraph.template.yaml")),
+                gravity_template()
+                    .replace(
+                        "{{network}}",
+                        network.replace("ethereum", "mainnet").as_str(),
+                    )
+                    .replace("{{gravity.", &format!("{{{{{network}.")),
+            )
+            .unwrap();
+            fs::write(
+                root.join(format!("templates/{chain}/addresses.template.ts")),
+                format!("export const GRAVITY = \"{{{{{network}.address}}}}\";\n"),
+            )
+            .unwrap();
+        }
+        fs::write(
+            root.join("networks.json"),
+            r#"{"base": {"address": "0x00000000000014aA86C5d3c41765bb24e11bd701", "startBlock": 1},
+"ethereum": {"address": "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", "startBlock": 6175244}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "generate-manifest-base": "mustache ./networks.json ./templates/8453/subgraph.template.yaml > ./subgraph.yaml",
+  "generate-manifest-ethereum": "mustache ./networks.json ./templates/1/subgraph.template.yaml > ./subgraph.yaml",
+  "generate-addresses-base": "mustache ./networks.json ./templates/8453/addresses.template.ts > ./src/constants/addresses.ts",
+  "generate-addresses-ethereum": "mustache ./networks.json ./templates/1/addresses.template.ts > ./src/constants/addresses.ts",
+  "codegen": "rm -rf ./generated && graph codegen"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let unset = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+        let picked = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                unset.contains("(base, ethereum)"),
+                chain_of(&picked).0,
+                fs::read_to_string(root.join("src/constants/addresses.ts")).ok(),
+            ),
+            (
+                true,
+                8453,
+                Some(
+                    "export const GRAVITY = \"0x00000000000014aA86C5d3c41765bb24e11bd701\";\n"
+                        .to_string()
+                ),
+            )
+        );
+    }
+
     // beefy's `"codegen": "rm -Rf generated && graph codegen"`: a step before
     // `graph codegen` that can't write a manifest isn't the manifest's
     // writer. envio ran it and blamed it; the error is about the script that
