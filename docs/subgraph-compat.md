@@ -406,6 +406,13 @@ classes call `DataSource.create`. Consequences:
   library spells differently: an i64 is a bigint, so `+ - * % /` with an
   integer on the other side stay i64 arithmetic (`timestamp.toI64() * 1000`),
   `Date` takes and sets an i64, and `DataView` has `setUint64`/`getUint64`.
+  `new Map`/`new Set` build AssemblyScript's own (`keys()`/`values()` arrays,
+  `map[key]` as `get`/`set`), a bit operation on a u32 stays unsigned and one
+  on an i64 runs in 64 bits, `new StaticArray<u32>(n)` is a typed array (stores
+  wrap), and memory builtins work over buffers: `x.dataStart` and
+  `changetype<usize>(x.buffer)` are pointers that `load<T>`, `store<T>`,
+  `memory.copy`/`fill`, `bswap`, `rotl`/`rotr`, `min`/`max` take — a raw
+  integer address is refused.
   `matchstick-as` (which re-exports graph-ts' `log`) resolves to the shim too.
   A handler's event is built as the generated class it declares, wherever the
   handler is written — the manifest's file may only re-export it.

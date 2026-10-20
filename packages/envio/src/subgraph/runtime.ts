@@ -68,6 +68,10 @@ import {
   AS_SET,
   AsMap,
   AsSet,
+  Pointer,
+  builtinMax,
+  builtinMin,
+  memory as assemblyScriptMemory,
   EVENT_CLASSES_EXPORT,
   MODULE_INIT,
   OPERATORS_HELPER,
@@ -309,6 +313,21 @@ function installResolveHook(root: string) {
   globals[RETAG_EACH_HELPER] ??= retagEach;
   globals[AS_MAP] ??= AsMap;
   globals[AS_SET] ??= AsSet;
+  // AssemblyScript's memory builtins, over the buffers a typed array's
+  // `dataStart` points into.
+  globals.memory ??= assemblyScriptMemory;
+  globals.min ??= builtinMin;
+  globals.max ??= builtinMax;
+  globals.unchecked ??= (value: unknown) => value;
+  const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
+  if (!Object.getOwnPropertyDescriptor(typedArray, "dataStart")) {
+    Object.defineProperty(typedArray, "dataStart", {
+      get(this: Uint8Array) {
+        return new Pointer(this.buffer, this.byteOffset);
+      },
+      configurable: true,
+    });
+  }
   globals.assert ??= (value: unknown, message?: string) => {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;

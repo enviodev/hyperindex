@@ -37,7 +37,10 @@
 //! It fails loudly: a mapping that can't be rewritten can't be trusted to
 //! compute what it computes under `asc`.
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use anyhow::{anyhow, Result};
 use oxc::{
@@ -960,6 +963,8 @@ struct Locals {
     /// Names declared `u32`: its own parameters and locals, and the module's
     /// globals this function doesn't rebind.
     unsigned: HashSet<String>,
+    /// Names declared with an integer type, by the type, likewise.
+    integers: HashMap<String, String>,
 }
 
 /// What the module's top level declares, for every function in it.
@@ -971,6 +976,25 @@ struct ModuleNames {
     unsigned: HashSet<String>,
     /// Functions declared to return a `u32`.
     unsigned_functions: HashSet<String>,
+    /// Globals declared with an integer type, by the type.
+    integers: HashMap<String, String>,
+    /// Every top-level function's name.
+    functions: HashSet<String>,
+}
+
+/// The integer type an annotation names, if it names one.
+fn integer_annotation(annotation: Option<&TSTypeAnnotation<'_>>) -> Option<String> {
+    let TSType::TSTypeReference(reference) = &annotation?.type_annotation else {
+        return None;
+    };
+    let TSTypeName::IdentifierReference(name) = &reference.type_name else {
+        return None;
+    };
+    matches!(
+        name.name.as_str(),
+        "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize" | "usize"
+    )
+    .then(|| name.name.to_string())
 }
 
 fn is_u32(annotation: Option<&TSTypeAnnotation<'_>>) -> bool {
@@ -1074,10 +1098,14 @@ fn module_names(program: &Program<'_>) -> ModuleNames {
                     if is_u32(declarator.type_annotation.as_deref()) {
                         names.unsigned.insert(id.name.to_string());
                     }
+                    if let Some(ty) = integer_annotation(declarator.type_annotation.as_deref()) {
+                        names.integers.insert(id.name.to_string(), ty);
+                    }
                 }
             }
             Declaration::FunctionDeclaration(func) => {
                 if let Some(id) = &func.id {
+                    names.functions.insert(id.name.to_string());
                     if is_u32(func.return_type.as_deref()) {
                         names.unsigned_functions.insert(id.name.to_string());
                     }
@@ -1100,6 +1128,7 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
         fresh: HashSet<String>,
         assigned: HashSet<String>,
         unsigned: HashSet<String>,
+        integers: HashMap<String, String>,
     }
     impl<'a> Visit<'a> for Scan {
         fn visit_binding_identifier(&mut self, id: &BindingIdentifier<'a>) {
@@ -1109,6 +1138,9 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
             if let BindingPattern::BindingIdentifier(id) = &param.pattern {
                 if is_u32(param.type_annotation.as_deref()) {
                     self.unsigned.insert(id.name.to_string());
+                }
+                if let Some(ty) = integer_annotation(param.type_annotation.as_deref()) {
+                    self.integers.insert(id.name.to_string(), ty);
                 }
             }
             walk::walk_formal_parameter(self, param);
@@ -1120,6 +1152,9 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
                 }
                 if is_u32(declarator.type_annotation.as_deref()) {
                     self.unsigned.insert(id.name.to_string());
+                }
+                if let Some(ty) = integer_annotation(declarator.type_annotation.as_deref()) {
+                    self.integers.insert(id.name.to_string(), ty);
                 }
             }
             walk::walk_variable_declarator(self, declarator);
@@ -1155,10 +1190,22 @@ fn locals(func: &Function<'_>, module: &ModuleNames) -> Locals {
             .filter(|name| scan.bound.get(*name) == Some(&1))
             .cloned(),
     );
+    let mut integers: HashMap<String, String> = module
+        .integers
+        .iter()
+        .filter(|(name, _)| !scan.bound.contains_key(*name))
+        .map(|(name, ty)| (name.clone(), ty.clone()))
+        .collect();
+    integers.extend(
+        scan.integers
+            .into_iter()
+            .filter(|(name, _)| scan.bound.get(name) == Some(&1)),
+    );
     Locals {
         fresh,
         literal,
         unsigned,
+        integers,
     }
 }
 
@@ -1367,6 +1414,122 @@ impl<'a> Rewrite<'a> {
         Expression::new_call_expression(span, callee, None, args, false, &self.ast)
     }
 
+    /// `load<T>(p)`, `store<T>(p, v)`, `bswap(x)`, `rotr(x, n)`, `rotl(x, n)`:
+    /// AssemblyScript builtins of a type, which the call names or its operand
+    /// has. The helper method and its arguments, the type as a string — for
+    /// `load` and `store` first, after the operands for the others.
+    fn memory_builtin(
+        &self,
+        call: &mut CallExpression<'a>,
+    ) -> Option<(&'static str, Vec<Expression<'a>>)> {
+        let Expression::Identifier(callee) = &call.callee else {
+            return None;
+        };
+        let method = match callee.name.as_str() {
+            "load" => "load",
+            "store" => "store",
+            "bswap" => "bswap",
+            "rotl" => "rotl",
+            "rotr" => "rotr",
+            _ => return None,
+        };
+        if self.classes.contains(callee.name.as_str())
+            || self.module_names.functions.contains(callee.name.as_str())
+        {
+            return None;
+        }
+        let named = call
+            .type_arguments
+            .as_ref()
+            .and_then(|arguments| arguments.params.first())
+            .and_then(|ty| match ty {
+                TSType::TSTypeReference(reference) => match &reference.type_name {
+                    TSTypeName::IdentifierReference(name) => Some(name.name.to_string()),
+                    _ => None,
+                },
+                TSType::TSBooleanKeyword(_) => Some("bool".to_string()),
+                _ => None,
+            });
+        if matches!(method, "load" | "store") && named.is_none() {
+            return None;
+        }
+        let ty = named.or_else(|| {
+            call.arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .and_then(|operand| self.integer_type(operand))
+        });
+        let text: &'a str = self.ast.allocator().alloc_str(ty.as_deref().unwrap_or(""));
+        let ty = Expression::new_string_literal(call.span, text, None, &self.ast);
+        let mut args: Vec<Expression<'a>> = call
+            .arguments
+            .iter_mut()
+            .map(|argument| argument.to_expression_mut().take_in(&self.ast))
+            .collect();
+        if matches!(method, "load" | "store") {
+            args.insert(0, ty);
+        } else {
+            while args.len() < if method == "bswap" { 1 } else { 2 } {
+                args.push(Expression::new_numeric_literal(
+                    call.span,
+                    0.0,
+                    None,
+                    oxc::syntax::number::NumberBase::Decimal,
+                    &self.ast,
+                ));
+            }
+            args.push(ty);
+        }
+        Some((method, args))
+    }
+
+    /// The integer type an operand has, as far as this pass can tell.
+    fn integer_type(&self, expr: &Expression<'a>) -> Option<String> {
+        match expr.without_parentheses() {
+            Expression::Identifier(id) => {
+                let name = id.name.as_str();
+                let declared = match self.locals.last() {
+                    Some(locals) => locals.integers.get(name),
+                    None => self.module_names.integers.get(name),
+                };
+                declared.cloned()
+            }
+            Expression::CallExpression(call) => match &call.callee {
+                Expression::StaticMemberExpression(member) => {
+                    let name = member.property.name.as_str();
+                    let helper = matches!(&member.object, Expression::Identifier(id) if id.name == OPERATORS_HELPER);
+                    if helper && matches!(name, "load" | "bswap" | "rotl" | "rotr") {
+                        let index = if name == "load" {
+                            0
+                        } else {
+                            call.arguments.len().saturating_sub(1)
+                        };
+                        match call.arguments.get(index)?.as_expression()? {
+                            Expression::StringLiteral(ty) if !ty.value.is_empty() => {
+                                Some(ty.value.to_string())
+                            }
+                            _ => None,
+                        }
+                    } else if helper && name.starts_with("as_") {
+                        Some(name.trim_start_matches("as_").to_string())
+                    } else if helper && name.ends_with("_u32") {
+                        Some("u32".to_string())
+                    } else {
+                        match name {
+                            "toU32" => Some("u32".to_string()),
+                            "toI32" => Some("i32".to_string()),
+                            "toU64" => Some("u64".to_string()),
+                            "toI64" => Some("i64".to_string()),
+                            _ => None,
+                        }
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn unsigned_name(&self, name: &str) -> bool {
         match self.locals.last() {
             Some(locals) => locals.unsigned.contains(name),
@@ -1500,6 +1663,28 @@ fn integer_changetype(call: &CallExpression<'_>) -> bool {
         ty.name.as_str(),
         "usize" | "isize" | "u64" | "i64" | "u32" | "i32" | "u16" | "i16" | "u8" | "i8"
     ))
+}
+
+/// The element type of `new StaticArray<T>(n)` when a typed array holds it:
+/// a number type up to 32 bits, or a float.
+fn static_array_element(new: &NewExpression<'_>) -> Option<&'static str> {
+    let TSType::TSTypeReference(reference) = new.type_arguments.as_ref()?.params.first()? else {
+        return None;
+    };
+    let TSTypeName::IdentifierReference(name) = &reference.type_name else {
+        return None;
+    };
+    Some(match name.name.as_str() {
+        "i8" => "i8",
+        "u8" => "u8",
+        "i16" => "i16",
+        "u16" => "u16",
+        "i32" | "isize" => "i32",
+        "u32" | "usize" => "u32",
+        "f32" => "f32",
+        "f64" => "f64",
+        _ => return None,
+    })
 }
 
 fn is_pure(expr: &Expression<'_>) -> bool {
@@ -1693,6 +1878,21 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
             }
             // AssemblyScript's std Map and Set aren't JavaScript's: `keys()`
             // is an array and `map[key]` an operator (std/assembly/map.ts).
+            // `new StaticArray<u32>(n)` holds u32s: a store wraps, as a typed
+            // array's does, and the elements start at zero.
+            Expression::NewExpression(new)
+                if matches!(&new.callee, Expression::Identifier(callee)
+                    if callee.name == "StaticArray" && !self.classes.contains("StaticArray"))
+                    && static_array_element(new).is_some()
+                    && new.arguments.len() == 1 =>
+            {
+                let element = static_array_element(new).expect("checked");
+                let span = new.span;
+                let text: &'a str = self.ast.allocator().alloc_str(element);
+                let element = Expression::new_string_literal(span, text, None, &self.ast);
+                let length = new.arguments[0].to_expression_mut().take_in(&self.ast);
+                *expr = self.operator(span, "static_array", [element, length]);
+            }
             Expression::NewExpression(new) => {
                 let Expression::Identifier(callee) = &mut new.callee else {
                     return;
@@ -1754,6 +1954,19 @@ impl<'a> VisitMut<'a> for Rewrite<'a> {
                         &self.ast,
                     );
                     *expr = self.call(span, RETAG_EACH_HELPER, [class, value]);
+                    return;
+                }
+                if let Some((method, args)) = self.memory_builtin(call) {
+                    let span = call.span;
+                    let object = Expression::new_identifier(span, OPERATORS_HELPER, &self.ast);
+                    let property = IdentifierName::new(span, method, &self.ast);
+                    let callee = Expression::new_static_member_expression(
+                        span, object, property, false, &self.ast,
+                    );
+                    let args =
+                        ArenaVec::from_iter_in(args.into_iter().map(Argument::from), &self.ast);
+                    *expr =
+                        Expression::new_call_expression(span, callee, None, args, false, &self.ast);
                     return;
                 }
                 if integer_changetype(call) {
@@ -2212,6 +2425,28 @@ export function f(tick, signed) {
 \tlet low = __envio_op.and_u32(word([]), mask);
 \tmask = __envio_op.shr_u32(mask, 1);
 \tlet plain = __envio_op.shr(signed, 4);
+}
+"
+        );
+    }
+
+    // A `load`/`store` the module binds itself (graph-ts' `store`) is its own.
+    #[test]
+    fn names_the_type_of_a_memory_builtin() {
+        assert_eq!(
+            js("export function f(x: Uint8Array, u: u64, v: u32): void {
+  let w = bswap(load<u32>(changetype<usize>(x.buffer) + 4));
+  store<u64>(x.dataStart, bswap(u));
+  let r = rotr(v, 7);
+  let words = new StaticArray<u32>(16);
+  let names = new StaticArray<string>(2);
+}"),
+            "export function f(x, u, v) {
+\tlet w = __envio_op.bswap(__envio_op.load(\"u32\", __envio_op.add(__envio_op.address(x.buffer), 4)), \"u32\");
+\t__envio_op.store(\"u64\", x.dataStart, __envio_op.bswap(u, \"u64\"));
+\tlet r = __envio_op.rotr(v, 7, \"u32\");
+\tlet words = __envio_op.static_array(\"u32\", 16);
+\tlet names = new StaticArray(2);
 }
 "
         );

@@ -130,8 +130,136 @@ const objectAddresses = new WeakMap<object, number>();
 const stringAddresses = new Map<string, number>();
 let lastAddress = 0;
 const nextAddress = () => (lastAddress += 16);
+/**
+ * An AssemblyScript pointer into a buffer — `x.dataStart`,
+ * `changetype<usize>(x.buffer)` — for `load`, `store` and `memory.copy`, and
+ * pointer arithmetic on it. As a number it is a stable address of its own.
+ */
+export class Pointer {
+  constructor(
+    readonly buffer: ArrayBufferLike,
+    readonly offset: number,
+  ) {}
+  at(delta: number): Pointer {
+    return new Pointer(this.buffer, this.offset + delta);
+  }
+  valueOf(): number {
+    return objectAddress(this.buffer as object) + this.offset;
+  }
+}
+
+const isBuffer = (value: unknown): value is ArrayBufferLike =>
+  value instanceof ArrayBuffer || (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer);
+
+function pointer(value: unknown, what: string): Pointer {
+  if (value instanceof Pointer) return value;
+  throw new Error(
+    `Envio Subgraph can't ${what} at a raw memory address (${String(value)}): only a pointer into a buffer, ` +
+      "from x.dataStart or changetype<usize>(x.buffer), addresses memory here.",
+  );
+}
+
+type Width = { size: number; get: (view: DataView, at: number) => unknown; set: (view: DataView, at: number, value: unknown) => void };
+const number = (value: unknown) => Number(typeof value === "boolean" ? Number(value) : value);
+const big = (value: unknown) => (typeof value === "bigint" ? value : BigInt(Math.trunc(number(value))));
+const WIDTHS: Record<string, Width> = {
+  i8: { size: 1, get: (v, at) => v.getInt8(at), set: (v, at, x) => v.setInt8(at, number(x)) },
+  u8: { size: 1, get: (v, at) => v.getUint8(at), set: (v, at, x) => v.setUint8(at, number(x)) },
+  bool: { size: 1, get: (v, at) => v.getUint8(at) !== 0, set: (v, at, x) => v.setUint8(at, number(x) ? 1 : 0) },
+  i16: { size: 2, get: (v, at) => v.getInt16(at, true), set: (v, at, x) => v.setInt16(at, number(x), true) },
+  u16: { size: 2, get: (v, at) => v.getUint16(at, true), set: (v, at, x) => v.setUint16(at, number(x), true) },
+  i32: { size: 4, get: (v, at) => v.getInt32(at, true), set: (v, at, x) => v.setInt32(at, number(x), true) },
+  u32: { size: 4, get: (v, at) => v.getUint32(at, true), set: (v, at, x) => v.setUint32(at, number(x), true) },
+  i64: { size: 8, get: (v, at) => v.getBigInt64(at, true), set: (v, at, x) => v.setBigInt64(at, BigInt.asIntN(64, big(x)), true) },
+  u64: { size: 8, get: (v, at) => v.getBigUint64(at, true), set: (v, at, x) => v.setBigUint64(at, BigInt.asUintN(64, big(x)), true) },
+  f32: { size: 4, get: (v, at) => v.getFloat32(at, true), set: (v, at, x) => v.setFloat32(at, number(x), true) },
+  f64: { size: 8, get: (v, at) => v.getFloat64(at, true), set: (v, at, x) => v.setFloat64(at, number(x), true) },
+};
+WIDTHS.isize = WIDTHS.i32;
+WIDTHS.usize = WIDTHS.u32;
+
+function width(type: string): Width {
+  const found = WIDTHS[type];
+  if (!found) throw new Error(`Envio Subgraph can't load or store a ${type} in memory: only integer, float and bool values.`);
+  return found;
+}
+
+/** AssemblyScript's `memory` builtin, over the buffers pointers address. */
+export const memory = {
+  copy(destination: unknown, source: unknown, length: unknown): void {
+    const to = pointer(destination, "copy memory");
+    const from = pointer(source, "copy memory");
+    const count = number(length);
+    // TypedArray#set copies an overlapping range as memmove does.
+    new Uint8Array(to.buffer, to.offset, count).set(new Uint8Array(from.buffer, from.offset, count));
+  },
+  fill(destination: unknown, value: unknown, length: unknown): void {
+    const to = pointer(destination, "fill memory");
+    new Uint8Array(to.buffer, to.offset, number(length)).fill(number(value));
+  },
+};
+
+/** The bit width of an integer builtin's operand: its type, or its value. */
+function bitsOf(type: string, value: unknown): 16 | 32 | 64 {
+  if (type === "u16" || type === "i16") return 16;
+  if (type === "u64" || type === "i64") return 64;
+  if (type) return 32;
+  return typeof value === "bigint" ? 64 : 32;
+}
+const signed = (type: string) => type.startsWith("i");
+
+const bswap = (value: unknown, type = ""): unknown => {
+  const bits = bitsOf(type, value);
+  if (bits === 64) {
+    let rest = BigInt.asUintN(64, big(value));
+    let out = 0n;
+    for (let i = 0; i < 8; i++) {
+      out = (out << 8n) | (rest & 0xffn);
+      rest >>= 8n;
+    }
+    return signed(type) ? BigInt.asIntN(64, out) : out;
+  }
+  const v = number(value) >>> 0;
+  if (bits === 16) {
+    const swapped = ((v & 0xff) << 8) | ((v >>> 8) & 0xff);
+    return signed(type) ? (swapped << 16) >> 16 : swapped;
+  }
+  const swapped = (((v & 0xff) << 24) | ((v & 0xff00) << 8) | ((v >>> 8) & 0xff00) | (v >>> 24)) >>> 0;
+  return signed(type) ? swapped | 0 : swapped;
+};
+
+const rotate = (left: boolean) => (value: unknown, shift: unknown, type = ""): unknown => {
+  const bits = bitsOf(type, value);
+  if (bits === 64) {
+    const v = BigInt.asUintN(64, big(value));
+    const s = big(shift) & 63n;
+    const out = BigInt.asUintN(64, left ? (v << s) | (v >> ((64n - s) & 63n)) : (v >> s) | (v << ((64n - s) & 63n)));
+    return signed(type) ? BigInt.asIntN(64, out) : out;
+  }
+  const v = number(value) >>> 0;
+  const s = number(shift) & 31;
+  const out = (left ? (v << s) | (v >>> ((32 - s) & 31)) : (v >>> s) | (v << ((32 - s) & 31))) >>> 0;
+  return signed(type) ? out | 0 : out;
+};
+
+const TYPED_ARRAYS: Record<string, new (length: number) => ArrayLike<number>> = {
+  i8: Int8Array,
+  u8: Uint8Array,
+  i16: Int16Array,
+  u16: Uint16Array,
+  i32: Int32Array,
+  u32: Uint32Array,
+  f32: Float32Array,
+  f64: Float64Array,
+};
+
+/** AssemblyScript's generic `min`/`max` builtins. */
+export const builtinMin = (a: any, b: any) => (b < a ? b : a);
+export const builtinMax = (a: any, b: any) => (b > a ? b : a);
+
 const address = (value: unknown): unknown => {
   if (value === null || value === undefined) return 0;
+  if (isBuffer(value)) return new Pointer(value, 0);
   if (typeof value === "number" || typeof value === "bigint") return value;
   if (typeof value === "boolean") return value ? 1 : 0;
   if (typeof value === "string") {
@@ -140,10 +268,14 @@ const address = (value: unknown): unknown => {
     if (at === undefined) stringAddresses.set(value, (at = nextAddress()));
     return at;
   }
-  let at = objectAddresses.get(value as object);
-  if (at === undefined) objectAddresses.set(value as object, (at = nextAddress()));
-  return at;
+  return objectAddress(value as object);
 };
+
+function objectAddress(value: object): number {
+  let at = objectAddresses.get(value);
+  if (at === undefined) objectAddresses.set(value, (at = nextAddress()));
+  return at;
+}
 
 /**
  * `x as i32` and its narrower kin. A number or bigint wraps to the width; a
@@ -326,6 +458,9 @@ export class AsSet<T> extends Set<T> {
   }
 }
 
+const add = binary("plus", widened((a, b) => a + b));
+const sub = binary("minus", widened((a, b) => a - b));
+
 /**
  * graph-ts overloads the arithmetic and comparison operators on `BigInt`,
  * `BigDecimal` and `ByteArray`, and AssemblyScript calls the overload: a
@@ -334,8 +469,26 @@ export class AsSet<T> extends Set<T> {
  */
 export const operators = {
   recv: (receiver: any): any => receiver ?? nullReceiver,
-  add: binary("plus", widened((a, b) => a + b)),
-  sub: binary("minus", widened((a, b) => a - b)),
+  add: (a: unknown, b: unknown): unknown =>
+    a instanceof Pointer ? a.at(number(b)) : b instanceof Pointer ? b.at(number(a)) : add(a, b),
+  sub: (a: unknown, b: unknown): unknown =>
+    a instanceof Pointer
+      ? b instanceof Pointer
+        ? a.offset - b.offset
+        : a.at(-number(b))
+      : sub(a, b),
+  load: (type: string, at: unknown, offset: unknown = 0): unknown => {
+    const p = pointer(at, `load a ${type}`);
+    return width(type).get(new DataView(p.buffer), p.offset + number(offset));
+  },
+  store: (type: string, at: unknown, value: unknown, offset: unknown = 0): void => {
+    const p = pointer(at, `store a ${type}`);
+    width(type).set(new DataView(p.buffer), p.offset + number(offset), value);
+  },
+  static_array: (element: string, length: unknown): unknown => new TYPED_ARRAYS[element](number(length)),
+  bswap,
+  rotl: rotate(true),
+  rotr: rotate(false),
   mul: binary("times", widened((a, b) => a * b)),
   div: binary("div", integerDivision),
   rem: binary("mod", widened((a, b) => a % b)),
