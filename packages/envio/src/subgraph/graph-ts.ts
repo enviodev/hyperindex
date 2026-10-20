@@ -2907,7 +2907,9 @@ class EthereumEvent {
     this._address = value;
   }
   get logIndex(): BigInt_ {
-    return (this._logIndex ??= BigInt_.fromI32(this._raw.logIndex));
+    // graph-node builds it from the log's U256 index: minimal two's
+    // complement bytes, not an i32's four.
+    return (this._logIndex ??= new BigInt_(BigInt(this._raw.logIndex)));
   }
   set logIndex(value: BigInt_) {
     this._logIndex = value;
