@@ -156,6 +156,108 @@ export function declaredVersion(root: string, name: string): string | null {
   return null;
 }
 
+// --- the workspace's own packages -------------------------------------------------
+
+/** A workspace glob (`packages/*`, `subgraphs/**`, `apps/web`) as the directories it names under `root`. */
+function expandWorkspaceGlob(root: string, pattern: string): string[] {
+  const parts = pattern.replace(/^\.\//, "").replace(/\/$/, "").split("/").filter(Boolean);
+  let dirs = [root];
+  for (const part of parts) {
+    const next: string[] = [];
+    for (const dir of dirs) {
+      if (part === "**") {
+        // Any depth, as far as a monorepo nests its packages.
+        const queue = [{ dir, depth: 0 }];
+        while (queue.length > 0) {
+          const { dir: current, depth } = queue.shift()!;
+          next.push(current);
+          if (depth >= 4) continue;
+          for (const entry of safeReaddir(current)) {
+            if (entry !== "node_modules" && !entry.startsWith(".") && isDirectory(path.join(current, entry))) {
+              queue.push({ dir: path.join(current, entry), depth: depth + 1 });
+            }
+          }
+        }
+      } else if (part.includes("*")) {
+        const matcher = new RegExp(`^${part.split("*").map(escapeRegExp).join("[^/]*")}$`);
+        for (const entry of safeReaddir(dir)) {
+          if (entry !== "node_modules" && matcher.test(entry) && isDirectory(path.join(dir, entry))) {
+            next.push(path.join(dir, entry));
+          }
+        }
+      } else if (isDirectory(path.join(dir, part))) {
+        next.push(path.join(dir, part));
+      }
+    }
+    dirs = next;
+  }
+  return dirs;
+}
+
+function safeReaddir(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+function isDirectory(dir: string): boolean {
+  try {
+    return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** The globs of the workspace whose root is `dir`: package.json `workspaces` (npm, yarn) or pnpm-workspace.yaml. */
+function workspaceGlobs(dir: string): string[] | null {
+  const manifest = readJson(path.join(dir, "package.json"));
+  const declared = Array.isArray(manifest?.workspaces) ? manifest.workspaces : manifest?.workspaces?.packages;
+  if (Array.isArray(declared)) return declared.filter((glob: unknown): glob is string => typeof glob === "string");
+  let pnpm: string;
+  try {
+    pnpm = readFileSync(path.join(dir, "pnpm-workspace.yaml"), "utf8");
+  } catch {
+    return null;
+  }
+  const globs: string[] = [];
+  let inPackages = false;
+  for (const line of pnpm.split("\n")) {
+    if (/^packages\s*:/.test(line)) {
+      inPackages = true;
+      continue;
+    }
+    if (inPackages && /^\S/.test(line)) break;
+    const glob = inPackages ? line.match(/^\s*-\s*["']?([^"'#]+?)["']?\s*(?:#.*)?$/)?.[1] : undefined;
+    if (glob) globs.push(glob);
+  }
+  return globs;
+}
+
+/**
+ * The packages of the workspace `root` is in, by name: what a package
+ * manager links into node_modules, and what a failed install leaves
+ * unlinked. A name here is never fetched — the registry's package of that
+ * name (sushiswap's workspace has one called `const`) is someone else's.
+ */
+export function workspacePackages(root: string): Map<string, string> {
+  const packages = new Map<string, string>();
+  for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
+    const globs = workspaceGlobs(dir);
+    if (globs) {
+      for (const glob of globs.filter((glob) => !glob.startsWith("!"))) {
+        for (const packageDir of expandWorkspaceGlob(dir, glob)) {
+          const name = readJson(path.join(packageDir, "package.json"))?.name;
+          if (typeof name === "string" && !packages.has(name)) packages.set(name, packageDir);
+        }
+      }
+      return packages;
+    }
+    if (path.dirname(dir) === dir) return packages;
+  }
+}
+
 // --- the packages the mappings import -----------------------------------------
 
 const BARE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']([@\w][^"'\s]*)["']/g;
@@ -189,6 +291,7 @@ function resolvableFrom(fromDir: string, name: string): boolean {
  * imports only graph-ts.
  */
 export function missingMappingPackages(root: string, mappingFiles: string[]): string[] {
+  const workspace = workspacePackages(root);
   const queue = [...new Set(mappingFiles)].map((file) => path.resolve(root, file));
   const seen = new Set(queue);
   const missing = new Set<string>();
@@ -202,7 +305,7 @@ export function missingMappingPackages(root: string, mappingFiles: string[]): st
     }
     for (const [, specifier] of source.matchAll(BARE_IMPORT)) {
       const name = packageName(specifier);
-      if (name && !resolvableFrom(path.dirname(file), name)) missing.add(name);
+      if (name && !workspace.has(name) && !resolvableFrom(path.dirname(file), name)) missing.add(name);
     }
     for (const [, specifier] of source.matchAll(RELATIVE_IMPORT)) {
       const target = path.resolve(path.dirname(file), specifier);

@@ -617,6 +617,14 @@ that would write the manifest — that one is named in the error instead.
 Each step logs a line naming it (and the variables set) before it runs, and
 a failing step stops envio with the script's own error above it.
 
+**A workspace with nothing installed.** When the repo's install fails (graph-cli
+0.2x's vanished git dependencies), §6a's fetch supplies graph-cli and the npm
+packages the mappings import. A package of the repo's own workspace (package.json
+`workspaces`, or pnpm-workspace.yaml) is never fetched — the registry's
+package of that name is someone else's, as sushiswap's `const` is — and a
+mapping's import of it loads from the workspace: its `main`, else its
+`index.ts` or `assembly/index.ts`, as the package manager's link would.
+
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
 (CryptoPunks): it builds there and runs on hosted platforms, and graph-cli on

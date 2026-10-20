@@ -74,7 +74,7 @@ import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
 import { createHash } from "node:crypto";
 import { advanceRollup } from "./rollup.ts";
 import { graftBaseNotice } from "./graft.ts";
-import { fetchMappingPackages, missingMappingPackages } from "./toolchain.ts";
+import { fetchMappingPackages, missingMappingPackages, workspacePackages } from "./toolchain.ts";
 import { ensureGeneratedCode, generatedDir, missingGeneratedCode, typeCheckMappings } from "./graph-cli.ts";
 import { unknown, unsupported } from "./errors.ts";
 import { runSyncCounted } from "./stats.ts";
@@ -193,6 +193,39 @@ function onDiskPath(file: string): string | null {
   return matches.length === 1 ? path.join(dir, matches[0]!) : null;
 }
 
+let workspace: Map<string, string> | null = null;
+
+/**
+ * A bare import of a package of the project's own workspace, when nothing
+ * linked it into node_modules (the install failed): the file a package
+ * manager's link would have led to. Entry: package.json's `main`, else the
+ * `index.ts` an AssemblyScript library keeps at its root or in `assembly/`.
+ */
+function workspaceImport(specifier: string, parentURL: string | undefined): string | null {
+  if (!projectRoot || !parentURL?.startsWith(projectRoot)) return null;
+  workspace ??= workspacePackages(fileURLToPath(projectRoot));
+  const parts = specifier.split("/");
+  const name = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
+  const dir = workspace.get(name);
+  if (!dir) return null;
+  const subpath = specifier.slice(name.length).replace(/^\//, "");
+  const file = (base: string) =>
+    [base, `${base}.ts`, `${base}.js`, path.join(base, "index.ts"), path.join(base, "index.js")].find(
+      (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
+    );
+  if (subpath) return file(path.join(dir, subpath)) ?? null;
+  let main: unknown;
+  try {
+    main = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")).main;
+  } catch {}
+  return (
+    (typeof main === "string" ? file(path.join(dir, main)) : undefined) ??
+    file(path.join(dir, "index")) ??
+    file(path.join(dir, "assembly", "index")) ??
+    null
+  );
+}
+
 const caseWarned = new Set<string>();
 
 /**
@@ -308,6 +341,9 @@ function installResolveHook(root: string) {
             : null;
         if (caseMatched) return nextResolve(pathToFileURL(caseMatched).href, context);
         const bare = !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.includes(":");
+        const workspaceFile =
+          bare && error?.code === "ERR_MODULE_NOT_FOUND" ? workspaceImport(specifier, context?.parentURL) : null;
+        if (workspaceFile) return nextResolve(pathToFileURL(workspaceFile).href, context);
         let fetched;
         if (fetchedModulesParent && bare && error?.code === "ERR_MODULE_NOT_FOUND") {
           try {
