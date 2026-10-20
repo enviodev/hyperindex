@@ -49,7 +49,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Data source `endBlock` | past it the runtime runs none of that data source's handlers (graph-node's `has_expired`) while other data sources and template instances keep indexing; the chain's `end_block` is set only when every data source on the network has one and no template is on it (graph-node's `max_end_block` rule) | ✅ |
 | `network: mainnet` | `chains[].id` through a snapshot of The Graph's networks registry (ids and aliases; `scripts/sync-graph-networks.mjs`, drift reported in CI), then the slugs other hosts use for chains the registry lacks (`host_networks.json`: filecoin, plasma-mainnet, manta-pacific-*, story, fluent, …), then `evm-<chain id>`, then Envio's own chain names. A name none of these know (a self-hosted graph-node's own, `risechain`) is the chain `ENVIO_SUBGRAPH_RPC` serves, asked once by `eth_chainId` — graph-node binds a network name to the providers its operator configured for it and indexes whatever chain they serve. With no endpoint set, a name that spells a known one in another case or with `_` or camelCase (`hyperEVM`, `base_sepolia`, `baseSepolia`) is read as it, with a startup notice. A chain HyperSync doesn't serve indexes over `ENVIO_SUBGRAPH_RPC` (which then needs an archive node: Filecoin RPCs refuse logs older than ~2 weeks), with no HyperSync token; its block handlers' timestamps and headers and its `event.receipt.logs` come from that RPC alone, the blocks of a batch fetched concurrently | ✅ |
 | Event handlers (nameless sigs: `Transfer(indexed address,...)`) | human-readable sig with param names pulled from the ABI file + `onEvent` wrapper. An event the ABI gives more than three indexed parameters needs more topics than a log has, so graph-node never decodes a log as it and skips the handler; it is left out, with a startup warning | ✅ |
-| `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — the receipt-only ones are HyperSync fields (§6b); `receipt.logs` → §7 error on access | ⚠️ |
+| `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — from HyperSync, or from `eth_getTransactionReceipt` on a chain synced over RPC (§6b); `receipt.logs` from HyperSync's logs of the block, or the RPC receipt | ✅ |
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
@@ -494,14 +494,11 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
   is asked its `eth_chainId`, and one that serves another chain than the
   network's is refused, as graph-node refuses a provider whose chain doesn't
   match its network; one that doesn't answer is left to the runtime's retries.
-- **`receipt: true` + RPC: envio's standard behavior, inherited.** The
-  HyperSync-only receipt scalars aren't servable via RPC —
-  they're outside `RpcTransactionField`. Envio's existing validation already
-  rejects `for: sync` entries when those fields are selected;
-  `for: fallback` entries are accepted as in any envio project, with the
-  same documented degradation: if the fallback ever activates, the receipt
-  scalars can't be served during the fallback window. Subgraph mode adds no
-  special handling.
+- **`receipt: true` + RPC: envio's standard behavior, inherited.** envio's
+  RPC source reads the receipt scalars from `eth_getTransactionReceipt`, so a
+  chain synced over RPC (`for: sync`, or a fallback that took over) serves
+  them as HyperSync does; `event.receipt.logs` comes from the same receipt.
+  Subgraph mode adds no special handling.
 - **Contract calls fail lazily but clearly.** Whether mappings call
   contracts isn't statically knowable in general — except declared
   `eth_calls` (1.2.0), which are declared precisely for this: those
