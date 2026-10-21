@@ -37,8 +37,8 @@ let makeEventConfig = (
           Utils.magic: array<Internal.svmTransactionField> => array<string>
         ),
       ),
-      ~blockMaskFn=Svm.eventBlockFieldMask,
-      ~transactionMaskFn=Svm.eventTransactionFieldMask,
+      ~blockMaskFn=Svm.blockFieldMask,
+      ~transactionMaskFn=Svm.transactionFieldMask,
     ),
     accounts: [],
     args: JSON.Null,
@@ -179,6 +179,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~selection={
         onEventRegistrations: [(reg :> Internal.onEventRegistration)],
         dependsOnAddresses: true,
+        onBlockRegistrations: [],
       },
       ~retry=0,
       ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
@@ -299,8 +300,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~blockFields=eventConfig.fieldSelection.blockFields,
         ~transactionFields=eventConfig.fieldSelection.transactionFields,
         ~instructionFields=Utils.Set.fromArray(["args", "accounts"]),
-        ~blockMaskFn=Svm.eventBlockFieldMask,
-        ~transactionMaskFn=Svm.eventTransactionFieldMask,
+        ~blockMaskFn=Svm.blockFieldMask,
+        ~transactionMaskFn=Svm.transactionFieldMask,
       ),
     }
     let where = Some(
@@ -355,6 +356,7 @@ describe("SvmHyperSyncSource include_all_blocks", () => {
       ~selection={
         onEventRegistrations: [(makeReg() :> Internal.onEventRegistration)],
         dependsOnAddresses: true,
+        onBlockRegistrations: [],
       },
       ~retry=0,
       ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),

@@ -290,8 +290,8 @@ let resolveFieldSelection = (
     ~transactionFields=selectedTransactionFields->(
       Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
     ),
-    ~blockMaskFn=Evm.eventBlockFieldMask,
-    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+    ~blockMaskFn=Evm.blockFieldMask,
+    ~transactionMaskFn=Evm.transactionFieldMask,
   )
 }
 
@@ -425,10 +425,34 @@ let resolveInlineFieldSelection = (
   Internal.makeFieldSelection(
     ~blockFields,
     ~transactionFields,
-    ~blockMaskFn=Evm.eventBlockFieldMask,
-    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+    ~blockMaskFn=Evm.blockFieldMask,
+    ~transactionMaskFn=Evm.transactionFieldMask,
   )
 }
+
+// Resolve a block handler's `fields` option, the same shape `onEvent` takes but
+// with the block table alone to select from. The block's key comes with every
+// selection, so a selection of nothing else is no selection.
+let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t): option<float> =>
+  if fields === %raw(`undefined`) {
+    None
+  } else {
+    let registration = `\`indexer.${ecosystem.onBlockMethodName}("${name}")\``
+    validateFieldsShapeOrThrow(fields, ~registration, ~validKeys=["block"], ~shapeNoun="block")
+    let blockFields = parseFieldsOrThrow(
+      selectionList(fields, "block"),
+      ~valid=Utils.Set.fromArray(ecosystem.blockFields),
+      ~kind="block",
+      ~registration,
+    )
+    blockFields->Utils.Set.delete(ecosystem.blockKeyField)->ignore
+    if blockFields->Utils.Set.size === 0 {
+      None
+    } else {
+      blockFields->Utils.Set.add(ecosystem.blockKeyField)->ignore
+      Some(ecosystem.blockFieldMask(blockFields))
+    }
+  }
 
 // ============== Build complete EVM event config ==============
 
@@ -624,8 +648,8 @@ let resolveSvmInlineFieldSelection = (
     ~instructionFields,
     ~accountActivityFields,
     ~logFields,
-    ~blockMaskFn=Svm.eventBlockFieldMask,
-    ~transactionMaskFn=Svm.eventTransactionFieldMask,
+    ~blockMaskFn=Svm.blockFieldMask,
+    ~transactionMaskFn=Svm.transactionFieldMask,
   )
 }
 
@@ -646,8 +670,8 @@ let buildSvmInstructionEventConfig = (
   let fieldSelection = Internal.makeFieldSelection(
     ~blockFields=Utils.Set.fromArray(alwaysIncludedSvmBlockFields),
     ~transactionFields=Utils.Set.make(),
-    ~blockMaskFn=Svm.eventBlockFieldMask,
-    ~transactionMaskFn=Svm.eventTransactionFieldMask,
+    ~blockMaskFn=Svm.blockFieldMask,
+    ~transactionMaskFn=Svm.transactionFieldMask,
   )
   {
     name: instructionName,
@@ -888,8 +912,8 @@ let buildFuelEventConfig = (
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.fromArray(Fuel.blockFields),
       ~transactionFields=Utils.Set.fromArray(Fuel.transactionFields),
-      ~blockMaskFn=Fuel.eventBlockFieldMask,
-      ~transactionMaskFn=Fuel.eventTransactionFieldMask,
+      ~blockMaskFn=Fuel.blockFieldMask,
+      ~transactionMaskFn=Fuel.transactionFieldMask,
     ),
     kind: fuelKind,
   }

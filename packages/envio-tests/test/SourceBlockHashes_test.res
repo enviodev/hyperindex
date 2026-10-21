@@ -49,8 +49,8 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
       Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
     ),
     ~transactionFields=Utils.Set.make(),
-    ~blockMaskFn=Evm.eventBlockFieldMask,
-    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+    ~blockMaskFn=Evm.blockFieldMask,
+    ~transactionMaskFn=Evm.transactionFieldMask,
   ),
   sighash: pairCreatedTopic0,
   topicCount: 3,
@@ -93,6 +93,7 @@ let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Fact
 
 let makeSelection = (): FetchState.selection => {
   onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
+  onBlockRegistrations: [],
   dependsOnAddresses: true,
 }
 

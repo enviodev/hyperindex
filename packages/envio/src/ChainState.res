@@ -222,6 +222,13 @@ let makeInternal = (
     registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->ChainId.toString)
     ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
+  // A block handler without `_gte` counts its interval from the chain's start
+  // block. Spelled out here because a source matching blocks to handlers needs
+  // the origin, and the chain's start block is only resolved by now.
+  let onBlockRegistrations = onBlockRegistrations->Array.map(reg => {
+    ...reg,
+    startBlock: Some(reg.startBlock->Option.getOr(startBlock)),
+  })
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
@@ -760,7 +767,7 @@ type transactionGroups = {
 type blockGroups = {
   blockBlockNumbers: array<int>,
   blockMasks: array<float>,
-  blockItemGroups: array<array<Internal.eventItem>>,
+  blockHolderGroups: array<array<Internal.blockHolder>>,
 }
 
 // Walk `items` once to build both the transaction-store and block-store
@@ -777,7 +784,18 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
 
   let blockBlockNumbers = []
   let blockMasks = []
-  let blockItemGroups = []
+  let blockHolderGroups = []
+  let addBlockHolder = (holder, ~blockNumber, ~mask) => {
+    let last = blockHolderGroups->Array.length - 1
+    if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
+      blockHolderGroups->Array.getUnsafe(last)->Array.push(holder)
+      blockMasks->Array.setUnsafe(last, FieldMask.orMask(blockMasks->Array.getUnsafe(last), mask))
+    } else {
+      blockBlockNumbers->Array.push(blockNumber)
+      blockMasks->Array.push(mask)
+      blockHolderGroups->Array.push([holder])
+    }
+  }
 
   items->Array.forEach(item =>
     switch item {
@@ -815,24 +833,17 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
       | Some(_) => () // Simulate carries the block inline.
       | None =>
-        let mask = eventItem.onEventRegistration.fieldSelection.blockMask
-        let last = blockItemGroups->Array.length - 1
-        if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
-          blockItemGroups->Array.getUnsafe(last)->Array.push(eventItem)
-          blockMasks->Array.setUnsafe(
-            last,
-            FieldMask.orMask(blockMasks->Array.getUnsafe(last), mask),
-          )
-        } else {
-          blockBlockNumbers->Array.push(blockNumber)
-          blockMasks->Array.push(mask)
-          blockItemGroups->Array.push([eventItem])
-        }
+        eventItem.payload
+        ->Internal.payloadBlockHolder
+        ->addBlockHolder(~blockNumber, ~mask=eventItem.onEventRegistration.fieldSelection.blockMask)
       }
-    // onBlock items build their block from the handler's own block number, not
-    // from the stores - which is what lets the sources keep only the blocks and
-    // transactions an event item references.
-    | Internal.Block(_) => ()
+    | Internal.Block({block: ?Some(_)}) => () // Simulate carries the block inline.
+    | Internal.Block({onBlockRegistration: {blockFieldMask: Some(mask)}, blockNumber}) =>
+      item->Internal.itemBlockHolder->addBlockHolder(~blockNumber, ~mask)
+    // A handler reading only the block number gets its block built from the
+    // item's own number, which is why a source only keeps blocks some item
+    // selected fields of.
+    | Internal.Block({onBlockRegistration: {blockFieldMask: None}}) => ()
     }
   )
 
@@ -844,7 +855,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       payloadGroups,
       anyTransactionFieldSelected: anyTransactionFieldSelected.contents,
     },
-    {blockBlockNumbers, blockMasks, blockItemGroups},
+    {blockBlockNumbers, blockMasks, blockHolderGroups},
   )
 }
 
@@ -885,15 +896,15 @@ let applyTransactionGroups = async (
 
 // Materialise a `BlockStore` against precomputed groups (see `groupBatchItems`).
 let applyBlockGroups = async (store: BlockStore.t, g: blockGroups, ~shouldChecksum) => {
-  if g.blockItemGroups->Utils.Array.notEmpty {
+  if g.blockHolderGroups->Utils.Array.notEmpty {
     let blocks = await store->BlockStore.materialize(
       ~blockNumbers=g.blockBlockNumbers,
       ~masks=g.blockMasks,
       ~shouldChecksum,
     )
-    g.blockItemGroups->Array.forEachWithIndex((group, i) => {
+    g.blockHolderGroups->Array.forEachWithIndex((group, i) => {
       let block = blocks->Array.getUnsafe(i)
-      group->Array.forEach(ei => ei.payload->Internal.setPayloadBlock(block))
+      group->Array.forEach(holder => holder->Internal.setHolderBlock(block))
     })
   }
 }

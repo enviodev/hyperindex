@@ -74,19 +74,24 @@ let make = (
     let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
 
     //fetch batch
-    let pageUnsafe = try await HyperSync.GetLogs.query(
+    let pageUnsafe = try await HyperSync.GetItems.query(
       ~client,
-      ~fromBlock,
-      ~toBlock,
-      ~maxNumLogs=itemsTarget,
-      ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
+      ~query={
+        fromBlock,
+        toBlock,
+        maxNumLogs: ?itemsTarget,
+        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onBlockRegistrations: selection.onBlockRegistrations->BlockItem.toRegistrationInputs,
+        clientFilteredContracts: selection.clientFilteredContracts,
+        // Absent rather than false, so a range that wants only the blocks its
+        // logs came from sends the query it always sent.
+        includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
+      },
       ~addressSet,
-      ~clientFilteredContracts=selection.clientFilteredContracts,
-      ~includeAllBlocks,
     ) catch {
-    | HyperSync.GetLogs.Error(WrongInstance) =>
+    | HyperSync.GetItems.Error(WrongInstance) =>
       throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
-    | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
+    | HyperSync.GetItems.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -136,7 +141,13 @@ let make = (
     let parsingTimeRef = Performance.now()
 
     let parsedQueueItems =
-      pageUnsafe.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      pageUnsafe.eventItems
+      ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      ->Array.concat(
+        pageUnsafe.blockItems->BlockItem.toInternalItems(
+          ~onBlockRegistrations=selection.onBlockRegistrations,
+        ),
+      )
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
@@ -163,8 +174,8 @@ let make = (
 
   // Called through the client rather than passed as a value: the client is a
   // napi class, so a detached method reference loses the instance it belongs to.
-  let getBlockHashes = HyperSync.makeGetBlockHashes(
-    ~query=(~blockNumbers) => client.getBlockHashes(~blockNumbers),
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
+    client.getBlockHashes(~blockNumbers)
   )
 
   {
@@ -180,10 +191,7 @@ let make = (
         await client.getHeight()
       } catch {
       | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(
-          ~warned=unauthorizedWarned,
-          ~product="HyperSync",
-        )
+        exn->HyperSync.rethrowLoggingUnauthorized(~warned=unauthorizedWarned, ~product="HyperSync")
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

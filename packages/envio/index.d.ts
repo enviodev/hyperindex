@@ -1022,22 +1022,42 @@ export type EvmOnBlockWhereArgs<Config extends IndexerConfigTypes = GlobalConfig
 /** Context for EVM `indexer.onBlock` handlers. Alias of {@link EvmOnEventContext}. */
 export type EvmOnBlockContext<Config extends IndexerConfigTypes = GlobalConfig> = EvmOnEventContext<Config>;
 
+/** The `fields` option of `indexer.onBlock`: the block fields the handler
+ * reads. The block number comes without being listed. */
+export type EvmOnBlockFieldsSelection = {
+  readonly block?: readonly EvmBlockFieldName[];
+};
+
+/** A block as an EVM block handler with the `Fields` selection reads it. */
+export type EvmOnBlockBlock<Fields = undefined> = EvmSelectedFields<
+  EvmAllBlockFields,
+  EvmAlwaysSelectedBlockField | EvmListedFields<Fields, "block">,
+  "block"
+>;
+
 /** Arguments passed to an EVM block handler. */
-export type EvmOnBlockHandlerArgs<Config extends IndexerConfigTypes = GlobalConfig> = {
-  /** Block being processed. Contains the block number; extended fields are
-      opt-in via `field_selection` in config.yaml. */
-  readonly block: { readonly number: number };
+export type EvmOnBlockHandlerArgs<
+  Config extends IndexerConfigTypes = GlobalConfig,
+  Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
+> = {
+  /** Block being processed: its number, plus the fields listed in the
+      registration's `fields.block`. */
+  readonly block: EvmOnBlockBlock<Fields>;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: EvmOnBlockContext<Config>;
 };
 
 /** Handler function for an EVM `indexer.onBlock` registration. */
-export type EvmOnBlockHandler<Config extends IndexerConfigTypes = GlobalConfig> = (
-  args: EvmOnBlockHandlerArgs<Config>,
-) => Promise<void>;
+export type EvmOnBlockHandler<
+  Config extends IndexerConfigTypes = GlobalConfig,
+  Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
+> = (args: EvmOnBlockHandlerArgs<Config, Fields>) => Promise<void>;
 
 /** Options for an EVM `indexer.onBlock` registration. */
-export type EvmOnBlockOptions<Config extends IndexerConfigTypes = GlobalConfig> = {
+export type EvmOnBlockOptions<
+  Config extends IndexerConfigTypes = GlobalConfig,
+  Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
+> = {
   /** Unique name for this block handler. Used as the key in error messages
       and in persisted progress tracking. */
   readonly name: string;
@@ -1045,6 +1065,9 @@ export type EvmOnBlockOptions<Config extends IndexerConfigTypes = GlobalConfig> 
       time. Return `false` to skip a chain, `true` to match every block, or
       a filter object to restrict by block number range and stride. */
   readonly where?: (args: EvmOnBlockWhereArgs<Config>) => EvmOnBlockWhereResult;
+  /** Block fields this handler reads besides the number. Selecting any makes
+      the indexer fetch every block the handler runs on. */
+  readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
 };
 
 // ============== Fuel onBlock types ==============
@@ -1088,8 +1111,7 @@ export type FuelOnBlockContext<Config extends IndexerConfigTypes = GlobalConfig>
 
 /** Arguments passed to a Fuel block handler. */
 export type FuelOnBlockHandlerArgs<Config extends IndexerConfigTypes = GlobalConfig> = {
-  /** Block being processed. Contains the block height; extended fields are
-      opt-in via `field_selection` in config.yaml. */
+  /** Block being processed. Contains the block height. */
   readonly block: { readonly height: number };
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: FuelOnBlockContext<Config>;
@@ -1604,9 +1626,9 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              * whether `contracts` are configured — block handlers don't need
              * any contract context.
              */
-            readonly onBlock: (
-              options: EvmOnBlockOptions<Config>,
-              handler: EvmOnBlockHandler<Config>,
+            readonly onBlock: <const F extends EvmOnBlockFieldsSelection | undefined = undefined>(
+              options: EvmOnBlockOptions<Config, F>,
+              handler: EvmOnBlockHandler<Config, F>,
             ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
@@ -1923,7 +1945,15 @@ type EvmTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig>
   /** The block number to stop processing at. Defaults to max simulate block number when simulate is provided. */
   endBlock?: number;
   /** Simulate items to process instead of fetching from real sources. */
-  simulate?: EvmSimulateItem<Config>[];
+  simulate?: (EvmSimulateItem<Config> | EvmSimulateBlock)[];
+};
+
+/** A simulated block header, read by the block handlers that select fields.
+ * A block the handlers run on without one gets the defaults an event's block
+ * gets. */
+type EvmSimulateBlock = {
+  /** Block fields, keyed by the names `fields.block` selects. */
+  block: { readonly number: number } & Partial<EvmAllBlockFields>;
 };
 
 /** Configuration for a single Fuel chain in the test indexer. */

@@ -15,8 +15,10 @@ mod interval;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
+use crate::block_selection::{BlockItem, BlockSelection, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
+use crate::evm_hypersync_source::query::BlockField;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput,
@@ -124,10 +126,12 @@ pub struct NextPageParams {
     /// on `NextPageResponse`.
     pub to_block_ceiling: i64,
     pub partition_id: String,
-    /// The partition's registration selection, by chain-scoped id. Log
+    /// The event registrations selecting logs, by chain-scoped id. Log
     /// selections and the routing index are derived internally from the
-    /// registrations passed at construction.
-    pub registration_indexes: Vec<i64>,
+    /// registrations passed at construction. Empty selects no logs.
+    pub on_event_registration_indexes: Vec<i64>,
+    /// The block handlers selecting blocks.
+    pub on_block_registrations: Vec<OnBlockRegistrationInput>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -165,7 +169,8 @@ pub struct NextPageResult {
     /// The block this attempt targeted: the page's own `toBlock` when it
     /// succeeded, the block it got as far as otherwise.
     pub to_block: i64,
-    pub items: Vec<EventItem>,
+    pub event_items: Vec<EventItem>,
+    pub block_items: Vec<BlockItem>,
     /// What to say about a failure: on `Backoff` the line the retry logs, on
     /// `FieldSelection` why the selection cannot be served.
     pub message: Option<String>,
@@ -215,7 +220,8 @@ impl NextPageResult {
             kind,
             request_stats,
             to_block: to_block as i64,
-            items: Vec::new(),
+            event_items: Vec::new(),
+            block_items: Vec::new(),
             message: None,
             provider_message: None,
             block_number: None,
@@ -280,8 +286,13 @@ pub struct EvmRpcClient {
     /// response, so a later page with a different selection is served from the
     /// stores rather than refetched.
     block_read: BlockRead,
+    chain_block_mask: u64,
     chain_tx_mask: u64,
 }
+
+/// How many blocks a page reads for its block handlers at most: each costs an
+/// `eth_getBlockByNumber`, which the log range's size says nothing about.
+const MAX_HANDLER_BLOCKS_PER_PAGE: usize = 100;
 
 /// Everything one page read works from: the range it covers, the queries to run
 /// over it, the stores whose contents decide what still has to be fetched, and
@@ -293,6 +304,8 @@ struct PageQuery<'a> {
     selections: &'a [BuiltLogSelection],
     set_cache: &'a Arc<SetCache>,
     decoder: &'a Arc<SelectionDecoder>,
+    block_selection: &'a BlockSelection,
+    block_read: &'a BlockRead,
     known_blocks: &'a BlockStore,
     known_transactions: &'a TransactionStore,
 }
@@ -367,7 +380,7 @@ impl EvmRpcClient {
                 (
                     reg.index,
                     SelectedFields {
-                        block_mask: fields::block_mask(&reg.block_fields),
+                        block_mask: BlockField::store_mask(&reg.block_fields),
                         tx_mask: fields::tx_mask(&reg.transaction_fields),
                     },
                 )
@@ -391,6 +404,7 @@ impl EvmRpcClient {
             fetches: Fetches::default(),
             registration_fields,
             block_read: BlockRead::for_chain(chain_fields.block_mask),
+            chain_block_mask: chain_fields.block_mask,
             chain_tx_mask: chain_fields.tx_mask,
         })
     }
@@ -499,20 +513,34 @@ impl EvmRpcClient {
         let (suggested_interval, source_max) = self
             .intervals
             .suggested_interval(&params.partition_id, &self.sync_config);
-        let to_block = (from_block + suggested_interval - 1).min(to_block_ceiling);
+        let block_selection =
+            BlockSelection::new(&params.on_block_registrations).map_err(map_err)?;
+        let to_block = block_selection.range_end(
+            from_block,
+            (from_block + suggested_interval - 1).min(to_block_ceiling),
+            MAX_HANDLER_BLOCKS_PER_PAGE,
+        );
+        // A block handler can select fields no event registration does, so a
+        // page reading blocks for one reads them for its fields too.
+        let block_read = (!block_selection.is_empty())
+            .then(|| BlockRead::for_chain(self.chain_block_mask | block_selection.mask()));
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, address_set, &client_filtered)
+            .build(
+                &params.on_event_registration_indexes,
+                address_set,
+                &client_filtered,
+            )
             .map_err(map_err)?;
         let set_cache = address_set.cache().clone();
         let selection_decoder = Arc::new(
             self.decoder
                 .selection(
-                    &params.registration_indexes,
+                    &params.on_event_registration_indexes,
                     &client_filtered,
                     set_cache.clone(),
                 )
@@ -526,6 +554,8 @@ impl EvmRpcClient {
             selections: &built.log_selections,
             set_cache: &set_cache,
             decoder: &selection_decoder,
+            block_selection: &block_selection,
+            block_read: block_read.as_ref().unwrap_or(&self.block_read),
             known_blocks,
             known_transactions,
         };
@@ -535,7 +565,7 @@ impl EvmRpcClient {
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
         let (result, page) = match outcome {
-            Ok((items, page)) => {
+            Ok((event_items, block_items, page)) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -551,7 +581,8 @@ impl EvmRpcClient {
                 }
                 (
                     NextPageResult {
-                        items,
+                        event_items,
+                        block_items,
                         ..NextPageResult::new(PageOutcome::Ok, to_block, request_stats)
                     },
                     Some(page),
@@ -631,7 +662,7 @@ impl EvmRpcClient {
     async fn read_page(
         &self,
         query: &PageQuery<'_>,
-    ) -> Result<(Vec<EventItem>, enrich::EnrichedPage), PageError> {
+    ) -> Result<(Vec<EventItem>, Vec<BlockItem>, enrich::EnrichedPage), PageError> {
         let decoded = self.fetch_page(query).await.map_err(PageError::Logs)?;
 
         let mut refs = PageRefs::default();
@@ -681,6 +712,15 @@ impl EvmRpcClient {
             }
         }
 
+        let mut block_items = Vec::new();
+        for block_number in query
+            .block_selection
+            .block_numbers(query.from_block, query.to_block)
+        {
+            query.block_selection.route(block_number, &mut block_items);
+            refs.add_block(block_number, query.block_selection.mask());
+        }
+
         let page = enrich::page(
             &self.inner,
             &self.fetches,
@@ -690,12 +730,12 @@ impl EvmRpcClient {
                 refs,
                 known_blocks: query.known_blocks,
                 known_transactions: query.known_transactions,
-                block_read: &self.block_read,
+                block_read: query.block_read,
                 chain_tx_mask: self.chain_tx_mask,
             },
         )
         .await?;
-        Ok((items, page))
+        Ok((items, block_items, page))
     }
 
     /// Builds the retry decision for a page that could not be read, updating

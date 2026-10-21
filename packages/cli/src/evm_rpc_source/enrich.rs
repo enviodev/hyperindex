@@ -26,7 +26,7 @@ use serde_json::{json, Value as Json};
 
 use super::client::{JsonRpcClient, RpcError};
 use super::fields::{
-    block_fields_in, tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
+    tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
     TX_EAGER_EXCLUDED_MASK,
 };
 use super::inflight::Inflight;
@@ -234,6 +234,18 @@ impl PageRefs {
                 hash: transaction_hash.clone(),
             });
         transaction.mask |= fields.tx_mask;
+    }
+
+    /// A block a block handler runs on, which no log of the page has to have
+    /// landed on.
+    pub(crate) fn add_block(&mut self, block_number: u64, block_mask: u64) {
+        self.blocks
+            .entry(block_number)
+            .or_insert_with(|| ReferencedBlock {
+                mask: 0,
+                log_hashes: Vec::new(),
+            })
+            .mask |= block_mask;
     }
 }
 
@@ -466,8 +478,8 @@ impl BlockRead {
         let covering = chain_mask | BLOCK_OBSERVATION_MASK;
         BlockRead {
             covering,
-            fields: block_fields_in(covering),
-            selected: block_fields_in(chain_mask & !BLOCK_OBSERVATION_MASK),
+            fields: BlockField::in_store_mask(covering),
+            selected: BlockField::in_store_mask(chain_mask & !BLOCK_OBSERVATION_MASK),
         }
     }
 
@@ -475,7 +487,7 @@ impl BlockRead {
     fn observations_only() -> Self {
         BlockRead {
             covering: BLOCK_OBSERVATION_MASK,
-            fields: block_fields_in(BLOCK_OBSERVATION_MASK),
+            fields: BlockField::in_store_mask(BLOCK_OBSERVATION_MASK),
             selected: Vec::new(),
         }
     }
@@ -944,8 +956,8 @@ mod tests {
             (read.covering, read.fields, read.selected),
             (
                 miner | gas_used | BLOCK_OBSERVATION_MASK,
-                block_fields_in(miner | gas_used | BLOCK_OBSERVATION_MASK),
-                block_fields_in(miner | gas_used),
+                BlockField::in_store_mask(miner | gas_used | BLOCK_OBSERVATION_MASK),
+                BlockField::in_store_mask(miner | gas_used),
             )
         );
     }

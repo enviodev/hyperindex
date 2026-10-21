@@ -39,7 +39,8 @@ chains:
         address: "0x0000000000000000000000000000000000000004"
 `
 
-let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
+let check = handlers =>
+  InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
 
 // For the cases that must NOT type-check: returns the type errors instead of
 // throwing them.
@@ -483,10 +484,13 @@ if (0) {
   it("offers the fields knobs and field names to an editor", t => {
     let completions = handlers =>
       InternalTestIndexer.completionsAt(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)
-    let at = source => completions(`
+    let at = source =>
+      completions(
+        `
 import { indexer } from "envio";
 indexer.onEvent(${source}, async () => {});
-`)
+`,
+      )
     t.expect((
       at(`{ contract: "Token", event: "Transfer", fields: { /*HERE*/ } }`),
       at(`{ contract: "Token", event: "Transfer", fields: { block: ["/*HERE*/"] } }`),
@@ -531,7 +535,9 @@ type _badEnumLookup = Enum<"NotAnEnum">;
   it("shapes the onBlock surface", _ =>
     check(`
 import type {
+  Address,
   EvmChainId,
+  EvmOnBlockBlock,
   EvmOnBlockContext,
   EvmOnBlockFilter,
   EvmOnBlockHandler,
@@ -549,9 +555,12 @@ const _blockOpts: EvmOnBlockOptions = {
   where: ({ chain }) => (chain.id === 1 ? true : false),
 };
 expectType<EvmOnBlockOptions>(_blockOpts);
-expectType<
-  TypeEqual<EvmOnBlockHandlerArgs["block"], { readonly number: number }>
->(true);
+expectType<TypeEqual<EvmOnBlockHandlerArgs["block"]["number"], number>>(true);
+// @ts-expect-error - a field the registration didn't select
+const _unselected: string = ({} as EvmOnBlockHandlerArgs["block"]).hash;
+expectType<TypeEqual<EvmOnBlockBlock<{ readonly block: readonly ["miner"] }>["miner"], Address>>(
+  true,
+);
 expectType<TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>>(true);
 expectType<
   TypeEqual<EvmOnBlockHandler, (args: EvmOnBlockHandlerArgs) => Promise<void>>

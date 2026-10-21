@@ -65,12 +65,11 @@ let makeSource = (~url) => {
     ),
   )
   let chainConfig = parsed.config.chainMap->ChainMap.values->Array.getUnsafe(0)
-  let _ =
-    addressStore->AddressStore.seedRows(
-      chainConfig
-      ->ChainState.configStorageRows(~ecosystem=Evm, ~contractMapping)
-      ->AddressRows.seedRowsOf,
-    )
+  let _ = addressStore->AddressStore.seedRows(
+    chainConfig
+    ->ChainState.configStorageRows(~ecosystem=Evm, ~contractMapping)
+    ->AddressRows.seedRowsOf,
+  )
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
@@ -103,6 +102,7 @@ let fetch = (source: Source.t, ~addressSet) =>
     ~selection={
       dependsOnAddresses: true,
       onEventRegistrations: onEventRegistrations(),
+      onBlockRegistrations: [],
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,
@@ -114,16 +114,12 @@ let log = (~address, ~logIndex, ~topic0, ~topics=[fromAddress, toAddress]) =>
     `{"block_number":10,"log_index":${logIndex->Int.toString},"transaction_index":0,"address":"${address}","data":"${uint256(
         100,
       )}","topic0":"${topic0}"${topics
-      ->Array.mapWithIndex((topic, idx) =>
-        `,"topic${(idx + 1)->Int.toString}":"${topic->padded}"`
-      )
+      ->Array.mapWithIndex((topic, idx) => `,"topic${(idx + 1)->Int.toString}":"${topic->padded}"`)
       ->Array.joinUnsafe("")}}`,
   )
 
 let page: MockHyperSyncServer.page = {
-  blocks: [
-    JSON.parseOrThrow(`{"number":10,"timestamp":1700000000,"hash":"${blockHash(10)}"}`),
-  ],
+  blocks: [JSON.parseOrThrow(`{"number":10,"timestamp":1700000000,"hash":"${blockHash(10)}"}`)],
   transactions: [JSON.parseOrThrow(`{"block_number":10,"transaction_index":0}`)],
   logs: [
     log(~address=sharedAddress, ~logIndex=0, ~topic0=transferSighash),
@@ -148,24 +144,28 @@ let routed = (item: Internal.item) =>
 
 describe("An address indexed by two contracts", () => {
   Async.it("asks HyperSync for both contracts' selections", async t => {
-    let queries = await MockHyperSyncServer.withServer(~height=100, async server => {
-      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
-      server->MockHyperSyncServer.pushResponse(page)
-      let _ = await source->fetch(~addressSet)
-      server->MockHyperSyncServer.takeQueries
-    })
+    let queries = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse(page)
+        let _ = await source->fetch(~addressSet)
+        server->MockHyperSyncServer.takeQueries
+      },
+    )
 
     t.expect(
-      queries
-      ->Array.map(query =>
-        query
-        ->JSON.Decode.object
-        ->Option.getOrThrow
-        ->Dict.get("logs")
-        ->Option.getOrThrow
+      queries->Array.map(
+        query =>
+          query
+          ->JSON.Decode.object
+          ->Option.getOrThrow
+          ->Dict.get("logs")
+          ->Option.getOrThrow,
       ),
     ).toEqual([
-      JSON.parseOrThrow(`[
+      JSON.parseOrThrow(
+        `[
         {
           "address": ["${sharedAddress}"],
           "topics": [["${transferSighash}"], [], [], []]
@@ -174,17 +174,21 @@ describe("An address indexed by two contracts", () => {
           "address": ["${sharedAddress}", "${vaultOnlyAddress}"],
           "topics": [["${transferSighash}", "${depositSighash}"], [], [], []]
         }
-      ]`),
+      ]`,
+      ),
     ])
   })
 
   Async.it("routes one log to every contract that declares it", async t => {
-    let items = await MockHyperSyncServer.withServer(~height=100, async server => {
-      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
-      server->MockHyperSyncServer.pushResponse(page)
-      let page = await source->fetch(~addressSet)
-      page.parsedQueueItems
-    })
+    let items = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse(page)
+        let page = await source->fetch(~addressSet)
+        page.parsedQueueItems
+      },
+    )
 
     t.expect(items->Array.map(routed)).toEqual([
       (0, "Token", "Transfer", sharedAddress),

@@ -9,7 +9,7 @@ let defaultQuery: FetchState.query = {
   isChunk: false,
   itemsTarget: Some(0),
   itemsEst: 0,
-  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
+  selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[]),
   addresses: TestAddresses.setOf([]),
 }
 
@@ -197,7 +197,7 @@ describe("SourceManager.getSourceRole", () => {
 })
 
 describe("SourceManager source priority with Live sources", () => {
-  let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let selection = FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[])
   let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
@@ -379,7 +379,10 @@ describe("SourceManager source priority with Live sources", () => {
 })
 
 describe("SourceManager fetchNext", () => {
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
 
   // Selection (getNextQuery) now happens in CrossChainState; SourceManager only
   // dispatches the chosen action. This shim keeps the per-chain tests focused on
@@ -1416,7 +1419,7 @@ describe("SourceManager wait for new blocks", () => {
 })
 describe("SourceManager.executeQuery", () => {
   afterEach(() => Vi.useRealTimers())
-  let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let selection = FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[])
   let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
@@ -3341,7 +3344,7 @@ describe("SourceManager height subscription", () => {
         fromBlock: 0,
         toBlock: None,
         isChunk: false,
-        selection: {dependsOnAddresses: false, onEventRegistrations: []},
+        selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[]),
         addresses: TestAddresses.setOf([]),
       },
       ~isRealtime=true,

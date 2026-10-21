@@ -1,5 +1,6 @@
-type logsQueryPage = {
-  items: array<HyperSyncClient.EventItems.item>,
+type itemsPage = {
+  eventItems: array<EvmEventItem.t>,
+  blockItems: array<BlockItem.t>,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,
@@ -40,7 +41,7 @@ let makeGetBlockHashes: (
   ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
 ) => (~blockNumbers: array<int>, ~logger: Pino.t) => promise<Source.getBlockHashesResponse>
 
-module GetLogs: {
+module GetItems: {
   type error =
     | UnexpectedMissingParams({missingParams: array<string>})
     | WrongInstance
@@ -51,12 +52,7 @@ module GetLogs: {
 
   let query: (
     ~client: HyperSyncClient.t,
-    ~fromBlock: int,
-    ~toBlock: option<int>,
-    ~maxNumLogs: option<int>,
-    ~registrationIndexes: array<int>,
+    ~query: HyperSyncClient.Items.query,
     ~addressSet: AddressSet.t,
-    ~clientFilteredContracts: option<array<string>>,
-    ~includeAllBlocks: bool,
-  ) => promise<logsQueryPage>
+  ) => promise<itemsPage>
 }

@@ -247,17 +247,18 @@ module Registration = {
   }
 }
 
-module EventItems = {
+module Items = {
   // The whole per-query input beside the partition's address set: block range
-  // and the registration selection (by id). Log selections, field selection,
-  // and the routing index are derived on the Rust side.
+  // and what it selects from each table. Log selections, field selection, and
+  // the routing index are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
     // Absent means no server-side cap on the number of logs returned.
     maxNumLogs?: int,
-    registrationIndexes: array<int>,
+    onEventRegistrationIndexes: array<int>,
+    onBlockRegistrations: array<BlockItem.registrationInput>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.
@@ -267,12 +268,11 @@ module EventItems = {
     includeAllBlocks?: bool,
   }
 
-  type item = EvmEventItem.t
-
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    items: array<item>,
+    eventItems: array<EvmEventItem.t>,
+    blockItems: array<BlockItem.t>,
     // Blocks the server returned for the query, counted before routing drops
     // the ones no item joins to.
     responseBlocks: int,
@@ -282,15 +282,13 @@ module EventItems = {
 type t = {
   // Block-hash query construction and pagination live in Rust; only the
   // aggregate response store crosses the boundary.
-  getBlockHashes: (
-    ~blockNumbers: array<int>,
-  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
-  getEventItems: (
-    ~query: EventItems.query,
+  getItems: (
+    ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
+  ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 

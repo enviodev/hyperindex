@@ -71,7 +71,10 @@ let make = (
     | None => knownHeight
     }
 
-    if selection.onEventRegistrations->Utils.Array.isEmpty {
+    if (
+      selection.onEventRegistrations->Utils.Array.isEmpty &&
+        selection.onBlockRegistrations->Utils.Array.isEmpty
+    ) {
       throw(
         Source.GetItemsError(
           UnsupportedSelection({
@@ -87,7 +90,8 @@ let make = (
         fromBlock,
         toBlockCeiling: toBlock,
         partitionId,
-        registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onBlockRegistrations: selection.onBlockRegistrations->BlockItem.toRegistrationInputs,
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
       },
@@ -175,7 +179,13 @@ let make = (
 
     let parsingTimeRef = Performance.now()
     let parsedQueueItems =
-      result.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      result.eventItems
+      ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      ->Array.concat(
+        result.blockItems->BlockItem.toInternalItems(
+          ~onBlockRegistrations=selection.onBlockRegistrations,
+        ),
+      )
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     {

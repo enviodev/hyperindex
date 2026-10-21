@@ -1,7 +1,13 @@
 type indexingAddress = Internal.indexingContract
 
+// What a partition fetches, one list per table a source can query: event
+// registrations select logs, block registrations select blocks. Either may be
+// empty, not both.
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
+  // Only the registrations that select block fields: a block handler reading
+  // just the number is generated locally and never reaches a source.
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
   // Whether the partition's queries are built from its own address list
   // (server-side address filtering). This is the *partition* property; not to
   // be confused with the per-registration `Internal.onEventRegistration.dependsOnAddresses`.
@@ -25,12 +31,12 @@ type selection = {
 
 // The earliest block any of the registrations can produce an item at, or `None`
 // when one of them is unrestricted. Nothing below it is worth querying.
-let deriveSelectionStartBlock = (onEventRegistrations: array<Internal.onEventRegistration>) => {
+let deriveSelectionStartBlock = (startBlocks: array<option<int>>) => {
   let earliest = ref(None)
   let idx = ref(0)
-  let unrestricted = ref(onEventRegistrations->Utils.Array.isEmpty)
-  while !unrestricted.contents && idx.contents < onEventRegistrations->Array.length {
-    switch (onEventRegistrations->Array.getUnsafe(idx.contents)).startBlock {
+  let unrestricted = ref(startBlocks->Utils.Array.isEmpty)
+  while !unrestricted.contents && idx.contents < startBlocks->Array.length {
+    switch startBlocks->Array.getUnsafe(idx.contents) {
     | None => unrestricted := true
     | Some(startBlock) =>
       switch earliest.contents {
@@ -43,11 +49,22 @@ let deriveSelectionStartBlock = (onEventRegistrations: array<Internal.onEventReg
   unrestricted.contents ? None : earliest.contents
 }
 
-let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFilteredContracts=?) => {
+let makeSelection = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
+  ~dependsOnAddresses,
+  ~clientFilteredContracts=?,
+) => {
   onEventRegistrations,
+  onBlockRegistrations,
   dependsOnAddresses,
   ?clientFilteredContracts,
-  startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
+  startBlock: ?deriveSelectionStartBlock(
+    Array.concat(
+      onEventRegistrations->Array.map(reg => reg.startBlock),
+      onBlockRegistrations->Array.map(reg => reg.startBlock),
+    ),
+  ),
 }
 
 // A partition's frontier never sits below the block before its selection can
@@ -160,22 +177,30 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
   switch toBlock {
   | None => selection
   | Some(toBlock) =>
-    let inRange = selection.onEventRegistrations->Array.filter(reg =>
-      switch reg.startBlock {
+    let hasStarted = startBlock =>
+      switch startBlock {
       | Some(startBlock) => startBlock <= toBlock
       | None => true
       }
-    )
-    switch inRange->Array.length {
-    // Every registration starts above the range. Narrowing to nothing would
-    // build a selection with no log filters, which each source reads as
-    // "select everything" — the opposite of the intent. The partition is
-    // queried unnarrowed instead and the routers drop what hasn't started.
-    | 0 => selection
-    | length if length === selection.onEventRegistrations->Array.length => selection
-    | _ =>
+    let onEventRegistrations =
+      selection.onEventRegistrations->Array.filter(reg => hasStarted(reg.startBlock))
+    let onBlockRegistrations =
+      selection.onBlockRegistrations->Array.filter(reg => hasStarted(reg.startBlock))
+    if (
+      onEventRegistrations->Array.length === selection.onEventRegistrations->Array.length &&
+        onBlockRegistrations->Array.length === selection.onBlockRegistrations->Array.length
+    ) {
+      selection
+    } else if (
+      // Every registration starts above the range. The partition is queried
+      // unnarrowed instead and the routers drop what hasn't started.
+      onEventRegistrations->Utils.Array.isEmpty && onBlockRegistrations->Utils.Array.isEmpty
+    ) {
+      selection
+    } else {
       makeSelection(
-        ~onEventRegistrations=inRange,
+        ~onEventRegistrations,
+        ~onBlockRegistrations,
         ~dependsOnAddresses=selection.dependsOnAddresses,
         ~clientFilteredContracts=?selection.clientFilteredContracts,
       )
@@ -858,6 +883,8 @@ type t = {
   // size). Event fetch depth is bounded separately, by CrossChainState's
   // cross-chain admission against the indexer-wide buffer pool.
   maxOnBlockBufferSize: int,
+  // The block handlers whose items are generated here, block by block. Those
+  // selecting block fields are fetched instead, through a partition's selection.
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
@@ -1441,7 +1468,15 @@ let collapseClientFilteredContracts = (
           if standing->isFetching {
             kept->Array.push(standing->retire)->ignore
           }
-          {...standing, id, selection: newSelection, mutPendingQueries: []}
+          // The block table stays with the standing partition alone: a
+          // backfill only catches up on the newly-switched contracts' logs.
+          let selection = makeSelection(
+            ~dependsOnAddresses=false,
+            ~onEventRegistrations=newSelection.onEventRegistrations,
+            ~onBlockRegistrations=standing.selection.onBlockRegistrations,
+            ~clientFilteredContracts=?newSelection.clientFilteredContracts,
+          )
+          {...standing, id, selection, mutPendingQueries: []}
         } else {
           standing
         }
@@ -2654,15 +2689,28 @@ let make = (
     }
   })
 
+  let fetchedOnBlockRegistrations =
+    onBlockRegistrations->Array.filter((reg: Internal.onBlockRegistration) =>
+      reg.blockFieldMask->Option.isSome
+    )
+  let onBlockRegistrations =
+    onBlockRegistrations->Array.filter((reg: Internal.onBlockRegistration) =>
+      reg.blockFieldMask->Option.isNone
+    )
+
   let partitions = []
 
-  if notDependingOnAddresses->Array.length > 0 {
+  if (
+    notDependingOnAddresses->Utils.Array.notEmpty ||
+      fetchedOnBlockRegistrations->Utils.Array.notEmpty
+  ) {
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
       latestFetchedBlock,
       selection: makeSelection(
         ~dependsOnAddresses=false,
         ~onEventRegistrations=notDependingOnAddresses,
+        ~onBlockRegistrations=fetchedOnBlockRegistrations,
       ),
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,

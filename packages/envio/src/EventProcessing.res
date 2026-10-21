@@ -91,7 +91,7 @@ let runHandlerOrThrow = async (
   ~chains: Internal.chains,
 ) => {
   switch item {
-  | Block({onBlockRegistration: {handler}, blockNumber}) =>
+  | Block({onBlockRegistration: {handler}, blockNumber, ?block}) =>
     try {
       let contextParams: UserContext.contextParams = {
         item,
@@ -107,6 +107,7 @@ let runHandlerOrThrow = async (
       await handler(
         Ecosystem.makeOnBlockArgs(
           ~blockNumber,
+          ~block,
           ~ecosystem=config.ecosystem,
           ~context=UserContext.getHandlerContext(contextParams),
         ),
@@ -206,12 +207,13 @@ let preloadBatchOrThrow = async (
           | _ => ()
           }
         }
-      | Block({onBlockRegistration: {handler}, blockNumber}) =>
+      | Block({onBlockRegistration: {handler}, blockNumber, ?block}) =>
         try {
           promises->Array.push(
             handler({
               Ecosystem.makeOnBlockArgs(
                 ~blockNumber,
+                ~block,
                 ~ecosystem=config.ecosystem,
                 ~context=UserContext.getHandlerContext({
                   item,

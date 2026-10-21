@@ -31,7 +31,9 @@ let rethrowLoggingUnauthorized = (exn: exn, ~warned: ref<bool>, ~product: string
     | Some(message) if message->isUnauthorizedError =>
       if !warned.contents {
         warned := true
-        Logging.error(`Your ENVIO_API_TOKEN was rejected by ${product} (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+        Logging.error(
+          `Your ENVIO_API_TOKEN was rejected by ${product} (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`,
+        )
       }
     | _ => ()
     }
@@ -86,8 +88,9 @@ let reraiseIfRecoverable = exn =>
   | _ => ()
   }
 
-type logsQueryPage = {
-  items: array<HyperSyncClient.EventItems.item>,
+type itemsPage = {
+  eventItems: array<EvmEventItem.t>,
+  blockItems: array<BlockItem.t>,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,
@@ -97,7 +100,7 @@ type logsQueryPage = {
   blockStore: BlockStore.t,
 }
 
-module GetLogs = {
+module GetItems = {
   type error =
     | UnexpectedMissingParams({missingParams: array<string>})
     | WrongInstance
@@ -131,29 +134,10 @@ module GetLogs = {
 
   let query = async (
     ~client: HyperSyncClient.t,
-    ~fromBlock,
-    ~toBlock,
-    ~maxNumLogs,
-    ~registrationIndexes,
+    ~query: HyperSyncClient.Items.query,
     ~addressSet,
-    ~clientFilteredContracts,
-    ~includeAllBlocks,
-  ): logsQueryPage => {
-    let query: HyperSyncClient.EventItems.query = {
-      fromBlock,
-      toBlock,
-      ?maxNumLogs,
-      registrationIndexes,
-      clientFilteredContracts,
-      // Absent rather than false, so a range that wants only the blocks its
-      // logs came from sends the query it always sent.
-      includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
-    }
-
-    let (res, transactionStore, blockStore) = switch await client.getEventItems(
-      ~query,
-      ~addressSet,
-    ) {
+  ): itemsPage => {
+    let (res, transactionStore, blockStore) = switch await client.getItems(~query, ~addressSet) {
     | res => res
     | exception exn =>
       reraiseIfRecoverable(exn)
@@ -162,13 +146,14 @@ module GetLogs = {
       | None => throw(exn)
       }
     }
-    if res.nextBlock <= fromBlock {
+    if res.nextBlock <= query.fromBlock {
       // Might happen when /height response was from another instance of HyperSync
       throw(Error(WrongInstance))
     }
 
     {
-      items: res.items,
+      eventItems: res.eventItems,
+      blockItems: res.blockItems,
       nextBlock: res.nextBlock,
       responseBlocks: res.responseBlocks,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0

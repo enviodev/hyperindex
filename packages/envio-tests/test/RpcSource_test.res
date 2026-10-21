@@ -30,8 +30,7 @@ let makeSource = (
   ~lowercaseAddresses=false,
   ~stores=?,
 ) => {
-  let (blockStore, transactionStore) =
-    stores->Option.getOr(RpcSourcePins.makeStores())
+  let (blockStore, transactionStore) = stores->Option.getOr(RpcSourcePins.makeStores())
   RpcSource.make({
     url,
     chainId,
@@ -161,8 +160,7 @@ describe("RpcSource - field selection end to end", () => {
         },
       ],
     )
-    let (blockStore, transactionStore) =
-      stores->Option.getOr(RpcSourcePins.makeStores())
+    let (blockStore, transactionStore) = stores->Option.getOr(RpcSourcePins.makeStores())
     let source = makeSource(
       ~url=mock.url,
       ~onEventRegistrations=[registration],
@@ -181,6 +179,7 @@ describe("RpcSource - field selection end to end", () => {
       ~partitionId="0",
       ~selection={
         dependsOnAddresses: true,
+        onBlockRegistrations: [],
         onEventRegistrations: [(registration :> Internal.onEventRegistration)],
       },
       ~itemsTarget=Some(5000),
@@ -358,11 +357,7 @@ describe("RpcSource - field selection end to end", () => {
       seen->Utils.Set.toArray->Array.toSorted(String.compare)
     }
     mock.close()
-    t.expect(methods).toEqual([
-      "eth_getBlockByNumber",
-      "eth_getLogs",
-      "eth_getTransactionByHash",
-    ])
+    t.expect(methods).toEqual(["eth_getBlockByNumber", "eth_getLogs", "eth_getTransactionByHash"])
   })
 
   Async.it("Retries rather than disabling the source on a value it cannot decode", async t => {
@@ -636,7 +631,7 @@ describe("RpcSource - empty selection", () => {
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
         ~knownHeight=1,
         ~partitionId="0",
-        ~selection={dependsOnAddresses: true, onEventRegistrations: []},
+        ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: []},
         ~itemsTarget=Some(5000),
         ~retry=0,
         ~logger=Logging.createChild(~params={"test": "RpcSource empty selection"}),
@@ -726,6 +721,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~partitionId="0",
             ~selection={
               dependsOnAddresses: true,
+              onBlockRegistrations: [],
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
             ~itemsTarget=Some(5000),
@@ -852,6 +848,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
+            onBlockRegistrations: [],
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
           ~itemsTarget=Some(5000),
@@ -973,6 +970,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~partitionId="selection-e2e",
         ~selection={
           dependsOnAddresses: true,
+          onBlockRegistrations: [],
           onEventRegistrations: selectedRegistrations->Array.map(
             reg => (reg :> Internal.onEventRegistration),
           ),
@@ -1042,18 +1040,20 @@ describe("RpcSource - height subscription", () => {
   Async.it("Advances by polling when no ws url is configured", async t => {
     let height = ref(100)
     let blockNumberCalls = ref(0)
-    let mock = await MockRpcServer.make(~getResult=method =>
-      switch method {
-      | "eth_blockNumber" =>
-        blockNumberCalls := blockNumberCalls.contents + 1
-        // Stays at the known height until the wait has polled more than once,
-        // so a pass can't come from the single poll that precedes subscribing.
-        if blockNumberCalls.contents > 2 {
-          height := 101
-        }
-        JSON.String(`0x${height.contents->Int.toString(~radix=16)}`)
-      | _ => JSON.Null
-      }
+    let mock = await MockRpcServer.make(
+      ~getResult=method =>
+        switch method {
+        | "eth_blockNumber" =>
+          blockNumberCalls := blockNumberCalls.contents + 1
+
+          // Stays at the known height until the wait has polled more than once,
+          // so a pass can't come from the single poll that precedes subscribing.
+          if blockNumberCalls.contents > 2 {
+            height := 101
+          }
+          JSON.String(`0x${height.contents->Int.toString(~radix=16)}`)
+        | _ => JSON.Null
+        },
     )
 
     let source = makeSource(~url=mock.url)

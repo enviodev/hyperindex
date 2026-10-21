@@ -51,17 +51,16 @@ let make = (
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations: onEventRegistrations->(
-          Utils.magic: array<Internal.onEventRegistration> => array<
-            Internal.svmOnEventRegistration,
-          >
+          Utils.magic: array<Internal.onEventRegistration> => array<Internal.svmOnEventRegistration>
         ),
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         addressStore,
       }),
     ]
-  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
+  | Config.SimulateSourceConfig({items, getBlock, endBlock, ?transactionStore, ?blockStore}) => [
       SimulateSource.make(
         ~items,
+        ~getBlock,
         ~endBlock,
         ~chainId,
         ~addressStore,

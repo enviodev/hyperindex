@@ -5,6 +5,13 @@ type t = {
   blockNumberName: string,
   blockTimestampName: string,
   blockHashName: string,
+  /** Every block field a registration can select, in store order: a field's
+      index is its bit in the block store's selection mask. */
+  blockFields: array<string>,
+  /** The field keying a block in the store — the one field a block handler
+      always has without selecting it. */
+  blockKeyField: string,
+  blockFieldMask: Utils.Set.t<string> => float,
   /** Method name that the block handler is exposed under on the public
       `indexer` object — `"onBlock"` for chain-based ecosystems, `"onSlot"`
       for SVM. Centralised here so adding a new ecosystem only requires a
@@ -92,13 +99,25 @@ let getItemLogger = {
 let getItemUserLogger = (item: Internal.item, ~ecosystem: t): Envio.logger =>
   getItemLogger(item, ~ecosystem)->Logging.userLogger
 
-let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
+// `block` is the item's materialised selection, which already carries the key;
+// without one the handler selected nothing but the key.
+let makeOnBlockArgs = (
+  ~blockNumber: int,
+  ~block: option<Internal.eventBlock>,
+  ~ecosystem: t,
+  ~context,
+): Internal.onBlockArgs => {
+  let block = block->(Utils.magic: option<Internal.eventBlock> => option<Internal.blockEvent>)
   switch ecosystem.name {
-  | Svm => {slot: blockNumber, context}
-  | _ => {
+  | Svm => {slot: blockNumber, ?block, context}
+  | Evm | Fuel =>
+    let block = switch block {
+    | Some(block) => block
+    | None =>
       let blockEvent = Dict.make()
-      blockEvent->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
-      {block: blockEvent->(Utils.magic: dict<unknown> => Internal.blockEvent), context}
+      blockEvent->Dict.set(ecosystem.blockKeyField, blockNumber->(Utils.magic: int => unknown))
+      blockEvent->(Utils.magic: dict<unknown> => Internal.blockEvent)
     }
+    {block, context}
   }
 }

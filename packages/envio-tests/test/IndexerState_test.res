@@ -9,7 +9,7 @@ let defaultQuery: FetchState.query = {
   isChunk: false,
   itemsTarget: Some(0),
   itemsEst: 0,
-  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
+  selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[]),
   addresses: TestAddresses.setOf([]),
 }
 
@@ -94,10 +94,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
-          selection: {
-            dependsOnAddresses: false,
-            onEventRegistrations,
-          },
+          selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations),
           addresses: TestAddresses.setOf([]),
         }
 
@@ -140,7 +137,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
-
     ~isRealtime=false,
     ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
@@ -150,11 +146,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
 let getItemKey = (item: Internal.item) =>
   switch item {
-  | Event({chainId, blockNumber, logIndex}) => (
-      chainId,
-      blockNumber,
-      logIndex,
-    )
+  | Event({chainId, blockNumber, logIndex}) => (chainId, blockNumber, logIndex)
   | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
   }
 
@@ -192,10 +184,7 @@ describe("IndexerState", () => {
         let allEventsRead = []
         let continue = ref(true)
         while continue.contents {
-          let batch =
-            state->IndexerState.createBatch(
-              ~batchSizeTarget=10000,
-            )
+          let batch = state->IndexerState.createBatch(~batchSizeTarget=10000)
           let {items, totalBatchSize} = batch
 
           // ensure that the events are ordered correctly
@@ -273,7 +262,10 @@ describe("IndexerState", () => {
                 fromBlock: 0,
                 toBlock: None,
                 isChunk: false,
-                selection: {dependsOnAddresses: false, onEventRegistrations},
+                selection: FetchState.makeSelection(
+                  ~dependsOnAddresses=false,
+                  ~onEventRegistrations,
+                ),
                 addresses: TestAddresses.setOf([]),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -283,7 +275,7 @@ describe("IndexerState", () => {
                   ~latestFetchedBlock=blockNumber,
                   ~newItems=[
                     Internal.Event({
-                      chainId: chainId,
+                      chainId,
                       blockNumber,
                       logIndex: 0,
                       transactionIndex: 0,
@@ -325,7 +317,6 @@ describe("IndexerState", () => {
             ~config,
             ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,
-
             ~isRealtime=false,
             ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
           )
@@ -333,10 +324,7 @@ describe("IndexerState", () => {
 
         // The batch is created while each chain has fetched up to block 5.
         let state = makeState(~eventBlocks=[5])
-        let batch =
-          state->IndexerState.createBatch(
-            ~batchSizeTarget=10000,
-          )
+        let batch = state->IndexerState.createBatch(~batchSizeTarget=10000)
 
         let chainId = config.chainMap->ChainMap.keys->Array.getUnsafe(0)
 
@@ -350,7 +338,7 @@ describe("IndexerState", () => {
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
-          selection: {dependsOnAddresses: false, onEventRegistrations},
+          selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations),
           addresses: TestAddresses.setOf([]),
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])

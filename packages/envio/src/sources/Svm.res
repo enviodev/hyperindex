@@ -8,7 +8,7 @@ let transactionFields =
 
 // One instruction's selected transaction fields → store selection bitmask.
 // Computed per event at config build and cached on the event config.
-let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 // Ordered block field names. The index of each is the field code shared with the
 // Rust store (`SvmBlockField`) — keep this order in sync.
@@ -19,7 +19,7 @@ let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
 //
 // One instruction's selected block fields → store selection bitmask. Computed per
 // event at config build and cached on the event config.
-let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+let blockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.eventTransaction) => {
   let instruction = payload->(Utils.magic: Internal.eventPayload => dict<unknown>)
@@ -27,18 +27,20 @@ let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.even
   switch (instruction->Dict.get("accounts"), transaction->Dict.get("accountActivities")) {
   | (Some(accounts), Some(activities)) if !(accounts->Array.isArray) =>
     let byAddress = Dict.make()
-    (activities->(Utils.magic: unknown => array<Envio.svmAccountActivity>))->Array.forEach(
-      activity => byAddress->Dict.set(activity.address->SvmTypes.Pubkey.toString, activity),
+    activities
+    ->(Utils.magic: unknown => array<Envio.svmAccountActivity>)
+    ->Array.forEach(activity =>
+      byAddress->Dict.set(activity.address->SvmTypes.Pubkey.toString, activity)
     )
-    (accounts->(Utils.magic: unknown => dict<Envio.svmInstructionAccount>))
+    accounts
+    ->(Utils.magic: unknown => dict<Envio.svmInstructionAccount>)
     ->Dict.valuesToArray
     ->Array.forEach(account =>
       switch byAddress->Dict.get(account.address->SvmTypes.Pubkey.toString) {
       | Some(activity) =>
-        (account->(Utils.magic: Envio.svmInstructionAccount => dict<unknown>))->Dict.set(
-          "activity",
-          activity->(Utils.magic: Envio.svmAccountActivity => unknown),
-        )
+        account
+        ->(Utils.magic: Envio.svmInstructionAccount => dict<unknown>)
+        ->Dict.set("activity", activity->(Utils.magic: Envio.svmAccountActivity => unknown))
       | None => ()
       }
     )
@@ -51,6 +53,9 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
+  blockFields,
+  blockKeyField: "slot",
+  blockFieldMask,
   onBlockMethodName: "onSlot",
   contractNoun: "program",
   eventNoun: "instruction",

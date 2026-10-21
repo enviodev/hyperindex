@@ -56,9 +56,7 @@ let indexedAddresses: array<Internal.indexingAddress> = [
 ]
 
 let addressStore = () =>
-  TestAddresses.makeStore(
-    ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-  )
+  TestAddresses.makeStore(~onEventRegistrations=[(registration :> Internal.onEventRegistration)])
 
 // The store the source routes against, and the one a query's address set is cut
 // from. It has to be seeded: an unseeded store matches none of the logs the mock
@@ -67,7 +65,7 @@ let addressStore = () =>
 // store instead and lets `FetchState.make` seed it, as production does.
 let sourceAddressStore = TestAddresses.makeStore(
   ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-  ~addresses=indexedAddresses
+  ~addresses=indexedAddresses,
 )
 
 // The chain the mock server currently serves. `forkFrom` is the first block
@@ -157,6 +155,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
     ~partitionId="0",
     ~selection={
       dependsOnAddresses: true,
+      onBlockRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=None,

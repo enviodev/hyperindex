@@ -1,5 +1,6 @@
 mod address_store;
 mod block_hash_pagination;
+mod block_selection;
 mod block_store;
 mod cli_args;
 mod clickhouse;

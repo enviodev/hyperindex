@@ -424,11 +424,13 @@ let rpcFilterMatchesLog = (~params: JSON.t, log: emittedLog): bool =>
 
 describe("Test eventFilters", () => {
   it("Matches Solidity's topics for indexed scalar filters through the public handler API", t => {
-    scalarTopicCases->Array.forEach(({eventName, expectedTopic}) => {
-      t.expect(getTopicSelection(eventName).topic1, ~message=eventName).toEqual(
-        Some([expectedTopic]),
-      )
-    })
+    scalarTopicCases->Array.forEach(
+      ({eventName, expectedTopic}) => {
+        t.expect(getTopicSelection(eventName).topic1, ~message=eventName).toEqual(
+          Some([expectedTopic]),
+        )
+      },
+    )
   })
 
   it("Preserves boundary scalar values across the NAPI encoder", t => {
@@ -456,12 +458,14 @@ describe("Test eventFilters", () => {
         "0x0102030400000000000000000000000000000000000000000000000000000000",
       ),
     ]
-    cases->Array.forEach(((abiType, value, expectedTopic)) => {
-      t.expect(
-        Core.getAddon().encodeIndexedTopic(~abiType, ~value)->EvmTypes.Hex.toString,
-        ~message=abiType,
-      ).toBe(expectedTopic)
-    })
+    cases->Array.forEach(
+      ((abiType, value, expectedTopic)) => {
+        t.expect(
+          Core.getAddon().encodeIndexedTopic(~abiType, ~value)->EvmTypes.Hex.toString,
+          ~message=abiType,
+        ).toBe(expectedTopic)
+      },
+    )
   })
 
   it("Matches Solidity's topics for indexed complex-type filters", t => {
@@ -469,20 +473,21 @@ describe("Test eventFilters", () => {
     // elements, without the offset or length prefix regular ABI encoding uses.
     // Exercise the filter path from public handler registration through the
     // client payload handed to the native source implementations.
-    complexTopicCases->Array.forEach(({eventName, expectedTopic}) => {
-      t.expect(getTopicSelection(eventName).topic1, ~message=eventName).toEqual(
-        Some([expectedTopic]),
-      )
-    })
+    complexTopicCases->Array.forEach(
+      ({eventName, expectedTopic}) => {
+        t.expect(getTopicSelection(eventName).topic1, ~message=eventName).toEqual(
+          Some([expectedTopic]),
+        )
+      },
+    )
   })
 
   Async.it("Matches canonical emitted logs through the native RPC client", async t => {
     // From here the test follows the production path: registration
     // serialization -> Rust selection builder -> real HTTP eth_getLogs
     // request -> Rust routing and decoding.
-    let onEventRegistrations = allTopicCases->Array.map(({eventName}) =>
-      getTestEventsRegistration(eventName)
-    )
+    let onEventRegistrations =
+      allTopicCases->Array.map(({eventName}) => getTestEventsRegistration(eventName))
     let nativeRegistrations = HyperSyncClient.Registration.fromOnEventRegistrations(
       onEventRegistrations,
     )
@@ -490,9 +495,9 @@ describe("Test eventFilters", () => {
     let providerAddressString = providerAddress->Address.toString
     // The chain's address index, holding the one emitter these logs come from.
     let addressStore = TestAddresses.makeStore(
-      ~onEventRegistrations=onEventRegistrations->Array.map(reg => (
-        reg :> Internal.onEventRegistration
-      )),
+      ~onEventRegistrations=onEventRegistrations->Array.map(
+        reg => (reg :> Internal.onEventRegistration),
+      ),
       ~addresses=[{address: providerAddress, contractName: "TestEvents", registrationBlock: -1}],
     )
 
@@ -520,10 +525,12 @@ describe("Test eventFilters", () => {
       ),
     }
 
-    let emittedLogs = allTopicCases->Array.mapWithIndex((topicCase, index) => {
-      let registration = nativeRegistrations->Array.getUnsafe(index)
-      makeEmittedLog(~topics=[registration.sighash, topicCase.expectedTopic], ~logIndex=index)
-    })
+    let emittedLogs = allTopicCases->Array.mapWithIndex(
+      (topicCase, index) => {
+        let registration = nativeRegistrations->Array.getUnsafe(index)
+        makeEmittedLog(~topics=[registration.sighash, topicCase.expectedTopic], ~logIndex=index)
+      },
+    )
     // Same signature as IndexedUint, but a non-matching indexed value. If
     // native query construction drops topic1 or widens it accidentally, this
     // extra log is returned and the item-count/registration assertions fail.
@@ -536,25 +543,26 @@ describe("Test eventFilters", () => {
     )
     let providerLogs = emittedLogs->Array.concat([mismatchingLog])
 
-    let mock = await MockRpcServer.makeWithParams(~getResult=(~method, ~params) =>
-      switch method {
-      | "eth_getLogs" =>
-        providerLogs
-        ->Array.filter(log => rpcFilterMatchesLog(~params, log))
-        ->Array.map(log => log.json)
-        ->JSON.Array
-      // The client reads the range's last block for its reorg observation.
-      | "eth_getBlockByNumber" =>
-        JSON.Object(
-          Dict.fromArray([
-            ("number", JSON.String("0x1")),
-            ("timestamp", JSON.String("0x1")),
-            ("hash", JSON.String("0x" ++ "b1"->String.repeat(32))),
-            ("parentHash", JSON.String("0x" ++ "b0"->String.repeat(32))),
-          ]),
-        )
-      | _ => JSON.Null
-      }
+    let mock = await MockRpcServer.makeWithParams(
+      ~getResult=(~method, ~params) =>
+        switch method {
+        | "eth_getLogs" =>
+          providerLogs
+          ->Array.filter(log => rpcFilterMatchesLog(~params, log))
+          ->Array.map(log => log.json)
+          ->JSON.Array
+        // The client reads the range's last block for its reorg observation.
+        | "eth_getBlockByNumber" =>
+          JSON.Object(
+            Dict.fromArray([
+              ("number", JSON.String("0x1")),
+              ("timestamp", JSON.String("0x1")),
+              ("hash", JSON.String("0x" ++ "b1"->String.repeat(32))),
+              ("parentHash", JSON.String("0x" ++ "b0"->String.repeat(32))),
+            ]),
+          )
+        | _ => JSON.Null
+        },
     )
     let client = EvmRpcClient.make(
       ~url=mock.url,
@@ -569,7 +577,8 @@ describe("Test eventFilters", () => {
         fromBlock: 1,
         toBlockCeiling: 1,
         partitionId: "topic-filter-e2e",
-        registrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
+        onEventRegistrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
+        onBlockRegistrations: [],
         clientFilteredContracts: None,
         retry: 0,
       },
@@ -587,7 +596,7 @@ describe("Test eventFilters", () => {
       mock.requests->Array.filter(body => body->String.includes("eth_getLogs"))->Array.length
     t.expect((
       getLogsRequestCount,
-      page.items->Array.map(item => item.onEventRegistrationIndex),
+      page.eventItems->Array.map(item => item.onEventRegistrationIndex),
     )).toEqual((allTopicCases->Array.length, nativeRegistrations->Array.map(reg => reg.index)))
   })
 

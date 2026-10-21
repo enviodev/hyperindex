@@ -1,5 +1,40 @@
+// A block item for every block in [fromBlock, toBlock] a selected registration
+// runs on, each carrying its simulated block inline.
+let blockItems = (
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+  ~fromBlock,
+  ~toBlock,
+  ~getBlock,
+) => {
+  let items = []
+  onBlockRegistrations->Array.forEach(onBlockRegistration => {
+    let {startBlock, endBlock, interval} = onBlockRegistration
+    let startBlock = startBlock->Option.getOr(0)
+    let toBlock = endBlock->Option.mapOr(toBlock, endBlock => Pervasives.min(endBlock, toBlock))
+    // The first block at or after `fromBlock` the interval lands on.
+    let first = Pervasives.max(startBlock, fromBlock)
+    let first =
+      first + Pervasives.mod(interval - Pervasives.mod(first - startBlock, interval), interval)
+    let blockNumber = ref(first)
+    while blockNumber.contents <= toBlock {
+      items
+      ->Array.push(
+        Internal.Block({
+          onBlockRegistration,
+          blockNumber: blockNumber.contents,
+          block: getBlock(blockNumber.contents),
+        }),
+      )
+      ->ignore
+      blockNumber := blockNumber.contents + interval
+    }
+  })
+  items
+}
+
 let make = (
   ~items: array<Internal.item>,
+  ~getBlock: int => Internal.eventBlock,
   ~endBlock: int,
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,
@@ -107,7 +142,13 @@ let make = (
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        parsedQueueItems,
+        parsedQueueItems: parsedQueueItems->Array.concat(
+          selection.onBlockRegistrations->blockItems(
+            ~fromBlock,
+            ~toBlock=toBlockQueried,
+            ~getBlock,
+          ),
+        ),
         // EVM/Fuel keep transaction and block inline. SVM simulate returns a
         // store page so materialize + activity attach run the same path as HyperSync.
         transactionStore,

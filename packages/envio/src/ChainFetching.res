@@ -8,6 +8,12 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
+let hasContractRegister = (item: Internal.item) =>
+  switch item {
+  | Event({onEventRegistration: {contractRegister: Some(_)}}) => true
+  | Event(_) | Block(_) => false
+  }
+
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
@@ -122,10 +128,10 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
-    let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
-      let eventItem = item->Internal.castUnsafeEventItem
-      eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
-    })
+    let numContractRegisterEvents =
+      parsedQueueItems->Array.reduce(0, (count, item) =>
+        item->hasContractRegister ? count + 1 : count
+      )
     if numContractRegisterEvents === 0 {
       Logging.trace({
         "msg": "Finished querying",
@@ -220,8 +226,7 @@ let rec onQueryResponse = async (
       let itemsWithContractRegister = []
       for idx in 0 to newItems->Array.length - 1 {
         let item = newItems->Array.getUnsafe(idx)
-        let eventItem = item->Internal.castUnsafeEventItem
-        if eventItem.onEventRegistration.contractRegister !== None {
+        if item->hasContractRegister {
           itemsWithContractRegister->Array.push(item)
         }
       }
