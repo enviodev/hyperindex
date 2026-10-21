@@ -49,9 +49,9 @@ describe("Logging Output", () => {
   testLogStrategy("ecs-console");
 });
 
-// The logger writes stdout from Rust, synchronously; Node queues a
-// `console.log` it can't write yet. On a full pipe the logger's lines would
-// overtake the queued ones and land inside them.
+// Node queues a write a full pipe can't take yet, while the logger writes
+// synchronously, so a `console.log` writing stdout itself would be overtaken
+// and split by the logger's lines; routed through the logger, it can't be.
 describe("Logging Output (shared with console.log)", () => {
   it("keeps lines whole and in call order on a piped stdout", () => {
     const output = execSync("node test/fixtures/ConsoleOrder.res.mjs", {
@@ -62,9 +62,7 @@ describe("Logging Output (shared with console.log)", () => {
     const lines = output
       .trimEnd()
       .split("\n")
-      .map((line) =>
-        line.startsWith("{") ? JSON.parse(line).message : line.split(" ").slice(0, 2).join(" ")
-      );
+      .map((line) => JSON.parse(line).message.split(" ").slice(0, 2).join(" "));
     assert.deepEqual(
       lines,
       Array.from({ length: 50 }, (_, i) => [`console ${i}`, `logger ${i}`]).flat()

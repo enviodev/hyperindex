@@ -148,8 +148,8 @@ let fork = (
   // A run that draws a display reads its workers' output instead of letting
   // them write to the terminal behind the frame's back.
   ~pipeOutput=false,
-  ~onOutput=Console.log,
-  ~onErrorOutput=Console.error,
+  ~onOutput=line => Core.getAddon().writeStdoutLine(line),
+  ~onErrorOutput=line => Core.getAddon().writeStderrLine(line),
   ~onSnapshot=() => (),
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
@@ -182,10 +182,9 @@ let fork = (
     },
   )
   if pipeOutput {
-    // The supervisor writes a worker's lines the way it writes its own, which is
-    // the only way the display can print them above its frame. Each stream keeps the one
-    // it was written to, so a worker's errors stay on stderr for whoever is
-    // redirecting it.
+    // A worker's lines are already written by its logger, so they're passed on
+    // as they are, above the display. Each stream keeps the one it was written
+    // to, so a worker's errors stay on stderr for whoever is redirecting it.
     [
       (child->NodeJs.ChildProcess.Child.stdout, onOutput),
       (child->NodeJs.ChildProcess.Child.stderr, onErrorOutput),

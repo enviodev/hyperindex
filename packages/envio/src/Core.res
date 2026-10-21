@@ -103,6 +103,8 @@ type addon = {
   tui: tuiCtor,
   @as("Logger")
   logger: loggerCtor,
+  writeStdoutLine: string => unit,
+  writeStderrLine: string => unit,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,

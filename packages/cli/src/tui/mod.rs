@@ -317,12 +317,6 @@ impl Tui {
         ));
     }
 
-    /// `false` once the display is gone, so the text needs printing elsewhere.
-    #[napi]
-    pub fn print(&self, text: String) -> bool {
-        self.commands.send(Command::Print(text)).is_ok()
-    }
-
     /// Draws the final frame and returns once it is on screen, so it can run
     /// from an exit handler.
     #[napi]

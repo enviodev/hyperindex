@@ -104,6 +104,21 @@ fn write_to_stdout_or_above_display(line: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// A line already written by a worker's logger, passed on as it is: above the
+/// display while one is running, to stdout otherwise.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_stdout_line(line: String) {
+    let _ = write_to_stdout_or_above_display(format!("{line}\n").as_bytes());
+}
+
+/// The same for a worker's stderr.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_stderr_line(line: String) {
+    let _ = crate::tui::LogWriter.write_all(format!("{line}\n").as_bytes());
+}
+
 /// `NO_COLOR` wins over `FORCE_COLOR`, which the supervisor sets for workers
 /// whose output it pipes to a terminal.
 fn supports_color(
