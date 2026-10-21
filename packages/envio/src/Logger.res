@@ -79,7 +79,19 @@ let wrapNative = native => {
   boundFieldsJson: Null.Null,
 }
 
-let make = (config: config) => Core.getAddon().logger->makeNative(config)->wrapNative
+// The logger writes stdout from Rust, synchronously, while Node queues a
+// `console.log` a full pipe can't take yet; the logger's lines would overtake
+// and split the queued ones. Blocking Node's writes too keeps both in call
+// order. Files and terminals already block.
+let blockNodeStdout: unit => unit = %raw(`function () {
+  var handle = process.stdout._handle;
+  if (handle && typeof handle.setBlocking === "function") handle.setBlocking(true);
+}`)
+
+let make = (config: config) => {
+  blockNodeStdout()
+  Core.getAddon().logger->makeNative(config)->wrapNative
+}
 
 // Keeps every line in memory, where a test reads it back as JSON.
 let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative

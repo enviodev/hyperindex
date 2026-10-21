@@ -49,6 +49,29 @@ describe("Logging Output", () => {
   testLogStrategy("ecs-console");
 });
 
+// The logger writes stdout from Rust, synchronously; Node queues a
+// `console.log` it can't write yet. On a full pipe the logger's lines would
+// overtake the queued ones and land inside them.
+describe("Logging Output (shared with console.log)", () => {
+  it("keeps lines whole and in call order on a piped stdout", () => {
+    const output = execSync("node test/fixtures/ConsoleOrder.res.mjs", {
+      encoding: "utf-8",
+      env: { ...process.env, ENVIO_TEST_LOGGING_FORMAT: "1" },
+      maxBuffer: 1 << 26,
+    });
+    const lines = output
+      .trimEnd()
+      .split("\n")
+      .map((line) =>
+        line.startsWith("{") ? JSON.parse(line).message : line.split(" ").slice(0, 2).join(" ")
+      );
+    assert.deepEqual(
+      lines,
+      Array.from({ length: 50 }, (_, i) => [`console ${i}`, `logger ${i}`]).flat()
+    );
+  });
+});
+
 // These strategies write to file, not stdout - test separately
 describe("Logging Output (file strategies)", () => {
   it("LOG_STRATEGY=ecs-file writes to log file", () => {
