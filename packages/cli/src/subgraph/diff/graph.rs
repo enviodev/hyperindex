@@ -2,9 +2,9 @@
 //! `_meta`, its collection names, every id of a type, and entities by id.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -21,8 +21,23 @@ pub struct GraphClient {
     pub url: String,
     headers: reqwest::header::HeaderMap,
     permits: Arc<Semaphore>,
+    /// Requests allowed in flight: `--concurrency`, one fewer after each 429
+    /// down to one.
+    in_flight_limit: AtomicUsize,
+    /// Spacing between request starts once the endpoint has rate-limited:
+    /// zero until the first 429, then doubled by each one (100 ms to 5 s).
+    pace: std::sync::Mutex<Pace>,
+    pace_floor: Duration,
     max_retries: u32,
     requests: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct Pace {
+    interval: Duration,
+    next_start: Option<Instant>,
+    /// Answers since the spacing last changed.
+    answered: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +95,9 @@ impl GraphClient {
             url: url.to_string(),
             headers: header_map,
             permits: Arc::new(Semaphore::new(concurrency.max(1))),
+            in_flight_limit: AtomicUsize::new(concurrency.max(1)),
+            pace: std::sync::Mutex::new(Pace::default()),
+            pace_floor: Duration::from_millis(100),
             // With the backoff capped at 30s this waits out about a minute and a
             // half, which shared-key public endpoints' rate windows need.
             max_retries: 8,
@@ -94,9 +112,14 @@ impl GraphClient {
     /// Runs one query and returns its `data`. Rate limits, gateway hiccups and
     /// timeouts are retried with backoff; a GraphQL error is returned as is.
     pub async fn query(&self, query: &str) -> Result<Value> {
-        let _permit = self.permits.acquire().await.expect("never closed");
         let mut attempt = 0;
         loop {
+            let permit = self.permits.acquire().await.expect("never closed");
+            let mut forget_permit = false;
+            let wait = self.reserve_start();
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
+            }
             self.requests.fetch_add(1, Ordering::Relaxed);
             let response = self
                 .http
@@ -121,8 +144,16 @@ impl GraphClient {
                         .and_then(|value| value.trim().parse::<u64>().ok())
                         .map(Duration::from_secs);
                     let body = response.text().await.unwrap_or_default();
-                    let transient = status.as_u16() == 429 || status.is_server_error();
+                    let rate_limited = status.as_u16() == 429;
+                    let transient = rate_limited || status.is_server_error();
                     if transient && attempt < self.max_retries {
+                        // A rate limit on requests in parallel refuses them
+                        // again when they retry together: keep one fewer in
+                        // flight from now on.
+                        if rate_limited {
+                            forget_permit = self.shrink_in_flight_limit();
+                            self.slow_down();
+                        }
                         retry_after
                     } else if !status.is_success() && !looks_like_graphql(&body) {
                         return Err(anyhow!(
@@ -136,17 +167,69 @@ impl GraphClient {
                             Err(GraphError::Transient(message) | GraphError::Fatal(message)) => {
                                 return Err(anyhow!("{} answered: {message}", self.url))
                             }
-                            Ok(data) => return Ok(data),
+                            Ok(data) => {
+                                self.speed_up();
+                                return Ok(data);
+                            }
                         }
                     }
                 }
             };
+            // Waiting out the backoff doesn't hold a request's place.
+            if forget_permit {
+                permit.forget();
+            } else {
+                drop(permit);
+            }
             let backoff = retry_after
                 .unwrap_or_else(|| Duration::from_millis(500 * 2u64.pow(attempt)))
                 .min(Duration::from_secs(30));
             tokio::time::sleep(backoff).await;
             attempt += 1;
         }
+    }
+
+    /// How long to wait before starting a request, holding its start slot.
+    fn reserve_start(&self) -> Duration {
+        let mut pace = self.pace.lock().expect("never poisoned");
+        if pace.interval.is_zero() {
+            return Duration::ZERO;
+        }
+        let now = Instant::now();
+        let start = pace.next_start.map_or(now, |next| next.max(now));
+        pace.next_start = Some(start + pace.interval);
+        start - now
+    }
+
+    fn slow_down(&self) {
+        let mut pace = self.pace.lock().expect("never poisoned");
+        pace.interval = (pace.interval * 2).clamp(self.pace_floor, Duration::from_secs(5));
+        pace.answered = 0;
+    }
+
+    /// Every tenth answer since the last 429 halves the spacing, down to none.
+    fn speed_up(&self) {
+        let mut pace = self.pace.lock().expect("never poisoned");
+        if pace.interval.is_zero() {
+            return;
+        }
+        pace.answered += 1;
+        if pace.answered >= 10 {
+            pace.answered = 0;
+            pace.interval /= 2;
+            if pace.interval < self.pace_floor {
+                pace.interval = Duration::ZERO;
+            }
+        }
+    }
+
+    /// One fewer request in flight, unless only one is left.
+    fn shrink_in_flight_limit(&self) -> bool {
+        self.in_flight_limit
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |limit| {
+                (limit > 1).then(|| limit - 1)
+            })
+            .is_ok()
     }
 
     pub async fn meta(&self) -> Result<Meta> {
@@ -271,15 +354,27 @@ fn block_arg(block: Option<u64>) -> String {
         .unwrap_or_default()
 }
 
+/// `collection(arguments)`, joining the arguments a collection carries
+/// (`candleStats(interval: hour)`) with the query's own.
+fn call(collection: &str, arguments: &str) -> String {
+    match collection
+        .strip_suffix(')')
+        .and_then(|collection| collection.split_once('('))
+    {
+        Some((name, own)) => format!("{name}({own}, {arguments})"),
+        None => format!("{collection}({arguments})"),
+    }
+}
+
 pub fn page_query(collection: &str, cursor: Option<&str>, block: Option<u64>) -> String {
     let filter = cursor
         .map(|cursor| format!(", where: {{id_gt: {cursor}}}"))
         .unwrap_or_default();
-    format!(
-        "{{ page: {collection}(first: {PAGE_SIZE}, orderBy: id, orderDirection: asc{filter}{}) {{ \
-         id }} }}",
+    let arguments = format!(
+        "first: {PAGE_SIZE}, orderBy: id, orderDirection: asc{filter}{}",
         block_arg(block)
-    )
+    );
+    format!("{{ page: {} {{ id }} }}", call(collection, &arguments))
 }
 
 pub fn rows_query(collection: &str, selection: &str, ids: &[Value], block: Option<u64>) -> String {
@@ -294,10 +389,13 @@ fn rows_query_as(
     block: Option<u64>,
 ) -> String {
     let ids = ids.iter().map(literal).collect::<Vec<_>>().join(", ");
-    format!(
-        "{{ {alias}: {collection}(first: {PAGE_SIZE}, where: {{id_in: [{ids}]}}{}) {{ id \
-         {selection} }} }}",
+    let arguments = format!(
+        "first: {PAGE_SIZE}, where: {{id_in: [{ids}]}}{}",
         block_arg(block)
+    );
+    format!(
+        "{{ {alias}: {} {{ id {selection} }} }}",
+        call(collection, &arguments)
     )
 }
 
@@ -642,6 +740,113 @@ pub mod tests {
             .await
             .unwrap();
         assert_eq!((ids.ids.len(), ids.complete), (2000, false));
+    }
+
+    // openPetition's self-hosted graph-node sits behind an nginx rate limit
+    // that answers 429 to requests in parallel: a client keeping four in
+    // flight retried them in lockstep until a type gave up ("couldn't
+    // compare"). After a 429 the client asks one fewer at a time.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn asks_fewer_at_a_time_once_rate_limited() {
+        use std::sync::atomic::AtomicUsize;
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let counter = in_flight.clone();
+        let mock = mock_graph(move |_| {
+            let concurrent = counter.fetch_add(1, Ordering::SeqCst) > 0;
+            if !concurrent {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            counter.fetch_sub(1, Ordering::SeqCst);
+            if concurrent {
+                (429, "<html>429 Too Many Requests</html>".to_string())
+            } else {
+                (200, json!({"data": {"ok": true}}).to_string())
+            }
+        })
+        .await;
+        let mut client = GraphClient::new(&mock.url, &[], 4, Duration::from_secs(5)).unwrap();
+        client.max_retries = 3;
+        let queries: Vec<String> = (0..8).map(|i| format!("{{ ok{i}: ok }}")).collect();
+        let answers =
+            futures_util::future::join_all(queries.iter().map(|query| client.query(query))).await;
+        // Three of the first four are refused; from then on one is asked at a
+        // time, so nothing else is.
+        assert_eq!(
+            (
+                answers
+                    .into_iter()
+                    .map(|answer| answer.map_err(|err| err.to_string()))
+                    .collect::<Vec<_>>(),
+                client.requests()
+            ),
+            (vec![Ok(json!({"ok": true})); 8], 11)
+        );
+    }
+
+    // The same endpoint also limits requests per second: one at a time, sent
+    // back to back, still drew 429s until a listing gave up. After a 429 the
+    // client spaces the requests it starts.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn spaces_requests_once_rate_limited() {
+        let last_served = Arc::new(Mutex::new(None::<std::time::Instant>));
+        let served = last_served.clone();
+        let mock = mock_graph(move |_| {
+            let mut last = served.lock().unwrap();
+            let now = std::time::Instant::now();
+            if last.is_some_and(|last| now - last < Duration::from_millis(200)) {
+                return (429, "<html>429 Too Many Requests</html>".to_string());
+            }
+            *last = Some(now);
+            (200, json!({"data": {"ok": true}}).to_string())
+        })
+        .await;
+        let mut client = GraphClient::new(&mock.url, &[], 4, Duration::from_secs(5)).unwrap();
+        client.max_retries = 3;
+        let queries: Vec<String> = (0..10).map(|i| format!("{{ ok{i}: ok }}")).collect();
+        let answers =
+            futures_util::future::join_all(queries.iter().map(|query| client.query(query))).await;
+        assert_eq!(
+            answers
+                .into_iter()
+                .map(|answer| answer.map_err(|err| err.to_string()))
+                .collect::<Vec<_>>(),
+            vec![Ok(json!({"ok": true})); 10]
+        );
+    }
+
+    // A gateway that refused a burst once mustn't slow a listing of
+    // thousands of pages for good: the spacing halves after every ten answers.
+    // Checked on the policy itself: the mock's own ~40 ms per request hides
+    // spacings that small in wall-clock time.
+    #[tokio::test]
+    async fn relaxes_the_spacing_once_answers_come_back() {
+        let refused = Arc::new(Mutex::new(0));
+        let counter = refused.clone();
+        let mock = mock_graph(move |_| {
+            let mut refused = counter.lock().unwrap();
+            if *refused < 3 {
+                *refused += 1;
+                return (429, "<html>429 Too Many Requests</html>".to_string());
+            }
+            (200, json!({"data": {"ok": true}}).to_string())
+        })
+        .await;
+        let mut client = GraphClient::new(&mock.url, &[], 1, Duration::from_secs(5)).unwrap();
+        client.max_retries = 3;
+        client.pace_floor = Duration::from_millis(1);
+        let spacing = |client: &GraphClient| client.pace.lock().unwrap().interval;
+        let mut seen = vec![];
+        for round in 0..4 {
+            for i in 0..10 {
+                client
+                    .query(&format!("{{ ok{round}{i}: ok }}"))
+                    .await
+                    .unwrap();
+            }
+            seen.push(spacing(&client));
+        }
+        let ms = Duration::from_millis;
+        assert_eq!(seen, vec![ms(2), ms(1), Duration::ZERO, Duration::ZERO]);
     }
 
     #[tokio::test]

@@ -538,7 +538,7 @@ Exit code: 0 when everything matches within the tolerances, 1 on a mismatch, 2 w
 * `--max-field-mismatches <MAX_FIELD_MISMATCHES>` — Allowed sampled field mismatches, across all types
 
   Default value: `0`
-* `--concurrency <CONCURRENCY>` — Requests in flight per endpoint
+* `--concurrency <CONCURRENCY>` — Requests in flight per endpoint (one fewer after each HTTP 429, down to one)
 
   Default value: `4`
 * `--max-entities <MAX_ENTITIES>` — Stop listing a type's reference ids after this many (the count is then a lower bound and the type is inconclusive unless ours falls short of it). 0 lists them all
@@ -549,6 +549,9 @@ Exit code: 0 when everything matches within the tolerances, 1 on a mismatch, 2 w
 * `--timeout <TIMEOUT>` — Per-request timeout, in seconds
 
   Default value: `60`
+* `--wait <WAIT>` — How long to wait for a reference behind ours to reach ours' block, in seconds
+
+  Default value: `120`
 * `--json` — Print the report as JSON (stable shape, `schemaVersion: 1`) instead of a table
 
 

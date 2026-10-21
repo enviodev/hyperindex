@@ -727,17 +727,27 @@ is used when they pass only one (zkBob: `--network sepolia --network-file
 envio subgraph diff <graph-node endpoint> [--json] [--ours <graph endpoint>]
 ```
 
-Run inside the subgraph project. It compares the indexer's Postgres (same
+Run inside the subgraph project; the schema is the one the manifest names,
+and the manifest is the one `envio start` reads (`--config`/`ENVIO_CONFIG`,
+else subgraph.yaml). It compares the indexer's Postgres (same
 `ENVIO_PG_*` settings, one `REPEATABLE READ READ ONLY` snapshot) with the
 endpoint the subgraph ran on before, at the block the indexer has processed
 (`envio_chains.progress_block`): the reference is pinned with
 `block: {number: N}`. Ours keeps no history, so that block is the only one it
-can answer for — `--block` only asserts it, and a reference that hasn't
-reached it, or reports `hasIndexingErrors`, is refused. `--ours` compares a
+can answer for — `--block` only asserts it. A reference that hasn't reached
+it yet (one at the chain head trails a live indexer by a few blocks) is
+waited for, `--wait` seconds (120 by default), then refused; one that
+reports `hasIndexingErrors` is refused. A reference that prunes its history
+(`indexerHints.prune: auto`, which `graph init` writes, so most new Studio
+deployments) answers only its last few thousand blocks: index to the chain
+head first (the refusal names the first block it serves). `--ours` compares a
 Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
 block.
 
-Per `@entity` type (timeseries and aggregations skipped): every reference id
+Per `@entity` type (a timeseries too), and per interval of each
+`@aggregation` (ours' `<Aggregation>_<interval>` table against the
+reference's `<collection>(interval: hour|day)`, reported as
+`<Aggregation>_<interval>`): every reference id
 is paged in by `id_gt` cursor, the id sets are diffed, and a deterministic
 sample (`--sample`, default 100; first by sha256 of the id) is compared field
 by field. Both sides are normalized to graph-node's encodings first: BigInt,
