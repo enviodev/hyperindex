@@ -13,7 +13,7 @@ use std::{
     io::{self, IsTerminal, Write},
     os::fd::FromRawFd,
     path::Path,
-    sync::{Arc, Condvar, Mutex, OnceLock},
+    sync::{mpsc, Mutex, OnceLock},
     thread,
     time::Duration,
 };
@@ -155,139 +155,47 @@ impl Batch {
     }
 }
 
-/// How many lines may wait for the writer before a caller waits with them: a
+enum Message {
+    Batch(Batch),
+    /// Answered once every batch sent before it is written.
+    Flush(mpsc::SyncSender<()>),
+}
+
+/// How many batches may wait for the writer before a caller waits with them: a
 /// reader that can't keep up slows the indexer rather than filling its memory.
-const QUEUE_CAPACITY: usize = 262_144;
+const QUEUE_CAPACITY: usize = 256;
 
-/// Batches waiting for the writer, which takes them all at once. A caller only
-/// wakes the writer when it is idle, so a busy run hands a batch over with an
-/// uncontended lock and a push.
-struct Queue {
-    state: Mutex<QueueState>,
-    /// The writer waits here for lines.
-    arrived: Condvar,
-    /// Callers wait here for room, and flushes for their lines to be written.
-    written: Condvar,
-}
-
-#[derive(Default)]
-struct QueueState {
-    batches: Vec<Batch>,
-    waiting_lines: usize,
-    pushed: u64,
-    written: u64,
-    writer_idle: bool,
-    waiting_on_writes: usize,
-    closed: bool,
-}
-
-impl Queue {
-    fn push(&self, batch: Batch) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
-        while state.waiting_lines >= QUEUE_CAPACITY {
-            state.waiting_on_writes += 1;
-            state = match self.written.wait(state) {
-                Ok(state) => state,
-                Err(_) => return,
-            };
-            state.waiting_on_writes -= 1;
-        }
-        state.waiting_lines += batch.lines;
-        state.pushed += batch.lines as u64;
-        state.batches.push(batch);
-        if state.writer_idle {
-            state.writer_idle = false;
-            self.arrived.notify_one();
-        }
-    }
-
-    fn flush(&self) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
-        let target = state.pushed;
-        while state.written < target {
-            state.waiting_on_writes += 1;
-            state = match self.written.wait(state) {
-                Ok(state) => state,
-                Err(_) => return,
-            };
-            state.waiting_on_writes -= 1;
-        }
-    }
-
-    fn close(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.closed = true;
-            self.arrived.notify_one();
-        }
-    }
-
-    /// The next batches to write, swapped for `spare`; `None` once the logger
-    /// is gone and nothing is left.
-    fn take(&self, spare: Vec<Batch>) -> Option<Vec<Batch>> {
-        let mut state = self.state.lock().ok()?;
-        while state.batches.is_empty() {
-            if state.closed {
-                return None;
-            }
-            state.writer_idle = true;
-            state = self.arrived.wait(state).ok()?;
-        }
-        state.writer_idle = false;
-        state.waiting_lines = 0;
-        Some(std::mem::replace(&mut state.batches, spare))
-    }
-
-    fn mark_written(&self, count: usize) {
-        if let Ok(mut state) = self.state.lock() {
-            state.written += count as u64;
-            if state.waiting_on_writes > 0 {
-                self.written.notify_all();
-            }
-        }
-    }
-}
-
-fn spawn_writer(sinks: Vec<Sink>) -> io::Result<Arc<Queue>> {
-    let queue = Arc::new(Queue {
-        state: Mutex::new(QueueState::default()),
-        arrived: Condvar::new(),
-        written: Condvar::new(),
-    });
-    let writer_queue = queue.clone();
+fn spawn_writer(sinks: Vec<Sink>) -> io::Result<mpsc::SyncSender<Message>> {
+    let (sender, receiver) = mpsc::sync_channel::<Message>(QUEUE_CAPACITY);
     thread::Builder::new()
         .name("envio-logger".into())
         .spawn(move || {
             let mut outs: Vec<Vec<u8>> = sinks.iter().map(|_| Vec::new()).collect();
-            let mut spare = Vec::new();
-            while let Some(mut batches) = writer_queue.take(spare) {
-                let mut count = 0;
-                for batch in &batches {
-                    count += batch.lines;
-                    batch.with_records(|record| {
+            for message in receiver {
+                match message {
+                    Message::Batch(batch) => {
+                        batch.with_records(|record| {
+                            for (sink, out) in sinks.iter().zip(outs.iter_mut()) {
+                                if record.level >= sink.level {
+                                    sink.render(record, out);
+                                }
+                            }
+                        });
+                        // One write per sink for the whole batch.
                         for (sink, out) in sinks.iter().zip(outs.iter_mut()) {
-                            if record.level >= sink.level {
-                                sink.render(record, out);
+                            if !out.is_empty() {
+                                sink.target.write_all(out);
+                                out.clear();
                             }
                         }
-                    });
-                }
-                // One write per sink for everything taken at once.
-                for (sink, out) in sinks.iter().zip(outs.iter_mut()) {
-                    if !out.is_empty() {
-                        sink.target.write_all(out);
-                        out.clear();
+                    }
+                    Message::Flush(written) => {
+                        let _ = written.send(());
                     }
                 }
-                writer_queue.mark_written(count);
-                batches.clear();
-                spare = batches;
             }
         })?;
-    Ok(queue)
+    Ok(sender)
 }
 
 /// Stdout through a descriptor of the logger's own: Node may switch the
@@ -452,15 +360,7 @@ enum Output {
     Memory(Mutex<Vec<Value>>),
     /// Formatted and written off the caller's thread, which only hands each
     /// line over.
-    Written(Arc<Queue>),
-}
-
-impl Drop for Logger {
-    fn drop(&mut self) {
-        if let Output::Written(queue) = &self.output {
-            queue.close();
-        }
-    }
+    Written(mpsc::SyncSender<Message>),
 }
 
 /// Where a run's lines go. Holds no fields of its own: a caller's bound fields
@@ -480,7 +380,9 @@ impl Logger {
                     batch.with_records(|record| lines.push(format::to_captured_line(record)));
                 }
             }
-            Output::Written(queue) => queue.push(batch),
+            Output::Written(sender) => {
+                let _ = sender.send(Message::Batch(batch));
+            }
         }
     }
 
@@ -510,12 +412,12 @@ impl Logger {
             .map(|sink| sink.level)
             .min()
             .unwrap_or(Level::SILENT);
-        let queue = spawn_writer(sinks).map_err(|error| {
+        let sender = spawn_writer(sinks).map_err(|error| {
             napi::Error::from_reason(format!("Failed to start the log writer: {error}"))
         })?;
         Ok(Logger {
             min_level,
-            output: Output::Written(queue),
+            output: Output::Written(sender),
         })
     }
 
@@ -548,8 +450,11 @@ impl Logger {
     /// the lines still waiting for the writer aren't lost with the process.
     #[napi]
     pub fn flush(&self) {
-        if let Output::Written(queue) = &self.output {
-            queue.flush();
+        if let Output::Written(sender) = &self.output {
+            let (written, done) = mpsc::sync_channel(1);
+            if sender.send(Message::Flush(written)).is_ok() {
+                let _ = done.recv();
+            }
         }
     }
 
