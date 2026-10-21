@@ -4,8 +4,13 @@
 // the current one) met its own edit on the next round, because every round got
 // the same event object: its V0 `Mint` handler read a 6-field tuple, rewrote it
 // to 5 fields, and crashed on `.treasuryFee` after the call resolved.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4761"), ("ENVIO_SUBGRAPH_SKIP_PRELOAD", "1")]),
+  ~env=Dict.fromArray([
+    ("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`),
+    ("ENVIO_SUBGRAPH_SKIP_PRELOAD", "1"),
+  ]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -156,7 +161,7 @@ beforeAll(async () => {
       reply(SLOT_RESULT.replace(/2a$/, "07"));
     });
   });
-  await new Promise<void>((resolve) => server.listen(4761, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

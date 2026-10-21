@@ -497,7 +497,7 @@ describe("subgraph translation: unknown things", () => {
   it("accepts specVersion 1.4.0, whose declared calls may read a struct field", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,
-      ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4840")]),
+      ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${FreePort.pick()}`)]),
       ~manifest=manifestWith(
         `${plainEventHandler}
           calls:

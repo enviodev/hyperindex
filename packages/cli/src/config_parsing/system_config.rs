@@ -1485,6 +1485,11 @@ impl SystemConfig {
         let rpc_env = env.get(crate::subgraph::RPC_ENV_VAR).map(|s| s.as_str());
         let missing_abis =
             crate::subgraph::missing_abi_files(manifest_yaml, files, Path::new(root));
+        if missing_abis.is_none() {
+            if let Some(undeclared) = crate::subgraph::undeclared_events(manifest_yaml, files) {
+                return Err(anyhow!("{undeclared}"));
+            }
+        }
         let translation = match (
             crate::subgraph::translate(
                 manifest_yaml,
@@ -1634,6 +1639,7 @@ impl SystemConfig {
         let root = &root;
 
         crate::subgraph::render::write_missing_inputs(root, &manifest)?;
+        crate::subgraph::render::write_missing_abis_with_codegen_steps(root, &manifest)?;
         let schema_path = manifest_dir.join(&schema_file);
         if !schema_path.exists() {
             // inverse-governance's schema is OpenZeppelin graph-compiler output.
@@ -1776,6 +1782,7 @@ impl SystemConfig {
                     template: rendered.template,
                     view: rendered.view,
                     steps: rendered.steps,
+                    commands: rendered.commands,
                 });
         }
         config.parsed_project_paths = project_paths.clone();
@@ -1812,6 +1819,9 @@ impl SystemConfig {
                     .and_then(|dir| {
                         crate::subgraph::render::unrepeatable_writers(
                             &dir.join(crate::subgraph::DEFAULT_MANIFEST),
+                            crate::utils::project_env::ProjectEnv::new(root)
+                                .var(crate::subgraph::NETWORK_ENV_VAR)
+                                .as_deref(),
                         )
                     })
                     .map(|writers| format!("\n{writers}"))
@@ -1863,8 +1873,13 @@ impl SystemConfig {
             Err(err) => {
                 let manifests = crate::subgraph::find_manifests(root);
                 let hint = crate::subgraph::manifest_hint(&manifests);
-                if let Some(writers) = crate::subgraph::render::unrepeatable_writers(&manifest_path)
-                    .filter(|_| manifests.is_empty())
+                let network = crate::utils::project_env::ProjectEnv::new(root)
+                    .var(crate::subgraph::NETWORK_ENV_VAR);
+                if let Some(writers) = crate::subgraph::render::unrepeatable_writers(
+                    &manifest_path,
+                    network.as_deref(),
+                )
+                .filter(|_| manifests.is_empty())
                 {
                     return Err(anyhow!(
                         "There is no {} here.\n{writers}",
@@ -1875,6 +1890,26 @@ impl SystemConfig {
                     ));
                 }
                 if root.join("subgraph.template.yaml").exists() && manifests.is_empty() {
+                    let readers =
+                        crate::subgraph::render::files_reading(root, &["subgraph", "template"]);
+                    if let [reader] = readers.as_slice() {
+                        return Err(anyhow!(
+                            "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                             The repo's {reader} reads subgraph.template.yaml, so it likely \
+                             writes the manifest; no package.json script runs it, so envio \
+                             doesn't either. Run it for your network, then start envio again."
+                        ));
+                    }
+                    if !readers.is_empty() {
+                        return Err(anyhow!(
+                            "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                             The repo's {} read subgraph.template.yaml, so one of them likely \
+                             writes the manifest; no package.json script runs them, so envio \
+                             doesn't either. Run the right one for your network, then start \
+                             envio again.",
+                            readers.join(", ")
+                        ));
+                    }
                     return Err(anyhow!(
                         "Found subgraph.template.yaml but no subgraph.yaml.\n\
                          This project generates its manifest — run the package prepare script \

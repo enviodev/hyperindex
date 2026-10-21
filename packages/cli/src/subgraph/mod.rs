@@ -154,6 +154,10 @@ pub struct RenderedManifest {
     /// the runtime's codegen then doesn't run again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<String>,
+    /// The commands envio ran of `script`, the one package.json script that
+    /// writes the manifest (§6d).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
 }
 
 pub const DEFAULT_MANIFEST: &str = "subgraph.yaml";
@@ -342,6 +346,54 @@ pub fn apply_network(manifest_yaml: &str, networks_json: &str, network: &str) ->
         }
     }
     Ok(serde_yaml::to_string(&manifest)?)
+}
+
+/// An event handler whose event the data source's ABI doesn't declare, as
+/// graph-cli's validation reports it ("Event with signature … not present in
+/// ABI"), or `None`. envio's own check reported it as a translation gap.
+pub fn undeclared_events(manifest_yaml: &str, files: &HashMap<String, String>) -> Option<String> {
+    let mut discard = Report::new();
+    let manifest = manifest::parse(manifest_yaml, &mut discard)?;
+    let mut messages = Vec::new();
+    for source in manifest.all_sources() {
+        let Some((abi, path)) = source
+            .abi
+            .as_ref()
+            .and_then(|abi| Some((abi, source.abis.get(abi)?)))
+        else {
+            continue;
+        };
+        let Some(abi_json) = files
+            .get(path)
+            .or_else(|| files.get(path.trim_start_matches("./")))
+        else {
+            continue;
+        };
+        for handler in &source.event_handlers {
+            let Some((false, events)) = abi::declared_events(&handler.event, abi_json) else {
+                continue;
+            };
+            let kind = if source.is_template {
+                "template"
+            } else {
+                "data source"
+            };
+            messages.push(format!(
+                "The {kind} \"{}\" handles the event {}, which its ABI \"{abi}\" ({path}) doesn't \
+                 declare. The ABI's events: {}. graph-cli refuses the manifest the same way \
+                 (\"Event with signature … not present in ABI\"): the manifest and the ABI are \
+                 from different versions of the contract.",
+                source.name,
+                handler.event,
+                if events.is_empty() {
+                    "none".to_string()
+                } else {
+                    events.join(", ")
+                }
+            ));
+        }
+    }
+    (!messages.is_empty()).then(|| messages.join("\n"))
 }
 
 /// The ABI files the manifest's data sources and templates decode with that
@@ -1636,10 +1688,11 @@ pub fn translate(
     }
 
     // A block handler gets only the block number from envio; its header is
-    // fetched afterwards, outside the reorg guard that validates event blocks
-    // (spec/BLOCK_HASH.md). So a chain whose block handlers read the header
-    // trails its head by the reorg depth, where envio itself assumes nothing
-    // reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the depth; 0 turns it off.
+    // fetched afterwards, outside the reorg guard that validates event blocks,
+    // so inside the reorg window it may be another fork's. A chain whose block
+    // handlers read the header trails its head by the reorg depth, where envio
+    // itself assumes nothing reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the
+    // depth; 0 turns it off.
     // A `filter: call` handler is exempt: its block arrives whole with the call.
     let mut block_header_lag: BTreeMap<u64, u32> = BTreeMap::new();
     for source in manifest.all_sources() {
@@ -3509,6 +3562,64 @@ type Renewal implements Event @entity {
         fs::write(dir.join(manifest), GRAVITY_MANIFEST).unwrap();
     }
 
+    // VeltrixaLabs' manifest says `network: 66665` (a chain id). graph-node
+    // reads the manifest with serde_yaml, which reads a plain scalar into a
+    // String field as written: the network "66665". envio refused the number
+    // ("doesn't know the value of network, which has to be a string").
+    #[test]
+    fn reads_a_number_where_the_manifest_has_a_string_as_graph_node_does() {
+        let dir = tempdir::TempDir::new("envio-subgraph-numeric-network").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: 66665"),
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err.lines().next().unwrap_or_default(),
+            "Envio Subgraph doesn't know the network \"66665\"."
+        );
+    }
+
+    // burngraph's manifest handles `AnonymousDeposit(indexed
+    // address,uint256,string,string)`, and its VoteOption ABI declares that
+    // event as ReceivedDeposit: graph-cli refuses it ("Event with signature …
+    // not present in ABI"). envio reported a translation gap of its own
+    // ("envio can't index the result … Event AnonymousDeposit not found in ABI
+    // file", "please open an issue").
+    #[test]
+    fn says_which_event_the_abi_does_not_declare() {
+        let dir = tempdir::TempDir::new("envio-subgraph-undeclared-event").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.yaml");
+        fs::write(
+            root.join("subgraph.yaml"),
+            GRAVITY_MANIFEST.replace("NewGravatar(uint256)", "AnonymousGravatar(uint256)"),
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            err,
+            "The data source \"Gravity\" handles the event AnonymousGravatar(uint256), which its \
+             ABI \"Gravity\" (./abis/Gravity.json) doesn't declare. The ABI's events: \
+             NewGravatar(uint256). graph-cli refuses the manifest the same way (\"Event with \
+             signature … not present in ABI\"): the manifest and the ABI are from different \
+             versions of the contract."
+        );
+    }
+
     // Uniswap v3's build writes `v3-subgraph.yaml`; `--config` naming it was
     // parsed as an envio config ("missing field `chains`").
     #[test]
@@ -4194,6 +4305,39 @@ type Renewal implements Event @entity {
                 err.contains("graph build --network"),
             ),
             (true, true)
+        );
+    }
+
+    // kleros/pgtcr renders its manifest with `node render-templates.js
+    // <network>`, a repo file no package.json script runs: envio runs no such
+    // file, and said only "run the package prepare script".
+    #[test]
+    fn names_the_repo_file_that_reads_the_template() {
+        let dir = tempdir::TempDir::new("envio-subgraph-template-file").unwrap();
+        let root = dir.path();
+        fs::write(root.join("subgraph.template.yaml"), "specVersion: 0.0.2\n").unwrap();
+        fs::write(
+            root.join("render-templates.js"),
+            // as kleros' does: the file name is put together
+            "for (const [name, ext] of [['subgraph', 'yaml']]) {\n  const template = fs.readFileSync(`${name}.template.${ext}`).toString();\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"codegen": "graph codegen", "build": "graph build"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(
+            err,
+            "Found subgraph.template.yaml but no subgraph.yaml.\nThe repo's render-templates.js \
+             reads subgraph.template.yaml, so it likely writes the manifest; no package.json \
+             script runs it, so envio doesn't either. Run it for your network, then start envio \
+             again."
         );
     }
 
@@ -4895,6 +5039,68 @@ type Renewal implements Event @entity {
         );
     }
 
+    // FilOzone's dealbot commits its manifest but not its ABIs: `"codegen":
+    // "pnpm run sync-abis && graph codegen"`, and `sync-abis` writes abis/
+    // from the installed @filoz/synapse-core. envio runs those steps at
+    // codegen anyway (§6a), but the translation needs the ABIs before that,
+    // and stopped at "These ABI files the manifest names don't exist". A
+    // codegen step that writes the manifest itself doesn't run for them: the
+    // manifest there is the user's.
+    #[test]
+    fn runs_the_codegen_steps_that_write_the_missing_abis() {
+        let project = |codegen: &str| {
+            let dir = tempdir::TempDir::new("envio-subgraph-codegen-abis").unwrap();
+            write_gravity(dir.path(), "subgraph.yaml");
+            fs::remove_file(dir.path().join("abis/Gravity.json")).unwrap();
+            fs::create_dir_all(dir.path().join("scripts")).unwrap();
+            fs::write(
+                dir.path().join("scripts/sync-abis.sh"),
+                format!("mkdir -p abis && printf '%s' '{GRAVITY_ABI}' > abis/Gravity.json\n"),
+            )
+            .unwrap();
+            fs::write(
+                dir.path().join("package.json"),
+                format!(
+                    r#"{{"scripts": {{"sync-abis": "sh scripts/sync-abis.sh", "codegen": "{codegen}"}}}}"#
+                ),
+            )
+            .unwrap();
+            dir
+        };
+        let outcome = |dir: &tempdir::TempDir| {
+            let project_paths =
+                ParsedProjectPaths::new(dir.path().to_str().unwrap(), "config.yaml").unwrap();
+            match SystemConfig::parse_from_project_files(&project_paths) {
+                Ok(config) => format!("{}", chain_of(&config).0),
+                Err(err) => format!("{err:#}")
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+            }
+        };
+        let dealbot = project("npm run sync-abis && graph codegen");
+        let rewrites_manifest = project(
+            "sh scripts/sync-abis.sh && cp subgraph.yaml subgraph.yaml.bak && graph codegen",
+        );
+
+        assert_eq!(
+            (
+                outcome(&dealbot),
+                outcome(&rewrites_manifest),
+                rewrites_manifest.path().join("subgraph.yaml.bak").exists()
+            ),
+            (
+                "1".to_string(),
+                format!(
+                    "These ABI files the manifest names don't exist under {}:",
+                    rewrites_manifest.path().canonicalize().unwrap().display()
+                ),
+                false
+            )
+        );
+    }
+
     // balancer-v2's `"codegen": "npm run generate-manifests && graph codegen
     // subgraph.mainnet.yaml --output-dir src/types/"`: the steps before
     // `graph codegen` write subgraph.<network>.yaml, and the codegen step
@@ -4930,16 +5136,23 @@ type Renewal implements Event @entity {
     // beefy's `"codegen": "rm -Rf generated && graph codegen"`: a step before
     // `graph codegen` that can't write a manifest isn't the manifest's
     // writer. envio ran it and blamed it; the error is about the script that
-    // does write the manifest (`configure`, ./bin/prepare.sh).
+    // does write the manifest (`configure`, ./bin/prepare.sh), which envio
+    // runs as the one that does, and which wants its chain as an argument.
     #[test]
     fn passes_over_codegen_steps_that_write_no_manifest() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = tempdir::TempDir::new("envio-subgraph-codegen-noop").unwrap();
         let root = dir.path();
         write_gravity(root, "subgraph.template.yaml");
         fs::create_dir_all(root.join("bin")).unwrap();
         fs::write(
             root.join("bin/prepare.sh"),
-            "jq -r . config/$1.json | sed -f - subgraph.template.yaml > subgraph.yaml\n",
+            "#!/bin/sh\n[ -n \"$1\" ] || { echo \"Usage: $0 <chain>\"; exit 1; }\njq -r . config/$1.json | sed -f - subgraph.template.yaml > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            root.join("bin/prepare.sh"),
+            fs::Permissions::from_mode(0o755),
         )
         .unwrap();
         fs::write(
@@ -4954,12 +5167,11 @@ type Renewal implements Event @entity {
         );
 
         assert_eq!(
-            err.lines().take(3).collect::<Vec<_>>(),
+            err.lines().collect::<Vec<_>>(),
             vec![
-                "There is no subgraph.yaml here.",
-                "The project writes its manifest with a package.json script, and envio can't \
-                 repeat it:",
-                "  \"configure\": ./bin/prepare.sh",
+                "There is no subgraph.yaml here, and the package.json script \"configure\" writes \
+                 it: envio ran `./bin/prepare.sh` from it, and it exited with 1 — the error above \
+                 is the script's own.",
             ]
         );
     }
@@ -5018,6 +5230,501 @@ type Renewal implements Event @entity {
         assert_eq!(
             (ran, root.join("subgraph.yaml").exists(), named),
             (Vec::<&str>::new(), false, scripts.to_vec())
+        );
+    }
+
+    fn ran_markers(root: &std::path::Path) -> Vec<String> {
+        let mut ran: Vec<String> = fs::read_dir(root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter_map(|name| name.strip_prefix("ran-").map(str::to_string))
+            .collect();
+        ran.sort();
+        ran
+    }
+
+    // Venus writes its manifest with `"prepare:bsc": "NETWORK=bsc yarn
+    // ts-node config/index.ts"`, one script per network, and Polymarket with
+    // `ts-node ./templatify.ts`: the repo's own code, which envio can't
+    // repeat itself. The one script that writes the manifest for the network
+    // picked runs as it is, up to graph-cli. Nothing else runs: not another
+    // network's, not a deploy script, not a step after `graph codegen`, and
+    // with no network picked, none of the per-network ones.
+    #[test]
+    fn runs_the_one_script_that_writes_the_manifest() {
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-script").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(
+            root.join("subgraph.template.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/write.sh"),
+            "touch \"ran-$1\"\nsed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::write(root.join("scripts/mark.sh"), "touch \"ran-$1\"\n").unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {
+  "prepare:mainnet": "sh scripts/write.sh mainnet && graph codegen",
+  "prepare:arbitrum-one": "sh scripts/write.sh arbitrum-one && yarn codegen && sh scripts/mark.sh after-codegen",
+  "deploy:arbitrum-one": "sh scripts/write.sh deploy && sh scripts/mark.sh deployed",
+  "codegen": "graph codegen",
+  "test": "sh scripts/mark.sh test"
+}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+
+        let unset = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+        let ran_unset = ran_markers(root);
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=arbitrum-one\n").unwrap();
+        let picked = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+        let rendered = picked.subgraph.clone().unwrap().rendered_manifest.unwrap();
+
+        assert_eq!(
+            (
+                unset.contains("ENVIO_SUBGRAPH_NETWORK"),
+                ran_unset,
+                chain_of(&picked).0,
+                ran_markers(root),
+                rendered.script,
+                rendered.commands,
+            ),
+            (
+                true,
+                Vec::<String>::new(),
+                42161,
+                vec!["arbitrum-one".to_string()],
+                "prepare:arbitrum-one".to_string(),
+                vec!["sh scripts/write.sh arbitrum-one".to_string()],
+            )
+        );
+    }
+
+    // Of the scripts that build for the network picked, the one that writes
+    // the manifest runs:
+    // - The Graph's network subgraph: `prepare:mainnet` runs
+    //   `prep:addresses:mainnet` (which writes only addresses.ts, and the
+    //   generatedAddresses.json input) before rendering the manifest itself;
+    // - Reserve's `parse:fork` passes `--output subgraph.fork.yaml`;
+    // - FilOzone's `generate:yaml:mainnet` runs a file that writes
+    //   subgraph.yaml, `generate:constants:mainnet` one that doesn't.
+    #[test]
+    fn runs_the_script_that_writes_the_manifest_of_those_for_the_network() {
+        let project = |files: &[(&str, &str)]| {
+            let dir = tempdir::TempDir::new("envio-subgraph-writer-pick").unwrap();
+            write_gravity(dir.path(), "subgraph.template.yaml");
+            fs::write(
+                dir.path().join("subgraph.template.yaml"),
+                GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+            )
+            .unwrap();
+            for (file, text) in files {
+                let path = dir.path().join(file);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, text).unwrap();
+            }
+            fs::write(dir.path().join(".env"), "ENVIO_SUBGRAPH_NETWORK=mainnet\n").unwrap();
+            dir
+        };
+        let picked = |dir: &tempdir::TempDir| {
+            let project_paths =
+                ParsedProjectPaths::new(dir.path().to_str().unwrap(), "config.yaml").unwrap();
+            match SystemConfig::parse_from_project_files(&project_paths) {
+                Ok(config) => config.subgraph.unwrap().rendered_manifest.unwrap().script,
+                Err(err) => format!("{err:#}"),
+            }
+        };
+        let network = project(&[
+            (
+                "config/addresses.sh",
+                "echo \"s/network: NETWORK/network: $1/\" > config/generatedAddresses.sed\n",
+            ),
+            (
+                "config/addresses.template.ts",
+                "export const NETWORK = \"X\";\n",
+            ),
+            (
+                "package.json",
+                r#"{"scripts": {
+  "prep:addresses:mainnet": "sh config/addresses.sh mainnet && sed s/X/mainnet/ ./config/addresses.template.ts > ./config/addresses.ts",
+  "prep:addresses:arbitrum": "sh config/addresses.sh arbitrum-one && sed s/X/arbitrum/ ./config/addresses.template.ts > ./config/addresses.ts",
+  "prepare:mainnet": "yarn prep:addresses:mainnet && sed -f ./config/generatedAddresses.sed subgraph.template.yaml > subgraph.yaml && graph codegen",
+  "prepare:arbitrum": "yarn prep:addresses:arbitrum && sed -f ./config/generatedAddresses.sed subgraph.template.yaml > subgraph.yaml && graph codegen"
+}}"#,
+            ),
+        ]);
+        let reserve = project(&[
+            (
+                "scripts/parse.sh",
+                "out=subgraph.yaml; [ \"$2\" = --output ] && out=$3\nsed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > $out\n",
+            ),
+            (
+                "package.json",
+                r#"{"scripts": {
+  "parse:fork": "sh scripts/parse.sh mainnet --output subgraph.fork.yaml",
+  "parse:mainnet": "sh scripts/parse.sh mainnet",
+  "parse:base": "sh scripts/parse.sh base"
+}}"#,
+            ),
+        ]);
+        let filoz = project(&[
+            (
+                "scripts/gen-config.sh",
+                "sed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > subgraph.yaml\n",
+            ),
+            (
+                "scripts/gen-constants.sh",
+                "sed s/X/$1/ src/constants.template.ts > src/constants.ts\n",
+            ),
+            (
+                "src/constants.template.ts",
+                "export const NETWORK = \"X\";\n",
+            ),
+            (
+                "package.json",
+                r#"{"scripts": {
+  "generate:constants:mainnet": "sh scripts/gen-constants.sh mainnet",
+  "generate:constants:calibration": "sh scripts/gen-constants.sh calibration",
+  "generate:yaml:mainnet": "sh scripts/gen-config.sh mainnet",
+  "generate:yaml:calibration": "sh scripts/gen-config.sh calibration"
+}}"#,
+            ),
+        ]);
+
+        assert_eq!(
+            (picked(&network), picked(&reserve), picked(&filoz)),
+            (
+                "prepare:mainnet".to_string(),
+                "parse:mainnet".to_string(),
+                "generate:yaml:mainnet".to_string()
+            )
+        );
+    }
+
+    // beefy's `"configure": "./bin/prepare.sh"` takes its chain as its first
+    // argument (`CHAIN=$1`; its README: `yarn configure <chain>`), and NFTX's
+    // `ts-node ./script/build` its network (`const network =
+    // process.argv[2]`). envio ran them without one, and they exited on their
+    // usage message. The network picked is passed as that argument, as `npm
+    // run <script> -- <network>` passes it; a script whose first argument is
+    // something else (an output path) isn't given it.
+    #[test]
+    fn passes_the_network_to_a_script_that_takes_it_as_its_first_argument() {
+        use std::os::unix::fs::PermissionsExt;
+        let project = |script: &str, body: &str| {
+            let dir = tempdir::TempDir::new("envio-subgraph-writer-argument").unwrap();
+            write_gravity(dir.path(), "subgraph.template.yaml");
+            fs::write(
+                dir.path().join("subgraph.template.yaml"),
+                GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+            )
+            .unwrap();
+            fs::create_dir_all(dir.path().join("bin")).unwrap();
+            fs::write(dir.path().join("bin/prepare.sh"), body).unwrap();
+            fs::set_permissions(
+                dir.path().join("bin/prepare.sh"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            fs::write(
+                dir.path().join("package.json"),
+                format!(
+                    r#"{{"scripts": {{"configure": "{script}", "codegen": "graph codegen"}}}}"#
+                ),
+            )
+            .unwrap();
+            fs::write(dir.path().join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+            dir
+        };
+        let outcome = |dir: &tempdir::TempDir| {
+            let project_paths =
+                ParsedProjectPaths::new(dir.path().to_str().unwrap(), "config.yaml").unwrap();
+            match SystemConfig::parse_from_project_files(&project_paths) {
+                Ok(config) => format!(
+                    "{} {:?}",
+                    chain_of(&config).0,
+                    config.subgraph.unwrap().rendered_manifest.unwrap().commands
+                ),
+                Err(err) => format!("{err:#}")
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+            }
+        };
+        let chain = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nCHAIN=$1\n[ -n \"$CHAIN\" ] || { echo \"Usage: $0 <chain>\"; exit 1; }\nsed \"s/network: NETWORK/network: $CHAIN/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
+        let output_path = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nOUT=${1:-subgraph.yaml}\nsed \"s/network: NETWORK/network: mainnet/\" subgraph.template.yaml > $OUT\n",
+        );
+        // Decentraland's buildData.ts: `if (process.argv[i] === '--network')`.
+        let option = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\n[ \"$1\" = '--network' ] || { echo \"Supply a valid network using --network\"; exit 1; }\nsed \"s/network: NETWORK/network: $2/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
+        // UMA has both `"build-manifest": "scripts/build-manifest.sh"` and
+        // `"prepare:polygon": "scripts/build-manifest.sh polygon && …"`: given
+        // the network, the first runs what the second does.
+        let both = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nCHAIN=$1\nsed \"s/network: NETWORK/network: $CHAIN/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
+        fs::write(
+            both.path().join("package.json"),
+            r#"{"scripts": {"build-manifest": "./bin/prepare.sh", "prepare:base": "./bin/prepare.sh base && yarn codegen", "prepare:mainnet": "./bin/prepare.sh mainnet && yarn codegen", "codegen": "graph codegen"}}"#,
+        )
+        .unwrap();
+
+        // Polymarket's `"prepare:mainnet": "NETWORK_NAME=mainnet ts-node
+        // ./templatify.ts"` names its network itself: it isn't given another.
+        let named = project(
+            "./bin/prepare.sh",
+            "#!/bin/sh\nCHAIN=$1\nsed \"s/network: NETWORK/network: $CHAIN/\" subgraph.template.yaml > subgraph.yaml\n",
+        );
+        fs::write(
+            named.path().join("package.json"),
+            r#"{"scripts": {"prepare:mainnet": "NETWORK_NAME=mainnet ./bin/prepare.sh"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            (
+                outcome(&chain),
+                outcome(&output_path),
+                outcome(&option),
+                outcome(&both),
+                outcome(&named)
+            ),
+            (
+                "8453 [\"./bin/prepare.sh base\"]".to_string(),
+                "There is no subgraph.yaml here.".to_string(),
+                "8453 [\"./bin/prepare.sh --network base\"]".to_string(),
+                "8453 [\"./bin/prepare.sh base\"]".to_string(),
+                "There is no subgraph.yaml here.".to_string(),
+            )
+        );
+    }
+
+    // sushiswap's v3 subgraph: `"generate": "mustache ../../config/$NETWORK.js
+    // template.yaml > subgraph.yaml && mustache ../../config/$NETWORK.js
+    // src/constants/index.template.ts > src/constants/index.ts && graph
+    // codegen"`. The view is a JavaScript module, which the mustache CLI
+    // runs; envio's own render can't, and refused ("the view … is a JavaScript
+    // module"). It is the one script that writes the manifest, so it runs.
+    #[test]
+    fn runs_a_mustache_script_whose_view_is_a_javascript_module() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir::TempDir::new("envio-subgraph-js-view").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(root.join("subgraph.template.yaml"), gravity_template()).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(
+            root.join("config/base.js"),
+            "module.exports = { network: 'base', gravity: { address: '0x00000000000014aA86C5d3c41765bb24e11bd701', startBlock: 1 } };\n",
+        )
+        .unwrap();
+        // The mustache CLI the install links: it requires a .js view.
+        fs::create_dir_all(root.join("node_modules/.bin")).unwrap();
+        fs::write(
+            root.join("node_modules/.bin/mustache"),
+            "#!/usr/bin/env node\nconst fs = require('fs'), path = require('path');\nconst view = require(path.resolve(process.argv[2]));\nlet text = fs.readFileSync(process.argv[3], 'utf8');\ntext = text.replace(/\\{\\{([\\w.]+)\\}\\}/g, (_, key) => key.split('.').reduce((value, part) => value[part], view));\nprocess.stdout.write(text);\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            root.join("node_modules/.bin/mustache"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"generate": "mustache config/$NETWORK.js subgraph.template.yaml > subgraph.yaml && graph codegen"}}"#,
+        )
+        .unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config),
+                config.subgraph.unwrap().rendered_manifest.unwrap().commands
+            ),
+            (
+                (
+                    8453,
+                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                ),
+                vec![
+                    "mustache config/$NETWORK.js subgraph.template.yaml > subgraph.yaml"
+                        .to_string()
+                ]
+            )
+        );
+    }
+
+    // beefy's `"postinstall": "yarn run --silent configure linea && …"`: a
+    // package manager passes the words after the script's name on to it, so
+    // `configure` (`./bin/prepare.sh`) runs as `./bin/prepare.sh linea`.
+    // envio read `--silent` as the script's name, and dropped the arguments of
+    // a script it read through.
+    #[test]
+    fn passes_a_script_call_s_arguments_to_the_script() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-call-args").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(
+            root.join("subgraph.template.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(
+            root.join("bin/prepare.sh"),
+            "#!/bin/sh\n[ -n \"$1\" ] || { echo \"Usage: $0 <chain>\"; exit 1; }\nsed \"s/network: NETWORK/network: $1/\" subgraph.template.yaml > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            root.join("bin/prepare.sh"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"configure": "./bin/prepare.sh", "prepare:base": "yarn run --silent configure base && yarn codegen", "codegen": "graph codegen"}}"#,
+        )
+        .unwrap();
+        fs::write(root.join(".env"), "ENVIO_SUBGRAPH_NETWORK=base\n").unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(
+            (
+                chain_of(&config).0,
+                config.subgraph.unwrap().rendered_manifest.unwrap().commands
+            ),
+            (8453, vec!["./bin/prepare.sh base".to_string()])
+        );
+    }
+
+    // envio runs each of a script's `&&` commands in a shell of its own, so
+    // `export NETWORK=… && node build.js` and `cd subgraph && …` would lose
+    // what the shell they ran in carries to the next command.
+    #[test]
+    fn carries_a_scripts_cd_and_export_to_its_next_commands() {
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-export").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::write(
+            root.join("subgraph.template.yaml"),
+            GRAVITY_MANIFEST.replace("network: mainnet", "network: NETWORK"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/write.sh"),
+            "[ -n \"$CHAIN\" ] || exit 1\nsed \"s/network: NETWORK/network: $CHAIN/\" ../subgraph.template.yaml > ../subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"build-manifest": "export CHAIN=base && cd scripts && sh write.sh"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
+
+        assert_eq!(chain_of(&config).0, 8453);
+    }
+
+    // NFTX v3's `ts-node ./script/build mainnet` copies a template its public
+    // repo lacks, logs the ENOENT, and exits 0 having written an empty
+    // subgraph.yaml. envio then read the empty file ("doesn't know the value
+    // at \"\"").
+    #[test]
+    fn says_a_writer_script_wrote_an_empty_manifest() {
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-empty").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/build.sh"),
+            "echo \"ENOENT: subgraph.template.yaml\" >&2\nprintf '' > subgraph.yaml\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"prepare-build": "sh scripts/build.sh"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            (err, root.join("subgraph.yaml").exists()),
+            (
+                "There is no subgraph.yaml here. envio ran the package.json script \
+                 \"prepare-build\", the one that writes it, and the subgraph.yaml it wrote is \
+                 empty: the script's own output above says why."
+                    .to_string(),
+                false
+            )
+        );
+    }
+
+    // A script that fails leaves no manifest behind: the shell had already
+    // created the file its `>` names.
+    #[test]
+    fn a_writer_script_that_fails_leaves_no_manifest() {
+        let dir = tempdir::TempDir::new("envio-subgraph-writer-fails").unwrap();
+        let root = dir.path();
+        write_gravity(root, "subgraph.template.yaml");
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("scripts/render.js"),
+            "process.exit(require('fs').existsSync('subgraph.template.yaml') ? 3 : 0)\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts": {"build-manifest": "node scripts/render.js > subgraph.yaml"}}"#,
+        )
+        .unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = format!(
+            "{:#}",
+            SystemConfig::parse_from_project_files(&project_paths).unwrap_err()
+        );
+
+        assert_eq!(
+            (
+                err.lines().next().unwrap_or_default().to_string(),
+                root.join("subgraph.yaml").exists()
+            ),
+            (
+                "There is no subgraph.yaml here, and the package.json script \"build-manifest\" \
+                 writes it: envio ran `node scripts/render.js > subgraph.yaml` from it, and it \
+                 exited with 3 — the error above is the script's own."
+                    .to_string(),
+                false
+            )
         );
     }
 
@@ -5205,6 +5912,8 @@ type Renewal implements Event @entity {
     // ops/render-subgraph-conf.js <network>`, which reads truffle artifacts and
     // asks an RPC for start blocks: not something envio repeats, so the error
     // names the script — and not `publish-graph:gnosis`, which only runs it.
+    // envio would run it as the one script that writes the manifest, but the
+    // file it runs isn't there.
     #[test]
     fn names_the_render_script_envio_does_not_run() {
         let dir = tempdir::TempDir::new("envio-subgraph-render-node").unwrap();
@@ -5232,10 +5941,12 @@ type Renewal implements Event @entity {
              The project writes its manifest with a package.json script, and envio can't \
              repeat it:\n  \"render-subgraph-config:gnosis\": node ops/render-subgraph-conf.js \
              gnosis\n\
-             envio renders a manifest itself only when every step of the script is a standard \
+             envio renders a manifest itself when every step of the script is a standard \
              tool over files in the repo (`mustache <config> <template> > subgraph.yaml`, \
-             `yaml2json`, `cat`), so that the network you pick is its only input. Run the script \
-             for your network, then start envio again."
+             `yaml2json`, `cat`), so that the network you pick is its only input.\n\
+             envio runs the one script that writes the manifest itself, but never one that \
+             deploys, publishes or runs docker or git, nor one that reads a file the repo \
+             doesn't have. Run the script for your network, then start envio again."
         );
     }
 }

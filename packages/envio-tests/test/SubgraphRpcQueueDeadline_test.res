@@ -4,8 +4,10 @@
 // the queue, and was sent twice: Venus's register pass logged 46k timeouts
 // for 3.3k requests actually sent. The deadline now runs once a request is
 // on the wire.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4692")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -97,7 +99,7 @@ beforeAll(async () => {
       setTimeout(() => res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: word(n * 10n) })), 200);
     });
   });
-  await new Promise<void>((resolve) => server.listen(4692, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

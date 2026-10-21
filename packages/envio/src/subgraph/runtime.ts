@@ -22,6 +22,7 @@ import {
   subgraphSureCreates,
   subgraphWorkspacePackages,
   subgraphWorkspaceRoot,
+  subgraphScriptsWriting,
 } from "../Core.res.mjs";
 import { install as installCallSource } from "../sources/CallSource.res.mjs";
 import { fetchCalls, resetCallBackends } from "./calls-source.ts";
@@ -193,6 +194,7 @@ type SubgraphConfig = {
     template: string;
     view: string;
     steps?: string[];
+    commands?: string[];
   };
   /** Files the manifest names, as written and where they are read from (another case, or a fetched package). */
   pathFixes?: [string, string][];
@@ -600,6 +602,31 @@ function notExported(root: string, generated: string, mappingFile: string, messa
   );
 }
 
+/**
+ * Why a project file a mapping imports isn't there: a package.json script
+ * writes it before `graph build` (Goldfinch's `"prebuild": "ts-node
+ * ./scripts/update-address-manifest.ts"` writes src/address-manifest.ts).
+ */
+function unwrittenImport(root: string, generated: string, message: string): string | undefined {
+  const found = /Cannot find module '([^']+)' imported from /.exec(message);
+  if (!found) return undefined;
+  const target = found[1]!;
+  const inside = (dir: string) => target.startsWith(path.resolve(dir) + path.sep);
+  if (!path.isAbsolute(target) || !inside(root) || inside(generated)) return undefined;
+  const stem = path.basename(target).replace(/\.[cm]?[jt]s$/, "");
+  const writers = subgraphScriptsWriting(root, stem) as string[][];
+  if (writers.length === 0) return undefined;
+  const file = path.relative(root, target) + (path.extname(target) ? "" : ".ts");
+  const names = writers.map(([name]) => `"${name}"`).join(", ");
+  return writers.length === 1
+    ? `${file}, which the mapping imports, isn't in the repo: the package.json script ${names} writes it ` +
+        `(${writers[0]![1]}), and \`graph build\` fails on this import too until it has run. Run it, then start ` +
+        "envio again."
+    : `${file}, which the mapping imports, isn't in the repo: the package.json scripts ${names} write it, and ` +
+        "`graph build` fails on this import too until one has run. Run the one for your network, then start " +
+        "envio again.";
+}
+
 async function loadMapping(
   root: string,
   generated: string,
@@ -632,7 +659,10 @@ async function loadMapping(
     // in the shim can see it — rewrap it with the mapping that caused it.
     const template = undeclaredTemplate(message);
     if (template) throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${template}`);
-    const why = notGenerated(root, generated, message, sources) ?? notExported(root, generated, mappingFile, message);
+    const why =
+      notGenerated(root, generated, message, sources) ??
+      notExported(root, generated, mappingFile, message) ??
+      unwrittenImport(root, generated, message);
     throw new Error(`Envio Subgraph failed to load the mapping ${mappingFile}.\n  ${message}${why ? `\n${why}` : ""}`);
   }
 }
@@ -831,17 +861,6 @@ type ChainPasses = {
   waiters: { position: number; release: () => void }[];
 };
 const chainPasses = new Map<number, ChainPasses>();
-
-if (process.env.ENVIO_SUBGRAPH_LOG_MEMORY) {
-  const t = setInterval(() => {
-    let running = 0;
-    for (const p of chainPasses.values()) running += p.running.length;
-    const m = process.memoryUsage();
-    // eslint-disable-next-line no-console
-    console.log(`[mem] heap=${Math.round(m.heapUsed / 1e6)}MB ext=${Math.round(m.external / 1e6)}MB ab=${Math.round(m.arrayBuffers / 1e6)}MB passes=${running} inflight=${registerInFlight.size} cache=${registerCache.size} missers=${missers.size} slots=${JSON.stringify(registerSlots.stats())}`);
-  }, 5000);
-  t.unref();
-}
 
 /** Passes start in about the order of their events, so this mostly appends. */
 function insertByPosition<T extends { position: number }>(list: T[], item: T) {
@@ -1447,7 +1466,13 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const rendered = config.renderedManifest;
   manifestName = config.manifestFile ?? "subgraph.yaml";
   declaredTemplates = config.templates.map((template) => template.name);
-  if (rendered?.steps?.length) {
+  if (rendered?.commands?.length) {
+    info(
+      `Envio Subgraph ran ${rendered.commands.map((command) => `\`${command}\``).join(", ")} from the package.json ` +
+        `script "${rendered.script}" first: it is the one that writes ${manifestName}` +
+        (rendered.network ? ` (network "${rendered.network}").` : "."),
+    );
+  } else if (rendered?.steps?.length) {
     info(
       `Envio Subgraph ran ${rendered.steps.map((step) => `\`${step}\``).join(", ")} from the codegen script ` +
         `first: it writes ${manifestName}` +

@@ -58,7 +58,7 @@ graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 | `topic0` on an anonymous event (Balancer's `LOG_CALL`, keyed on the called selector) | an envio event per `topic0` value, matched on that first topic and decoded from all of them (no signature topic). A `topic0` other than the signature's hash on an event the ABI doesn't declare anonymous matches logs graph-node then fails to decode as that event (alloy's `decode_log` checks topic0 against the signature's hash), so graph-node skips the handler for each of them; it is left out, with a startup warning. One combined with `topic1`–`topic3` → §7 error | ✅ |
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock`; `once` runs ahead of its block's events, as graph-node's `Start` trigger does | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
-| Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); the other header fields (`hash`, `parentHash`, …) from a second batched header query, served only from below the chain's reorg depth, so a block handler that reads them holds its chain that far behind the head (spec/BLOCK_HASH.md) | ✅ |
+| Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); the other header fields (`hash`, `parentHash`, …) from a second batched header query, served only from below the chain's reorg depth, so a block handler that reads them holds its chain that far behind the head: fetched after the batch, a header is outside the reorg guard that validates an event's block (`ENVIO_SUBGRAPH_BLOCK_LAG` sets the distance; 0 turns the hold off) | ✅ |
 | A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned. The handlers stay apart: the data source's run for its static address, the template's for the addresses it created | ✅ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create. A new address's events in the block that created it run after that block's other events and block handlers, as graph-node runs a new data source's creation-block triggers — a constructor's logs precede the factory event that announces it | ✅ |
 | File data sources (0.0.7): `kind: file/ipfs`, `file/arweave` templates, `DataSourceTemplate.create("X", [cid])` / `createWithContext` | No contract, no chain: the translator leaves them out of the envio config. `create()` queues the file; once the creating handler returns, the file is fetched (`envio_subgraph_file` effect, `cache: true`, so on disk) and the template's `handler(content: Bytes)` runs in the same block and checkpoint. See "File data sources" below | ⚠️ timing differs |
@@ -66,6 +66,7 @@ graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 | `fullTextSearch` / `indexerHints.prune` | strip / no-op (default pruning ≈ `auto`) | — |
 | `context` on a data source | typed values carried to the runtime, read back by `dataSource.context()`; `createWithContext` keeps its context by chain, template and address (also in `.envio/subgraph-data-source-contexts.jsonl`, for a restart) | ⚠️ |
 | `features: [...]` | a declaration, not a use — whatever it enables is refused where the manifest or schema uses it | — |
+| A number where the manifest has a string (`network: 66665`) | read as written, the network "66665": graph-node reads the manifest with serde_yaml, which reads a plain scalar into a String field as its text | ✅ |
 | `features: [nonFatalErrors]` | accepted, not honored: a handler that throws stops the indexer. graph-node logs "Handler skipped due to execution failure", drops that handler's changes and keeps indexing (`runtime/wasm/src/module/instance.rs`). Skipping here would also hide this shim's own gaps, which surface as handler errors | ⚠️ |
 | `graft` | **ignored**: envio can't copy another deployment's data, so the subgraph indexes from its data sources' own `startBlock`s — a full re-index. Startup logs a warning saying so, and a louder one naming any data source that starts after the graft block (the base deployment may hold data from before it that a re-index cannot reproduce; lower that `startBlock` to the base's start). The result equals the grafted deployment only if the base's mappings produced the same data as these mappings do up to the graft block. graph-node's docs and source give no rule that can be applied offline (a graft is a store-level copy: `Graft::validate` only checks the base's head and health); the one record of where the base started is its manifest on IPFS, which startup reads best-effort (`ENVIO_SUBGRAPH_GRAFT_CHECK=off` skips it, following `graft.base` up its own grafts) and reports the exact blocks a re-index would miss | ⚠️ |
 | `callHandlers` | an envio event named `__envio_call_<selector>_<function>` on the data source's contract; the source reads **calls** instead of logs for it (§4a). The first handler for a selector wins, as in graph-node | ✅ needs traces (§4a) |
@@ -209,19 +210,19 @@ like any other entity list.
 | `getInBlock` | never suspends, and checkpoint-filtered: the in-memory table spans the whole batch, so a hit counts only if its change record's checkpoint falls in the current block — everything else (including entities written in an *earlier* block of the same batch) = `null` |
 | `BigInt`/`BigDecimal`/`Bytes`/`Address`/`TypedMap`/`JSONValue` | pure-JS classes over `bigint`/bignumber.js, converted at every host boundary. `BigDecimal` arithmetic reproduces graph-node's digit for digit: every value is normalized to 34 significant digits through the `bigdecimal` 0.1.2 rounding graph-node pins (positives half up, negatives truncated), so residues match; checked against vectors that crate computes |
 | `event.*` | `params`/`srcAddress`/`logIndex` direct; block/tx via `field_selection`; `transactionLogIndex` = `logIndex`, as graph-node answers it (no Ethereum client sets the per-transaction index; `chain/ethereum/src/trigger.rs`) |
-| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A call the register pass already made at the same block is answered from its memo. A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
+| `Contract.bind(x).foo()` / `.try_foo()` | effect + viem (bundled), `cache: true`, via suspend; `try_` re-throws suspend. A call the register pass already made at the same block is answered from its memo. A function whose answer a contract doesn't change (`name`, `symbol`, `decimals`, `token0`, `token1`, `factory`, `getPair`, `comptroller`, `underlying`) is asked once: after its first non-empty answer, a later block gets that answer without a request (a proxy that renames itself is the case this gets wrong; `ENVIO_SUBGRAPH_EXACT_CALLS=1` asks every call at its own block). A contract **revert** → `{reverted: true}`; a transport/RPC failure is *not* a revert — it is asked again (below), so a flaky RPC never fabricates `reverted` data |
 | `ethereum.Value` | its own class, tagged with graph-ts' ABI `ValueKind` from the ABI type (event inputs, call outputs, `ethereum.decode`'s type string); accessors refuse another kind exactly as graph-ts' asserts do |
 | `ethereum.decode/encode`, `crypto.keccak256`, `json.*` | pure sync JS (viem, keccak). `encode` ports graph-node's token encoding (alloy's `DynSolValue::abi_encode`): each token by its own kind, so an array of unlike values encodes element by element |
 | `changetype<Bytes[]>(event.params.<structs>)` (`graph init`'s scaffold for a struct array) | each struct is read as the bytes of its element pointers, four per field. (Deviation, with a warning: graph-node's are wasm memory addresses; envio's are stand-ins of the same length) |
 | `ethereum.getBalance`/`hasCode` (0.0.9) | effect via viem, suspend |
-| RPC traffic | contract calls, `getBalance`/`hasCode` and the block-timestamp fallback share one client, which keeps at most 16 requests in flight and queues the rest — preload runs a batch's handlers at once, and unbounded that was one connection per call. A slot is held at most the request deadline, so requests that never settle can't stall every call behind them |
+| RPC traffic | contract calls, `getBalance`/`hasCode` and the block-timestamp fallback share one client, which keeps at most 48 requests in flight per endpoint (`ENVIO_SUBGRAPH_RPC_CONCURRENCY`) and sends what queues behind them as JSON-RPC batches (`ENVIO_SUBGRAPH_RPC_BATCH`, §6b) — preload runs a batch's handlers at once, and unbounded that was one connection per call. A slot is held at most the request deadline, so requests that never settle can't stall every call behind them |
 | Transient host failures | envio exits on a handler error, it has no batch retry, so every host op (calls, balances, timestamps, IPFS, Arweave, ENS) gets a per-attempt deadline and is asked again with exponential backoff on a timeout, a network error, a 429/5xx, a JSON-RPC rate limit or a node's internal error (-32603) — as graph-node does — and only a deterministic answer (a value, a revert, a definite miss) reaches the mapping. Any other failure, such as a 401, still stops the run |
 | Block handler's `block.timestamp` | internal `getBlockTimestamp` effect, `cache: false`, suspend: calls are microtask-collected into one HyperSync range query (`fieldSelection: {block: [Number, Timestamp]}`) — the pattern proven in [all-contracts-indexer](https://github.com/enviodev/all-contracts-indexer/blob/main/src/handlers/onBlock.ts). Uncached on purpose: a block's timestamp is read exactly once, by that block's own handler invocation, so a persisted row per indexed block would be pure bloat with no reuse. In-memory memoization (which holds even with `cache: false`, §5) still covers what the bridge needs — replay rounds and the preload→execute transition reuse the fetched value |
 | `log.*` | `context.log`, buffered per replay round, flushed on success; `log.critical` throws (halts, as graph-node) |
 | `dataSource.create/createWithContext` | captured in register pass (below) |
 | `dataSource.address()/network()` | ALS scope + chain-id→name reverse lookup. `address()` is what graph-node's `DataSourceDetails` holds: the data source's or instance's address, empty bytes for a data source without `source.address` (the emitter is `event.address`), a file data source's source text |
 | `dataSource.context()` | persisted in an internal entity table |
-| `ipfs.cat/map`, `arweave.*` | effect + gateway (`ENVIO_SUBGRAPH_IPFS_URL`, default `https://ipfs.io/ipfs/`; `ENVIO_SUBGRAPH_ARWEAVE_URL`, default `https://arweave.net/`), `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again for up to `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS` (default 60000, graph-node's `GRAPH_IPFS_TIMEOUT`), after which `ipfs.cat` answers `null` as graph-node's does (not cached, with a warning) and `ipfs.map` keeps waiting (graph-node fails and retries that block). The argument is read as graph-node's `ContentPath`: `<CID>[/<path>]`, `/ipfs/…`, `ipfs://…`, or an http(s) URL with `/ipfs/<CID>…` or `?arg=<CID>`; anything else (an empty string, a bare word, a query on the path) is `null` without a fetch, as graph-node's `ipfs.cat` answers it, and an error for `ipfs.map`. `ipfs.map` calls the callback once per non-blank line of the file (a JSON value each), refuses flags without `"json"`, and names the callback and line in a failure, as graph-node does |
+| `ipfs.cat/map`, `arweave.*` | effect + gateway (`ENVIO_SUBGRAPH_IPFS_URL`, default The Graph's `https://ipfs.thegraph.com/ipfs/`, then `https://ipfs.io/ipfs/` and `https://gateway.pinata.cloud/ipfs/`; `ENVIO_SUBGRAPH_ARWEAVE_URL`, default `https://arweave.net/`), `cache: true`, suspend; a 404 is the cached `null`, a failing gateway is asked again for up to `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS` (default 60000, graph-node's `GRAPH_IPFS_TIMEOUT`), after which `ipfs.cat` answers `null` as graph-node's does (not cached, with a warning) and `ipfs.map` keeps waiting (graph-node fails and retries that block). The argument is read as graph-node's `ContentPath`: `<CID>[/<path>]`, `/ipfs/…`, `ipfs://…`, or an http(s) URL with `/ipfs/<CID>…` or `?arg=<CID>`; anything else (an empty string, a bare word, a query on the path) is `null` without a fetch, as graph-node's `ipfs.cat` answers it, and an error for `ipfs.map`. `ipfs.map` calls the callback once per non-blank line of the file (a JSON value each), refuses flags without `"json"`, and names the callback and line in a failure, as graph-node does |
 | `ens.nameByHash` | effect against ENSRainbow (`ENVIO_SUBGRAPH_ENS_RAINBOW_URL`, default the public `api.ensrainbow.io/v1/heal/`), `cache: true`, at most 32 lookups in flight; `null` when its table lacks the hash (its "Label not found" 404), as graph-node's does; a failing lookup is asked again, up to 5 attempts. A service that stays down — or a 404 that isn't ENSRainbow's — answers `null` for 5 minutes, as graph-node without a rainbow table does, with one warning and without caching those nulls. `off` skips lookups |
 
 **File data sources.** graph-node runs a file data source when its file arrives, in a
@@ -256,6 +257,58 @@ later block, with a causality region of its own. Here:
   uncached, so a later create asks again.
 - *Bad CID.* A source that doesn't parse as a CID is ignored with a warning, as graph-node does.
 - Arweave sources are the transaction id (with an optional path).
+
+**Register pass.** `dataSource.create` must reach envio's `contractRegister`,
+which runs at fetch time — before any entities exist. For each
+template-creating event the shim registers a wrapper that reruns the same
+mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
+(deduped, so replays are idempotent); logs → no-ops; **writes go to the
+register pass's own store, and reads see what an earlier register pass wrote**
+(no envio entity state exists at fetch time). A read sees only writes from
+strictly earlier events on its chain, for the 50k most recently used
+entities (an evicted one reads `null` again); a `once` block handler runs in register mode too, at its
+block, before the first register pass of its chain (Venus saves its
+Comptroller there); a change a handler without a register pass makes to an
+entity (it only updates one a create depends on, below) or one a polling block
+handler saves doesn't reach that store, so a `create()` conditioned on such
+state can still mis-register. An unfiltered or polling block handler gets no
+register pass at all (envio registers addresses only at fetch time, from
+events), so a contract template's `create()` it makes is refused when it runs
+(§7). graph-node's own block-handlers integration test, centrifuge's tinlake
+and beefy-balances (a `polling` handler on a one-block data source) create
+templates that way. A `once` handler's `create()` is registered by the first
+register pass of its chain, at that event's block — on a chain with no
+template-creating event at all (yieldyak's strategies, whose only data source
+is the `once` handler) never. A mapping that throws in the
+pass (usually on a `null` it would never see on graph-node) keeps whatever it
+registered before the throw; the handler pass surfaces its real errors. Host
+ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
+suspend-and-replay, capped at 10,000 rounds as the handler pass is (§5); a
+host op that fails fails the batch rather than dropping the registration. Safe
+because graph-node already requires mappings to be deterministic.
+
+Only handlers whose code can reach `DataSourceTemplate.create` get the pass:
+the addon follows each handler through the mapping's module graph (top-level
+functions, classes and variables, relative imports and re-exports, into
+`generated/templates.ts`), and anything it can't see — a file that doesn't
+parse or resolve, another package, a namespace import of graph-ts — counts as
+a create, so a pool's swap handler doesn't replay its mapping and its contract
+calls at fetch time. A handler that creates an entity a create depends on gets
+the pass too: the analysis notes, in creating code, the entity types whose
+load decides a create (a create under `if (collection)`, after
+`if (!pool) return`, handed `entity.address`), and a handler of any data source
+that constructs one (`new E(…)`, `store.set("E", …)`) has its writes in the
+register store. Concurrent passes share one in-flight request per op.
+`ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` restores the pass for every handler.
+
+At most `ENVIO_SUBGRAPH_REGISTER_CONCURRENCY` passes (default 256) run at
+once, the lowest position first; the rest wait in a queue, which is also the
+back-pressure on fetching. A response is applied only once every pass in it is
+done, so one whose passes would make more contract calls than the endpoint
+answers promptly (about 3,000, from what finished passes cost, and at least 100
+events) is cut after a block and the rest fetched again; a run whose passes
+make no calls is never cut. `ENVIO_SUBGRAPH_REGISTER_CHUNK` fixes the number of
+events with a pass a response may hold; 0 turns the cut off.
 
 ### 4a. Call triggers
 
@@ -298,50 +351,9 @@ with the `callTracer`, **one request per block** — bound the block window on
 those chains. `ENVIO_SUBGRAPH_TRACE_MODE` (`hypersync`, `trace_filter`,
 `debug`) forces one; `ENVIO_SUBGRAPH_TRACES_URL` points HyperSync's at another
 endpoint (`{chainId}` is replaced); `ENVIO_SUBGRAPH_TRACE_BLOCKS_PER_PAGE`
-(default 25) and `ENVIO_SUBGRAPH_TRACE_FILTER_BLOCKS` (500) size a page.
-
-**Register pass.** `dataSource.create` must reach envio's `contractRegister`,
-which runs at fetch time — before any entities exist. For each
-template-creating event the shim registers a wrapper that reruns the same
-mapping in register mode: `create()` → `context.chain.<Name>.add(addr)`
-(deduped, so replays are idempotent); logs → no-ops; **writes go to the
-register pass's own store, and reads see what an earlier register pass wrote**
-(no envio entity state exists at fetch time). A read sees only writes from
-strictly earlier events on its chain, for the 50k most recently used
-entities (an evicted one reads `null` again); a `once` block handler runs in register mode too, at its
-block, before the first register pass of its chain (Venus saves its
-Comptroller there); a change a handler without a register pass makes to an
-entity (it only updates one a create depends on, below) or one a polling block
-handler saves doesn't reach that store, so a `create()` conditioned on such
-state can still mis-register. An unfiltered or polling block handler gets no
-register pass at all (envio registers addresses only at fetch time, from
-events), so a contract template's `create()` it makes is refused when it runs
-(§7). graph-node's own block-handlers integration test, centrifuge's tinlake
-and beefy-balances (a `polling` handler on a one-block data source) create
-templates that way. A `once` handler's `create()` is registered by the first
-register pass of its chain, at that event's block — on a chain with no
-template-creating event at all (yieldyak's strategies, whose only data source
-is the `once` handler) never. A mapping that throws in the
-pass (usually on a `null` it would never see on graph-node) keeps whatever it
-registered before the throw; the handler pass surfaces its real errors. Host
-ops (`eth_call`, IPFS, …) before `create()` → resolved by the pass's own
-suspend-and-replay, capped at 100 rounds; a host op that fails fails the
-batch rather than dropping the registration. Safe because graph-node already
-requires mappings to be deterministic.
-
-Only handlers whose code can reach `DataSourceTemplate.create` get the pass:
-the addon follows each handler through the mapping's module graph (top-level
-functions, classes and variables, relative imports and re-exports, into
-`generated/templates.ts`), and anything it can't see — a file that doesn't
-parse or resolve, another package, a namespace import of graph-ts — counts as
-a create. A pool's swap handler no longer replays its mapping and its contract
-calls at fetch time. A handler that creates an entity a create depends on gets
-the pass too: the analysis notes, in creating code, the entity types whose
-load decides a create (a create under `if (collection)`, after
-`if (!pool) return`, handed `entity.address`), and a handler of any data source
-that constructs one (`new E(…)`, `store.set("E", …)`) has its writes in the
-register store. Concurrent passes share one in-flight request per op.
-`ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` restores the pass for every handler.
+(default 25) and `ENVIO_SUBGRAPH_TRACE_FILTER_BLOCKS` (500) size a page, and
+`ENVIO_SUBGRAPH_TRACE_CONCURRENCY` (default 4) is how many of a page's
+`debug_traceBlockByNumber` requests are in flight at once.
 
 ## 5. Sync bridge: try-sync, suspend, replay
 
@@ -487,7 +499,9 @@ classes call `DataSource.create`. Consequences:
   steps — Lido's `graph codegen && node genParserData.js` writes
   `generated/parserData.ts` — every step runs in order: `graph codegen`
   in-process as above, the rest in a shell with the project's
-  `node_modules/.bin` on `PATH`, as the package manager would. A step that
+  `node_modules/.bin` on `PATH`, as the package manager would, and without
+  envio's own `ENVIO_*` settings (its HyperSync token, the database password)
+  in its environment: it is the repo's code. A step that
   is only a package install (`yarn && graph codegen`) is skipped: the
   developer installs before envio starts, and envio runs no installer.
   graph-cli before 0.93 ships CommonJS, whose command class an ES import
@@ -496,22 +510,24 @@ classes call `DataSource.create`. Consequences:
   `envio dev`'s `graph build` type check runs the same way. The failure modes
   get explicit messages:
 
-  graph-cli not installed (or `node_modules` missing):
+  `ENVIO_SUBGRAPH_CODEGEN=graph-cli` with no graph-cli installed and no npm
+  to fetch one with (below):
 
   ```
   Envio Subgraph needs the project's generated code, but "generated/" is
-  missing and @graphprotocol/graph-cli isn't installed.
-  Install dependencies and try again:
-    pnpm install
+  missing and @graphprotocol/graph-cli isn't installed in the project or any
+  directory above it. Install the project's dependencies and try again:
+    npm install   (or yarn / pnpm install)
   Or generate manually:
-    pnpm exec graph codegen --output-dir generated
+    npx graph codegen --output-dir generated
   ```
 
-  `graph codegen` fails (its output shown verbatim above the tail):
+  `graph codegen` fails with `ENVIO_SUBGRAPH_CODEGEN=graph-cli`, or after the
+  bundled codegen failed too (its output shown verbatim above the tail):
 
   ```
   Envio Subgraph ran `graph codegen` to build the generated code, but it
-  failed — the error above comes from The Graph's own codegen, so fix it
+  failed with the project's graph-cli (1 version tried) — the error above comes from The Graph's own codegen, so fix it
   there and rerun. If `graph codegen` succeeds on its own but fails through
   envio, please open an issue: https://github.com/enviodev/hyperindex/issues
   ```
@@ -526,7 +542,9 @@ classes call `DataSource.create`. Consequences:
 - **Without graph-cli, envio writes the tree itself.** `ENVIO_SUBGRAPH_CODEGEN`:
   `auto` (default) uses a complete committed tree as it is, else the project's
   graph-cli, else (missing or failing) envio's bundled port of graph-cli's
-  generators; `bundled` always writes it; `graph-cli` never falls back. The
+  generators, and a graph-cli it fetches (below) when that port fails or the
+  codegen script passes `--uncrashable`, which only graph-cli implements;
+  `bundled` always writes it; `graph-cli` never falls back. The
   bundled output follows the project's toolchain where graph-cli releases
   differ: the installed or declared graph-cli (a derived field is a `…Loader`
   from 0.51, an array getter and setter before; a call output tuple is
@@ -567,6 +585,18 @@ classes call `DataSource.create`. Consequences:
   to that package, as the install would link it, before anything fetched from
   npm; the field-usage scan follows it, and every other package the mappings
   import, too.
+- **What a failed install leaves out is fetched.** A repo whose own install
+  failed (a dead git dependency in an old graph-cli lockfile, a vanished fork)
+  has no `node_modules`, and graph-node never installs one: it runs compiled
+  WASM. envio fetches the two things a run needs, with npm and no lifecycle
+  scripts, into a cache of its own (`ENVIO_SUBGRAPH_CACHE_DIR`, default
+  `$XDG_CACHE_HOME/envio/subgraph` or `~/.cache/envio/subgraph`), never into
+  the repo: the packages the mappings import, at the version the lockfile pins,
+  else the newest in the package.json range; and, when the generated code needs
+  one, a graph-cli — the version the project declares (when 0.50 or newer),
+  then two pinned ones, since no one version reads every manifest. A codegen
+  script step whose tools the failed install left out is skipped with a
+  warning.
 - **graph-ts before 0.18** (apiVersion 0.0.3 and older): the top-level
   `EthereumBlock`, `EthereumEvent`, `EthereumValue`, `SmartContract`, … are the
   same classes as `ethereum.*`, and a binding's `super.call("name", [params])`
@@ -588,15 +618,17 @@ prototypes, where the prototype-tail Proxy (§7) throws.
 ## 6b. Tokens, RPC & extra settings
 
 subgraph.yaml has no place for provider config — graph-node keeps RPC in its
-own config, not the project. Two env vars, nothing else — no envio-side
-config file, and neither touches subgraph.yaml. Every other knob
-(`hypersync_config.url`, `full_batch_size`, `block_lag`, `max_reorg_depth`,
-effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
+own config, not the project. What it can't say comes from environment
+variables (the process environment or the project's `.env`), never from an
+envio-side config file, and none of them touches subgraph.yaml. Most projects
+set two, `ENVIO_API_TOKEN` and `ENVIO_SUBGRAPH_RPC`; the rest tune timeouts,
+concurrency and batching. envio's other knobs (`hypersync_config.url`,
+`max_reorg_depth`, effect rate limits) stay at their defaults in subgraph mode.
 
 | Need | Channel | Behavior |
 |---|---|---|
-| HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup |
-| RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary), required for contract calls — HyperRPC doesn't support `eth_call`. Required at startup when the manifest declares `eth_calls` (1.2.0); otherwise lazily, at the first call |
+| HyperSync token | `ENVIO_API_TOKEN` (process env or `.env`, loaded in subgraph mode) | required for the default HyperSync source; missing → setup error at startup. A chain HyperSync doesn't serve runs without one (§2) |
+| RPC for sync fallback + contract calls | `ENVIO_SUBGRAPH_RPC` | optional for sync (HyperSync is primary; on a chain HyperSync doesn't serve, this is the sync source), required for contract calls — HyperRPC doesn't support `eth_call`. Required at startup when the manifest declares `eth_calls` (1.2.0); otherwise lazily, at the first call |
 | Host op request deadline | `ENVIO_SUBGRAPH_REQUEST_TIMEOUT_MS` | optional, default 30000: how long one attempt of a contract call, balance, block timestamp, IPFS/Arweave fetch or ENS lookup may take before it's given up on and asked again |
 | ENSRainbow heal endpoint for `ens.nameByHash` | `ENVIO_SUBGRAPH_ENS_RAINBOW_URL` | optional, default `https://api.ensrainbow.io/v1/heal/` (no hosted instance has stayed up; self-host ENSRainbow for healed names); `off` → every lookup is `null`, as on graph-node without a rainbow table |
 | Contract-call progress log interval | `ENVIO_SUBGRAPH_PROGRESS_LOG_MS` | optional, default 30000: while contract calls are outstanding, how often answered/waiting counts are logged (a batch is written only once its calls are all in) |
@@ -606,6 +638,22 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 | RPC requests in flight | `ENVIO_SUBGRAPH_RPC_CONCURRENCY` | optional, default 48 per endpoint. When the endpoint says "slow down" (HTTP 429 or a JSON-RPC rate-limit error), requests in flight and the calls per batch are halved, once per wave of requests, and grow back by one per round of answers |
 | JSON-RPC batch size | `ENVIO_SUBGRAPH_RPC_BATCH` | optional, default 32; 1 sends every request alone. Contract calls, balances and block lookups that queue while every connection is busy (48, `ENVIO_SUBGRAPH_RPC_CONCURRENCY`) leave together as one JSON-RPC batch. Answers are matched by id, so a revert stays that call's revert; an endpoint that refuses a batch (HTTP 4xx, an error instead of the array, "batch of more than N" per item) gets smaller ones, down to single requests |
 | Preload lookahead | `ENVIO_SUBGRAPH_PRELOAD_LOOKAHEAD` | optional, default 256; 0 turns it off. A handler whose preload read an entity as absent is preloaded again once an earlier event of the batch creates it, while it is at most this many events ahead of the one executing, so its contract calls go out together instead of one event at a time (a v3 pool's Mint after its PoolCreated). Preload also reads what earlier events of the batch wrote in their own preload (held apart from the store, and only until execute has run that event), so a handler reading the entity the previous log created gets to its calls in the first preload. Preload never writes to the store, so results are the same either way |
+| Events per batch | `ENVIO_SUBGRAPH_BATCH_SIZE` | optional; default envio's 5,000, or 500 when a mapping calls contracts: a batch commits only once every call in it is answered, and a smaller one commits sooner at no cost in calls |
+| Block handler header lag | `ENVIO_SUBGRAPH_BLOCK_LAG` | optional; on a chain whose block handlers read header fields, default the chain's reorg depth (200 where envio has no figure, §2); 0 turns it off |
+| Register passes at once | `ENVIO_SUBGRAPH_REGISTER_CONCURRENCY` | optional, default 256 (§4) |
+| Register passes per response | `ENVIO_SUBGRAPH_REGISTER_CHUNK` | optional; unset, it follows what the passes cost (§4); 0 turns the cut off |
+| Stable calls at every block | `ENVIO_SUBGRAPH_EXACT_CALLS=1` | asks `name`, `symbol`, `decimals` and the like at every block instead of reusing their first non-empty answer (§4) |
+| Fetch cache | `ENVIO_SUBGRAPH_CACHE_DIR` | optional, default `$XDG_CACHE_HOME/envio/subgraph` or `~/.cache/envio/subgraph`: where the graph-cli and packages envio fetches go (§6a) |
+| Replay stress | `ENVIO_SUBGRAPH_SKIP_PRELOAD=1` | for testing: skips the preload pass, so every read misses and each mapping replays as often as it can; the store must come out the same (CI runs the subgraph suite this way) |
+| Replay counts | `ENVIO_SUBGRAPH_SYNC_STATS=1` | for diagnosis: how often the sync bridge replayed mappings (§5), per phase, printed as one `SGSTATS {json}` line on stderr every 30 s and at exit |
+
+The settings of one feature are documented with it: `ENVIO_SUBGRAPH_IPFS_URL`,
+`ENVIO_SUBGRAPH_ARWEAVE_URL`, `ENVIO_SUBGRAPH_FILE_ATTEMPTS` and
+`ENVIO_SUBGRAPH_FILE_RETRY_MS` (§4); `ENVIO_SUBGRAPH_TRACE_MODE`,
+`ENVIO_SUBGRAPH_TRACES_URL`, `ENVIO_SUBGRAPH_TRACE_BLOCKS_PER_PAGE`,
+`ENVIO_SUBGRAPH_TRACE_FILTER_BLOCKS` and `ENVIO_SUBGRAPH_TRACE_CONCURRENCY`
+(§4a); `ENVIO_SUBGRAPH_GRAFT_CHECK` (§2); `ENVIO_SUBGRAPH_CODEGEN` (§6a);
+`ENVIO_SUBGRAPH_NETWORK` and `ENVIO_SUBGRAPH_NETWORK_FILE` (below and §6d).
 
 - **`ENVIO_SUBGRAPH_RPC` value = envio's rpc config**, not just a URL:
   `<url>` | `{...}` (JSON object matching the config `rpc` entry schema —
@@ -654,7 +702,7 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
   id column is the exception: envio ids are text, so an `id: Bytes!` still
   stores lowercase 0x-hex. Not overridable.
 
-A subgraph.yaml says *what* to index; these two vars are the only
+A subgraph.yaml says *what* to index; these variables are the only
 envio-side *how*.
 
 **Call cache.** Contract calls, `getBalance`/`hasCode` and file data source
@@ -682,17 +730,27 @@ is used when they pass only one (zkBob: `--network sepolia --network-file
 envio subgraph diff <graph-node endpoint> [--json] [--ours <graph endpoint>]
 ```
 
-Run inside the subgraph project. It compares the indexer's Postgres (same
+Run inside the subgraph project; the schema is the one the manifest names,
+and the manifest is the one `envio start` reads (`--config`/`ENVIO_CONFIG`,
+else subgraph.yaml). It compares the indexer's Postgres (same
 `ENVIO_PG_*` settings, one `REPEATABLE READ READ ONLY` snapshot) with the
 endpoint the subgraph ran on before, at the block the indexer has processed
 (`envio_chains.progress_block`): the reference is pinned with
 `block: {number: N}`. Ours keeps no history, so that block is the only one it
-can answer for — `--block` only asserts it, and a reference that hasn't
-reached it, or reports `hasIndexingErrors`, is refused. `--ours` compares a
+can answer for — `--block` only asserts it. A reference that hasn't reached
+it yet (one at the chain head trails a live indexer by a few blocks) is
+waited for, `--wait` seconds (120 by default), then refused; one that
+reports `hasIndexingErrors` is refused. A reference that prunes its history
+(`indexerHints.prune: auto`, which `graph init` writes, so most new Studio
+deployments) answers only its last few thousand blocks: index to the chain
+head first (the refusal names the first block it serves). `--ours` compares a
 Graph endpoint of ours instead (envio-serve), read unpinned at its `_meta`
 block.
 
-Per `@entity` type (timeseries and aggregations skipped): every reference id
+Per `@entity` type (a timeseries too), and per interval of each
+`@aggregation` (ours' `<Aggregation>_<interval>` table against the
+reference's `<collection>(interval: hour|day)`, reported as
+`<Aggregation>_<interval>`): every reference id
 is paged in by `id_gt` cursor, the id sets are diffed, and a deterministic
 sample (`--sample`, default 100; first by sha256 of the id) is compared field
 by field. Both sides are normalized to graph-node's encodings first: BigInt,
@@ -779,7 +837,9 @@ moonwell renders in `make generate-config`.
   lists them.
 - The rendering is mustache.js 4.x's, standalone-line stripping and HTML
   escaping included (a `{{path}}` with a `/` renders `&#x2F;`, as it does for
-  the repo's author); `yaml2json` is read as YAML 1.2.
+  the repo's author); `yaml2json` is read as YAML 1.2. A view that is a
+  JavaScript module (sushiswap's `config/$NETWORK.js`) is code the mustache
+  CLI runs, so that script is a writer, run as below.
 - Every file the script writes is written, where it writes it (zora-creator's
   `src/constants/chainid.ts` too), and only inside the package. envio records
   the manifest it wrote (`.envio/rendered-manifests.json`), so a later start
@@ -797,20 +857,26 @@ moonwell renders in `make generate-config`.
 
 A script that runs anything else to write the manifest — `node`, `ts-node`,
 `truffle exec`, a shell script, `jq`, handlebars through a script of its own —
-isn't run. Those read node_modules artifacts, ask an RPC for start blocks, or
-compute addresses; the error names each script and what it runs (a script is
-named when it writes the manifest, mentions a template, or runs a repo file
-whose source mentions one — Uniswap's `ts-node ./script/build`). `--config`
-naming the template itself renders what a repeatable script renders from it,
-else says it is a template:
+envio doesn't repeat itself. Those read node_modules artifacts, ask an RPC for
+start blocks, or compute addresses. Such a script is a *writer* when it writes
+the manifest's file name, mentions a template, or runs a repo file whose source
+mentions one (Uniswap's `ts-node ./script/build`), and envio runs the one
+writer as it is (below, *The one script that writes the manifest*); otherwise
+the error names each writer and what it runs. `--config` naming the template
+itself renders what a repeatable script renders from it, else says it is a
+template:
 
 ```
 There is no subgraph.yaml here.
-The project writes its manifest with a package.json script, and envio can't repeat it:
-  "render-subgraph-config:gnosis": node ops/render-subgraph-conf.js gnosis
-envio renders a manifest itself only when every step of the script is a standard tool
-over files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`,
-`cat`), so that the network you pick is its only input. Run the script for your
+The project writes its manifest with a package.json script, and envio can't repeat these:
+  "prepare:mainnet": NETWORK_NAME=mainnet ts-node ./templatify.ts && yarn codegen
+  "prepare:matic": NETWORK_NAME=matic ts-node ./templatify.ts && yarn codegen
+envio renders a manifest itself when every step of the script is a standard tool over
+files in the repo (`mustache <config> <template> > subgraph.yaml`, `yaml2json`, `cat`),
+so that the network you pick is its only input.
+envio runs such a script itself when it is the only one that writes the manifest;
+"prepare:mainnet", "prepare:matic" all do, so set ENVIO_SUBGRAPH_NETWORK to run the one
+for your network (its name ends with it, or it passes it). Run the script for your
 network, then start envio again.
 ```
 
@@ -825,14 +891,85 @@ generate-manifests && graph codegen subgraph.mainnet.yaml`), that is the
 manifest envio runs. Steps that are only `rm`/`mkdir` don't run early. Each
 variable such a step reads is set to `ENVIO_SUBGRAPH_NETWORK` when it is set
 (unset, the script's default applies), the manifest is recorded as envio's
-like a rendered one, and codegen doesn't run those steps again. This is the
-one place envio runs a repo's own script to get a manifest, and only because
-it runs that script anyway: only the `codegen` script's steps, split on `&&`
-exactly as §6a splits them; no other package.json script and no lifecycle
-hook (`preinstall`, `install`, `postinstall`, `prepare`) ever runs, even one
-that would write the manifest — that one is named in the error instead.
+like a rendered one, and codegen doesn't run those steps again. Only the
+`codegen` script's steps run here, split on `&&` exactly as §6a splits them.
 Each step logs a line naming it (and the variables set) before it runs, and
-a failing step stops envio with the script's own error above it.
+a failing step stops envio with the script's own error above it. The same
+steps run first when the manifest is there but ABI files it names aren't,
+provided one of them mentions an ABI and none a `.yaml` (the manifest there is
+the user's): FilOzone's dealbot, `"codegen": "pnpm run sync-abis && graph
+codegen"`, writes abis/ from its installed @filoz/synapse-core.
+
+**The one script that writes the manifest.** When the manifest is missing, no
+standard render writes it and the codegen script's steps don't either, envio
+runs the writer — Venus' `"prepare:bsc": "NETWORK=bsc yarn ts-node
+config/index.ts"`, Polymarket's `"templatify:matic": "ts-node ./templatify.ts
+matic"`, UMA's `scripts/build-manifest.sh polygon` — as the developer runs it
+before `graph build`, and as envio runs the codegen script's own steps: the
+user's own repo, on their machine or in their build, doing what their own
+build does first.
+
+- *Which:* the writers of the nearest package that has any (the manifest's
+  own, then the packages above it). A lifecycle hook (`prepare`,
+  `postinstall`) counts like any other script: the developer's install runs
+  it. Never one whose name says `deploy`, `publish`, `release`, `docker`,
+  `test`, `lint`, `format`, `clean`, `remove`, `watch`, `serve` or `start`;
+  one that runs `docker`, `git`, `curl`, `wget`, `ssh`, `scp` or `rsync`, a
+  command with a `deploy` or `publish` argument (`npm publish`, a hosting
+  CLI's `subgraph deploy`), or a file whose source runs `graph deploy` or
+  `subgraph deploy`; one whose program (`node ops/render.js`, `./build.sh`)
+  isn't in the repo, or that renders a template that isn't.
+- *The network picks it,* as it picks a render: with `ENVIO_SUBGRAPH_NETWORK`
+  set, the writer whose name ends with it (`prepare:bsc`), that passes it
+  (`NETWORK=matic`, `build-manifest.sh polygon`, `--network mainnet`), or that
+  reads it from a variable (`${NETWORK:-mainnet}`, `$CHAIN`; envio sets it).
+  Of several, the one that writes the manifest itself — it names the file, or
+  runs a repo file that does (FilOzone's `generate:yaml:mainnet`, not
+  `generate:constants:mainnet`; the network subgraph's `prepare:mainnet`, not
+  the `prep:addresses:mainnet` it runs first) — and doesn't send its output to
+  another manifest (Reserve's `parse:fork --output subgraph.fork.yaml`); then
+  the one that runs the fewest commands (Polymarket's `templatify:matic`, not
+  `prepare:matic`, which runs codegen after it); else none. Scripts that run
+  the same commands (euler's `build:mainnet` runs `prepare:mainnet`, then
+  `graph build`) count once. A writer that takes its network as its first
+  argument and is passed none (beefy's `"configure": "./bin/prepare.sh"`,
+  whose file starts `CHAIN=$1`; NFTX's `ts-node ./script/build`, `const
+  network = process.argv[2]`) builds for whichever is picked: envio passes
+  it, as `npm run configure -- base` does. Only a first argument the file
+  assigns to a `network` or `chain` variable counts; a file that reads a
+  `--network` option instead (Decentraland's buildData.ts, Spectra's config
+  generator) is passed `--network <network>`. A script that names its network
+  itself (Polymarket's `NETWORK_NAME=mainnet ts-node ./templatify.ts`) isn't
+  given another, and one that, given it, runs another script's commands
+  (UMA's `build-manifest` beside `prepare:polygon`) counts once. With no network picked,
+  a writer runs only when it is the only one.
+  Any other case is the error above, saying why none ran.
+- *What runs:* the script's commands up to its first graph-cli step, with
+  `npm run <script>` (`yarn <script>`, a workspace-wide run) read as that
+  script's commands, the variables the call sets, and the words it passes on
+  appended as the package manager appends them (beefy's `yarn run --silent
+  configure linea` runs `./bin/prepare.sh linea`), and package installs
+  skipped as in §6a; each in a shell (a `cd` or `export` before it carries
+  over, as in one shell), in its package, with the project's bins
+  on PATH, stdin closed, and without envio's own `ENVIO_*` settings (the
+  HyperSync token, the database password) in its environment. No command
+  after graph-cli runs, and no other script.
+- Each command logs a line before it runs:
+
+  ```
+  Envio Subgraph is running `NETWORK=bsc yarn ts-node config/index.ts` from the
+  package.json script "prepare:bsc": there is no subgraph.yaml, and that script is
+  the one that writes it.
+  ```
+
+  A failing command stops envio with the script's own error above it, and
+  leaves no manifest behind (its `>` had created the file); so does a script
+  that exits 0 having written an empty one (NFTX's build logs a missing
+  template and carries on). The manifest is
+  recorded as envio's, like a rendered one, so a later start runs the script
+  again, for whichever network is picked then; when the script's own `graph
+  codegen <manifest>` names the manifest it wrote (stakewise's
+  `src/subgraph-mainnet.yaml`), that is the manifest envio runs.
 
 **A workspace with nothing installed.** When the repo's install fails (graph-cli
 0.2x's vanished git dependencies), §6a's fetch supplies graph-cli and the npm
@@ -876,7 +1013,14 @@ under node_modules the install didn't provide. When another script runs
 `graph codegen` on a different manifest (inverse-governance's `build:codegen`
 builds `generated/mainnet.subgraph.yaml`, and its committed `subgraph.yaml`
 is a copy naming `../src/…`), the error names that manifest to point
-`--config` at once the step has run.
+`--config` at once the step has run. A project file a mapping imports that
+isn't there gets the same in its load error: the nearest package's scripts
+that mention it, or run a repo file that does (Goldfinch's `"prebuild":
+"ts-node ./scripts/update-address-manifest.ts"` writes
+src/address-manifest.ts). An event handler whose event the data source's ABI
+doesn't declare (burngraph handles `AnonymousDeposit(…)`, its ABI declares
+`ReceivedDeposit(…)`) is refused as graph-cli refuses it ("Event with
+signature … not present in ABI"), with the events the ABI does declare.
 
 **Paths that differ only in case.** A manifest written on macOS or Windows
 can name `./abis/WrappedPunks.json` for a committed `abis/wrappedpunks.json`
@@ -909,8 +1053,8 @@ issues welcome a 👍 — demand drives prioritization):
 
 **Unindexable** — a kind of subgraph whose data doesn't come from mappings
 over EVM chain data, so no release will run it (substreams, composition, Amp,
-NEAR/Cosmos/Arweave/Starknet); the third line says where its data comes from
-instead:
+NEAR/Cosmos/Arweave/Starknet data sources, a non-EVM network such as
+Solana's); the third line says where its data comes from instead:
 
 ```
 Envio Subgraph can't index <what>.
@@ -936,18 +1080,19 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues
 **Deny-unknown everywhere.** graph-node ignores what it doesn't expect; we
 refuse instead, so behavior never silently diverges:
 
-- *Manifest*: `deny_unknown_fields` on every subgraph.yaml struct; unknown
-  data source `kind`, unknown `features` entries, unknown block-handler filter kinds,
-  and `specVersion`/`apiVersion` above the supported range all raise the
-  unknown error with the YAML path as location. `mapping.kind` and
-  `mapping.language` are the exception: free strings graph-node keeps and
-  never reads (graph-cli types them `String`), so any value is accepted.
+- *Manifest*: every key of subgraph.yaml is either read or reported; an
+  unknown key, data source `kind`, `features` entry or block-handler filter
+  kind, and a `specVersion`/`apiVersion` above the supported range, all raise
+  the unknown error with the YAML path as location. The exceptions are what
+  graph-node itself accepts and never acts on: `mapping.kind` and
+  `mapping.language` are free strings (graph-cli types them `String`), so any
+  value is accepted, and `source.addresses` is read as graph-node reads it (§2).
 - *Schema*: unknown arguments on known directives (e.g. `@entity(...)`
-  beyond `immutable`/`timeseries`) and unknown type names that aren't
+  beyond `immutable`/`timeseries`/`skipDuplicates`) and unknown type names that aren't
   schema-defined raise the unknown error. Unknown directives are dropped
   (§3 accepted divergence).
-- *Runtime*: every shim surface is strict, via three mechanisms picked by
-  path heat and whether the unknown names are enumerable (precedent:
+- *Runtime*: every shim surface is strict, via two mechanisms picked by
+  path heat (precedent:
   `UserContext.res` already Proxy-traps invalid context access):
   1. **Full Proxy** on the graph-ts namespace objects (`store`, `ethereum`,
      `dataSource`, `json`, `crypto`, `ipfs`, `ens`, `arweave`, `log`) —
@@ -958,10 +1103,10 @@ refuse instead, so behavior never silently diverges:
      properties, V8-optimizable) → base object whose Proxy throws the
      unknown error. Known lookups never reach the trap — zero overhead;
      unknown names fall through the chain and throw.
-  3. **Plain throwing getters** for known-but-refused fields
-     (`receipt.logs`, block fields beyond `number`) —
-     enumerable names need no Proxy and throw the *unsupported* error,
-     keeping the unsupported/unknown distinction crisp.
+
+  A known API the shim refuses (`typeConversion.bytesToBase58`, `allocate()`)
+  is a function that throws the *unsupported* error when called, so the
+  unsupported/unknown distinction stays crisp.
 
   Traps must return `undefined` for symbols and a small allowlist (`then`,
   `toJSON`, `constructor`, `valueOf`, `Symbol.toPrimitive`, inspect) so
@@ -976,9 +1121,13 @@ refuse instead, so behavior never silently diverges:
 | A call handler on a data source with no `source.address`, or whose function the ABI lacks | translation (manifest) |
 | File data sources outside `templates` (`file/ipfs`, `file/arweave`) | translation (manifest) |
 | `call`-filtered `blockHandlers` on a template | translation (manifest) |
+| An event handler's `topic0` other than the signature's hash on an event the ABI doesn't declare anonymous, or one combined with `topic1`–`topic3` | translation (manifest) |
+| A template on a network no data source indexes | translation (manifest) |
+| Lists whose elements can be null (`[String]`; an entity list's are read as ids, §3), lists of `Timestamp`, GraphQL unions, a timeseries whose `id` isn't `Int8`, `skipDuplicates` on a mutable type | translation (schema) |
+| Loading a derived field whose `@derivedFrom` names a list field; a `createWithContext()` context holding a list, null or `Timestamp` value; `typeConversion.bytesToBase58`; `allocate()`; a member of `near`, `cosmos` or `starknet` | runtime, at the call |
 | A contract template's `create()` from a block handler other than a data source's `filter: once` one (a `call` one runs as a call handler; a template's `once` one runs per instance as a handler only), which no register pass registers | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
-| Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`) | translation (manifest), as unindexable |
+| Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`), NEAR/Cosmos/Arweave/Starknet data sources and non-EVM networks | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
 | Timeseries & aggregations | supported (§3); malformed declarations refused at translation (schema) |
 
@@ -1048,7 +1197,7 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    `ethereum.SmartContract.call/tryCall` (→ effects; revert →
    `{reverted: true}`, transport failure → asked again, §4),
    `DataSourceTemplate.create` (→ register capture), `ethereum.Event` (→
-   envio event conversion; `receipt.logs` getter → §7 error), the
+   envio event conversion; `receipt.logs` read on first access, §2), the
    `getBlockTimestamp` effect for block handlers (§4), and `Timestamp`
    micros ↔ date conversion at the store boundary (§3). `generated/`
    itself is real `graph codegen` output executed as-is (§6a).
@@ -1106,16 +1255,17 @@ vitest run` (A, C), `cargo test -p envio-cli` (B), scenario CI job (D).
 5. Block-handler `block.timestamp`: internal batched HyperSync effect
    (pattern proven in all-contracts-indexer), `cache: false` — read once
    per block, so persisting it only bloats the effect cache table; `hash`
-   and other fields stay §7 errors — post-hoc fetches can't be made
-   reorg-consistent.
+   and the other header fields come the same way, served only from below
+   the chain's reorg depth, where a header fetched after the batch can't be
+   another fork's (§2).
 6. `@entity(immutable: true)`: dropped, documented divergence (§3) — the
    write-once check only ever fires for mappings already broken on
    graph-node.
 7. `Timestamp` scalar: kept as envio `Timestamp` (real timestamp column),
    shim converts i64 micros ↔ date at the store boundary.
-8. `receipt: true` + `ENVIO_SUBGRAPH_RPC`: inherit envio behavior — `for:
-   sync` rejected by existing field validation, `for: fallback` allowed
-   with documented degradation (§6b).
+8. `receipt: true` + `ENVIO_SUBGRAPH_RPC`: inherit envio behavior — its
+   RPC source reads the receipt from `eth_getTransactionReceipt`, so a
+   chain synced over RPC serves the same fields (§6b).
 9. `try_` calls: only contract reverts produce `{reverted: true}`;
    transport failures are asked again with backoff until they answer.
 10. Topic filters on dynamic-typed indexed params: §7 unsupported (topics
