@@ -224,3 +224,46 @@ let asContextLog = (logger: t): Envio.logger => {
       logAt(#uerror, message, ~params={"err": exn->Utils.prettifyExn}),
   }
 }
+
+type consoleClass
+type writableClass
+@module("node:console") external consoleClass: consoleClass = "Console"
+@module("node:stream") external writableClass: writableClass = "Writable"
+
+// Each method writes through a `Console` of its level's own, so it formats as
+// Node's would; group indentation is kept per level.
+let routeConsoleTo: (
+  consoleClass,
+  writableClass,
+  (level, string) => unit,
+) => unit => unit = %raw(`(Console, Writable, write) => {
+  const methodsByLevel = {
+    uinfo: ["log", "info", "dir", "dirxml", "table", "count", "countReset", "group", "groupCollapsed", "groupEnd", "time", "timeEnd", "timeLog"],
+    udebug: ["debug", "trace"],
+    uwarn: ["warn", "assert"],
+    uerror: ["error"],
+  };
+  const original = [];
+  for (const level of Object.keys(methodsByLevel)) {
+    const stream = new Writable({
+      decodeStrings: false,
+      write(chunk, _encoding, callback) {
+        // Each call ends its output with a newline, which a line doesn't need.
+        write(level, String(chunk).replace(/\n$/, ""));
+        callback();
+      },
+    });
+    const routed = new Console({stdout: stream, stderr: stream, colorMode: false});
+    for (const name of methodsByLevel[level]) {
+      original.push([name, console[name]]);
+      console[name] = routed[name].bind(routed);
+    }
+  }
+  return () => original.forEach(([name, method]) => { console[name] = method; });
+}`)
+
+// A handler's `console` writes lines through `logger`, at the `u*` level its
+// method names, instead of writing stdout behind the logger's back. Returns
+// the function that puts the original methods back.
+let routeConsole = (logger: t) =>
+  routeConsoleTo(consoleClass, writableClass, (level, text) => logger->logAt(level, text))

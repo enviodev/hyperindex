@@ -61,19 +61,14 @@ let toChain = (m: Metrics.chainMetrics): chain => {
   processedToEndblock: m->Metrics.hasProcessedToEndblock,
 }
 
-type consoleClass
-type writableClass
-@module("node:console") external consoleClass: consoleClass = "Console"
-@module("node:stream") external writableClass: writableClass = "Writable"
-
 // Sends everything written through `console` above the display, the way the
 // terminal would have shown it, and returns the function that restores it.
 // Routed through a `Console` of our own so every method formats as Node's
 // would; stderr stays where it is when it isn't the terminal, and once the
 // display is gone, output goes back to where it came from.
-let redirectConsole: (
-  consoleClass,
-  writableClass,
+let redirectConsoleToDisplay: (
+  Logger.consoleClass,
+  Logger.writableClass,
   string => bool,
 ) => unit => unit = %raw(`(Console, Writable, print) => {
   let original = [];
@@ -111,7 +106,10 @@ let drive = (tui: t, ~getMetrics: unit => Metrics.t) => {
   }
 }
 
-let start = (~config: Config.t, ~logger, ~getMetrics: unit => Metrics.t) => {
+// A process that routes `console` through its logger already prints it above
+// the display, so only the supervisor, forwarding its workers' lines through
+// `console`, redirects it.
+let start = (~config: Config.t, ~logger, ~getMetrics: unit => Metrics.t, ~redirectConsole=true) => {
   let metrics = getMetrics()
   let info = {
     ecosystem: (config.ecosystem.name :> string),
@@ -133,7 +131,11 @@ let start = (~config: Config.t, ~logger, ~getMetrics: unit => Metrics.t) => {
       ~params={"err": exn->Utils.prettifyExn},
     )
   | tui =>
-    let restoreConsole = redirectConsole(consoleClass, writableClass, text => tui->print(text))
+    let restoreConsole = redirectConsole
+      ? redirectConsoleToDisplay(Logger.consoleClass, Logger.writableClass, text =>
+          tui->print(text)
+        )
+      : () => ()
     let stop = tui->drive(~getMetrics)
     let finish = () => {
       stop()

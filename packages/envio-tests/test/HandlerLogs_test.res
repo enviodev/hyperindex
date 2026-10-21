@@ -181,3 +181,68 @@ describe("context.log", () => {
     )
   })
 })
+
+describe("console in a handler", () => {
+  // Formatted as Node's console would, on the level the method names, so it
+  // reaches the run's log instead of writing behind the logger's back.
+  Async.it("writes each console method as a line at its level", async t => {
+    await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      async (~indexer, ~source) => {
+        let mock = source(1)
+        mock.resolveGetHeightOrThrow(300)
+        await mock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 5,
+                  logIndex: 2,
+                  handler: async _ => {
+                    let _ = %raw(`(() => {
+                      console.log("seen %d", 5, {a: 1});
+                      console.info("info");
+                      console.debug("debug");
+                      console.warn("careful");
+                      console.error("bad");
+                      console.count("calls");
+                      console.table([{a: 1}]);
+                    })()`)
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        t.expect(
+          indexer.allLogsAsJson()
+          ->Array.filter(
+            line =>
+              switch line->Dict.get("level") {
+              | Some(String("uinfo" | "udebug" | "uwarn" | "uerror")) => true
+              | _ => false
+              },
+          )
+          ->Array.map(line => (line->Dict.get("level"), line->Dict.get("msg"))),
+        ).toEqual([
+          (Some(JSON.String("uinfo")), Some(JSON.String("seen 5 { a: 1 }"))),
+          (Some(JSON.String("uinfo")), Some(JSON.String("info"))),
+          (Some(JSON.String("udebug")), Some(JSON.String("debug"))),
+          (Some(JSON.String("uwarn")), Some(JSON.String("careful"))),
+          (Some(JSON.String("uerror")), Some(JSON.String("bad"))),
+          (Some(JSON.String("uinfo")), Some(JSON.String("calls: 1"))),
+          (
+            Some(JSON.String("uinfo")),
+            Some(
+              JSON.String(
+                "┌─────────┬───┐\n│ (index) │ a │\n├─────────┼───┤\n│ 0       │ 1 │\n└─────────┴───┘",
+              ),
+            ),
+          ),
+        ])
+      },
+    )
+  })
+})

@@ -203,6 +203,9 @@ let run = async (
   // Postgres resources this run owns: one schema, plus every client and
   // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
+  // Handler files log through `console` as they load and run, so the run's
+  // capture holds those lines too.
+  let restoreConsole = logger->Logger.routeConsole
   let cacheDir = NodeJs.Path.resolve([tmpdir(), `envio-cache-${pgSchema}`])
   let clients = []
   let storages: array<Persistence.storage> = []
@@ -720,6 +723,8 @@ let run = async (
     | None => ()
     }
   }
+
+  restoreConsole()
 
   switch (outcome, indexerFailure.contents, teardownFailure.contents) {
   | (Some(exn), _, _)

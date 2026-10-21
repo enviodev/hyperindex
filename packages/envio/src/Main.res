@@ -451,6 +451,9 @@ exception FatalError(exn)
     ~exitAfterFirstEventBlock=false,
     ~patchConfig: option<(Config.t, HandlerRegister.registrationsByChainId) => Config.t>=?,
   ) => {
+    // Handler files log through `console` as they load and run; routed, their
+    // lines reach the run's log, its levels and the display like the indexer's.
+    let _: unit => unit = logger->Logger.routeConsole
     // A worker reports to its supervisor, which draws for the whole run.
     let shouldUseTui = Tui.shouldUse(~suppressed=isTest || Worker.isEnabled)
     // isDevelopmentMode controls whether the indexer stays alive after all
@@ -546,7 +549,12 @@ exception FatalError(exn)
       ~onError,
     )
     if shouldUseTui {
-      Tui.start(~config, ~logger, ~getMetrics=() => state->IndexerState.toMetrics)
+      Tui.start(
+        ~config,
+        ~logger,
+        ~getMetrics=() => state->IndexerState.toMetrics,
+        ~redirectConsole=false,
+      )
     }
     Worker.bindRun(
       ~getMetrics=() => state->IndexerState.toMetrics,
