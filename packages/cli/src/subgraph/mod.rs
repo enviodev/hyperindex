@@ -1281,6 +1281,23 @@ fn rpc_for_chain(rpc: &RpcSelection, chain_id: u64) -> RpcSelection {
 /// How long the one `eth_chainId` request per endpoint may take.
 const CHAIN_ID_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+thread_local! {
+    /// The local ports the process reading the project listens on, as its
+    /// napi caller reported them (`with_ports_served_here`).
+    static PORTS_SERVED_HERE: std::cell::RefCell<Vec<u16>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `read` knowing which local ports the calling process serves. That
+/// process is blocked until `read` returns, so an endpoint on one of them
+/// (a test's RPC stub, beside `createTestIndexer()`) can't answer it.
+pub fn with_ports_served_here<T>(ports: &[u16], read: impl FnOnce() -> T) -> T {
+    let previous = PORTS_SERVED_HERE.with(|served| served.replace(ports.to_vec()));
+    let result = read();
+    PORTS_SERVED_HERE.with(|served| served.replace(previous));
+    result
+}
+
 /// The chain `ENVIO_SUBGRAPH_RPC` serves, for each manifest network no table
 /// knows and each one whose table chain it doesn't serve, with a startup
 /// notice for the latter. graph-node indexes a network on whatever chain the
@@ -1326,7 +1343,7 @@ fn networks_from_rpc(
 /// On a thread of its own, since translation also runs inside the CLI's async
 /// runtime, where blocking on another one isn't allowed.
 fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
-    let endpoints: Vec<(String, BTreeMap<String, String>)> = match rpc {
+    let all: Vec<(String, BTreeMap<String, String>)> = match rpc {
         RpcSelection::Url(url) => vec![(url.clone(), BTreeMap::new())],
         RpcSelection::Single(entry) => {
             vec![(entry.url.clone(), entry.headers.clone().unwrap_or_default())]
@@ -1336,6 +1353,18 @@ fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
             .map(|entry| (entry.url.clone(), entry.headers.clone().unwrap_or_default()))
             .collect(),
     };
+    let (here, endpoints): (Vec<_>, Vec<_>) =
+        all.into_iter().partition(|(url, _)| served_here(url));
+    if endpoints.is_empty() {
+        if let Some((url, _)) = here.first() {
+            return Err(format!(
+                "didn't ask {} (eth_chainId) which chain it serves: this process serves it, and \
+                 can't answer while it reads the project (an RPC stub beside createTestIndexer()). \
+                 Serve it from another process, or name a network Envio knows",
+                endpoint_host(url)
+            ));
+        }
+    }
     let asked = std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1354,6 +1383,23 @@ fn chain_id_served_by(rpc: &RpcSelection) -> Result<u64, String> {
     })
     .join();
     asked.unwrap_or_else(|_| Err(format!("failed asking {RPC_ENV_VAR} for its chain id")))
+}
+
+/// Whether `url` is a port this process serves on its own machine.
+fn served_here(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let local = match parsed.host() {
+        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        None => false,
+    };
+    local
+        && parsed
+            .port_or_known_default()
+            .is_some_and(|port| PORTS_SERVED_HERE.with(|served| served.borrow().contains(&port)))
 }
 
 fn unanswered(url: &str, err: &anyhow::Error) -> String {
@@ -3041,6 +3087,60 @@ type Gravatar @entity {
                 ))
                 && !message.contains("sekret-api-key"),
             "unexpected error: {message}"
+        );
+    }
+
+    // A test's own RPC stub listens in the process that reads the project, and
+    // `createTestIndexer()` reads it synchronously: the stub can't answer until
+    // the read is done, so asking it held every such test up for the 15 s
+    // eth_chainId deadline. An endpoint the caller says it serves itself is
+    // left unasked, as one that doesn't answer leaves a known name to its
+    // table, and an unknown name's error says why it wasn't asked.
+    #[test]
+    fn an_endpoint_this_process_serves_is_not_asked() {
+        // Accepts connections and never answers, as a blocked thread's server.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a local port");
+        let address = silent.local_addr().expect("a local address");
+        let env = rpc_env(&format!("http://{address}"));
+        let manifest = MANIFEST.split("templates:").next().unwrap().to_string();
+        let started = std::time::Instant::now();
+        let (known, unknown) = with_ports_served_here(&[address.port()], || {
+            let known = translate(
+                &manifest,
+                SCHEMA,
+                "gravatar",
+                &env,
+                ".",
+                &HashMap::new(),
+                &ambiguous(),
+            )
+            .map(|translation| translation.human_config.chains[0].id)
+            .map_err(|err| format!("{err:#}"));
+            let unknown = translate(
+                &manifest.replace("network: mainnet", "network: risechain"),
+                SCHEMA,
+                "gravatar",
+                &env,
+                ".",
+                &HashMap::new(),
+                &ambiguous(),
+            )
+            .err()
+            .map(|err| format!("{err:#}"))
+            .unwrap_or_default();
+            (known, unknown)
+        });
+        assert_eq!(
+            (
+                known,
+                unknown.contains(&format!(
+                    "didn't ask http://{address} (eth_chainId) which chain it serves: this \
+                     process serves it"
+                )),
+                started.elapsed() < std::time::Duration::from_secs(5),
+            ),
+            (Ok(1), true, true),
+            "unknown network error: {unknown}"
         );
     }
 

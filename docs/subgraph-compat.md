@@ -670,7 +670,10 @@ The settings of one feature are documented with it: `ENVIO_SUBGRAPH_IPFS_URL`,
   `mainnet` whatever it is, and a local subgraph says `network: mainnet` for an
   anvil node), so an endpoint that serves another chain than the registry's for
   the network's name decides the chain, with a startup notice naming both; one
-  that doesn't answer leaves the name to the tables.
+  that doesn't answer leaves the name to the tables. An endpoint served by the
+  process reading the project isn't asked, and counts as one that doesn't
+  answer: `createTestIndexer()` reads the project synchronously, so a test's
+  RPC stub in the same process couldn't answer until the read gave up.
 - **`receipt: true` + RPC: envio's standard behavior, inherited.** envio's
   RPC source reads the receipt scalars from `eth_getTransactionReceipt`, so a
   chain synced over RPC (`for: sync`, or a fallback that took over) serves

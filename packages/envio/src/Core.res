@@ -46,7 +46,11 @@ type filledGeneratedFile = {
 }
 
 type addon = {
-  getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  getConfigJson: (
+    ~configPath: Null.t<string>,
+    ~directory: Null.t<string>,
+    ~portsServedHere: array<int>,
+  ) => string,
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
   subgraphFileToJavascript: (string, string, bool) => string,
   subgraphRegisterHandlers: (array<string>, array<array<string>>) => array<array<string>>,
@@ -308,11 +312,24 @@ let getAddon = () =>
     }
   }
 
+// The ports servers in this process listen on. Node has no public list of
+// them; `_getActiveHandles` has held them since its first releases, and
+// without it nothing is reported.
+let portsServedHere: unit => array<int> = %raw(`() =>
+  typeof process._getActiveHandles !== "function"
+    ? []
+    : process
+        ._getActiveHandles()
+        .map((handle) => (handle?.listening === true && typeof handle.address === "function" ? handle.address() : null))
+        .filter((address) => typeof address?.port === "number")
+        .map((address) => address.port)`)
+
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
   addon.getConfigJson(
     ~configPath=configPath->Null.fromOption,
     ~directory=directory->Null.fromOption,
+    ~portsServedHere=portsServedHere(),
   )
 }
 
