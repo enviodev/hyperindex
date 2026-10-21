@@ -391,22 +391,11 @@ describe("console in a handler", () => {
           [("level", JSON.String("uinfo")), ("msg", JSON.String(msg)), ...fields]
         t.expect(
           indexer.allLogsAsJson()->Array.filter(isHandlerLine)->Array.map(Dict.toArray),
-        ).toEqual(
-          ConsoleScope.isCheap
-            ? [
-                line("registering", eventFields),
-                line("effect ran", [...eventFields, ("effect", JSON.String("lookup"))]),
-                line("handled", eventFields),
-              ]
-              // Without async context frames, knowing the scope would slow every
-              // `await` in the process, so lines go without it.
-            : [
-                line("registering", []),
-                line("preloading", []),
-                line("effect ran", []),
-                line("handled", []),
-              ],
-        )
+        ).toEqual([
+          line("registering", eventFields),
+          line("effect ran", [...eventFields, ("effect", JSON.String("lookup"))]),
+          line("handled", eventFields),
+        ])
       },
     )
   })

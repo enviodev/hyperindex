@@ -14,25 +14,11 @@ type storage
 @send external runInStorage: (storage, t, unit => 'a) => 'a = "run"
 @send external getStore: storage => Nullable.t<t> = "getStore"
 
-// Async context costs a fixed charge per scope entered only where Node carries
-// it in frames: by default from Node 24, behind a flag before. Without frames,
-// any use of it makes every `await` in the process about twice as slow, so
-// lines there go without the fields.
-let isCheap: bool = %raw(`(function () {
-  var major = Number(process.versions.node.split(".")[0]);
-  var flags = process.execArgv.concat((process.env.NODE_OPTIONS || "").split(/\s+/));
-  return major >= 24
-    ? flags.indexOf("--no-async-context-frame") === -1
-    : flags.indexOf("--experimental-async-context-frame") !== -1;
-})()`)
+// Cheap where Node keeps async context in frames, the default from Node 24.
+// Before that, using it at all makes every `await` in the process slower.
+let storage = makeStorage()
 
-let storage = isCheap ? Some(makeStorage()) : None
-
-let run = (scope, f) =>
-  switch storage {
-  | Some(storage) => storage->runInStorage(scope, f)
-  | None => f()
-  }
+let run = (scope, f) => storage->runInStorage(scope, f)
 
 let setItem = (scope, item) =>
   switch scope {
@@ -43,15 +29,11 @@ let setItem = (scope, item) =>
 // The logger a `console` line goes through: the scope's, or `root` outside any.
 // `None` drops the line.
 let loggerFor = (root: Logger.t) =>
-  switch storage {
+  switch storage->getStore->Nullable.toOption {
   | None => Some(root)
-  | Some(storage) =>
-    switch storage->getStore->Nullable.toOption {
-    | None => Some(root)
-    | Some(Silent) => None
-    | Some(Item({item, loggerFor})) => Some(loggerFor(item))
-    | Some(Logger(logger)) => Some(logger())
-    }
+  | Some(Silent) => None
+  | Some(Item({item, loggerFor})) => Some(loggerFor(item))
+  | Some(Logger(logger)) => Some(logger())
   }
 
 // An effect is called with its arguments only, after the calls that asked for
@@ -59,12 +41,10 @@ let loggerFor = (root: Logger.t) =>
 let effectScopes: Utils.WeakMap.t<Internal.effectArgs, t> = Utils.WeakMap.make()
 
 let setForEffect = (args: Internal.effectArgs, logger) =>
-  if isCheap {
-    effectScopes->Utils.WeakMap.set(args, Logger(logger))->ignore
-  }
+  effectScopes->Utils.WeakMap.set(args, Logger(logger))->ignore
 
 let runEffect = (args: Internal.effectArgs, f) =>
-  switch isCheap ? effectScopes->Utils.WeakMap.get(args) : None {
+  switch effectScopes->Utils.WeakMap.get(args) {
   | Some(scope) => run(scope, f)
   | None => f()
   }
