@@ -84,104 +84,44 @@ let handOver = (output: output) =>
     output.lines = 0
   }
 
-// Writes one line into `output`, growing its buffer when the line doesn't fit.
-// A flat params object, which almost every one is, is written straight in as
-// JSON; anything else goes through `paramsToJson` first.
+// Writes one line into `output`, flushing first when it might not fit. A UTF-16
+// code unit is at most three UTF-8 bytes, which bounds a line before writing it.
 let appendLine: (
   output,
+  ~handOver: output => unit,
   ~level: int,
   ~time: float,
   ~message: string,
   ~boundFieldsJson: array<string>,
-  ~params: unknown,
-  ~paramsToJson: unknown => string,
-) => unit = %raw(`(function () {
-  // A UTF-16 code unit is at most three UTF-8 bytes.
-  function ensure(output, size) {
-    if (output.offset + size > output.bytes.length) {
-      var grown = Buffer.allocUnsafe(Math.max(2 * output.bytes.length, output.offset + size));
-      output.bytes.copy(grown, 0, 0, output.offset);
-      output.bytes = grown;
-      output.view = new DataView(grown.buffer, grown.byteOffset, grown.byteLength);
+  ~paramsJson: Null.t<string>,
+) => unit = %raw(`function (output, handOver, level, time, message, bound, params) {
+  var need = 18 + 3 * (message.length + (params === null ? 0 : params.length));
+  for (var i = 0; i < bound.length; i++) need += 4 + 3 * bound[i].length;
+  if (output.offset + need > output.bytes.length) {
+    handOver(output);
+    if (need > output.bytes.length) {
+      output.bytes = Buffer.allocUnsafe(need);
+      output.view = new DataView(output.bytes.buffer, output.bytes.byteOffset, output.bytes.byteLength);
     }
   }
-  function writeText(output, text) {
-    ensure(output, 4 + 3 * text.length);
-    var written = output.bytes.utf8Write(text, output.offset + 4);
-    output.view.setUint32(output.offset, written, true);
-    output.offset += 4 + written;
+  var bytes = output.bytes, view = output.view, offset = output.offset;
+  bytes[offset] = level;
+  view.setFloat64(offset + 1, time, true);
+  offset += 9;
+  var written = bytes.utf8Write(message, offset + 4);
+  view.setUint32(offset, written, true);
+  offset += 4 + written;
+  bytes[offset++] = bound.length;
+  for (var i = 0; i < bound.length; i++) {
+    written = bytes.utf8Write(bound[i], offset + 4);
+    view.setUint32(offset, written, true);
+    offset += 4 + written;
   }
-  function writeRaw(output, text) {
-    ensure(output, 3 * text.length);
-    output.offset += output.bytes.utf8Write(text, output.offset);
-  }
-  function writeByte(output, byte) {
-    ensure(output, 1);
-    output.bytes[output.offset++] = byte;
-  }
-  // A string without quotes, backslashes, control characters or surrogates is
-  // its own JSON between quotes.
-  var plain = /^[^"\\\u0000-\u001f\ud800-\udfff]*$/;
-  function writeQuoted(output, text) {
-    if (plain.test(text)) {
-      writeByte(output, 34);
-      writeRaw(output, text);
-      writeByte(output, 34);
-    } else {
-      writeRaw(output, JSON.stringify(text));
-    }
-  }
-  function isFlat(params) {
-    if (typeof params !== "object" || params === null || Array.isArray(params) || params instanceof Error) return false;
-    for (var key in params) {
-      var field = params[key];
-      if (typeof field === "object" && field !== null) return false;
-    }
-    return true;
-  }
-  function writeFlatParams(output, params) {
-    ensure(output, 4);
-    var lengthAt = output.offset;
-    output.offset += 4;
-    writeByte(output, 123);
-    var isFirst = true;
-    for (var key in params) {
-      var field = params[key];
-      var kind = typeof field;
-      if (kind === "undefined" || kind === "function" || kind === "symbol") continue;
-      if (!isFirst) writeByte(output, 44);
-      isFirst = false;
-      writeQuoted(output, key);
-      writeByte(output, 58);
-      if (kind === "string") writeQuoted(output, field);
-      else if (kind === "number") writeRaw(output, isFinite(field) ? "" + field : "null");
-      else if (kind === "bigint") { writeByte(output, 34); writeRaw(output, field.toString()); writeByte(output, 34); }
-      else if (kind === "boolean") writeRaw(output, field ? "true" : "false");
-      else writeRaw(output, "null");
-    }
-    writeByte(output, 125);
-    output.view.setUint32(lengthAt, output.offset - lengthAt - 4, true);
-  }
-  return function (output, level, time, message, bound, params, paramsToJson) {
-    ensure(output, 9);
-    output.bytes[output.offset] = level;
-    output.view.setFloat64(output.offset + 1, time, true);
-    output.offset += 9;
-    writeText(output, message);
-    writeByte(output, bound.length);
-    for (var i = 0; i < bound.length; i++) writeText(output, bound[i]);
-    if (params === undefined) {
-      ensure(output, 4);
-      output.view.setUint32(output.offset, 0xFFFFFFFF, true);
-      output.offset += 4;
-    } else if (isFlat(params)) {
-      writeFlatParams(output, params);
-    } else {
-      writeText(output, paramsToJson(params));
-    }
-    output.lines++;
-  };
-})()`)
+  if (params === null) { view.setUint32(offset, 0xFFFFFFFF, true); offset += 4; }
+  else { written = bytes.utf8Write(params, offset + 4); view.setUint32(offset, written, true); offset += 4 + written; }
+  output.offset = offset;
+  output.lines++;
+}`)
 
 // Enough lines that the call costs little per line.
 let maxPendingLines = 1024
@@ -242,6 +182,8 @@ let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative
 // params of plain values skip it. Params come from anywhere, so a value that
 // refers to itself says so, and one JSON can't hold says so rather than losing
 // the line.
+// Params repeat the same few keys, so their JSON is kept.
+let quotedKeys: unknown = %raw(`new Map()`)
 let paramsToJson: 'a => string = %raw(`function (value) {
   var ancestors = [];
   function replacer(_key, value) {
@@ -259,16 +201,44 @@ let paramsToJson: 'a => string = %raw(`function (value) {
     }
     return value;
   }
+  // A key or string without quotes, backslashes, control characters or
+  // surrogates is its own JSON between quotes.
+  var plain = /^[^"\\\u0000-\u001f\ud800-\udfff]*$/;
+  function quote(text) {
+    return plain.test(text) ? '"' + text + '"' : JSON.stringify(text);
+  }
+  function quoteKey(key) {
+    var quoted = quotedKeys.get(key);
+    if (quoted === undefined) {
+      quoted = quote(key);
+      if (quotedKeys.size < 4096) quotedKeys.set(key, quoted);
+    }
+    return quoted;
+  }
   try {
     if (value instanceof Error) value = {err: value};
-    else if (typeof value === "bigint") return JSON.stringify(value, replacer);
+    else if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return JSON.stringify(value, replacer);
+    }
+    // Params are almost always one flat object, written here without the
+    // replacer, which costs more than the line; anything nested takes it.
+    var json = "{";
     for (var key in value) {
       var field = value[key];
-      if (typeof field === "bigint" || (typeof field === "object" && field !== null)) {
-        return JSON.stringify(value, replacer);
+      var fieldJson;
+      switch (typeof field) {
+        case "string": fieldJson = quote(field); break;
+        case "number": fieldJson = isFinite(field) ? "" + field : "null"; break;
+        case "bigint": fieldJson = '"' + field + '"'; break;
+        case "boolean": fieldJson = field ? "true" : "false"; break;
+        case "undefined": case "function": case "symbol": continue;
+        default:
+          if (field !== null) return JSON.stringify(value, replacer);
+          fieldJson = "null";
       }
+      json += (json.length === 1 ? "" : ",") + quoteKey(key) + ":" + fieldJson;
     }
-    return JSON.stringify(value);
+    return json + "}";
   } catch (error) {
     return JSON.stringify({unserializable: String(error)});
   }
@@ -323,12 +293,15 @@ let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
     let output = logger.output
     let time = Date.now()
     output->appendLine(
+      ~handOver,
       ~level=levelNumber(level),
       ~time,
       ~message,
       ~boundFieldsJson=logger->getBoundFieldsJson,
-      ~params=params->(Utils.magic: option<'a> => unknown),
-      ~paramsToJson=paramsToJson->(Utils.magic: ('b => string) => unknown => string),
+      ~paramsJson=switch params {
+      | Some(params) => Null.Value(params->paramsToJson)
+      | None => Null.Null
+      },
     )
     if output.lines >= maxPendingLines || time -. output.lastFlushTime >= maxPendingMs {
       output.lastFlushTime = time
