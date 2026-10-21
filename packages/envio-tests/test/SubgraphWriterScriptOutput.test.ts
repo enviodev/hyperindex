@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // UMA writes its manifest with `"prepare:polygon": "scripts/build-manifest.sh
 // polygon && yarn codegen && yarn build"`, and build-manifest.sh echoes what it
@@ -65,12 +67,12 @@ describe("the one package.json script that writes the manifest", () => {
     }
 
     const parse = `
-      import { createRequire } from "node:module";
-      const addon = createRequire(import.meta.url)(process.env.ENVIO_DEV_ADDON);
-      const config = JSON.parse(addon.getConfigJson(null, process.argv[1]));
+      const { getAddon } = await import(process.argv[2]);
+      const config = JSON.parse(getAddon().getConfigJson(null, process.argv[1]));
       console.log("chains: " + Object.values(config.evm.chains).map((chain) => chain.id).join(","));
     `;
-    const output = execFileSync(process.execPath, ["--input-type=module", "-e", parse, project], {
+    const core = pathToFileURL(createRequire(import.meta.url).resolve("envio/src/Core.res.mjs")).href;
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", parse, project, core], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
