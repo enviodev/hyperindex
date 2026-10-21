@@ -4369,6 +4369,31 @@ describe("SourceManager minimum interval between head fetches", () => {
     },
   )
 
+  // https://github.com/enviodev/hyperindex/issues/1758
+  // A wall-clock step back (NTP correction) must not stretch the hold.
+  Async.it("Measures the interval on the monotonic clock, not the wall clock", async t => {
+    Vi.useFakeTimers()
+    let (mock, sourceManager) = makeStreaming(~minHeadFetchInterval=2_000)
+
+    let first = track(sourceManager->waitAbove(~isRealtime=true, ~knownHeight=100))
+    mock.setHeightSubscriptionStatus(Live)
+    mock.triggerHeightSubscription(101)
+    await Vi.advanceTimersByTimeAsync(0)
+
+    Vi.setSystemTime(Date.now() -. 60_000.)
+    let second = track(sourceManager->waitAbove(~isRealtime=true, ~knownHeight=101))
+    mock.triggerHeightSubscription(102)
+    await Vi.advanceTimersByTimeAsync(1_999)
+    let duringHold = second.contents
+    await Vi.advanceTimersByTimeAsync(1)
+
+    t.expect((first.contents, duringHold, second.contents)).toStrictEqual((
+      Some(101),
+      None,
+      Some(102),
+    ))
+  })
+
   Async.it("Does not hold a wait that starts after the interval has already passed", async t => {
     Vi.useFakeTimers()
     let (mock, sourceManager) = makePolling(~minHeadFetchInterval=1_000)
