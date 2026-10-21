@@ -1061,8 +1061,12 @@ function hasRegisterPass(source: DataSource, handler: BlockHandler): boolean {
 
 const BLOCK_HANDLER_CREATE =
   "envio registers a template's instances in a register pass ahead of the handlers, and a template's " +
-  "unfiltered and polling block handlers get none, so the instances one creates would never have their " +
-  "events indexed";
+  "unfiltered and polling block handlers get none, nor does a data source's that runs on many blocks " +
+  "unless its code surely reaches a template's generated class, so the instances one creates would " +
+  "never have their events indexed";
+
+/** A data source's block handler that runs on at most this many blocks may get a pass on suspicion. */
+const FEW_BLOCK_HANDLER_BLOCKS = 1_000;
 
 /**
  * Where a block handler sits in its block for the register pass's store: a
@@ -1372,7 +1376,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
     if (registeredTemplates.has(key) || unregisteredCreates.has(key)) return;
     if (scope.blockHandler) {
       throw unsupported(
-        "creating contract templates from a template's block handler",
+        "creating contract templates from a block handler without a register pass",
         `data source "${scope.dataSource.name}" → blockHandlers → "${scope.blockHandler}", which created ` +
           `${templateName} ${address.toLowerCase()} at block ${scope.blockNumber}`,
         BLOCK_HANDLER_CREATE,
@@ -1565,6 +1569,19 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
   const templateNames = new Set(
     config.templates.filter((template) => !isFile(template)).map((template) => template.name),
   );
+  const sureCreatingBySource = new Map<DataSource, Set<string>>();
+  const sureCreating = (source: DataSource): Set<string> => {
+    let found = sureCreatingBySource.get(source);
+    if (!found) {
+      const handlers = source.blockHandlers.map((handler) => handler.handler);
+      const created = subgraphSureCreates(path.resolve(config.root, source.mappingFile), handlers, [
+        ...templateNames,
+      ]);
+      found = new Set(handlers.filter((_, index) => created[index]!.length > 0));
+      sureCreatingBySource.set(source, found);
+    }
+    return found;
+  };
   // A template's block handler's create is refused when it runs (the create
   // hook above). Whether one will run depends on data — moonwell's Feed
   // handler creates only at the blocks its network's config lists, none on
@@ -1873,6 +1890,7 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       if (typeof fn !== "function") continue;
       const start = source.startBlock ?? 0;
       const once = handler.filter === "once";
+      const every = typeof handler.filter === "object" ? handler.filter.every : 1;
       const location = `data source "${source.name}" → "${handler.handler}"`;
       // graph-node creates a data source from any handler, a block handler's
       // included, and runs it from that block on. A data source's block handler
@@ -1880,8 +1898,25 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
       // ahead of them, as an event's does; so does every `once` one when there
       // are templates at all: Venus's saves the Comptroller that
       // getOrCreateMarket's register pass reads before it creates a VToken.
+      // One that runs on every block, or every few, gets a pass only when the
+      // code surely reaches a template's class: anything the analysis can't
+      // follow counts as a create, and kiln's vsuite handleBlock, which checks
+      // BLS signatures in a module it can't follow, would redo them at every
+      // block. A create from one without a pass is refused where it runs.
+      const blocksRun = once
+        ? 1
+        : source.endBlock === undefined
+          ? Number.POSITIVE_INFINITY
+          : Math.floor((source.endBlock - start) / every) + 1;
+      const registers =
+        !source.isTemplate &&
+        templateNames.size > 0 &&
+        (once ||
+          (blocksRun <= FEW_BLOCK_HANDLER_BLOCKS
+            ? creating.has(handler.handler)
+            : sureCreating(source).has(handler.handler)));
       const contractRegister =
-        !source.isTemplate && templateNames.size > 0 && (once || creating.has(handler.handler))
+        registers
           ? async ({ block, context }: any) => {
               const blockNumber: number = block.number;
               const position = blockHandlerPosition(blockNumber, once);
@@ -1965,7 +2000,6 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
           : source.endBlock === undefined
             ? { _gte: first, _every: handler.filter.every }
             : { _gte: start, _lte: source.endBlock, _every: handler.filter.every };
-      const every = typeof handler.filter === "object" ? handler.filter.every : 1;
       const scheduled = (created: number, blockNumber: number) =>
         once ? blockNumber === created : (blockNumber - created) % every === 0;
       indexer.onBlock(
@@ -2001,7 +2035,8 @@ export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
               blockNumber: block.number,
               blockSeconds: secondsOf(block.number, block.timestamp),
               mappingExports: mapping,
-              blockHandler: hasRegisterPass(source, handler) ? undefined : handler.handler,
+              blockHandler:
+                (source.isTemplate ? hasRegisterPass(source, handler) : registers) ? undefined : handler.handler,
             };
             await runSyncCounted(context, () =>
               runInScope(scope, () => {

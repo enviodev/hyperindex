@@ -6,7 +6,7 @@
 // `(block - start_block) % every == 0`), and what it creates is indexed from
 // that block on, as from any other trigger.
 let manifest = `
-specVersion: 0.0.8
+specVersion: 0.0.9
 schema:
   file: ./schema.graphql
 dataSources:
@@ -88,18 +88,32 @@ type Holding @entity {
 `,
   ~files=Dict.fromArray([("./abis/Product.json", abi)]),
   ~mappings=Dict.fromArray([
+    // What graph codegen writes to generated/templates.ts.
+    (
+      "src/templates.ts",
+      `
+import { Address, DataSourceTemplate } from "@graphprotocol/graph-ts";
+
+export class BeefyERC20Product extends DataSourceTemplate {
+  static create(address: Address): void {
+    DataSourceTemplate.create("BeefyERC20Product", [address.toHex()]);
+  }
+}
+`,
+    ),
     (
       "src/binder.ts",
       `
-import { DataSourceTemplate, ethereum } from "@graphprotocol/graph-ts";
+import { Address, ethereum } from "@graphprotocol/graph-ts";
+import { BeefyERC20Product as BeefyERC20ProductTemplate } from "./templates";
 
 export function bindOldProducts(block: ethereum.Block): void {
-  DataSourceTemplate.create("BeefyERC20Product", ["0x4444444444444444444444444444444444444444"]);
+  BeefyERC20ProductTemplate.create(Address.fromString("0x4444444444444444444444444444444444444444"));
 }
 
 export function handleTick(block: ethereum.Block): void {
   if (block.number.toI32() == 8) {
-    DataSourceTemplate.create("BeefyERC20Product", ["0x5555555555555555555555555555555555555555"]);
+    BeefyERC20ProductTemplate.create(Address.fromString("0x5555555555555555555555555555555555555555"));
   }
 }
 `,
