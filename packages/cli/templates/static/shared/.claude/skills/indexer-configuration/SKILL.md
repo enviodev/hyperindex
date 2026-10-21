@@ -117,11 +117,12 @@ Changing it changes the column types, so resync from scratch.
 
 ## strict_hex_type
 
-Types `0x`-prefixed hex values as the stricter `Hex` (`` `0x${string}` ``)
-instead of plain `string` in TypeScript, so a plain `string` is rejected where a
-hex value is expected. Covers `bytes`/`bytesN` event params (including `where`
-filters and test `simulate` params), block and transaction hashes and other hex
-fields, and `Bytes` entity fields with `bytes_type: hex`.
+Makes the `Hex` type from `envio` mean `` `0x${string}` `` (`StrictHex`) instead
+of plain `string`, so a plain `string` is rejected where a hex value is
+expected. `Hex` types `bytes`/`bytesN` event params (including `where` filters
+and test `simulate` params), block and transaction hashes and other hex fields,
+and `Bytes` entity fields with `bytes_type: hex`. Use `StrictHex` for a value
+that must be checked regardless of this setting.
 
 ```yaml
 strict_hex_type: true

@@ -46,14 +46,18 @@ import {
   type Address,
   type Entity,
   type Hex,
+  type StrictHex,
   TestHelpers,
 } from "envio";
 
 const { Addresses } = TestHelpers;
 
-expectType<TypeEqual<Account, Entity<"Account">>>(true);
-expectType<TypeEqual<Hex, \`0x\${string}\`>>(true);
-expectType<TypeEqual<Address, \`0x\${string}\`>>(true);
+expectType<
+  TypeEqual<
+    [Account, Hex, StrictHex, Address],
+    [Entity<"Account">, string, \`0x\${string}\`, \`0x\${string}\`]
+  >
+>(true);
 
 describe("entities named after envio exports", () => {
   it("indexes entities named Hex, Address and enum", async (t) => {

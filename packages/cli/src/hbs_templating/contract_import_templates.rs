@@ -206,7 +206,7 @@ mod json_value {
         match type_ident {
             TypeIdent::BigInt => format!("JSON.String({value}->BigInt.toString)"),
             TypeIdent::Bool => format!("JSON.Boolean({value})"),
-            TypeIdent::String | TypeIdent::Hex | TypeIdent::HexString => {
+            TypeIdent::String | TypeIdent::StrictHex | TypeIdent::Hex => {
                 format!("JSON.String({value})")
             }
             TypeIdent::Address => format!("JSON.String({value}->Address.toString)"),

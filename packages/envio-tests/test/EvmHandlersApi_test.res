@@ -980,17 +980,17 @@ import type {
   EvmAllTransactionFields,
   EvmEvent,
   Hex,
-  HexString,
+  StrictHex,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type Stored = EvmEvent<"Registry", "Stored">;
-type Expected = ${strictHexType ? "Hex" : "string"};
+type Expected = ${strictHexType ? "StrictHex" : "string"};
 expectType<
   TypeEqual<
     {
+      strictHex: StrictHex;
       hex: Hex;
-      hexString: HexString;
       key: Stored["params"]["key"];
       data: Stored["params"]["data"];
       blockHash: Stored["block"]["hash"];
@@ -1004,8 +1004,8 @@ expectType<
       blobData: Blob["data"];
     },
     {
-      hex: \`0x\${string}\`;
-      hexString: Expected;
+      strictHex: \`0x\${string}\`;
+      hex: Expected;
       key: Expected;
       data: Expected;
       blockHash: Expected;
@@ -1021,7 +1021,7 @@ expectType<
   >
 >(true);
 
-const KEY: Hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+const KEY: StrictHex = "0x0000000000000000000000000000000000000000000000000000000000000001";
 const plain: string = KEY;
 ${handlers}
 `,

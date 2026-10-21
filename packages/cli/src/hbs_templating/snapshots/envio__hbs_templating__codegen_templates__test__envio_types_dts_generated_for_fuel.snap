@@ -9,18 +9,18 @@ expression: project_template.envio_types_dts
  * (or your package manager's `codegen` script, e.g. `pnpm codegen`).
  */
 
-import type { Address, BigDecimal, Hex, HexString, JSON, SingleOrMultiple } from "envio";
+import type { Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex } from "envio";
 
 /** Marks a block/transaction field that this event's `field_selection` doesn't include.
  * Reading such a field is a type error; the message tells you which field to add to
  * `field_selection` in config.yaml to make it available. */
 type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
 
-type FuelBlock = { id: HexString; height: number; time: number };
-type FuelTransaction = { id: HexString };
+type FuelBlock = { id: Hex; height: number; time: number };
+type FuelTransaction = { id: Hex };
 declare namespace FuelTypes {
   namespace Greeter {
-    type type0 = Hex;
+    type type0 = StrictHex;
     type type1 = { case: "InvalidContractSender"; payload: FuelTypes.Greeter.type8 } | { case: "ToThrow"; payload: FuelTypes.Greeter.type8 };
     type type2<t> = { case: "None"; payload: FuelTypes.Greeter.type8 } | { case: "Some"; payload: t };
     type type4 = { readonly user: FuelTypes.Greeter.type7 };

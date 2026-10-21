@@ -36,9 +36,9 @@ fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
         AbiType::Int(_) => TypeIdent::BigInt,
         AbiType::Bool => TypeIdent::Bool,
         AbiType::Address => TypeIdent::Address,
-        AbiType::Bytes => TypeIdent::HexString,
+        AbiType::Bytes => TypeIdent::Hex,
         AbiType::String => TypeIdent::String,
-        AbiType::FixedBytes(_) => TypeIdent::HexString,
+        AbiType::FixedBytes(_) => TypeIdent::Hex,
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
@@ -64,9 +64,9 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
         AbiType::Int(_) => TypeIdent::BigInt,
         AbiType::Bool => TypeIdent::Bool,
         AbiType::Address => TypeIdent::Address,
-        AbiType::Bytes => TypeIdent::HexString,
+        AbiType::Bytes => TypeIdent::Hex,
         AbiType::String => TypeIdent::String,
-        AbiType::FixedBytes(_) => TypeIdent::HexString,
+        AbiType::FixedBytes(_) => TypeIdent::Hex,
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
@@ -159,8 +159,7 @@ mod tests {
             (parsed.to_string(), parsed.to_ts_type_string()),
             (
                 "{\"data\": string, \"key\": string, \"label\": string}".to_string(),
-                "{ readonly data: HexString; readonly key: HexString; readonly label: string }"
-                    .to_string()
+                "{ readonly data: Hex; readonly key: Hex; readonly label: string }".to_string()
             )
         );
     }
