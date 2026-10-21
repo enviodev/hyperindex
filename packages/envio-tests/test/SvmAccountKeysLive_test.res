@@ -77,7 +77,7 @@ describe("SVM account keys (live)", () => {
         programIndex: 28,
       },
     ]);
-  });
+  }, 300_000);
 });
 `,
 )
