@@ -5,6 +5,7 @@ mod level;
 use fields::Fields;
 use format::Record;
 pub use level::Level;
+use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use serde_json::Value;
 use std::{
@@ -12,9 +13,9 @@ use std::{
     io::{self, IsTerminal, Write},
     os::fd::FromRawFd,
     path::Path,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Condvar, Mutex, OnceLock},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 enum Format {
@@ -25,8 +26,17 @@ enum Format {
 
 enum Target {
     Stdout,
-    File(Mutex<File>),
-    Memory(Mutex<Vec<Value>>),
+    File(File),
+}
+
+impl Target {
+    // A failed write has nowhere to be reported but the log itself.
+    fn write_all(&self, bytes: &[u8]) {
+        let _ = match self {
+            Target::Stdout => write_to_stdout_or_above_display(bytes),
+            Target::File(file) => (&*file).write_all(bytes),
+        };
+    }
 }
 
 struct Sink {
@@ -44,33 +54,240 @@ impl Sink {
         }
     }
 
-    fn accepts(&self, level: Level) -> bool {
-        level >= self.level
+    fn render(&self, record: &Record, out: &mut Vec<u8>) {
+        match self.format {
+            Format::Pretty { colorize } => format::write_pretty_line(record, colorize, out),
+            Format::Json => format::write_json_line(record, out),
+            Format::Ecs => format::write_ecs_line(record, out),
+        }
+    }
+}
+
+/// Lines as the caller hands them over, many at a time, in one buffer: parsing,
+/// formatting and writing them are the writer thread's. Each line is its level
+/// as a byte, its time in milliseconds as a little-endian `f64`, its message,
+/// a byte counting its bound fields' JSON objects (the logger's parents' first)
+/// and those objects, then its params' JSON object. Each text is a
+/// little-endian `u32` byte length and that much UTF-8; `ABSENT` in place of
+/// the params' length stands for none.
+#[derive(Default)]
+struct Batch {
+    bytes: Vec<u8>,
+    lines: usize,
+}
+
+const ABSENT: u32 = u32::MAX;
+
+/// Reads a [`Batch`]'s bytes from the front.
+struct Cursor<'a>(&'a [u8]);
+
+impl<'a> Cursor<'a> {
+    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
+        let (taken, rest) = self.0.split_at_checked(len)?;
+        self.0 = rest;
+        Some(taken)
     }
 
-    fn write(&self, record: &Record, line: &mut Vec<u8>) {
-        if let Target::Memory(lines) = &self.target {
-            if let Ok(mut lines) = lines.lock() {
-                lines.push(format::to_captured_line(record));
-            }
-            return;
+    fn text(&mut self) -> Option<Option<std::borrow::Cow<'a, str>>> {
+        let len = u32::from_le_bytes(self.take(4)?.try_into().ok()?);
+        if len == ABSENT {
+            return Some(None);
         }
-        line.clear();
-        match self.format {
-            Format::Pretty { colorize } => format::write_pretty_line(record, colorize, line),
-            Format::Json => format::write_json_line(record, line),
-            Format::Ecs => format::write_ecs_line(record, line),
-        };
-        // A failed write has nowhere to be reported but the log itself.
-        let _ = match &self.target {
-            Target::Stdout => write_to_stdout_or_above_display(line),
-            Target::File(file) => file
-                .lock()
-                .map_err(|_| io::Error::other("log file lock poisoned"))
-                .and_then(|mut file| file.write_all(line)),
-            Target::Memory(_) => Ok(()),
-        };
+        Some(Some(String::from_utf8_lossy(self.take(len as usize)?)))
     }
+}
+
+impl Batch {
+    fn with_records(&self, mut f: impl FnMut(&Record)) {
+        let mut cursor = Cursor(&self.bytes);
+        let parse = |json: Option<std::borrow::Cow<str>>| {
+            json.map_or_else(Vec::new, |json| parse_fields_or_keep_as_text(&json))
+        };
+        let mut layers: Vec<Fields> = Vec::new();
+        for _ in 0..self.lines {
+            layers.clear();
+            // A batch only this module's caller lays out, so a short one ends
+            // the batch rather than being reported.
+            let Some((level, millis, msg)) = (|| {
+                let level = Level::from_value(u32::from(*cursor.take(1)?.first()?))?;
+                let millis = f64::from_le_bytes(cursor.take(8)?.try_into().ok()?) as i64;
+                let msg = cursor.text()?;
+                for _ in 0..*cursor.take(1)?.first()? {
+                    layers.push(parse(cursor.text()?));
+                }
+                layers.push(parse(cursor.text()?));
+                Some((level, millis, msg))
+            })() else {
+                return;
+            };
+            let layers: Vec<&[(String, Box<serde_json::value::RawValue>)]> =
+                layers.iter().map(Vec::as_slice).collect();
+            f(&Record {
+                level,
+                millis,
+                msg: msg.as_deref().unwrap_or_default(),
+                fields: &fields::merge_later_wins(&layers),
+            });
+        }
+    }
+
+    #[cfg(test)]
+    fn push(&mut self, level: Level, msg: &str, bindings: Option<&str>, params: Option<&str>) {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_millis() as f64);
+        fn push_text(bytes: &mut Vec<u8>, text: &str) {
+            bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(text.as_bytes());
+        }
+        self.bytes.push(level.value() as u8);
+        self.bytes.extend_from_slice(&millis.to_le_bytes());
+        push_text(&mut self.bytes, msg);
+        self.bytes.push(u8::from(bindings.is_some()));
+        if let Some(bindings) = bindings {
+            push_text(&mut self.bytes, bindings);
+        }
+        match params {
+            Some(params) => push_text(&mut self.bytes, params),
+            None => self.bytes.extend_from_slice(&ABSENT.to_le_bytes()),
+        }
+        self.lines += 1;
+    }
+}
+
+/// How many lines may wait for the writer before a caller waits with them: a
+/// reader that can't keep up slows the indexer rather than filling its memory.
+const QUEUE_CAPACITY: usize = 262_144;
+
+/// Batches waiting for the writer, which takes them all at once. A caller only
+/// wakes the writer when it is idle, so a busy run hands a batch over with an
+/// uncontended lock and a push.
+struct Queue {
+    state: Mutex<QueueState>,
+    /// The writer waits here for lines.
+    arrived: Condvar,
+    /// Callers wait here for room, and flushes for their lines to be written.
+    written: Condvar,
+}
+
+#[derive(Default)]
+struct QueueState {
+    batches: Vec<Batch>,
+    waiting_lines: usize,
+    pushed: u64,
+    written: u64,
+    writer_idle: bool,
+    waiting_on_writes: usize,
+    closed: bool,
+}
+
+impl Queue {
+    fn push(&self, batch: Batch) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        while state.waiting_lines >= QUEUE_CAPACITY {
+            state.waiting_on_writes += 1;
+            state = match self.written.wait(state) {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            state.waiting_on_writes -= 1;
+        }
+        state.waiting_lines += batch.lines;
+        state.pushed += batch.lines as u64;
+        state.batches.push(batch);
+        if state.writer_idle {
+            state.writer_idle = false;
+            self.arrived.notify_one();
+        }
+    }
+
+    fn flush(&self) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let target = state.pushed;
+        while state.written < target {
+            state.waiting_on_writes += 1;
+            state = match self.written.wait(state) {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            state.waiting_on_writes -= 1;
+        }
+    }
+
+    fn close(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+            self.arrived.notify_one();
+        }
+    }
+
+    /// The next batches to write, swapped for `spare`; `None` once the logger
+    /// is gone and nothing is left.
+    fn take(&self, spare: Vec<Batch>) -> Option<Vec<Batch>> {
+        let mut state = self.state.lock().ok()?;
+        while state.batches.is_empty() {
+            if state.closed {
+                return None;
+            }
+            state.writer_idle = true;
+            state = self.arrived.wait(state).ok()?;
+        }
+        state.writer_idle = false;
+        state.waiting_lines = 0;
+        Some(std::mem::replace(&mut state.batches, spare))
+    }
+
+    fn mark_written(&self, count: usize) {
+        if let Ok(mut state) = self.state.lock() {
+            state.written += count as u64;
+            if state.waiting_on_writes > 0 {
+                self.written.notify_all();
+            }
+        }
+    }
+}
+
+fn spawn_writer(sinks: Vec<Sink>) -> io::Result<Arc<Queue>> {
+    let queue = Arc::new(Queue {
+        state: Mutex::new(QueueState::default()),
+        arrived: Condvar::new(),
+        written: Condvar::new(),
+    });
+    let writer_queue = queue.clone();
+    thread::Builder::new()
+        .name("envio-logger".into())
+        .spawn(move || {
+            let mut outs: Vec<Vec<u8>> = sinks.iter().map(|_| Vec::new()).collect();
+            let mut spare = Vec::new();
+            while let Some(mut batches) = writer_queue.take(spare) {
+                let mut count = 0;
+                for batch in &batches {
+                    count += batch.lines;
+                    batch.with_records(|record| {
+                        for (sink, out) in sinks.iter().zip(outs.iter_mut()) {
+                            if record.level >= sink.level {
+                                sink.render(record, out);
+                            }
+                        }
+                    });
+                }
+                // One write per sink for everything taken at once.
+                for (sink, out) in sinks.iter().zip(outs.iter_mut()) {
+                    if !out.is_empty() {
+                        sink.target.write_all(out);
+                        out.clear();
+                    }
+                }
+                writer_queue.mark_written(count);
+                batches.clear();
+                spare = batches;
+            }
+        })?;
+    Ok(queue)
 }
 
 /// Stdout through a descriptor of the logger's own: Node may switch the
@@ -186,7 +403,7 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
     let file_level = parse_level(&config.file_level)?;
     let file = || -> napi::Result<Target> {
         open_log_file(&config.log_file)
-            .map(|file| Target::File(Mutex::new(file)))
+            .map(Target::File)
             .map_err(|error| {
                 napi::Error::from_reason(format!(
                     "Failed to open the log file {}: {error}",
@@ -230,45 +447,56 @@ fn parse_fields_or_keep_as_text(json: &str) -> Fields {
     })
 }
 
+enum Output {
+    /// Lines a test reads back, kept as they are logged.
+    Memory(Mutex<Vec<Value>>),
+    /// Formatted and written off the caller's thread, which only hands each
+    /// line over.
+    Written(Arc<Queue>),
+}
+
+impl Drop for Logger {
+    fn drop(&mut self) {
+        if let Output::Written(queue) = &self.output {
+            queue.close();
+        }
+    }
+}
+
 /// Where a run's lines go. Holds no fields of its own: a caller's bound fields
 /// arrive with each line, so a logger scoped to a chain or a query is a value
 /// on the caller's side that costs nothing until it writes.
 #[napi]
 pub struct Logger {
-    sinks: Vec<Sink>,
+    min_level: Level,
+    output: Output,
 }
 
 impl Logger {
-    /// `bindings` are the caller's bound fields and `params` the line's own,
-    /// which replace a bound field of the same name.
-    pub fn log(&self, level: Level, msg: &str, bindings: &Fields, params: &Fields) {
-        if !self.sinks.iter().any(|sink| sink.accepts(level)) {
-            return;
-        }
-        let merged = fields::merge_later_wins(&[bindings, params]);
-        let record = Record {
-            level,
-            millis: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |since| since.as_millis() as i64),
-            msg,
-            fields: &merged,
-        };
-        let mut line = Vec::with_capacity(256);
-        for sink in self.sinks.iter().filter(|sink| sink.accepts(level)) {
-            sink.write(&record, &mut line);
+    fn take(&self, batch: Batch) {
+        match &self.output {
+            Output::Memory(lines) => {
+                if let Ok(mut lines) = lines.lock() {
+                    batch.with_records(|record| lines.push(format::to_captured_line(record)));
+                }
+            }
+            Output::Written(queue) => queue.push(batch),
         }
     }
 
+    /// One line, the way `write` takes each of its lines.
+    #[cfg(test)]
+    fn log(&self, level: Level, msg: &str, bindings: Option<&str>, params: Option<&str>) {
+        let mut batch = Batch::default();
+        batch.push(level, msg, bindings, params);
+        self.take(batch);
+    }
+
     fn read_in_memory_lines(&self) -> Vec<Value> {
-        self.sinks
-            .iter()
-            .filter_map(|sink| match &sink.target {
-                Target::Memory(lines) => Some(lines),
-                _ => None,
-            })
-            .flat_map(|lines| lines.lock().map(|lines| lines.clone()).unwrap_or_default())
-            .collect()
+        match &self.output {
+            Output::Memory(lines) => lines.lock().map(|lines| lines.clone()).unwrap_or_default(),
+            Output::Written(_) => Vec::new(),
+        }
     }
 }
 
@@ -276,8 +504,18 @@ impl Logger {
 impl Logger {
     #[napi(factory)]
     pub fn make(config: LoggerConfig) -> napi::Result<Logger> {
+        let sinks = sinks_for_strategy(&config)?;
+        let min_level = sinks
+            .iter()
+            .map(|sink| sink.level)
+            .min()
+            .unwrap_or(Level::SILENT);
+        let queue = spawn_writer(sinks).map_err(|error| {
+            napi::Error::from_reason(format!("Failed to start the log writer: {error}"))
+        })?;
         Ok(Logger {
-            sinks: sinks_for_strategy(&config)?,
+            min_level,
+            output: Output::Written(queue),
         })
     }
 
@@ -286,44 +524,40 @@ impl Logger {
     #[napi(factory)]
     pub fn make_in_memory() -> Logger {
         Logger {
-            sinks: vec![Sink::new(
-                Format::Json,
-                Target::Memory(Mutex::new(Vec::new())),
-                Level::TRACE,
-            )],
+            min_level: Level::TRACE,
+            output: Output::Memory(Mutex::new(Vec::new())),
         }
     }
 
     /// `level` is the numeric one, which the caller already compared against
     /// `minLevel` before serializing anything. `bindings` and `params` are JSON
     /// objects; a key repeated in `bindings` takes its last value.
-    #[napi(js_name = "log")]
-    pub fn log_js(
-        &self,
-        level: u32,
-        msg: String,
-        bindings: Option<String>,
-        params: Option<String>,
-    ) -> napi::Result<()> {
-        let level = Level::from_value(level)
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown log level: {level}")))?;
-        let parse = |json: Option<String>| {
-            json.as_deref()
-                .map_or_else(Vec::new, parse_fields_or_keep_as_text)
-        };
-        self.log(level, &msg, &parse(bindings), &parse(params));
-        Ok(())
+    /// Takes the `lines` the caller buffered since its last call, laid out as
+    /// a [`Batch`] lays them out. A key repeated in the bound fields takes its
+    /// last value, and a param replaces a bound field of the same name. The
+    /// caller has already dropped lines below `minLevel`.
+    #[napi]
+    pub fn write(&self, bytes: Buffer, lines: u32) {
+        self.take(Batch {
+            bytes: bytes.to_vec(),
+            lines: lines as usize,
+        });
+    }
+
+    /// Returns once every line logged before it is written. Called on exit, so
+    /// the lines still waiting for the writer aren't lost with the process.
+    #[napi]
+    pub fn flush(&self) {
+        if let Output::Written(queue) = &self.output {
+            queue.flush();
+        }
     }
 
     /// The lowest level any sink writes, read once when the logger is made so
     /// the caller can skip a line no sink would take before building it.
     #[napi]
     pub fn min_level(&self) -> u32 {
-        self.sinks
-            .iter()
-            .map(|sink| sink.level.value())
-            .min()
-            .unwrap_or(Level::SILENT.value())
+        self.min_level.value()
     }
 
     /// Every line an in-memory logger has taken, oldest first.
@@ -357,18 +591,14 @@ mod tests {
     #[test]
     fn lines_merge_bindings_and_params() {
         let logger = Logger::make_in_memory();
-        let chain = Some(r#"{"chainId":1,"source":"a","source":"b"}"#.to_string());
-        logger
-            .log_js(Level::TRACE.value(), "bound".into(), chain.clone(), None)
-            .unwrap();
-        logger
-            .log_js(
-                Level::WARN.value(),
-                "overridden".into(),
-                chain,
-                Some(r#"{"chainId":2,"a":1}"#.into()),
-            )
-            .unwrap();
+        let chain = Some(r#"{"chainId":1,"source":"a","source":"b"}"#);
+        logger.log(Level::TRACE, "bound", chain, None);
+        logger.log(
+            Level::WARN,
+            "overridden",
+            chain,
+            Some(r#"{"chainId":2,"a":1}"#),
+        );
         assert_eq!(
             (logger.in_memory_lines(), logger.min_level()),
             (
@@ -423,13 +653,16 @@ mod tests {
             file_level: "debug".into(),
         })
         .unwrap();
-        logger.log(Level::TRACE, "skipped", &Vec::new(), &Vec::new());
-        logger.log(
-            Level::DEBUG,
-            "kept",
-            &fields::parse_object_fields(r#"{"chainId":1}"#).unwrap(),
-            &Vec::new(),
-        );
+        logger.log(Level::TRACE, "skipped", None, None);
+        for index in 0..10_000 {
+            logger.log(
+                Level::DEBUG,
+                &format!("kept {index}"),
+                Some(r#"{"chainId":1}"#),
+                None,
+            );
+        }
+        logger.flush();
         let lines: Vec<Value> = fs::read_to_string(&path)
             .unwrap()
             .lines()
@@ -441,7 +674,9 @@ mod tests {
             .collect();
         assert_eq!(
             lines,
-            vec![json!({"level": 20, "chainId": 1, "msg": "kept"})]
+            (0..10_000)
+                .map(|index| json!({"level": 20, "chainId": 1, "msg": format!("kept {index}")}))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -450,13 +685,8 @@ mod tests {
         let dir = tempdir::TempDir::new("envio-logger").unwrap();
         let path = dir.path().join("logs/run.jsonl");
         let logger = Logger::make_in_memory();
-        logger.log(Level::INFO, "one", &Vec::new(), &Vec::new());
-        logger.log(
-            Level::ERROR,
-            "two",
-            &Vec::new(),
-            &fields::parse_object_fields(r#"{"x":1}"#).unwrap(),
-        );
+        logger.log(Level::INFO, "one", None, None);
+        logger.log(Level::ERROR, "two", None, Some(r#"{"x":1}"#));
         logger
             .write_in_memory_lines_to_file(path.to_string_lossy().into())
             .unwrap();
@@ -469,19 +699,11 @@ mod tests {
     #[test]
     fn fields_serde_rejects_still_log_the_line() {
         let logger = Logger::make_in_memory();
-        let lone_surrogate_key = r#"{"\ud800":1}"#.to_string();
-        let result = logger.log_js(
-            Level::INFO.value(),
-            "kept".into(),
-            None,
-            Some(lone_surrogate_key.clone()),
-        );
+        let lone_surrogate_key = r#"{"\ud800":1}"#;
+        logger.log(Level::INFO, "kept", None, Some(lone_surrogate_key));
         assert_eq!(
-            (result.is_ok(), logger.in_memory_lines()),
-            (
-                true,
-                vec![json!({"level": "info", "msg": "kept", "unparsedFields": lone_surrogate_key})]
-            )
+            logger.in_memory_lines(),
+            vec![json!({"level": "info", "msg": "kept", "unparsedFields": lone_surrogate_key})]
         );
     }
 

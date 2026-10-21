@@ -28,6 +28,8 @@ let ecosystem = Evm.make()
 // Testing usage:
 logger->trace("By default - This trace message should only be seen in the log file.")
 logger->logAt(#debug, "By default - This debug message should only be seen in the log file.")
+// Each logger writes from a thread of its own, so the next one waits for it.
+logger->flush
 
 exception SomethingWrong({myMessage: string})
 
@@ -43,6 +45,7 @@ let logAtEveryLevel = (~shown) => {
     SomethingWrong({myMessage: "example exception"}),
   )
   logger->logAt(#fatal, "This is a fatal message.", ~params={"extra": "another"})
+  logger->flush
 }
 
 logAtEveryLevel(~shown=#info)
@@ -84,6 +87,7 @@ let logUserLevels = (~shown, ~child) => {
     "This is a user error with exception.",
     SomethingWrong({myMessage: "example exception"}),
   )
+  logger->flush
 }
 
 logUserLevels(~shown=#udebug, ~child="userLogs debug")

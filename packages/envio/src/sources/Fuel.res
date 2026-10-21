@@ -57,14 +57,13 @@ let make = (): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))->S.strict))
   ),
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
+  // An address is hex, so it needs no escaping.
   withEventFields: (eventItem, ~logger) =>
-    logger->Logger.withFields({
-      "contract": eventItem.onEventRegistration.eventConfig.contractName,
-      "event": eventItem.onEventRegistration.eventConfig.name,
-      "block": eventItem.blockNumber,
-      "logIndex": eventItem.logIndex,
-      "address": (eventItem.payload->toPayload).srcAddress,
-    }),
+    logger->Logger.withFieldsJson(
+      `{${eventItem.onEventRegistration.eventConfig->Internal.contractAndEventJson},"block":${eventItem.blockNumber->Int.toString},"logIndex":${eventItem.logIndex->Int.toString},"address":"${(
+          eventItem.payload->toPayload
+        ).srcAddress->Address.toString}"}`,
+    ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
     // Store-backed payloads get `block` written at batch prep and simulate

@@ -1,5 +1,5 @@
 use super::level::Level;
-use chrono::{DateTime, Local, SecondsFormat};
+use chrono::{DateTime, Local};
 use serde_json::{value::RawValue, Map, Value};
 use std::io::Write;
 
@@ -60,14 +60,13 @@ pub fn write_json_line(record: &Record, out: &mut Vec<u8>) {
 
 /// Elastic Common Schema, as `@elastic/ecs-pino-format` wrote it.
 pub fn write_ecs_line(record: &Record, out: &mut Vec<u8>) {
-    let timestamp = DateTime::from_timestamp_millis(record.millis)
-        .unwrap_or_default()
-        .to_rfc3339_opts(SecondsFormat::Millis, true);
     let _ = write!(
         out,
-        "{{\"log.level\":\"{}\",\"@timestamp\":\"{timestamp}\",\"ecs.version\":\"1.6.0\"",
+        "{{\"log.level\":\"{}\",\"@timestamp\":\"",
         record.level.name()
     );
+    write_utc_timestamp(record.millis, out);
+    out.extend_from_slice(b"\",\"ecs.version\":\"1.6.0\"");
     for (key, value) in fields_not_written_by_format(record, &ECS_KEYS) {
         out.push(b',');
         match (*key == "err")
@@ -147,44 +146,120 @@ fn level_color(level: Level) -> (&'static str, &'static str) {
 /// Ends with a blank line, as `pino-pretty` through `console.log` printed it,
 /// which keeps multi-line params apart.
 pub fn write_pretty_line(record: &Record, colorize: bool, out: &mut Vec<u8>) {
-    let paint = |color: &str, reset: &str, text: &str| {
+    let painted = |out: &mut Vec<u8>, color: &str, reset: &str, text: &[u8]| {
         if colorize {
-            format!("{color}{text}{reset}")
+            out.extend_from_slice(color.as_bytes());
+            out.extend_from_slice(text);
+            out.extend_from_slice(reset.as_bytes());
         } else {
-            text.to_string()
+            out.extend_from_slice(text);
         }
     };
     let (color, reset) = level_color(record.level);
-    let time = DateTime::from_timestamp_millis(record.millis)
-        .unwrap_or_default()
-        .with_timezone(&Local)
-        .format("%H:%M:%S%.3f");
-    let _ = write!(
-        out,
-        "[{time}] {}:",
-        paint(color, reset, &record.level.name().to_uppercase())
-    );
+    out.push(b'[');
+    write_local_time(record.millis, out);
+    out.extend_from_slice(b"] ");
+    let label: Vec<u8> = record
+        .level
+        .name()
+        .bytes()
+        .map(|byte| byte.to_ascii_uppercase())
+        .collect();
+    painted(out, color, reset, &label);
+    out.push(b':');
     if !record.msg.is_empty() {
         out.push(b' ');
-        out.extend_from_slice(paint(CYAN, RESET_FG, record.msg).as_bytes());
+        painted(out, CYAN, RESET_FG, record.msg.as_bytes());
     }
     out.push(b'\n');
     for (key, value) in record.fields {
         let is_error = *key == "err" || *key == "error";
-        let label = if is_error {
-            key.to_string()
+        out.extend_from_slice(b"    ");
+        if is_error {
+            out.extend_from_slice(key.as_bytes());
         } else {
-            paint(MAGENTA, RESET_FG, key)
-        };
-        let value = parse(value);
-        let rendered = if is_error {
-            pretty_error(&value)
+            painted(out, MAGENTA, RESET_FG, key.as_bytes());
+        }
+        out.extend_from_slice(b": ");
+        let raw = value.get();
+        // A scalar is already written as it prints; only objects and arrays
+        // are laid out again.
+        if !is_error && !raw.starts_with(['{', '[']) {
+            out.extend_from_slice(raw.as_bytes());
         } else {
-            pretty_json(&value)
-        };
-        let _ = writeln!(out, "    {label}: {}", rendered.replace('\n', "\n    "));
+            let value = parse(value);
+            let rendered = if is_error {
+                pretty_error(&value)
+            } else {
+                pretty_json(&value)
+            };
+            out.extend_from_slice(rendered.replace('\n', "\n    ").as_bytes());
+        }
+        out.push(b'\n');
     }
     out.push(b'\n');
+}
+
+/// RFC 3339 in UTC to the millisecond, as `2026-01-05T12:54:45.274Z`. The date
+/// is formatted once a day rather than for every line.
+fn write_utc_timestamp(millis: i64, out: &mut Vec<u8>) {
+    thread_local! {
+        static DATE: std::cell::RefCell<(i64, String)> = const { std::cell::RefCell::new((i64::MIN, String::new())) };
+    }
+    let day = millis.div_euclid(86_400_000);
+    DATE.with(|date| {
+        let mut date = date.borrow_mut();
+        if date.0 != day {
+            *date = (
+                day,
+                DateTime::from_timestamp_millis(millis)
+                    .unwrap_or_default()
+                    .format("%Y-%m-%dT")
+                    .to_string(),
+            );
+        }
+        out.extend_from_slice(date.1.as_bytes());
+    });
+    let of_day = millis.rem_euclid(86_400_000);
+    let _ = write!(
+        out,
+        "{:02}:{:02}:{:02}.{:03}Z",
+        of_day / 3_600_000,
+        of_day / 60_000 % 60,
+        of_day / 1000 % 60,
+        of_day % 1000
+    );
+}
+
+/// `HH:MM:SS.mmm` in local time. The zone's offset is looked up once a minute,
+/// which is as often as it can change, rather than for every line.
+fn write_local_time(millis: i64, out: &mut Vec<u8>) {
+    thread_local! {
+        static OFFSET: std::cell::Cell<Option<(i64, i64)>> = const { std::cell::Cell::new(None) };
+    }
+    let minute = millis.div_euclid(60_000);
+    let offset_millis = OFFSET.with(|cached| match cached.get() {
+        Some((cached_minute, offset)) if cached_minute == minute => offset,
+        _ => {
+            let offset = DateTime::from_timestamp_millis(millis)
+                .unwrap_or_default()
+                .with_timezone(&Local)
+                .offset()
+                .local_minus_utc() as i64
+                * 1000;
+            cached.set(Some((minute, offset)));
+            offset
+        }
+    });
+    let of_day = (millis + offset_millis).rem_euclid(86_400_000);
+    let _ = write!(
+        out,
+        "{:02}:{:02}:{:02}.{:03}",
+        of_day / 3_600_000,
+        of_day / 60_000 % 60,
+        of_day / 1000 % 60,
+        of_day % 1000
+    );
 }
 
 fn pretty_json(value: &Value) -> String {

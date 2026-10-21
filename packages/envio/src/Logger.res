@@ -42,44 +42,136 @@ type config = {
 type native
 @send external makeNative: (Core.loggerCtor, config) => native = "make"
 @send external makeInMemoryNative: Core.loggerCtor => native = "makeInMemory"
-@send
-external nativeLog: (
-  native,
-  ~level: int,
-  ~message: string,
-  ~boundFieldsJson: Null.t<string>,
-  ~paramsJson: Null.t<string>,
-) => unit = "log"
+@send external nativeWrite: (native, NodeJs.Buffer.t, int) => unit = "write"
 @send external nativeMinLevel: native => int = "minLevel"
+@send external nativeFlush: native => unit = "flush"
 @send external nativeInMemoryLines: native => array<dict<JSON.t>> = "inMemoryLines"
 @send
 external nativeWriteInMemoryLinesToFile: (native, string) => unit = "writeInMemoryLinesToFile"
+
+// Lines wait here and cross into Rust many at a time, already UTF-8: a call or
+// a string copy per line would cost more than the line. Every logger derived
+// from one shares its output. Laid out as Rust's `Batch` reads it.
+type output = {
+  native: native,
+  mutable bytes: NodeJs.Buffer.t,
+  mutable view: unknown,
+  mutable offset: int,
+  mutable lines: int,
+  mutable isFlushScheduled: bool,
+  mutable lastFlushTime: float,
+}
+
+let makeOutput: native => output = %raw(`function (native) {
+  var bytes = Buffer.allocUnsafe(1 << 20);
+  return {
+    native: native,
+    bytes: bytes,
+    view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    offset: 0,
+    lines: 0,
+    isFlushScheduled: false,
+    lastFlushTime: 0,
+  };
+}`)
+
+@send external subarray: (NodeJs.Buffer.t, int, int) => NodeJs.Buffer.t = "subarray"
+
+let handOver = (output: output) =>
+  if output.lines > 0 {
+    output.native->nativeWrite(output.bytes->subarray(0, output.offset), output.lines)
+    output.offset = 0
+    output.lines = 0
+  }
+
+// Writes one line into `output`, flushing first when it might not fit. A UTF-16
+// code unit is at most three UTF-8 bytes, which bounds a line before writing it.
+let appendLine: (
+  output,
+  ~handOver: output => unit,
+  ~level: int,
+  ~time: float,
+  ~message: string,
+  ~boundFieldsJson: array<string>,
+  ~paramsJson: Null.t<string>,
+) => unit = %raw(`function (output, handOver, level, time, message, bound, params) {
+  var need = 18 + 3 * (message.length + (params === null ? 0 : params.length));
+  for (var i = 0; i < bound.length; i++) need += 4 + 3 * bound[i].length;
+  if (output.offset + need > output.bytes.length) {
+    handOver(output);
+    if (need > output.bytes.length) {
+      output.bytes = Buffer.allocUnsafe(need);
+      output.view = new DataView(output.bytes.buffer, output.bytes.byteOffset, output.bytes.byteLength);
+    }
+  }
+  var bytes = output.bytes, view = output.view, offset = output.offset;
+  bytes[offset] = level;
+  view.setFloat64(offset + 1, time, true);
+  offset += 9;
+  var written = bytes.utf8Write(message, offset + 4);
+  view.setUint32(offset, written, true);
+  offset += 4 + written;
+  bytes[offset++] = bound.length;
+  for (var i = 0; i < bound.length; i++) {
+    written = bytes.utf8Write(bound[i], offset + 4);
+    view.setUint32(offset, written, true);
+    offset += 4 + written;
+  }
+  if (params === null) { view.setUint32(offset, 0xFFFFFFFF, true); offset += 4; }
+  else { written = bytes.utf8Write(params, offset + 4); view.setUint32(offset, written, true); offset += 4 + written; }
+  output.offset = offset;
+  output.lines++;
+}`)
+
+// Enough lines that the call costs little per line.
+let maxPendingLines = 1024
+// A line waits at most this long behind a run of microtasks that never yields
+// to the event loop, where the scheduled flush would run.
+let maxPendingMs = 20.
 
 // A logger per query and per event is made whether or not it ever writes, so a
 // derived logger is only a record of its fields. They are serialized, joined to
 // its parent's and kept the first time a line passes the level, and Rust merges
 // them into each line it writes.
 type rec t = {
-  native: native,
+  output: output,
   // The lowest level any sink takes, fixed when the logger is made, so a line no
   // sink takes is dropped before its params are serialized.
   minLevel: int,
   parent: option<t>,
   fields: unknown,
+  // `fields` is already a JSON object, written by a caller that knows its shape.
+  isFieldsJson: bool,
   mutable isBoundFieldsJsonReady: bool,
-  mutable boundFieldsJson: Null.t<string>,
+  // The fields of the logger and its parents as JSON objects, parents first,
+  // each kept as its own string so a logger made per event doesn't copy its
+  // parents' into one.
+  mutable boundFieldsJson: array<string>,
 }
 
 let wrapNative = native => {
-  native,
+  output: makeOutput(native),
   minLevel: native->nativeMinLevel,
   parent: None,
   fields: %raw(`undefined`),
+  isFieldsJson: false,
   isBoundFieldsJsonReady: true,
-  boundFieldsJson: Null.Null,
+  boundFieldsJson: [],
 }
 
-let make = (config: config) => Core.getAddon().logger->makeNative(config)->wrapNative
+// Returns once every line logged so far is written.
+let flush = (logger: t) => {
+  logger.output->handOver
+  logger.output.native->nativeFlush
+}
+
+// Lines are written off the JS thread, so the ones still waiting when the
+// process exits are written before it does.
+let make = (config: config) => {
+  let logger = Core.getAddon().logger->makeNative(config)->wrapNative
+  NodeJs.Process.onExit(() => logger->flush)
+  logger
+}
 
 // Keeps every line in memory, where a test reads it back as JSON.
 let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative
@@ -90,6 +182,8 @@ let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative
 // params of plain values skip it. Params come from anywhere, so a value that
 // refers to itself says so, and one JSON can't hold says so rather than losing
 // the line.
+// Params repeat the same few keys, so their JSON is kept.
+let quotedKeys: unknown = %raw(`new Map()`)
 let paramsToJson: 'a => string = %raw(`function (value) {
   var ancestors = [];
   function replacer(_key, value) {
@@ -107,41 +201,62 @@ let paramsToJson: 'a => string = %raw(`function (value) {
     }
     return value;
   }
+  // A key or string without quotes, backslashes, control characters or
+  // surrogates is its own JSON between quotes.
+  var plain = /^[^"\\\u0000-\u001f\ud800-\udfff]*$/;
+  function quote(text) {
+    return plain.test(text) ? '"' + text + '"' : JSON.stringify(text);
+  }
+  function quoteKey(key) {
+    var quoted = quotedKeys.get(key);
+    if (quoted === undefined) {
+      quoted = quote(key);
+      if (quotedKeys.size < 4096) quotedKeys.set(key, quoted);
+    }
+    return quoted;
+  }
   try {
     if (value instanceof Error) value = {err: value};
-    else if (typeof value === "bigint") return JSON.stringify(value, replacer);
+    else if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return JSON.stringify(value, replacer);
+    }
+    // Params are almost always one flat object, written here without the
+    // replacer, which costs more than the line; anything nested takes it.
+    var json = "{";
     for (var key in value) {
       var field = value[key];
-      if (typeof field === "bigint" || (typeof field === "object" && field !== null)) {
-        return JSON.stringify(value, replacer);
+      var fieldJson;
+      switch (typeof field) {
+        case "string": fieldJson = quote(field); break;
+        case "number": fieldJson = isFinite(field) ? "" + field : "null"; break;
+        case "bigint": fieldJson = '"' + field + '"'; break;
+        case "boolean": fieldJson = field ? "true" : "false"; break;
+        case "undefined": case "function": case "symbol": continue;
+        default:
+          if (field !== null) return JSON.stringify(value, replacer);
+          fieldJson = "null";
       }
+      json += (json.length === 1 ? "" : ",") + quoteKey(key) + ":" + fieldJson;
     }
-    return JSON.stringify(value);
+    return json + "}";
   } catch (error) {
     return JSON.stringify({unserializable: String(error)});
   }
 }`)
 
-// Two JSON objects as one; a key in both is sent twice, and Rust keeps the
-// later value.
-let concatJsonObjects = (parent: string, own: string) =>
-  switch (parent, own) {
-  | ("{}", _) => own
-  | (_, "{}") => parent
-  | _ =>
-    parent->String.slice(~start=0, ~end=parent->String.length - 1) ++
-    "," ++
-    own->String.slice(~start=1)
-  }
-
 let rec getBoundFieldsJson = (logger: t) => {
   if !logger.isBoundFieldsJsonReady {
-    let own = logger.fields->paramsToJson
-    let own = own->String.startsWith("{") ? own : `{"params":${own}}`
-    logger.boundFieldsJson = switch logger.parent->Option.map(getBoundFieldsJson) {
-    | Some(Null.Value(parent)) => Null.Value(concatJsonObjects(parent, own))
-    | Some(Null.Null) | None => Null.Value(own)
+    let own = if logger.isFieldsJson {
+      logger.fields->(Utils.magic: unknown => string)
+    } else {
+      let own = logger.fields->paramsToJson
+      own->String.startsWith("{") ? own : `{"params":${own}}`
     }
+    let parent = switch logger.parent {
+    | Some(parent) => parent->getBoundFieldsJson
+    | None => []
+    }
+    logger.boundFieldsJson = own === "{}" ? parent : parent->Array.concat([own])
     logger.isBoundFieldsJsonReady = true
   }
   logger.boundFieldsJson
@@ -149,12 +264,25 @@ let rec getBoundFieldsJson = (logger: t) => {
 
 // A logger adding `fields` to every line it writes.
 let withFields = (logger: t, fields: 'a) => {
-  native: logger.native,
+  output: logger.output,
   minLevel: logger.minLevel,
   parent: Some(logger),
   fields: fields->(Utils.magic: 'a => unknown),
+  isFieldsJson: false,
   isBoundFieldsJsonReady: false,
-  boundFieldsJson: Null.Null,
+  boundFieldsJson: [],
+}
+
+// A logger adding the fields of `json`, a JSON object: for a logger made per
+// event, whose fields' JSON is cheaper built from parts than serialized.
+let withFieldsJson = (logger: t, json: string) => {
+  output: logger.output,
+  minLevel: logger.minLevel,
+  parent: Some(logger),
+  fields: json->(Utils.magic: string => unknown),
+  isFieldsJson: true,
+  isBoundFieldsJsonReady: false,
+  boundFieldsJson: [],
 }
 
 // Every line about one chain names it, so the run's lines can be told apart.
@@ -162,8 +290,12 @@ let withChainId = (logger: t, chainId: ChainId.t) => logger->withFields({"chainI
 
 let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
   if levelNumber(level) >= logger.minLevel {
-    logger.native->nativeLog(
+    let output = logger.output
+    let time = Date.now()
+    output->appendLine(
+      ~handOver,
       ~level=levelNumber(level),
+      ~time,
       ~message,
       ~boundFieldsJson=logger->getBoundFieldsJson,
       ~paramsJson=switch params {
@@ -171,6 +303,16 @@ let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
       | None => Null.Null
       },
     )
+    if output.lines >= maxPendingLines || time -. output.lastFlushTime >= maxPendingMs {
+      output.lastFlushTime = time
+      output->handOver
+    } else if !output.isFlushScheduled {
+      output.isFlushScheduled = true
+      NodeJs.setImmediate(() => {
+        output.isFlushScheduled = false
+        output->handOver
+      })
+    }
   }
 
 let trace = (logger, message, ~params=?) => logger->logAt(#trace, message, ~params?)
@@ -183,10 +325,15 @@ let errorWithExn = (logger, message, exn) =>
 
 // Every line an in-memory logger has taken, oldest first: `level` and `msg`,
 // then the fields the logger and the call added.
-let inMemoryLines = (logger: t) => logger.native->nativeInMemoryLines
+let inMemoryLines = (logger: t) => {
+  logger.output->handOver
+  logger.output.native->nativeInMemoryLines
+}
 
-let writeInMemoryLinesToFile = (logger: t, ~path) =>
-  logger.native->nativeWriteInMemoryLinesToFile(path)
+let writeInMemoryLinesToFile = (logger: t, ~path) => {
+  logger.output->handOver
+  logger.output.native->nativeWriteInMemoryLinesToFile(path)
+}
 
 // `context.log` while a handler is only being preloaded, which must not log.
 let silentContextLog: Envio.logger = {

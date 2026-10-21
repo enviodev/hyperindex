@@ -489,6 +489,14 @@ type eventConfig = private {
   fieldSelection: fieldSelection,
 }
 
+// The contract and event names of a line about one of this event's items, as
+// JSON object members: built once, since a logger is made per item.
+let contractAndEventJson = Utils.WeakMap.memoize((eventConfig: eventConfig) =>
+  `"contract":${JSON.stringify(JSON.String(eventConfig.contractName))},"event":${JSON.stringify(
+      JSON.String(eventConfig.name),
+    )}`
+)
+
 type fuelEventKind =
   | LogData({logId: string, abi: JSON.t})
   | Mint

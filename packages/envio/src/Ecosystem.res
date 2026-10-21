@@ -71,10 +71,11 @@ let loggerForItem = {
       let logger = switch item {
       | Internal.Event(_) => ecosystem.withEventFields(item->Internal.castUnsafeEventItem, ~logger)
       | Block({blockNumber, onBlockRegistration}) =>
-        logger->Logger.withFields({
-          "onBlock": onBlockRegistration.name,
-          "block": blockNumber,
-        })
+        logger->Logger.withFieldsJson(
+          `{"onBlock":${JSON.stringify(
+              JSON.String(onBlockRegistration.name),
+            )},"block":${blockNumber->Int.toString}}`,
+        )
       }
       cache->Dict.set(cacheKey, logger)
       logger
