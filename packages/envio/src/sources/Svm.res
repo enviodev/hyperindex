@@ -16,9 +16,6 @@ let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
 
 // `slot` is always included (the item's key); every other block field is
 // opt-in via handler `fields.block`. All are materialised from the store.
-//
-// One instruction's selected block fields → store selection bitmask. Computed per
-// event at config build and cached on the event config.
 let blockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.eventTransaction) => {
@@ -50,9 +47,7 @@ let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.even
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
-  blockNumberName: "height",
   blockTimestampName: "time",
-  blockHashName: "hash",
   blockFields,
   blockKeyField: "slot",
   blockFieldMask,

@@ -2,9 +2,7 @@ type name = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
 
 type t = {
   name: name,
-  blockNumberName: string,
   blockTimestampName: string,
-  blockHashName: string,
   /** Every block field a registration can select, in store order: a field's
       index is its bit in the block store's selection mask. */
   blockFields: array<string>,

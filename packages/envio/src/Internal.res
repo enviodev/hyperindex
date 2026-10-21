@@ -734,9 +734,7 @@ type onBlockRegistration = {
   handler: onBlockArgs => promise<unit>,
   // The selected block fields as the block store's bitmask, key included.
   // `None` when the handler reads only the block's key, which needs nothing
-  // from a source: its items are generated locally, block by block. Selecting
-  // any other field turns the registration into a selection on the block table
-  // that sources fetch, like an event registration on the log table.
+  // from a source: its items are generated locally, block by block.
   blockFieldMask: option<float>,
 }
 

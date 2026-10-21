@@ -19,8 +19,9 @@ external toPayload: Internal.eventPayload => payload = "%identity"
 // the Rust store (`FuelBlockField`) — keep this order in sync.
 let blockFields = ["height", "id", "time"]
 
-// Fuel has no per-event block field selection: every event materialises the
-// full (height, time, id) trio, matching what the source always queries.
+// Events have no block field selection: each materialises the full
+// (height, time, id) trio, matching what the source always queries. Only block
+// handlers select from these.
 let blockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 // Fuel keeps the transaction inline on the event payload rather than in the
@@ -36,9 +37,7 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Fuel,
-  blockNumberName: "height",
   blockTimestampName: "time",
-  blockHashName: "id",
   blockFields,
   blockKeyField: "height",
   blockFieldMask,

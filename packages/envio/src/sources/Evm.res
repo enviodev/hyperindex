@@ -73,9 +73,7 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Evm,
-  blockNumberName: "number",
   blockTimestampName: "timestamp",
-  blockHashName: "hash",
   blockFields,
   blockKeyField: "number",
   blockFieldMask,
