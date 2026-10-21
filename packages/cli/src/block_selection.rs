@@ -142,6 +142,9 @@ impl BlockSelection {
     /// some handler runs on in `[from_block, ..]`: for a source paying a
     /// request per block, the end of a range it can afford.
     pub(crate) fn range_end(&self, from_block: u64, to_block: u64, max_blocks: usize) -> u64 {
+        if self.is_empty() {
+            return to_block;
+        }
         let mut matched = 0;
         for block_number in from_block..=to_block {
             if self.runs_any(block_number) {
