@@ -303,11 +303,15 @@ events with a pass a response may hold; 0 turns the cut off.
 **Block handlers' register pass.** graph-node creates a data source from any
 handler, a block handler's included, and runs it for the rest of its creation
 block and from the next block on (`process_dynamic_data_sources` in
-`core/src/subgraph/runner/mod.rs`). A data source's unfiltered, `polling` and
-`once` block handlers whose code can reach a create — and every `once` one when
-the subgraph has templates (Venus saves its Comptroller there, and an event's
-pass reads it) — run in register mode at each of their blocks, as an `onBlock`
-`contractRegister` (subgraph mode only). Core runs a block's passes with the
+`core/src/subgraph/runner/mod.rs`). A data source's block handlers run in
+register mode at each of their blocks, as an `onBlock` `contractRegister`
+(subgraph mode only): every `once` one when the subgraph has templates (Venus
+saves its Comptroller there, and an event's pass reads it), an unfiltered or
+`polling` one on at most 1,000 blocks when its code can reach a create, and one
+on more only when its code surely reaches a template's generated class (§7
+otherwise): the analysis counts what it can't follow as a create, and kiln's
+vsuite handleBlock, verifying BLS signatures in a module it can't follow, redid
+them at every block. Core runs a block's passes with the
 fetch response that first reaches it, among that response's events in
 graph-node's trigger order (a `once` handler ahead of the block's logs, the
 others after its logs and calls), a chain's register work one response at a
@@ -1151,7 +1155,7 @@ refuse instead, so behavior never silently diverges:
 | A template on a network no data source indexes | translation (manifest) |
 | Lists whose elements can be null (`[String]`; an entity list's are read as ids, §3), lists of `Timestamp`, GraphQL unions, a timeseries whose `id` isn't `Int8`, `skipDuplicates` on a mutable type | translation (schema) |
 | Loading a derived field whose `@derivedFrom` names a list field; a `createWithContext()` context holding a list, null or `Timestamp` value; `typeConversion.bytesToBase58`; `allocate()`; a member of `near`, `cosmos` or `starknet` | runtime, at the call |
-| A contract template's `create()` from a template's unfiltered or `polling` block handler, which no register pass registers; a data source's block handlers and a template's `once` one have one (§4) | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
+| A contract template's `create()` from a block handler with no register pass: a template's unfiltered or `polling` one, or a data source's on more than 1,000 blocks whose code the analysis isn't sure reaches a template's generated class (§4) | runtime, at the create, naming the handler, template, address and block; startup warns for each such handler whose code the create analysis sees reach a template class. Whether the create runs depends on data (moonwell's Feed handler creates only at the override blocks its network lists), so it isn't refused up front |
 | `graft` | accepted; startup warning, loud when a source starts after the graft block |
 | Subgraph composition (`kind: subgraph`), substreams (`kind: substreams`), Amp (`kind: amp`), NEAR/Cosmos/Arweave/Starknet data sources and non-EVM networks | translation (manifest), as unindexable |
 | Topic filter on a dynamic-typed indexed param (`string`/`bytes`/arrays/tuples) | translation (manifest) |
