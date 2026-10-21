@@ -742,7 +742,10 @@ pub fn missing_api_token_message() -> String {
     )
 }
 
-/// The same words the runtime uses when it can't build the generated code.
+/// Also the runtime's, when a mapping imports the tree it couldn't build
+/// (napi `subgraph_missing_graph_cli_message`). It shows when graph-cli isn't
+/// installed, so the manual command names the package: `npx graph` would fetch
+/// an unrelated package called `graph`.
 pub fn missing_graph_cli_message(generated: &str) -> String {
     format!(
         "Envio Subgraph needs the project's generated code, but \"{generated}/\" is\n\
@@ -750,7 +753,7 @@ pub fn missing_graph_cli_message(generated: &str) -> String {
          directory above it. Install the project's dependencies and try again:\n  \
          npm install   (or yarn / pnpm install)\n\
          Or generate manually:\n  \
-         npx graph codegen --output-dir {generated}"
+         npx @graphprotocol/graph-cli codegen --output-dir {generated}"
     )
 }
 

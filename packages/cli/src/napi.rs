@@ -319,6 +319,11 @@ pub fn subgraph_workspace_root(root: String) -> Option<String> {
 }
 
 #[napi_derive::napi]
+pub fn subgraph_missing_graph_cli_message(generated: String) -> String {
+    crate::subgraph::missing_graph_cli_message(&generated)
+}
+
+#[napi_derive::napi]
 pub fn subgraph_bundled_codegen_current(manifest_file: String, output_dir: String) -> bool {
     crate::subgraph::codegen::is_current(
         std::path::Path::new(&manifest_file),

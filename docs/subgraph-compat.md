@@ -519,7 +519,7 @@ classes call `DataSource.create`. Consequences:
   directory above it. Install the project's dependencies and try again:
     npm install   (or yarn / pnpm install)
   Or generate manually:
-    npx graph codegen --output-dir generated
+    npx @graphprotocol/graph-cli codegen --output-dir generated
   ```
 
   `graph codegen` fails with `ENVIO_SUBGRAPH_CODEGEN=graph-cli`, or after the

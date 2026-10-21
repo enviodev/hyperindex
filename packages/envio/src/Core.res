@@ -54,6 +54,7 @@ type addon = {
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
   subgraphBundledCodegenCurrent: (string, string) => bool,
+  subgraphMissingGraphCliMessage: string => string,
   subgraphFillGenerated: (string, string, string, array<string>) => array<filledGeneratedFile>,
   subgraphWorkspacePackages: string => dict<string>,
   subgraphWorkspaceRoot: string => Null.t<string>,
@@ -362,6 +363,9 @@ let subgraphBundledCodegen = (~manifestFile, ~outputDir: option<string>) => {
 
 let subgraphBundledCodegenCurrent = (~manifestFile, ~outputDir) =>
   getAddon().subgraphBundledCodegenCurrent(manifestFile, outputDir)
+
+let subgraphMissingGraphCliMessage = generated =>
+  getAddon().subgraphMissingGraphCliMessage(generated)
 
 let subgraphFillGenerated = (~root, ~manifestFile, ~outputDir, ~wanted) =>
   getAddon().subgraphFillGenerated(root, manifestFile, outputDir, wanted)

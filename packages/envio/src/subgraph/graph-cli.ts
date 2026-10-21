@@ -21,7 +21,12 @@ import { spawn } from "node:child_process";
 import { totalmem } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { subgraphBundledCodegen, subgraphBundledCodegenCurrent, subgraphFillGenerated } from "../Core.res.mjs";
+import {
+  subgraphBundledCodegen,
+  subgraphBundledCodegenCurrent,
+  subgraphFillGenerated,
+  subgraphMissingGraphCliMessage,
+} from "../Core.res.mjs";
 import { info, warn } from "../Logging.res.mjs";
 import { fetchGraphCli, graphCliVersions } from "./toolchain.ts";
 
@@ -341,16 +346,9 @@ function importsFrom(root: string, mappingFiles: string[], dir: string): boolean
   return false;
 }
 
+/** The CLI's words for the same failure, which it reports before the runtime starts. */
 export function missingGeneratedCode(root: string, dir: string): Error {
-  const relative = path.relative(root, dir);
-  return new Error(
-    `Envio Subgraph needs the project's generated code, but "${relative}/" is\n` +
-      "missing and @graphprotocol/graph-cli isn't installed in the project or any\n" +
-      "directory above it. Install the project's dependencies and try again:\n" +
-      "  npm install   (or yarn / pnpm install)\n" +
-      "Or generate manually:\n" +
-      `  pnpm exec graph codegen --output-dir ${relative}`,
-  );
+  return new Error(subgraphMissingGraphCliMessage(path.relative(root, dir)));
 }
 
 /**
