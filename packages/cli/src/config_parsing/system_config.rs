@@ -2669,7 +2669,6 @@ impl FieldSelection {
             Block::ExcessBlobGas => Res::option(Res::BigInt),
             Block::ParentBeaconBlockRoot => Res::option(Res::HexString),
             Block::WithdrawalsRoot => Res::option(Res::HexString),
-            // Block::Withdrawals => todo!(), //should be array of withdrawal record
             Block::L1BlockNumber => Res::option(Res::Int),
             Block::SendCount => Res::option(Res::HexString),
             Block::SendRoot => Res::option(Res::HexString),

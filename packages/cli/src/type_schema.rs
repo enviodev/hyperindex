@@ -336,11 +336,13 @@ pub enum TypeIdent {
     BigDecimal,
     Address,
     String,
-    /// A `0x`-prefixed hex string that isn't an address (a hash, an asset id,
-    /// a signature): `string` in ReScript, `Hex` from "envio" in TypeScript.
+    /// A `0x`-prefixed hex string that is always typed `Hex` in TypeScript
+    /// (Fuel `b256`/`B512`, which were never plain `string`); `string` in
+    /// ReScript.
     Hex,
-    /// Like `Hex`, but `HexString` from "envio" in TypeScript: `Hex` only when
-    /// config.yaml sets `strict_hex_type: true`, plain `string` otherwise.
+    /// A `0x`-prefixed hex string typed `HexString` in TypeScript: `Hex` only
+    /// when config.yaml sets `strict_hex_type: true`, plain `string` otherwise,
+    /// so existing projects keep their types; `string` in ReScript.
     HexString,
     Bytes,
     Json,
