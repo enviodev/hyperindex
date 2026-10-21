@@ -942,7 +942,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async 
 })
 
 describe("Hex type", () => {
-  it("types hex-string values as Hex and rejects a plain string with strict_hex_type", _ =>
+  let checkHex = (~strictHexType, handlers) =>
     InternalTestIndexer.fromUserApi(
       ~schema=`
 type Blob {
@@ -952,7 +952,7 @@ type Blob {
 `,
       ~configYaml=`
 name: hex-types
-strict_hex_type: true
+${strictHexType ? "strict_hex_type: true" : ""}
 contracts:
   - name: Registry
     events:
@@ -974,27 +974,89 @@ chains:
 `,
       ~handlers=`
 import { createTestIndexer, indexer } from "envio";
-import type { Blob, EvmAllBlockFields, EvmAllTransactionFields, EvmEvent, Hex } from "envio";
+import type {
+  Blob,
+  EvmAllBlockFields,
+  EvmAllTransactionFields,
+  EvmEvent,
+  Hex,
+  HexString,
+} from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
-expectType<TypeEqual<Hex, \`0x\${string}\`>>(true);
-
 type Stored = EvmEvent<"Registry", "Stored">;
-expectType<TypeEqual<Stored["params"]["key"], Hex>>(true);
-expectType<TypeEqual<Stored["params"]["data"], Hex>>(true);
-expectType<TypeEqual<Stored["block"]["hash"], Hex>>(true);
-expectType<TypeEqual<Stored["block"]["parentHash"], Hex>>(true);
-expectType<TypeEqual<Stored["block"]["uncles"], readonly Hex[] | undefined>>(true);
-expectType<TypeEqual<Stored["transaction"]["hash"], Hex>>(true);
-expectType<TypeEqual<Stored["transaction"]["input"], Hex>>(true);
-expectType<TypeEqual<Stored["transaction"]["r"], Hex | undefined>>(true);
-expectType<TypeEqual<EvmAllBlockFields["hash"], Hex>>(true);
-expectType<TypeEqual<EvmAllTransactionFields["hash"], Hex>>(true);
-expectType<TypeEqual<Blob["data"], Hex>>(true);
+type Expected = ${strictHexType ? "Hex" : "string"};
+expectType<
+  TypeEqual<
+    {
+      hex: Hex;
+      hexString: HexString;
+      key: Stored["params"]["key"];
+      data: Stored["params"]["data"];
+      blockHash: Stored["block"]["hash"];
+      parentHash: Stored["block"]["parentHash"];
+      uncles: Stored["block"]["uncles"];
+      transactionHash: Stored["transaction"]["hash"];
+      input: Stored["transaction"]["input"];
+      r: Stored["transaction"]["r"];
+      allBlockHash: EvmAllBlockFields["hash"];
+      allTransactionHash: EvmAllTransactionFields["hash"];
+      blobData: Blob["data"];
+    },
+    {
+      hex: \`0x\${string}\`;
+      hexString: Expected;
+      key: Expected;
+      data: Expected;
+      blockHash: Expected;
+      parentHash: Expected;
+      uncles: readonly Expected[] | undefined;
+      transactionHash: Expected;
+      input: Expected;
+      r: Expected | undefined;
+      allBlockHash: Expected;
+      allTransactionHash: Expected;
+      blobData: Expected;
+    }
+  >
+>(true);
 
 const KEY: Hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
 const plain: string = KEY;
+${handlers}
+`,
+    )->ignore
 
+  it("keeps hex values as plain string by default", _ =>
+    checkHex(
+      ~strictHexType=false,
+      `
+if (0) {
+  indexer.onEvent(
+    { contract: "Registry", event: "Stored", where: { params: { key: plain } } },
+    async ({ context }) => {
+      context.Blob.set({ id: "1", data: plain });
+    },
+  );
+
+  void createTestIndexer().process({
+    chains: {
+      1: {
+        simulate: [
+          { contract: "Registry", event: "Stored", params: { key: plain, data: plain } },
+        ],
+      },
+    },
+  });
+}
+`,
+    )
+  )
+
+  it("types hex values as Hex and rejects a plain string with strict_hex_type", _ =>
+    checkHex(
+      ~strictHexType=true,
+      `
 if (0) {
   indexer.onEvent(
     { contract: "Registry", event: "Stored", where: { params: { key: [KEY] } } },
@@ -1028,6 +1090,6 @@ if (0) {
   });
 }
 `,
-    )->ignore
+    )
   )
 })

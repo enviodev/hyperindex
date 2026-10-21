@@ -3900,9 +3900,6 @@ type Swap {
         );
     }
 
-    /// Regression: only entities get per-name aliases; enum schema names
-    /// often clash with TS reserved words or envio exports, so they're
-    /// only available via `Enum<"Name">`.
     #[test]
     fn envio_export_names_cover_every_export_form() {
         let names = super::envio_export_names();
@@ -3923,6 +3920,9 @@ type Swap {
         );
     }
 
+    /// Regression: only entities get per-name aliases; enum schema names
+    /// often clash with TS reserved words or envio exports, so they're
+    /// only available via `Enum<"Name">`.
     #[test]
     fn entities_get_aliases_enums_do_not() {
         let file_level_types = "type Enums = {\n  \"accountType\": \"ADMIN\" | \
