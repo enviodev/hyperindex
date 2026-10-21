@@ -40,6 +40,17 @@ indexer.onBlock(
     block.miner;
   },
 );
+
+indexer.onBlock(
+  {
+    name: "early",
+    where: () => ({ block: { number: { _gte: 0, _lte: 5 } } }),
+    fields: { block: ["miner"] },
+  },
+  async ({ block }) => {
+    block.miner;
+  },
+);
 `,
   ~registerHandlers=true,
 )
@@ -50,12 +61,15 @@ let onBlockRegistrations = () => {
   chainRegistrations.onBlockRegistrations
 }
 
+let named = name => onBlockRegistrations()->Array.filter(reg => reg.name === name)
+
 let makeHyperSyncSource = (~url) => {
   let addressStore = TestAddresses.storeOf(~contracts=[], ~addresses=[])
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
     onEventRegistrations: [],
+    onBlockRegistrations: onBlockRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
     lowercaseAddresses: true,
@@ -67,7 +81,7 @@ let makeHyperSyncSource = (~url) => {
   (source, addressStore->AddressStore.emptySet)
 }
 
-let fetch = (source: Source.t, ~addressSet) =>
+let fetch = (source: Source.t, ~addressSet, ~onBlockRegistrations=named("headers")) =>
   source.getItemsOrThrow(
     ~fromBlock=10,
     ~toBlock=Some(13),
@@ -78,7 +92,7 @@ let fetch = (source: Source.t, ~addressSet) =>
     ~selection=FetchState.makeSelection(
       ~dependsOnAddresses=false,
       ~onEventRegistrations=[],
-      ~onBlockRegistrations=onBlockRegistrations(),
+      ~onBlockRegistrations,
     ),
     ~itemsTarget=None,
     ~retry=0,
@@ -119,6 +133,7 @@ let makeRpcSource = (~url) => {
     url,
     chainId: 1->ChainId.fromInt,
     onEventRegistrations: [],
+    onBlockRegistrations: onBlockRegistrations(),
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({
       initialBlockInterval: 100,
@@ -188,12 +203,13 @@ describe("A block handler selecting fields, fetched from an RPC", () => {
 })
 
 describe("A block handler selecting fields, fetched from HyperSync", () => {
-  Async.it("asks for every block in the range with the selected fields", async t => {
+  // With no log asked for, the query stops at the handler's last block of the range.
+  Async.it("asks for the blocks up to the handler's last one, with its fields", async t => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
         let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
-        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
+        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12]->Array.map(header)})
         let _ = await source->fetch(~addressSet)
         server->MockHyperSyncServer.takeQueries
       },
@@ -202,9 +218,29 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     t.expect(queries).toEqual([
       JSON.parseOrThrow(`{
         "from_block": 10,
-        "to_block": 14,
+        "to_block": 13,
         "include_all_blocks": true,
         "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
+      }`),
+    ])
+  })
+
+  Async.it("doesn't ask for blocks when the handler doesn't run in the range", async t => {
+    let queries = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({blocks: []})
+        let _ = await source->fetch(~addressSet, ~onBlockRegistrations=named("early"))
+        server->MockHyperSyncServer.takeQueries
+      },
+    )
+
+    t.expect(queries).toEqual([
+      JSON.parseOrThrow(`{
+        "from_block": 10,
+        "to_block": 14,
+        "field_selection": {"block": ["hash", "number", "timestamp"]}
       }`),
     ])
   })

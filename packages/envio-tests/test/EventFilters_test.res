@@ -578,7 +578,7 @@ describe("Test eventFilters", () => {
         toBlockCeiling: 1,
         partitionId: "topic-filter-e2e",
         onEventRegistrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
-        onBlockRegistrations: [],
+        onBlockRegistrationIndexes: [],
         clientFilteredContracts: None,
         retry: 0,
       },

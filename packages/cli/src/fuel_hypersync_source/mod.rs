@@ -9,7 +9,7 @@ mod selection;
 mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
-use crate::block_selection::{BlockItem, BlockSelection, OnBlockRegistrationInput};
+use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::{BlockStore, FuelBlockRow};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
@@ -26,6 +26,7 @@ pub struct FuelHyperSyncClient {
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-receipt owner gate.
     address_store: std::sync::Arc<std::sync::RwLock<StoreInner>>,
+    block_registrations: BlockRegistrations,
 }
 
 #[napi]
@@ -35,6 +36,7 @@ impl FuelHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<FuelOnEventRegistrationInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<FuelHyperSyncClient> {
         let handle = address_store.handle();
@@ -53,6 +55,7 @@ impl FuelHyperSyncClient {
             inner,
             selection_builder,
             address_store: handle,
+            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
         })
     }
 
@@ -83,10 +86,20 @@ impl FuelHyperSyncClient {
                 &client_filtered,
             )
             .map_err(map_err)?;
-        let block_selection =
-            BlockSelection::new(&params.on_block_registrations).map_err(map_err)?;
+        let block_selection = self
+            .block_registrations
+            .select(
+                &params.on_block_registration_indexes,
+                u64::try_from(params.from_block)
+                    .context("from_block must be >= 0")
+                    .map_err(map_err)?,
+                params.to_block.and_then(|to| u64::try_from(to).ok()),
+            )
+            .map_err(map_err)?;
+        let (from_block, to_block) =
+            block_selection.query_range(!params.on_event_registration_indexes.is_empty());
 
-        let query = build_query(&params, &built, &block_selection)
+        let query = build_query(from_block, to_block, &built, !block_selection.is_empty())
             .context("build query")
             .map_err(map_err)?;
         let res = self
@@ -115,13 +128,15 @@ impl FuelHyperSyncClient {
         // Every block field is fetched for every block, so routing is all a
         // block handler needs. The page asked for every block of the range it
         // covered, so one missing is a bad answer, not a block to skip.
-        let block_items = route_blocks(
-            &raw.blocks,
-            &block_selection,
-            u64::try_from(params.from_block).unwrap_or(0)
-                ..u64::try_from(raw.next_block).unwrap_or(0),
-        )
-        .map_err(convert_error_to_napi)?;
+        let present: HashSet<i64> = raw.blocks.iter().map(|b| b.height).collect();
+        let block_items = block_selection
+            .route(
+                from_block..u64::try_from(raw.next_block).unwrap_or(0),
+                |height| present.contains(&(height as i64)),
+            )
+            .map_err(|_| {
+                convert_error_to_napi(ConvertError::MissingFields(vec!["block".to_string()]))
+            })?;
 
         // Materialise the set's cache before taking the store guard: `cache()`
         // lazily initialises by reading the same lock, and a writer queued
@@ -151,26 +166,6 @@ impl FuelHyperSyncClient {
     }
 }
 
-/// The block handlers running on the blocks of `covered`, in block order.
-fn route_blocks(
-    blocks: &[Block],
-    block_selection: &BlockSelection,
-    covered: std::ops::Range<u64>,
-) -> Result<Vec<BlockItem>, ConvertError> {
-    let mut block_items = Vec::new();
-    if block_selection.is_empty() || covered.is_empty() {
-        return Ok(block_items);
-    }
-    let present: HashSet<i64> = blocks.iter().map(|b| b.height).collect();
-    for height in block_selection.block_numbers(covered.start, covered.end - 1) {
-        if !present.contains(&(height as i64)) {
-            return Err(ConvertError::MissingFields(vec!["block".to_string()]));
-        }
-        block_selection.route(height, &mut block_items);
-    }
-    Ok(block_items)
-}
-
 /// The whole per-query input for `get_items`: the block range and what it
 /// selects from each table. The partition's addresses arrive separately, as
 /// the `AddressSet` handle. Receipt selections, field selection, and routing
@@ -183,8 +178,8 @@ pub struct ItemsQuery {
     /// The event registrations selecting receipts, by index. Empty selects no
     /// receipts.
     pub on_event_registration_indexes: Vec<i64>,
-    /// The block handlers selecting blocks.
-    pub on_block_registrations: Vec<OnBlockRegistrationInput>,
+    /// The block handlers selecting blocks, by index.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent contract is filtered server-side.
@@ -241,20 +236,14 @@ pub struct RejectedLogData {
 }
 
 fn build_query(
-    params: &ItemsQuery,
+    from_block: u64,
+    to_block: Option<u64>,
     built: &BuiltSelection,
-    block_selection: &BlockSelection,
+    selects_blocks: bool,
 ) -> anyhow::Result<net_types::Query> {
-    let from_block = u64::try_from(params.from_block).context("from_block must be >= 0")?;
-    let to_block = params
-        .to_block
+    let to_block = to_block
         // Inclusive on the boundary, exclusive on the wire.
-        .map(|b| {
-            u64::try_from(b)
-                .context("to_block must be >= 0")?
-                .checked_add(1)
-                .context("to_block overflow")
-        })
+        .map(|b| b.checked_add(1).context("to_block overflow"))
         .transpose()?;
 
     let mut receipt_fields = vec![
@@ -287,7 +276,7 @@ fn build_query(
             ..Default::default()
         },
         // A block handler runs on blocks no receipt landed on.
-        include_all_blocks: !block_selection.is_empty(),
+        include_all_blocks: selects_blocks,
         ..Default::default()
     })
 }
@@ -486,46 +475,6 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
     use crate::js_value::test_value::JsValue;
-
-    fn every_other_block_from(start_block: i64) -> BlockSelection {
-        BlockSelection::new(&[OnBlockRegistrationInput {
-            index: 0,
-            start_block,
-            end_block: None,
-            interval: 2,
-            block_field_mask: 0b111 as f64,
-        }])
-        .unwrap()
-    }
-
-    fn block(height: i64) -> Block {
-        Block {
-            id: String::new(),
-            height,
-            time: 0,
-        }
-    }
-
-    #[test]
-    fn routes_the_covered_blocks_a_handler_runs_on() {
-        let items = route_blocks(
-            &(10..14).map(block).collect::<Vec<_>>(),
-            &every_other_block_from(10),
-            10..14,
-        )
-        .ok()
-        .unwrap();
-        assert_eq!(
-            items.iter().map(|i| i.block_number).collect::<Vec<_>>(),
-            vec![10, 12]
-        );
-    }
-
-    #[test]
-    fn reports_a_missing_block_a_handler_runs_on() {
-        let err = route_blocks(&[block(10)], &every_other_block_from(10), 10..14);
-        assert!(matches!(err, Err(ConvertError::MissingFields(fields)) if fields == ["block"]));
-    }
 
     #[test]
     fn convert_error_serializes_as_expected_json() {

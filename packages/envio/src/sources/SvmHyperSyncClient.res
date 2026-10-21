@@ -138,7 +138,7 @@ module Items = {
     // Absent means no server-side cap on the number of instructions returned.
     maxNumInstructions?: int,
     onEventRegistrationIndexes: array<int>,
-    onBlockRegistrations: array<BlockItem.registrationInput>,
+    onBlockRegistrationIndexes: array<int>,
     // Program names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent program is filtered server-side.
@@ -208,6 +208,7 @@ external classFromConfig: (
   cfg,
   string,
   array<Registration.program>,
+  array<BlockItem.registrationInput>,
   AddressStore.t,
 ) => t = "fromConfig"
 
@@ -218,6 +219,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~programs=[],
+  ~onBlockRegistrations=[],
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
@@ -231,6 +233,7 @@ let make = (
     },
     `hyperindex/${envioVersion}`,
     programs,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
     addressStore,
   )
 }

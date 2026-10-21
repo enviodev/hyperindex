@@ -237,7 +237,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           toSlot: Some(slot + 10),
           maxNumInstructions: 5000,
           onEventRegistrationIndexes: [0],
-          onBlockRegistrations: [],
+          onBlockRegistrationIndexes: [],
           clientFilteredContracts: None,
         }: SvmHyperSyncClient.Items.query
       ),

@@ -6,7 +6,7 @@ type t = {
   onBlockRegistrationIndex: int,
 }
 
-// A block handler selecting fields, as a native query carries it.
+// A block handler selecting fields, as a native client is built with it.
 type registrationInput = {
   index: int,
   startBlock: int,
@@ -15,28 +15,28 @@ type registrationInput = {
   blockFieldMask: float,
 }
 
+// The chain's block handlers a source fetches blocks for: those selecting
+// fields, the rest being generated without one.
 let toRegistrationInputs = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
-  onBlockRegistrations->Array.map(({index, startBlock, endBlock, interval, blockFieldMask}) => {
-    index,
-    // Resolved to the chain's start block by `ChainState` when absent.
-    startBlock: startBlock->Option.getOr(0),
-    endBlock,
-    interval,
-    blockFieldMask: blockFieldMask->Option.getOr(0.),
-  })
+  onBlockRegistrations->Array.filterMap(({index, startBlock, endBlock, interval, blockFieldMask}) =>
+    blockFieldMask->Option.map(blockFieldMask => {
+      index,
+      // Resolved to the chain's start block by `ChainState` when absent.
+      startBlock: startBlock->Option.getOr(0),
+      endBlock,
+      interval,
+      blockFieldMask,
+    })
+  )
 
-// Back to the selection's own registrations, which the indexes come from.
+let toIndexes = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
+  onBlockRegistrations->Array.map(reg => reg.index)
+
 let toInternalItems = (
   items: array<t>,
   ~onBlockRegistrations: array<Internal.onBlockRegistration>,
 ): array<Internal.item> =>
-  switch items {
-  | [] => []
-  | items =>
-    let byIndex = Dict.make()
-    onBlockRegistrations->Array.forEach(reg => byIndex->Dict.set(reg.index->Int.toString, reg))
-    items->Array.map(({blockNumber, onBlockRegistrationIndex}) => Internal.Block({
-      onBlockRegistration: byIndex->Dict.getUnsafe(onBlockRegistrationIndex->Int.toString),
-      blockNumber,
-    }))
-  }
+  items->Array.map(({blockNumber, onBlockRegistrationIndex}) => Internal.Block({
+    onBlockRegistration: onBlockRegistrations->Array.getUnsafe(onBlockRegistrationIndex),
+    blockNumber,
+  }))

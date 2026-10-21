@@ -330,8 +330,16 @@ let parse = (
   let currentLogIndex = ref(0)
 
   let items = []
-  // Headers given on their own, for the block handlers that select fields.
+  // One block per number, which the block handlers that select fields read: a
+  // block given on its own, otherwise the first one an item carried.
   let blocks: dict<Internal.eventBlock> = Dict.make()
+  let ownBlockNumbers = Utils.Set.make()
+  let addCarriedBlock = (block, ~blockNumber) => {
+    let key = blockNumber->Int.toString
+    if blocks->Dict.get(key)->Option.isNone {
+      blocks->Dict.set(key, block)
+    }
+  }
   let svmTxs: array<TransactionStore.svmTxInput> = []
   let svmActivities: array<TransactionStore.svmActivityInput> = []
   let svmBlocks: array<BlockStore.inputBlock> = []
@@ -351,13 +359,13 @@ let parse = (
           ~defaultBlockNumber=currentBlock.contents,
           ~blockJson,
         )
-        let key = blockNumber->Int.toString
-        if blocks->Dict.get(key)->Option.isSome {
+        if ownBlockNumbers->Utils.Set.has(blockNumber) {
           JsError.throwWithMessage(
-            `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is a second block ${key}. Give each block's fields in one item.`,
+            `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is a second block ${blockNumber->Int.toString}. Give each block's fields in one item.`,
           )
         }
-        blocks->Dict.set(key, block)
+        ownBlockNumbers->Utils.Set.add(blockNumber)->ignore
+        blocks->Dict.set(blockNumber->Int.toString, block)
       | None =>
         JsError.throwWithMessage(
           `simulate: Invalid item. Each item must name what it is${switch config.ecosystem.name {
@@ -504,6 +512,8 @@ let parse = (
       | Some(block) => block.hash
       | None => None
       }
+      let (block, _) = parseBlock(~ecosystem=Svm, ~defaultBlockNumber=slot, ~blockJson)
+      block->addCarriedBlock(~blockNumber=slot)
       svmBlocks
       ->Array.push({
         blockNumber: slot,
@@ -614,6 +624,7 @@ let parse = (
         ~defaultBlockNumber=currentBlock.contents,
         ~blockJson,
       )
+      block->addCarriedBlock(~blockNumber)
       let transaction = switch config.ecosystem.name {
       | Fuel => parseFuelSimulateTransaction(~transactionJson)
       | Evm => parseEvmSimulateTransaction(~transactionJson)

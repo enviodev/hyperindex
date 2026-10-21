@@ -258,7 +258,7 @@ module Items = {
     // Absent means no server-side cap on the number of logs returned.
     maxNumLogs?: int,
     onEventRegistrationIndexes: array<int>,
-    onBlockRegistrations: array<BlockItem.registrationInput>,
+    onBlockRegistrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.
@@ -298,11 +298,9 @@ external classNew: (
   cfg,
   string,
   array<Registration.input>,
+  array<BlockItem.registrationInput>,
   AddressStore.t,
 ) => t = "new"
-
-let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
-  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations, addressStore)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -321,6 +319,7 @@ let make = (
   ~apiToken,
   ~httpReqTimeoutMillis,
   ~eventRegistrations,
+  ~onBlockRegistrations=[],
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -331,7 +330,7 @@ let make = (
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  makeWithAgent(
+  Core.getAddon().evmHyperSyncClient->classNew(
     {
       url,
       enableChecksumAddresses,
@@ -344,8 +343,9 @@ let make = (
       ?retryCeilingMs,
       logLevel: logLevelToString(logLevel),
     },
-    ~userAgent=`hyperindex/${envioVersion}`,
-    ~eventRegistrations,
-    ~addressStore,
+    `hyperindex/${envioVersion}`,
+    eventRegistrations,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
+    addressStore,
   )
 }

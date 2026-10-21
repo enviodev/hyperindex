@@ -28,6 +28,12 @@ indexer.onSlot(
     context.SlotBlock.set({ id: \`\${slot}\`, time: block.time, hash: block.hash });
   },
 );
+
+// The slot is the handler's own argument, so selecting only it selects no block.
+indexer.onSlot({ name: "slots", fields: { block: ["slot"] } }, async (args) => {
+  // @ts-expect-error - no block field beyond the slot is selected
+  args.block;
+});
 `,
   ~test=`
 import { describe, it } from "vitest";

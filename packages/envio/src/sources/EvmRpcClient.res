@@ -15,7 +15,7 @@ type nextPageParams = {
   toBlockCeiling: int,
   partitionId: string,
   onEventRegistrationIndexes: array<int>,
-  onBlockRegistrations: array<BlockItem.registrationInput>,
+  onBlockRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
 }
@@ -70,6 +70,7 @@ external classNew: (
   Core.evmRpcClientCtor,
   cfg,
   array<HyperSyncClient.Registration.input>,
+  array<BlockItem.registrationInput>,
   ~checksumAddresses: bool,
   ~addressStore: AddressStore.t,
 ) => t = "new"
@@ -81,6 +82,7 @@ let make = (
   ~maxConcurrentRequests=?,
   ~headers=?,
   ~eventRegistrations=[],
+  ~onBlockRegistrations=[],
   ~addressStore,
 ) =>
   Core.getAddon().evmRpcClient->classNew(
@@ -96,6 +98,7 @@ let make = (
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
     },
     eventRegistrations,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
     ~checksumAddresses,
     ~addressStore,
   )

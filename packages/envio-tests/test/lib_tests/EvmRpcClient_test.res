@@ -260,7 +260,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         toBlockCeiling,
         partitionId: "0",
         onEventRegistrationIndexes: indexes,
-        onBlockRegistrations: [],
+        onBlockRegistrationIndexes: [],
         clientFilteredContracts: None,
         retry: 0,
       },

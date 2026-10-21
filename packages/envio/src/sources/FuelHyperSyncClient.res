@@ -67,7 +67,7 @@ module Items = {
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
     onEventRegistrationIndexes: array<int>,
-    onBlockRegistrations: array<BlockItem.registrationInput>,
+    onBlockRegistrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent contract is filtered server-side.
@@ -119,15 +119,17 @@ external classNew: (
   cfg,
   ~userAgent: string,
   array<Registration.input>,
+  array<BlockItem.registrationInput>,
   AddressStore.t,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
+let make = (cfg: cfg, ~eventRegistrations, ~onBlockRegistrations=[], ~addressStore) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
     eventRegistrations,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
     addressStore,
   )
 }

@@ -15,7 +15,9 @@ mod interval;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
-use crate::block_selection::{BlockItem, BlockSelection, OnBlockRegistrationInput};
+use crate::block_selection::{
+    BlockItem, BlockRegistrations, BlockSelection, OnBlockRegistrationInput,
+};
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::query::BlockField;
@@ -130,8 +132,8 @@ pub struct NextPageParams {
     /// selections and the routing index are derived internally from the
     /// registrations passed at construction. Empty selects no logs.
     pub on_event_registration_indexes: Vec<i64>,
-    /// The block handlers selecting blocks.
-    pub on_block_registrations: Vec<OnBlockRegistrationInput>,
+    /// The block handlers selecting blocks, by chain-scoped id.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -288,6 +290,7 @@ pub struct EvmRpcClient {
     block_read: BlockRead,
     chain_block_mask: u64,
     chain_tx_mask: u64,
+    block_registrations: BlockRegistrations,
 }
 
 /// How many blocks a page reads for its block handlers at most: each costs an
@@ -316,6 +319,7 @@ impl EvmRpcClient {
     pub fn new(
         cfg: EvmRpcClientConfig,
         event_registrations: Vec<OnEventRegistrationInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         checksum_addresses: bool,
         address_store: &AddressStore,
     ) -> napi::Result<EvmRpcClient> {
@@ -406,6 +410,7 @@ impl EvmRpcClient {
             block_read: BlockRead::for_chain(chain_fields.block_mask),
             chain_block_mask: chain_fields.block_mask,
             chain_tx_mask: chain_fields.tx_mask,
+            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
         })
     }
 
@@ -513,13 +518,16 @@ impl EvmRpcClient {
         let (suggested_interval, source_max) = self
             .intervals
             .suggested_interval(&params.partition_id, &self.sync_config);
-        let block_selection =
-            BlockSelection::new(&params.on_block_registrations).map_err(map_err)?;
-        let to_block = block_selection.range_end(
-            from_block,
-            (from_block + suggested_interval - 1).min(to_block_ceiling),
-            MAX_HANDLER_BLOCKS_PER_PAGE,
-        );
+        let interval_end = (from_block + suggested_interval - 1).min(to_block_ceiling);
+        let block_selection = self
+            .block_registrations
+            .select(
+                &params.on_block_registration_indexes,
+                from_block,
+                Some(interval_end),
+            )
+            .map_err(map_err)?;
+        let to_block = block_selection.range_end(interval_end, MAX_HANDLER_BLOCKS_PER_PAGE);
         // A block handler can select fields no event registration does, so a
         // page reading blocks for one reads them for its fields too.
         let block_read = (!block_selection.is_empty())
@@ -712,13 +720,13 @@ impl EvmRpcClient {
             }
         }
 
-        let mut block_items = Vec::new();
-        for block_number in query
+        // The page reads every block a handler runs on, so none can be missing.
+        let block_items = query
             .block_selection
-            .block_numbers(query.from_block, query.to_block)
-        {
-            query.block_selection.route(block_number, &mut block_items);
-            refs.add_block(block_number, query.block_selection.mask());
+            .route(query.from_block..query.to_block + 1, |_| true)
+            .unwrap_or_default();
+        for item in &block_items {
+            refs.add_block(item.block_number as u64, query.block_selection.mask());
         }
 
         let page = enrich::page(

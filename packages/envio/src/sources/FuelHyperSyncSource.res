@@ -6,12 +6,23 @@ type options = {
   apiToken: option<string>,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.fuelOnEventRegistration>,
+  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
 }
 
-let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}: options): t => {
+let make = (
+  {
+    chainId,
+    endpointUrl,
+    apiToken,
+    onEventRegistrations,
+    ?onBlockRegistrations,
+    addressStore,
+  }: options,
+): t => {
   let name = "HyperFuel"
+  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   // Per source, so one rejected token is reported once rather than on every
   // height retry for the life of the process.
@@ -27,6 +38,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
     ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(
       onEventRegistrations,
     ),
+    ~onBlockRegistrations,
     ~addressStore,
   ) {
   | client => client
@@ -59,7 +71,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
         fromBlock,
         toBlock,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-        onBlockRegistrations: selection.onBlockRegistrations->BlockItem.toRegistrationInputs,
+        onBlockRegistrationIndexes: selection.onBlockRegistrations->BlockItem.toIndexes,
         clientFilteredContracts: selection.clientFilteredContracts,
       },
       ~addressSet,
@@ -195,9 +207,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
 
     {
       parsedQueueItems: eventItems->Array.concat(
-        pageUnsafe.blockItems->BlockItem.toInternalItems(
-          ~onBlockRegistrations=selection.onBlockRegistrations,
-        ),
+        pageUnsafe.blockItems->BlockItem.toInternalItems(~onBlockRegistrations),
       ),
       // Fuel keeps the transaction inline on the payload. The block store holds
       // the page's blocks, materialised at batch prep; their ids also drive

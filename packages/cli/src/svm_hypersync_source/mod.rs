@@ -26,7 +26,7 @@ use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
-use crate::block_selection::{BlockItem, BlockSelection, OnBlockRegistrationInput};
+use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
@@ -112,6 +112,7 @@ pub struct SvmHyperSyncClient {
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-instruction owner gate.
     address_store: Arc<std::sync::RwLock<StoreInner>>,
+    block_registrations: BlockRegistrations,
 }
 
 #[napi]
@@ -121,9 +122,16 @@ impl SvmHyperSyncClient {
         cfg: SvmClientConfig,
         user_agent: String,
         programs: Vec<SvmProgramInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<SvmHyperSyncClient> {
-        Self::from_config(cfg, user_agent, programs, address_store)
+        Self::from_config(
+            cfg,
+            user_agent,
+            programs,
+            block_registrations,
+            address_store,
+        )
     }
 
     /// Factory taking a custom user agent, mirroring EVM's `new_with_agent`.
@@ -134,6 +142,7 @@ impl SvmHyperSyncClient {
         cfg: SvmClientConfig,
         user_agent: String,
         programs: Vec<SvmProgramInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<SvmHyperSyncClient> {
         let handle = address_store.handle();
@@ -150,6 +159,7 @@ impl SvmHyperSyncClient {
             inner: Arc::new(inner),
             selection_builder,
             address_store: handle,
+            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
         })
     }
 
@@ -223,8 +233,18 @@ impl SvmHyperSyncClient {
             .selection_builder
             .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
-        let block_selection =
-            BlockSelection::new(&params.on_block_registrations).map_err(map_err)?;
+        let block_selection = self
+            .block_registrations
+            .select(
+                &params.on_block_registration_indexes,
+                u64::try_from(params.from_slot)
+                    .context("from_slot must be non-negative")
+                    .map_err(map_err)?,
+                params.to_slot.and_then(|to| u64::try_from(to).ok()),
+            )
+            .map_err(map_err)?;
+        let (from_slot, to_slot) =
+            block_selection.query_range(!params.on_event_registration_indexes.is_empty());
         let mut block_columns = built.block_columns.clone();
         for column in fields::block_mask_columns(block_selection.mask()).map_err(map_err)? {
             fields::push_unique(&mut block_columns, column);
@@ -254,18 +274,10 @@ impl SvmHyperSyncClient {
         }
 
         let query = SolanaQuery {
-            from_slot: u64::try_from(params.from_slot)
-                .context("from_slot must be non-negative")
-                .map_err(map_err)?,
+            from_slot,
             // Inclusive on the boundary, exclusive on the wire.
-            to_slot: params
-                .to_slot
-                .map(|b| {
-                    u64::try_from(b)
-                        .context("to_slot must be non-negative")?
-                        .checked_add(1)
-                        .context("to_slot overflow")
-                })
+            to_slot: to_slot
+                .map(|b| b.checked_add(1).context("to_slot overflow"))
                 .transpose()
                 .map_err(map_err)?,
             instruction_calls: built.instruction_selections.clone(),
@@ -325,12 +337,15 @@ impl SvmHyperSyncClient {
             .collect();
         // Only a slot that produced a block has one to read, so a slot handler
         // selecting fields runs on the blocks returned — a skipped slot has none.
-        let mut block_items = Vec::new();
-        for slot in resp.blocks.iter().filter_map(|block| block.slot) {
-            if block_selection.route(slot, &mut block_items) {
-                referenced_slots.insert(slot);
-            }
-        }
+        let returned_slots: HashSet<u64> =
+            resp.blocks.iter().filter_map(|block| block.slot).collect();
+        let block_items: Vec<BlockItem> = block_selection
+            .route(from_slot..resp.next_slot, |_| true)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|item| returned_slots.contains(&(item.block_number as u64)))
+            .collect();
+        referenced_slots.extend(block_items.iter().map(|item| item.block_number as u64));
 
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
@@ -383,8 +398,8 @@ pub struct ItemsQuery {
     /// The instruction registrations selecting instructions, by index. Empty
     /// selects no instructions.
     pub on_event_registration_indexes: Vec<i64>,
-    /// The slot handlers selecting blocks.
-    pub on_block_registrations: Vec<OnBlockRegistrationInput>,
+    /// The slot handlers selecting blocks, by index.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Program names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent program is filtered server-side.
@@ -689,6 +704,7 @@ mod tests {
                 ..Default::default()
             },
             "hyperindex-test".into(),
+            vec![],
             vec![],
             &svm_store(&[]),
         )

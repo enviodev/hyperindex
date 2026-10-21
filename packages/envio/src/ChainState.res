@@ -299,6 +299,7 @@ let makeInternal = (
   let sources = ChainSources.make(
     ~chainConfig,
     ~onEventRegistrations,
+    ~onBlockRegistrations,
     ~addressStore,
     ~lowercaseAddresses,
     ~blockStore,

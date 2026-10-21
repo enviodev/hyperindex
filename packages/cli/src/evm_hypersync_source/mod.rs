@@ -7,7 +7,9 @@ use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
-use crate::block_selection::{BlockItem, BlockSelection, OnBlockRegistrationInput};
+use crate::block_selection::{
+    BlockItem, BlockRegistrations, BlockSelection, OnBlockRegistrationInput,
+};
 use crate::block_store::BlockStore;
 use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -53,6 +55,7 @@ pub struct EvmHyperSyncClient {
     enable_checksum_addresses: bool,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
+    block_registrations: BlockRegistrations,
 }
 
 impl EvmHyperSyncClient {
@@ -80,9 +83,11 @@ impl EvmHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
+        let block_registrations = BlockRegistrations::new(&block_registrations).map_err(map_err)?;
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
@@ -107,6 +112,7 @@ impl EvmHyperSyncClient {
             enable_checksum_addresses,
             decoder,
             selection_builder,
+            block_registrations,
         })
     }
 
@@ -197,8 +203,15 @@ impl EvmHyperSyncClient {
                 set_cache.clone(),
             )
             .map_err(map_err)?;
-        let block_selection =
-            BlockSelection::new(&params.on_block_registrations).map_err(map_err)?;
+        let block_selection = self
+            .block_registrations
+            .select(
+                &params.on_block_registration_indexes,
+                u64::try_from(params.from_block).map_err(|e| map_err(e.into()))?,
+                params.to_block.and_then(|to| u64::try_from(to).ok()),
+            )
+            .map_err(map_err)?;
+        let (from_block, to_block) = block_selection.query_range(selects_logs);
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
@@ -234,8 +247,8 @@ impl EvmHyperSyncClient {
         }
 
         let query = Query {
-            from_block: params.from_block,
-            to_block: params.to_block.map(|b| b + 1),
+            from_block: from_block as i64,
+            to_block: to_block.map(|b| b as i64 + 1),
             logs: selects_logs.then(|| {
                 built
                     .log_selections
@@ -310,7 +323,7 @@ impl EvmHyperSyncClient {
                 &block_selection,
                 // The range the page covered: `include_all_blocks` leaves no
                 // gaps in it.
-                (params.from_block as u64)..(next_block as u64),
+                from_block..(next_block as u64),
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -363,9 +376,9 @@ pub struct ItemsQuery {
     /// The event registrations selecting logs, by the index the client was
     /// constructed with. Empty selects no logs.
     pub on_event_registration_indexes: Vec<i64>,
-    /// The block handlers selecting blocks. Empty selects no more blocks than
-    /// the logs come from.
-    pub on_block_registrations: Vec<OnBlockRegistrationInput>,
+    /// The block handlers selecting blocks, by the index the client was
+    /// constructed with. Empty selects no more blocks than the logs come from.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -596,19 +609,13 @@ fn process_response(
     // A block a block handler runs on is referenced like one a log routed
     // from. The page asked for every block of the range it covered, so one
     // missing is a bad answer, not a block to skip.
-    let mut block_items = Vec::new();
-    if !block_selection.is_empty() && !covered_blocks.is_empty() {
-        for block_number in
-            block_selection.block_numbers(covered_blocks.start, covered_blocks.end - 1)
-        {
-            if present_block_numbers.contains(&block_number) {
-                block_selection.route(block_number, &mut block_items);
-                referenced_blocks.insert(block_number);
-            } else {
-                push_unique(&mut missing, "block".into());
-            }
-        }
-    }
+    let block_items = block_selection
+        .route(covered_blocks, |n| present_block_numbers.contains(&n))
+        .unwrap_or_else(|_| {
+            push_unique(&mut missing, "block".into());
+            Vec::new()
+        });
+    referenced_blocks.extend(block_items.iter().map(|item| item.block_number as u64));
 
     // Validate the requested block fields once per distinct block. The
     // always-required number/timestamp/hash back every header, so they are

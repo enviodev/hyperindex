@@ -1212,17 +1212,17 @@ export type SvmOnSlotHandlerArgs<
   readonly slot: number;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: SvmOnSlotContext<Config>;
-} & ([Fields] extends [SvmOnSlotFieldsSelection]
-  ? {
+} & ([Exclude<EvmListedFields<Fields, "block">, "slot">] extends [never]
+  ? {}
+  : {
       /** The slot's block: the fields listed in the registration's
           `fields.block`. */
       readonly block: EvmSelectedFields<
         SvmAllBlockFields,
-        "slot" | (NonNullable<Fields["block"]>[number] & string),
+        "slot" | EvmListedFields<Fields, "block">,
         "block"
       >;
-    }
-  : {});
+    });
 
 /** Handler function for an SVM `indexer.onSlot` registration. */
 export type SvmOnSlotHandler<

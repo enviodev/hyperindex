@@ -7,6 +7,7 @@ type options = {
   chainId: ChainId.t,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   lowercaseAddresses: bool,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
@@ -25,6 +26,7 @@ let make = (
     url,
     chainId,
     onEventRegistrations,
+    ?onBlockRegistrations,
     lowercaseAddresses,
     addressStore,
     blockStore,
@@ -41,10 +43,12 @@ let make = (
   | Some(host) => host
   }
   let name = `RPC (${urlHost})`
+  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   let rpcClient = EvmRpcClient.make(
     ~url,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~onBlockRegistrations,
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -91,7 +95,7 @@ let make = (
         toBlockCeiling: toBlock,
         partitionId,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-        onBlockRegistrations: selection.onBlockRegistrations->BlockItem.toRegistrationInputs,
+        onBlockRegistrationIndexes: selection.onBlockRegistrations->BlockItem.toIndexes,
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
       },
@@ -181,11 +185,7 @@ let make = (
     let parsedQueueItems =
       result.eventItems
       ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
-      ->Array.concat(
-        result.blockItems->BlockItem.toInternalItems(
-          ~onBlockRegistrations=selection.onBlockRegistrations,
-        ),
-      )
+      ->Array.concat(result.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     {

@@ -5,6 +5,7 @@ type options = {
   endpointUrl: string,
   apiToken: option<string>,
   onEventRegistrations: array<Internal.svmOnEventRegistration>,
+  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   clientTimeoutMillis: int,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
@@ -124,11 +125,13 @@ let make = (
     endpointUrl,
     apiToken,
     onEventRegistrations,
+    ?onBlockRegistrations,
     clientTimeoutMillis,
     addressStore,
   }: options,
 ): t => {
   let name = "SvmHyperSync"
+  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   let apiToken = apiToken->HyperSync.requireApiToken
 
@@ -140,6 +143,7 @@ let make = (
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~onBlockRegistrations,
     ~addressStore,
   )
 
@@ -165,7 +169,7 @@ let make = (
       toSlot: toBlock,
       maxNumInstructions: ?itemsTarget,
       onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-      onBlockRegistrations: selection.onBlockRegistrations->BlockItem.toRegistrationInputs,
+      onBlockRegistrationIndexes: selection.onBlockRegistrations->BlockItem.toIndexes,
       clientFilteredContracts: selection.clientFilteredContracts,
       // Absent rather than false, so a backfill query is the one it always was.
       includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
@@ -240,9 +244,7 @@ let make = (
 
     {
       parsedQueueItems: eventItems->Array.concat(
-        resp.blockItems->BlockItem.toInternalItems(
-          ~onBlockRegistrations=selection.onBlockRegistrations,
-        ),
+        resp.blockItems->BlockItem.toInternalItems(~onBlockRegistrations),
       ),
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),

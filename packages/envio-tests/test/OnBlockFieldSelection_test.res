@@ -47,6 +47,8 @@ indexer.onBlock({ name: "ticks", where: () => ({ block: { number: { _lte: 3 } } 
   const _timestamp: number = block.timestamp;
   context.Tick.set({ id: \`\${block.number}\` });
 });
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async () => {});
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -86,7 +88,14 @@ describe("onBlock field selection", () => {
           endBlock: 6,
           simulate: [
             { block: { number: 2, timestamp: 1_700_000_002, miner } },
-            { block: { number: 4, timestamp: 1_700_000_004, miner } },
+            // An event's block is the block, for its handler and a block
+            // handler alike.
+            {
+              contract: "Token",
+              event: "Transfer",
+              params: { from: miner, to: miner, value: 1n },
+              block: { number: 4, timestamp: 1_700_000_004, miner },
+            },
             { block: { number: 6, timestamp: 1_700_000_006, miner } },
           ],
         },

@@ -69,7 +69,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
       toBlock: Some(toBlock),
       maxNumLogs: 10_000,
       onEventRegistrationIndexes: registrationIndexes,
-      onBlockRegistrations: [],
+      onBlockRegistrationIndexes: [],
       clientFilteredContracts: None,
     },
     ~addressSet=usdcSet,

@@ -97,7 +97,7 @@ let decodeLogs = async (
           toBlockCeiling: 0,
           partitionId: "0",
           onEventRegistrationIndexes: eventRegistrations->Array.map(reg => reg.index),
-          onBlockRegistrations: [],
+          onBlockRegistrationIndexes: [],
           clientFilteredContracts: None,
           retry: 0,
         },
