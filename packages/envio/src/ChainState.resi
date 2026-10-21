@@ -101,7 +101,6 @@ let drainAddressesForWrite: (
 let hasAddressesToWrite: t => bool
 let bufferSize: t => int
 let bufferReadyCount: t => int
-let getProgressPercentage: t => float
 let chainDensity: t => option<float>
 let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
@@ -135,7 +134,6 @@ let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
 let hasCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
-let isActivelyIndexing: t => bool
 let isReady: t => bool
 let isFetchingAtHead: t => bool
 let isAtHeadWithoutEndBlock: t => bool

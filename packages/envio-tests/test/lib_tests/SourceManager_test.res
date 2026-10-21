@@ -2,16 +2,6 @@ open Vitest
 
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
-let defaultQuery: FetchState.query = {
-  partitionId: "0",
-  fromBlock: 0,
-  toBlock: None,
-  isChunk: false,
-  itemsTarget: Some(0),
-  itemsEst: 0,
-  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addresses: TestAddresses.setOf([]),
-}
 
 type executeQueryMock = {
   fn: FetchState.query => Promise.t<unit>,

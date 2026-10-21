@@ -54,9 +54,7 @@ let mockAddress3 = mockAddress(3)
 let mockAddress4 = mockAddress(4)
 let mockAddress5 = mockAddress(5)
 let mockAddress6 = mockAddress(6)
-let mockFactoryAddress = mockAddress(7)
 
-let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): int => blockNumber
 
 let rollbackTo = (fetchState: FetchState.t, ~addressStore, ~targetBlockNumber) =>
