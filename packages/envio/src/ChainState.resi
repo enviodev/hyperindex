@@ -50,6 +50,7 @@ let makeFromDbState: (
   ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~reducedPollingInterval: int=?,
+  ~newBlockStallTimeoutRealtime: int=?,
 ) => t
 
 // Accessors.

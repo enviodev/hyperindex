@@ -237,6 +237,7 @@ let makeFromDbState = (
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   // A process driving part of a split run waits for its supervisor before
   // entering the reorg threshold or switching to realtime.
@@ -278,6 +279,7 @@ let makeFromDbState = (
         ~contractMapping=initialState.contractMapping,
         ~registrationsByChainId,
         ~reducedPollingInterval?,
+        ~newBlockStallTimeoutRealtime?,
       ),
     )
   })

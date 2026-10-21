@@ -34,6 +34,7 @@ let makeFromDbState: (
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
   ~reducedPollingInterval: int=?,
+  ~newBlockStallTimeoutRealtime: int=?,
   ~targetBufferSize: int=?,
   ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
