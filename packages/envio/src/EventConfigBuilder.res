@@ -434,7 +434,7 @@ let resolveInlineFieldSelection = (
 // with the block table alone to select from. The block's key comes with every
 // selection, so a selection of nothing else is no selection.
 let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t): option<float> =>
-  if fields === %raw(`undefined`) {
+  if typeof(fields) === #undefined {
     None
   } else {
     let registration = `\`indexer.${ecosystem.onBlockMethodName}("${name}")\``

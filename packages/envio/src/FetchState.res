@@ -177,30 +177,23 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
   switch toBlock {
   | None => selection
   | Some(toBlock) =>
-    let hasStarted = startBlock =>
-      switch startBlock {
+    let inRange = selection.onEventRegistrations->Array.filter(reg =>
+      switch reg.startBlock {
       | Some(startBlock) => startBlock <= toBlock
       | None => true
       }
-    let onEventRegistrations =
-      selection.onEventRegistrations->Array.filter(reg => hasStarted(reg.startBlock))
-    let onBlockRegistrations =
-      selection.onBlockRegistrations->Array.filter(reg => hasStarted(reg.startBlock))
-    if (
-      onEventRegistrations->Array.length === selection.onEventRegistrations->Array.length &&
-        onBlockRegistrations->Array.length === selection.onBlockRegistrations->Array.length
-    ) {
-      selection
-    } else if (
-      // Every registration starts above the range. The partition is queried
-      // unnarrowed instead and the routers drop what hasn't started.
-      onEventRegistrations->Utils.Array.isEmpty && onBlockRegistrations->Utils.Array.isEmpty
-    ) {
-      selection
-    } else {
+    )
+    switch inRange->Array.length {
+    // Every registration starts above the range. Narrowing to nothing would
+    // build a selection with no log filters, which each source reads as
+    // "select everything" — the opposite of the intent. The partition is
+    // queried unnarrowed instead and the routers drop what hasn't started.
+    | 0 => selection
+    | length if length === selection.onEventRegistrations->Array.length => selection
+    | _ =>
       makeSelection(
-        ~onEventRegistrations,
-        ~onBlockRegistrations,
+        ~onEventRegistrations=inRange,
+        ~onBlockRegistrations=selection.onBlockRegistrations,
         ~dependsOnAddresses=selection.dependsOnAddresses,
         ~clientFilteredContracts=?selection.clientFilteredContracts,
       )
@@ -2671,14 +2664,8 @@ let make = (
     }
   })
 
-  let fetchedOnBlockRegistrations =
-    onBlockRegistrations->Array.filter((reg: Internal.onBlockRegistration) =>
-      reg.blockFieldMask->Option.isSome
-    )
-  let onBlockRegistrations =
-    onBlockRegistrations->Array.filter((reg: Internal.onBlockRegistration) =>
-      reg.blockFieldMask->Option.isNone
-    )
+  let (fetchedOnBlockRegistrations, onBlockRegistrations) =
+    onBlockRegistrations->Belt.Array.partition(BlockItem.isFetched)
 
   let partitions = []
   let pushAddressFreePartition = selection =>

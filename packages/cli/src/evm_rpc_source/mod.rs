@@ -527,7 +527,8 @@ impl EvmRpcClient {
                 Some(interval_end),
             )
             .map_err(map_err)?;
-        let to_block = block_selection.range_end(interval_end, MAX_HANDLER_BLOCKS_PER_PAGE);
+        let to_block =
+            block_selection.range_end(from_block, interval_end, MAX_HANDLER_BLOCKS_PER_PAGE);
         // A block handler can select fields no event registration does, so a
         // page reading blocks for one reads them for its fields too.
         let block_read = (!block_selection.is_empty())
@@ -723,8 +724,7 @@ impl EvmRpcClient {
         // The page reads every block a handler runs on, so none can be missing.
         let block_items = query
             .block_selection
-            .route(query.from_block..query.to_block + 1, |_| true)
-            .unwrap_or_default();
+            .route(query.from_block..query.to_block + 1);
         for item in &block_items {
             refs.add_block(item.block_number as u64, query.block_selection.mask());
         }

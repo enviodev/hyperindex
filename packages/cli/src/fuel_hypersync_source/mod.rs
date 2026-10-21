@@ -89,7 +89,11 @@ impl FuelHyperSyncClient {
         let from_block = u64::try_from(params.from_block)
             .context("from_block must be >= 0")
             .map_err(map_err)?;
-        let to_block = params.to_block.and_then(|to| u64::try_from(to).ok());
+        let to_block = params
+            .to_block
+            .map(|to| u64::try_from(to).context("to_block must be >= 0"))
+            .transpose()
+            .map_err(map_err)?;
         let block_selection = self
             .block_registrations
             .select(&params.on_block_registration_indexes, from_block, to_block)
@@ -125,14 +129,16 @@ impl FuelHyperSyncClient {
         // block handler needs. The page asked for every block of the range it
         // covered, so one missing is a bad answer, not a block to skip.
         let present: HashSet<i64> = raw.blocks.iter().map(|b| b.height).collect();
-        let block_items = block_selection
-            .route(
-                from_block..u64::try_from(raw.next_block).unwrap_or(0),
-                |height| present.contains(&(height as i64)),
-            )
-            .map_err(|_| {
-                convert_error_to_napi(ConvertError::MissingFields(vec!["block".to_string()]))
-            })?;
+        let block_items =
+            block_selection.route(from_block..u64::try_from(raw.next_block).unwrap_or(0));
+        if block_items
+            .iter()
+            .any(|item| !present.contains(&item.block_number))
+        {
+            return Err(convert_error_to_napi(ConvertError::MissingFields(vec![
+                "block".to_string(),
+            ])));
+        }
 
         // Materialise the set's cache before taking the store guard: `cache()`
         // lazily initialises by reading the same lock, and a writer queued

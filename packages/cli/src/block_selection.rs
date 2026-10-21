@@ -117,10 +117,7 @@ impl BlockRegistrations {
             }
         }
         registrations.sort_unstable_by_key(|r| r.index);
-        Ok(BlockSelection {
-            registrations,
-            from_block,
-        })
+        Ok(BlockSelection { registrations })
     }
 }
 
@@ -129,7 +126,6 @@ impl BlockRegistrations {
 #[derive(Default)]
 pub(crate) struct BlockSelection {
     registrations: Vec<Registration>,
-    from_block: u64,
 }
 
 impl BlockSelection {
@@ -145,9 +141,9 @@ impl BlockSelection {
     /// The highest block up to `to_block` keeping at most `max_blocks` blocks
     /// some handler runs on in `[from_block, ..]`: for a source paying a
     /// request per block, the end of a range it can afford.
-    pub(crate) fn range_end(&self, to_block: u64, max_blocks: usize) -> u64 {
+    pub(crate) fn range_end(&self, from_block: u64, to_block: u64, max_blocks: usize) -> u64 {
         let mut matched = 0;
-        for block_number in self.from_block..=to_block {
+        for block_number in from_block..=to_block {
             if self.runs_any(block_number) {
                 matched += 1;
                 if matched == max_blocks {
@@ -159,35 +155,22 @@ impl BlockSelection {
     }
 
     /// An item for every handler running on a block of `covered`, in block
-    /// then registration order. A block some handler runs on that `is_present`
-    /// says the response lacks is returned as the error.
-    pub(crate) fn route(
-        &self,
-        covered: Range<u64>,
-        is_present: impl Fn(u64) -> bool,
-    ) -> std::result::Result<Vec<BlockItem>, u64> {
-        let mut items = Vec::new();
+    /// then registration order.
+    pub(crate) fn route(&self, covered: Range<u64>) -> Vec<BlockItem> {
         if self.is_empty() {
-            return Ok(items);
+            return Vec::new();
         }
-        for block_number in covered {
-            let mut running = self
-                .registrations
-                .iter()
-                .filter(|r| r.runs_on(block_number))
-                .peekable();
-            if running.peek().is_none() {
-                continue;
-            }
-            if !is_present(block_number) {
-                return Err(block_number);
-            }
-            items.extend(running.map(|r| BlockItem {
-                block_number: block_number as i64,
-                on_block_registration_index: r.index,
-            }));
-        }
-        Ok(items)
+        covered
+            .flat_map(|block_number| {
+                self.registrations
+                    .iter()
+                    .filter(move |r| r.runs_on(block_number))
+                    .map(move |r| BlockItem {
+                        block_number: block_number as i64,
+                        on_block_registration_index: r.index,
+                    })
+            })
+            .collect()
     }
 
     fn runs_any(&self, block_number: u64) -> bool {
@@ -241,21 +224,15 @@ mod tests {
             Some(12),
         );
         assert_eq!(
-            selection.route(9..13, |_| true),
-            Ok(vec![
+            selection.route(9..13),
+            vec![
                 item(9, 1),
                 item(10, 0),
                 item(10, 1),
                 item(11, 1),
                 item(12, 0)
-            ])
+            ]
         );
-    }
-
-    #[test]
-    fn reports_a_missing_block_a_handler_runs_on() {
-        let selection = select(&[input(0, 0, None, 2)], 0, Some(4));
-        assert_eq!(selection.route(0..5, |n| n != 2 && n != 3), Err(2));
     }
 
     #[test]
@@ -282,7 +259,7 @@ mod tests {
     fn ends_a_range_at_the_last_block_it_can_afford() {
         let selection = select(&[input(0, 0, None, 3)], 1, Some(100));
         assert_eq!(
-            (selection.range_end(100, 2), selection.range_end(5, 2)),
+            (selection.range_end(1, 100, 2), selection.range_end(1, 5, 2)),
             (6, 5)
         );
     }

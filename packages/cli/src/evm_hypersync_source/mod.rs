@@ -204,7 +204,11 @@ impl EvmHyperSyncClient {
             )
             .map_err(map_err)?;
         let from_block = u64::try_from(params.from_block).map_err(|e| map_err(e.into()))?;
-        let to_block = params.to_block.and_then(|to| u64::try_from(to).ok());
+        let to_block = params
+            .to_block
+            .map(|to| u64::try_from(to).context("to_block must be >= 0"))
+            .transpose()
+            .map_err(map_err)?;
         let block_selection = self
             .block_registrations
             .select(&params.on_block_registration_indexes, from_block, to_block)
@@ -604,14 +608,9 @@ fn process_response(
         returned_blocks.iter().filter_map(|b| b.number).collect();
 
     // A block a block handler runs on is referenced like one a log routed
-    // from. The page asked for every block of the range it covered, so one
-    // missing is a bad answer, not a block to skip.
-    let block_items = block_selection
-        .route(covered_blocks, |n| present_block_numbers.contains(&n))
-        .unwrap_or_else(|_| {
-            push_unique(&mut missing, "block".into());
-            Vec::new()
-        });
+    // from. The page asked for every block of the range it covered, so the
+    // coverage check below rejects one missing rather than skipping it.
+    let block_items = block_selection.route(covered_blocks);
     referenced_blocks.extend(block_items.iter().map(|item| item.block_number as u64));
 
     // Validate the requested block fields once per distinct block. The

@@ -117,26 +117,6 @@ pub struct SvmHyperSyncClient {
 
 #[napi]
 impl SvmHyperSyncClient {
-    #[napi(constructor)]
-    pub fn new(
-        cfg: SvmClientConfig,
-        user_agent: String,
-        programs: Vec<SvmProgramInput>,
-        block_registrations: Vec<OnBlockRegistrationInput>,
-        address_store: &AddressStore,
-    ) -> napi::Result<SvmHyperSyncClient> {
-        Self::from_config(
-            cfg,
-            user_agent,
-            programs,
-            block_registrations,
-            address_store,
-        )
-    }
-
-    /// Factory taking a custom user agent, mirroring EVM's `new_with_agent`.
-    /// Exposed so callers that grab the class dynamically (e.g. ReScript
-    /// reaching through the addon dict) can use `@send` rather than `%raw`.
     #[napi(factory)]
     pub fn from_config(
         cfg: SvmClientConfig,
@@ -236,7 +216,11 @@ impl SvmHyperSyncClient {
         let from_slot = u64::try_from(params.from_slot)
             .context("from_slot must be non-negative")
             .map_err(map_err)?;
-        let to_slot = params.to_slot.and_then(|to| u64::try_from(to).ok());
+        let to_slot = params
+            .to_slot
+            .map(|to| u64::try_from(to).context("to_slot must be non-negative"))
+            .transpose()
+            .map_err(map_err)?;
         let block_selection = self
             .block_registrations
             .select(&params.on_block_registration_indexes, from_slot, to_slot)
@@ -336,8 +320,7 @@ impl SvmHyperSyncClient {
         let returned_slots: HashSet<u64> =
             resp.blocks.iter().filter_map(|block| block.slot).collect();
         let block_items: Vec<BlockItem> = block_selection
-            .route(from_slot..resp.next_slot, |_| true)
-            .unwrap_or_default()
+            .route(from_slot..resp.next_slot)
             .into_iter()
             .filter(|item| returned_slots.contains(&(item.block_number as u64)))
             .collect();
@@ -694,7 +677,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
-        let client = SvmHyperSyncClient::new(
+        let client = SvmHyperSyncClient::from_config(
             SvmClientConfig {
                 url: "https://solana.hypersync.xyz".into(),
                 ..Default::default()

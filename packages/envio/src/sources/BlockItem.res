@@ -6,6 +6,8 @@ type t = {
   onBlockRegistrationIndex: int,
 }
 
+let isFetched = (reg: Internal.onBlockRegistration) => reg.blockFieldMask->Option.isSome
+
 // Mirrors `Registration::runs_on` in `block_selection.rs`.
 let runsOn = (
   {startBlock, endBlock, interval}: Internal.onBlockRegistration,
