@@ -89,7 +89,7 @@ let callEffect = (
 ) => {
   inMemTable.stats->EffectState.startCall(~timerRef)
 
-  effect.handler(arg)
+  ConsoleScope.runEffect(arg, () => effect.handler(arg))
   ->Promise.thenResolve(output => {
     inMemTable->InMemoryStore.setEffectOutput(
       ~chainId=arg.chainId,

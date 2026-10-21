@@ -57,7 +57,10 @@ let runContractRegistersOrThrow = async (
     }
     // Catch sync and async errors
     try {
-      let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
+      let result = ConsoleScope.run(
+        Logger(() => params->ContractRegisterContext.loggerForItem),
+        () => contractRegister(ContractRegisterContext.getContractRegisterArgs(params)),
+      )
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.

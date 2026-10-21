@@ -6,7 +6,7 @@ switch NodeJs.Process.process.env->Dict.get("ENVIO_TEST_LOGGING_FORMAT") {
 }
 
 let logger = Logger.make({strategy: "ecs-console", logFile: "", level: #info, fileLevel: #silent})
-let _ = logger->Logger.routeConsole
+let _ = logger->Logger.routeConsole(~loggerFor=ConsoleScope.loggerFor)
 let pad = "x"->String.repeat(200_000)
 for i in 0 to 49 {
   Console.log(`console ${i->Int.toString} ${pad}`)

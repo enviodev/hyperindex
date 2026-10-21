@@ -19,7 +19,12 @@ chains:
 `,
 )
 
-type handlerContext = {log: Envio.logger}
+let eventFieldNames = ["chainId", "contract", "event", "block", "logIndex", "address"]
+
+type handlerContext = {
+  log: Envio.logger,
+  effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
+}
 
 let isHandlerLine = (line: dict<JSON.t>) =>
   switch line->Dict.get("level") {
@@ -288,7 +293,12 @@ describe("console in a handler", () => {
               | _ => false
               },
           )
-          ->Array.map(Dict.toArray),
+          ->Array.map(
+            line =>
+              line
+              ->Dict.toArray
+              ->Array.filter(((key, _)) => !(eventFieldNames->Array.includes(key))),
+          ),
         ).toEqual([
           [
             ("level", JSON.String("uinfo")),
@@ -313,6 +323,90 @@ describe("console in a handler", () => {
           [("level", JSON.String("uwarn")), ("msg", JSON.String("two objects { a: 1 } { b: 2 }"))],
           [("level", JSON.String("uinfo")), ("msg", JSON.String("x seen { a: 1 }"))],
         ])
+      },
+    )
+  })
+
+  // Each line names what it's about, like `context.log` does: the event for a
+  // handler or a contract register, plus the effect for an effect. A handler's
+  // preload run says nothing, as its run proper says it all again; an effect
+  // runs once, usually while preloading, so it's never silenced.
+  Async.it("names the event, and stays silent while preloading", async t => {
+    // Looked up on each call: the run routes `console` after this test's body is
+    // defined.
+    let log: string => unit = %raw(`message => console.log(message)`)
+    let lookup = Envio.createEffect(
+      {
+        name: "lookup",
+        input: S.string,
+        output: S.string,
+        rateLimit: Disable,
+      },
+      async ({input}) => {
+        log("effect ran")
+        input
+      },
+    )
+    await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      async (~indexer, ~source) => {
+        let mock = source(1)
+        mock.resolveGetHeightOrThrow(300)
+        await mock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 5,
+                  logIndex: 2,
+                  contractRegister: async _ => log("registering"),
+                  preloadHandler: async args => {
+                    log("preloading")
+                    let context =
+                      args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                    let _ = await context.effect(lookup, "in")
+                  },
+                  handler: async args => {
+                    let context =
+                      args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                    let _ = await context.effect(lookup, "in")
+                    log("handled")
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        let eventFields = [
+          ("chainId", JSON.Number(1.)),
+          ("contract", JSON.String("Token")),
+          ("event", JSON.String("MockEvent")),
+          ("block", JSON.Number(5.)),
+          ("logIndex", JSON.Number(2.)),
+          ("address", JSON.String("0x0000000000000000000000000000000000000000")),
+        ]
+        let line = (msg, fields) =>
+          [("level", JSON.String("uinfo")), ("msg", JSON.String(msg)), ...fields]
+        t.expect(
+          indexer.allLogsAsJson()->Array.filter(isHandlerLine)->Array.map(Dict.toArray),
+        ).toEqual(
+          ConsoleScope.isCheap
+            ? [
+                line("registering", eventFields),
+                line("effect ran", [...eventFields, ("effect", JSON.String("lookup"))]),
+                line("handled", eventFields),
+              ]
+              // Without async context frames, knowing the scope would slow every
+              // `await` in the process, so lines go without it.
+            : [
+                line("registering", []),
+                line("preloading", []),
+                line("effect ran", []),
+                line("handled", []),
+              ],
+        )
       },
     )
   })

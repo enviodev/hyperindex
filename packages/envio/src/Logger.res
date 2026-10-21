@@ -273,13 +273,18 @@ let routeConsoleTo: (
 }`)
 
 // A handler's `console` writes lines through `logger`, at the `u*` level its
-// method names, instead of writing stdout behind the logger's back. Returns
-// the function that puts the original methods back.
-let routeConsole = (logger: t) =>
+// method names, instead of writing stdout behind the logger's back.
+// `loggerFor` picks the logger in scope where the call is made, or `None` to
+// drop the line. Returns the function that puts the original methods back.
+let routeConsole = (logger: t, ~loggerFor: t => option<t>) =>
   routeConsoleTo(
     consoleClass,
     writableClass,
     formatWithOptions,
     level => levelNumber(level) >= logger.minLevel,
-    (level, message, params) => logger->logAt(level, message, ~params=?params->Nullable.toOption),
+    (level, message, params) =>
+      switch loggerFor(logger) {
+      | Some(logger) => logger->logAt(level, message, ~params=?params->Nullable.toOption)
+      | None => ()
+      },
   )

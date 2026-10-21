@@ -205,7 +205,7 @@ let run = async (
   let pgSchema = TestPgSchema.make()
   // Handler files log through `console` as they load and run, so the run's
   // capture holds those lines too.
-  let restoreConsole = logger->Logger.routeConsole
+  let restoreConsole = logger->Logger.routeConsole(~loggerFor=ConsoleScope.loggerFor)
   let cacheDir = NodeJs.Path.resolve([tmpdir(), `envio-cache-${pgSchema}`])
   let clients = []
   let storages: array<Persistence.storage> = []

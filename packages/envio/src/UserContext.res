@@ -98,6 +98,11 @@ let initEffect = (params: contextParams) => {
         chainId: handlerChainId,
         checkpointId: params.checkpointId,
       }
+      effectArgs->ConsoleScope.setForEffect(() =>
+        params.indexerState
+        ->IndexerState.loggerForItem(params.item)
+        ->Logger.withFields({"effect": effect.name})
+      )
       LoadLayer.loadEffect(
         ~loadManager=params.loadManager,
         ~persistence=params.persistence,

@@ -246,6 +246,7 @@ let runBatchHandlersOrThrow = async (
   ~persistence,
   ~config,
   ~chains: Internal.chains,
+  ~consoleScope,
 ) => {
   let itemIdx = ref(0)
 
@@ -255,6 +256,7 @@ let runBatchHandlersOrThrow = async (
 
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
+      consoleScope->ConsoleScope.setItem(item)
 
       await runHandlerOrThrow(
         item,
@@ -357,18 +359,27 @@ let processEventBatch = async (
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
       await materializeBatchEvents(batch, ~chainStates)
-      await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
+      await ConsoleScope.run(Silent, () =>
+        batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
+      )
     }
 
     let elapsedTimeAfterLoaders = timeRef->Performance.secondsSince
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->runBatchHandlersOrThrow(
-        ~indexerState,
-        ~loadManager,
-        ~persistence,
-        ~config,
-        ~chains,
+      let consoleScope = ConsoleScope.Item({
+        item: batch.items->Array.getUnsafe(0),
+        loggerFor: item => indexerState->IndexerState.loggerForItem(item),
+      })
+      await ConsoleScope.run(consoleScope, () =>
+        batch->runBatchHandlersOrThrow(
+          ~indexerState,
+          ~loadManager,
+          ~persistence,
+          ~config,
+          ~chains,
+          ~consoleScope,
+        )
       )
     }
 
