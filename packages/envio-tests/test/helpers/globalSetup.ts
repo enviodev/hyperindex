@@ -1,7 +1,27 @@
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+
+// envio loads its platform package before any dev build (`Core.loadAddon`).
+// CI installs that package from the release build of the commit under test, so
+// a cargo build there would be a cold debug build of the whole crate that no
+// test loads — minutes on a fresh runner.
+function platformAddonInstalled(): boolean {
+  const envioRequire = createRequire(
+    createRequire(import.meta.url).resolve("envio/package.json")
+  );
+  const name = `envio-${process.platform}-${process.arch}`;
+  return [name, `${name}-musl`].some((pkg) => {
+    try {
+      envioRequire.resolve(pkg);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
 
 // Build the addon once before worker forks exist. Each fork otherwise runs
 // `cargo build --lib` and can sit on cargo's lock through vitest's teardown.
@@ -14,7 +34,7 @@ function buildDevAddon(): void {
     ".."
   );
   const cliDir = path.join(repoRoot, "packages", "cli");
-  if (!fs.existsSync(path.join(cliDir, "Cargo.toml"))) {
+  if (!fs.existsSync(path.join(cliDir, "Cargo.toml")) || platformAddonInstalled()) {
     return;
   }
 
