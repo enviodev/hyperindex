@@ -218,34 +218,56 @@ type writableClass
 @module("node:console") external consoleClass: consoleClass = "Console"
 @module("node:stream") external writableClass: writableClass = "Writable"
 
-// Each method writes through a `Console` of its level's own, so it formats as
-// Node's would; group indentation is kept per level.
+type formatWithOptions
+@module("node:util") external formatWithOptions: formatWithOptions = "formatWithOptions"
+
+// The common methods skip formatting when the level is off, and read a message
+// and one plain object (or an Error) as `context.log`'s message and params;
+// anything else is formatted into the message as Node's console would. The
+// rest write through a `Console` of their level's own, so they format as
+// Node's would, with group indentation kept per level.
 let routeConsoleTo: (
   consoleClass,
   writableClass,
-  (level, string) => unit,
-) => unit => unit = %raw(`(Console, Writable, write) => {
-  const methodsByLevel = {
-    uinfo: ["log", "info", "dir", "dirxml", "table", "count", "countReset", "group", "groupCollapsed", "groupEnd", "time", "timeEnd", "timeLog"],
-    udebug: ["debug", "trace"],
-    uwarn: ["warn", "assert"],
-    uerror: ["error"],
+  formatWithOptions,
+  level => bool,
+  (level, string, Nullable.t<unknown>) => unit,
+) => unit => unit = %raw(`(Console, Writable, formatWithOptions, isEnabled, write) => {
+  const isParams = (value) =>
+    value instanceof Error ||
+    (typeof value === "object" && value !== null &&
+      (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null));
+  const direct = (level) => (...args) => {
+    if (!isEnabled(level)) return;
+    if (args.length === 2 && typeof args[0] === "string" && !args[0].includes("%") && isParams(args[1])) {
+      write(level, args[0], args[1]);
+    } else {
+      write(level, formatWithOptions({colors: false}, ...args), undefined);
+    }
+  };
+  const directByName = {log: "uinfo", info: "uinfo", debug: "udebug", warn: "uwarn", error: "uerror"};
+  const viaConsoleByLevel = {
+    uinfo: ["dir", "dirxml", "table", "count", "countReset", "group", "groupCollapsed", "groupEnd", "time", "timeEnd", "timeLog"],
+    udebug: ["trace"],
+    uwarn: ["assert"],
   };
   const original = [];
-  for (const level of Object.keys(methodsByLevel)) {
+  const replace = (name, method) => {
+    original.push([name, console[name]]);
+    console[name] = method;
+  };
+  for (const name of Object.keys(directByName)) replace(name, direct(directByName[name]));
+  for (const level of Object.keys(viaConsoleByLevel)) {
     const stream = new Writable({
       decodeStrings: false,
       write(chunk, _encoding, callback) {
         // Each call ends its output with a newline, which a line doesn't need.
-        write(level, String(chunk).replace(/\n$/, ""));
+        write(level, String(chunk).replace(/\n$/, ""), undefined);
         callback();
       },
     });
     const routed = new Console({stdout: stream, stderr: stream, colorMode: false});
-    for (const name of methodsByLevel[level]) {
-      original.push([name, console[name]]);
-      console[name] = routed[name].bind(routed);
-    }
+    for (const name of viaConsoleByLevel[level]) replace(name, routed[name].bind(routed));
   }
   return () => original.forEach(([name, method]) => { console[name] = method; });
 }`)
@@ -254,4 +276,10 @@ let routeConsoleTo: (
 // method names, instead of writing stdout behind the logger's back. Returns
 // the function that puts the original methods back.
 let routeConsole = (logger: t) =>
-  routeConsoleTo(consoleClass, writableClass, (level, text) => logger->logAt(level, text))
+  routeConsoleTo(
+    consoleClass,
+    writableClass,
+    formatWithOptions,
+    level => levelNumber(level) >= logger.minLevel,
+    (level, message, params) => logger->logAt(level, message, ~params=?params->Nullable.toOption),
+  )

@@ -245,4 +245,75 @@ describe("console in a handler", () => {
       },
     )
   })
+
+  // A message and one object read as `context.log`'s message and params, so
+  // they print and ship as fields; anything else is formatted into the message.
+  Async.it("takes a message and one object as the line's params", async t => {
+    let error = JsError.make("boom")
+    await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      async (~indexer, ~source) => {
+        let mock = source(1)
+        mock.resolveGetHeightOrThrow(300)
+        await mock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 5,
+                  logIndex: 2,
+                  handler: async _ => {
+                    let log: (string, {..}) => unit = %raw(`console.log`)
+                    let logError: (string, JsError.t) => unit = %raw(`console.error`)
+                    let warnTwo: (string, {..}, {..}) => unit = %raw(`console.warn`)
+                    let logFormatted: (string, string, {..}) => unit = %raw(`console.log`)
+                    log("transfer", {"amount": 10n, "to": "0x1"})
+                    logError("failed", error)
+                    warnTwo("two objects", {"a": 1}, {"b": 2})
+                    logFormatted("%s seen", "x", {"a": 1})
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        t.expect(
+          indexer.allLogsAsJson()
+          ->Array.filter(
+            line =>
+              switch line->Dict.get("level") {
+              | Some(String("uinfo" | "uwarn" | "uerror")) => true
+              | _ => false
+              },
+          )
+          ->Array.map(Dict.toArray),
+        ).toEqual([
+          [
+            ("level", JSON.String("uinfo")),
+            ("msg", JSON.String("transfer")),
+            ("amount", JSON.String("10")),
+            ("to", JSON.String("0x1")),
+          ],
+          [
+            ("level", JSON.String("uerror")),
+            ("msg", JSON.String("failed")),
+            (
+              "err",
+              JSON.Object(
+                dict{
+                  "type": JSON.String("Error"),
+                  "message": JSON.String("boom"),
+                  "stack": JSON.String(error->JsError.stack->Option.getOr("")),
+                },
+              ),
+            ),
+          ],
+          [("level", JSON.String("uwarn")), ("msg", JSON.String("two objects { a: 1 } { b: 2 }"))],
+          [("level", JSON.String("uinfo")), ("msg", JSON.String("x seen { a: 1 }"))],
+        ])
+      },
+    )
+  })
 })
