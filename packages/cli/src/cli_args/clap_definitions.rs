@@ -139,7 +139,7 @@ pub struct SubgraphDiffArgs {
     #[arg(long, default_value_t = 0)]
     pub max_field_mismatches: usize,
 
-    ///Requests in flight per endpoint
+    ///Requests in flight per endpoint (one fewer after each HTTP 429, down to one)
     #[arg(long, default_value_t = 4)]
     pub concurrency: usize,
 
@@ -159,6 +159,10 @@ pub struct SubgraphDiffArgs {
     ///Per-request timeout, in seconds
     #[arg(long, default_value_t = 60)]
     pub timeout: u64,
+
+    ///How long to wait for a reference behind ours to reach ours' block, in seconds
+    #[arg(long, default_value_t = 120)]
+    pub wait: u64,
 
     ///Print the report as JSON (stable shape, `schemaVersion: 1`) instead of a table
     #[arg(long)]

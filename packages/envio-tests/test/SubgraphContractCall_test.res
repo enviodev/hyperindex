@@ -1,7 +1,9 @@
 // Contract calls from a mapping: an envio effect over viem, evaluated at the
 // event's block. A revert is data; a transport failure is asked again.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8599")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -192,7 +194,7 @@ beforeAll(async () => {
       reply(SLOT_RESULT.replace(/2a$/, "07"));
     });
   });
-  await new Promise<void>((resolve) => server.listen(8599, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

@@ -57,6 +57,7 @@ type addon = {
   subgraphFillGenerated: (string, string, string, array<string>) => array<filledGeneratedFile>,
   subgraphWorkspacePackages: string => dict<string>,
   subgraphWorkspaceRoot: string => Null.t<string>,
+  subgraphScriptsWriting: (string, string) => array<array<string>>,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -368,6 +369,8 @@ let subgraphFillGenerated = (~root, ~manifestFile, ~outputDir, ~wanted) =>
 let subgraphWorkspacePackages = root => getAddon().subgraphWorkspacePackages(root)
 
 let subgraphWorkspaceRoot = root => getAddon().subgraphWorkspaceRoot(root)
+
+let subgraphScriptsWriting = (~dir, ~needle) => getAddon().subgraphScriptsWriting(dir, needle)
 
 let runCli = args => {
   let addon = getAddon()

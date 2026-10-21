@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
-use graphql_parser::schema::{Definition, Document, Type, TypeDefinition, Value};
+use graphql_parser::schema::{Definition, Document, Type, TypeDefinition};
 
 use crate::subgraph::{errors::Report, schema};
 
@@ -62,6 +62,26 @@ pub struct Entity {
     pub fields: Vec<Field>,
     /// Fields neither side stores, so neither can be compared.
     pub derived: Vec<String>,
+    /// How a graph endpoint serves the rows when not as an entity of this
+    /// name: an aggregation interval's table.
+    pub served: Option<Served>,
+}
+
+/// One interval of an `@aggregation`, stored as `<Aggregation>_<interval>`
+/// and served as `<collection>(interval: <interval>)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Served {
+    pub type_name: String,
+    pub args: String,
+}
+
+impl Entity {
+    /// The object type a graph endpoint serves the rows as.
+    pub fn graph_type(&self) -> &str {
+        self.served
+            .as_ref()
+            .map_or(self.name.as_str(), |served| served.type_name.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,32 +110,6 @@ impl Model {
             if object.name == "_Schema_" {
                 continue;
             }
-            let Some(entity_directive) = object.directives.iter().find(|d| d.name == "entity")
-            else {
-                continue;
-            };
-            let timeseries = entity_directive
-                .arguments
-                .iter()
-                .any(|(name, value)| name == "timeseries" && *value == Value::Boolean(true));
-            if timeseries || object.directives.iter().any(|d| d.name == "aggregation") {
-                skipped.push((
-                    object.name.clone(),
-                    "timeseries and aggregations aren't indexed by envio".to_string(),
-                ));
-                continue;
-            }
-
-            let types = translation
-                .entity_field_types
-                .get(&object.name)
-                .cloned()
-                .unwrap_or_default();
-            let order = translation
-                .entity_fields
-                .get(&object.name)
-                .cloned()
-                .unwrap_or_default();
             let nullable: BTreeMap<String, bool> = object
                 .fields
                 .iter()
@@ -126,13 +120,45 @@ impl Model {
                     )
                 })
                 .collect();
-            entities.push(entity(
-                &object.name,
-                &order,
-                &types,
-                &nullable,
-                &translation,
-            ));
+            let stored = |name: &str| {
+                let types = translation
+                    .entity_field_types
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_default();
+                let order = translation
+                    .entity_fields
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_default();
+                entity(name, &order, &types, &nullable, &translation)
+            };
+            if object.directives.iter().any(|d| d.name == "aggregation") {
+                let Some(aggregation) = translation
+                    .aggregations
+                    .iter()
+                    .find(|aggregation| aggregation.name == object.name)
+                else {
+                    skipped.push((
+                        object.name.clone(),
+                        "an @aggregation envio can't translate".to_string(),
+                    ));
+                    continue;
+                };
+                for interval in &aggregation.intervals {
+                    let mut rows = stored(&format!("{}_{interval}", object.name));
+                    rows.served = Some(Served {
+                        type_name: object.name.clone(),
+                        args: format!("interval: {interval}"),
+                    });
+                    entities.push(rows);
+                }
+                continue;
+            }
+            // Timeseries are ordinary immutable entities to both sides.
+            if object.directives.iter().any(|d| d.name == "entity") {
+                entities.push(stored(&object.name));
+            }
         }
 
         Ok(Model { entities, skipped })
@@ -194,6 +220,7 @@ fn entity(
         id: id_of(name),
         fields,
         derived,
+        served: None,
     }
 }
 
@@ -233,6 +260,13 @@ type Token @entity(immutable: true) {
 type Candle @entity(timeseries: true) {
   id: Int8!
   timestamp: Timestamp!
+  volume: BigInt!
+}
+
+type CandleStats @aggregation(intervals: ["hour", "day"], source: "Candle") {
+  id: Int8!
+  timestamp: Timestamp!
+  volume: BigInt! @aggregate(fn: "sum", arg: "volume")
 }
 
 enum Status {
@@ -250,6 +284,32 @@ enum Status {
             list,
             nullable: ["status", "frozen"].contains(&name),
             declared: declared.to_string(),
+        };
+        // A timeseries is stored as it is served; an aggregation is one table
+        // per interval, `CandleStats_hour`, which graph-node serves as
+        // `candleStats(interval: hour)`.
+        let candle = |name: &str, interval: Option<&str>| Entity {
+            name: name.to_string(),
+            id: Scalar::Integer,
+            fields: vec![
+                field(
+                    "timestamp",
+                    FieldKind::Scalar(Scalar::Integer),
+                    false,
+                    "Timestamp",
+                ),
+                field(
+                    "volume",
+                    FieldKind::Scalar(Scalar::Integer),
+                    false,
+                    "BigInt",
+                ),
+            ],
+            derived: vec![],
+            served: interval.map(|interval| Served {
+                type_name: "CandleStats".to_string(),
+                args: format!("interval: {interval}"),
+            }),
         };
         assert_eq!(
             model,
@@ -277,6 +337,7 @@ enum Status {
                             field("status", FieldKind::Scalar(Scalar::Text), false, "Status"),
                         ],
                         derived: vec!["tokens".to_string()],
+                        served: None,
                     },
                     Entity {
                         name: "Token".to_string(),
@@ -312,12 +373,13 @@ enum Status {
                             ),
                         ],
                         derived: vec![],
+                        served: None,
                     },
+                    candle("Candle", None),
+                    candle("CandleStats_hour", Some("hour")),
+                    candle("CandleStats_day", Some("day")),
                 ],
-                skipped: vec![(
-                    "Candle".to_string(),
-                    "timeseries and aggregations aren't indexed by envio".to_string()
-                )],
+                skipped: vec![],
             }
         );
     }

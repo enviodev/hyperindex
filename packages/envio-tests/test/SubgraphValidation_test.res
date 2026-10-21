@@ -357,7 +357,7 @@ type Token @entity {
 `,
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support lists whose elements can be null, like [String] yet.",
+      ~headline="Envio Subgraph doesn't support nested lists whose elements can be null, like [[Int!]] yet.",
       ~location="schema.graphql → Token.grid",
     )
   })
@@ -497,7 +497,7 @@ describe("subgraph translation: unknown things", () => {
   it("accepts specVersion 1.4.0, whose declared calls may read a struct field", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,
-      ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4840")]),
+      ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${FreePort.pick()}`)]),
       ~manifest=manifestWith(
         `${plainEventHandler}
           calls:
@@ -665,16 +665,19 @@ describe("subgraph translation: reporting", () => {
   // subgraph project off it.
   it("points an unsupported feature at the subgraph release", t => {
     let message = translate(
-      ~manifest=manifestWith(
-        `${plainEventHandler}
-          topic0: "0x0000000000000000000000000000000000000000000000000000000000000001"`,
-      ),
+      ~manifest=manifestWith(`      eventHandlers:
+        - event: LOG_CALL(indexed bytes4,indexed address,bytes)
+          topic0: "0x0000000000000000000000000000000000000000000000000000000000000001"
+          topic1:
+            - "0x0000000000000000000000000000000000000000000000000000000000000002"
+          handler: handleLogCall`),
       ~schema=baseSchema,
+      ~extraAbi=`{"type":"event","name":"LOG_CALL","anonymous":true,"inputs":[{"name":"sig","type":"bytes4","indexed":true},{"name":"caller","type":"address","indexed":true},{"name":"data","type":"bytes","indexed":false}]}`,
     )
     t.expect(
       message,
-    ).toEqual(`Envio Subgraph doesn't support event handlers whose topic0 is not the event signature's hash on an event the ABI doesn't declare anonymous yet.
-  Found in data source "Token" → eventHandlers → "handleTransfer" → topic0.
+    ).toEqual(`Envio Subgraph doesn't support topic1-3 filters on an anonymous event matched on topic0 yet.
+  Found in data source "Token" → eventHandlers → "handleLogCall" → topic0.
 First, make sure you're on the newest Envio Subgraph release — support may have landed:
   pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing

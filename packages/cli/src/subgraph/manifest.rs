@@ -252,8 +252,16 @@ impl<'a> Obj<'a> {
         }
     }
 
+    /// graph-node reads the manifest with serde_yaml, which reads a plain
+    /// scalar into a String field as written: `network: 66665` is the network
+    /// "66665". Only an integer is taken: a float doesn't read back as written
+    /// (`1e3` is 1000), nor, though the parsed value can't tell, a hex one.
     fn string(&mut self, key: &str) -> Option<String> {
-        self.typed(key, "a string", |v| v.as_str().map(|s| s.to_string()))
+        self.typed(key, "a string", |v| match v {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(number) if number.is_u64() || number.is_i64() => Some(number.to_string()),
+            _ => None,
+        })
     }
 
     fn u64(&mut self, key: &str) -> Option<u64> {

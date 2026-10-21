@@ -13,7 +13,7 @@ pub mod postgres;
 pub mod report;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -36,6 +36,7 @@ const MISMATCH_EXAMPLES: usize = 10;
 /// Ids on one side only re-asked by `id_in` per type and side, and per query.
 const RECHECK_CAP: usize = 1000;
 const RECHECK_BATCH: usize = 100;
+const WAIT_POLL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -51,6 +52,9 @@ pub struct Options {
     pub headers: Vec<String>,
     pub allow_indexing_errors: bool,
     pub timeout: Duration,
+    pub wait: Duration,
+    /// The subgraph manifest `--config` names; `subgraph.yaml` when `None`.
+    pub manifest: Option<PathBuf>,
     pub progress: bool,
 }
 
@@ -119,7 +123,7 @@ pub async fn run(project_root: &Path, options: &Options) -> Report {
 }
 
 async fn compare(project_root: &Path, options: &Options, report: &mut Report) -> Result<()> {
-    let model = load_model(project_root)?;
+    let model = load_model(project_root, options.manifest.as_deref())?;
     report.skipped_types = model
         .skipped
         .iter()
@@ -157,10 +161,20 @@ async fn compare(project_root: &Path, options: &Options, report: &mut Report) ->
         }
     };
 
-    let meta = reference
+    let mut meta = reference
         .meta()
         .await
         .context("Failed to read the reference's _meta")?;
+    // Ours' block is fixed by its snapshot, so a reference that trails it at
+    // the chain head can only be compared once it gets there.
+    let waiting = Instant::now();
+    while meta.block < ours_block && waiting.elapsed() < options.wait {
+        tokio::time::sleep(WAIT_POLL.min(options.wait.saturating_sub(waiting.elapsed()))).await;
+        meta = reference
+            .meta()
+            .await
+            .context("Failed to read the reference's _meta")?;
+    }
     report.reference.latest_block = Some(meta.block);
     report.reference.deployment = meta.deployment.clone();
     report.reference.has_indexing_errors = Some(meta.has_indexing_errors);
@@ -235,20 +249,27 @@ async fn compare(project_root: &Path, options: &Options, report: &mut Report) ->
     Ok(())
 }
 
-fn load_model(project_root: &Path) -> Result<Model> {
-    let manifest_path = project_root.join("subgraph.yaml");
-    let manifest = std::fs::read_to_string(&manifest_path).map_err(|_| {
-        anyhow!(
+fn load_model(project_root: &Path, manifest: Option<&Path>) -> Result<Model> {
+    let manifest_path = manifest
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project_root.join(crate::subgraph::DEFAULT_MANIFEST));
+    let manifest = std::fs::read_to_string(&manifest_path).map_err(|_| match manifest {
+        Some(_) => anyhow!("No subgraph manifest at {}.", manifest_path.display()),
+        None => anyhow!(
             "No subgraph.yaml in {}. Run `envio subgraph diff` inside the subgraph project (or \
-             pass -d <dir>).",
+             pass -d <dir>, and --config for a manifest of another name).",
             project_root.display()
-        )
+        ),
     })?;
     let schema_file = serde_yaml::from_str::<serde_yaml::Value>(&manifest)
         .ok()
         .and_then(|value| Some(value.get("schema")?.get("file")?.as_str()?.to_string()))
         .unwrap_or_else(|| "./schema.graphql".to_string());
-    let schema_path = project_root.join(&schema_file);
+    // graph-cli resolves the schema path against the manifest's directory.
+    let schema_path = manifest_path
+        .parent()
+        .unwrap_or(project_root)
+        .join(&schema_file);
     let schema = std::fs::read_to_string(&schema_path)
         .with_context(|| format!("Failed to read {}", schema_path.display()))?;
     Model::from_schema(&schema)
@@ -258,9 +279,11 @@ fn select_types<'a>(model: &'a Model, types: &[String]) -> Result<Vec<&'a Entity
     if types.is_empty() {
         return Ok(model.entities.iter().collect());
     }
+    // An aggregation's name selects each of its intervals.
+    let named = |entity: &Entity, name: &str| entity.name == name || entity.graph_type() == name;
     let unknown: Vec<&str> = types
         .iter()
-        .filter(|name| !model.entities.iter().any(|e| &e.name == *name))
+        .filter(|name| !model.entities.iter().any(|e| named(e, name)))
         .map(String::as_str)
         .collect();
     if !unknown.is_empty() {
@@ -278,7 +301,7 @@ fn select_types<'a>(model: &'a Model, types: &[String]) -> Result<Vec<&'a Entity
     Ok(model
         .entities
         .iter()
-        .filter(|entity| types.contains(&entity.name))
+        .filter(|entity| types.iter().any(|name| named(entity, name)))
         .collect())
 }
 
@@ -299,8 +322,9 @@ pub fn pin_block(requested: Option<u64>, ours: u64, reference: u64) -> Result<u6
     if reference < ours {
         bail!(
             "The reference has only indexed up to block {reference}, behind ours at {ours}, and \
-             graph-node can't answer for a block it hasn't reached. Rerun once it has, or \
-             compare an indexer stopped at or before block {reference}."
+             graph-node can't answer for a block it hasn't reached. Rerun once it has (or give \
+             it longer with --wait), or compare an indexer stopped at or before block \
+             {reference}."
         );
     }
     Ok(ours)
@@ -316,6 +340,15 @@ async fn exposed_or_guess(client: &GraphClient, who: &str, warnings: &mut Vec<St
             ));
             Exposed::default()
         }
+    }
+}
+
+/// An aggregation interval's collection carries the interval graph-node
+/// requires: `candleStats(interval: hour)`.
+fn served_collection(collection: String, entity: &Entity) -> String {
+    match &entity.served {
+        Some(served) => format!("{collection}({})", served.args),
+        None => collection,
     }
 }
 
@@ -367,13 +400,16 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         Ours::Graph { exposed, .. } => exposed,
         Ours::Postgres(_) => &empty,
     };
-    let their_collection = collection(
-        context.reference_exposed,
-        our_exposed,
-        &entity.name,
-        "The reference",
-    )?;
-    let their_fields = context.reference_exposed.fields.get(&entity.name);
+    let their_collection = served_collection(
+        collection(
+            context.reference_exposed,
+            our_exposed,
+            entity.graph_type(),
+            "The reference",
+        )?,
+        entity,
+    );
+    let their_fields = context.reference_exposed.fields.get(entity.graph_type());
 
     let (our_columns, our_collection, our_fields) = match context.ours {
         Ours::Postgres(pg) => {
@@ -385,13 +421,16 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         }
         Ours::Graph { exposed, .. } => (
             None,
-            Some(collection(
-                exposed,
-                context.reference_exposed,
-                &entity.name,
-                "Ours",
-            )?),
-            exposed.fields.get(&entity.name),
+            Some(served_collection(
+                collection(
+                    exposed,
+                    context.reference_exposed,
+                    entity.graph_type(),
+                    "Ours",
+                )?,
+                entity,
+            )),
+            exposed.fields.get(entity.graph_type()),
         ),
     };
 

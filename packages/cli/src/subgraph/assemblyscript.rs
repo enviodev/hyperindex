@@ -220,6 +220,9 @@ fn transform(source: &str, path: &Path, legacy_nulls: bool, hoist: bool) -> Resu
         return Err(describe(path, source, parsed.diagnostics.errors()));
     }
     let mut program = parsed.program;
+    if let Some(error) = duplicate_class(&program, path, source) {
+        return Err(error);
+    }
     drop_reimported_names(&mut program);
 
     let mut rewrite = Rewrite {
@@ -2452,6 +2455,64 @@ fn drop_reimported_names(program: &mut Program<'_>) {
             }
         }
     }
+}
+
+/// A file declaring one class name twice, which asc refuses (TS2300 Duplicate
+/// identifier) and an ES module can't load. graph codegen writes one for an ABI
+/// with an event of its own name: the binding is named after the ABI and each
+/// event class after its event (graph-cli's codegen/abi.ts), so osr21's
+/// `Memo` ABI with a `Memo` event gets two `export class Memo`.
+fn duplicate_class(program: &Program<'_>, path: &Path, source: &str) -> Option<anyhow::Error> {
+    let line = |span: Span| {
+        source[..(span.start as usize).min(source.len())]
+            .matches('\n')
+            .count()
+            + 1
+    };
+    let mut seen: HashMap<String, &Class<'_>> = HashMap::new();
+    for statement in &program.body {
+        let class = match statement {
+            Statement::ClassDeclaration(class) => class,
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::ClassDeclaration(class) => class,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let Some(id) = class.id.as_ref() else {
+            continue;
+        };
+        let name = id.name.to_string();
+        let Some(first) = seen.get(&name) else {
+            seen.insert(name, class);
+            continue;
+        };
+        let extends = |class: &Class<'_>| {
+            class
+                .heritage
+                .as_ref()
+                .map(|heritage| heritage.expression.span().source_text(source))
+        };
+        let kinds = [extends(first), extends(class)];
+        let generated = kinds.contains(&Some("ethereum.SmartContract"))
+            && kinds.contains(&Some("ethereum.Event"));
+        return Some(anyhow!(
+            "{} declares the class {name} twice (lines {} and {}). asc refuses that (TS2300 Duplicate \
+             identifier), so `graph build` fails on this file as well.{}",
+            path.display(),
+            line(first.span),
+            line(class.span),
+            if generated {
+                format!(
+                    " graph codegen names the contract binding after the ABI (\"{name}\") and each event \
+                     class after its event, so an ABI with an event of its own name gets two."
+                )
+            } else {
+                String::new()
+            }
+        ));
+    }
+    None
 }
 
 /// Module-level names a `changetype` target can refer to at runtime.

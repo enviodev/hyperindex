@@ -1394,7 +1394,7 @@ function pointerBytes(elements: unknown[]): Bytes {
   return bytes;
 }
 
-function toRow(entityType: string, entity: Entity): Record<string, unknown> {
+function toRow(entityType: string, entity: Entity, id?: string): Record<string, unknown> {
   const { schema } = currentScope();
   // graph-ts holds a relation as the related entity's id under the field's own
   // name; envio's column for it is `<field>_id`.
@@ -1410,6 +1410,19 @@ function toRow(entityType: string, entity: Entity): Record<string, unknown> {
     // a relation, which carries one. Every other `Bytes` field is a bytes
     // column, which is what `bytes_type: uint8array` makes of it.
     const isId = entry.key === "id" || refFields.has(entry.key) || listFields.has(entry.key);
+    const declared = schema.entityFieldTypes[entityType]?.[entry.key];
+    if (
+      declared?.nullableElements &&
+      entry.value.kind === ValueKind.ARRAY &&
+      entry.value.toArray().some((item) => item.kind === ValueKind.NULL || item.data == null)
+    ) {
+      throw unsupported(
+        "a null element in a list field",
+        `${entityType}[${id}].${entry.key}`,
+        `graph-node stores ${entityType}.${entry.key} ([${declared.kind}]) with the null in it, and envio's store ` +
+          "holds list elements that aren't null",
+      );
+    }
     row[column] =
       timestampFields.has(entry.key) && entry.value.kind !== ValueKind.NULL
         ? new Date(Number(entry.value.toTimestamp() / 1000n))
@@ -1757,7 +1770,7 @@ const storeImpl = {
     const scope = currentScope();
     const own = fileAccess(scope, entityType, id);
     if (scope.file) scope.file.written.add(`${entityType}\u0000${id}`);
-    const row = toRow(entityType, data);
+    const row = toRow(entityType, data, id);
     row.id = id;
     // graph-node merges a save onto the stored entity (EntityCache::set is an
     // Update, merged by merge_remove_null_fields): a field this instance
@@ -2907,7 +2920,9 @@ class EthereumEvent {
     this._address = value;
   }
   get logIndex(): BigInt_ {
-    return (this._logIndex ??= BigInt_.fromI32(this._raw.logIndex));
+    // graph-node builds it from the log's U256 index: minimal two's
+    // complement bytes, not an i32's four.
+    return (this._logIndex ??= new BigInt_(BigInt(this._raw.logIndex)));
   }
   set logIndex(value: BigInt_) {
     this._logIndex = value;

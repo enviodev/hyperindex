@@ -41,7 +41,7 @@ function maxBatchFromEnv(): number {
 }
 
 /**
- * Runs at most `the limit at once, queueing the rest. A slot is
+ * Runs at most `maxInFlight` requests at once, queueing the rest. A slot is
  * held at most the request deadline: one that never settles would otherwise
  * keep it for good, and a handful of those stall every call behind them with
  * no connection doing anything.

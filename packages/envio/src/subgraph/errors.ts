@@ -83,14 +83,3 @@ export function strictNamespace<T extends object>(name: string, target: T): T {
     },
   });
 }
-
-/** A known-but-refused field: enumerable, so a plain throwing getter is enough. */
-export function refusedGetter(object: object, prop: string, feature: string, location: string) {
-  Object.defineProperty(object, prop, {
-    enumerable: true,
-    configurable: true,
-    get() {
-      throw unsupported(feature, location);
-    },
-  });
-}

@@ -24,7 +24,7 @@ let fixture = relativePath =>
 let abis = ["abis/Margin.json", "abis/ERC20.json", "abis/Registry.json"]
 
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4790")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${FreePort.pick()}`)]),
   ~manifest=fixture("subgraph.yaml"),
   ~schema=fixture("schema.graphql"),
   ~files=Dict.fromArray(abis->Array.map(file => ("./" ++ file, fixture(file)))),

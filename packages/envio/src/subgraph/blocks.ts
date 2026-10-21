@@ -10,8 +10,9 @@
  *
  * `block.hash` and the other header fields ride the same path, as a second
  * batcher so a handler that only reads the timestamp keeps its narrow
- * queries. A header is only ever served from below the chain's head by its
- * reorg depth (spec/BLOCK_HASH.md): the translator holds the chain back by
+ * queries. Fetched after the batch, a header is outside the reorg guard that
+ * validates an event's block, so it is only ever served from below the
+ * chain's head by its reorg depth: the translator holds the chain back by
  * that much, and the check here is the backstop.
  */
 

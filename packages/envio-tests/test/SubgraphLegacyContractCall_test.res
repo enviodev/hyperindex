@@ -46,8 +46,10 @@ let abi = `[
   {"type":"function","name":"paused","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"bool"}]}
 ]`
 
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4791")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest,
   ~schema,
   ~files=Dict.fromArray([("abis/Registry.json", abi)]),
@@ -157,7 +159,7 @@ beforeAll(async () => {
       res.end(JSON.stringify(Array.isArray(JSON.parse(body)) ? answers : answers[0]));
     });
   });
-  await new Promise<void>((resolve) => server.listen(4791, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

@@ -2,8 +2,10 @@
 // requests: one HTTP round trip answers many. Each call keeps its own answer —
 // a revert stays that call's revert — and an endpoint that limits or refuses
 // batches still gets every call answered.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4826")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -121,7 +123,7 @@ beforeAll(async () => {
       }, 10);
     });
   });
-  await new Promise<void>((resolve) => server.listen(4826, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {
