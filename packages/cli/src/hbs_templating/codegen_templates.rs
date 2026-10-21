@@ -10,7 +10,7 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField},
         event_parsing::abi_to_rescript_type,
         field_types,
-        human_config::{HexType, HumanConfig, StartBlock},
+        human_config::{HumanConfig, StartBlock},
         system_config::{
             self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SelectedField,
             SystemConfig,
@@ -2427,7 +2427,7 @@ type testIndexer = {{
                 &envio_dts_code,
                 &entity_aliases,
                 cfg.get_ecosystem(),
-                cfg.human_config.hex_type(),
+                cfg.human_config.strict_hex_type(),
                 ConfigBodies {
                     evm_chains: &evm_chains_body,
                     evm_contracts: &evm_contracts_body,
@@ -2478,7 +2478,7 @@ type testIndexer = {{
         file_level_types: &str,
         entity_aliases: &[String],
         ecosystem: Ecosystem,
-        hex_type: HexType,
+        strict_hex_type: bool,
         bodies: ConfigBodies<'_>,
     ) -> String {
         const I2: &str = "  ";
@@ -2507,16 +2507,12 @@ type testIndexer = {{
                 programs = bodies.svm_programs,
             ),
         };
-        let hex_type_field = match hex_type {
-            HexType::Hex => Some("hexType: \"hex\";".to_string()),
-            HexType::String => None,
-        };
         let config_block = [
             Some(ecosystem_field),
             Some(format!("entities: {};", bodies.entities)),
             Some(format!("perChainEntities: {};", bodies.per_chain_entities)),
             Some(format!("enums: {};", bodies.enums)),
-            hex_type_field,
+            strict_hex_type.then(|| "strictHexType: true;".to_string()),
         ]
         .iter()
         .flatten()
@@ -3938,7 +3934,7 @@ type Swap {
             file_level_types,
             &entity_aliases,
             super::Ecosystem::Evm,
-            HexType::String,
+            false,
             super::ConfigBodies {
                 evm_chains: "{}",
                 evm_contracts: "{}",
@@ -3965,8 +3961,8 @@ type Swap {
     }
 
     #[test]
-    fn global_config_declares_hex_type_only_when_opted_in() {
-        let hex_type_lines = |yaml: &str| -> Vec<String> {
+    fn global_config_declares_strict_hex_type_only_when_opted_in() {
+        let strict_hex_type_lines = |yaml: &str| -> Vec<String> {
             let config =
                 SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
                     .unwrap();
@@ -3974,7 +3970,7 @@ type Swap {
                 .unwrap()
                 .envio_types_dts
                 .lines()
-                .filter(|line| line.contains("hexType"))
+                .filter(|line| line.contains("strictHexType"))
                 .map(|line| line.trim().to_string())
                 .collect()
         };
@@ -3984,18 +3980,18 @@ type Swap {
         };
         assert_eq!(
             [
-                hex_type_lines(&evm("")),
-                hex_type_lines(&evm("hex_type: string\n")),
-                hex_type_lines(&evm("hex_type: hex\n")),
-                hex_type_lines(&fuel("")),
-                hex_type_lines(&fuel("hex_type: hex\n")),
+                strict_hex_type_lines(&evm("")),
+                strict_hex_type_lines(&evm("strict_hex_type: false\n")),
+                strict_hex_type_lines(&evm("strict_hex_type: true\n")),
+                strict_hex_type_lines(&fuel("")),
+                strict_hex_type_lines(&fuel("strict_hex_type: true\n")),
             ],
             [
                 vec![],
                 vec![],
-                vec!["hexType: \"hex\";".to_string()],
+                vec!["strictHexType: true;".to_string()],
                 vec![],
-                vec!["hexType: \"hex\";".to_string()],
+                vec!["strictHexType: true;".to_string()],
             ],
         );
     }

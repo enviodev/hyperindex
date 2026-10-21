@@ -340,7 +340,7 @@ pub enum TypeIdent {
     /// a signature): `string` in ReScript, `Hex` from "envio" in TypeScript.
     Hex,
     /// Like `Hex`, but `HexString` from "envio" in TypeScript: `Hex` only when
-    /// config.yaml sets `hex_type: hex`, plain `string` otherwise.
+    /// config.yaml sets `strict_hex_type: true`, plain `string` otherwise.
     HexString,
     Bytes,
     Json,

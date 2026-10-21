@@ -942,7 +942,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async 
 })
 
 describe("Hex type", () => {
-  it("types hex-string values as Hex and rejects a plain string with hex_type: hex", _ =>
+  it("types hex-string values as Hex and rejects a plain string with strict_hex_type", _ =>
     InternalTestIndexer.fromUserApi(
       ~schema=`
 type Blob {
@@ -952,7 +952,7 @@ type Blob {
 `,
       ~configYaml=`
 name: hex-types
-hex_type: hex
+strict_hex_type: true
 contracts:
   - name: Registry
     events:

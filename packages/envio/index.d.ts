@@ -17,8 +17,8 @@ export type Hex = `0x${string}`;
 
 /** The type of `bytes`/`bytesN` event params, block and transaction hashes and
  * other hex fields, and `Bytes` entity fields: plain `string` by default, the
- * stricter {@link Hex} with `hex_type: hex` in config.yaml. */
-export type HexString = GlobalConfig extends { readonly hexType: "hex" } ? Hex : string;
+ * stricter {@link Hex} with `strict_hex_type: true` in config.yaml. */
+export type HexString = GlobalConfig extends { readonly strictHexType: true } ? Hex : string;
 
 /** A value a `Json` entity field can hold. A `bigint` isn't JSON — store its
  * decimal string with `.toString()`. Shadows the global `JSON` interface only
@@ -526,7 +526,7 @@ type IndexerConfigTypes = {
   // Union of the entity names whose rows belong to a single chain, or `never`.
   perChainEntities?: string;
   enums?: Record<string, string>;
-  hexType?: "hex";
+  strictHexType?: true;
 };
 
 // ============== onEvent / contractRegister Types ==============

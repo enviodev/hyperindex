@@ -95,15 +95,11 @@
         }
       ]
     },
-    "hex_type": {
-      "description": "TypeScript type of 0x-prefixed hex values — `bytes`/`bytesN` event params, block and transaction hashes and other hex fields, and `Bytes` entity fields with `bytes_type: hex`. `string` (default) or `hex` for the stricter `Hex` (`0x${string}`) type. ReScript types are unaffected.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/HexType"
-        },
-        {
-          "type": "null"
-        }
+    "strict_hex_type": {
+      "description": "If true, 0x-prefixed hex values are typed as the stricter `Hex` (`0x${string}`) instead of `string` in TypeScript — `bytes`/`bytesN` event params, block and transaction hashes and other hex fields, and `Bytes` entity fields with `bytes_type: hex`. ReScript types are unaffected. (default: false)",
+      "type": [
+        "boolean",
+        "null"
       ]
     }
   },
@@ -516,21 +512,6 @@
           "description": "`Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).",
           "type": "string",
           "const": "uint8array"
-        }
-      ]
-    },
-    "HexType": {
-      "description": "The TypeScript type of `0x`-prefixed hex values. ReScript types are unaffected.",
-      "oneOf": [
-        {
-          "description": "Plain `string`.",
-          "type": "string",
-          "const": "string"
-        },
-        {
-          "description": "The stricter `Hex` (`` `0x${string}` ``) type.",
-          "type": "string",
-          "const": "hex"
         }
       ]
     }

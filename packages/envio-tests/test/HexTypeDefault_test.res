@@ -1,6 +1,6 @@
 open Vitest
 
-describe("hex_type default", () => {
+describe("strict_hex_type default", () => {
   it("keeps hex-string values as plain string and accepts a plain string", _ =>
     InternalTestIndexer.fromUserApi(
       ~schema=`
