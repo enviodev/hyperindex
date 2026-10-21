@@ -284,10 +284,17 @@ and applyQueryResponse = (
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
-  if state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0 {
-    chainState->ChainState.setEndBlockToFirstEvent(
-      ~blockNumber=newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
-    )
+  if state->IndexerState.exitAfterFirstEventBlock {
+    switch newItems->Array.find(item =>
+      switch item {
+      | Internal.Event(_) => true
+      | Block(_) => false
+      }
+    ) {
+    | Some(item) =>
+      chainState->ChainState.setEndBlockToFirstEvent(~blockNumber=item->Internal.getItemBlockNumber)
+    | None => ()
+    }
   }
 }
 
