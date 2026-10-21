@@ -150,7 +150,7 @@ describe("a data source a block handler creates", () => {
         ~source,
         ~head=301,
         ~validUpTo=100,
-        ~until=async () => (await poolAddresses(indexer))->Array.includes(pool3),
+        ~until=async () => (await poolAddresses(indexer))->Array.some(row => row == pool3),
       )
       t.expect(
         (await poolAddresses(indexer), registerPasses()),
