@@ -6,6 +6,18 @@ type t = {
   onBlockRegistrationIndex: int,
 }
 
+// Mirrors `Registration::runs_on` in `block_selection.rs`.
+let runsOn = (
+  {startBlock, endBlock, interval}: Internal.onBlockRegistration,
+  ~blockNumber,
+  ~chainStartBlock,
+) => {
+  let startBlock = startBlock->Option.getOr(chainStartBlock)
+  blockNumber >= startBlock &&
+  endBlock->Option.mapOr(true, endBlock => blockNumber <= endBlock) &&
+  Pervasives.mod(blockNumber - startBlock, interval) === 0
+}
+
 // A block handler selecting fields, as a native client is built with it.
 type registrationInput = {
   index: int,
@@ -28,9 +40,6 @@ let toRegistrationInputs = (onBlockRegistrations: array<Internal.onBlockRegistra
       blockFieldMask,
     })
   )
-
-let toIndexes = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
-  onBlockRegistrations->Array.map(reg => reg.index)
 
 let toInternalItems = (
   items: array<t>,

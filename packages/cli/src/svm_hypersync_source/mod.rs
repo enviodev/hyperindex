@@ -233,18 +233,14 @@ impl SvmHyperSyncClient {
             .selection_builder
             .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
+        let from_slot = u64::try_from(params.from_slot)
+            .context("from_slot must be non-negative")
+            .map_err(map_err)?;
+        let to_slot = params.to_slot.and_then(|to| u64::try_from(to).ok());
         let block_selection = self
             .block_registrations
-            .select(
-                &params.on_block_registration_indexes,
-                u64::try_from(params.from_slot)
-                    .context("from_slot must be non-negative")
-                    .map_err(map_err)?,
-                params.to_slot.and_then(|to| u64::try_from(to).ok()),
-            )
+            .select(&params.on_block_registration_indexes, from_slot, to_slot)
             .map_err(map_err)?;
-        let (from_slot, to_slot) =
-            block_selection.query_range(!params.on_event_registration_indexes.is_empty());
         let mut block_columns = built.block_columns.clone();
         for column in fields::block_mask_columns(block_selection.mask()).map_err(map_err)? {
             fields::push_unique(&mut block_columns, column);

@@ -71,7 +71,7 @@ let make = (
         fromBlock,
         toBlock,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-        onBlockRegistrationIndexes: selection.onBlockRegistrations->BlockItem.toIndexes,
+        onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,
       },
       ~addressSet,

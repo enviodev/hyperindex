@@ -203,15 +203,12 @@ impl EvmHyperSyncClient {
                 set_cache.clone(),
             )
             .map_err(map_err)?;
+        let from_block = u64::try_from(params.from_block).map_err(|e| map_err(e.into()))?;
+        let to_block = params.to_block.and_then(|to| u64::try_from(to).ok());
         let block_selection = self
             .block_registrations
-            .select(
-                &params.on_block_registration_indexes,
-                u64::try_from(params.from_block).map_err(|e| map_err(e.into()))?,
-                params.to_block.and_then(|to| u64::try_from(to).ok()),
-            )
+            .select(&params.on_block_registration_indexes, from_block, to_block)
             .map_err(map_err)?;
-        let (from_block, to_block) = block_selection.query_range(selects_logs);
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;

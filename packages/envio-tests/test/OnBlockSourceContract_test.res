@@ -203,26 +203,29 @@ describe("A block handler selecting fields, fetched from an RPC", () => {
 })
 
 describe("A block handler selecting fields, fetched from HyperSync", () => {
-  // With no log asked for, the query stops at the handler's last block of the range.
-  Async.it("asks for the blocks up to the handler's last one, with its fields", async t => {
-    let queries = await MockHyperSyncServer.withServer(
+  // The range's last block runs no handler, yet the page has read it.
+  Async.it("asks for every block in the range with the selected fields", async t => {
+    let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
         let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
-        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12]->Array.map(header)})
-        let _ = await source->fetch(~addressSet)
-        server->MockHyperSyncServer.takeQueries
+        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
+        let page = await source->fetch(~addressSet)
+        (server->MockHyperSyncServer.takeQueries, page.latestFetchedBlockNumber)
       },
     )
 
-    t.expect(queries).toEqual([
-      JSON.parseOrThrow(`{
+    t.expect((queries, latestFetchedBlockNumber)).toEqual((
+      [
+        JSON.parseOrThrow(`{
         "from_block": 10,
-        "to_block": 13,
+        "to_block": 14,
         "include_all_blocks": true,
         "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
       }`),
-    ])
+      ],
+      13,
+    ))
   })
 
   Async.it("doesn't ask for blocks when the handler doesn't run in the range", async t => {

@@ -169,7 +169,7 @@ let make = (
       toSlot: toBlock,
       maxNumInstructions: ?itemsTarget,
       onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-      onBlockRegistrationIndexes: selection.onBlockRegistrations->BlockItem.toIndexes,
+      onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
       clientFilteredContracts: selection.clientFilteredContracts,
       // Absent rather than false, so a backfill query is the one it always was.
       includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),

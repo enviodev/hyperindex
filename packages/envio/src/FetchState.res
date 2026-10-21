@@ -1114,20 +1114,7 @@ let appendOnBlockItems = (
 
     for configIdx in 0 to onBlockRegistrations->Array.length - 1 {
       let onBlockRegistration = onBlockRegistrations->Array.getUnsafe(configIdx)
-
-      let handlerStartBlock = switch onBlockRegistration.startBlock {
-      | Some(startBlock) => startBlock
-      | None => indexerStartBlock
-      }
-
-      if (
-        blockNumber >= handlerStartBlock &&
-        switch onBlockRegistration.endBlock {
-        | Some(endBlock) => blockNumber <= endBlock
-        | None => true
-        } &&
-        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockRegistration.interval) === 0
-      ) {
+      if onBlockRegistration->BlockItem.runsOn(~blockNumber, ~chainStartBlock=indexerStartBlock) {
         mutItems->Array.push(
           Block({
             onBlockRegistration,
@@ -1335,6 +1322,9 @@ let collapseClientFilteredContracts = (
 
     partitions->Array.forEach(p =>
       switch p {
+      // The block partition reads no logs, so no client filtering touches it.
+      | {selection: {onBlockRegistrations}} if onBlockRegistrations->Utils.Array.notEmpty =>
+        kept->Array.push(p)->ignore
       | {selection: {dependsOnAddresses: false}, mergeBlock: None}
         if standingRef.contents->Option.isNone =>
         standingRef := Some(p)
@@ -1468,15 +1458,7 @@ let collapseClientFilteredContracts = (
           if standing->isFetching {
             kept->Array.push(standing->retire)->ignore
           }
-          // The block table stays with the standing partition alone: a
-          // backfill only catches up on the newly-switched contracts' logs.
-          let selection = makeSelection(
-            ~dependsOnAddresses=false,
-            ~onEventRegistrations=newSelection.onEventRegistrations,
-            ~onBlockRegistrations=standing.selection.onBlockRegistrations,
-            ~clientFilteredContracts=?newSelection.clientFilteredContracts,
-          )
-          {...standing, id, selection, mutPendingQueries: []}
+          {...standing, id, selection: newSelection, mutPendingQueries: []}
         } else {
           standing
         }
@@ -2699,19 +2681,11 @@ let make = (
     )
 
   let partitions = []
-
-  if (
-    notDependingOnAddresses->Utils.Array.notEmpty ||
-      fetchedOnBlockRegistrations->Utils.Array.notEmpty
-  ) {
+  let pushAddressFreePartition = selection =>
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
       latestFetchedBlock,
-      selection: makeSelection(
-        ~dependsOnAddresses=false,
-        ~onEventRegistrations=notDependingOnAddresses,
-        ~onBlockRegistrations=fetchedOnBlockRegistrations,
-      ),
+      selection,
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,
       dynamicContract: None,
@@ -2721,6 +2695,23 @@ let make = (
       eventDensity: None,
       latestSourceRangeCapacityUpdateBlock: 0,
     })
+
+  if notDependingOnAddresses->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=notDependingOnAddresses),
+    )
+  }
+
+  // Apart from the wildcard events: a source reads blocks at a pace of its own
+  // (RPC pays a request per block), which would hold the log pages to it.
+  if fetchedOnBlockRegistrations->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=[],
+        ~onBlockRegistrations=fetchedOnBlockRegistrations,
+      ),
+    )
   }
 
   let normalSelection = makeSelection(

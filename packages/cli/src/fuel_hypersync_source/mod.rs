@@ -86,18 +86,14 @@ impl FuelHyperSyncClient {
                 &client_filtered,
             )
             .map_err(map_err)?;
+        let from_block = u64::try_from(params.from_block)
+            .context("from_block must be >= 0")
+            .map_err(map_err)?;
+        let to_block = params.to_block.and_then(|to| u64::try_from(to).ok());
         let block_selection = self
             .block_registrations
-            .select(
-                &params.on_block_registration_indexes,
-                u64::try_from(params.from_block)
-                    .context("from_block must be >= 0")
-                    .map_err(map_err)?,
-                params.to_block.and_then(|to| u64::try_from(to).ok()),
-            )
+            .select(&params.on_block_registration_indexes, from_block, to_block)
             .map_err(map_err)?;
-        let (from_block, to_block) =
-            block_selection.query_range(!params.on_event_registration_indexes.is_empty());
 
         let query = build_query(from_block, to_block, &built, !block_selection.is_empty())
             .context("build query")

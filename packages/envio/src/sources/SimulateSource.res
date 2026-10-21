@@ -1,10 +1,3 @@
-let runsOn = ({startBlock, endBlock, interval}: Internal.onBlockRegistration, blockNumber) => {
-  let startBlock = startBlock->Option.getOr(0)
-  blockNumber >= startBlock &&
-  endBlock->Option.mapOr(true, endBlock => blockNumber <= endBlock) &&
-  Pervasives.mod(blockNumber - startBlock, interval) === 0
-}
-
 // A block item for every block in [fromBlock, toBlock] the simulated chain has
 // and a selected registration runs on, each carrying its block inline — the
 // way `block_selection.rs` routes a native source's blocks.
@@ -17,14 +10,18 @@ let blockItems = (
   let items = []
   if onBlockRegistrations->Utils.Array.notEmpty {
     for blockNumber in fromBlock to toBlock {
-      switch getBlock(blockNumber) {
-      | Some(block) =>
-        onBlockRegistrations->Array.forEach(onBlockRegistration =>
-          if onBlockRegistration->runsOn(blockNumber) {
-            items->Array.push(Internal.Block({onBlockRegistration, blockNumber, block}))
-          }
+      let running =
+        onBlockRegistrations->Array.filter(reg =>
+          reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0)
         )
-      | None => ()
+      if running->Utils.Array.notEmpty {
+        switch getBlock(blockNumber) {
+        | Some(block) =>
+          running->Array.forEach(onBlockRegistration =>
+            items->Array.push(Internal.Block({onBlockRegistration, blockNumber, block}))
+          )
+        | None => ()
+        }
       }
     }
   }

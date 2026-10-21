@@ -5297,6 +5297,57 @@ describe("FetchState client-side address filtering", () => {
     },
   )
 
+  it("leaves the block partition out of the collapse", t => {
+    let blockRegistration: Internal.onBlockRegistration = {
+      index: 0,
+      name: "headers",
+      chainId,
+      startBlock: Some(0),
+      endBlock: None,
+      interval: 1,
+      handler: Utils.magic("mock handler"),
+      blockFieldMask: Some(3.),
+    }
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[baseEventConfig],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=100,
+      ~clientFilterAddressThreshold=Some(1),
+      ~onBlockRegistrations=[blockRegistration],
+    )
+    let updated =
+      fetchState->FetchState.registerDynamicContracts(
+        ~addressStore,
+        [
+          makeDynContractRegistration(
+            ~blockNumber=3,
+            ~contractAddress=mockAddress1,
+          )->dcToRegistration,
+          makeDynContractRegistration(
+            ~blockNumber=4,
+            ~contractAddress=mockAddress2,
+          )->dcToRegistration,
+        ],
+      )
+
+    t.expect(
+      updated.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.map(
+        p => (
+          p.selection.onEventRegistrations->Array.length,
+          p.selection.onBlockRegistrations->Array.map(reg => reg.name),
+          p.selection.clientFilteredContracts,
+        ),
+      ),
+    ).toEqual([(0, ["headers"], None), (1, [], Some(["Gravatar"]))])
+  })
+
   it("stays server-side while under the threshold", t => {
     let (fetchState, addressStore) = makeGravatarFs(~clientFilterAddressThreshold=Some(10))
     let updated =

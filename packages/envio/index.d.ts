@@ -826,7 +826,7 @@ export type EvmFieldsSelection = {
  * the item's own key, so it costs nothing extra. */
 type EvmAlwaysSelectedBlockField = "number";
 
-type EvmSelectedFields<All, Selected extends string, Knob extends string> = {
+type SelectedFields<All, Selected extends string, Knob extends string> = {
   readonly [K in keyof All]: K extends Selected
     ? All[K]
     : FieldNotSelected<`Field '${K &
@@ -834,21 +834,21 @@ type EvmSelectedFields<All, Selected extends string, Knob extends string> = {
 };
 
 /** Field names listed under `Knob`, or `never` when the key is absent or lists
- * nothing. Reads the value through `EvmListedArray` for the same reason that
+ * nothing. Reads the value through `ListedArray` for the same reason that
  * type exists: an optional property doesn't satisfy a `Record<Knob, _>`
  * conditional, which would type every listed field as unselected for a
  * selection whose keys are optional. Element access rather than `infer`, which
  * falls back to its `string` constraint on an absent key — naming every field
  * as selected. */
-type EvmListedFields<Fields, Knob extends keyof EvmFieldsSelection> = NonNullable<
-  EvmListedArray<Fields, Knob>
+type ListedFields<Fields, Knob extends string> = NonNullable<
+  ListedArray<Fields, Knob>
 >[number] &
   string;
 
 /** The value listed under `Knob`, keeping optional keys (which a `Record<Knob, _>`
  * conditional would miss, since an optional property doesn't satisfy a required
  * one). `never` when the key is absent from the selection entirely. */
-type EvmListedArray<Fields, Knob extends keyof EvmFieldsSelection> = Fields[Knob &
+type ListedArray<Fields, Knob extends string> = Fields[Knob &
   keyof Fields];
 
 /** True for an unbounded `T[]` / `readonly T[]`, false for a literal tuple —
@@ -871,11 +871,11 @@ export type EvmFieldsMustBeLiteral<Knob extends string> = {
 
 /** `unknown` (a no-op intersection) when every listed selection is a literal
  * array, otherwise the branded type that rejects the option. */
-type EvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
+type FieldsLiteralCheck<Fields> = [Fields] extends [undefined]
   ? unknown
-  : IsWidenedArray<EvmListedArray<Fields, "block">> extends true
+  : IsWidenedArray<ListedArray<Fields, "block">> extends true
     ? EvmFieldsMustBeLiteral<"block">
-    : IsWidenedArray<EvmListedArray<Fields, "transaction">> extends true
+    : IsWidenedArray<ListedArray<Fields, "transaction">> extends true
       ? EvmFieldsMustBeLiteral<"transaction">
       : unknown;
 
@@ -884,14 +884,14 @@ type EvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
  * `field_selection` path is unaffected. */
 export type EvmEventWithFields<Event, Fields> = [Fields] extends [EvmFieldsSelection]
   ? Omit<Event, "block" | "transaction"> & {
-      readonly block: EvmSelectedFields<
+      readonly block: SelectedFields<
         EvmAllBlockFields,
-        EvmAlwaysSelectedBlockField | EvmListedFields<Fields, "block">,
+        EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
         "block"
       >;
-      readonly transaction: EvmSelectedFields<
+      readonly transaction: SelectedFields<
         EvmAllTransactionFields,
-        EvmListedFields<Fields, "transaction">,
+        ListedFields<Fields, "transaction">,
         "transaction"
       >;
     }
@@ -917,7 +917,7 @@ export type EvmOnEventOptions<
        * no selection: `EvmFieldsSelection` names no fields in particular, so an
        * options value declared without the generic would carry a selection
        * `onEvent` can only reject. */
-      readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
+      readonly fields?: Fields & FieldsLiteralCheck<Fields>;
     }
   : never;
 
@@ -1029,9 +1029,9 @@ export type EvmOnBlockFieldsSelection = {
 };
 
 /** A block as an EVM block handler with the `Fields` selection reads it. */
-export type EvmOnBlockBlock<Fields = undefined> = EvmSelectedFields<
+export type EvmOnBlockBlock<Fields = undefined> = SelectedFields<
   EvmAllBlockFields,
-  EvmAlwaysSelectedBlockField | EvmListedFields<Fields, "block">,
+  EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
   "block"
 >;
 
@@ -1067,7 +1067,7 @@ export type EvmOnBlockOptions<
   readonly where?: (args: EvmOnBlockWhereArgs<Config>) => EvmOnBlockWhereResult;
   /** Block fields this handler reads besides the number. Selecting any makes
       the indexer fetch every block the handler runs on. */
-  readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
+  readonly fields?: Fields & FieldsLiteralCheck<Fields>;
 };
 
 // ============== Fuel onBlock types ==============
@@ -1131,9 +1131,9 @@ export type FuelOnBlockHandlerArgs<
 > = {
   /** Block being processed: its height, plus the fields listed in the
       registration's `fields.block`. */
-  readonly block: EvmSelectedFields<
+  readonly block: SelectedFields<
     FuelAllBlockFields,
-    "height" | EvmListedFields<Fields, "block">,
+    "height" | ListedFields<Fields, "block">,
     "block"
   >;
   /** Handler context: entity operations, logger, effect caller, chain state. */
@@ -1160,7 +1160,7 @@ export type FuelOnBlockOptions<
   readonly where?: (args: FuelOnBlockWhereArgs<Config>) => FuelOnBlockWhereResult;
   /** Block fields this handler reads besides the height. Selecting any makes
       the indexer fetch every block the handler runs on. */
-  readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
+  readonly fields?: Fields & FieldsLiteralCheck<Fields>;
 };
 
 // ============== SVM onSlot types ==============
@@ -1212,14 +1212,14 @@ export type SvmOnSlotHandlerArgs<
   readonly slot: number;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: SvmOnSlotContext<Config>;
-} & ([Exclude<EvmListedFields<Fields, "block">, "slot">] extends [never]
+} & ([Exclude<ListedFields<Fields, "block">, "slot">] extends [never]
   ? {}
   : {
       /** The slot's block: the fields listed in the registration's
           `fields.block`. */
-      readonly block: EvmSelectedFields<
+      readonly block: SelectedFields<
         SvmAllBlockFields,
-        "slot" | EvmListedFields<Fields, "block">,
+        "slot" | ListedFields<Fields, "block">,
         "block"
       >;
     });
@@ -1711,7 +1711,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
-                    readonly fields?: F & EvmFieldsLiteralCheck<F>;
+                    readonly fields?: F & FieldsLiteralCheck<F>;
                   },
                   handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
@@ -1735,7 +1735,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
-                    readonly fields?: F & EvmFieldsLiteralCheck<F>;
+                    readonly fields?: F & FieldsLiteralCheck<F>;
                   },
                   handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;

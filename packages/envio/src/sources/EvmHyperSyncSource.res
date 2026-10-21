@@ -85,7 +85,7 @@ let make = (
         toBlock,
         maxNumLogs: ?itemsTarget,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-        onBlockRegistrationIndexes: selection.onBlockRegistrations->BlockItem.toIndexes,
+        onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,
         // Absent rather than false, so a range that wants only the blocks its
         // logs came from sends the query it always sent.

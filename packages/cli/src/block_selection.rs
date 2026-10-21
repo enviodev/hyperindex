@@ -64,16 +64,6 @@ impl Registration {
         };
         (!self.ends_before(first)).then_some(first)
     }
-
-    /// The last block at or before `block_number` the handler runs on.
-    fn last_until(&self, block_number: u64) -> Option<u64> {
-        let until = match self.end_block {
-            Some(end) => u64::try_from(end).ok()?.min(block_number),
-            None => block_number,
-        };
-        let offset = until.checked_sub(self.start_block)? % self.interval;
-        Some(until - offset)
-    }
 }
 
 /// The chain's block handlers that select fields, by index.
@@ -130,7 +120,6 @@ impl BlockRegistrations {
         Ok(BlockSelection {
             registrations,
             from_block,
-            to_block,
         })
     }
 }
@@ -141,7 +130,6 @@ impl BlockRegistrations {
 pub(crate) struct BlockSelection {
     registrations: Vec<Registration>,
     from_block: u64,
-    to_block: Option<u64>,
 }
 
 impl BlockSelection {
@@ -152,38 +140,6 @@ impl BlockSelection {
     /// Every block field some handler selected, as the block store's bitmask.
     pub(crate) fn mask(&self) -> u64 {
         self.registrations.iter().fold(0, |acc, r| acc | r.mask)
-    }
-
-    /// The first and last block of the range some handler runs on — the last
-    /// absent when the range is unbounded and a handler is too. A query of
-    /// blocks alone needs nothing outside them.
-    pub(crate) fn span(&self) -> Option<(u64, Option<u64>)> {
-        let first = self
-            .registrations
-            .iter()
-            .filter_map(|r| r.first_from(self.from_block))
-            .min()?;
-        let unbounded =
-            self.to_block.is_none() && self.registrations.iter().any(|r| r.end_block.is_none());
-        let last = if unbounded {
-            None
-        } else {
-            let to_block = self.to_block.unwrap_or(u64::MAX);
-            self.registrations
-                .iter()
-                .filter_map(|r| r.last_until(to_block))
-                .max()
-        };
-        Some((first, last))
-    }
-
-    /// The inclusive range a query reads: its own when it selects other
-    /// tables, otherwise just the span its handlers run on.
-    pub(crate) fn query_range(&self, selects_other_tables: bool) -> (u64, Option<u64>) {
-        match self.span() {
-            Some((first, last)) if !selects_other_tables => (first, last.or(self.to_block)),
-            _ => (self.from_block, self.to_block),
-        }
     }
 
     /// The highest block up to `to_block` keeping at most `max_blocks` blocks
@@ -319,21 +275,6 @@ mod tests {
                 .map(|r| r.index)
                 .collect::<Vec<_>>(),
             vec![3]
-        );
-    }
-
-    #[test]
-    fn spans_the_first_and_last_block_a_handler_runs_on() {
-        let bounded = select(
-            &[input(0, 0, None, 5), input(1, 3, Some(14), 4)],
-            1,
-            Some(17),
-        );
-        let unbounded = select(&[input(0, 0, None, 5)], 1, None);
-        let ended = select(&[input(0, 0, Some(12), 5)], 1, None);
-        assert_eq!(
-            (bounded.span(), unbounded.span(), ended.span()),
-            (Some((3, Some(15))), Some((5, None)), Some((5, Some(10))))
         );
     }
 
