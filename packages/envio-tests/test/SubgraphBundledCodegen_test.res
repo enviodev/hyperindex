@@ -17,8 +17,10 @@ let fixture = relativePath =>
     "utf8",
   )
 
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4700")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=fixture("subgraph.yaml"),
   ~schema=fixture("schema.graphql"),
   ~files=Dict.fromArray([
@@ -66,7 +68,7 @@ beforeAll(async () => {
       res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: "0x1" }));
     });
   });
-  await new Promise<void>((resolve) => server.listen(4700, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

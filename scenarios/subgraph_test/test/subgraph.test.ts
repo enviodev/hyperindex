@@ -1,8 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
-// Its own port: envio-tests runs stub RPCs on 8601 and 8602, and the suites
-// can be in flight together.
-process.env.ENVIO_SUBGRAPH_RPC = "http://127.0.0.1:8603";
+import type { AddressInfo } from "node:net";
+
+// envio reads ENVIO_SUBGRAPH_RPC when it is imported, and that import blocks
+// the thread the stub below answers on, so the stub can't be listening yet: a
+// port the OS assigns is taken now and freed for it.
+const probe = createServer();
+await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+const port = (probe.address() as AddressInfo).port;
+await new Promise<void>((resolve) => probe.close(() => resolve()));
+process.env.ENVIO_SUBGRAPH_RPC = `http://127.0.0.1:${port}`;
 
 const { createTestIndexer, TestHelpers } = await import("envio");
 
@@ -33,7 +40,7 @@ beforeAll(async () => {
       );
     });
   });
-  await new Promise<void>((resolve) => server.listen(8603, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

@@ -1,8 +1,10 @@
 // The dominant factory shape: read the pair's tokens over RPC, then create the
 // template for it. The register pass runs at fetch time, so the call has to
 // resolve there too — the address it decides is the one that gets indexed.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8601")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 0.0.5
 schema:
@@ -143,7 +145,7 @@ beforeAll(async () => {
       return reply(PAIR_RESULT);
     });
   });
-  await new Promise<void>((resolve) => server.listen(8601, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

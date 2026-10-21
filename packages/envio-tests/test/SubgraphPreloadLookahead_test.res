@@ -3,8 +3,10 @@
 // execute pass asks them one event at a time: a round trip per call, in series.
 // Once the entity exists, those handlers are preloaded again, so their calls go
 // out together while execute works through the events before them.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4823")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -119,7 +121,7 @@ beforeAll(async () => {
       }, 40);
     });
   });
-  await new Promise<void>((resolve) => server.listen(4823, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

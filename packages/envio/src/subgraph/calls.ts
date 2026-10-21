@@ -69,7 +69,7 @@ export type CallOutput = {
 /**
  * A batch commits only once every contract call its handlers make is in, and a
  * call-heavy backfill's first batch can wait minutes on thousands of them with
- * nothing else to show — the sweep took several for hung. While calls are
+ * nothing else to show, which reads as a hang. While calls are
  * outstanding, how many were answered is logged now and then.
  */
 const progress = { started: 0, answered: 0, reportedAnswered: 0, timer: undefined as NodeJS.Timeout | undefined };

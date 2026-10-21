@@ -5,8 +5,10 @@
 // So preload sees what the batch's earlier events wrote in their own preload,
 // and the calls go out together. Preload's writes stay its own: execute runs
 // against the real store, so the results are the same.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4832")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -117,7 +119,7 @@ beforeAll(async () => {
       }, 40);
     });
   });
-  await new Promise<void>((resolve) => server.listen(4832, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

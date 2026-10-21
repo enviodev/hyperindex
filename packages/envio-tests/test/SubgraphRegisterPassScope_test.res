@@ -3,8 +3,10 @@
 // made again there. A template's swap-style handler, which creates nothing, used
 // to pay that for every event — Venus and Aave spent most of their RPC budget
 // on it. Only the handlers whose code can reach a create get the pass now.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:4690")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 0.0.5
 schema:
@@ -157,7 +159,7 @@ beforeAll(async () => {
       );
     });
   });
-  await new Promise<void>((resolve) => server.listen(4690, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {

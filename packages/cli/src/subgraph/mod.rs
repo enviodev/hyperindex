@@ -1627,10 +1627,11 @@ pub fn translate(
     }
 
     // A block handler gets only the block number from envio; its header is
-    // fetched afterwards, outside the reorg guard that validates event blocks
-    // (spec/BLOCK_HASH.md). So a chain whose block handlers read the header
-    // trails its head by the reorg depth, where envio itself assumes nothing
-    // reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the depth; 0 turns it off.
+    // fetched afterwards, outside the reorg guard that validates event blocks,
+    // so inside the reorg window it may be another fork's. A chain whose block
+    // handlers read the header trails its head by the reorg depth, where envio
+    // itself assumes nothing reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the
+    // depth; 0 turns it off.
     // A `filter: call` handler is exempt: its block arrives whole with the call.
     let mut block_header_lag: BTreeMap<u64, u32> = BTreeMap::new();
     for source in manifest.all_sources() {

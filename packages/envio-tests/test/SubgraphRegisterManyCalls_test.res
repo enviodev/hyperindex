@@ -3,8 +3,10 @@
 // rounds. graph-node has no such count: sweem's Aave handler reads ten values
 // per reserve of a pool's reserve list and stopped the run at the cap of 100
 // rounds, a limit the handler pass sets at 10000.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8611")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 0.0.5
 schema:
@@ -126,7 +128,7 @@ beforeAll(async () => {
       res.end(JSON.stringify(Array.isArray(parsed) ? parsed.map(answer) : answer(parsed)));
     });
   });
-  await new Promise<void>((resolve) => server.listen(8611, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {
