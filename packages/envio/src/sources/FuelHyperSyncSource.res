@@ -53,17 +53,20 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
     let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
 
     //fetch batch
-    let pageUnsafe = try await FuelHyperSync.GetLogs.query(
+    let pageUnsafe = try await FuelHyperSync.GetItems.query(
       ~client,
-      ~fromBlock,
-      ~toBlock,
-      ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
+      ~query={
+        fromBlock,
+        toBlock,
+        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onBlockRegistrations: selection.onBlockRegistrations->BlockItem.toRegistrationInputs,
+        clientFilteredContracts: selection.clientFilteredContracts,
+      },
       ~addressSet,
-      ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
-    | FuelHyperSync.GetLogs.Error(WrongInstance) =>
+    | FuelHyperSync.GetItems.Error(WrongInstance) =>
       throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
-    | FuelHyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
+    | FuelHyperSync.GetItems.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -127,7 +130,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
       }
     })
 
-    let parsedQueueItems = pageUnsafe.items->Array.map(item => {
+    let eventItems = pageUnsafe.eventItems->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
@@ -191,10 +194,14 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
     }
 
     {
-      parsedQueueItems,
-      // Fuel keeps transaction and block inline on the payload; the block store
-      // carries only the (height, id) rows that drive reorg detection (Fuel
-      // never rolls back, so it's detect-only logging).
+      parsedQueueItems: eventItems->Array.concat(
+        pageUnsafe.blockItems->BlockItem.toInternalItems(
+          ~onBlockRegistrations=selection.onBlockRegistrations,
+        ),
+      ),
+      // Fuel keeps the transaction inline on the payload. The block store holds
+      // the page's blocks, materialised at batch prep; their ids also drive
+      // reorg detection (Fuel never rolls back, so it's detect-only logging).
       transactionStore: None,
       blockStore: pageUnsafe.blockStore,
       latestFetchedBlockNumber: heighestBlockQueried,

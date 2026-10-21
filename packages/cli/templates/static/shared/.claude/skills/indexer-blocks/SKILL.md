@@ -54,11 +54,25 @@ indexer.onBlock(
 |--------|------|----------|-------------|
 | `name` | `string` | yes | Handler name for logging |
 | `where` | `({ chain }) => boolean \| filter` | no | Predicate evaluated once per configured chain at registration. Return `false` to skip a chain, `true` / omit to match every block, or `{block: {number: {_gte?, _lte?, _every?}}}` to restrict range and stride. `_every` aligns relative to `_gte`, preserving `(blockNumber - _gte) % _every === 0`. |
+| `fields` | `{ block?: BlockField[] }` | no | Block fields the handler reads besides the number, e.g. `{ block: ["timestamp", "hash"] }`. Selecting any makes the indexer fetch every block the handler runs on, so keep `_every` as large as the use case allows. Reading a field not listed is a type error. `config.yaml` `field_selection` does not apply to block handlers. |
+
+## Block fields
+
+```ts
+indexer.onBlock(
+  { name: "Timestamps", where: () => ({ block: { number: { _every: 1000 } } }), fields: { block: ["timestamp"] } },
+  async ({ block, context }) => {
+    context.BlockTime.set({ id: `${block.number}`, timestamp: block.timestamp });
+  }
+);
+```
+
+In `createTestIndexer`, give the fields of a block as its own simulate item: `simulate: [{ block: { number: 1000, timestamp: 1700000000 } }]`. A block without one gets the same defaults as an event's block.
 
 ## Other ecosystems
 
-- **Fuel**: same `indexer.onBlock` API; filter is keyed by `block.height` instead of `block.number`.
-- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}` (no `block` wrapper).
+- **Fuel**: same `indexer.onBlock` API; filter is keyed by `block.height` instead of `block.number`, and `fields.block` selects from `id` and `time`.
+- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}`. With `fields: { block: ["time", "hash", ...] }` it also gets `block` — and runs only on slots that produced a block, since a skipped slot has none. In `createTestIndexer` that means the slots given a `{ block: { slot, ... } }` simulate item.
 
 ## Notes
 

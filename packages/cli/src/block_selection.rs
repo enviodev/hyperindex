@@ -40,7 +40,7 @@ impl Registration {
     fn runs_on(&self, block_number: u64) -> bool {
         block_number >= self.start_block
             && self.end_block.is_none_or(|end| block_number <= end)
-            && (block_number - self.start_block) % self.interval == 0
+            && (block_number - self.start_block).is_multiple_of(self.interval)
     }
 }
 

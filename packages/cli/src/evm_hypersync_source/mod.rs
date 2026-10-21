@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn forced_block_fields_validated_even_when_user_requested_none() {
-        // get_event_items force-adds REQUIRED_BLOCK_FIELDS and validates that
+        // get_items force-adds REQUIRED_BLOCK_FIELDS and validates that
         // forced set, so number/timestamp/hash are guaranteed present even when
         // the user's config selected no block fields. Here the user requested
         // nothing yet a missing timestamp is still reported.

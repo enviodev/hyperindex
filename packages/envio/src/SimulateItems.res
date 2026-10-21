@@ -176,6 +176,7 @@ type rawSimulateItem
 @get external getEvent: rawSimulateItem => option<string> = "event"
 @get external getProgram: rawSimulateItem => option<string> = "program"
 @get external getInstruction: rawSimulateItem => option<string> = "instruction"
+@get external getBlock: rawSimulateItem => option<JSON.t> = "block"
 
 let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: string) => {
   let found = ref(None)
@@ -244,7 +245,7 @@ let deriveSrcAddress = (
 
 type parseResult = {
   items: array<Internal.item>,
-  getBlock: int => Internal.eventBlock,
+  getBlock: int => option<Internal.eventBlock>,
   transactionStore: option<TransactionStore.t>,
   blockStore: option<BlockStore.t>,
 }
@@ -293,7 +294,9 @@ let liveRegistrationsFor = (
       !HandlerRegister.isDroppedByWhere(~config, reg)
   )
 
-// An EVM or Fuel simulated block with the defaults filled in, and its number.
+// A simulated block with the defaults filled in, and its number. An SVM slot
+// has no defaults to fill beyond the slot itself: every other field is one a
+// slot that produced no block lacks too.
 let parseBlock = (~ecosystem: Ecosystem.name, ~defaultBlockNumber, ~blockJson) =>
   switch ecosystem {
   | Fuel =>
@@ -302,7 +305,17 @@ let parseBlock = (~ecosystem: Ecosystem.name, ~defaultBlockNumber, ~blockJson) =
   | Evm =>
     let block = parseEvmSimulateBlock(~defaultBlockNumber, ~blockJson)
     (block, (block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)).number)
-  | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
+  | Svm =>
+    let block = switch blockJson {
+    | Some(json) => json->(Utils.magic: JSON.t => dict<unknown>)->Dict.copy
+    | None => Dict.make()
+    }
+    let slot = switch block->Dict.get("slot") {
+    | Some(slot) => slot->(Utils.magic: unknown => int)
+    | None => defaultBlockNumber
+    }
+    block->Dict.set("slot", slot->(Utils.magic: int => unknown))
+    (block->(Utils.magic: dict<unknown> => Internal.eventBlock), slot)
   }
 
 let parse = (
@@ -330,6 +343,30 @@ let parse = (
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
+    | (_, None, None) if raw->getContract->Option.isNone && raw->getEvent->Option.isNone =>
+      switch raw->getBlock {
+      | Some(_) as blockJson =>
+        let (block, blockNumber) = parseBlock(
+          ~ecosystem=config.ecosystem.name,
+          ~defaultBlockNumber=currentBlock.contents,
+          ~blockJson,
+        )
+        let key = blockNumber->Int.toString
+        if blocks->Dict.get(key)->Option.isSome {
+          JsError.throwWithMessage(
+            `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is a second block ${key}. Give each block's fields in one item.`,
+          )
+        }
+        blocks->Dict.set(key, block)
+      | None =>
+        JsError.throwWithMessage(
+          `simulate: Invalid item. Each item must name what it is${switch config.ecosystem.name {
+            | Svm => ` with "program" and "instruction"`
+            | Evm | Fuel => ` with "contract" and "event"`
+            }}, or be a "block" on its own.`,
+        )
+      }
+
     | (Svm, Some(programName), Some(instructionName)) =>
       let eventConfig = switch findEventConfig(
         ~config,
@@ -406,7 +443,7 @@ let parse = (
       let args = item.args->Option.getOr(Dict.make()->(Utils.magic: dict<unknown> => unknown))
       let logs = item.logs->Option.map(logs =>
         logs->Array.map(
-          (log): SvmHyperSyncClient.EventItems.log => {
+          (log): SvmHyperSyncClient.Items.log => {
             kind: log.kind->Null.fromOption,
             message: log.message->Null.fromOption,
           },
@@ -519,27 +556,7 @@ let parse = (
       })
 
     | (Svm, _, _) =>
-      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "program" and "instruction" fields.`)
-
-    | (_, _, _) if raw->getContract->Option.isNone && raw->getEvent->Option.isNone =>
-      let blockJson = (rawJson->(Utils.magic: JSON.t => {"block": Nullable.t<JSON.t>}))["block"]
-      switch blockJson->Nullable.toOption {
-      | Some(_) as blockJson =>
-        let (block, blockNumber) = parseBlock(
-          ~ecosystem=config.ecosystem.name,
-          ~defaultBlockNumber=currentBlock.contents,
-          ~blockJson,
-        )
-        let key = blockNumber->Int.toString
-        if blocks->Dict.get(key)->Option.isSome {
-          JsError.throwWithMessage(
-            `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is a second block ${key}. Give each block's fields in one item.`,
-          )
-        }
-        blocks->Dict.set(key, block)
-      | None =>
-        JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields, or be a "block" on its own.`)
-      }
+      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "program" and "instruction" fields, or be a "block" on its own.`)
 
     | (_, _, _) =>
       let (contractName, eventName) = switch (raw->getContract, raw->getEvent) {
@@ -682,16 +699,19 @@ let parse = (
     }
   })
 
+  // A slot the chain skipped has no block, so on SVM a slot nothing simulated
+  // a block for has none either, where an EVM or Fuel block takes defaults.
   let getBlock = blockNumber =>
-    switch blocks->Dict.get(blockNumber->Int.toString) {
-    | Some(block) => block
-    | None =>
+    switch (blocks->Dict.get(blockNumber->Int.toString), config.ecosystem.name) {
+    | (Some(_) as block, _) => block
+    | (None, Svm) => None
+    | (None, Evm | Fuel) =>
       let (block, _) = parseBlock(
         ~ecosystem=config.ecosystem.name,
         ~defaultBlockNumber=blockNumber,
         ~blockJson=None,
       )
-      block
+      Some(block)
     }
 
   switch config.ecosystem.name {

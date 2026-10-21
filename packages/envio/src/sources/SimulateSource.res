@@ -1,5 +1,13 @@
-// A block item for every block in [fromBlock, toBlock] a selected registration
-// runs on, each carrying its simulated block inline.
+let runsOn = ({startBlock, endBlock, interval}: Internal.onBlockRegistration, blockNumber) => {
+  let startBlock = startBlock->Option.getOr(0)
+  blockNumber >= startBlock &&
+  endBlock->Option.mapOr(true, endBlock => blockNumber <= endBlock) &&
+  Pervasives.mod(blockNumber - startBlock, interval) === 0
+}
+
+// A block item for every block in [fromBlock, toBlock] the simulated chain has
+// and a selected registration runs on, each carrying its block inline — the
+// way `block_selection.rs` routes a native source's blocks.
 let blockItems = (
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   ~fromBlock,
@@ -7,34 +15,25 @@ let blockItems = (
   ~getBlock,
 ) => {
   let items = []
-  onBlockRegistrations->Array.forEach(onBlockRegistration => {
-    let {startBlock, endBlock, interval} = onBlockRegistration
-    let startBlock = startBlock->Option.getOr(0)
-    let toBlock = endBlock->Option.mapOr(toBlock, endBlock => Pervasives.min(endBlock, toBlock))
-    // The first block at or after `fromBlock` the interval lands on.
-    let first = Pervasives.max(startBlock, fromBlock)
-    let first =
-      first + Pervasives.mod(interval - Pervasives.mod(first - startBlock, interval), interval)
-    let blockNumber = ref(first)
-    while blockNumber.contents <= toBlock {
-      items
-      ->Array.push(
-        Internal.Block({
-          onBlockRegistration,
-          blockNumber: blockNumber.contents,
-          block: getBlock(blockNumber.contents),
-        }),
-      )
-      ->ignore
-      blockNumber := blockNumber.contents + interval
+  if onBlockRegistrations->Utils.Array.notEmpty {
+    for blockNumber in fromBlock to toBlock {
+      switch getBlock(blockNumber) {
+      | Some(block) =>
+        onBlockRegistrations->Array.forEach(onBlockRegistration =>
+          if onBlockRegistration->runsOn(blockNumber) {
+            items->Array.push(Internal.Block({onBlockRegistration, blockNumber, block}))
+          }
+        )
+      | None => ()
+      }
     }
-  })
+  }
   items
 }
 
 let make = (
   ~items: array<Internal.item>,
-  ~getBlock: int => Internal.eventBlock,
+  ~getBlock: int => option<Internal.eventBlock>,
   ~endBlock: int,
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,

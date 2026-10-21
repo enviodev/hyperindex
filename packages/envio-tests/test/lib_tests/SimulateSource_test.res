@@ -63,7 +63,7 @@ let getItems = async (
 ) => {
   let source = SimulateSource.make(
     ~items,
-    ~getBlock=_ => JsError.throwWithMessage("No block handler selects fields here"),
+    ~getBlock=_ => None,
     ~endBlock=1000,
     ~chainId,
     ~addressStore=store,

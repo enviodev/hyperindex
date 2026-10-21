@@ -26,6 +26,7 @@ use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
+use crate::block_selection::{BlockItem, BlockSelection, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
@@ -213,18 +214,24 @@ impl SvmHyperSyncClient {
         Ok((aggregate, request_stats))
     }
     #[napi]
-    pub async fn get_event_items(
+    pub async fn get_items(
         &self,
-        params: EventItemsQuery,
+        params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
         let built = self
             .selection_builder
-            .build(&params.registration_indexes)
+            .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
+        let block_selection =
+            BlockSelection::new(&params.on_block_registrations).map_err(map_err)?;
+        let mut block_columns = built.block_columns.clone();
+        for column in fields::block_mask_columns(block_selection.mask()).map_err(map_err)? {
+            fields::push_unique(&mut block_columns, column);
+        }
 
         let mut field_selection = SolanaFieldSelection {
-            block: parse_columns(&built.block_columns).map_err(map_err)?,
+            block: parse_columns(&block_columns).map_err(map_err)?,
             // Instructions are exempt from merge-mode "empty = no rows", so an
             // empty list would fetch every column. Spell the routing set.
             instruction_call: parse_columns(&built.instruction_columns).map_err(map_err)?,
@@ -266,7 +273,9 @@ impl SvmHyperSyncClient {
             max_num_instructions: params
                 .max_num_instructions
                 .and_then(|v| usize::try_from(v).ok()),
-            include_all_blocks: params.include_all_blocks.unwrap_or(false),
+            // A slot handler runs on slots no instruction landed on.
+            include_all_blocks: params.include_all_blocks.unwrap_or(false)
+                || !block_selection.is_empty(),
             ..Default::default()
         };
 
@@ -310,10 +319,18 @@ impl SvmHyperSyncClient {
                 ))
             })
             .collect();
-        let referenced_slots: HashSet<u64> = referenced_transactions
+        let mut referenced_slots: HashSet<u64> = referenced_transactions
             .iter()
             .map(|(slot, _)| *slot)
             .collect();
+        // Only a slot that produced a block has one to read, so a slot handler
+        // selecting fields runs on the blocks returned — a skipped slot has none.
+        let mut block_items = Vec::new();
+        for slot in resp.blocks.iter().filter_map(|block| block.slot) {
+            if block_selection.route(slot, &mut block_items) {
+                referenced_slots.insert(slot);
+            }
+        }
 
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
@@ -323,12 +340,13 @@ impl SvmHyperSyncClient {
         let (block_headers, block_store) =
             take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
 
-        let response = EventItemsResponse {
+        let response = ItemsResponse {
             next_slot: i64::try_from(resp.next_slot)
                 .context("next_slot overflow")
                 .map_err(map_err)?,
             blocks: block_headers,
-            items,
+            event_items: items,
+            block_items,
         };
         Ok((response, store, block_store))
     }
@@ -351,19 +369,22 @@ fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, Option<
     Ok((next_slot, last_slot, block_store))
 }
 
-/// The whole per-query input for `get_event_items`: the slot range and the
-/// partition's registration selection (by index). The partition's addresses
-/// arrive separately, as the `AddressSet` handle. Instruction selections, field
-/// selection, and routing are all derived internally from the registrations
-/// passed at construction.
+/// The whole per-query input for `get_items`: the slot range and what it
+/// selects from each table. The partition's addresses arrive separately, as the
+/// `AddressSet` handle. Instruction selections, field selection, and routing
+/// are all derived internally from the registrations passed at construction.
 #[napi(object)]
-pub struct EventItemsQuery {
+pub struct ItemsQuery {
     pub from_slot: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_slot: Option<i64>,
     /// `None` sends no server-side cap on the number of instructions returned.
     pub max_num_instructions: Option<i64>,
-    pub registration_indexes: Vec<i64>,
+    /// The instruction registrations selecting instructions, by index. Empty
+    /// selects no instructions.
+    pub on_event_registration_indexes: Vec<i64>,
+    /// The slot handlers selecting blocks.
+    pub on_block_registrations: Vec<OnBlockRegistrationInput>,
     /// Program names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent program is filtered server-side.
@@ -408,13 +429,14 @@ pub struct EventItem {
 }
 
 #[napi(object, object_from_js = false)]
-pub struct EventItemsResponse {
+pub struct ItemsResponse {
     pub next_slot: i64,
     /// The page's lean block headers, one per slot; used for reorg detection
     /// and the batch's latest timestamp. The full blocks live in the
     /// `BlockStore` returned alongside this response.
     pub blocks: Vec<types::Block>,
-    pub items: Vec<EventItem>,
+    pub event_items: Vec<EventItem>,
+    pub block_items: Vec<BlockItem>,
 }
 
 fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {

@@ -9,6 +9,7 @@ mod selection;
 mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
+use crate::block_selection::{BlockItem, BlockSelection, OnBlockRegistrationInput};
 use crate::block_store::{BlockStore, FuelBlockRow};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
@@ -66,20 +67,26 @@ impl FuelHyperSyncClient {
     }
 
     #[napi]
-    pub async fn get_event_items(
+    pub async fn get_items(
         &self,
-        params: EventItemsQuery,
+        params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, BlockStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, address_set, &client_filtered)
+            .build(
+                &params.on_event_registration_indexes,
+                address_set,
+                &client_filtered,
+            )
             .map_err(map_err)?;
+        let block_selection =
+            BlockSelection::new(&params.on_block_registrations).map_err(map_err)?;
 
-        let query = build_query(&params, &built)
+        let query = build_query(&params, &built, &block_selection)
             .context("build query")
             .map_err(map_err)?;
         let res = self
@@ -105,6 +112,16 @@ impl FuelHyperSyncClient {
             .collect::<anyhow::Result<Vec<_>>>()
             .map_err(map_err)?;
         block_store.insert_fuel_block_rows(rows);
+        // Every block field is fetched for every block, so routing is all a
+        // block handler needs. The page asked for every block of the range it
+        // covered, so one missing is a bad answer, not a block to skip.
+        let block_items = route_blocks(
+            &raw.blocks,
+            &block_selection,
+            u64::try_from(params.from_block).unwrap_or(0)
+                ..u64::try_from(raw.next_block).unwrap_or(0),
+        )
+        .map_err(convert_error_to_napi)?;
 
         // Materialise the set's cache before taking the store guard: `cache()`
         // lazily initialises by reading the same lock, and a writer queued
@@ -123,27 +140,51 @@ impl FuelHyperSyncClient {
             .map_err(convert_error_to_napi)?
         };
 
-        let response = EventItemsResponse {
+        let response = ItemsResponse {
             archive_height: raw.archive_height,
             next_block: raw.next_block,
-            items,
+            event_items: items,
+            block_items,
             rejected_log_data,
         };
         Ok((response, block_store))
     }
 }
 
-/// The whole per-query input for `get_event_items`: the block range and the
-/// partition's registration selection (by index). The partition's addresses
-/// arrive separately, as the `AddressSet` handle. Receipt selections, field
-/// selection, and routing are all derived internally from the registrations
-/// passed at construction.
+/// The block handlers running on the blocks of `covered`, in block order.
+fn route_blocks(
+    blocks: &[Block],
+    block_selection: &BlockSelection,
+    covered: std::ops::Range<u64>,
+) -> Result<Vec<BlockItem>, ConvertError> {
+    let mut block_items = Vec::new();
+    if block_selection.is_empty() || covered.is_empty() {
+        return Ok(block_items);
+    }
+    let present: HashSet<i64> = blocks.iter().map(|b| b.height).collect();
+    for height in block_selection.block_numbers(covered.start, covered.end - 1) {
+        if !present.contains(&(height as i64)) {
+            return Err(ConvertError::MissingFields(vec!["block".to_string()]));
+        }
+        block_selection.route(height, &mut block_items);
+    }
+    Ok(block_items)
+}
+
+/// The whole per-query input for `get_items`: the block range and what it
+/// selects from each table. The partition's addresses arrive separately, as
+/// the `AddressSet` handle. Receipt selections, field selection, and routing
+/// are all derived internally from the registrations passed at construction.
 #[napi(object)]
-pub struct EventItemsQuery {
+pub struct ItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
-    pub registration_indexes: Vec<i64>,
+    /// The event registrations selecting receipts, by index. Empty selects no
+    /// receipts.
+    pub on_event_registration_indexes: Vec<i64>,
+    /// The block handlers selecting blocks.
+    pub on_block_registrations: Vec<OnBlockRegistrationInput>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent contract is filtered server-side.
@@ -177,10 +218,11 @@ pub struct EventItem {
 }
 
 #[napi(object, object_from_js = false)]
-pub struct EventItemsResponse {
+pub struct ItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub items: Vec<EventItem>,
+    pub event_items: Vec<EventItem>,
+    pub block_items: Vec<BlockItem>,
     pub rejected_log_data: Vec<RejectedLogData>,
 }
 
@@ -199,8 +241,9 @@ pub struct RejectedLogData {
 }
 
 fn build_query(
-    params: &EventItemsQuery,
+    params: &ItemsQuery,
     built: &BuiltSelection,
+    block_selection: &BlockSelection,
 ) -> anyhow::Result<net_types::Query> {
     let from_block = u64::try_from(params.from_block).context("from_block must be >= 0")?;
     let to_block = params
@@ -243,6 +286,8 @@ fn build_query(
             receipt: receipt_fields.into_iter().map(str::to_string).collect(),
             ..Default::default()
         },
+        // A block handler runs on blocks no receipt landed on.
+        include_all_blocks: !block_selection.is_empty(),
         ..Default::default()
     })
 }
@@ -441,6 +486,46 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
     use crate::js_value::test_value::JsValue;
+
+    fn every_other_block_from(start_block: i64) -> BlockSelection {
+        BlockSelection::new(&[OnBlockRegistrationInput {
+            index: 0,
+            start_block,
+            end_block: None,
+            interval: 2,
+            block_field_mask: 0b111 as f64,
+        }])
+        .unwrap()
+    }
+
+    fn block(height: i64) -> Block {
+        Block {
+            id: String::new(),
+            height,
+            time: 0,
+        }
+    }
+
+    #[test]
+    fn routes_the_covered_blocks_a_handler_runs_on() {
+        let items = route_blocks(
+            &(10..14).map(block).collect::<Vec<_>>(),
+            &every_other_block_from(10),
+            10..14,
+        )
+        .ok()
+        .unwrap();
+        assert_eq!(
+            items.iter().map(|i| i.block_number).collect::<Vec<_>>(),
+            vec![10, 12]
+        );
+    }
+
+    #[test]
+    fn reports_a_missing_block_a_handler_runs_on() {
+        let err = route_blocks(&[block(10)], &every_other_block_from(10), 10..14);
+        assert!(matches!(err, Err(ConvertError::MissingFields(fields)) if fields == ["block"]));
+    }
 
     #[test]
     fn convert_error_serializes_as_expected_json() {

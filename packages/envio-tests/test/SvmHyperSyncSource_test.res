@@ -57,7 +57,7 @@ let makeReg = (~eventConfig=makeEventConfig(), ~where=None, ~index=0) => {
   {...reg, Internal.index}
 }
 
-let mockResponse: SvmHyperSyncClient.EventItems.response = {
+let mockResponse: SvmHyperSyncClient.Items.response = {
   nextSlot: slot + 1,
   blocks: [
     {
@@ -66,7 +66,8 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       blockTime: Null.make(blockTime),
     },
   ],
-  items: [
+  blockItems: [],
+  eventItems: [
     {
       onEventRegistrationIndex: 0,
       slot,
@@ -82,7 +83,7 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
   ],
 }
 
-let capturedQueries: array<SvmHyperSyncClient.EventItems.query> = []
+let capturedQueries: array<SvmHyperSyncClient.Items.query> = []
 let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
 
 // The chain's address index; created outside the mock-addon window below so it
@@ -103,7 +104,7 @@ let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   getBlockHashes: (~blockNumbers as _) =>
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
-  getEventItems: (~query, ~addressSet as _) => {
+  getItems: (~query, ~addressSet as _) => {
     capturedQueries->Array.push(query)
     // The real Rust client builds the stores from raw transactions/blocks; the
     // mock returns empty pages (materialisation is covered by the Rust unit
@@ -235,9 +236,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           fromSlot: slot - 10,
           toSlot: Some(slot + 10),
           maxNumInstructions: 5000,
-          registrationIndexes: [0],
+          onEventRegistrationIndexes: [0],
+          onBlockRegistrations: [],
           clientFilteredContracts: None,
-        }: SvmHyperSyncClient.EventItems.query
+        }: SvmHyperSyncClient.Items.query
       ),
     })
   })

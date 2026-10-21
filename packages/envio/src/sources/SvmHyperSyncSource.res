@@ -35,7 +35,7 @@ let namedAccounts = (
 }
 
 let selectedLog = (
-  log: SvmHyperSyncClient.EventItems.log,
+  log: SvmHyperSyncClient.Items.log,
   ~logFields: Utils.Set.t<string>,
 ): Envio.svmLog => {
   let out = Dict.make()
@@ -61,7 +61,7 @@ let setField = (out: dict<unknown>, name: string, value: 'a) =>
 // at batch prep. Named-account `.activity` is attached then too.
 // Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
-  item: SvmHyperSyncClient.EventItems.item,
+  item: SvmHyperSyncClient.Items.item,
   ~programName,
   ~instructionName,
   ~eventConfig: Internal.svmInstructionEventConfig,
@@ -160,17 +160,18 @@ let make = (
 
     let fetchStats = () => RequestStat.single(~method="getInstructions", ~sentAt=pageFetchRef)
 
-    let query: SvmHyperSyncClient.EventItems.query = {
+    let query: SvmHyperSyncClient.Items.query = {
       fromSlot: fromBlock,
       toSlot: toBlock,
       maxNumInstructions: ?itemsTarget,
-      registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+      onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+      onBlockRegistrations: selection.onBlockRegistrations->BlockItem.toRegistrationInputs,
       clientFilteredContracts: selection.clientFilteredContracts,
       // Absent rather than false, so a backfill query is the one it always was.
       includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
     }
 
-    let (resp, transactionStore, blockStore) = try await client.getEventItems(
+    let (resp, transactionStore, blockStore) = try await client.getItems(
       ~query,
       ~addressSet,
     ) catch {
@@ -200,7 +201,7 @@ let make = (
 
     let parsingRef = Performance.now()
 
-    let parsedQueueItems = resp.items->Array.map(item => {
+    let eventItems = resp.eventItems->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
@@ -238,7 +239,11 @@ let make = (
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
-      parsedQueueItems,
+      parsedQueueItems: eventItems->Array.concat(
+        resp.blockItems->BlockItem.toInternalItems(
+          ~onBlockRegistrations=selection.onBlockRegistrations,
+        ),
+      ),
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
       // Raw blocks kept in Rust; materialised onto the payload at batch prep.
