@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bytes_params_are_hex_strings() {
+    fn test_bytes_params_are_hex() {
         let tuple_type = AbiType::Tuple(vec![
             AbiTupleField {
                 name: Some("data".to_string()),
