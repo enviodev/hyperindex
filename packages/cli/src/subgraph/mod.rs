@@ -997,16 +997,34 @@ fn contract_config(
             .iter()
             .filter(|input| input.indexed)
             .count();
-        if indexed <= 3 {
-            return true;
+        if indexed > 3 {
+            notices.push(format!(
+                "Envio Subgraph: data source \"{source_name}\" → \"{}\" never runs: its event {} \
+                 declares {indexed} indexed parameters, more than the three a log has topics for, \
+                 so no log decodes as it. graph-node skips it for the same reason.",
+                handler.handler, handler.event
+            ));
+            return false;
         }
-        notices.push(format!(
-            "Envio Subgraph: data source \"{source_name}\" → \"{}\" never runs: its event {} \
-             declares {indexed} indexed parameters, more than the three a log has topics for, so \
-             no log decodes as it. graph-node skips it for the same reason.",
-            handler.handler, handler.event
-        ));
-        false
+        // graph-node decodes a log its topic0 matched with the ABI's event, and
+        // a non-anonymous event's decoding checks topic0 against the
+        // signature's hash (alloy's decode_log, "invalid event signature").
+        if let Some(topic0) = handler
+            .topic0
+            .as_ref()
+            .filter(|_| !abi::is_anonymous(&handler.event, abi_json.as_deref()))
+        {
+            notices.push(format!(
+                "Envio Subgraph: data source \"{source_name}\" → \"{}\" never runs: its topic0 \
+                 {topic0} isn't the hash of {}, which the ABI doesn't declare anonymous, so every \
+                 log it matches fails to decode as that event (\"invalid event signature\"). \
+                 graph-node skips it for the same reason.",
+                handler.handler,
+                handler.event.replace("indexed ", "")
+            ));
+            return false;
+        }
+        true
     });
 
     // An overloaded name needs a unique envio name as well as a spelled-out
@@ -1033,23 +1051,14 @@ fn contract_config(
             report,
         );
         handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
-        if handler.topic0.is_some() {
-            let location = format!(
-                "data source \"{source_name}\" → eventHandlers → \"{}\" → topic0",
-                handler.handler
+        if handler.topic0.is_some() && !handler.topics.is_empty() {
+            report.unsupported(
+                "topic1-3 filters on an anonymous event matched on topic0",
+                format!(
+                    "data source \"{source_name}\" → eventHandlers → \"{}\" → topic0",
+                    handler.handler
+                ),
             );
-            if !abi::is_anonymous(&handler.event, abi_json.as_deref()) {
-                report.unsupported(
-                    "event handlers whose topic0 is not the event signature's hash on an event \
-                     the ABI doesn't declare anonymous",
-                    location,
-                );
-            } else if !handler.topics.is_empty() {
-                report.unsupported(
-                    "topic1-3 filters on an anonymous event matched on topic0",
-                    location,
-                );
-            }
         }
         let key = (event.clone(), handler.topic0.clone());
         if let Some((name, _)) = by_event.get(&key) {
@@ -2307,16 +2316,66 @@ type Gravatar @entity {
                 &ambiguous(),
             )
         };
-        // Another word is only a selector on an anonymous event, which
-        // NewGravatar isn't.
+        assert_eq!((with(&own).is_ok(), with("0x").is_ok()), (true, false));
+    }
+
+    // graph-node matches a log on a handler's topic0, then decodes it with the
+    // ABI's event, and alloy's decode_log checks a non-anonymous event's topic0
+    // against its signature's hash ("invalid event signature",
+    // graph/src/abi/event_ext.rs `decode_log_invalid_topic_0`), so the handler
+    // is skipped for every log it matches (chain/ethereum/src/data_source.rs,
+    // "Skipping handler because the event parameters do not match").
+    // hpmszk/poolstrade.dev declares an indexed struct as `indexed bytes32` and
+    // overrides topic0 with the struct signature's hash.
+    #[test]
+    fn drops_a_handler_whose_topic0_is_another_hash_on_a_non_anonymous_event() {
         let selector = format!("0x4bb278f3{}", "00".repeat(28));
+        let manifest = MANIFEST.split("templates:").next().unwrap().replacen(
+            "          handler: handleNewGravatar",
+            &format!("          topic0: \"{selector}\"\n          handler: handleNewGravatar"),
+            1,
+        );
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        let events: Vec<String> = translation.human_config.contracts.as_ref().unwrap()[0]
+            .config
+            .events
+            .iter()
+            .map(|event| {
+                event
+                    .event
+                    .split('(')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect();
+        let handlers: Vec<String> = translation.runtime.manifest.data_sources[0]
+            .event_handlers
+            .iter()
+            .map(|handler| handler.handler.clone())
+            .collect();
         assert_eq!(
+            (events, handlers, translation.runtime.notices.clone()),
             (
-                with(&own).is_ok(),
-                with("0x").is_ok(),
-                with(&selector).is_ok()
-            ),
-            (true, false, false)
+                vec!["UpdatedGravatar".to_string()],
+                vec!["handleUpdatedGravatar".to_string()],
+                vec![format!(
+                    "Envio Subgraph: data source \"Gravity\" → \"handleNewGravatar\" never runs: its \
+                     topic0 {selector} isn't the hash of NewGravatar(uint256,address,string,string), \
+                     which the ABI doesn't declare anonymous, so every log it matches fails to decode \
+                     as that event (\"invalid event signature\"). graph-node skips it for the same \
+                     reason."
+                )]
+            )
         );
     }
 

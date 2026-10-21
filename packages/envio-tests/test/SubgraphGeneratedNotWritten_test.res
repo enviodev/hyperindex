@@ -1,7 +1,8 @@
 // graph codegen writes generated/<data source>/<ABI>.ts for each data source of
 // the manifest it runs on, and nothing else. A mapping importing a path it never
 // writes, from an ABI no manifest names and not under the data source's own name,
-// fails `graph build` too (TS6054), and envio has nothing to write it from.
+// fails `graph build` too (TS6054), and envio has nothing to write it from when
+// no generated module has the names it imports (here the binding `Controller`).
 // envio reported only Node's "Cannot find module"; it now says what the manifest
 // does declare.
 let manifest = `
@@ -50,7 +51,7 @@ let _ = InternalTestIndexer.fromSubgraph(
     (
       "src/staker.ts",
       `
-import { TokenStaked } from "../generated/NNSController/Controller";
+import { Controller, TokenStaked } from "../generated/NNSController/Controller";
 import { Stake } from "../generated/schema";
 
 export function handleTokenStaked(event: TokenStaked): void {

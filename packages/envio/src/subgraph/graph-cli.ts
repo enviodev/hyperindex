@@ -586,7 +586,104 @@ export async function ensureGeneratedCode(
   options: CodegenOptions = {},
 ): Promise<void> {
   await buildGeneratedCode(root, dir, manifestFile, mappingFiles, options);
-  if (codegenMode() !== "graph-cli") fillFromOtherManifests(root, dir, manifestFile, mappingFiles);
+  if (codegenMode() !== "graph-cli") {
+    fillFromOtherManifests(root, dir, manifestFile, mappingFiles);
+    fillFromImportedNames(root, dir, mappingFiles);
+  }
+}
+
+/** The generated ABI modules under `dir`: `<data source>/<ABI>.ts` and `templates/<template>/<ABI>.ts`. */
+function generatedModules(dir: string): string[] {
+  const subdirs = (parent: string) =>
+    existsSync(parent)
+      ? readdirSync(parent, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+      : [];
+  const modulesIn = (relative: string) =>
+    readdirSync(path.join(dir, relative))
+      .filter((file) => file.endsWith(".ts") && file !== "index.ts")
+      .map((file) => path.join(relative, file));
+  return [
+    ...subdirs(dir)
+      .filter((name) => name !== "templates")
+      .flatMap(modulesIn),
+    ...subdirs(path.join(dir, "templates")).flatMap((name) => modulesIn(path.join("templates", name))),
+  ].sort();
+}
+
+/**
+ * A generated module the mappings import that graph codegen didn't write and no
+ * manifest or ABI accounts for, when every generated module exporting all the
+ * names they import from it is the same code: tornado-subgraph imports its event
+ * classes from the generated directory itself (`from '../generated'`; its node
+ * manifest script writes an index.ts re-exporting a data source's module), and
+ * balancer's cow-amm LOG_NEW_POOL from src/types/Factory/Factory, from when its
+ * factory data source was "Factory" with the ABI named "Factory" (now Factory3
+ * and Factory4 with BFactory). The file is written as a re-export of that
+ * module, with a warning; anything else keeps the load error.
+ */
+function fillFromImportedNames(root: string, dir: string, mappingFiles: string[]): void {
+  dir = path.resolve(dir);
+  if (!existsSync(dir)) return;
+  const wanted = new Map<string, { names: Set<string>; importers: Set<string> }>();
+  for (const { file } of scanImports(root, mappingFiles)) {
+    const source = readFileSync(file, "utf8");
+    for (const [, clause, specifier] of source.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*["'](\.\.?\/[^"']*)["']/g)) {
+      const target = path.resolve(path.dirname(file), specifier.replace(/\/$/, "").replace(/\.ts$/, ""));
+      if (target !== dir && !target.startsWith(dir + path.sep)) continue;
+      if ([`${target}.ts`, path.join(target, "index.ts")].some((candidate) => existsSync(candidate))) continue;
+      const module = target === dir || existsSync(target) ? path.join(target, "index.ts") : `${target}.ts`;
+      // Only where graph codegen writes ABI modules, or the directory's own
+      // index: schema.ts and templates.ts hold entity and template classes.
+      const parts = path.relative(dir, module).split(path.sep);
+      const abiModule =
+        parts.length === 1
+          ? parts[0] === "index.ts"
+          : parts.length === 2
+            ? parts[0] !== "templates"
+            : parts.length === 3 && parts[0] === "templates";
+      if (!abiModule) continue;
+      const entry = wanted.get(module) ?? { names: new Set<string>(), importers: new Set<string>() };
+      for (const name of clause.split(",")) {
+        const imported = name.trim().split(/\s+as\s+/)[0];
+        if (imported) entry.names.add(imported);
+      }
+      entry.importers.add(path.relative(root, file));
+      wanted.set(module, entry);
+    }
+  }
+  if (wanted.size === 0) return;
+  const exportsOf = new Map(
+    generatedModules(dir).map((module) => {
+      const source = readFileSync(path.join(dir, module), "utf8");
+      return [module, { source, classes: new Set([...source.matchAll(/^export class (\w+)/gm)].map(([, name]) => name)) }];
+    }),
+  );
+  for (const [module, { names, importers }] of wanted) {
+    if (names.size === 0) continue;
+    const sibling = ([candidate]: [string, unknown]) => (path.join(dir, path.dirname(candidate)) === path.dirname(module) ? 0 : 1);
+    const found = [...exportsOf]
+      .filter(([, { classes }]) => [...names].every((name) => classes.has(name)))
+      .sort((a, b) => sibling(a) - sibling(b));
+    if (new Set(found.map(([, { source }]) => source)).size !== 1) continue;
+    const from = path.join(dir, found[0][0]);
+    let specifier = path.relative(path.dirname(module), from).replace(/\.ts$/, "").split(path.sep).join("/");
+    if (!specifier.startsWith(".")) specifier = `./${specifier}`;
+    mkdirSync(path.dirname(module), { recursive: true });
+    writeFileSync(module, `export * from "${specifier}";\n`);
+    const files = [...importers];
+    warn(
+      `Envio Subgraph wrote ${path.relative(root, module)}, re-exporting ${path.relative(root, from)}: ` +
+        `${files.join(", ")} import${files.length === 1 ? "s" : ""} ${[...names].join(", ")} from ` +
+        `${path.relative(root, module).replace(/(\/index)?\.ts$/, "")}, which graph codegen doesn't write for any ` +
+        "manifest of the project, so `graph build` fails on a clean checkout. " +
+        (found.length === 1
+          ? "That module is the only generated one with those names; "
+          : "Every generated module with those names is the same code; ") +
+        "the tree this subgraph was built with had the file from an earlier manifest or the project's own scripts.",
+    );
+  }
 }
 
 /**

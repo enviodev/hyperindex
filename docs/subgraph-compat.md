@@ -55,7 +55,7 @@ graph-node's own ceiling (`GRAPH_MAX_API_VERSION`), is a §7 error.
 | `receipt: true` | scalars (`transactionHash`, `transactionIndex`, `root`, `status`, `gasUsed`, `cumulativeGasUsed`, `logsBloom`, `contractAddress`) via `field_selection`, selected whether or not the mapping also reads `event.transaction` — from HyperSync, or from `eth_getTransactionReceipt` on a chain synced over RPC (§6b); `receipt.logs` is every log of the transaction, read on first access from HyperSync's logs of its block (one query per block, shared by the batch), or from the RPC receipt where HyperSync can't answer or the chain is synced over RPC (`receipts.ts`) | ✅ |
 | Topic filters (1.2.0) | `where: { params: ... }` (arrays = OR), raw topic values decoded back to param values. Dynamic-typed indexed params (`string`/`bytes`/arrays/tuples) appear in topics as keccak hashes, which can't be decoded back to the values envio filters on → §7 error | ⚠️ |
 | Several handlers on one event | one envio event, a registration per handler, run in manifest order (graph-node's `handlers_for_log`) | ✅ |
-| `topic0` on an anonymous event (Balancer's `LOG_CALL`, keyed on the called selector) | an envio event per `topic0` value, matched on that first topic and decoded from all of them (no signature topic). A `topic0` other than the signature's hash on an event the ABI doesn't declare anonymous, or one combined with `topic1`–`topic3`, → §7 error | ✅ |
+| `topic0` on an anonymous event (Balancer's `LOG_CALL`, keyed on the called selector) | an envio event per `topic0` value, matched on that first topic and decoded from all of them (no signature topic). A `topic0` other than the signature's hash on an event the ABI doesn't declare anonymous matches logs graph-node then fails to decode as that event (alloy's `decode_log` checks topic0 against the signature's hash), so graph-node skips the handler for each of them; it is left out, with a startup warning. One combined with `topic1`–`topic3` → §7 error | ✅ |
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock`; `once` runs ahead of its block's events, as graph-node's `Start` trigger does | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); the other header fields (`hash`, `parentHash`, …) from a second batched header query, served only from below the chain's reorg depth, so a block handler that reads them holds its chain that far behind the head: fetched after the batch, a header is outside the reorg guard that validates an event's block (`ENVIO_SUBGRAPH_BLOCK_LAG` sets the distance; 0 turns the hold off) | ✅ |
@@ -106,7 +106,11 @@ off the entity schema, §4; a JS date holds milliseconds, so a value's last
 three digits read back as zeros where graph-node keeps them — block times are
 whole seconds, so timeseries and `block.timestamp`-derived values are exact), stored entity lists → `[String!]!` id arrays
 (also when written with nullable elements, `[Mint]!` as Uniswap v2 forks do:
-a mapping stores ids there, never nulls),
+a mapping stores ids there, never nulls), a flat scalar list with nullable
+elements (`whitelist: [String]`, QuickSwap) → `[String!]` — graph-node
+stores a null element too, envio's store can't, so a save that puts one there
+fails with a §7 error naming the entity and field (nested ones, `[[Int!]]`,
+are refused at translation),
 `_Schema_ @fulltext` stripped, and every `@derivedFrom` field → `[T!]!`
 whatever nullability it was written with, including the one-to-one
 `Registration @derivedFrom(...)` the ENS subgraph uses. The lookup is the
@@ -560,7 +564,14 @@ classes call `DataSource.create`. Consequences:
     source and ABI depends on the ABI alone (a renamed data source); and a
     `<X>/<X>.ts` from data source X's own ABI under that name (a renamed
     ABI); and from an `<ABI>.json` the manifests' ABI directories still hold
-    (a data source taken out of the manifest). A file
+    (a data source taken out of the manifest). Any other missing module the
+    mappings import from the tree — the generated directory itself
+    (tornado-subgraph's `from '../generated'`, whose manifest script writes an
+    `index.ts` re-exporting one data source's module), or `<X>/<Y>.ts` where
+    no manifest has data source X or ABI Y (cow-amm's `Factory/Factory` from
+    when its factory and its ABI were both named Factory) — is written as a
+    re-export of the generated module that exports every name imported from
+    it, with a warning, when all such modules are the same code. A file
     none of them accounts for fails to load with the reason (no data source of
     that name, no such ABI, no `index.ts`), as `graph build` fails on it.
 - **Workspace packages resolve without an install.** A bare import a monorepo's
