@@ -247,11 +247,14 @@ later block, with a causality region of its own. Here:
   `ENVIO_SUBGRAPH_ARWEAVE_URL`; at most 16 fetches in flight; during preload a
   batch's files download concurrently. The fetch is an effect with `cache: true`, so
   files live in the on-disk effect cache.
-- *Not found.* A 404, or a gateway that keeps failing, is asked again
+- *Not found.* A file every gateway answers 404 for is asked again
   `ENVIO_SUBGRAPH_FILE_ATTEMPTS` times (default 4; first wait `ENVIO_SUBGRAPH_FILE_RETRY_MS`,
   default 2000, doubling), then the handler is skipped with a warning and indexing goes
-  on. (Deviation: graph-node polls with backoff up to 10 minutes, indefinitely.) A definite
-  404 is cached as `null`; a gateway that never answered is not, so a later create asks again.
+  on. (Deviation: graph-node polls with backoff up to 10 minutes, indefinitely.) That miss
+  is cached as `null`. A failure asking again can mend (a 429, a 5xx, a timeout) is not a
+  miss: it is asked again with backoff for up to `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS`, the
+  `ipfs.cat` budget, and a file still out of reach then skips its handler with a warning,
+  uncached, so a later create asks again.
 - *Bad CID.* A source that doesn't parse as a CID is ignored with a warning, as graph-node does.
 - Arweave sources are the transaction id (with an optional path).
 
@@ -539,7 +542,7 @@ classes call `DataSource.create`. Consequences:
   directory above it. Install the project's dependencies and try again:
     npm install   (or yarn / pnpm install)
   Or generate manually:
-    npx graph codegen --output-dir generated
+    npx @graphprotocol/graph-cli codegen --output-dir generated
   ```
 
   `graph codegen` fails with `ENVIO_SUBGRAPH_CODEGEN=graph-cli`, or after the
@@ -653,7 +656,7 @@ concurrency and batching. envio's other knobs (`hypersync_config.url`,
 | ENSRainbow heal endpoint for `ens.nameByHash` | `ENVIO_SUBGRAPH_ENS_RAINBOW_URL` | optional, default `https://api.ensrainbow.io/v1/heal/` (no hosted instance has stayed up; self-host ENSRainbow for healed names); `off` → every lookup is `null`, as on graph-node without a rainbow table |
 | Contract-call progress log interval | `ENVIO_SUBGRAPH_PROGRESS_LOG_MS` | optional, default 30000: while contract calls are outstanding, how often answered/waiting counts are logged (a batch is written only once its calls are all in) |
 | Register pass for every handler | `ENVIO_SUBGRAPH_REGISTER_ALL_HANDLERS=1` | escape hatch: rerun every handler at fetch time, not only those whose code can reach `DataSourceTemplate.create` (§4) |
-| `ipfs.cat` wait before it answers null | `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS` | optional, default 60000, graph-node's `GRAPH_IPFS_TIMEOUT`: how long a file every gateway fails to hand over is asked for again |
+| `ipfs.cat` wait before it answers null | `ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS` | optional, default 60000, graph-node's `GRAPH_IPFS_TIMEOUT`: how long a file every gateway fails to hand over is asked for again, by `ipfs.cat` and by a file data source |
 | Host op retry backoff | `ENVIO_SUBGRAPH_RETRY_BACKOFF_MS` | optional, default 500: the first wait before asking again after a transient failure, doubling up to 30 s |
 | RPC requests in flight | `ENVIO_SUBGRAPH_RPC_CONCURRENCY` | optional, default 48 per endpoint. When the endpoint says "slow down" (HTTP 429 or a JSON-RPC rate-limit error), requests in flight and the calls per batch are halved, once per wave of requests, and grow back by one per round of answers |
 | JSON-RPC batch size | `ENVIO_SUBGRAPH_RPC_BATCH` | optional, default 32; 1 sends every request alone. Contract calls, balances and block lookups that queue while every connection is busy (48, `ENVIO_SUBGRAPH_RPC_CONCURRENCY`) leave together as one JSON-RPC batch. Answers are matched by id, so a revert stays that call's revert; an endpoint that refuses a batch (HTTP 4xx, an error instead of the array, "batch of more than N" per item) gets smaller ones, down to single requests |
@@ -690,7 +693,10 @@ The settings of one feature are documented with it: `ENVIO_SUBGRAPH_IPFS_URL`,
   `mainnet` whatever it is, and a local subgraph says `network: mainnet` for an
   anvil node), so an endpoint that serves another chain than the registry's for
   the network's name decides the chain, with a startup notice naming both; one
-  that doesn't answer leaves the name to the tables.
+  that doesn't answer leaves the name to the tables. An endpoint served by the
+  process reading the project isn't asked, and counts as one that doesn't
+  answer: `createTestIndexer()` reads the project synchronously, so a test's
+  RPC stub in the same process couldn't answer until the read gave up.
 - **`receipt: true` + RPC: envio's standard behavior, inherited.** envio's
   RPC source reads the receipt scalars from `eth_getTransactionReceipt`, so a
   chain synced over RPC (`for: sync`, or a fallback that took over) serves

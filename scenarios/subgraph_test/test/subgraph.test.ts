@@ -2,9 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-// envio reads ENVIO_SUBGRAPH_RPC when it is imported, and that import blocks
-// the thread the stub below answers on, so the stub can't be listening yet: a
-// port the OS assigns is taken now and freed for it.
+// The stub below answers on a port the OS assigns, taken now and freed for it,
+// so ENVIO_SUBGRAPH_RPC can name it before envio is imported.
 const probe = createServer();
 await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
 const port = (probe.address() as AddressInfo).port;
@@ -52,6 +51,17 @@ afterAll(async () => {
 const bytes = (hex: string) => Uint8Array.from(Buffer.from(hex.slice(2), "hex"));
 
 describe("an unmodified subgraph project", () => {
+  // createTestIndexer() reads the project synchronously, and reading it asks
+  // ENVIO_SUBGRAPH_RPC its eth_chainId. This stub answers on the thread that
+  // read blocks, so the ask waited out its 15 s deadline; an endpoint this
+  // process serves is now left unasked. The project is read once per process,
+  // so this runs first.
+  it("creates its indexer without waiting on the RPC stub this process serves", () => {
+    const started = performance.now();
+    createTestIndexer();
+    expect(performance.now() - started).toBeLessThan(5_000);
+  });
+
   it("indexes a factory event, its contract call and its template", async () => {
     const indexer = createTestIndexer();
 

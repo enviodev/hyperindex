@@ -46,7 +46,11 @@ type filledGeneratedFile = {
 }
 
 type addon = {
-  getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  getConfigJson: (
+    ~configPath: Null.t<string>,
+    ~directory: Null.t<string>,
+    ~portsServedHere: array<int>,
+  ) => string,
   fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
   subgraphFileToJavascript: (string, string, bool) => string,
   subgraphRegisterHandlers: (array<string>, array<array<string>>) => array<array<string>>,
@@ -54,6 +58,7 @@ type addon = {
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
   subgraphBundledCodegenCurrent: (string, string) => bool,
+  subgraphMissingGraphCliMessage: string => string,
   subgraphFillGenerated: (string, string, string, array<string>) => array<filledGeneratedFile>,
   subgraphWorkspacePackages: string => dict<string>,
   subgraphWorkspaceRoot: string => Null.t<string>,
@@ -307,11 +312,24 @@ let getAddon = () =>
     }
   }
 
+// The ports servers in this process listen on. Node has no public list of
+// them; `_getActiveHandles` has held them since its first releases, and
+// without it nothing is reported.
+let portsServedHere: unit => array<int> = %raw(`() =>
+  typeof process._getActiveHandles !== "function"
+    ? []
+    : process
+        ._getActiveHandles()
+        .map((handle) => (handle?.listening === true && typeof handle.address === "function" ? handle.address() : null))
+        .filter((address) => typeof address?.port === "number")
+        .map((address) => address.port)`)
+
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
   addon.getConfigJson(
     ~configPath=configPath->Null.fromOption,
     ~directory=directory->Null.fromOption,
+    ~portsServedHere=portsServedHere(),
   )
 }
 
@@ -362,6 +380,9 @@ let subgraphBundledCodegen = (~manifestFile, ~outputDir: option<string>) => {
 
 let subgraphBundledCodegenCurrent = (~manifestFile, ~outputDir) =>
   getAddon().subgraphBundledCodegenCurrent(manifestFile, outputDir)
+
+let subgraphMissingGraphCliMessage = generated =>
+  getAddon().subgraphMissingGraphCliMessage(generated)
 
 let subgraphFillGenerated = (~root, ~manifestFile, ~outputDir, ~wanted) =>
   getAddon().subgraphFillGenerated(root, manifestFile, outputDir, wanted)

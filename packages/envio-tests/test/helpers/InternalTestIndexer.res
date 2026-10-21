@@ -14,11 +14,14 @@ type parsed = {
   // `~registerHandlers`. Readable from a test body: the module is imported while
   // vitest collects the suite, so nothing at module scope can see them yet.
   registrations: unit => HandlerRegister.registrationsByChainId,
+  // Where `fromSubgraph` wrote the project.
+  workspace: option<string>,
 }
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
 @module("node:fs") external chmodSync: (string, int) => unit = "chmodSync"
+@module("node:fs") external rmSync: (string, {..}) => unit = "rmSync"
 @module("node:path") @variadic external pathJoin: array<string> => string = "join"
 @module("node:path") external pathDirname: string => string = "dirname"
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
@@ -155,10 +158,23 @@ let fromSubgraph = (
     }
   })
 
-  let configJson = if fromProjectFiles {
-    Core.getConfigJson(~directory=root)
-  } else {
-    (Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)).config
+  let removeWorkspace = () => rmSync(workspace, {"recursive": true, "force": true})
+  let configJson = try {
+    if fromProjectFiles {
+      Core.getConfigJson(~directory=root)
+    } else {
+      (Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)).config
+    }
+  } catch {
+  | exn =>
+    removeWorkspace()
+    throw(exn)
+  }
+  // The mappings are loaded from the workspace only once a test creates an
+  // indexer; a parse-only fixture is done with it already.
+  switch test {
+  | None => removeWorkspace()
+  | Some(_) => Vitest.afterAll(removeWorkspace)
   }
   let publicConfigJson = switch configJson->JSON.parseOrThrow {
   | Object(fields) if isDev =>
@@ -207,7 +223,7 @@ let fromSubgraph = (
     }
   }
 
-  {config, registrations}
+  {config, registrations, workspace: Some(workspace)}
 }
 
 let fromUserApi = (
@@ -350,7 +366,7 @@ let fromUserApi = (
     }
   }
 
-  {config, registrations}
+  {config, registrations, workspace: None}
 }
 
 // The message a config the parser should reject failed with. Returns a

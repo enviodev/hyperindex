@@ -50,10 +50,14 @@ pub struct FromSubgraphOptions {
     pub root: Option<String>,
 }
 
+/// `ports_served_here` are the ports servers in the calling process listen on:
+/// the call blocks that process, so a subgraph's RPC endpoint on one of them
+/// can't answer the parse's `eth_chainId`.
 #[napi_derive::napi]
 pub fn get_config_json(
     config_path: Option<String>,
     directory: Option<String>,
+    ports_served_here: Option<Vec<u32>>,
 ) -> napi::Result<String> {
     let project_root = directory.unwrap_or_else(|| ".".to_string());
     let config = config_path
@@ -61,7 +65,14 @@ pub fn get_config_json(
         .unwrap_or_else(|| "config.yaml".to_string());
     let project_paths = ParsedProjectPaths::new(&project_root, &config)
         .map_err(|e| napi::Error::from_reason(format!("Failed parsing project paths: {e}")))?;
-    serialize_config_result(SystemConfig::parse_from_project_files(&project_paths))
+    let ports: Vec<u16> = ports_served_here
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|port| u16::try_from(port).ok())
+        .collect();
+    serialize_config_result(crate::subgraph::with_ports_served_here(&ports, || {
+        SystemConfig::parse_from_project_files(&project_paths)
+    }))
 }
 
 /// Parses an inline indexer config the way a user's project would, without
@@ -316,6 +327,11 @@ pub fn subgraph_scripts_writing(dir: String, needle: String) -> Vec<Vec<String>>
 pub fn subgraph_workspace_root(root: String) -> Option<String> {
     crate::subgraph::workspace::root(std::path::Path::new(&root))
         .map(|dir| dir.display().to_string())
+}
+
+#[napi_derive::napi]
+pub fn subgraph_missing_graph_cli_message(generated: String) -> String {
+    crate::subgraph::missing_graph_cli_message(&generated)
 }
 
 #[napi_derive::napi]

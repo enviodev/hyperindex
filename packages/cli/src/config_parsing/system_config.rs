@@ -1495,7 +1495,7 @@ impl SystemConfig {
                 manifest_yaml,
                 schema_text,
                 project_name,
-                rpc_env,
+                env,
                 root,
                 files,
                 mapping_sources,
@@ -1558,10 +1558,10 @@ impl SystemConfig {
 
         let env = crate::utils::project_env::ProjectEnv::new(&project_paths.project_root);
         let mut env_vars = HashMap::new();
-        for name in [
-            crate::subgraph::RPC_ENV_VAR,
-            crate::subgraph::API_TOKEN_ENV_VAR,
-        ] {
+        for name in crate::subgraph::TRANSLATION_ENV_VARS
+            .into_iter()
+            .chain([crate::subgraph::API_TOKEN_ENV_VAR])
+        {
             if let Some(value) = env.var(name) {
                 env_vars.insert(name.to_string(), value);
             }

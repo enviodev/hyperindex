@@ -165,17 +165,11 @@ async function fetchOnce(url: string, signal: AbortSignal): Promise<string | nul
  * The file at `path` under each gateway in turn: the first to have it answers.
  * Only "none of them has it" is an answer, and a cached one; a timeout, a 5xx or
  * a rate limit at any gateway that didn't have it is asked again rather than
- * cached as a null for good. With `maxTries`, the last failure is thrown once
- * that many rounds of the gateways have failed.
+ * cached as a null for good. With `budgetMs`, the last failure is thrown once
+ * asking again would end past that long after the first round.
  */
-function fetchBase64(
-  gateways: string[],
-  path: string,
-  maxTries = Infinity,
-  budgetMs = Infinity,
-): Promise<string | null> {
+function fetchBase64(gateways: string[], path: string, budgetMs = Infinity): Promise<string | null> {
   return untilAnswered(`the fetch of ${path}`, () => firstGatewayAnswer(gateways, path), {
-    maxTries,
     deadline: false,
     budgetMs,
   });
@@ -301,7 +295,7 @@ export function makeHostEffects(
     async ({ input, context }: { input: string; context: { cache: boolean } }) => {
       const budget = ipfsTimeoutMs();
       try {
-        return await fetchBase64(ipfsGatewayUrls(), input, Infinity, budget);
+        return await fetchBase64(ipfsGatewayUrls(), input, budget);
       } catch (error) {
         if (!isTransient(error)) throw error;
         context.cache = false;
@@ -341,11 +335,13 @@ export function makeHostEffects(
   );
 
   // A file data source's file: `ipfs:<path>` or `arweave:<id>`. graph-node polls
-  // for it until it exists; here a file the gateway lacks, or can't be reached
-  // for, is asked for `fileAttempts()` times and then reads null, and the
-  // handler is skipped. A definite miss is cached like any answer; a gateway
-  // that never answered is not, so a later run (or the same file created again)
-  // asks anew.
+  // for it until it exists, backing off after a miss and after an error alike
+  // (core/src/polling_monitor/mod.rs). Here a file every gateway says isn't
+  // there is asked for `fileAttempts()` times and then reads null, cached like
+  // any answer, and the handler is skipped. A failure asking again can mend (a
+  // 429, a 5xx, a timeout) is no such answer: it is asked again, with backoff,
+  // for the `ipfs.cat` budget, and a file still out of reach after that reads
+  // null uncached, so a later run (or the same file created again) asks anew.
   const fileGate = limiter(FILE_IN_FLIGHT);
   const fileData = createEffect(
     {
@@ -362,15 +358,28 @@ export function makeHostEffects(
       const gateways = kind === "arweave" ? arweaveGatewayUrls() : ipfsGatewayUrls();
       const url = gateways[0] + id;
       const attempts = fileAttempts();
+      const budget = ipfsTimeoutMs();
+      const started = Date.now();
       let unreachable = false;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         try {
-          const content = await fileGate(() => fetchBase64(gateways, id, 1));
+          const content = await untilAnswered(`the fetch of ${url}`, () => fileGate(() => firstGatewayAnswer(gateways, id)), {
+            deadline: false,
+            budgetMs: Math.max(0, budget - (Date.now() - started)),
+          });
           if (content !== null) return content;
           unreachable = false;
         } catch (error) {
-          unreachable = true;
           const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+          if (isTransient(error)) {
+            warn(
+              `Envio Subgraph: the file data source's file ${url} couldn't be fetched within ${budget}ms (${reason}); ` +
+                "its handler is skipped. The miss isn't cached; ENVIO_SUBGRAPH_IPFS_TIMEOUT_MS sets the wait.",
+            );
+            context.cache = false;
+            return null;
+          }
+          unreachable = true;
           warn(`Envio Subgraph: file ${url} failed (${reason}).`);
         }
         if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, fileRetryMs() * 2 ** (attempt - 1)));

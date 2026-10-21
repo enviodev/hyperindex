@@ -2443,10 +2443,12 @@ function receiptLogsOf(json: string, blockHash: Bytes, blockNumber: number): Eth
         // signed little-endian bytes.
         Bytes.fromHexString("0x" + bigintToLittleEndianHex(BigInt(blockNumber))),
         Bytes.fromHexString(log.transactionHash),
-        BigInt_.fromI32(log.transactionIndex),
-        BigInt_.fromI32(log.logIndex),
+        // graph-node builds these from the log's u64s: minimal two's
+        // complement bytes, not an i32's four.
+        new BigInt_(BigInt(log.transactionIndex)),
+        new BigInt_(BigInt(log.logIndex)),
         // Where no client sets it, graph-node falls back to the log index.
-        BigInt_.fromI32(log.logIndex),
+        new BigInt_(BigInt(log.logIndex)),
         null as unknown as string,
         new Wrapped(false),
       ),
@@ -3618,7 +3620,9 @@ export function makeCallBlock(raw: unknown): EthereumBlock {
  */
 export function makeBlockHandlerBlock(blockNumber: number, _location: string): EthereumBlock {
   const block = blank(EthereumBlock);
-  block.number = BigInt_.fromI32(blockNumber);
+  // graph-node builds it from the header's u64: minimal two's complement
+  // bytes, as an event's block number is.
+  block.number = new BigInt_(BigInt(blockNumber));
   Object.defineProperty(block, "timestamp", {
     enumerable: true,
     configurable: true,
