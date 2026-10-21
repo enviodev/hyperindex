@@ -497,15 +497,20 @@ function binDirs(root: string): string[] {
   }
 }
 
-/** A step as the package manager would run it: a shell, with the project's bins on PATH. */
+/**
+ * A step as the package manager would run it: a shell, with the project's bins
+ * on PATH. It is the repo's own code, so envio's settings (its HyperSync token,
+ * the database password) stay out of its environment.
+ */
 function runScriptStep(root: string, step: string): Promise<void> {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("ENVIO_")));
   return new Promise((resolve, reject) => {
     const child = spawn(step, {
       cwd: root,
       shell: true,
       stdio: "inherit",
       env: {
-        ...process.env,
+        ...env,
         PATH: [...binDirs(root), process.env.PATH].join(path.delimiter),
       },
     });

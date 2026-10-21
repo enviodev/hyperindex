@@ -301,6 +301,16 @@ pub fn subgraph_workspace_packages(root: String) -> std::collections::HashMap<St
         .collect()
 }
 
+/// The package.json scripts that write a file a mapping imports, as `[name,
+/// script]`, from the nearest package up from `dir`.
+#[napi_derive::napi]
+pub fn subgraph_scripts_writing(dir: String, needle: String) -> Vec<Vec<String>> {
+    crate::subgraph::render::scripts_writing(std::path::Path::new(&dir), &needle)
+        .into_iter()
+        .map(|(name, script)| vec![name, script])
+        .collect()
+}
+
 /// The directory that declares the workspace `root` sits in.
 #[napi_derive::napi]
 pub fn subgraph_workspace_root(root: String) -> Option<String> {
