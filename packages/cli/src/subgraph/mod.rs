@@ -1235,9 +1235,9 @@ fn contract_config(
 /// with nothing to show for it meanwhile (harvest-base, dhedge, gooddollar). A
 /// smaller batch commits sooner and costs no calls: they all run concurrently
 /// either way. `ENVIO_SUBGRAPH_BATCH_SIZE` overrides it.
-fn calling_batch_size(mapping_sources: &[String]) -> Option<u64> {
-    let configured = std::env::var(BATCH_SIZE_ENV_VAR)
-        .ok()
+fn calling_batch_size(env: &HashMap<String, String>, mapping_sources: &[String]) -> Option<u64> {
+    let configured = env
+        .get(BATCH_SIZE_ENV_VAR)
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|size| *size > 0);
     configured.or_else(|| {
@@ -1400,12 +1400,18 @@ async fn eth_chain_id(url: &str, headers: &BTreeMap<String, String>) -> Result<u
         .map_err(|_| anyhow!("\"{result}\" isn't a chain id"))
 }
 
-/// Builds the envio config a translated manifest indexes with.
+/// The settings a translation reads from the environment. A project's are its
+/// process environment over its `.env` (`ProjectEnv`), as every envio
+/// setting's are.
+pub const TRANSLATION_ENV_VARS: [&str; 3] = [RPC_ENV_VAR, BATCH_SIZE_ENV_VAR, BLOCK_LAG_ENV_VAR];
+
+/// Builds the envio config a translated manifest indexes with. `env` holds
+/// the `TRANSLATION_ENV_VARS` that are set.
 pub fn translate(
     manifest_yaml: &str,
     schema_text: &str,
     project_name: &str,
-    rpc_env: Option<&str>,
+    env: &HashMap<String, String>,
     root: &str,
     files: &HashMap<String, String>,
     mapping_sources: &[String],
@@ -1413,7 +1419,7 @@ pub fn translate(
     let mut report = Report::new();
     let usage = usage::scan(mapping_sources);
 
-    let rpc_parsed = rpc_env.map(parse_rpc_env);
+    let rpc_parsed = env.get(RPC_ENV_VAR).map(|raw| parse_rpc_env(raw));
     let mut notices = Vec::new();
     let mut networks = match &rpc_parsed {
         Some(Ok(rpc)) => networks_from_rpc(manifest_yaml, rpc, &mut notices),
@@ -1710,8 +1716,8 @@ pub fn translate(
             None => chains.keys().cloned().collect(),
         };
         for id in chain_ids {
-            let lag = std::env::var(BLOCK_LAG_ENV_VAR)
-                .ok()
+            let lag = env
+                .get(BLOCK_LAG_ENV_VAR)
                 .and_then(|raw| raw.trim().parse::<u32>().ok())
                 .or_else(|| get_max_reorg_depth_from_id(id))
                 .unwrap_or(DEFAULT_MAX_REORG_DEPTH);
@@ -1738,7 +1744,7 @@ pub fn translate(
             description: None,
             schema: None,
             handlers: None,
-            full_batch_size: calling_batch_size(mapping_sources),
+            full_batch_size: calling_batch_size(env, mapping_sources),
             storage: None,
             disable_default_cross_chain: None,
         },
@@ -1885,6 +1891,10 @@ mod tests {
         vec!["helper(event.transaction); helper(event.block);".to_string()]
     }
 
+    fn rpc_env(value: &str) -> HashMap<String, String> {
+        HashMap::from([(RPC_ENV_VAR.to_string(), value.to_string())])
+    }
+
     const MANIFEST: &str = r#"
 specVersion: 0.0.5
 schema:
@@ -1960,7 +1970,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &files,
             &ambiguous(),
@@ -1987,7 +1997,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2021,7 +2031,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &files,
             &ambiguous(),
@@ -2081,7 +2091,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2120,7 +2130,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &files,
             &ambiguous(),
@@ -2140,7 +2150,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2155,7 +2165,7 @@ type Gravatar @entity {
             MANIFEST,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2205,7 +2215,7 @@ type Gravatar @entity {
             without_templates,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2220,7 +2230,7 @@ type Gravatar @entity {
             &bounded_source,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2250,7 +2260,7 @@ type Gravatar @entity {
             &bounded,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2272,7 +2282,7 @@ type Gravatar @entity {
                 &manifest,
                 SCHEMA,
                 "gravatar",
-                None,
+                &HashMap::new(),
                 ".",
                 &HashMap::new(),
                 &[source.to_string()],
@@ -2302,7 +2312,7 @@ type Gravatar @entity {
                 MANIFEST,
                 SCHEMA,
                 "gravatar",
-                None,
+                &HashMap::new(),
                 ".",
                 &HashMap::new(),
                 &[source.to_string()],
@@ -2328,7 +2338,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2362,7 +2372,7 @@ type Gravatar @entity {
                 &manifest,
                 SCHEMA,
                 "gravatar",
-                None,
+                &HashMap::new(),
                 ".",
                 &HashMap::new(),
                 &ambiguous(),
@@ -2391,7 +2401,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2437,7 +2447,7 @@ type Gravatar @entity {
             MANIFEST,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2493,7 +2503,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2544,7 +2554,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2566,7 +2576,7 @@ type Gravatar @entity {
             MANIFEST,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2585,7 +2595,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2610,7 +2620,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2652,7 +2662,7 @@ type Gravatar @entity {
             MANIFEST,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &mappings,
@@ -2693,7 +2703,7 @@ type Gravatar @entity {
             MANIFEST,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &mappings,
@@ -2735,7 +2745,7 @@ type Gravatar @entity {
             &two_chains,
             SCHEMA,
             "gravatar",
-            Some("https://rpc.example.test"),
+            &rpc_env("https://rpc.example.test"),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2756,7 +2766,7 @@ type Gravatar @entity {
             &two_chains,
             SCHEMA,
             "gravatar",
-            Some(&polygon),
+            &rpc_env(&polygon),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2782,7 +2792,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2810,7 +2820,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            Some(r#"[{"url":"https://rpc.example.test","for":"fallback"}]"#),
+            &rpc_env(r#"[{"url":"https://rpc.example.test","for":"fallback"}]"#),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2931,7 +2941,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2950,7 +2960,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            Some(&rpc),
+            &rpc_env(&rpc),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -2981,7 +2991,7 @@ type Gravatar @entity {
                     &yaml,
                     SCHEMA,
                     "gravatar",
-                    None,
+                    &HashMap::new(),
                     ".",
                     &HashMap::new(),
                     &ambiguous(),
@@ -3012,7 +3022,7 @@ type Gravatar @entity {
             &yaml,
             SCHEMA,
             "gravatar",
-            Some(&format!("http://{closed}/v2/sekret-api-key")),
+            &rpc_env(&format!("http://{closed}/v2/sekret-api-key")),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -3071,7 +3081,7 @@ type Gravatar @entity {
             &manifest,
             SCHEMA,
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &files,
             &ambiguous(),
@@ -3119,7 +3129,7 @@ type Gravatar @entity {
             MANIFEST,
             SCHEMA,
             "gravatar",
-            Some(r#"{"url":"https://rpc.example.test","for":"fallback"}"#),
+            &rpc_env(r#"{"url":"https://rpc.example.test","for":"fallback"}"#),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -3182,7 +3192,7 @@ type Gravatar @entity {
             &manifest,
             "type Gravatar @entity { id: ID! bad: NotAType! }",
             "gravatar",
-            None,
+            &HashMap::new(),
             ".",
             &HashMap::new(),
             &ambiguous(),
@@ -3207,7 +3217,7 @@ type Gravatar @entity {
             MANIFEST,
             "type Gravatar @entity { id: ID! bad: NotAType! }",
             "gravatar",
-            Some("[1, 2]"),
+            &rpc_env("[1, 2]"),
             ".",
             &HashMap::new(),
             &ambiguous(),

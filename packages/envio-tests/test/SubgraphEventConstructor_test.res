@@ -4,11 +4,10 @@
 // handlers share. The shim's `ethereum.Event` constructor was its own internal
 // `(raw, kind)`, so `event.block` came back empty, and `ethereum.Block` and
 // `ethereum.Transaction` had no constructor at all.
-// handleOnce hands its block to a constructor, which counts as a read of the
-// header; a simulated chain has no head for the resulting lag to trail.
-%%raw(`process.env.ENVIO_SUBGRAPH_BLOCK_LAG = "0"`)
-
 let _ = InternalTestIndexer.fromSubgraph(
+  // handleOnce hands its block to a constructor, which counts as a read of the
+  // header; a simulated chain has no head for the resulting lag to trail.
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_BLOCK_LAG", "0")]),
   ~manifest=`
 specVersion: 0.0.8
 schema:
