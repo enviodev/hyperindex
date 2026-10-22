@@ -144,6 +144,9 @@ let buildOnEventRegistrationWith = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
+      ~where,
+      ~chainId,
+      ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   | Svm =>
@@ -763,7 +766,9 @@ let registerOnBlock = (
         // Off the same object the predicate above was handed, not off
         // `chainConfig`: that one still says whatever config.yaml said, and for
         // `start_block: latest` the resolved head only lives in persisted state.
-        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        let chainStartBlock = (
+          chainObj->(Utils.magic: unknown => {"startBlock": int})
+        )["startBlock"]
         if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
             `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,

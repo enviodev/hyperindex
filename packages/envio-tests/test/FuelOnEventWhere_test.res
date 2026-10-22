@@ -1,10 +1,5 @@
 // A Fuel block is keyed by height, so `where.block` is too: `height._gte` is an
 // event's start block, and `number` is a key it doesn't take.
-//
-// Both cases fail today, so they are marked `it.fails`: a Fuel registration
-// drops its `where` without reading it, so the start block never applies and
-// the bad key is never rejected. Once that is fixed they pass, and vitest
-// reports the `it.fails` as the failure.
 let _ = InternalTestIndexer.fromUserApi(
   ~files=dict{"abis/greeter-abi.json": FuelAbiFixtures.greeter},
   ~configYaml=`
@@ -49,7 +44,7 @@ const greeting = (height: number) => ({
 
 describe("Fuel onEvent where block", () => {
   // Registration closes once a test indexer starts, so this runs first.
-  it.fails("rejects block.number", (t) => {
+  it("rejects block.number", (t) => {
     let message = "no error";
     try {
       indexer.onEvent(
@@ -70,7 +65,7 @@ describe("Fuel onEvent where block", () => {
 
   // A simulated item the start block excludes never reaches a handler, which
   // the test indexer reports rather than dropping silently.
-  it.fails("starts the event at block.height._gte", async (t) => {
+  it("starts the event at block.height._gte", async (t) => {
     const testIndexer = createTestIndexer();
     await t
       .expect(
