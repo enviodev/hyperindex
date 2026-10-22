@@ -309,19 +309,21 @@ pub fn write_stderr_line(line: String) {
 }
 
 /// `NO_COLOR` wins over `FORCE_COLOR`, which the supervisor sets for workers
-/// whose output it pipes to a terminal.
+/// whose output it pipes to a terminal. CI logs are coloured even though they
+/// aren't a terminal, as colorette (used by pino-pretty before) did.
 fn supports_color(
     force_color: Option<&str>,
     no_color: bool,
     term: Option<&str>,
     is_terminal: bool,
+    is_ci: bool,
 ) -> bool {
     if no_color {
         return false;
     }
     match force_color {
         Some(value) => value != "0" && value != "false",
-        None => term != Some("dumb") && is_terminal,
+        None => (term != Some("dumb") && is_terminal) || is_ci,
     }
 }
 
@@ -331,6 +333,10 @@ fn stdout_supports_color() -> bool {
         std::env::var_os("NO_COLOR").is_some(),
         std::env::var("TERM").ok().as_deref(),
         io::stdout().is_terminal(),
+        std::env::var_os("CI").is_some()
+            && ["GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI"]
+                .iter()
+                .any(|name| std::env::var_os(name).is_some()),
     )
 }
 
@@ -725,13 +731,15 @@ mod tests {
     fn no_color_wins_over_force_color() {
         assert_eq!(
             [
-                supports_color(Some("1"), true, None, true),
-                supports_color(Some("1"), false, None, false),
-                supports_color(Some("0"), false, None, true),
-                supports_color(None, false, Some("dumb"), true),
-                supports_color(None, false, None, true),
+                supports_color(Some("1"), true, None, true, false),
+                supports_color(Some("1"), false, None, false, false),
+                supports_color(Some("0"), false, None, true, false),
+                supports_color(None, false, Some("dumb"), true, false),
+                supports_color(None, false, None, true, false),
+                supports_color(None, false, None, false, true),
+                supports_color(None, true, None, false, true),
             ],
-            [false, true, false, false, true]
+            [false, true, false, false, true, true, false]
         );
     }
 
