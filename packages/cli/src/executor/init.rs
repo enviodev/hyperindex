@@ -447,11 +447,15 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     out.push_str("pnpx envio init contract-import explorer \\\n");
     out.push_str("  -n ${indexer-name} \\\n");
     out.push_str("  -c ${address} \\\n");
-    out.push_str("  -b ${chainId} \\\n");
+    out.push_str("  -b ${network} \\\n");
     out.push_str("  --single-contract \\\n");
     out.push_str("  --all-events \\\n");
     out.push_str("  -d ${directory}\n");
     out.push('\n');
+    out.push_str(
+        "For `${network}`, pass a network name such as ethereum-mainnet or base, not a chain ID. \
+         `pnpx envio init contract-import explorer --help` lists every name.\n\n",
+    );
     out.push_str(
         "Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep \
          iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until \
@@ -478,7 +482,8 @@ fn shell_quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli_args::init_config::PackageManager;
+    use crate::cli_args::{clap_definitions::CommandLineArgs, init_config::PackageManager};
+    use clap::Parser;
 
     #[test]
     fn next_steps_in_subdir() {
@@ -627,5 +632,33 @@ mod tests {
     #[test]
     fn agentic_prompt_with_api_token() {
         insta::assert_snapshot!(agentic_init_prompt(true));
+    }
+
+    // Agents run the printed command with its placeholders filled in, so it has
+    // to parse against the real CLI definitions.
+    #[test]
+    fn agentic_prompt_command_parses_once_filled_in() {
+        let prompt = agentic_init_prompt(true);
+        let command = prompt
+            .split("\n\n")
+            .find(|block| block.starts_with("pnpx envio init"))
+            .expect("the plan should print an init command")
+            .replace("\\\n", " ");
+        let args = command.split_whitespace().skip(1).map(|arg| match arg {
+            "${indexer-name}" => "my-indexer",
+            "${address}" => "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+            "${network}" => "ethereum-mainnet",
+            "${directory}" => "my-indexer",
+            placeholder if placeholder.contains("${") => {
+                panic!("no agent value for {placeholder}")
+            }
+            literal => literal,
+        });
+        assert_eq!(
+            CommandLineArgs::try_parse_from(args)
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            Ok(())
+        );
     }
 }
