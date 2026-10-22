@@ -106,6 +106,9 @@ type t = {
   name: string,
   description: option<string>,
   handlers: string,
+  // Relative path to the module declaring custom GraphQL resolvers, when the
+  // project ships them. None means entity fields only.
+  resolvers: option<string>,
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
@@ -597,6 +600,7 @@ let publicConfigSchema = S.schema(s =>
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
+    "resolvers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
     "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
     "projectFlags": s.matches(S.option(S.string)),
@@ -684,8 +688,12 @@ let withProjectFlags = (command, ~config: t) =>
 
 let ecosystemFields = ["evm", "fuel", "svm"]
 
-// What `envio_info` records: the public config without the command's fields
-// or its chains. A chain is recorded by its own `envio_chains` row and its
+// Where the custom GraphQL resolvers live. Nothing about what is indexed or
+// how it is stored, so adopting resolvers must not read as a config change.
+let servingFields = ["resolvers"]
+
+// What `envio_info` records: the public config without the command's fields,
+// the serving fields, or its chains. A chain is recorded by its own `envio_chains` row and its
 // config's `envio_addresses` rows instead, so adding one never rewrites this
 // record. The rest of a chain's config — its sources, its block lag, a
 // contract's start block — is read from config.yaml on every start.
@@ -694,6 +702,7 @@ let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
   switch envioInfo {
   | Object(obj) => {
       commandFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
+      servingFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
       ecosystemFields->Array.forEach(ecosystem =>
         switch obj->Dict.get(ecosystem) {
         | Some(Object(ecosystemDict)) => ecosystemDict->Utils.Dict.deleteInPlace("chains")
@@ -1153,6 +1162,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
+    resolvers: publicConfig["resolvers"],
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
