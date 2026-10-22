@@ -1093,3 +1093,125 @@ if (0) {
     )
   )
 })
+
+// An anonymous event's logs are selected by its first indexed param, so every
+// registration has to name values for it.
+describe("Anonymous event types", () => {
+  let checkAnonymous = handlers =>
+    InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: anonymous-types
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed sig, address indexed guy, bytes32 indexed foo, bytes32 indexed bar, uint256 wad, bytes fax) anonymous
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Vat
+        address: "0x0000000000000000000000000000000000000001"
+`,
+      ~handlers=`
+import { indexer } from "envio";
+import type { Address, EvmEvent, EvmOnEventOptions, Hex, SingleOrMultiple } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+const SIG = "0x29ae8114";
+const GUY: Address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+type LogNote = EvmEvent<"Vat", "LogNote">;
+type LogNoteParams = {
+  readonly sig: SingleOrMultiple<Hex>;
+  readonly guy?: SingleOrMultiple<Address>;
+  readonly foo?: SingleOrMultiple<Hex>;
+  readonly bar?: SingleOrMultiple<Hex>;
+};
+${handlers}
+`,
+    )->ignore
+
+  it("accepts filters that name the first indexed param", _ =>
+    checkAnonymous(`
+if (0) {
+  indexer.onEvent(
+    { contract: "Vat", event: "LogNote", where: { params: { sig: SIG } } },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.params.sig, Hex>>(true);
+    },
+  );
+  indexer.onEvent(
+    { contract: "Vat", event: "LogNote", where: { params: [{ sig: SIG }, { sig: [SIG], guy: GUY }] } },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "Vat",
+      event: "LogNote",
+      where: ({ chain }) => (chain.id === 1 ? { params: { sig: SIG } } : false),
+    },
+    async () => {},
+  );
+  indexer.contractRegister(
+    { contract: "Vat", event: "LogNote", where: { params: { sig: SIG }, block: { number: { _gte: 1 } } } },
+    async () => {},
+  );
+}
+
+const _options: EvmOnEventOptions<LogNote, LogNoteParams> = {
+  contract: "Vat",
+  event: "LogNote",
+  where: { params: { sig: SIG } },
+};
+indexer.onEvent(_options, async () => {});
+`)
+  )
+
+  it("rejects filters that don't name the first indexed param", _ =>
+    checkAnonymous(`
+if (0) {
+  // @ts-expect-error - an anonymous event needs a where
+  indexer.onEvent({ contract: "Vat", event: "LogNote" }, async () => {});
+  // @ts-expect-error - an anonymous event needs a where
+  indexer.contractRegister({ contract: "Vat", event: "LogNote" }, async () => {});
+  indexer.onEvent(
+    // @ts-expect-error - the filter must name params
+    { contract: "Vat", event: "LogNote", where: {} },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - params must name sig
+    { contract: "Vat", event: "LogNote", where: { params: {} } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - params must name sig
+    { contract: "Vat", event: "LogNote", where: { params: { guy: GUY } } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - the filter must name params
+    { contract: "Vat", event: "LogNote", where: { block: { number: { _gte: 1 } } } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - an empty list of filters names no sig
+    { contract: "Vat", event: "LogNote", where: { params: [] } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - every filter in the list must name sig
+    { contract: "Vat", event: "LogNote", where: { params: [{ sig: SIG }, { guy: GUY }] } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - keeping every log would fetch every anonymous log
+    { contract: "Vat", event: "LogNote", where: () => true },
+    async () => {},
+  );
+}
+
+// @ts-expect-error - an anonymous event needs a where
+const _options: EvmOnEventOptions<LogNote, LogNoteParams> = { contract: "Vat", event: "LogNote" };
+`)
+  )
+})

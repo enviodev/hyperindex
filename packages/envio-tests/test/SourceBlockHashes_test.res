@@ -52,7 +52,7 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
     ~blockMaskFn=Evm.eventBlockFieldMask,
     ~transactionMaskFn=Evm.eventTransactionFieldMask,
   ),
-  sighash: pairCreatedTopic0,
+  sighash: Some(pairCreatedTopic0),
   topicCount: 3,
   paramsMetadata: pairCreatedAbi,
 }
@@ -69,12 +69,12 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   contractRegister: None,
   fieldSelection: pairCreatedEventConfig.fieldSelection,
   resolvedWhere: {
-    topicSelections: [
+    topicFilters: [
       {
-        topic0: [pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe],
-        topic1: Values([]),
-        topic2: Values([]),
-        topic3: Values([]),
+        topic0: Values([pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe]),
+        topic1: Any,
+        topic2: Any,
+        topic3: Any,
       },
     ],
     startBlock: None,

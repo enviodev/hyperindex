@@ -88,7 +88,7 @@ let makeMockSourceRegistration = (
         ~blockMaskFn=Evm.eventBlockFieldMask,
         ~transactionMaskFn=Evm.eventTransactionFieldMask,
       ),
-      sighash: "",
+      sighash: Some(""),
       topicCount: 1,
       paramsMetadata: [],
     }: Internal.evmEventConfig :> Internal.eventConfig),
@@ -105,7 +105,7 @@ let makeMockSourceRegistration = (
       ~blockMaskFn=Evm.eventBlockFieldMask,
       ~transactionMaskFn=Evm.eventTransactionFieldMask,
     ),
-    resolvedWhere: {topicSelections: [], startBlock: None},
+    resolvedWhere: {topicFilters: [], startBlock: None},
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
 

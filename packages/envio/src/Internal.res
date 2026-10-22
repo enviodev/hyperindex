@@ -504,25 +504,29 @@ type fuelContractConfig = {
   events: array<fuelEventConfig>,
 }
 
-// A single topic position of a resolved `where`: either static pre-encoded
-// values, or a marker for "the currently registered addresses of this
-// contract", expanded to topic values when a source query is built.
-type topicFilter =
+// A single topic position of a resolved `where`: any value, static
+// pre-encoded values (never empty), or a marker for "the currently registered
+// addresses of this contract", expanded to topic values when a source query is
+// built.
+type topicConstraint =
+  | Any
   | Values(array<EvmTypes.Hex.t>)
   | ContractAddresses({contractName: string})
 
-type resolvedTopicSelection = {
-  topic0: array<EvmTypes.Hex.t>,
-  topic1: topicFilter,
-  topic2: topicFilter,
-  topic3: topicFilter,
+// topic0 is the event signature, or for an anonymous event its first indexed
+// param.
+type topicFilter = {
+  topic0: topicConstraint,
+  topic1: topicConstraint,
+  topic2: topicConstraint,
+  topic3: topicConstraint,
 }
 
 // The registered `where` fully resolved at registration time for one chain.
-// `topicSelections` is in disjunctive normal form (outer array is OR);
+// `topicFilters` is in disjunctive normal form (outer array is OR);
 // an empty array means the `where` returned `false` for this chain.
 type resolvedWhere = {
-  topicSelections: array<resolvedTopicSelection>,
+  topicFilters: array<topicFilter>,
   startBlock: option<int>,
 }
 
@@ -534,7 +538,8 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type evmEventConfig = {
   ...eventConfig,
-  sighash: string,
+  // `None` for an anonymous event.
+  sighash: option<string>,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
 }

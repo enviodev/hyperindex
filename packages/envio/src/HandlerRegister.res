@@ -182,8 +182,9 @@ let getResolvedWhere = (reg: Internal.onEventRegistration) =>
 // event, the wildcard flag, and (on EVM) the resolved `where` — a handler and
 // a contractRegister that agree on all three can be merged into one
 // registration (so one item per log runs both). `where` is compared on the
-// resolved structure (`Values` by hex arrays, `ContractAddresses` by contract
-// name, plus `startBlock`); differing filters stay separate registrations.
+// resolved structure (each topic constraint, `Values` by hex arrays and
+// `ContractAddresses` by contract name, plus `startBlock`); differing filters
+// stay separate registrations.
 let sameEventAndFilter = (
   a: Internal.onEventRegistration,
   b: Internal.onEventRegistration,
@@ -257,10 +258,10 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
   merged.contents
 }
 
-// A `where` that resolved to no topic selections (`false` for this chain)
+// A `where` that resolved to no topic filters (`false` for this chain)
 // should never be fetched or dispatched here — drop it. Only meaningful on EVM.
 let isDroppedByWhere = (~config: Config.t, reg: Internal.onEventRegistration) =>
-  config.ecosystem.name === Evm && (reg->getResolvedWhere).topicSelections->Utils.Array.isEmpty
+  config.ecosystem.name === Evm && (reg->getResolvedWhere).topicFilters->Utils.Array.isEmpty
 
 // Names configured across every chain, used to explain a registration that
 // matched nothing. Only built on the failure path.
@@ -763,7 +764,9 @@ let registerOnBlock = (
         // Off the same object the predicate above was handed, not off
         // `chainConfig`: that one still says whatever config.yaml said, and for
         // `start_block: latest` the resolved head only lives in persisted state.
-        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        let chainStartBlock = (
+          chainObj->(Utils.magic: unknown => {"startBlock": int})
+        )["startBlock"]
         if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
             `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,

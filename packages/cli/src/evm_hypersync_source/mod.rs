@@ -15,6 +15,7 @@ mod config;
 pub(crate) mod decode;
 pub(crate) mod query;
 pub(crate) mod selection;
+pub(crate) mod topic_filter;
 pub(crate) mod types;
 
 use crate::js_value::JsTape;
@@ -845,18 +846,18 @@ mod tests {
             &[
                 crate::evm_hypersync_source::types::OnEventRegistrationInput {
                     index: 0,
-                    sighash: format!("0x{}", "00".repeat(32)),
+                    sighash: Some(format!("0x{}", "00".repeat(32))),
                     topic_count: 1,
                     event_name: "Zero".to_string(),
                     contract_name: "Zero".to_string(),
                     is_wildcard: true,
                     depends_on_addresses: false,
                     start_block: None,
-                    // One no-filter selection pinning topic0 (an empty list would
-                    // be `where: false` and match nothing).
-                    topic_selections: vec![
-                        crate::evm_hypersync_source::selection::TopicSelectionInput {
-                            topic0: vec![format!("0x{}", "00".repeat(32))],
+                    // One no-filter alternative pinning topic0 (an empty list
+                    // would be `where: false` and match nothing).
+                    topic_filters: vec![
+                        crate::evm_hypersync_source::topic_filter::TopicFilterInput {
+                            topic0: Some(vec![format!("0x{}", "00".repeat(32))]),
                             topic1: Some(vec![]),
                             topic2: Some(vec![]),
                             topic3: Some(vec![]),
