@@ -36,9 +36,9 @@ fn abi_type_to_rescript_positional(ty: &AbiType) -> TypeIdent {
         AbiType::Int(_) => TypeIdent::BigInt,
         AbiType::Bool => TypeIdent::Bool,
         AbiType::Address => TypeIdent::Address,
-        AbiType::Bytes => TypeIdent::String,
+        AbiType::Bytes => TypeIdent::Hex,
         AbiType::String => TypeIdent::String,
-        AbiType::FixedBytes(_) => TypeIdent::String,
+        AbiType::FixedBytes(_) => TypeIdent::Hex,
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
@@ -64,9 +64,9 @@ fn abi_type_to_rescript(ty: &AbiType) -> TypeIdent {
         AbiType::Int(_) => TypeIdent::BigInt,
         AbiType::Bool => TypeIdent::Bool,
         AbiType::Address => TypeIdent::Address,
-        AbiType::Bytes => TypeIdent::String,
+        AbiType::Bytes => TypeIdent::Hex,
         AbiType::String => TypeIdent::String,
-        AbiType::FixedBytes(_) => TypeIdent::String,
+        AbiType::FixedBytes(_) => TypeIdent::Hex,
         AbiType::Function => {
             unreachable!("Function type should be filtered out before reaching here")
         }
@@ -130,6 +130,38 @@ mod tests {
             parsed_rescript_string.to_string(),
             String::from("array<string>")
         )
+    }
+
+    #[test]
+    fn test_bytes_params_are_hex() {
+        let tuple_type = AbiType::Tuple(vec![
+            AbiTupleField {
+                name: Some("data".to_string()),
+                kind: AbiType::Bytes,
+            },
+            AbiTupleField {
+                name: Some("key".to_string()),
+                kind: AbiType::FixedBytes(32),
+            },
+            AbiTupleField {
+                name: Some("label".to_string()),
+                kind: AbiType::String,
+            },
+        ]);
+        let param = EvmEventParam {
+            abi_type: &tuple_type,
+            name: "myTuple",
+        };
+
+        let parsed = abi_to_rescript_type(&param);
+
+        assert_eq!(
+            (parsed.to_string(), parsed.to_ts_type_string()),
+            (
+                "{\"data\": string, \"key\": string, \"label\": string}".to_string(),
+                "{ readonly data: Hex; readonly key: Hex; readonly label: string }".to_string()
+            )
+        );
     }
 
     #[test]

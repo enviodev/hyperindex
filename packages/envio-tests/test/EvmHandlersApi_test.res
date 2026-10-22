@@ -39,7 +39,8 @@ chains:
         address: "0x0000000000000000000000000000000000000004"
 `
 
-let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
+let check = handlers =>
+  InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
 
 // For the cases that must NOT type-check: returns the type errors instead of
 // throwing them.
@@ -483,10 +484,13 @@ if (0) {
   it("offers the fields knobs and field names to an editor", t => {
     let completions = handlers =>
       InternalTestIndexer.completionsAt(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)
-    let at = source => completions(`
+    let at = source =>
+      completions(
+        `
 import { indexer } from "envio";
 indexer.onEvent(${source}, async () => {});
-`)
+`,
+      )
     t.expect((
       at(`{ contract: "Token", event: "Transfer", fields: { /*HERE*/ } }`),
       at(`{ contract: "Token", event: "Transfer", fields: { block: ["/*HERE*/"] } }`),
@@ -934,5 +938,158 @@ indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async 
   expectType<TypeEqual<typeof event.block.number, number>>(true);
 });
 `)
+  )
+})
+
+describe("Hex type", () => {
+  let checkHex = (~strictHexType, handlers) =>
+    InternalTestIndexer.fromUserApi(
+      ~schema=`
+type Blob {
+  id: ID!
+  data: Bytes!
+}
+`,
+      ~configYaml=`
+name: hex-types
+${strictHexType ? "strict_hex_type: true" : ""}
+contracts:
+  - name: Registry
+    events:
+      - event: Stored(bytes32 indexed key, bytes data)
+        field_selection:
+          block_fields:
+            - parentHash
+            - uncles
+          transaction_fields:
+            - hash
+            - input
+            - r
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Registry
+        address: "0x0000000000000000000000000000000000000001"
+`,
+      ~handlers=`
+import { createTestIndexer, indexer } from "envio";
+import type {
+  Blob,
+  EvmAllBlockFields,
+  EvmAllTransactionFields,
+  EvmEvent,
+  Hex,
+  StrictHex,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type Stored = EvmEvent<"Registry", "Stored">;
+type Expected = ${strictHexType ? "StrictHex" : "string"};
+expectType<
+  TypeEqual<
+    {
+      strictHex: StrictHex;
+      hex: Hex;
+      key: Stored["params"]["key"];
+      data: Stored["params"]["data"];
+      blockHash: Stored["block"]["hash"];
+      parentHash: Stored["block"]["parentHash"];
+      uncles: Stored["block"]["uncles"];
+      transactionHash: Stored["transaction"]["hash"];
+      input: Stored["transaction"]["input"];
+      r: Stored["transaction"]["r"];
+      allBlockHash: EvmAllBlockFields["hash"];
+      allTransactionHash: EvmAllTransactionFields["hash"];
+      blobData: Blob["data"];
+    },
+    {
+      strictHex: \`0x\${string}\`;
+      hex: Expected;
+      key: Expected;
+      data: Expected;
+      blockHash: Expected;
+      parentHash: Expected;
+      uncles: readonly Expected[] | undefined;
+      transactionHash: Expected;
+      input: Expected;
+      r: Expected | undefined;
+      allBlockHash: Expected;
+      allTransactionHash: Expected;
+      blobData: Expected;
+    }
+  >
+>(true);
+
+const KEY: StrictHex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+const plain: string = KEY;
+${handlers}
+`,
+    )->ignore
+
+  it("keeps hex values as plain string by default", _ =>
+    checkHex(
+      ~strictHexType=false,
+      `
+if (0) {
+  indexer.onEvent(
+    { contract: "Registry", event: "Stored", where: { params: { key: plain } } },
+    async ({ context }) => {
+      context.Blob.set({ id: "1", data: plain });
+    },
+  );
+
+  void createTestIndexer().process({
+    chains: {
+      1: {
+        simulate: [
+          { contract: "Registry", event: "Stored", params: { key: plain, data: plain } },
+        ],
+      },
+    },
+  });
+}
+`,
+    )
+  )
+
+  it("types hex values as Hex and rejects a plain string with strict_hex_type", _ =>
+    checkHex(
+      ~strictHexType=true,
+      `
+if (0) {
+  indexer.onEvent(
+    { contract: "Registry", event: "Stored", where: { params: { key: [KEY] } } },
+    async ({ event, context }) => {
+      context.Blob.set({ id: "1", data: event.params.data });
+      // @ts-expect-error - a plain string isn't Hex
+      context.Blob.set({ id: "2", data: plain });
+    },
+  );
+  indexer.onEvent(
+    {
+      contract: "Registry",
+      event: "Stored",
+      // @ts-expect-error - a plain string isn't a bytes32 filter value
+      where: { params: { key: plain } },
+    },
+    async () => {},
+  );
+
+  const testIndexer = createTestIndexer();
+  void testIndexer.process({
+    chains: {
+      1: {
+        simulate: [
+          { contract: "Registry", event: "Stored", params: { key: KEY, data: "0x01" } },
+          // @ts-expect-error - a plain string isn't a bytes param
+          { contract: "Registry", event: "Stored", params: { data: plain } },
+        ],
+      },
+    },
+  });
+}
+`,
+    )
   )
 })

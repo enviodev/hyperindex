@@ -177,6 +177,9 @@ let withInternalOverrides = (
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
+  // Leaves every chain on the source its YAML names, for a scenario whose YAML
+  // points each chain at a local server the test runs.
+  ~yamlSources=false,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
@@ -211,9 +214,9 @@ let run = async (
     ))
 
   let config =
-    scenario.config
-    ->withMockSources(~sources=mocks)
-    ->withInternalOverrides(
+    (
+      yamlSources ? scenario.config : scenario.config->withMockSources(~sources=mocks)
+    )->withInternalOverrides(
       ~maxAddrInPartition,
       ~clientFilterAddressThreshold,
       ~reorgThresholdReadyTolerance,
