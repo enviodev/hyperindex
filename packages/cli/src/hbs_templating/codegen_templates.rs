@@ -16,7 +16,10 @@ use crate::{
             SystemConfig,
         },
     },
-    constants::project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
+    constants::{
+        project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
+        reserved_keywords::ENVIO_TYPE_EXPORTS,
+    },
     project_paths::ParsedProjectPaths,
     type_schema::{RecordField, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
@@ -2408,15 +2411,13 @@ type testIndexer = {{
 
         // Per-entity aliases shadow the lookup table for ergonomic imports
         // (`import type { User } from "envio"`). An entity named like an
-        // envio export (`Hex`, `Address`, …) gets none: a second `export
-        // type Hex` in the augmentation is a duplicate identifier, not a
-        // merge, so that entity is reached through `Entity<"Hex">` only.
-        // Enums skip aliasing altogether and go through `Enum<"Name">`.
-        let envio_exports = envio_export_names();
+        // envio export (`Hex`, `Address`, …) gets none and is reached through
+        // `Entity<"Hex">` only. Enums skip aliasing altogether and go through
+        // `Enum<"Name">`.
         let entity_aliases: Vec<String> = entities
             .iter()
             .map(|e| e.name.capitalized.clone())
-            .filter(|name| !envio_exports.contains(name.as_str()))
+            .filter(|name| !ENVIO_TYPE_EXPORTS.contains(&name.as_str()))
             .collect();
 
         Ok(ProjectTemplate {
@@ -2552,49 +2553,6 @@ type testIndexer = {{
             entity_aliases = entity_aliases,
         )
     }
-}
-
-/// Top-level names `packages/envio/index.d.ts` exports, read from the file
-/// itself so a new export can never be shadowed by an entity alias. Handles
-/// the two forms the file uses: `export [declare] [abstract] <kind> Name` and
-/// `export { default as Name } from "…"`. Indented `export`s belong to
-/// namespaces and aren't top-level.
-fn envio_export_names() -> BTreeSet<&'static str> {
-    const DECLARATION_KEYWORDS: &[&str] = &[
-        "declare",
-        "abstract",
-        "type",
-        "interface",
-        "const",
-        "function",
-        "class",
-        "namespace",
-        "enum",
-    ];
-    let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
-
-    include_str!("../../../envio/index.d.ts")
-        .lines()
-        .filter_map(|line| line.strip_prefix("export "))
-        .flat_map(|rest| -> Vec<&'static str> {
-            match rest.strip_prefix('{') {
-                Some(braced) => braced
-                    .split('}')
-                    .next()
-                    .unwrap_or_default()
-                    .split(',')
-                    .filter_map(|item| item.split_whitespace().last())
-                    .collect(),
-                None => rest
-                    .split_whitespace()
-                    .find(|token| !DECLARATION_KEYWORDS.contains(token))
-                    .and_then(|token| token.split(|c| !is_ident_char(c)).next())
-                    .filter(|name| !name.is_empty())
-                    .into_iter()
-                    .collect(),
-            }
-        })
-        .collect()
 }
 
 struct ConfigBodies<'a> {
@@ -3900,23 +3858,51 @@ type Swap {
         );
     }
 
+    /// Reads the top-level exports of `packages/envio/index.d.ts` in the two
+    /// forms the file uses: `export [declare] [abstract] <kind> Name` and
+    /// `export { default as Name } from "…"`. Indented `export`s belong to
+    /// namespaces.
     #[test]
-    fn envio_export_names_cover_every_export_form() {
-        let names = super::envio_export_names();
+    fn envio_type_exports_match_index_d_ts() {
+        const DECLARATION_KEYWORDS: &[&str] = &[
+            "declare",
+            "abstract",
+            "type",
+            "interface",
+            "const",
+            "function",
+            "class",
+            "namespace",
+            "enum",
+        ];
+        let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+
+        let exports: BTreeSet<&str> = include_str!("../../../envio/index.d.ts")
+            .lines()
+            .filter_map(|line| line.strip_prefix("export "))
+            .flat_map(|rest| -> Vec<&str> {
+                match rest.strip_prefix('{') {
+                    Some(braced) => braced
+                        .split('}')
+                        .next()
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter_map(|item| item.split_whitespace().last())
+                        .collect(),
+                    None => rest
+                        .split_whitespace()
+                        .find(|token| !DECLARATION_KEYWORDS.contains(token))
+                        .and_then(|token| token.split(|c| !is_ident_char(c)).next())
+                        .into_iter()
+                        .collect(),
+                }
+            })
+            .filter(|name| name.starts_with(|c: char| c.is_ascii_uppercase()))
+            .collect();
+
         assert_eq!(
-            [
-                "Hex",
-                "Address",
-                "BigDecimal",
-                "Effect",
-                "S",
-                "Global",
-                "indexer",
-                "createEffect",
-                "Output",
-            ]
-            .map(|name| names.contains(name)),
-            [true, true, true, true, true, true, true, true, false],
+            exports,
+            ENVIO_TYPE_EXPORTS.iter().copied().collect::<BTreeSet<_>>()
         );
     }
 

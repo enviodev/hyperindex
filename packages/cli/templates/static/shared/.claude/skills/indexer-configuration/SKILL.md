@@ -117,20 +117,17 @@ Changing it changes the column types, so resync from scratch.
 
 ## strict_hex_type
 
-Makes the `Hex` type from `envio` mean `` `0x${string}` `` (`StrictHex`) instead
-of plain `string`, so a plain `string` is rejected where a hex value is
-expected. `Hex` types `bytes`/`bytesN` event params (including `where` filters
-and test `simulate` params), block and transaction hashes and other hex fields,
-and `Bytes` entity fields with `bytes_type: hex`. Use `StrictHex` for a value
-that must be checked regardless of this setting.
+Makes the `Hex` type from `envio` mean `` `0x${string}` `` instead of `string`,
+so a plain `string` is rejected where a hex value is expected. `Hex` types bytes
+params (including `where` filters and test `simulate` params), block and
+transaction hashes, and `Bytes` fields. `StrictHex` is always `` `0x${string}` ``.
 
 ```yaml
 strict_hex_type: true
 ```
 
 Off by default; `envio init` turns it on for new projects. Available on EVM and
-Fuel. Types only — runtime values, storage and ReScript types don't change, so
-no resync is needed.
+Fuel. Types only, so no resync is needed.
 
 ## Environment Variables
 

@@ -17,7 +17,6 @@ metadata:
 - Names: 1-63 chars, alphanumeric + underscore, no reserved words
 - Relationship fields use the **entity type directly**: `collection: NftCollection!` — **never** add `_id` in the schema field name
 - The `_id` suffix only appears in TypeScript handlers (added by codegen): schema field `collection` → handler field `collection_id`, typed as the referenced entity's id
-- Entity types import by name (`import type { NftCollection } from "envio"`), except an entity named like an existing `envio` export (`Hex`, `Address`, `Logger`, …) — use `Entity<"Hex">` for those
 
 ## Scalar Types
 
@@ -30,7 +29,7 @@ metadata:
 | `Boolean!` | `boolean` | |
 | `BigInt!` | `bigint` | Use `@config(precision: N)` for custom precision |
 | `BigDecimal!` | `BigDecimal` | Use `@config(precision: N, scale: M)` |
-| `Bytes!` | `string` or `Uint8Array` | Depends on `bytes_type` in config.yaml: `hex` (the EVM/Fuel default) gives a hex-encoded `string`, `uint8array` gives a `Uint8Array` stored as raw bytes. SVM is always `Uint8Array` |
+| `Bytes!` | `Hex` or `Uint8Array` | Depends on `bytes_type` in config.yaml: `hex` (the EVM/Fuel default) gives a hex-encoded `Hex` (a `string`, or `` `0x${string}` `` with `strict_hex_type: true`), `uint8array` gives a `Uint8Array` stored as raw bytes. SVM is always `Uint8Array` |
 | `Timestamp!` | `Date` | |
 | `Json!` | `JSON` | JSON values only — store a `bigint` as its `.toString()` |
 

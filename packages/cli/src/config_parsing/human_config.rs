@@ -606,11 +606,9 @@ pub mod evm {
         pub bytes_type: Option<BytesType>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "If true, the `Hex` type from envio is `0x${string}` instead of \
-                           `string` in TypeScript. `Hex` types `bytes`/`bytesN` event params, \
-                           block and transaction hashes and other hex fields, and `Bytes` \
-                           entity fields with `bytes_type: hex`. ReScript types are unaffected. \
-                           (default: false)"
+            description = "If true, the `Hex` type of bytes params, block and transaction hashes \
+                           and `Bytes` fields is `0x${string}` instead of `string` (default: \
+                           false)"
         )]
         pub strict_hex_type: Option<bool>,
     }
@@ -1014,11 +1012,9 @@ pub mod fuel {
         pub bytes_type: Option<BytesType>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "If true, the `Hex` type from envio is `0x${string}` instead of \
-                           `string` in TypeScript. `Hex` types `bytes`/`bytesN` event params, \
-                           block and transaction hashes and other hex fields, and `Bytes` \
-                           entity fields with `bytes_type: hex`. ReScript types are unaffected. \
-                           (default: false)"
+            description = "If true, the `Hex` type of bytes params, block and transaction hashes \
+                           and `Bytes` fields is `0x${string}` instead of `string` (default: \
+                           false)"
         )]
         pub strict_hex_type: Option<bool>,
     }
