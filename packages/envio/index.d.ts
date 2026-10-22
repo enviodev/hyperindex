@@ -723,9 +723,9 @@ export type EvmOnEventWhere<Params, ContractName extends string> =
 /** A single `where` filter condition of an anonymous EVM event. An anonymous
  * event's logs carry no signature topic — topic0 holds its first indexed
  * param — so every filter names values for that param (it's required in
- * `Params`), and a list of filters can't be empty. */
+ * `Params`). An empty list is rejected when the handler registers. */
 export type EvmAnonymousOnEventWhereFilter<Params> = {
-  readonly params: Params | readonly [Params, ...Params[]];
+  readonly params: Params | readonly Params[];
   readonly block?: {
     readonly number?: {
       readonly _gte?: number;

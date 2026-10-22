@@ -181,8 +181,7 @@ let expectedNotes =
       (6, fileSig, "jug-file"),
     ]->Array.map(((blockNumber, sig, name)) => {
       id: ServedEvmChain.routed(~chainId, ~blockNumber, name),
-      // bytesN params decode to their whole 32-byte word.
-      sig: sig->sigTopic,
+      sig,
       guy,
       foo,
       bar,

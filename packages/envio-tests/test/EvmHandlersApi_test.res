@@ -1151,6 +1151,10 @@ if (0) {
     },
     async () => {},
   );
+  indexer.onEvent(
+    { contract: "Vat", event: "LogNote", where: () => ({ params: [{ sig: SIG }, { sig: SIG }] }) },
+    async () => {},
+  );
   indexer.contractRegister(
     { contract: "Vat", event: "LogNote", where: { params: { sig: SIG }, block: { number: { _gte: 1 } } } },
     async () => {},
@@ -1191,11 +1195,6 @@ if (0) {
   indexer.onEvent(
     // @ts-expect-error - the filter must name params
     { contract: "Vat", event: "LogNote", where: { block: { number: { _gte: 1 } } } },
-    async () => {},
-  );
-  indexer.onEvent(
-    // @ts-expect-error - an empty list of filters names no sig
-    { contract: "Vat", event: "LogNote", where: { params: [] } },
     async () => {},
   );
   indexer.onEvent(

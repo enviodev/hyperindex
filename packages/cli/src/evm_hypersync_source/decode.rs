@@ -667,8 +667,7 @@ mod tests {
                 vec![(
                     0,
                     JsValue::obj([
-                        // bytesN params decode to their whole 32-byte word.
-                        ("sig", JsValue::str(&file_sig)),
+                        ("sig", JsValue::str("0x29ae8114")),
                         (
                             "guy",
                             JsValue::str("0x00000000000000000000000000000000000000aa")

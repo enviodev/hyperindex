@@ -388,7 +388,7 @@ fn write_sol_value(
             tape.str(address.to_checksum_buffer(None).as_str())
         }
         DynSolValue::Address(address) => tape.hex(address.as_slice()),
-        DynSolValue::FixedBytes(word, _) => tape.hex(word.as_slice()),
+        DynSolValue::FixedBytes(word, size) => tape.hex(&word[..*size]),
         DynSolValue::Function(function) => tape.hex(function.as_slice()),
         DynSolValue::Bytes(bytes) => tape.hex(bytes),
         DynSolValue::String(value) => tape.str(value),
