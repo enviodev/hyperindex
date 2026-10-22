@@ -730,8 +730,16 @@ let run = async (
   | (Some(exn), _, _)
   | (None, Some(exn), _)
   | (None, None, Some(exn)) =>
-    // Written after the teardown, which is still this run's to log.
-    exn->appendToFailureMessage(logsLinkPrefix ++ logger->writeLogsForFailure(~pgSchema))
+    // Written after the teardown, which is still this run's to log. A failed
+    // write must not replace the failure it was meant to explain.
+    let link = try logger->writeLogsForFailure(~pgSchema) catch {
+    | writeExn =>
+      `not written (${writeExn
+        ->Utils.prettifyExn
+        ->Utils.exnMessage
+        ->Option.getOr("unknown error")})`
+    }
+    exn->appendToFailureMessage(logsLinkPrefix ++ link)
     switch exn {
     // Rethrown as caught, so vitest gets the AssertionError itself and can diff
     // it, not a ReScript wrapper it prints as a plain object.

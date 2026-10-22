@@ -283,6 +283,8 @@ jobs:
         with:
           name: envio-tests-logs-${{ matrix.storage }}
           path: packages/envio-tests/.test-logs
+          # The folder's own name starts with a dot.
+          include-hidden-files: true
           if-no-files-found: ignore
 
       - name: Test Failure Notification
