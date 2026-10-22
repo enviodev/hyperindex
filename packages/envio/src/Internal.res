@@ -335,6 +335,7 @@ type eventPayload
 // filters on. Only those names are ever looked up, so the address type is
 // accurate at every use site.
 @get external getPayloadAddressParams: eventPayload => dict<Address.t> = "params"
+@get external getPayloadParams: eventPayload => dict<unknown> = "params"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,

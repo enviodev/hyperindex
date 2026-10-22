@@ -1,3 +1,43 @@
+// The topic a log of this event carries at `position`, encoded from the
+// simulated item's params with the same encoder a `where` value goes through.
+// A value that doesn't encode has no topic, so it matches no filter value.
+let topicAt = (eventConfig: Internal.evmEventConfig, ~params: dict<unknown>, position) => {
+  let indexedParamTopic = index =>
+    eventConfig.paramsMetadata
+    ->Array.filter(param => param.indexed)
+    ->Array.get(index)
+    ->Option.flatMap(param =>
+      try Some(
+        EventConfigBuilder.getTopicEncoder(param.abiType)(params->Dict.getUnsafe(param.name)),
+      ) catch {
+      | _ => None
+      }
+    )
+  switch eventConfig.sighash {
+  | Some(sighash) if position === 0 => Some(sighash->EvmTypes.Hex.fromStringUnsafe)
+  | Some(_) => indexedParamTopic(position - 1)
+  | None => indexedParamTopic(position)
+  }
+}
+
+// `ContractAddresses` passes here: it's checked against the address store by
+// the `addressFilterParamGroups` gate instead.
+let topicFilterMatches = (filter: Internal.topicFilter, ~topicAt) => {
+  let matchesAt = (topicConstraint: Internal.topicConstraint, position) =>
+    switch topicConstraint {
+    | Any | ContractAddresses(_) => true
+    | Values(values) =>
+      switch topicAt(position) {
+      | Some(topic) => values->Array.includes(topic)
+      | None => false
+      }
+    }
+  filter.topic0->matchesAt(0) &&
+  filter.topic1->matchesAt(1) &&
+  filter.topic2->matchesAt(2) &&
+  filter.topic3->matchesAt(3)
+}
+
 let make = (
   ~items: array<Internal.item>,
   ~endBlock: int,
@@ -74,6 +114,28 @@ let make = (
         | None => true
         }
 
+      // Real sources select logs by topic, so a static `where.params` value
+      // keeps out the items whose indexed params don't encode to it.
+      let topicFiltersMatch = (eventItem: Internal.eventItem) =>
+        switch ecosystem {
+        | Evm =>
+          let registration =
+            eventItem.onEventRegistration->(
+              Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration
+            )
+          let topicAt = topicAt(
+            registration.eventConfig->(
+              Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+            ),
+            ~params=eventItem.payload->Internal.getPayloadParams,
+            ...
+          )
+          registration.resolvedWhere.topicFilters->Array.some(filter =>
+            filter->topicFilterMatches(~topicAt)
+          )
+        | Fuel | Svm => true
+        }
+
       let parsedQueueItems = items->Array.filter(item => {
         let eventItem = item->Internal.castUnsafeEventItem
         let {blockNumber, onEventRegistration} = eventItem
@@ -82,6 +144,8 @@ let make = (
         } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
           false
         } else if !(onEventRegistration->hasStarted(~blockNumber)) {
+          false
+        } else if !topicFiltersMatch(eventItem) {
           false
         } else {
           let contractName = onEventRegistration.eventConfig.contractName
