@@ -6,6 +6,9 @@ description: Greeter indexer
 # single entity back into a shared row with `@crossChain` in schema.graphql, or
 # an effect with `crossChain: true`.
 disable_default_cross_chain: true
+# Type 0x-prefixed hex values (hashes, bytes params, Bytes fields) as `Hex`
+# instead of plain `string` in TypeScript.
+strict_hex_type: true
 #Global contract definitions that must contain all definitions except
 #addresses. Now you can share a single handler/abi/event definitions
 #for contracts across multiple chains
