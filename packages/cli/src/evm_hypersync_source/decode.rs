@@ -413,11 +413,11 @@ mod tests {
         }
     }
 
-    // A no-`where` filter for `sighash`: one alternative that pins topic0
-    // and leaves the rest unconstrained (the shape `LogSelection` builds for a
-    // registration without a `where`). An empty `topic_filters` would mean
+    // The topic filters of a registration without a `where`: one alternative
+    // that pins topic0 to `sighash` and leaves the rest unconstrained (the
+    // shape `LogSelection` builds). An empty `topic_filters` would mean
     // `where: false` (match nothing), so tests that expect a match use this.
-    fn no_filter_selection(sighash: &str) -> Vec<TopicFilterInput> {
+    fn no_where_filters(sighash: &str) -> Vec<TopicFilterInput> {
         vec![TopicFilterInput {
             topic0: Some(vec![sighash.to_string()]),
             topic1: Some(vec![]),
@@ -443,7 +443,7 @@ mod tests {
             is_wildcard,
             depends_on_addresses: false,
             start_block: None,
-            topic_filters: no_filter_selection(sighash),
+            topic_filters: no_where_filters(sighash),
             block_fields: vec![],
             transaction_fields: vec![],
             params: vec![pm("value", "uint256", false)],
@@ -563,7 +563,7 @@ mod tests {
                 is_wildcard: false,
                 depends_on_addresses: false,
                 start_block: None,
-                topic_filters: no_filter_selection(&real_sighash),
+                topic_filters: no_where_filters(&real_sighash),
                 block_fields: vec![],
                 transaction_fields: vec![],
                 params: vec![pm("owner", "address", false), pm("value", "uint256", false)],

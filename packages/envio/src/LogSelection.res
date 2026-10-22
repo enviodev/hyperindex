@@ -98,7 +98,6 @@ type indexedParam = {name: string, toTopics: JSON.t => array<EvmTypes.Hex.t>}
 type topicPosition =
   | Signature(EvmTypes.Hex.t)
   | Param(indexedParam)
-  | Unused
 
 let parseWhereOrThrow = (
   ~where: option<JSON.t>,
@@ -120,10 +119,10 @@ let parseWhereOrThrow = (
   | None => []
   }->Array.concat(indexedParams->Array.map(param => Param(param)))
   let constraintAt = (paramsFilter: dict<JSON.t>, position) =>
-    switch positions->Array.get(position)->Option.getOr(Unused) {
-    | Signature(sighash) => Internal.Values([sighash])
-    | Unused => Any
-    | Param({name, toTopics}) =>
+    switch positions->Array.get(position) {
+    | None => Internal.Any
+    | Some(Signature(sighash)) => Values([sighash])
+    | Some(Param({name, toTopics})) =>
       switch paramsFilter->Utils.Dict.dangerouslyGetNonOption(name) {
       | None => Any
       // Detected before encoding, which would touch the throwing Proxy.
