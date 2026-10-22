@@ -975,15 +975,15 @@ impl ProjectTemplate {
         write_if_changed(&project_paths.envio_types_dts(), &self.envio_types_dts)
             .context("Failed writing .envio/types.d.ts")?;
 
-        // 2. `.envio/.gitignore` — keeps `types.d.ts` out of git while leaving
-        //    sibling artifacts (like cache/) tracked. Written once; never
-        //    overwritten so users may add their own entries.
+        // 2. `.envio/.gitignore` — keeps the generated files out of git while
+        //    leaving sibling artifacts (like cache/) tracked. Written once;
+        //    never overwritten so users may add their own entries.
         let gitignore_path = project_paths.envio_dir.join(".gitignore");
         if !gitignore_path.exists() {
             std::fs::write(
                 &gitignore_path,
                 "# Ephemeral codegen output. Add other .envio entries here as \
-                 needed.\ntypes.d.ts\n",
+                 needed.\ntypes.d.ts\nresolvers.json\nresolvers.graphql\n",
             )
             .context("Failed writing .envio/.gitignore")?;
         }
@@ -3912,6 +3912,34 @@ type Swap {
             "declare module \"envio\" {\n  config: {\n    /** The event's block. */\n    \
              \"Contract{1}\": { id: 1 };\n    programs: {\n\n      \"a\": never;\n    };\n  \
              };\n}\n",
+        );
+    }
+
+    /// `envio codegen` writes `.envio/resolvers.json` and
+    /// `.envio/resolvers.graphql` for every project, resolvers or not, so the
+    /// `.gitignore` it writes has to cover them or each run leaves the tree
+    /// dirty.
+    #[test]
+    fn generated_gitignore_covers_every_ephemeral_artefact() {
+        use tempdir::TempDir;
+
+        let tmp = TempDir::new("envio-codegen-gitignore").expect("create tempdir");
+        let project_root = tmp.path().to_path_buf();
+        let project_paths = ParsedProjectPaths {
+            project_root: project_root.clone(),
+            config: project_root.join("config.yaml"),
+            envio_dir: project_root.join(".envio"),
+        };
+
+        get_project_template_helper("config1.yaml")
+            .generate_templates(&project_paths)
+            .expect("codegen run");
+
+        assert_eq!(
+            std::fs::read_to_string(project_root.join(".envio/.gitignore"))
+                .expect("read .gitignore"),
+            "# Ephemeral codegen output. Add other .envio entries here as needed.\ntypes.d.ts\n\
+             resolvers.json\nresolvers.graphql\n",
         );
     }
 
