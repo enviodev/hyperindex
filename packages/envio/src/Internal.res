@@ -504,13 +504,6 @@ type fuelContractConfig = {
   events: array<fuelEventConfig>,
 }
 
-type topicSelection = {
-  topic0: array<EvmTypes.Hex.t>,
-  topic1: array<EvmTypes.Hex.t>,
-  topic2: array<EvmTypes.Hex.t>,
-  topic3: array<EvmTypes.Hex.t>,
-}
-
 // A single topic position of a resolved `where`: either static pre-encoded
 // values, or a marker for "the currently registered addresses of this
 // contract", expanded to topic values when a source query is built.

@@ -6,8 +6,8 @@
 //! HTTP, real wire format — so a test can assert on the query the client
 //! actually sent and hand back a page the client actually decodes.
 //!
-//! Requests are captured verbatim as JSON text (the client's `Json`
-//! serialization format; the Cap'n Proto request format is not accepted).
+//! Requests are captured as JSON text: a `Json` query verbatim, a Cap'n Proto
+//! one re-serialized to the same JSON, so a test reads both the same way.
 //! Responses are supplied as JSON row tables and encoded into the response wire
 //! format: a packed Cap'n Proto message carrying one Arrow IPC file per table.
 //!
@@ -25,6 +25,7 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::FileWriter;
 use hypersync_net_types::hypersync_net_types_capnp;
+use hypersync_net_types::request::Request as CapnpRequest;
 use hypersync_net_types::{BlockField, LogField, TransactionField};
 use napi_derive::napi;
 use serde_json::Value;
@@ -35,6 +36,7 @@ use tokio::sync::watch;
 use crate::mock_http;
 
 const QUERY_PATH: &str = "/query/arrow-ipc";
+const CAPNP_QUERY_PATH: &str = "/query/arrow-ipc/capnp";
 const HEIGHT_PATH: &str = "/height";
 const HEIGHT_SSE_PATH: &str = "/height/sse";
 
@@ -47,9 +49,12 @@ struct State {
     /// covering the queried range, so a test only has to pin the pages it
     /// cares about.
     responses: VecDeque<Value>,
+    /// Rows the server holds the way HyperSync holds a chain: a query no queued
+    /// response answers gets the rows its selection matches. See `chain_page`.
+    chain: Option<Value>,
 }
 
-/// A HyperSync server bound to an ephemeral localhost port.
+/// A HyperSync server bound to a localhost port, ephemeral unless one is given.
 #[napi]
 pub struct MockHyperSyncServer {
     url: String,
@@ -65,8 +70,11 @@ fn err(e: impl std::fmt::Display) -> napi::Error {
 #[napi]
 impl MockHyperSyncServer {
     #[napi(factory)]
-    pub fn new(height: Option<i64>) -> napi::Result<Self> {
-        let listener = StdTcpListener::bind(("127.0.0.1", 0))
+    pub fn new(height: Option<i64>, port: Option<u32>) -> napi::Result<Self> {
+        let port = u16::try_from(port.unwrap_or(0))
+            .context("port out of range")
+            .map_err(err)?;
+        let listener = StdTcpListener::bind(("127.0.0.1", port))
             .context("bind mock hypersync server")
             .map_err(err)?;
         listener
@@ -122,6 +130,17 @@ impl MockHyperSyncServer {
             .context("parse mock hypersync response spec")
             .map_err(err)?;
         self.state.lock().unwrap().responses.push_back(value);
+        Ok(())
+    }
+
+    /// Hold `spec`'s rows as the chain every unqueued query is answered from.
+    /// Same shape as a `push_response` spec, minus the page-level fields.
+    #[napi]
+    pub fn serve_chain(&self, spec: String) -> napi::Result<()> {
+        let value: Value = serde_json::from_str(&spec)
+            .context("parse mock hypersync chain spec")
+            .map_err(err)?;
+        self.state.lock().unwrap().chain = Some(value);
         Ok(())
     }
 
@@ -202,58 +221,154 @@ async fn handle_connection(
                 stream_heights(&mut stream, state, shutdown).await?;
                 return Ok(());
             }
-            ("POST", QUERY_PATH) => {
-                let (spec, height) = {
-                    let mut state = state.lock().unwrap();
-                    state.queries.push(body.clone());
-                    (state.responses.pop_front(), state.height)
-                };
-                // A Cap'n Proto query body lands here too, and reads as a
-                // malformed JSON one — the source has to be built with the
-                // `Json` serialization format.
-                match spec.as_ref().and_then(raw_reply) {
-                    // A spec carrying a status answers at the HTTP level
-                    // instead of with a page: rate limiting and
-                    // payload-too-large are statuses the client acts on.
-                    Some(raw) => {
-                        let headers: Vec<(&str, &str)> = raw
-                            .headers
-                            .iter()
-                            .map(|(name, value)| (name.as_str(), value.as_str()))
-                            .collect();
-                        mock_http::write_response(
-                            &mut stream,
-                            raw.status,
-                            &headers,
-                            raw.body.as_bytes(),
-                        )
+            ("POST", QUERY_PATH) => answer_query(&mut stream, &state, body).await?,
+            ("POST", CAPNP_QUERY_PATH) => match CapnpRequest::from_capnp_bytes(&request.body) {
+                // The client asks by id first when it caches queries, and sends
+                // the full query once told the id isn't known.
+                Ok(CapnpRequest::QueryId { .. }) => {
+                    write_response(&mut stream, 200, "application/octet-stream", &not_cached()?)
                         .await?
-                    }
-                    None => {
-                        let page = serde_json::from_str(&body)
-                            .context("expected a JSON query body")
-                            .and_then(|query: Value| build_page(spec.as_ref(), &query, height));
-                        match page {
-                            Ok(body) => {
-                                write_response(&mut stream, 200, "application/octet-stream", &body)
-                                    .await?
-                            }
-                            Err(e) => {
-                                write_response(
-                                    &mut stream,
-                                    400,
-                                    "text/plain",
-                                    format!("{e:#}").as_bytes(),
-                                )
-                                .await?
-                            }
-                        }
-                    }
                 }
-            }
+                Ok(CapnpRequest::QueryBody { query, .. }) => {
+                    let body = serde_json::to_string(&query).context("serialize capnp query")?;
+                    answer_query(&mut stream, &state, body).await?
+                }
+                Err(e) => {
+                    write_response(&mut stream, 400, "text/plain", format!("{e}").as_bytes())
+                        .await?
+                }
+            },
             _ => write_response(&mut stream, 404, "text/plain", b"not found").await?,
         }
     }
+}
+
+async fn answer_query(
+    stream: &mut TcpStream,
+    state: &Arc<Mutex<State>>,
+    body: String,
+) -> Result<()> {
+    let (spec, chain, height) = {
+        let mut state = state.lock().unwrap();
+        state.queries.push(body.clone());
+        (
+            state.responses.pop_front(),
+            state.chain.clone(),
+            state.height,
+        )
+    };
+    // A spec carrying a status answers at the HTTP level instead of with a
+    // page: rate limiting and payload-too-large are statuses the client acts on.
+    if let Some(raw) = spec.as_ref().and_then(raw_reply) {
+        let headers: Vec<(&str, &str)> = raw
+            .headers
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        mock_http::write_response(stream, raw.status, &headers, raw.body.as_bytes()).await?;
+        return Ok(());
+    }
+    let page = serde_json::from_str(&body)
+        .context("expected a JSON query body")
+        .and_then(|query: Value| {
+            let spec = match (spec, chain) {
+                (None, Some(chain)) => Some(chain_page(&chain, &query, height)),
+                (spec, _) => spec,
+            };
+            build_page(spec.as_ref(), &query, height)
+        });
+    match page {
+        Ok(body) => write_response(stream, 200, "application/octet-stream", &body).await,
+        Err(e) => write_response(stream, 400, "text/plain", format!("{e:#}").as_bytes()).await,
+    }
+}
+
+fn not_cached() -> Result<Vec<u8>> {
+    let mut message = capnp::message::Builder::new_default();
+    message
+        .init_root::<hypersync_net_types_capnp::cached_query_response::Builder>()
+        .init_either()
+        .set_not_cached(());
+    let mut out = Vec::new();
+    capnp::serialize_packed::write_message(&mut out, &message).context("write capnp message")?;
+    Ok(out)
+}
+
+/// The page HyperSync would serve `query` from the chain's rows: the logs in
+/// `[from_block, to_block)` some log selection matches, with the blocks those
+/// logs belong to. The range ends at the server's height, as HyperSync's does.
+fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
+    let from_block = query.get("from_block").and_then(Value::as_u64).unwrap_or(0);
+    let next_block = query
+        .get("to_block")
+        .and_then(Value::as_u64)
+        .unwrap_or(u64::MAX)
+        .min(height + 1)
+        .max(from_block);
+    let rows = |table: &str| -> Vec<Value> {
+        chain
+            .get(table)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let number = |row: &Value, key: &str| row.get(key).and_then(Value::as_u64);
+    let selections = query
+        .get("logs")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let logs: Vec<Value> = rows("logs")
+        .into_iter()
+        .filter(|log| {
+            number(log, "block_number")
+                .is_some_and(|block| block >= from_block && block < next_block)
+                && selections
+                    .iter()
+                    .any(|selection| log_matches(log, selection))
+        })
+        .collect();
+    let blocks: Vec<Value> = rows("blocks")
+        .into_iter()
+        .filter(|block| {
+            logs.iter()
+                .any(|log| number(log, "block_number") == number(block, "number"))
+        })
+        .collect();
+
+    serde_json::json!({
+        "nextBlock": next_block,
+        "blocks": blocks,
+        "logs": logs,
+    })
+}
+
+/// HyperSync's log filter: every listed address and topic position must match
+/// one of its values, and an empty list matches anything.
+fn log_matches(log: &Value, selection: &Value) -> bool {
+    let any_of = |values: Option<&Value>, actual: Option<&Value>| match values
+        .and_then(Value::as_array)
+        .filter(|values| !values.is_empty())
+    {
+        None => true,
+        Some(values) => actual.and_then(Value::as_str).is_some_and(|actual| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|value| value.eq_ignore_ascii_case(actual))
+        }),
+    };
+    let topics = selection
+        .get("topics")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    any_of(selection.get("address"), log.get("address"))
+        && topics
+            .iter()
+            .enumerate()
+            .all(|(index, values)| any_of(Some(values), log.get(format!("topic{index}"))))
 }
 
 /// A response spec that answers at the HTTP level: `{"status": 429, "headers":
@@ -794,6 +909,45 @@ mod tests {
                 Some("0x00000000000000000000000000000000000000aa".to_string()),
                 None
             ]
+        );
+    }
+
+    #[test]
+    fn a_chain_serves_what_the_selection_matches() {
+        let log = |block: u64, address: &str, topic1: &str| {
+            serde_json::json!({
+                "block_number": block, "log_index": 0, "transaction_index": 0,
+                "address": address, "topic0": "0x01", "topic1": topic1,
+            })
+        };
+        let chain = serde_json::json!({
+            "blocks": [{"number": 5}, {"number": 6}, {"number": 7}],
+            "logs": [
+                log(5, "0x00000000000000000000000000000000000000AA", "0x0a"),
+                log(6, "0x00000000000000000000000000000000000000aa", "0x0b"),
+                log(6, "0x00000000000000000000000000000000000000bb", "0x0a"),
+                log(9, "0x00000000000000000000000000000000000000aa", "0x0a"),
+            ],
+        });
+        let page = chain_page(
+            &chain,
+            &serde_json::json!({
+                "from_block": 5,
+                "to_block": 20,
+                "logs": [{
+                    "address": ["0x00000000000000000000000000000000000000aa"],
+                    "topics": [["0x01"], ["0x0a"]],
+                }],
+            }),
+            7,
+        );
+        assert_eq!(
+            page,
+            serde_json::json!({
+                "nextBlock": 8,
+                "blocks": [{"number": 5}],
+                "logs": [log(5, "0x00000000000000000000000000000000000000AA", "0x0a")],
+            })
         );
     }
 
