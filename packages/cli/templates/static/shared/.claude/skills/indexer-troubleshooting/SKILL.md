@@ -48,9 +48,9 @@ rpc:
 
 **Missing `ENVIO_API_TOKEN`:** Required for HyperSync. Get an Envio API token at https://envio.dev/app/api-tokens, then set it in `.env` or shell environment.
 
-## Common Runtime Errors
+## Common Errors
 
-**"entity is read-only"** — Entities from `context.Entity.get()` are frozen. Spread to update: `context.Entity.set({ ...entity, field: newValue })`.
+**TS2540 "Cannot assign to 'field' because it is a read-only property"** — `pnpm tsc --noEmit` rejects assigning to a field of an entity from `context.Entity.get()`, because entity types are `readonly`. This is a compile-time check; there is no runtime "read-only" error. Spread to update: `context.Entity.set({ ...entity, field: newValue })`.
 
 **"Cannot find module 'envio'"** — Run `pnpm install`.
 

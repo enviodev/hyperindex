@@ -66,6 +66,7 @@ indexer.onBlock(
 - No events or contract address required
 - The handler context has the same entity API as event handlers
 - If `where` returns `false` for every configured chain, a warning is logged at registration time
+- `_gte` below the chain's `start_block` throws at registration ("The start block for onBlock handler ... is less than the chain start block"), and so does `_lte` above the chain's `end_block`. Omit `_gte` to start at the chain's start block
 - For per-event startBlock (not stride), use `indexer.onEvent` with `where.block.number._gte` (see `indexer-filters`). Event filters accept `_gte` only; `_lte`/`_every` are reserved for `onBlock`.
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.
