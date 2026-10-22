@@ -75,7 +75,6 @@ let makeMockSourceRegistration = (
   ({
     index,
     eventConfig: ({
-      id: "MockEvent",
       // Keep the synthetic registration in the same address-dependent fetch
       // partition as the config's registrations. MockSource ignores the
       // query selection, while ChainState still owns and resolves this slot.

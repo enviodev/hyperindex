@@ -508,6 +508,14 @@ impl HumanConfig {
             HumanConfig::Svm(_) => BytesType::Uint8Array,
         }
     }
+
+    pub fn strict_hex_type(&self) -> bool {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.strict_hex_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.strict_hex_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => false,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -596,6 +604,13 @@ pub mod evm {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If true, the `Hex` type of bytes params, block and transaction hashes \
+                           and `Bytes` fields is `0x${string}` instead of `string` (default: \
+                           false)"
+        )]
+        pub strict_hex_type: Option<bool>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -995,6 +1010,13 @@ pub mod fuel {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If true, the `Hex` type of bytes params, block and transaction hashes \
+                           and `Bytes` fields is `0x${string}` instead of `string` (default: \
+                           false)"
+        )]
+        pub strict_hex_type: Option<bool>,
     }
 
     impl Display for HumanConfig {
@@ -1966,6 +1988,52 @@ mod tests {
     }
 
     #[test]
+    fn strict_hex_type_is_off_unless_evm_or_fuel_opt_in() {
+        let evm = |extra: &str| {
+            serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                .map(super::HumanConfig::Evm)
+                .map(|config| config.strict_hex_type())
+                .map_err(|error| error.to_string())
+        };
+        let fuel = |extra: &str| {
+            serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                "name: t\necosystem: fuel\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Fuel)
+            .map(|config| config.strict_hex_type())
+            .map_err(|error| error.to_string())
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config| config.strict_hex_type())
+            .map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            [
+                evm(""),
+                evm("strict_hex_type: false"),
+                evm("strict_hex_type: true"),
+                fuel(""),
+                fuel("strict_hex_type: true"),
+                svm(""),
+                svm("strict_hex_type: true"),
+            ],
+            [
+                Ok(false),
+                Ok(false),
+                Ok(true),
+                Ok(false),
+                Ok(true),
+                Ok(false),
+                Err("unknown field `strict_hex_type`".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn test_flatten_deserialize_local_contract() {
         let yaml = r#"
 name: Contract1
@@ -2172,6 +2240,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            strict_hex_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -2226,6 +2295,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            strict_hex_type: None,
             chains: vec![],
         };
 
