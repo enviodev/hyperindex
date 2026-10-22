@@ -13,7 +13,6 @@ let loadById = (
   ~scope: Internal.chainScope,
   ~indexerState,
   ~shouldGroup,
-  ~item,
   ~entityId,
 ) => {
   let key = `${entityConfig.name}.get${scope->scopeKeySuffix}`
@@ -39,7 +38,7 @@ let loadById = (
     } catch {
     | Persistence.StorageError({message, reason}) =>
       reason->ErrorHandling.mkLogAndRaise(
-        ~logger=indexerState->IndexerState.loggerForItem(item),
+        ~logger=indexerState->IndexerState.loggerForScope(scope),
         ~msg=message,
       )
     }
@@ -220,11 +219,10 @@ let loadEffect = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
-  ~effectArgs,
+  ~effectArgs: Internal.effectArgs,
   ~scope: Internal.chainScope,
   ~indexerState,
   ~shouldGroup,
-  ~item,
 ) => {
   let effectName = effect.name
   let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
@@ -260,7 +258,7 @@ let loadEffect = (
       } catch {
       | exn =>
         indexerState
-        ->IndexerState.loggerForItem(item)
+        ->IndexerState.loggerForScope(scope)
         ->Logger.warn(
           `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
           ~params={"err": exn->Utils.prettifyExn, "effect": effectName},
@@ -273,7 +271,7 @@ let loadEffect = (
           let output = dbEntity.output->S.parseOrThrow(outputSchema)
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
           inMemTable->InMemoryStore.initEffectOutputFromDb(
-            ~chainId=item->Internal.getItemChainId,
+            ~chainId=effectArgs.chainId,
             ~cacheKey=dbEntity.id,
             ~output,
           )
@@ -281,7 +279,7 @@ let loadEffect = (
         | S.Raised(error) =>
           inMemTable->EffectState.recordInvalidation
           indexerState
-          ->IndexerState.loggerForItem(item)
+          ->IndexerState.loggerForScope(scope)
           ->Logger.trace(
             "Invalidated effect cache",
             ~params={"input": dbEntity.id, "effect": effectName, "err": error->S.Error.message},
@@ -338,7 +336,6 @@ let loadByParsedFilter = (
   ~scope: Internal.chainScope,
   ~indexerState,
   ~shouldGroup,
-  ~item,
   ~filter: EntityFilter.t,
 ) => {
   let key =
@@ -402,7 +399,7 @@ let loadByParsedFilter = (
           // placeholders, instead of an internal filter representation they
           // never constructed.
           ~logger=indexerState
-          ->IndexerState.loggerForItem(item)
+          ->IndexerState.loggerForScope(scope)
           ->Logger.withFields({
             "operation": key,
             "params": filter->EntityFilter.getParams,
@@ -448,7 +445,6 @@ let loadByFilter = (
   ~scope,
   ~indexerState,
   ~shouldGroup,
-  ~item,
   ~filter: dict<dict<unknown>>,
 ) =>
   // Rejecting rather than throwing keeps a bad filter failing only its own
@@ -461,7 +457,6 @@ let loadByFilter = (
       ~scope,
       ~indexerState,
       ~shouldGroup,
-      ~item,
       ~filter=filter->EntityFilter.parseOrThrow(
         ~entityName=entityConfig.name,
         ~table=entityConfig.table,

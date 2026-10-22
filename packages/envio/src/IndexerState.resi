@@ -52,6 +52,7 @@ let errorExit: (t, ErrorHandling.t) => unit
 let stop: t => unit
 let getChainState: (t, ~chainId: ChainId.t) => ChainState.t
 let loggerForItem: (t, Internal.item) => Logger.t
+let loggerForScope: (t, Internal.chainScope) => Logger.t
 let enterReorgThreshold: t => unit
 let beginReorg: (t, ~chainId: ChainId.t, ~blockNumber: int) => unit
 let enterFindingReorgDepth: t => unit

@@ -5,7 +5,6 @@ let loadById: (
   ~scope: Internal.chainScope,
   ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
-  ~item: Internal.item,
   ~entityId: string,
 ) => promise<option<Internal.entity>>
 
@@ -16,7 +15,6 @@ let loadByFilter: (
   ~scope: Internal.chainScope,
   ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
-  ~item: Internal.item,
   ~filter: dict<dict<unknown>>,
 ) => promise<array<Internal.entity>>
 
@@ -28,5 +26,4 @@ let loadEffect: (
   ~scope: Internal.chainScope,
   ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
-  ~item: Internal.item,
 ) => promise<Internal.effectOutput>

@@ -376,6 +376,14 @@ let loggerForItem = (state: t, item: Internal.item) =>
     ~logger=state->getChainState(~chainId=item->Internal.getItemChainId)->ChainState.logger,
   )
 
+// A load groups calls from many items, so its lines name the chain it reads,
+// not an item.
+let loggerForScope = (state: t, scope: Internal.chainScope) =>
+  switch scope {
+  | Chain(chainId) => state->getChainState(~chainId)->ChainState.logger
+  | CrossChain => state.logger
+  }
+
 let getSafeCheckpointIdByChain = (state: t) =>
   state.crossChainState->CrossChainState.getSafeCheckpointIdByChain(
     ~sequence=state.config.checkpointSequence,

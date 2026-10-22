@@ -111,7 +111,6 @@ let initEffect = (params: contextParams) => {
         ~scope,
         ~indexerState=params.indexerState,
         ~shouldGroup=params.isPreload,
-        ~item=params.item,
       )
     }
   }
@@ -136,7 +135,6 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     ~scope=params->entityScope,
     ~indexerState=params.indexerState,
     ~shouldGroup=params.isPreload,
-    ~item=params.item,
     ~filter,
   )
 
@@ -190,7 +188,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
-              ~item=params.item,
               ~entityId,
             )
         )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
@@ -222,7 +219,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
-              ~item=params.item,
               ~entityId,
             )->Promise.thenResolve(entity => {
               switch entity {
@@ -252,7 +248,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
-              ~item=params.item,
               ~entityId=entity.id,
             )->Promise.thenResolve(storageEntity => {
               switch storageEntity {
