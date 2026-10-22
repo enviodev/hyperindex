@@ -13,7 +13,7 @@ metadata:
 There is no `onTransaction` handler. Transaction and block data reach a handler
 through `event.transaction` and `event.block`.
 
-They carry only the fields the handler asks for. List them in `fields`:
+They carry the fields the handler asks for. List them in `fields`:
 
 ```ts
 indexer.onEvent(
@@ -31,7 +31,9 @@ indexer.onEvent(
 ```
 
 Reading a field you didn't list is a type error. `event.block.number` is
-available without listing it.
+available without listing it. Without `fields`, `event.block` also carries
+`timestamp` and `hash`; setting `fields` drops them, so list them if the
+handler reads them.
 
 Available on `indexer.onEvent` and `indexer.contractRegister`. Two handlers on
 the same event can list different fields.
@@ -53,8 +55,11 @@ the code that reads it. A handler's `fields` overrides `field_selection`.
 ```yaml
 field_selection:
   transaction_fields: [hash, from]
-  block_fields: [timestamp]
+  block_fields: [miner]
 ```
+
+`block_fields` takes the block fields below except `timestamp` and `hash`:
+without `fields` those are always included, and codegen rejects them here.
 
 ## Available Transaction Fields
 
@@ -65,7 +70,9 @@ Some are chain-specific and read as `undefined` where they don't apply: the
 
 ## Available Block Fields
 
-`event.block.number` is always available. The rest must be listed:
+`event.block.number` is always available. `timestamp` and `hash` are too unless
+the handler sets `fields`. Everything else must be listed. `fields.block`
+accepts:
 
 `timestamp`, `hash`, `parentHash`, `nonce`, `sha3Uncles`, `logsBloom`, `transactionsRoot`, `stateRoot`, `receiptsRoot`, `miner`, `difficulty`, `totalDifficulty`, `extraData`, `size`, `gasLimit`, `gasUsed`, `uncles`, `baseFeePerGas`, `blobGasUsed`, `excessBlobGas`, `parentBeaconBlockRoot`, `withdrawalsRoot`, `l1BlockNumber`, `sendCount`, `sendRoot`, `mixHash`
 

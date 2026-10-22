@@ -32,7 +32,7 @@ indexer.onEvent(
     // event.chainId        — chain ID
     // event.srcAddress     — emitting contract address (checksummed)
     // event.logIndex       — log index within block
-    // event.block          — block fields; `number` always, others via `fields`
+    // event.block          — `number`, `timestamp`, `hash` by default; with `fields`, `number` + the listed fields
     // event.transaction    — transaction fields selected via `fields`
   },
 );
@@ -44,7 +44,9 @@ optional `wildcard` / `where` / `fields` (see `indexer-wildcard`,
 handler.
 
 `fields` lists the block and transaction fields this handler reads. Anything not
-listed is a type error — see the `indexer-transactions` skill.
+listed is a type error, except `block.number`. Setting `fields` drops the default
+`block.timestamp` and `block.hash`, so list them if you read them — see the
+`indexer-transactions` skill.
 
 ```ts
 indexer.onEvent(
@@ -111,7 +113,7 @@ import { indexer } from "envio";
 indexer.name;                        // "my-indexer"
 indexer.chainIds;                    // [1, 137]
 indexer.chains[1].id;                // 1
-indexer.chains[1].name;              // "ethereum"
+indexer.chains[1].name;              // "ethereumMainnet"
 indexer.chains[1].startBlock;        // 0
 indexer.chains[1].isRealtime;        // false
 indexer.chains[1].MyContract.name;   // "MyContract"
