@@ -254,3 +254,61 @@ describe("anonymous events", () => {
       ),
   )
 })
+
+// An anonymous event nobody registers has no filter to fetch its logs by, so
+// it must neither get a raw-events registration nor a simulate fallback.
+let _ = InternalTestIndexer.fromUserApi(
+  ~configYaml=`
+name: anonymous-event-without-handler
+raw_events: true
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed sig, uint256 wad) anonymous
+      - event: Frob(address indexed u)
+chains:
+  - id: 1
+    start_block: 1
+    contracts:
+      - name: Vat
+        address: "${vat}"
+`,
+  ~schema=`
+type Noop {
+  id: ID!
+}
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Vat", event: "Frob" }, async () => {});
+`,
+  ~test=`
+import { describe, it } from "vitest";
+import { createTestIndexer } from "envio";
+
+const errorOf = async (simulate: any[]) => {
+  try {
+    await createTestIndexer().process({ chains: { 1: { startBlock: 1, endBlock: 10, simulate } } });
+    return "no error";
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+
+describe("anonymous events without a handler", () => {
+  it("start without a raw-events registration and can't be simulated", async (t) => {
+    t.expect({
+      rawEvents: await errorOf([{ contract: "Vat", event: "Frob", params: { u: "${guy}" } }]),
+      simulate: await errorOf([
+        { contract: "Vat", event: "LogNote", params: { sig: "${fileSig}", wad: 1n } },
+      ]),
+    }).toEqual({
+      rawEvents: "no error",
+      simulate:
+        'simulate: no handler runs for event "LogNote" on contract "Vat". Register a handler with indexer.onEvent (and check any \`where\` filter isn\\'t excluding this chain) before simulating it.',
+    });
+  });
+});
+`,
+)

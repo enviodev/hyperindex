@@ -2158,7 +2158,12 @@ impl Contract {
         let mut seen_by_name: HashMap<&str, &Event> = HashMap::new();
         for event in &events {
             if let Some(existing) = seen_by_name.insert(&event.name, event) {
-                if existing.sighash == event.sighash {
+                let is_duplicate = match (&existing.sighash, &event.sighash) {
+                    // Anonymous events have no sighash to tell overloads apart by.
+                    (None, None) => existing.event_signature == event.event_signature,
+                    (existing_sighash, sighash) => existing_sighash == sighash,
+                };
+                if is_duplicate {
                     return Err(anyhow!(
                         "Contract {name} defines the event \"{}\" more than once. Please remove \
                          the duplicate.",

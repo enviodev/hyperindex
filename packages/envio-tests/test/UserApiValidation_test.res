@@ -749,6 +749,27 @@ chains:
     )
   })
 
+  it(
+    "rejects two anonymous events with the same name but different signatures, suggesting the name alias",
+    t => {
+      expectParseError(
+        t,
+        `
+name: overloaded-anonymous-event
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed sig, uint256 wad) anonymous
+      - event: LogNote(bytes4 indexed sig, address indexed guy) anonymous
+chains:
+  - id: 1
+    start_block: 0
+`,
+        `Failed parsing globally defined contract: Contract Vat has two events named "LogNote". Give one of them a unique name with the "name" field so the generated code and the indexer's routing can tell them apart.`,
+      )
+    },
+  )
+
   // Their registrations' `where` filters tell their logs apart.
   it("accepts anonymous events that share a signature", t => {
     let {config} = InternalTestIndexer.fromUserApi(

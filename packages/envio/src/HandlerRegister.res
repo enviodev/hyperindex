@@ -459,9 +459,7 @@ let isWildcard = (~contractName, ~eventName) =>
   }
 
 // Every registration for one event on a chain, so simulate fans a simulated
-// event out to each the way real routing does. Falls back to a bare
-// registration when the event has no handler/contractRegister, so a simulated
-// item still produces an item to run.
+// event out to each the way real routing does.
 let getSimulateOnEventRegistrations = (
   ~config: Config.t,
   ~chainId: ChainId.t,
@@ -471,28 +469,19 @@ let getSimulateOnEventRegistrations = (
   | Some(r) => r->storedOnEventRegistrations(~chainId)
   | None => []
   }
-  let matching =
-    mergeRegistrations(stored, ~config)->Array.filter(reg =>
-      reg.eventConfig.contractName === eventConfig.contractName &&
-        reg.eventConfig.name === eventConfig.name
-    )
-  if matching->Utils.Array.notEmpty {
-    matching
-  } else {
-    [
-      buildOnEventRegistrationWith(
-        ~config,
-        ~chainId,
-        ~eventConfig,
-        ~isWildcard=false,
-        ~handler=None,
-        ~contractRegister=None,
-        ~where=None,
-        ~fieldSelection=None,
-      ),
-    ]
-  }
+  mergeRegistrations(stored, ~config)->Array.filter(reg =>
+    reg.eventConfig.contractName === eventConfig.contractName &&
+      reg.eventConfig.name === eventConfig.name
+  )
 }
+
+// Without a `where` naming its topic0 values, an anonymous event has no logs
+// to select, so it can't get a bare raw-events registration.
+let isAnonymousEvent = (~config: Config.t, eventConfig: Internal.eventConfig) =>
+  config.ecosystem.name === Evm &&
+    (
+      eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    ).sighash->Option.isNone
 
 let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch getActiveRegistration() {
@@ -533,7 +522,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                   )
                 )
               ) {
-                if config.enableRawEvents {
+                if config.enableRawEvents && !isAnonymousEvent(~config, eventConfig) {
                   rawEventRegs
                   ->Array.push(
                     buildOnEventRegistrationWith(

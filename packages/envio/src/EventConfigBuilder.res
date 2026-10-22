@@ -234,7 +234,7 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
   }
 }
 
-// ============== Build topic filter getters ==============
+// ============== Indexed param topic encoders ==============
 
 let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) =>
   value => Core.getAddon().encodeIndexedTopic(~abiType, ~value)

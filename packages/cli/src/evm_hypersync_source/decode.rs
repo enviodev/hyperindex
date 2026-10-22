@@ -88,14 +88,9 @@ impl OnEventRegistration {
         cache: &SetCache,
         store: &StoreInner,
     ) -> bool {
+        // Topic filters before the emitter: topic0 rejects most of a
+        // selection's registrations with one comparison.
         self.topic_count == topic_count
-            && address.matches_registration(
-                store,
-                self.contract_idx,
-                self.is_wildcard,
-                self.start_block,
-                force_wildcard,
-            )
             && self.topic_filters.matches(
                 topics,
                 self.contract_idx,
@@ -103,6 +98,13 @@ impl OnEventRegistration {
                 force_wildcard,
                 cache,
                 store,
+            )
+            && address.matches_registration(
+                store,
+                self.contract_idx,
+                self.is_wildcard,
+                self.start_block,
+                force_wildcard,
             )
     }
 }
