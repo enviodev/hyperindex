@@ -251,7 +251,7 @@ fn write_local_time(millis: i64, out: &mut Vec<u8>) {
             offset
         }
     });
-    let of_day = (millis + offset_millis).rem_euclid(86_400_000);
+    let of_day = millis.saturating_add(offset_millis).rem_euclid(86_400_000);
     let _ = write!(
         out,
         "{:02}:{:02}:{:02}.{:03}",

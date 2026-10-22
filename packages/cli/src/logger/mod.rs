@@ -46,14 +46,6 @@ struct Sink {
 }
 
 impl Sink {
-    fn new(format: Format, target: Target, level: Level) -> Self {
-        Sink {
-            format,
-            target,
-            level,
-        }
-    }
-
     fn render(&self, record: &Record, out: &mut Vec<u8>) {
         match self.format {
             Format::Pretty { colorize } => format::write_pretty_line(record, colorize, out),
@@ -78,7 +70,6 @@ struct Batch {
 
 const ABSENT: u32 = u32::MAX;
 
-/// Reads a [`Batch`]'s bytes from the front.
 struct Cursor<'a>(&'a [u8]);
 
 impl<'a> Cursor<'a> {
@@ -88,21 +79,25 @@ impl<'a> Cursor<'a> {
         Some(taken)
     }
 
-    fn text(&mut self) -> Option<Option<std::borrow::Cow<'a, str>>> {
+    fn text(&mut self) -> Option<std::borrow::Cow<'a, str>> {
         let len = u32::from_le_bytes(self.take(4)?.try_into().ok()?);
+        Some(String::from_utf8_lossy(self.take(len as usize)?))
+    }
+
+    /// A text that may be `ABSENT`.
+    fn optional_text(&mut self) -> Option<Option<std::borrow::Cow<'a, str>>> {
+        let len = u32::from_le_bytes(self.0.get(..4)?.try_into().ok()?);
         if len == ABSENT {
+            self.take(4)?;
             return Some(None);
         }
-        Some(Some(String::from_utf8_lossy(self.take(len as usize)?)))
+        self.text().map(Some)
     }
 }
 
 impl Batch {
     fn with_records(&self, mut f: impl FnMut(&Record)) {
         let mut cursor = Cursor(&self.bytes);
-        let parse = |json: Option<std::borrow::Cow<str>>| {
-            json.map_or_else(Vec::new, |json| parse_fields_or_keep_as_text(&json))
-        };
         let mut layers: Vec<Fields> = Vec::new();
         for _ in 0..self.lines {
             layers.clear();
@@ -113,9 +108,11 @@ impl Batch {
                 let millis = f64::from_le_bytes(cursor.take(8)?.try_into().ok()?) as i64;
                 let msg = cursor.text()?;
                 for _ in 0..*cursor.take(1)?.first()? {
-                    layers.push(parse(cursor.text()?));
+                    layers.push(parse_fields_or_keep_as_text(&cursor.text()?));
                 }
-                layers.push(parse(cursor.text()?));
+                if let Some(params) = cursor.optional_text()? {
+                    layers.push(parse_fields_or_keep_as_text(&params));
+                }
                 Some((level, millis, msg))
             })() else {
                 return;
@@ -125,7 +122,7 @@ impl Batch {
             f(&Record {
                 level,
                 millis,
-                msg: msg.as_deref().unwrap_or_default(),
+                msg: &msg,
                 fields: &fields::merge_later_wins(&layers),
             });
         }
@@ -163,7 +160,7 @@ enum Message {
 
 /// How many batches may wait for the writer before a caller waits with them: a
 /// reader that can't keep up slows the indexer rather than filling its memory.
-const QUEUE_CAPACITY: usize = 256;
+const QUEUE_CAPACITY: usize = 16;
 
 fn spawn_writer(sinks: Vec<Sink>) -> io::Result<mpsc::SyncSender<Message>> {
     let (sender, receiver) = mpsc::sync_channel::<Message>(QUEUE_CAPACITY);
@@ -181,7 +178,6 @@ fn spawn_writer(sinks: Vec<Sink>) -> io::Result<mpsc::SyncSender<Message>> {
                                 }
                             }
                         });
-                        // One write per sink for the whole batch.
                         for (sink, out) in sinks.iter().zip(outs.iter_mut()) {
                             if !out.is_empty() {
                                 sink.target.write_all(out);
@@ -198,26 +194,47 @@ fn spawn_writer(sinks: Vec<Sink>) -> io::Result<mpsc::SyncSender<Message>> {
     Ok(sender)
 }
 
-/// Stdout through a descriptor of the logger's own: Node may switch the
-/// terminal or pipe to non-blocking mode, and a line that would block waits
+/// A standard stream through a descriptor of the logger's own: Node may switch
+/// a terminal or pipe to non-blocking mode, and a write that would block waits
 /// instead of being dropped with `EAGAIN`.
-fn write_to_stdout_or_above_display(line: &[u8]) -> io::Result<()> {
-    if crate::tui::print_above_stdout(String::from_utf8_lossy(line).trim_end_matches('\n')) {
-        return Ok(());
-    }
-    static STDOUT: OnceLock<Option<File>> = OnceLock::new();
-    let stdout = STDOUT.get_or_init(|| {
+struct Stream {
+    file: Option<File>,
+    /// Workers share their supervisor's pipe, and only a write of at most
+    /// `PIPE_BUF` bytes reaches it whole, so a batch is cut into such writes at
+    /// line ends.
+    is_pipe: bool,
+}
+
+impl Stream {
+    fn dup(fd: libc::c_int) -> Stream {
         // SAFETY: `dup` returns a new descriptor or -1.
-        let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        let fd = unsafe { libc::dup(fd) };
         // SAFETY: the descriptor was just created and nothing else owns it.
-        (fd >= 0).then(|| unsafe { File::from_raw_fd(fd) })
-    });
-    let Some(mut stdout) = stdout.as_ref() else {
-        return io::stdout().write_all(line);
-    };
-    let mut rest = line;
+        let file = (fd >= 0).then(|| unsafe { File::from_raw_fd(fd) });
+        let is_pipe = file.as_ref().is_some_and(|file| {
+            file.metadata().is_ok_and(|metadata| {
+                std::os::unix::fs::FileTypeExt::is_fifo(&metadata.file_type())
+            })
+        });
+        Stream { file, is_pipe }
+    }
+
+    fn write_all(&self, bytes: &[u8]) -> io::Result<()> {
+        let Some(file) = &self.file else {
+            return Err(io::Error::other("no descriptor for the stream"));
+        };
+        if self.is_pipe {
+            line_chunks(bytes, libc::PIPE_BUF).try_for_each(|chunk| write_waiting(file, chunk))
+        } else {
+            write_waiting(file, bytes)
+        }
+    }
+}
+
+fn write_waiting(mut file: &File, bytes: &[u8]) -> io::Result<()> {
+    let mut rest = bytes;
     while !rest.is_empty() {
-        match stdout.write(rest) {
+        match file.write(rest) {
             Ok(written) => rest = &rest[written..],
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(1))
@@ -229,8 +246,53 @@ fn write_to_stdout_or_above_display(line: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// A line already written by a worker's logger, passed on as it is: above the
-/// display while one is running, to stdout otherwise.
+/// `bytes` in pieces of at most `max` bytes that each end a line, except a
+/// line longer than `max`, which is a piece of its own.
+fn line_chunks(bytes: &[u8], max: usize) -> impl Iterator<Item = &[u8]> {
+    let mut rest = bytes;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let end = if rest.len() <= max {
+            rest.len()
+        } else {
+            match rest[..max].iter().rposition(|&byte| byte == b'\n') {
+                Some(newline) => newline + 1,
+                None => rest
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .map_or(rest.len(), |newline| newline + 1),
+            }
+        };
+        let (chunk, tail) = rest.split_at(end);
+        rest = tail;
+        Some(chunk)
+    })
+}
+
+fn stdout() -> &'static Stream {
+    static STDOUT: OnceLock<Stream> = OnceLock::new();
+    STDOUT.get_or_init(|| Stream::dup(libc::STDOUT_FILENO))
+}
+
+fn stderr() -> &'static Stream {
+    static STDERR: OnceLock<Stream> = OnceLock::new();
+    STDERR.get_or_init(|| Stream::dup(libc::STDERR_FILENO))
+}
+
+/// Above the display while one is running, which a direct write would land in
+/// the middle of, and to stdout otherwise.
+fn write_to_stdout_or_above_display(bytes: &[u8]) -> io::Result<()> {
+    // A record's trailing blank line separates it from the next one printed.
+    let text = String::from_utf8_lossy(bytes);
+    if crate::tui::print_above_stdout(text.strip_suffix('\n').unwrap_or(&text)) {
+        return Ok(());
+    }
+    stdout().write_all(bytes)
+}
+
+/// A line already written by a worker's logger, passed on as it is.
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
 pub fn write_stdout_line(line: String) {
@@ -241,7 +303,9 @@ pub fn write_stdout_line(line: String) {
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
 pub fn write_stderr_line(line: String) {
-    let _ = crate::tui::LogWriter.write_all(format!("{line}\n").as_bytes());
+    if !crate::tui::print_above_stderr(&line) {
+        let _ = stderr().write_all(format!("{line}\n").as_bytes());
+    }
 }
 
 /// `NO_COLOR` wins over `FORCE_COLOR`, which the supervisor sets for workers
@@ -323,17 +387,41 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
         colorize: stdout_supports_color(),
     };
     Ok(match config.strategy.as_str() {
-        // pino gated these at the logger before the file's own level: info
-        // for `ecs-file`, the terminal's level for `both-prettyconsole`.
-        "ecs-file" => vec![Sink::new(Format::Ecs, file()?, file_level.max(Level::INFO))],
+        // A file never takes lines below info for `ecs-file`, or below the
+        // terminal's level for `both-prettyconsole`.
+        "ecs-file" => vec![Sink {
+            format: Format::Ecs,
+            target: file()?,
+            level: file_level.max(Level::INFO),
+        }],
         "ecs-console" | "ecs-console-multistream" => {
-            vec![Sink::new(Format::Ecs, Target::Stdout, level)]
+            vec![Sink {
+                format: Format::Ecs,
+                target: Target::Stdout,
+                level,
+            }]
         }
-        "file-only" => vec![Sink::new(Format::Json, file()?, file_level)],
-        "console-raw" | "console-pretty" => vec![Sink::new(pretty(), Target::Stdout, level)],
+        "file-only" => vec![Sink {
+            format: Format::Json,
+            target: file()?,
+            level: file_level,
+        }],
+        "console-raw" | "console-pretty" => vec![Sink {
+            format: pretty(),
+            target: Target::Stdout,
+            level,
+        }],
         "both-prettyconsole" => vec![
-            Sink::new(pretty(), Target::Stdout, level),
-            Sink::new(Format::Json, file()?, file_level.max(level)),
+            Sink {
+                format: pretty(),
+                target: Target::Stdout,
+                level,
+            },
+            Sink {
+                format: Format::Json,
+                target: file()?,
+                level: file_level.max(level),
+            },
         ],
         other => {
             return Err(napi::Error::from_reason(format!(
@@ -431,9 +519,6 @@ impl Logger {
         }
     }
 
-    /// `level` is the numeric one, which the caller already compared against
-    /// `minLevel` before serializing anything. `bindings` and `params` are JSON
-    /// objects; a key repeated in `bindings` takes its last value.
     /// Takes the `lines` the caller buffered since its last call, laid out as
     /// a [`Batch`] lays them out. A key repeated in the bound fields takes its
     /// last value, and a param replaces a bound field of the same name. The
@@ -447,13 +532,14 @@ impl Logger {
     }
 
     /// Returns once every line logged before it is written. Called on exit, so
-    /// the lines still waiting for the writer aren't lost with the process.
+    /// the lines still waiting for the writer aren't lost with the process; a
+    /// reader that has stopped reading can't keep the process from exiting.
     #[napi]
     pub fn flush(&self) {
         if let Output::Written(sender) = &self.output {
             let (written, done) = mpsc::sync_channel(1);
             if sender.send(Message::Flush(written)).is_ok() {
-                let _ = done.recv();
+                let _ = done.recv_timeout(Duration::from_secs(5));
             }
         }
     }
@@ -609,6 +695,29 @@ mod tests {
         assert_eq!(
             logger.in_memory_lines(),
             vec![json!({"level": "info", "msg": "kept", "unparsedFields": lone_surrogate_key})]
+        );
+    }
+
+    #[test]
+    fn pipe_writes_end_at_lines_and_fit_the_atomic_size() {
+        let chunks = |text: &str, max| {
+            line_chunks(text.as_bytes(), max)
+                .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (
+                chunks("aa\nbbbb\ncc\n", 5),
+                chunks("aa\nbbbb\ncc\n", 8),
+                chunks("xxxxxxxxxx\nyy\n", 4),
+                chunks("ab", 4),
+            ),
+            (
+                vec!["aa\n".to_string(), "bbbb\n".into(), "cc\n".into()],
+                vec!["aa\nbbbb\n".to_string(), "cc\n".into()],
+                vec!["xxxxxxxxxx\n".to_string(), "yy\n".into()],
+                vec!["ab".to_string()],
+            )
         );
     }
 
