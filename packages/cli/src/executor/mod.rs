@@ -103,7 +103,8 @@ impl Command {
         if !project_flags.is_empty() {
             let (Command::Start { config, .. }
             | Command::Migrate { config, .. }
-            | Command::DropSchema { config }) = &mut self;
+            | Command::DropSchema { config }
+            | Command::Resolvers { config, .. }) = &mut self;
             config["projectFlags"] = project_flags.into();
         }
         self

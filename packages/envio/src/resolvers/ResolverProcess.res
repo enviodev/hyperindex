@@ -35,7 +35,7 @@ type reassertOptions = {
 }
 
 @module("./hasuraApply.js")
-external startMetadataReassert: reassertOptions => (unit => unit) = "startMetadataReassert"
+external startMetadataReassert: reassertOptions => unit => unit = "startMetadataReassert"
 
 type schemaNames = {entities: array<string>, enums: array<string>}
 
@@ -80,15 +80,6 @@ type serverOptions = {
 external startResolverServer: serverOptions => promise<server> = "startResolverServer"
 
 @module("./server.js") external readyzProbeMs: int = "READYZ_PROBE_MS"
-
-// The resolver module is the user's TypeScript. Registering tsx is what makes
-// it importable; the throw means it is already registered, which is the case
-// under `--import tsx` and in tests.
-try {
-  NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
-} catch {
-| _ => ()
-}
 
 let toImportUrl = (~projectRoot, ~relativePath) =>
   NodeJs.Url.pathToFileURL(
@@ -160,6 +151,9 @@ let loadOrThrow = async (~projectRoot, ~relativePath) => {
     [relativePath]
   }
 
+  // The resolver module is the user's TypeScript, loaded through the same
+  // hooks as the handlers.
+  HandlerLoader.registerTsHooks()
   for index in 0 to relativePaths->Array.length - 1 {
     let path = relativePaths->Array.getUnsafe(index)
     switch await Utils.importPath(toImportUrl(~projectRoot, ~relativePath=path)) {
@@ -281,10 +275,10 @@ external spawn: (string, array<string>, spawnOptions) => child = "spawn"
 @send external unref: child => unit = "unref"
 @get external childPid: child => option<int> = "pid"
 @send external killChild: (child, string) => bool = "kill"
-@send external onChildExit: (child, string, (Nullable.t<int>, Nullable.t<string>) => unit) => unit = "on"
+@send
+external onChildExit: (child, string, (Nullable.t<int>, Nullable.t<string>) => unit) => unit = "on"
 @val external processEnv: dict<string> = "process.env"
 
-@module("node:url") external fileURLToPath: string => string = "fileURLToPath"
 @module("node:path") external pathDirname: string => string = "dirname"
 
 type httpResponse
@@ -298,7 +292,7 @@ type fetchInit = {method: string}
 // is a shim into whichever version is published rather than this one.
 let cliEntry = () =>
   NodeJs.Path.resolve([
-    pathDirname(fileURLToPath(NodeJs.ImportMeta.url)),
+    pathDirname(NodeJs.Url.fileURLToPath(NodeJs.ImportMeta.importMeta.url)),
     "..",
     "..",
     "bin.mjs",
@@ -324,41 +318,41 @@ external readConfigRows: (sqlFn, string, array<JSON.t>) => promise<array<{"confi
 // exists for arrives later: the indexer is redeployed with a new config while
 // this process keeps serving, and readiness is the only thing that can still
 // take it out of rotation.
-let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) => async () => {
-  // The probe's bound, not its own: this runs inside the same readiness check
-  // and shares its budget.
-  let sql =
-    pool->forResolver({name: "readyz", timeoutMs: readyzProbeMs})->sqlOf
-  switch await readConfigRows(
-    sql,
-    `SELECT "config" FROM "${pgSchema}"."${InternalTable.EnvioInfo.table.tableName}" LIMIT 1;`,
-    [],
-  ) {
-  | rows =>
-    switch rows->Array.get(0) {
-    | None =>
-      Nullable.make(
-        "The database records no config, so it cannot be checked against this build. It was initialized by an envio version that predates the check.",
-      )
-    | Some(row) =>
-      switch Config.diffPaths(~stored=row["config"]->JSON.parseOrThrow, ~current=envioInfo) {
-      | [] => Nullable.null
-      | changedPaths =>
+let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) =>
+  async () => {
+    // The probe's bound, not its own: this runs inside the same readiness check
+    // and shares its budget.
+    let sql = pool->forResolver({name: "readyz", timeoutMs: readyzProbeMs})->sqlOf
+    switch await readConfigRows(
+      sql,
+      `SELECT "config" FROM "${pgSchema}"."${InternalTable.EnvioInfo.table.tableName}" LIMIT 1;`,
+      [],
+    ) {
+    | rows =>
+      switch rows->Array.get(0) {
+      | None =>
         Nullable.make(
-          `The database was indexed with a different config: ${changedPaths->Array.join(
-              ", ",
-            )}. This build must not answer for it.`,
+          "The database records no config, so it cannot be checked against this build. It was initialized by an envio version that predates the check.",
         )
+      | Some(row) =>
+        switch Config.diffPaths(~stored=row["config"]->JSON.parseOrThrow, ~current=envioInfo) {
+        | [] => Nullable.null
+        | changedPaths =>
+          Nullable.make(
+            `The database was indexed with a different config: ${changedPaths->Array.join(
+                ", ",
+              )}. This build must not answer for it.`,
+          )
+        }
       }
+    | exception exn =>
+      InternalTable.isUndefinedTable(exn)
+        ? Nullable.make(
+            "The database has no envio_info table, so it was not initialized by this indexer.",
+          )
+        : throw(exn)
     }
-  | exception exn =>
-    InternalTable.isUndefinedTable(exn)
-      ? Nullable.make(
-          "The database has no envio_info table, so it was not initialized by this indexer.",
-        )
-      : throw(exn)
   }
-}
 
 type running = {server: server, pool: pool, shutdown: unit => promise<unit>}
 
@@ -368,7 +362,7 @@ let serve = async (
   ~port=?,
   ~exposeErrors=?,
   ~pgSchema=Env.Db.publicSchema,
-  ~envioInfo=Config.getPublicConfigJson()->Config.stripSensitiveData,
+  ~envioInfo=Config.getPublicConfigJson()->Config.toEnvioInfo,
 ) => {
   let exposeErrors = exposeErrors->Option.getOr(Env.Resolvers.exposeErrors())
   let relativePath = switch config.resolvers {
@@ -441,7 +435,10 @@ let serve = async (
   let stopReassert = switch hasuraTargetOrNone {
   | Ok((endpoint, adminSecret)) =>
     let handlerUrl = handlerUrlOrThrow()
-    let metadata = buildHasuraMetadata(manifest, {handlerUrl, actionSecret: ?Env.Resolvers.actionSecret()})
+    let metadata = buildHasuraMetadata(
+      manifest,
+      {handlerUrl, actionSecret: ?Env.Resolvers.actionSecret()},
+    )
     let intervalMs = Env.Resolvers.metadataIntervalMs()
 
     // Best effort, deliberately. Replicas rolling out together all find the
@@ -632,8 +629,7 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       let endpoint = switch Env.Resolvers.hasuraEndpoint() {
       | Some(endpoint) => endpoint
       | None =>
-        let hasuraPort =
-          processEnv->Dict.get("HASURA_EXTERNAL_PORT")->Option.getOr("8080")
+        let hasuraPort = processEnv->Dict.get("HASURA_EXTERNAL_PORT")->Option.getOr("8080")
         `http://localhost:${hasuraPort}/v1/metadata`
       }
       childEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", endpoint)
@@ -730,7 +726,7 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
         entities: Dict.make(),
         pgSchema: Env.Db.publicSchema,
       })
-      let sql = (pool->forResolver({name: "dev-wait", timeoutMs: 5000}))->sqlOf
+      let sql = pool->forResolver({name: "dev-wait", timeoutMs: 5000})->sqlOf
       let rec waitForTables = async attempt =>
         if attempt >= 120 {
           Logging.warn("Timed out waiting for the indexer's tables; starting envio-serve anyway.")
@@ -766,9 +762,7 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       // Not a warning when Hasura is running: it publishes the resolvers as
       // actions, so they are already in the endpoint a developer opens.
       if Env.Hasura.enabled {
-        Logging.info(
-          `Custom resolvers are published by Hasura as actions. Set ENVIO_SERVE_BIN to serve them through envio-serve instead.`,
-        )
+        Logging.info(`Custom resolvers are published by Hasura as actions. Set ENVIO_SERVE_BIN to serve them through envio-serve instead.`)
       } else {
         Logging.warn(
           `Resolvers are declared, but ENVIO_HASURA=false and ENVIO_SERVE_BIN is unset, so nothing publishes them. ` ++

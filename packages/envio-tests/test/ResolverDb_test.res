@@ -228,17 +228,24 @@ describe("Resolver db handle", () => {
   Async.it("holds one connection and one timeout across a transaction's queries", async t => {
     let pool = makePool()
     let db = pool->ResolverDb.forResolver({name: "batched", timeoutMs: 1000})
-    let result = await db->ResolverDb.transaction(async tx => {
-      let first: array<{"pid": int}> = await tx->Postgres.unsafe("SELECT pg_backend_pid() AS pid;")
-      let second: array<{"pid": int}> = await tx->Postgres.unsafe("SELECT pg_backend_pid() AS pid;")
-      let shown: array<{"statement_timeout": string}> =
-        await tx->Postgres.unsafe("SHOW statement_timeout;")
-      (
-        first->Array.getUnsafe(0)->(row => row["pid"]) ===
-          second->Array.getUnsafe(0)->(row => row["pid"]),
-        shown->Array.getUnsafe(0)->(row => row["statement_timeout"]),
-      )
-    })
+    let result = await db->ResolverDb.transaction(
+      async tx => {
+        let first: array<{
+          "pid": int,
+        }> = await tx->Postgres.unsafe("SELECT pg_backend_pid() AS pid;")
+        let second: array<{
+          "pid": int,
+        }> = await tx->Postgres.unsafe("SELECT pg_backend_pid() AS pid;")
+        let shown: array<{
+          "statement_timeout": string,
+        }> = await tx->Postgres.unsafe("SHOW statement_timeout;")
+        (
+          first->Array.getUnsafe(0)->(row => row["pid"]) ===
+            second->Array.getUnsafe(0)->(row => row["pid"]),
+          shown->Array.getUnsafe(0)->(row => row["statement_timeout"]),
+        )
+      },
+    )
     let tagged = await db->ResolverDb.taggedSelectOne
     await pool->ResolverDb.endPool
     t.expect((result, tagged->Array.getUnsafe(0)->(row => row["n"]))).toEqual(((true, "1s"), 1))
@@ -276,9 +283,7 @@ describe("Resolver db handle", () => {
     }
     await pool->ResolverDb.endPool
     t.expect(caught->Option.map(e => e.message)).toEqual(
-      Some(
-        `Invalid field "acount" in db.find("Position", { where: ... }). The entity has no such field.`,
-      ),
+      Some(`Invalid field "acount" in db.find("Position", { where: ... }). The entity has no such field.`),
     )
   })
 
@@ -304,9 +309,7 @@ describe("Resolver db handle", () => {
     }
     await pool->ResolverDb.endPool
     t.expect(caught->Option.map(e => e.message)).toEqual(
-      Some(
-        `db.get("Position", id) is ambiguous: the entity is per-chain, so the same id can exist on every chain. Use db.find("Position", { where: { id: { _eq: id }, chainId: { _eq: chainId } } }).`,
-      ),
+      Some(`db.get("Position", id) is ambiguous: the entity is per-chain, so the same id can exist on every chain. Use db.find("Position", { where: { id: { _eq: id }, chainId: { _eq: chainId } } }).`),
     )
   })
 
@@ -332,10 +335,11 @@ describe("Resolver db handle", () => {
       let db = pool->ResolverDb.forResolver({name: "prepared", timeoutMs: 5000})
       let _: array<position> = await db->ResolverDb.find("Position", {})
       let _: array<position> = await db->ResolverDb.find("Position", {})
-      let rows: array<{"n": int}> =
-        await db
-        ->ResolverDb.sqlOf
-        ->ResolverDb.unsafe("SELECT count(*)::int AS n FROM pg_prepared_statements;", [])
+      let rows: array<{
+        "n": int,
+      }> = await db
+      ->ResolverDb.sqlOf
+      ->ResolverDb.unsafe("SELECT count(*)::int AS n FROM pg_prepared_statements;", [])
       await pool->ResolverDb.endPool
       rows->Array.getUnsafe(0)->(row => row["n"])
     }

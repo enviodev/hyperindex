@@ -184,11 +184,7 @@ let makeFindQuery = (options: findOptions): query => {
 // `id` alone identifies a row only on a cross-chain entity: a per-chain table
 // is keyed by (id, chain id), so a bare `get` there would answer with whichever
 // chain's row Postgres reached first.
-let makeGetQuery = (
-  entityConfig: Internal.entityConfig,
-  pgSchema: string,
-  id: unknown,
-): query => {
+let makeGetQuery = (entityConfig: Internal.entityConfig, pgSchema: string, id: unknown): query => {
   let table = entityConfig.table
   let entityName = entityConfig.name
   switch table->Table.getChainIdField {
