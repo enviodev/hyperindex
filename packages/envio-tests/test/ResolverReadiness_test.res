@@ -50,8 +50,7 @@ type Position {
 let config = InternalTestIndexer.fromUserApi(~configYaml, ~schema).config
 
 // What the indexer would have written into `envio_info` for this project.
-let envioInfo =
-  Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.stripSensitiveData
+let envioInfo = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.toEnvioInfo
 
 let projectRoot = pathJoin([
   pathDirname(fileURLToPath(importMetaUrl)),
@@ -96,13 +95,7 @@ Async.afterAll(async () => {
 
 describe("resolver readiness", () => {
   Async.it("takes traffic only while the database matches the build serving it", async t => {
-    let running = await ResolverProcess.serve(
-      ~config,
-      ~projectRoot,
-      ~pgSchema,
-      ~envioInfo,
-      ~port=0,
-    )
+    let running = await ResolverProcess.serve(~config, ~projectRoot, ~pgSchema, ~envioInfo, ~port=0)
     let url = `http://127.0.0.1:${running.server.port->Int.toString}/readyz`
 
     let matching = await probe(url)
