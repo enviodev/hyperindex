@@ -161,7 +161,7 @@ contracts:
       - event: LogNote(bytes4 indexed sig, address indexed usr, bytes32 indexed arg1, bytes32 indexed arg2, bytes data) anonymous
 ```
 
-Every registration of an anonymous event **must** have a `where` whose every `params` entry names values for the first indexed parameter — that's how the indexer selects its logs. A missing `where`, `true`, `{}`, a block-only filter, an entry without the first parameter, or `chain.<Contract>.addresses` on it fails at registration. A callback may return `false` to skip a chain.
+Every registration of an anonymous event **must** have a `where` whose every `params` entry names values for the first indexed parameter — that's how the indexer selects its logs. A missing `where`, `true`, `{}`, a block-only filter, an empty `params` list, an entry without the first parameter or with an empty list for it, or `chain.<Contract>.addresses` on it fails at registration. A callback may return `false` to skip a chain.
 
 ```ts
 indexer.onEvent(

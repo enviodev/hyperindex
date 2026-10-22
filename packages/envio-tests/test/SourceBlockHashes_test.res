@@ -63,9 +63,7 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   isWildcard: false,
   filterByAddresses: false,
   dependsOnAddresses: true,
-  addressFilterParamGroups: [],
   startBlock: None,
-  handler: None,
   contractRegister: None,
   fieldSelection: pairCreatedEventConfig.fieldSelection,
   resolvedWhere: {

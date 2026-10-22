@@ -16,19 +16,18 @@ let registration = (
   ~contractName,
   ~isWildcard=false,
   ~startBlock=?,
-  ~addressFilterParamGroups=?,
+  ~paramsMetadata=?,
+  ~eventFilters=?,
 ) => {
   let base = (EventRegistration.evmOnEventRegistration(
     ~id=index->Int.toString,
     ~contractName,
     ~isWildcard,
     ~startBlock?,
+    ~paramsMetadata?,
+    ~eventFilters?,
   ) :> Internal.onEventRegistration)
-  {
-    ...base,
-    index,
-    addressFilterParamGroups: addressFilterParamGroups->Option.getOr([]),
-  }
+  {...base, index}
 }
 
 let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexingAddress => {
@@ -37,17 +36,21 @@ let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexi
   registrationBlock,
 }
 
-let item = (~registration: Internal.onEventRegistration, ~blockNumber, ~srcAddress, ~params=?) =>
-  Internal.Event({
-    chainId,
-    blockNumber,
-    logIndex: 0,
-    transactionIndex: 0,
-    onEventRegistration: registration,
-    payload: {"srcAddress": srcAddress, "params": params->Option.getOr(Dict.make())}->(
-      Utils.magic: {"srcAddress": Address.t, "params": dict<Address.t>} => Internal.eventPayload
-    ),
-  })
+let item = (
+  ~registration: Internal.onEventRegistration,
+  ~blockNumber,
+  ~srcAddress,
+  ~params=?,
+) => Internal.Event({
+  chainId,
+  blockNumber,
+  logIndex: 0,
+  transactionIndex: 0,
+  onEventRegistration: registration,
+  payload: {"srcAddress": srcAddress, "params": params->Option.getOr(Dict.make())}->(
+    Utils.magic: {"srcAddress": Address.t, "params": dict<Address.t>} => Internal.eventPayload
+  ),
+})
 
 let getItems = async (
   ~items,
@@ -187,7 +190,15 @@ describe("SimulateSource routing", () => {
       ~index=0,
       ~contractName="A",
       ~isWildcard=true,
-      ~addressFilterParamGroups=[["to"]],
+      ~paramsMetadata=[{name: "to", abiType: "address", indexed: true}],
+      ~eventFilters=[
+        {
+          topic0: Values(["0"->EvmTypes.Hex.fromStringUnsafe]),
+          topic1: ContractAddresses({contractName: "A"}),
+          topic2: Any,
+          topic3: Any,
+        },
+      ],
     )
     let store = TestAddresses.makeStore(
       ~onEventRegistrations=[regWildcard],

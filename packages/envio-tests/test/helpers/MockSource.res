@@ -95,9 +95,8 @@ let makeMockSourceRegistration = (
     isWildcard,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
-    addressFilterParamGroups: [],
     startBlock: None,
-    handler: Some(handler),
+    handler,
     contractRegister: Some(contractRegister),
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.make(),

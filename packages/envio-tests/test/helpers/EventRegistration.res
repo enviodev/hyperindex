@@ -47,9 +47,7 @@ let evmOnEventRegistration = (
     isWildcard,
     filterByAddresses,
     dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
-    addressFilterParamGroups: [],
     startBlock,
-    handler: None,
     contractRegister: None,
     fieldSelection: eventConfig.fieldSelection,
     resolvedWhere: {

@@ -1,11 +1,6 @@
 type parsedWhere = {
   resolvedWhere: Internal.resolvedWhere,
   filterByAddresses: bool,
-  // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
-  // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
-  // Applied natively by every source while routing; carried on the registration
-  // for the simulate source, which has no native query boundary.
-  addressFilterParamGroups: array<array<string>>,
 }
 
 // Inner schema for the event `block` filter chunk: `{_gte?}`.
@@ -80,8 +75,8 @@ let makeChainArg = (
 
 // Sentinel returned by `chain.<Contract>.addresses`. A Proxy
 // whose traps throw on any access, so the only non-throwing use is passing it
-// straight through as a param filter value — which `extractAddressFilterGroups`
-// then finds by identity. Misuse (spread/map/index/...) fails loud at the site.
+// straight through as a param filter value — which `parseWhereOrThrow` then
+// finds by identity. Misuse (spread/map/index/...) fails loud at the site.
 let makeAddressesProbe: (
   ~contractName: string,
 ) => array<Address.t> = %raw(`function (contractName) {
@@ -114,7 +109,6 @@ let parseWhereOrThrow = (
   ~chainId: ChainId.t,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
 ): parsedWhere => {
-  let addressFilterParamGroups = []
   let readAddresses = ref(false)
   let addressesSentinel = makeAddressesProbe(~contractName)
   let sentinelJson = addressesSentinel->(Utils.magic: array<Address.t> => JSON.t)
@@ -148,25 +142,25 @@ let parseWhereOrThrow = (
     topic3: paramsFilter->constraintAt(3),
   }
   let default = filterOf(Dict.make())
+  let filtersByContractAddresses = (filter: Internal.topicFilter) =>
+    [filter.topic0, filter.topic1, filter.topic2, filter.topic3]->Array.some(topicConstraint =>
+      switch topicConstraint {
+      | ContractAddresses(_) => true
+      | Any | Values(_) => false
+      }
+    )
 
   // Build a single topic filter from one indexed-param record (the inside of
   // `params`). Validates that the keys are actual indexed parameters of the
   // event — TS type checking doesn't catch this when `where` is a callback.
   let paramsRecordToTopicFilter = (paramsFilter: dict<JSON.t>) => {
-    let sentinelParamNames = []
-    paramsFilter->Utils.Dict.forEachWithKey((value, key) => {
+    paramsFilter->Utils.Dict.forEachWithKey((_, key) => {
       if indexedParams->Array.some(param => param.name === key)->not {
         JsError.throwWithMessage(
           `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
         )
       }
-      if value === sentinelJson {
-        sentinelParamNames->Array.push(key)->ignore
-      }
     })
-    if sentinelParamNames->Utils.Array.isEmpty->not {
-      addressFilterParamGroups->Array.push(sentinelParamNames)->ignore
-    }
     filterOf(paramsFilter)
   }
 
@@ -257,7 +251,7 @@ let parseWhereOrThrow = (
       where
     }
     let topicFilters = whereValue->parse
-    if readAddresses.contents && addressFilterParamGroups->Utils.Array.isEmpty {
+    if readAddresses.contents && !(topicFilters->Array.some(filtersByContractAddresses)) {
       JsError.throwWithMessage(
         `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
       )
@@ -288,7 +282,6 @@ let parseWhereOrThrow = (
       topicFilters,
       startBlock,
     },
-    filterByAddresses: addressFilterParamGroups->Utils.Array.isEmpty->not,
-    addressFilterParamGroups,
+    filterByAddresses: topicFilters->Array.some(filtersByContractAddresses),
   }
 }

@@ -478,7 +478,7 @@ let buildEvmOnEventRegistration = (
   ~fieldSelection: option<Internal.fieldSelection>=?,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
-  let {resolvedWhere, filterByAddresses, addressFilterParamGroups} = LogSelection.parseWhereOrThrow(
+  let {resolvedWhere, filterByAddresses} = LogSelection.parseWhereOrThrow(
     ~where,
     ~sighash=eventConfig.sighash,
     ~indexedParams=eventConfig.paramsMetadata->Array.filterMap(p =>
@@ -502,11 +502,10 @@ let buildEvmOnEventRegistration = (
     index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
-    handler,
+    ?handler,
     contractRegister,
     resolvedWhere,
     filterByAddresses,
-    addressFilterParamGroups,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     startBlock: resolvedStartBlock,
     fieldSelection: switch fieldSelection {
@@ -822,7 +821,7 @@ let buildSvmOnEventRegistration = (
   {
     index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
-    handler,
+    ?handler,
     contractRegister,
     isWildcard,
     filterByAddresses: false,
@@ -905,7 +904,7 @@ let buildFuelOnEventRegistration = (
 ): Internal.fuelOnEventRegistration => {
   index: -1,
   eventConfig: (eventConfig :> Internal.eventConfig),
-  handler,
+  ?handler,
   contractRegister,
   isWildcard,
   filterByAddresses: false,
