@@ -121,7 +121,6 @@ let make = (
         logger->Logger.warn(
           `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
           ~params={
-            "chainId": chainId,
             "blockNumber": rejected.blockHeight,
             "logIndex": rejected.receiptIndex,
             "txId": rejected.txId,

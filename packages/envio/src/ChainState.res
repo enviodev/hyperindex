@@ -3,7 +3,6 @@
 // change them through the sanctioned mutators.
 
 type t = {
-  // Names the chain on every line.
   logger: Logger.t,
   // The registrations used to build this chain's sources and route native items.
   onEventRegistrations: array<Internal.onEventRegistration>,
@@ -414,7 +413,7 @@ let makeFromDbState = (
   ~config,
   ~contractMapping,
   ~registrationsByChainId,
-  // The indexer's logger, which this chain's adds the chain id to.
+  // The indexer's root logger; the chain's own adds its id.
   ~logger,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,

@@ -6,7 +6,7 @@ type contractRegisterParams = {
   item: Internal.item,
   onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
   config: Config.t,
-  // The chain's logger, which the item's own is built on.
+  // The chain's logger: an item's is built on it.
   logger: Logger.t,
   mutable isResolved: bool,
 }

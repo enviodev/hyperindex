@@ -318,7 +318,8 @@ let awaitExit = async (group, ~logger): outcome => {
       }
 
     group.running->Array.forEach(r => {
-      r.child->NodeJs.ChildProcess.Child.onExit(
+      // A worker's last lines are still in its pipe when it exits.
+      r.child->NodeJs.ChildProcess.Child.onClose(
         (code, signal) => r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping)),
       )
       r.child->NodeJs.ChildProcess.Child.onError(

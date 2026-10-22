@@ -1,7 +1,6 @@
 @val external processChdir: string => unit = "process.chdir"
 let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
 
-// The process's root logger, handed down to everything it starts.
 let logger = Logger.make({
   strategy: Env.Logger.strategy,
   logFile: Env.Logger.file,

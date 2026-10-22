@@ -64,7 +64,6 @@ type requestStatSample = {
 // with a mutable state for easier reasoning and testing.
 type t = {
   sourcesState: array<sourceState>,
-  // The chain's logger.
   logger: Logger.t,
   mutable statusStart: Performance.timeRef,
   mutable status: sourceManagerStatus,
