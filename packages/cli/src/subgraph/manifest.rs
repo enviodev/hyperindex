@@ -12,15 +12,15 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
-use super::errors::Report;
+use super::errors::{Finding, Report};
 use crate::config_parsing::chain_helpers::Network;
 
 /// Highest manifest version this translator understands (§1).
-pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 3, 0);
+pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 5, 0);
 /// The newest graph-ts the runtime shim implements. There is no floor: older
 /// versions expose a subset of the same API, and anything genuinely missing from
 /// one is refused by name when the mapping reaches for it.
-pub const MAX_API_VERSION: (u32, u32, u32) = (0, 0, 9);
+pub const MAX_API_VERSION: (u32, u32, u32) = (0, 0, 10);
 
 /// Manifest `features` entries graph-node knows about. Anything else is a typo
 /// or newer than us.
@@ -29,6 +29,8 @@ const KNOWN_FEATURES: &[&str] = &[
     "fullTextSearch",
     "grafting",
     "ipfsOnEthereumContracts",
+    // graph-node's serde alias of `ipfsOnEthereumContracts`.
+    "nonDeterministicIpfs",
     "aggregations",
     "declaredEthCalls",
     "immutableEntities",
@@ -75,12 +77,29 @@ static GRAPH_NETWORKS: LazyLock<BTreeMap<String, GraphRegistryNetwork>> = LazyLo
         .expect("graph_networks.json is the sync script's output")
 });
 
-/// Names other subgraph hosts give chains the registry doesn't list, mapped to
-/// Envio's name for the chain.
-const OTHER_HOST_NETWORKS: &[(&str, &str)] = &[("pulse", "pulsechain")];
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostNetwork {
+    name: String,
+    chain_id: u64,
+}
 
-/// The registry's id or one of its aliases first, then Envio's kebab-case so
-/// `hyperliquid` still works when someone writes our name.
+/// Network slugs other hosts accept in `subgraph.yaml` that the Graph
+/// registry doesn't list, with the chain id each stands for. Chain
+/// ids were cross-checked against chainlist and, where dRPC serves the chain,
+/// its `eth_chainId`.
+static HOST_NETWORKS: LazyLock<BTreeMap<String, u64>> = LazyLock::new(|| {
+    serde_json::from_str::<Vec<HostNetwork>>(include_str!("host_networks.json"))
+        .expect("host_networks.json is valid")
+        .into_iter()
+        .map(|network| (network.name, network.chain_id))
+        .collect()
+});
+
+/// The registry's id or one of its aliases first, then the slugs other hosts
+/// use, then Envio's kebab-case so `hyperliquid` still works when someone
+/// writes our name. A chain id Envio has no name for is fine: it indexes over
+/// `ENVIO_SUBGRAPH_RPC` when HyperSync doesn't serve it.
 fn network_to_chain_id(network: &str) -> Option<u64> {
     let registered = GRAPH_NETWORKS.iter().find(|(id, registered)| {
         *id == network || registered.aliases.iter().any(|alias| alias == network)
@@ -88,13 +107,89 @@ fn network_to_chain_id(network: &str) -> Option<u64> {
     if let Some((_, registered)) = registered {
         return Some(registered.chain_id);
     }
-    let envio_name = OTHER_HOST_NETWORKS
-        .iter()
-        .find(|(name, _)| *name == network)
-        .map_or(network, |(_, envio_name)| *envio_name);
-    Network::from_str(envio_name)
-        .ok()
-        .map(|n| n.get_network_id())
+    if let Some(chain_id) = HOST_NETWORKS.get(network) {
+        return Some(*chain_id);
+    }
+    // The registry spells every chain `evm-<chain id>` too; for a chain it
+    // doesn't list, that is a way to name one without a slug.
+    if let Some(chain_id) = network
+        .strip_prefix("evm-")
+        .and_then(|id| id.parse::<u64>().ok())
+        .filter(|id| *id > 0)
+    {
+        return Some(chain_id);
+    }
+    Network::from_str(network).ok().map(|n| n.get_network_id())
+}
+
+/// The chains the network names no table knows were resolved to — by asking
+/// the RPC endpoint, or by the name they spell — or why asking failed.
+pub type NetworksFromRpc = BTreeMap<String, Result<u64, String>>;
+
+/// The known network a name spells in another case or with other separators
+/// (`hyperEVM`, `base_sepolia`, `baseSepolia`), with its chain id.
+pub fn network_spelled(network: &str) -> Option<(String, u64)> {
+    let mut kebab = String::new();
+    let mut previous: Option<char> = None;
+    for c in network.chars() {
+        if c.is_ascii_uppercase()
+            && previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit())
+        {
+            kebab.push('-');
+        }
+        kebab.push(if c == '_' {
+            '-'
+        } else {
+            c.to_ascii_lowercase()
+        });
+        previous = Some(c);
+    }
+    // `hyperEVM` is `hyperevm`, not `hyper-evm`; try the plain lowercase first.
+    [network.to_ascii_lowercase().replace('_', "-"), kebab]
+        .into_iter()
+        .filter(|candidate| candidate != network)
+        .find_map(|candidate| network_to_chain_id(&candidate).map(|id| (candidate, id)))
+}
+
+/// The `network:` values of the manifest's chain data sources and templates,
+/// each with the chain id the tables give it, if any. Non-EVM networks are
+/// left out: they are refused by name.
+pub fn chain_networks(yaml: &str) -> Vec<(String, Option<u64>)> {
+    let Ok(value) = serde_yaml::from_str::<Value>(yaml) else {
+        return vec![];
+    };
+    let mut networks: Vec<(String, Option<u64>)> = Vec::new();
+    for key in ["dataSources", "templates"] {
+        let Some(sources) = value.get(key).and_then(Value::as_sequence) else {
+            continue;
+        };
+        for source in sources {
+            let is_chain = matches!(
+                source.get("kind").and_then(Value::as_str),
+                Some("ethereum" | "ethereum/contract")
+            );
+            let Some(network) = source.get("network").and_then(Value::as_str) else {
+                continue;
+            };
+            if is_chain
+                && !NON_EVM_NETWORKS.iter().any(|(name, _)| *name == network)
+                && !networks.iter().any(|(name, _)| name == network)
+            {
+                networks.push((network.to_string(), network_to_chain_id(network)));
+            }
+        }
+    }
+    networks
+}
+
+/// The `network:` values of the manifest's chain data sources and templates
+/// that neither the tables nor the non-EVM list know.
+pub fn unknown_networks(yaml: &str) -> Vec<String> {
+    chain_networks(yaml)
+        .into_iter()
+        .filter(|(_, chain_id)| chain_id.is_none())
+        .map(|(network, _)| network)
+        .collect()
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -157,8 +252,16 @@ impl<'a> Obj<'a> {
         }
     }
 
+    /// graph-node reads the manifest with serde_yaml, which reads a plain
+    /// scalar into a String field as written: `network: 66665` is the network
+    /// "66665". Only an integer is taken: a float doesn't read back as written
+    /// (`1e3` is 1000), nor, though the parsed value can't tell, a hex one.
     fn string(&mut self, key: &str) -> Option<String> {
-        self.typed(key, "a string", |v| v.as_str().map(|s| s.to_string()))
+        self.typed(key, "a string", |v| match v {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(number) if number.is_u64() || number.is_i64() => Some(number.to_string()),
+            _ => None,
+        })
     }
 
     fn u64(&mut self, key: &str) -> Option<u64> {
@@ -211,6 +314,13 @@ pub enum DataSourceKind {
     FileArweave,
 }
 
+impl DataSourceKind {
+    /// A `file/ipfs` or `file/arweave` data source: no chain, no contract.
+    pub fn is_file(self) -> bool {
+        matches!(self, Self::FileIpfs | Self::FileArweave)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BlockFilter {
@@ -218,6 +328,9 @@ pub enum BlockFilter {
     Every(u64),
     /// `filter: {kind: once}` — runs a single time at the start block.
     Once,
+    /// `filter: {kind: call}` — runs once per call to the data source's address
+    /// (any function, internal calls included) in a block that has one.
+    Call,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -232,6 +345,9 @@ pub struct EventHandler {
     pub handler: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub receipt: bool,
+    /// A `topic0` other than the signature's hash, lowercase.
+    #[serde(skip)]
+    pub topic0: Option<String>,
     /// `topic1`/`topic2`/`topic3` values, keyed by indexed-parameter position.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<usize, Vec<String>>,
@@ -270,6 +386,39 @@ impl EventInput {
 pub struct BlockHandler {
     pub handler: String,
     pub filter: BlockFilter,
+    /// The name of the call trigger that carries a `filter: call` handler;
+    /// minted by the translator, empty for every other filter.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub call_event: String,
+}
+
+/// One `callHandlers` entry: the handler runs for a successful call to the data
+/// source's address whose input starts with the function's 4-byte selector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallHandler {
+    /// The function signature exactly as the manifest spells it. graph-node
+    /// takes the selector from the keccak of this text, as written.
+    pub function: String,
+    pub handler: String,
+    /// The name the runtime registers the handler under: the call trigger the
+    /// translator minted for it, which carries the call through envio's fetch.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The function's parameters in ABI order, filled in from the ABI.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<CallParam>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<CallParam>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallParam {
+    /// As the ABI spells it, empty when the ABI left it unnamed.
+    pub name: String,
+    #[serde(rename = "type")]
+    pub abi_type: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -295,6 +444,7 @@ pub struct DataSource {
     pub mapping_file: String,
     pub entities: Vec<String>,
     pub event_handlers: Vec<EventHandler>,
+    pub call_handlers: Vec<CallHandler>,
     pub block_handlers: Vec<BlockHandler>,
     /// Values the manifest attaches to this data source, read back by
     /// `dataSource.context()`.
@@ -315,6 +465,15 @@ pub struct ContextValue {
     pub data: String,
 }
 
+/// The manifest's `graft:` block: graph-node would start from a copy of the
+/// `base` deployment's data up to `block`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Graft {
+    pub base: String,
+    pub block: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -325,6 +484,46 @@ pub struct Manifest {
     /// Set by the declared-eth_calls feature or any `calls:` block: makes the
     /// RPC requirement statically known, so a missing one fails at startup.
     pub declares_eth_calls: bool,
+    /// The `graft:` block, ignored by the indexer (it re-indexes from the
+    /// data sources' start blocks) and reported once at startup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graft: Option<Graft>,
+    /// The warning that goes with `graft`, worded once here so the CLI and the
+    /// runtime say the same thing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graft_notice: Option<String>,
+}
+
+/// What ignoring a `graft:` means for this manifest. The base text is always
+/// shown; the loud part names data sources that start after the graft block.
+pub fn graft_notice(graft: &Graft, sources: &[DataSource]) -> String {
+    let mut text = format!(
+        "WARNING: this subgraph grafts onto deployment {} at block {}. Envio cannot copy another \
+         deployment's data, so the graft is IGNORED and the subgraph is indexed from its data \
+         sources' own startBlocks, as a full re-index. The result equals the grafted deployment \
+         only if the base deployment's mappings produced the same data as these mappings do \
+         for blocks up to {}.",
+        graft.base, graft.block, graft.block
+    );
+    let late: Vec<String> = sources
+        .iter()
+        .filter(|s| !s.is_template)
+        .filter_map(|s| match s.start_block {
+            Some(b) if b > graft.block => Some(format!("{} (startBlock {b})", s.name)),
+            _ => None,
+        })
+        .collect();
+    if !late.is_empty() {
+        text.push_str(&format!(
+            "\nWARNING, DATA MAY BE MISSING: {} start after the graft block {}. The base \
+             deployment may hold data from before those start blocks (it was indexed under its own \
+             manifest) that a re-index from the start blocks cannot reproduce. Lower the \
+             startBlock to the base deployment's start block to rebuild that history.",
+            late.join(", "),
+            graft.block
+        ));
+    }
+    text
 }
 
 impl Manifest {
@@ -337,6 +536,15 @@ impl Manifest {
 /// Parses subgraph.yaml, collecting every unsupported/unknown finding instead of
 /// stopping at the first.
 pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
+    parse_with_networks(yaml, &NetworksFromRpc::new(), report)
+}
+
+/// `parse`, with the chains an RPC endpoint named for networks no table knows.
+pub fn parse_with_networks(
+    yaml: &str,
+    networks: &NetworksFromRpc,
+    report: &mut Report,
+) -> Option<Manifest> {
     let value: Value = match serde_yaml::from_str(yaml) {
         Ok(value) => value,
         Err(err) => {
@@ -390,9 +598,18 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
         }
     }
 
-    if root.get("graft").is_some() {
-        report.unsupported("grafting", "graft");
-    }
+    // Envio can't copy another deployment's data, so a graft is ignored and the
+    // subgraph indexes from its own start blocks (see `graft_notice`).
+    let graft = root.get("graft").and_then(|raw| {
+        let mut obj = Obj::new(raw, "graft", report)?;
+        let base = obj.string("base");
+        let block = obj.u64("block");
+        obj.finish(report);
+        Some(Graft {
+            base: base.unwrap_or_default(),
+            block: block.unwrap_or(0),
+        })
+    });
 
     // `indexerHints.prune` only tunes how much history graph-node keeps; envio
     // prunes on its own schedule, so the hint is accepted and ignored.
@@ -411,6 +628,7 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
             &format!("dataSources[{idx}]"),
             false,
             &mut declares_eth_calls,
+            networks,
             report,
         ) {
             data_sources.push(ds);
@@ -424,6 +642,7 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
             &format!("templates[{idx}]"),
             true,
             &mut declares_eth_calls,
+            networks,
             report,
         ) {
             templates.push(ds);
@@ -432,12 +651,17 @@ pub fn parse(yaml: &str, report: &mut Report) -> Option<Manifest> {
 
     root.finish(report);
 
+    let graft_notice = graft
+        .as_ref()
+        .map(|graft| graft_notice(graft, &data_sources));
     Some(Manifest {
         spec_version,
         schema_file,
         data_sources,
         templates,
         declares_eth_calls,
+        graft,
+        graft_notice,
     })
 }
 
@@ -446,6 +670,7 @@ fn parse_data_source(
     path: &str,
     is_template: bool,
     declares_eth_calls: &mut bool,
+    networks: &NetworksFromRpc,
     report: &mut Report,
 ) -> Option<DataSource> {
     let mut obj = Obj::new(raw, path, report)?;
@@ -459,18 +684,60 @@ fn parse_data_source(
         "file/ipfs" => DataSourceKind::FileIpfs,
         "file/arweave" => DataSourceKind::FileArweave,
         "substreams" => {
-            report.unsupported("substreams data sources", where_("kind"));
-            return None;
-        }
-        "near" | "cosmos" | "arweave" | "starknet" => {
-            report.unsupported(
-                format!("{kind_raw} subgraphs — Envio Subgraph indexes EVM chains"),
+            let package = |key: &str| {
+                source_str(raw, &["package", key]).unwrap_or_else(|| "(unnamed)".to_string())
+            };
+            report.unindexable(
+                "a substreams-powered subgraph (`kind: substreams`)",
+                format!(
+                    "Its entities come from the module {} of the Substreams package {}, which \
+                     graph-node read from a Substreams provider until v0.42 removed Substreams \
+                     support. Envio Subgraph runs AssemblyScript mappings over chain data and \
+                     can't run a Substreams module.",
+                    package("moduleName"),
+                    package("file"),
+                ),
                 where_("kind"),
             );
             return None;
         }
+        // graph-node's Amp data sources (SPEC_VERSION_1_5_0,
+        // graph/src/amp/manifest/data_source) fill their tables with SQL.
+        "amp" => {
+            report.unindexable(
+                "an Amp data source (`kind: amp`)",
+                format!(
+                    "Its tables are SQL queries over the Amp dataset {}, which only an Amp \
+                     server answers. Envio Subgraph runs AssemblyScript mappings over chain data.",
+                    source_str(raw, &["dataset"]).unwrap_or_else(|| "(unnamed)".to_string()),
+                ),
+                where_("kind"),
+            );
+            return None;
+        }
+        "near" | "cosmos" | "arweave" | "starknet" => {
+            let ecosystem = match kind_raw.as_str() {
+                "near" => "NEAR",
+                "cosmos" => "Cosmos",
+                "arweave" => "Arweave",
+                _ => "Starknet",
+            };
+            report.unindexable(
+                format!("a {ecosystem} subgraph (`kind: {kind_raw}`)"),
+                non_evm_reason(ecosystem),
+                where_("kind"),
+            );
+            return None;
+        }
+        // graph-node triggers a `kind: subgraph` data source on the immutable
+        // entities the source deployment writes (graph/src/data_source/subgraph.rs),
+        // reading them from that deployment's store.
         "subgraph" => {
-            report.unsupported("subgraph composition", where_("kind"));
+            report.unindexable(
+                "subgraph composition (`kind: subgraph`)",
+                composition_reason(source_str(raw, &["address"]).as_deref()),
+                where_("kind"),
+            );
             return None;
         }
         other => {
@@ -481,23 +748,33 @@ fn parse_data_source(
 
     let network = obj.string("network");
     let chain_id = match (&network, kind) {
-        (Some(network), DataSourceKind::Contract) => match network_to_chain_id(network) {
-            Some(id) => Some(id),
-            None => {
-                match NON_EVM_NETWORKS
-                    .iter()
-                    .find(|(name, _)| name == network)
-                    .map(|(_, ecosystem)| *ecosystem)
-                {
-                    Some(ecosystem) => report.unsupported(
-                        format!("{ecosystem} subgraphs — Envio Subgraph indexes EVM chains"),
-                        where_("network"),
-                    ),
-                    None => report.unknown(format!("the network \"{network}\""), where_("network")),
+        (Some(network), DataSourceKind::Contract) => {
+            // What the endpoint serves comes first: graph-node indexes a
+            // network on the chain its configured provider serves.
+            match (network_to_chain_id(network), networks.get(network)) {
+                (_, Some(Ok(id))) => Some(*id),
+                (Some(id), _) => Some(id),
+                (None, asked) => {
+                    match NON_EVM_NETWORKS
+                        .iter()
+                        .find(|(name, _)| name == network)
+                        .map(|(_, ecosystem)| *ecosystem)
+                    {
+                        Some(ecosystem) => report.unindexable(
+                            format!("the {ecosystem} network \"{network}\""),
+                            non_evm_reason(ecosystem),
+                            where_("network"),
+                        ),
+                        None => report.push(Finding::UnknownNetwork {
+                            network: network.clone(),
+                            location: where_("network"),
+                            rpc_failure: asked.and_then(|asked| asked.clone().err()),
+                        }),
+                    }
+                    None
                 }
-                None
             }
-        },
+        }
         _ => None,
     };
 
@@ -507,12 +784,28 @@ fn parse_data_source(
     let mut abi = None;
     if let Some(source) = obj.get("source") {
         if let Some(mut source) = Obj::new(source, &format!("{path}.source"), report) {
-            address = source.string("address");
+            // graph-node parses the address as hex with or without the `0x`
+            // (Livepeer writes it bare); envio requires the prefix.
+            address = source.string("address").map(|address| {
+                let bare = address.len() == 40 && address.chars().all(|c| c.is_ascii_hexdigit());
+                if bare {
+                    format!("0x{address}")
+                } else {
+                    address
+                }
+            });
             start_block = source.u64("startBlock");
             end_block = source.u64("endBlock");
             abi = source.string("abi");
             // File data sources point at a CID instead of a contract.
             source.get("file");
+            // Not a graph-node field: its `Source` (graph/src/data/subgraph)
+            // has `address` only and doesn't deny unknown keys, so a list here
+            // is dropped and the data source matches every emitter, as one
+            // without an address does. graph-cli lets it through when the
+            // manifest has a file data source, which skips its validation
+            // (flaunch). Read the same way, so the same events are indexed.
+            source.get("addresses");
             source.finish(report);
         }
     }
@@ -522,24 +815,16 @@ fn parse_data_source(
     let mut mapping_file = String::new();
     let mut entities = Vec::new();
     let mut event_handlers = Vec::new();
+    let mut call_handlers: Vec<CallHandler> = Vec::new();
     let mut block_handlers = Vec::new();
 
     if let Some(mapping) = obj.get("mapping") {
         if let Some(mut mapping) = Obj::new(mapping, &format!("{path}.mapping"), report) {
-            match mapping.string("kind").as_deref() {
-                Some("ethereum/events") | Some("ethereum/contract") | Some("ethereum") | None => {}
-                Some(other) => report.unknown(
-                    format!("the mapping kind \"{other}\""),
-                    where_("mapping → kind"),
-                ),
-            }
-            match mapping.string("language").as_deref() {
-                Some("wasm/assemblyscript") | None => {}
-                Some(other) => report.unknown(
-                    format!("the mapping language \"{other}\""),
-                    where_("mapping → language"),
-                ),
-            }
+            // Free strings graph-node keeps and never reads, for ethereum and
+            // file data sources alike (graph-cli types them `String` too):
+            // the mapping is the code, whatever these say.
+            mapping.string("kind");
+            mapping.string("language");
 
             api_version = mapping.string("apiVersion").unwrap_or_default();
             match parse_version(&api_version) {
@@ -591,11 +876,14 @@ fn parse_data_source(
                     &name,
                     report,
                 ) {
-                    // graph-node runs one per created instance; envio's block
-                    // handlers know no instances, so it would run chain-wide.
-                    if is_template {
+                    // graph-node runs a handler on a template for each instance,
+                    // its creation block standing in for the start block; the
+                    // runtime keeps each instance's block for `once` and
+                    // `polling`. A `call` filter would need the trace source
+                    // to follow every instance's address.
+                    if is_template && handler.filter == BlockFilter::Call {
                         report.unsupported(
-                            "block handlers on templates",
+                            "call-filtered block handlers on templates",
                             where_(&format!("blockHandlers → \"{}\"", handler.handler)),
                         );
                     }
@@ -604,24 +892,14 @@ fn parse_data_source(
             }
 
             for (idx, raw) in mapping.seq("callHandlers").into_iter().enumerate() {
-                let handler = raw
-                    .as_mapping()
-                    .and_then(|m| m.get(Value::String("handler".into())))
-                    .and_then(|v| v.as_str())
-                    .map(|s| format!(" → \"{s}\""))
-                    .unwrap_or_else(|| format!("[{idx}]"));
-                report.unsupported(
-                    "call handlers",
-                    format!("data source \"{name}\" → callHandlers{handler}"),
-                );
-            }
-
-            for (idx, raw) in mapping.seq("entityHandlers").into_iter().enumerate() {
-                let _ = raw;
-                report.unsupported(
-                    "subgraph composition",
-                    format!("data source \"{name}\" → entityHandlers[{idx}]"),
-                );
+                if let Some(handler) = parse_call_handler(
+                    raw,
+                    &format!("{path}.mapping.callHandlers[{idx}]"),
+                    &name,
+                    report,
+                ) {
+                    call_handlers.push(handler);
+                }
             }
 
             // File data sources declare a single `handler` instead of a list.
@@ -631,6 +909,7 @@ fn parse_data_source(
                     name: String::new(),
                     handler,
                     receipt: false,
+                    topic0: None,
                     topics: BTreeMap::new(),
                     inputs: Vec::new(),
                 });
@@ -640,9 +919,11 @@ fn parse_data_source(
         }
     }
 
-    if matches!(kind, DataSourceKind::FileIpfs | DataSourceKind::FileArweave) {
+    // graph-node creates a file data source only from a template; a static one
+    // has no CID to read until something creates it.
+    if matches!(kind, DataSourceKind::FileIpfs | DataSourceKind::FileArweave) && !is_template {
         report.unsupported(
-            "file data sources",
+            "file data sources outside `templates`",
             format!("data source \"{name}\" → kind: {kind_raw}"),
         );
     }
@@ -650,6 +931,19 @@ fn parse_data_source(
     let context = parse_context(&mut obj, &where_, report);
 
     obj.finish(report);
+
+    // graph-node refuses a call trigger it has no address to look for.
+    let needs_address = !call_handlers.is_empty()
+        || block_handlers
+            .iter()
+            .any(|handler| handler.filter == BlockFilter::Call);
+    if needs_address && address.is_none() && !is_template {
+        report.unknown(
+            "a call handler on a data source without `source.address`, which graph-node refuses \
+             as well",
+            where_("callHandlers"),
+        );
+    }
 
     Some(DataSource {
         kind,
@@ -665,10 +959,36 @@ fn parse_data_source(
         mapping_file,
         entities,
         event_handlers,
+        call_handlers,
         block_handlers,
         context,
         is_template,
     })
+}
+
+/// A string under the data source's `source`, `path` deep.
+fn source_str(raw: &Value, path: &[&str]) -> Option<String> {
+    let mut value = raw.get("source")?;
+    for key in path {
+        value = value.get(*key)?;
+    }
+    value.as_str().map(|s| s.to_string())
+}
+
+fn non_evm_reason(ecosystem: &str) -> String {
+    format!(
+        "Envio Subgraph runs subgraphs on EVM chains, whose blocks and logs it reads; \
+         {ecosystem}'s aren't among them."
+    )
+}
+
+fn composition_reason(deployment: Option<&str>) -> String {
+    format!(
+        "graph-node feeds this data source the entities deployment {} writes. That deployment is \
+         published as compiled WASM, which Envio Subgraph can't run, and envio doesn't read \
+         another indexer's store. Index the source subgraph's contracts in this subgraph instead.",
+        deployment.unwrap_or("(unnamed)")
+    )
 }
 
 /// graph-node's context value types. Anything else is newer than this parser.
@@ -771,6 +1091,31 @@ fn parse_event_handler(
         *declares_eth_calls = true;
     }
 
+    // graph-node matches a log on `topic0` instead of the signature's hash
+    // when one is given (`MappingEventHandler::topic0`). Spelling out the
+    // signature's own hash changes nothing; any other value is kept, and the
+    // translation accepts it on an anonymous event (Balancer's LOG_CALL, keyed
+    // on the called function's selector).
+    let mut custom_topic0 = None;
+    if let Some(topic0) = obj.string("topic0") {
+        let topic0 = topic0.trim().to_lowercase();
+        let own = canonical_event_hash(&event);
+        let is_word = topic0.len() == 66
+            && topic0.starts_with("0x")
+            && topic0[2..].bytes().all(|b| b.is_ascii_hexdigit());
+        if !is_word {
+            report.unknown(
+                format!("the topic0 \"{topic0}\", which isn't a 32-byte hex value"),
+                format!("data source \"{data_source}\" → eventHandlers → \"{handler}\" → topic0"),
+            );
+        } else if own
+            .as_deref()
+            .is_some_and(|own| !own.eq_ignore_ascii_case(&topic0))
+        {
+            custom_topic0 = Some(topic0);
+        }
+    }
+
     obj.finish(report);
 
     let name = event
@@ -793,8 +1138,79 @@ fn parse_event_handler(
         name,
         handler,
         receipt,
+        topic0: custom_topic0,
         topics,
         inputs: Vec::new(),
+    })
+}
+
+/// `keccak256` of an event signature as the manifest spells it: `indexed` and
+/// parameter names dropped. `None` when the signature isn't one this reads.
+pub fn canonical_event_hash(event: &str) -> Option<String> {
+    let open = event.find('(')?;
+    let close = event.rfind(')')?;
+    let name = event[..open].trim();
+    let mut types = Vec::new();
+    let (mut depth, mut start) = (0usize, open + 1);
+    let params = &event[..close];
+    for (at, c) in params.char_indices().skip(open + 1) {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                types.push(&params[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    if !params[start..].trim().is_empty() {
+        types.push(&params[start..]);
+    }
+    let types: Option<Vec<String>> = types
+        .into_iter()
+        .map(|param| {
+            // A tuple is `(a,b)[]`-shaped: only a plain parameter loses its words.
+            let param = param.trim();
+            if param.starts_with('(') {
+                return None;
+            }
+            param
+                .split_whitespace()
+                .find(|word| *word != "indexed")
+                .map(str::to_string)
+        })
+        .collect();
+    let signature = format!("{name}({})", types?.join(","));
+    Some(alloy_primitives::keccak256(signature.as_bytes()).to_string())
+}
+
+fn parse_call_handler(
+    raw: &Value,
+    path: &str,
+    data_source: &str,
+    report: &mut Report,
+) -> Option<CallHandler> {
+    let mut obj = Obj::new(raw, path, report)?;
+    let function = obj.string("function").unwrap_or_default();
+    let handler = obj.string("handler").unwrap_or_default();
+    obj.finish(report);
+
+    if function.trim().is_empty() || !function.contains('(') || !function.trim_end().ends_with(')')
+    {
+        report.unknown(
+            "the call handler without a function signature",
+            format!("data source \"{data_source}\" → callHandlers → \"{handler}\""),
+        );
+        return None;
+    }
+
+    Some(CallHandler {
+        function,
+        handler,
+        name: String::new(),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
     })
 }
 
@@ -814,9 +1230,7 @@ fn parse_block_handler(
             let kind = filter_obj.string("kind").unwrap_or_default();
             let every = filter_obj.u64("every");
             match kind.as_str() {
-                "call" => {
-                    report.unsupported("block handlers with `filter: call`", where_.clone());
-                }
+                "call" => filter = BlockFilter::Call,
                 "polling" => filter = BlockFilter::Every(every.unwrap_or(1).max(1)),
                 "once" => filter = BlockFilter::Once,
                 other => report.unknown(
@@ -830,7 +1244,11 @@ fn parse_block_handler(
 
     obj.finish(report);
 
-    Some(BlockHandler { handler, filter })
+    Some(BlockHandler {
+        handler,
+        filter,
+        call_event: String::new(),
+    })
 }
 
 #[cfg(test)]
@@ -909,6 +1327,9 @@ templates:
                 network_to_chain_id("apechain"),
                 network_to_chain_id("pulsechain"),
                 network_to_chain_id("pulse"),
+                // Aliases the registry added in 0.8.7.
+                network_to_chain_id("arctest"),
+                network_to_chain_id("basesepolia"),
                 network_to_chain_id("not-a-chain"),
             ],
             [
@@ -924,6 +1345,8 @@ templates:
                 Some(33139),
                 Some(369),
                 Some(369),
+                Some(5042002),
+                Some(84532),
                 None,
             ]
         );
@@ -941,6 +1364,61 @@ templates:
             .filter(|(name, chain_id)| network_to_chain_id(name) != Some(*chain_id))
             .collect();
         assert_eq!(wrong, Vec::<(String, u64)>::new());
+    }
+
+    // The slugs other hosts' subgraph.yaml files use, with the chain ids the
+    // hosts' own docs and chainlist give (each also checked with eth_chainId).
+    #[test]
+    fn resolves_the_network_slugs_other_hosts_use() {
+        let expected = [
+            ("filecoin", 314),
+            ("plasma-mainnet", 9745),
+            ("manta-pacific-mainnet", 169),
+            ("manta-pacific-sepolia", 3441006),
+            ("mezo-testnet", 31611),
+            ("fluent", 25363),
+            ("story", 1514),
+            ("citrea-testnet-tangerine", 5115),
+            ("kite-ai-testnet", 2368),
+            ("andromeda", 1088),
+            ("telos", 40),
+            ("mantle-sepolia", 5003),
+            ("pulse", 369),
+            // Slugs Sep 2026 repos deploy to hosted subgraph platforms with,
+            // checked against where their contracts are: stagezerolabs/stage0's
+            // launchpad factory is on RISE's testnet, Pratiikpy/ivaronix's
+            // registry on 0G's Galileo testnet.
+            ("rise-sepolia", 11155931),
+            ("0g-galileo", 16602),
+            // Any chain by id, for one no host's slug list has.
+            ("evm-9999991", 9999991),
+        ];
+        let wrong: Vec<_> = expected
+            .iter()
+            .filter(|(name, id)| network_to_chain_id(name) != Some(*id))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:?}");
+    }
+
+    // The table only adds names: a slug the registry already knows keeps the
+    // registry's chain id, and no two slugs for a chain id disagree on a name.
+    #[test]
+    fn host_networks_never_shadow_the_registry() {
+        let table: Vec<HostNetwork> = serde_json::from_str(include_str!("host_networks.json"))
+            .expect("host_networks.json is valid");
+        let mut seen = HashSet::new();
+        for network in &table {
+            assert!(network.chain_id > 0, "{}", network.name);
+            assert!(seen.insert(network.name.clone()), "{} twice", network.name);
+            let in_registry = GRAPH_NETWORKS.iter().any(|(id, registered)| {
+                *id == network.name || registered.aliases.contains(&network.name)
+            });
+            assert!(
+                !in_registry,
+                "{} is in the registry; drop it from host_networks.json",
+                network.name
+            );
+        }
     }
 
     #[test]
@@ -1025,12 +1503,140 @@ dataSources:
             (
                 report.findings().len(),
                 rendered.contains("doesn't support grafting"),
-                rendered.contains("doesn't support call handlers"),
-                rendered.contains("doesn't support block handlers with `filter: call`"),
-                rendered.contains("data source \"Token\" → callHandlers → \"handleApprove\""),
             ),
-            (3, true, true, true, true)
+            (0, false)
         );
+    }
+
+    #[test]
+    fn reads_call_handlers_and_call_filtered_block_handlers() {
+        let yaml = r#"
+specVersion: 0.0.8
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "0x1"
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      callHandlers:
+        - function: approve(address,uint256)
+          handler: handleApprove
+      blockHandlers:
+        - handler: handleBlockCall
+          filter:
+            kind: call
+      file: ./src/token.ts
+  - kind: ethereum/contract
+    name: Anywhere
+    network: mainnet
+    source:
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      callHandlers:
+        - function: approve(address,uint256)
+          handler: handleApprove
+      file: ./src/token.ts
+"#;
+        let (manifest, report) = parse_ok(yaml);
+        let manifest = manifest.unwrap();
+        let token = &manifest.data_sources[0];
+        assert_eq!(
+            (
+                token.call_handlers[0].function.as_str(),
+                token.call_handlers[0].handler.as_str(),
+                token.block_handlers[0].filter.clone(),
+            ),
+            (
+                "approve(address,uint256)",
+                "handleApprove",
+                BlockFilter::Call
+            )
+        );
+        // graph-node refuses a call trigger on a data source with no address.
+        let rendered = report.to_string();
+        assert!(
+            report.findings().len() == 1 && rendered.contains("data source \"Anywhere\""),
+            "{rendered}"
+        );
+    }
+
+    fn graft_manifest(start_block: u64) -> String {
+        format!(
+            r#"
+specVersion: 1.3.0
+schema:
+  file: ./schema.graphql
+graft:
+  base: QmBase
+  block: 100
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "0x1"
+      abi: Token
+      startBlock: {start_block}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      file: ./src/token.ts
+"#
+        )
+    }
+
+    #[test]
+    fn a_graft_is_ignored_with_a_full_reindex_notice() {
+        let (manifest, report) = parse_ok(&graft_manifest(10));
+        let manifest = manifest.unwrap();
+        let notice = manifest.graft_notice.clone().unwrap_or_default();
+        assert_eq!(
+            (
+                report.findings().len(),
+                manifest.graft,
+                notice.contains("IGNORED"),
+                notice.contains("full re-index"),
+                notice.contains("QmBase"),
+                notice.contains("DATA MAY BE MISSING"),
+            ),
+            (
+                0,
+                Some(Graft {
+                    base: "QmBase".into(),
+                    block: 100
+                }),
+                true,
+                true,
+                true,
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn a_graft_with_a_source_starting_after_the_graft_block_warns_loudly() {
+        let (manifest, _) = parse_ok(&graft_manifest(500));
+        let manifest = manifest.unwrap();
+        let notice = manifest.graft_notice.unwrap_or_default();
+        assert!(notice.contains("DATA MAY BE MISSING"), "{notice}");
+        assert!(notice.contains("Token (startBlock 500)"), "{notice}");
     }
 
     #[test]
@@ -1067,8 +1673,7 @@ dataSources:
         let rendered = report.to_string();
         assert_eq!(
             (
-                rendered
-                    .contains("doesn't support near subgraphs — Envio Subgraph indexes EVM chains"),
+                rendered.contains("can't index a NEAR subgraph (`kind: near`)"),
                 rendered.contains("doesn't know"),
             ),
             (true, false)
@@ -1095,7 +1700,7 @@ dataSources:
             parse_ok(&yaml)
                 .1
                 .to_string()
-                .contains("doesn't support Arweave subgraphs"),
+                .contains("can't index the Arweave network \"arweave-mainnet\""),
             "expected an Arweave finding"
         );
     }
@@ -1297,6 +1902,110 @@ dataSources:
                         .to_string()
                 ])
             )
+        );
+    }
+
+    const TOPIC0_MANIFEST: &str = r#"
+specVersion: 1.2.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Token
+    network: mainnet
+    source:
+      address: "35Bcf3c30594191d53231E4FF333E8A770453e40"
+      abi: Token
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities: []
+      abis: []
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          topic0: "TOPIC0"
+          handler: handleTransfer
+      file: ./src/token.ts
+"#;
+
+    // Livepeer writes its addresses without `0x`, which graph-node accepts.
+    // A topic0 equal to the signature's hash (any case) matches what the
+    // signature already selects.
+    #[test]
+    fn accepts_a_bare_address_and_the_signature_topic0() {
+        let yaml = TOPIC0_MANIFEST.replace(
+            "TOPIC0",
+            "0xDDF252AD1BE2C89B69C2B068FC378DAA952BA7F163C4A11628F55A4DF523B3EF",
+        );
+        let (manifest, report) = parse_ok(&yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            manifest.unwrap().data_sources[0].address.clone(),
+            Some("0x35Bcf3c30594191d53231E4FF333E8A770453e40".to_string())
+        );
+    }
+
+    // flaunch's BidWall1 lists `addresses:`, which graph-node never reads: the
+    // data source has no address there, so it has none here either.
+    #[test]
+    fn reads_a_source_addresses_list_as_graph_node_does() {
+        let yaml = TOPIC0_MANIFEST
+            .replace(
+                "      address: \"35Bcf3c30594191d53231E4FF333E8A770453e40\"",
+                "      addresses:\n        - \"0x66681f10BA90496241A25e33380004f30Dfd8aa8\"",
+            )
+            .replace("          topic0: \"TOPIC0\"\n", "");
+        let (manifest, report) = parse_ok(&yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(manifest.unwrap().data_sources[0].address, None);
+    }
+
+    // Balancer's cow-amm matches its anonymous LOG_CALL on topic0, the called
+    // selector. Whether the event is anonymous is the ABI's to say, so the
+    // translation decides; the manifest keeps the value.
+    #[test]
+    fn keeps_a_topic0_other_than_the_signature_hash() {
+        let yaml = TOPIC0_MANIFEST.replace(
+            "TOPIC0",
+            "0x4BB278F300000000000000000000000000000000000000000000000000000000",
+        );
+        let (manifest, report) = parse_ok(&yaml);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            manifest.unwrap().data_sources[0].event_handlers[0].topic0,
+            Some("0x4bb278f300000000000000000000000000000000000000000000000000000000".to_string())
+        );
+    }
+
+    #[test]
+    fn refuses_a_topic0_that_is_not_a_word() {
+        let yaml = TOPIC0_MANIFEST.replace("TOPIC0", "0x4bb278f3");
+        let (_, report) = parse_ok(&yaml);
+        assert_eq!(
+            report.findings(),
+            &[crate::subgraph::errors::Finding::unknown(
+                "the topic0 \"0x4bb278f3\", which isn't a 32-byte hex value",
+                "data source \"Token\" → eventHandlers → \"handleTransfer\" → topic0",
+            )]
+        );
+    }
+}
+
+#[cfg(test)]
+mod topic0_tests {
+    use super::*;
+
+    #[test]
+    fn hashes_a_signature_without_indexed_or_names() {
+        assert_eq!(
+            canonical_event_hash("Deposit(indexed bytes32,address,address,uint256)").as_deref(),
+            Some("0xc95ddcaddf83340b68d0d44c01b1703f5d28d0611a3fd87e69d79ba7e2ac21d3")
+        );
+        assert_eq!(
+            canonical_event_hash("Deposit(indexed bytes32 id, address a, address b, uint256 c)")
+                .as_deref(),
+            Some("0xc95ddcaddf83340b68d0d44c01b1703f5d28d0611a3fd87e69d79ba7e2ac21d3")
         );
     }
 }

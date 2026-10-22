@@ -36,7 +36,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use hypersync_client_solana::decode::{
@@ -1381,6 +1381,7 @@ impl SystemConfig {
                                 sighash: normalized_discriminator.unwrap_or_default(),
                                 event_signature: String::new(),
                                 field_selection: None,
+                                anonymous: false,
                             }
                         })
                         .collect();
@@ -1482,15 +1483,30 @@ impl SystemConfig {
         mapping_sources: &[String],
     ) -> Result<Self> {
         let rpc_env = env.get(crate::subgraph::RPC_ENV_VAR).map(|s| s.as_str());
-        let translation = crate::subgraph::translate(
-            manifest_yaml,
-            schema_text,
-            project_name,
-            rpc_env,
-            root,
-            files,
-            mapping_sources,
-        )?;
+        let missing_abis =
+            crate::subgraph::missing_abi_files(manifest_yaml, files, Path::new(root));
+        if missing_abis.is_none() {
+            if let Some(undeclared) = crate::subgraph::undeclared_events(manifest_yaml, files) {
+                return Err(anyhow!("{undeclared}"));
+            }
+        }
+        let translation = match (
+            crate::subgraph::translate(
+                manifest_yaml,
+                schema_text,
+                project_name,
+                env,
+                root,
+                files,
+                mapping_sources,
+            ),
+            missing_abis,
+        ) {
+            (Ok(translation), None) => translation,
+            (Ok(_), Some(missing)) => return Err(anyhow!("{missing}")),
+            (Err(err), Some(missing)) => return Err(anyhow!("{missing}\n\n{err:#}")),
+            (Err(err), None) => return Err(err),
+        };
 
         // subgraph.yaml has nowhere to name an endpoint, so a project that calls
         // contracts without one is misconfigured rather than broken. Saying so
@@ -1525,26 +1541,88 @@ impl SystemConfig {
         Ok(config)
     }
 
-    /// A subgraph project has no config.yaml: `subgraph.yaml` next to it is
-    /// what puts the CLI into subgraph mode, so `dev`, `start` and `codegen`
-    /// all work inside one unchanged.
-    fn parse_subgraph_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
-        let root = &project_paths.project_root;
-        let manifest_path = root.join("subgraph.yaml");
-        let manifest = std::fs::read_to_string(&manifest_path)
-            .context(format!("Failed to read {}", manifest_path.display()))?;
+    /// A subgraph project has no config.yaml: its manifest is what puts the CLI
+    /// into subgraph mode, so `dev`, `start` and `codegen` all work inside one
+    /// unchanged. The manifest's paths resolve against its own directory, as
+    /// graph-cli resolves them.
+    fn parse_subgraph_from_project_files(
+        project_paths: &ParsedProjectPaths,
+        manifest_path: &Path,
+        manifest: String,
+        rendered: Option<crate::subgraph::render::Rendered>,
+    ) -> Result<Self> {
+        let manifest_dir = match manifest_path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+            _ => project_paths.project_root.clone(),
+        };
 
-        let env = crate::utils::project_env::ProjectEnv::new(root);
+        let env = crate::utils::project_env::ProjectEnv::new(&project_paths.project_root);
         let mut env_vars = HashMap::new();
-        for name in [
-            crate::subgraph::RPC_ENV_VAR,
-            crate::subgraph::API_TOKEN_ENV_VAR,
-        ] {
+        for name in crate::subgraph::TRANSLATION_ENV_VARS
+            .into_iter()
+            .chain([crate::subgraph::API_TOKEN_ENV_VAR])
+        {
             if let Some(value) = env.var(name) {
                 env_vars.insert(name.to_string(), value);
             }
         }
 
+        // A manifest envio rendered for the network is already that network's;
+        // networks.json is `graph build --network`'s, a step such repos skip.
+        let json_networks: Vec<String> = [&project_paths.project_root, &manifest_dir]
+            .iter()
+            .find_map(|dir| std::fs::read_to_string(dir.join("networks.json")).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|json| json.as_object().map(|all| all.keys().cloned().collect()))
+            .unwrap_or_default();
+        // What graph-cli is given when nothing is set: the repo's own build's
+        // `--network`, for a manifest that names none.
+        let build_network = (env.var(crate::subgraph::NETWORK_ENV_VAR).is_none()
+            && rendered.is_none()
+            && crate::subgraph::names_no_network(&manifest))
+        .then(|| {
+            crate::subgraph::render::build_network_default(&[
+                &manifest_dir,
+                &project_paths.project_root,
+            ])
+        })
+        .flatten()
+        .filter(|network| json_networks.contains(network));
+        let network_from_json = env
+            .var(crate::subgraph::NETWORK_ENV_VAR)
+            .or_else(|| build_network.clone())
+            .filter(|_| rendered.is_none());
+        let manifest = match network_from_json {
+            Some(network) => {
+                // graph-cli's `--network-file` defaults to the directory it
+                // runs in; a manifest in a subfolder may keep its own.
+                let networks_path = env
+                    .var(crate::subgraph::NETWORK_FILE_ENV_VAR)
+                    .map(|file| project_paths.project_root.join(file))
+                    .or_else(|| {
+                        [&project_paths.project_root, &manifest_dir]
+                            .iter()
+                            .map(|dir| dir.join("networks.json"))
+                            .find(|path| path.exists())
+                    })
+                    .or_else(|| {
+                        crate::subgraph::render::network_file_for(
+                            &[&manifest_dir, &project_paths.project_root],
+                            &network,
+                        )
+                    })
+                    .unwrap_or_else(|| manifest_dir.join("networks.json"));
+                let networks = std::fs::read_to_string(&networks_path).context(format!(
+                    "{} is set, so the manifest's addresses come from {}, which can't be read",
+                    crate::subgraph::NETWORK_ENV_VAR,
+                    networks_path.display()
+                ))?;
+                crate::subgraph::apply_network(&manifest, &networks, &network)?
+            }
+            None => manifest,
+        };
+        let (manifest, path_fixes) =
+            crate::subgraph::path_case::match_manifest(&manifest_dir, &manifest);
         // The manifest names its own schema file, so it's read before the
         // translation rather than through the usual `schema:` config field.
         let schema_file = serde_yaml::from_str::<serde_yaml::Value>(&manifest)
@@ -1557,7 +1635,61 @@ impl SystemConfig {
                     .map(|file| file.to_string())
             })
             .unwrap_or_else(|| "./schema.graphql".to_string());
-        let schema_path = root.join(&schema_file);
+        let (root, manifest) = crate::subgraph::rebase_manifest(&manifest_dir, &manifest)?;
+        let root = &root;
+
+        crate::subgraph::render::write_missing_inputs(root, &manifest)?;
+        crate::subgraph::render::write_missing_abis_with_codegen_steps(root, &manifest)?;
+        let schema_path = manifest_dir.join(&schema_file);
+        if !schema_path.exists() {
+            // inverse-governance's schema is OpenZeppelin graph-compiler output.
+            // Its scripts are looked for from the manifest's directory: a root
+            // rebased for `../src/…` paths is above the repo.
+            let stem = schema_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let absolute_dir = crate::project_paths::path_utils::normalize_path(
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .join(&manifest_dir),
+            );
+            let dirs: Vec<&Path> = absolute_dir.ancestors().take(4).collect();
+            let writer = dirs.iter().find_map(|dir| {
+                ["schema", stem.as_str()].iter().find_map(|needle| {
+                    crate::subgraph::render::scripts_mentioning(dir, needle)
+                        .into_iter()
+                        .find(|(_, script)| !script.trim_start().starts_with("graph "))
+                })
+            });
+            if let Some((script, text)) = writer {
+                // Its build then runs `graph codegen` on what the script
+                // wrote, not on this manifest.
+                let then = dirs
+                    .iter()
+                    .find_map(|dir| {
+                        crate::subgraph::render::other_codegen_manifest(
+                            dir,
+                            &absolute_dir.join(manifest_path.file_name().unwrap_or_default()),
+                        )
+                    })
+                    .map(|(builder, built)| {
+                        let shown = pathdiff::diff_paths(&built, &absolute_dir)
+                            .unwrap_or(built)
+                            .display()
+                            .to_string();
+                        format!(
+                            "start envio with --config {shown}, the manifest the script \
+                             \"{builder}\" builds"
+                        )
+                    })
+                    .unwrap_or_else(|| "start envio again".to_string());
+                return Err(anyhow!(
+                    "The schema {schema_file} the manifest names doesn't exist. The package.json \
+                     script \"{script}\" looks like it writes it: {text}. Run it, then {then}."
+                ));
+            }
+        }
         let schema = std::fs::read_to_string(&schema_path)
             .context(format!("Failed to read {}", schema_path.display()))?;
 
@@ -1575,9 +1707,11 @@ impl SystemConfig {
         // itself reads no files, so they're loaded up front. Findings from this
         // parse are dropped — `parse_subgraph` reports them properly.
         let mut files = HashMap::new();
+        let mut mapping_files = Vec::new();
         let mut discard = crate::subgraph::errors::Report::new();
         if let Some(parsed) = crate::subgraph::manifest::parse(&manifest, &mut discard) {
             for source in parsed.all_sources() {
+                mapping_files.push(source.mapping_file.clone());
                 for abi_file in source.abis.values() {
                     if let Ok(body) = std::fs::read_to_string(root.join(abi_file)) {
                         // Manifests spell these with and without a leading
@@ -1589,10 +1723,10 @@ impl SystemConfig {
             }
         }
 
-        let mapping_sources = crate::subgraph::usage::gather(root);
+        let mapping_sources = crate::subgraph::usage::gather_with_mappings(root, &mapping_files);
 
         let root_str = root.to_str().unwrap_or(".").to_string();
-        let mut config = Self::parse_subgraph(
+        let parsed = Self::parse_subgraph(
             &manifest,
             &schema,
             &name,
@@ -1600,41 +1734,209 @@ impl SystemConfig {
             &files,
             &root_str,
             &mapping_sources,
-        )?;
+        );
+        let networks = [&project_paths.project_root, &manifest_dir]
+            .iter()
+            .find_map(|dir| std::fs::read_to_string(dir.join("networks.json")).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|json| {
+                json.as_object()
+                    .map(|all| all.keys().cloned().collect::<Vec<_>>())
+            });
+        let mut config = match (parsed, networks) {
+            // A manifest that leaves its addresses to networks.json (Ekubo
+            // names no network at all) is only half written until a network
+            // is picked.
+            (Err(err), Some(networks)) if env.var(crate::subgraph::NETWORK_ENV_VAR).is_none() => {
+                return Err(anyhow!(
+                    "{err:#}\nThis project keeps per-network addresses in networks.json ({}). \
+                     Pick one, as `graph build --network` does:\n  {}={}",
+                    networks.join(", "),
+                    crate::subgraph::NETWORK_ENV_VAR,
+                    networks.first().cloned().unwrap_or_default()
+                ));
+            }
+            (parsed, _) => parsed?,
+        };
+        let manifest_file = if *root == manifest_dir {
+            manifest_path.file_name().map(PathBuf::from)
+        } else {
+            let absolute = path_utils::normalize_path(
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .join(manifest_path),
+            );
+            pathdiff::diff_paths(absolute, root)
+        };
+        if let (Some(subgraph), Some(file)) = (config.subgraph.as_mut(), manifest_file) {
+            subgraph.manifest_file = file.display().to_string();
+        }
+        if let Some(subgraph) = config.subgraph.as_mut() {
+            subgraph.path_fixes = path_fixes;
+            subgraph.build_network = build_network;
+            subgraph.rendered_manifest =
+                rendered.map(|rendered| crate::subgraph::RenderedManifest {
+                    script: rendered.script,
+                    inlined: rendered.inlined,
+                    network: rendered.network,
+                    template: rendered.template,
+                    view: rendered.view,
+                    steps: rendered.steps,
+                    commands: rendered.commands,
+                });
+        }
         config.parsed_project_paths = project_paths.clone();
         Ok(config)
     }
 
-    pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
-        if !project_paths.config.exists()
-            && project_paths.project_root.join("subgraph.yaml").exists()
-        {
-            return Self::parse_subgraph_from_project_files(project_paths);
-        }
-
-        if !project_paths.config.exists()
-            && project_paths
+    /// The manifest a subgraph project runs: the one `--config` names, else
+    /// `subgraph.yaml` beside config.yaml's default spot.
+    fn subgraph_manifest_path(project_paths: &ParsedProjectPaths) -> PathBuf {
+        if project_paths.config_relative_to_root() == Path::new("config.yaml") {
+            project_paths
                 .project_root
-                .join("subgraph.template.yaml")
-                .exists()
+                .join(crate::subgraph::DEFAULT_MANIFEST)
+        } else {
+            project_paths.config.clone()
+        }
+    }
+
+    pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
+        let root = &project_paths.project_root;
+        let mut manifest_path = Self::subgraph_manifest_path(project_paths);
+        // `--config subgraph.template.yaml`: the manifest is what a script
+        // renders from it.
+        let from_template = manifest_path == project_paths.config
+            && crate::subgraph::render::is_template(&manifest_path);
+        if from_template {
+            let Some(output) = crate::subgraph::render::template_output(&manifest_path) else {
+                let name = manifest_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let writers = manifest_path
+                    .parent()
+                    .and_then(|dir| {
+                        crate::subgraph::render::unrepeatable_writers(
+                            &dir.join(crate::subgraph::DEFAULT_MANIFEST),
+                            crate::utils::project_env::ProjectEnv::new(root)
+                                .var(crate::subgraph::NETWORK_ENV_VAR)
+                                .as_deref(),
+                        )
+                    })
+                    .map(|writers| format!("\n{writers}"))
+                    .unwrap_or_default();
+                return Err(anyhow!(
+                    "{name} is a mustache template, not a manifest: graph-cli can't read it \
+                     either until a script renders it.{writers}\nPoint --config (or \
+                     ENVIO_CONFIG) at the manifest the repo's build writes from it."
+                ));
+            };
+            manifest_path = output;
+        }
+        if !project_paths.config.exists() || manifest_path == project_paths.config || from_template
         {
-            return Err(anyhow!(
-                "Found subgraph.template.yaml but no subgraph.yaml.\n\
-                 This project generates its manifest — run the package prepare script \
-                 (mustache / `graph build --network <network>`), then run envio from \
-                 the directory that now contains subgraph.yaml."
-            ));
+            let env = crate::utils::project_env::ProjectEnv::new(root);
+            let network = env.var(crate::subgraph::NETWORK_ENV_VAR);
+            let rendered =
+                crate::subgraph::render::render_manifest(root, &manifest_path, network.as_deref())?;
+            if let Some(written) = rendered.as_ref().map(|rendered| rendered.manifest.clone()) {
+                manifest_path = written;
+            }
+            if rendered.is_some() || from_template {
+                let manifest = std::fs::read_to_string(&manifest_path)
+                    .context(format!("Failed to read {}", manifest_path.display()))?;
+                return Self::parse_subgraph_from_project_files(
+                    project_paths,
+                    &manifest_path,
+                    manifest,
+                    rendered,
+                );
+            }
+        }
+        if !project_paths.config.exists() {
+            let manifest_path = root.join(crate::subgraph::DEFAULT_MANIFEST);
+            if manifest_path.exists() {
+                let manifest = std::fs::read_to_string(&manifest_path)
+                    .context(format!("Failed to read {}", manifest_path.display()))?;
+                return Self::parse_subgraph_from_project_files(
+                    project_paths,
+                    &manifest_path,
+                    manifest,
+                    None,
+                );
+            }
         }
 
-        let human_config_string =
-            std::fs::read_to_string(&project_paths.config).context(format!(
-                "Failed to resolve config path {0} (--config {1} resolved relative to --directory \
-                 {2}). Make sure the file exists. Note that --config and ENVIO_CONFIG are \
-                 interpreted relative to --directory.",
-                project_paths.config.to_str().unwrap_or("{unknown}"),
-                project_paths.config_relative_to_root().display(),
-                project_paths.project_root.display(),
-            ))?;
+        let human_config_string = match std::fs::read_to_string(&project_paths.config) {
+            Ok(text) => text,
+            Err(err) => {
+                let manifests = crate::subgraph::find_manifests(root);
+                let hint = crate::subgraph::manifest_hint(&manifests);
+                let network = crate::utils::project_env::ProjectEnv::new(root)
+                    .var(crate::subgraph::NETWORK_ENV_VAR);
+                if let Some(writers) = crate::subgraph::render::unrepeatable_writers(
+                    &manifest_path,
+                    network.as_deref(),
+                )
+                .filter(|_| manifests.is_empty())
+                {
+                    return Err(anyhow!(
+                        "There is no {} here.\n{writers}",
+                        manifest_path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    ));
+                }
+                if root.join("subgraph.template.yaml").exists() && manifests.is_empty() {
+                    let readers =
+                        crate::subgraph::render::files_reading(root, &["subgraph", "template"]);
+                    if let [reader] = readers.as_slice() {
+                        return Err(anyhow!(
+                            "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                             The repo's {reader} reads subgraph.template.yaml, so it likely \
+                             writes the manifest; no package.json script runs it, so envio \
+                             doesn't either. Run it for your network, then start envio again."
+                        ));
+                    }
+                    if !readers.is_empty() {
+                        return Err(anyhow!(
+                            "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                             The repo's {} read subgraph.template.yaml, so one of them likely \
+                             writes the manifest; no package.json script runs them, so envio \
+                             doesn't either. Run the right one for your network, then start \
+                             envio again.",
+                            readers.join(", ")
+                        ));
+                    }
+                    return Err(anyhow!(
+                        "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                         This project generates its manifest — run the package prepare script \
+                         (mustache / `graph build --network <network>`), then run envio from \
+                         the directory that now contains subgraph.yaml, or point --config at \
+                         the manifest it wrote."
+                    ));
+                }
+                return Err(anyhow!(
+                    "Failed to resolve config path {0} (--config {1} resolved relative to \
+                     --directory {2}): {err}. Make sure the file exists. Note that --config and \
+                     ENVIO_CONFIG are interpreted relative to --directory.{hint}",
+                    project_paths.config.to_str().unwrap_or("{unknown}"),
+                    project_paths.config_relative_to_root().display(),
+                    project_paths.project_root.display(),
+                ));
+            }
+        };
+
+        if crate::subgraph::is_manifest(&human_config_string) {
+            return Self::parse_subgraph_from_project_files(
+                project_paths,
+                &project_paths.config,
+                human_config_string,
+                None,
+            );
+        }
 
         let mut source = FilesystemConfigSource::new(project_paths);
         Self::parse_yaml_with_source(human_config_string, &mut source)
@@ -2432,6 +2734,9 @@ pub struct Event {
     /// Only set for EVM events; empty for Fuel events.
     pub event_signature: String,
     pub field_selection: Option<FieldSelection>,
+    /// An anonymous EVM event matched on its first topic: `sighash` is that
+    /// topic's value, and every topic is an indexed param.
+    pub anonymous: bool,
 }
 
 impl Event {
@@ -2539,7 +2844,17 @@ impl Event {
             let alloy_event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
             // Use alloy's selector() method which computes keccak256 of the signature
             // Note: selector() returns B256 which formats as lowercase hex with 0x prefix
-            let sighash = alloy_event.selector().to_string();
+            let (sighash, anonymous) = match &event_config.topic0 {
+                None => (alloy_event.selector().to_string(), false),
+                Some(topic0) if alloy_event.anonymous => (topic0.to_lowercase(), true),
+                Some(_) => {
+                    return Err(anyhow!(
+                        "The event \"{}\" is matched on a topic0 of its own, which only an \
+                         anonymous event carries in place of its signature hash.",
+                        event_config.event
+                    ))
+                }
+            };
 
             let abi_name = alloy_event.name.clone();
             let name = event_config.name.clone().unwrap_or(abi_name.clone());
@@ -2566,6 +2881,7 @@ impl Event {
                     ),
                     None => None,
                 },
+                anonymous,
             })
         }
 
@@ -2645,6 +2961,7 @@ impl Event {
                         sighash: log.id,
                         event_signature: String::new(),
                         field_selection: None,
+                        anonymous: false,
                     }
                 }
                 EventType::Mint => Event {
@@ -2653,6 +2970,7 @@ impl Event {
                     sighash: "mint".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
                 EventType::Burn => Event {
                     name: event_config.name.clone(),
@@ -2660,6 +2978,7 @@ impl Event {
                     sighash: "burn".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
                 EventType::Transfer => Event {
                     name: event_config.name.clone(),
@@ -2667,6 +2986,7 @@ impl Event {
                     sighash: "transfer".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),
@@ -2674,6 +2994,7 @@ impl Event {
                     sighash: "call".to_string(),
                     event_signature: String::new(),
                     field_selection: None,
+                    anonymous: false,
                 },
             };
 

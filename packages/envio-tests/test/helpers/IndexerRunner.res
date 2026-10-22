@@ -63,7 +63,8 @@ type rec t = {
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
-  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, unit) => promise<t>,
+  // `~reset` starts over as `envio start -r` does: the schema is dropped.
+  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, ~reset: bool=?, unit) => promise<t>,
   // Every line this run has logged so far, in order — the run's own and its
   // chains'. Only for a run started with `~captureLogs`.
   logs: unit => array<logEntry>,
@@ -127,6 +128,7 @@ let run = async (
   ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
   ~backend: backend=selectedBackend,
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
@@ -161,6 +163,27 @@ let run = async (
   let capture = captureLogs ? Some(makeLogCapture()) : None
   let installedLogger = Logging.getLogger()
 
+  // Unless the test handles indexer errors itself, the first one fails the run
+  // with its own message. Exiting the process instead kills the vitest worker
+  // without naming the test or the error.
+  let indexerFailure = ref(None)
+  let resolveFailure = ref(None)
+  let failed = Promise.make((resolve, _) => resolveFailure := Some(resolve))
+  let failWith = (errHandler: ErrorHandling.t) =>
+    if indexerFailure.contents->Option.isNone {
+      let exn = errHandler->ErrorHandling.toExn
+      indexerFailure := Some(exn)
+      resolveFailure.contents->Option.forEach(resolve => resolve(exn))
+    }
+
+  // The run stops waiting on a body once its indexer fails, but the body keeps
+  // going. An indexer it starts after that would outlive the teardown.
+  let isClosing = ref(false)
+  let throwIfClosing = () =>
+    if isClosing.contents {
+      JsError.throwWithMessage("Can't start an indexer once the run is tearing down.")
+    }
+
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
   let clickHouseDatabase = switch backend {
@@ -171,6 +194,7 @@ let run = async (
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
   let rec make = async (~reset, ~config as baseConfig, ~chains=?) => {
+    throwIfClosing()
     let config = switch chains {
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
@@ -204,11 +228,7 @@ let run = async (
 
     let onError = switch onError {
     | Some(onError) => onError
-    | None =>
-      (errHandler: ErrorHandling.t) => {
-        errHandler->ErrorHandling.log
-        NodeJs.process->NodeJs.exitWithCode(NodeJs.Failure)
-      }
+    | None => failWith
     }
 
     await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=true)
@@ -217,6 +237,9 @@ let run = async (
     // `start_block: latest` chain reads its head - before handler modules load,
     // so a registration-time `chain.startBlock` sees the resolved block.
     let registrationsByChainId = await resolveRegistrations(~config)
+    // The client above is already in `clients`, so teardown still closes it;
+    // only the loop must not start, since teardown may have passed `stops`.
+    throwIfClosing()
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
     let state = IndexerState.makeFromDbState(
@@ -225,6 +248,7 @@ let run = async (
       ~persistence,
       ~registrationsByChainId,
       ~reducedPollingInterval?,
+      ~newBlockStallTimeoutRealtime?,
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
@@ -549,23 +573,28 @@ let run = async (
             "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
           )
         },
-      restart: async (~config=baseConfig, ~chains=?, ()) => {
+      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false, ~config, ~chains?)
+        await make(~reset, ~config, ~chains?)
       },
     }
   }
 
   let outcome = try {
     let indexer = await make(~reset=true, ~config)
-    await body(indexer)
-    None
+    // A body waiting on progress the failed indexer will never make would
+    // otherwise sit until the test times out.
+    await Promise.race([
+      body(indexer)->Promise.thenResolve(() => indexerFailure.contents),
+      failed->Promise.thenResolve(exn => Some(exn)),
+    ])
   } catch {
   | exn => Some(exn)
   }
+  isClosing := true
 
   // Every step runs even if an earlier one throws, and a teardown failure
   // never replaces the body's — losing the real failure behind a cleanup
@@ -612,9 +641,11 @@ let run = async (
     Logging.setLogger(installedLogger)
   }
 
-  switch (outcome, teardownFailure.contents) {
-  | (Some(exn), _) => throw(exn)
-  | (None, Some(exn)) => throw(exn)
-  | (None, None) => ()
+  switch (outcome, indexerFailure.contents, teardownFailure.contents) {
+  | (Some(exn), _, _)
+  | (None, Some(exn), _)
+  | (None, None, Some(exn)) =>
+    throw(exn)
+  | (None, None, None) => ()
   }
 }

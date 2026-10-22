@@ -29,9 +29,11 @@ type syncState = {
   mutable memo: option<dict<Internal.effectOutput>>,
   // Only while a synchronous round runs: its writes, held until it completes.
   mutable writes: option<SyncWrites.t>,
+  // Preload reads this round answered as absent while their load was in flight.
+  mutable speculated: int,
 }
 
-let makeSyncState = () => {status: Active, pending: None, memo: None, writes: None}
+let makeSyncState = () => {status: Active, pending: None, memo: None, writes: None, speculated: 0}
 
 type contextParams = {
   item: Internal.item,
@@ -75,13 +77,32 @@ let checkStatusOrThrow = (params: contextParams, ~access: string) =>
     )
   }
 
+// Every suspend throws this one value: `throw(Suspend)` builds a fresh Error,
+// stack trace and all, and a mapping suspends several times per event.
+let suspend: exn = Suspend
+
 // Fires the async op behind a sync miss, records it for the replay loop and
 // aborts the context.
 let scheduleAndSuspend = (params: contextParams, promise: promise<'a>): 'b => {
   params.sync->getPending->Array.push(promise->Utils.Promise.ignoreValue)
-  params.sync.status = Aborted(Suspend)
-  throw(Suspend)
+  params.sync.status = Aborted(suspend)
+  throw(suspend)
 }
+
+// Preload reads past a miss: the read answers as absent and the round runs on,
+// so the reads after it that don't depend on it join this round's batch rather
+// than taking a round each. Nothing preload computes is kept, and the round is
+// replayed once its reads land. Bounded, for a mapping that loops on a read.
+let maxSpeculatedReads = 32
+
+let missOrSuspend = (params: contextParams, promise: promise<'a>, ~absent: 'b): 'b =>
+  if params.isPreload && params.sync.speculated < maxSpeculatedReads {
+    params.sync->getPending->Array.push(promise->Utils.Promise.ignoreValue)
+    params.sync.speculated = params.sync.speculated + 1
+    absent
+  } else {
+    params->scheduleAndSuspend(promise)
+  }
 
 // We don't want to expose the params to the user
 // so instead of storing _params on the context object,
@@ -178,7 +199,10 @@ let rec prepareEffectCall = (
   let effectArgs: Internal.effectArgs = {
     input,
     context: effectContext,
-    cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+    cacheKey: input
+    ->S.reverseConvertOrThrow(effect.input)
+    ->Utils.Hash.makeOrThrow
+    ->Utils.Hash.boundCacheKey,
     chainId: params.item->Internal.getItemChainId,
     checkpointId: params.checkpointId,
   }
@@ -227,6 +251,11 @@ let initEffectSync = (params: contextParams) => {
         let output = inMemTable->InMemoryStore.getEffectOutputUnsafe(effectArgs.cacheKey)
         memo->Dict.set(memoKey, output)
         output
+      } else if params.sync.speculated > 0 {
+        // The input may be computed from a speculated read: an effect can
+        // cost an RPC call, so it waits to be asked with the real values.
+        params.sync.status = Aborted(suspend)
+        throw(suspend)
       } else {
         params->scheduleAndSuspend(
           LoadLayer.loadEffect(
@@ -298,27 +327,48 @@ let getSyncHandler = (params: entityContextParams, entityId: string) =>
   switch params->getRoundWrite(entityId) {
   | Some(entity) => entity
   | None =>
-    switch LoadLayer.getByIdInMemory(
-      ~entityConfig=params.entityConfig,
-      ~scope=params->entityScope,
-      ~indexerState=params.indexerState,
-      ~entityId,
-    ) {
+    switch params.isPreload
+      ? PreloadLookahead.overlayGet(
+          ~item=params.item,
+          ~entityName=params.entityConfig.name,
+          ~scope=params->entityScope,
+          ~entityId,
+        )
+      : None {
     | Some(entity) => entity
     | None =>
-      (params :> contextParams)->scheduleAndSuspend(
-        LoadLayer.loadById(
-          ~loadManager=params.loadManager,
-          ~persistence=params.persistence,
-          ~entityConfig=params.entityConfig,
-          ~scope=params->entityScope,
-          ~indexerState=params.indexerState,
-          ~shouldGroup=params.isPreload,
-          ~item=params.item,
-          ~ecosystem=params.config.ecosystem,
-          ~entityId,
-        ),
-      )
+      switch LoadLayer.getByIdInMemory(
+        ~entityConfig=params.entityConfig,
+        ~scope=params->entityScope,
+        ~indexerState=params.indexerState,
+        ~entityId,
+      ) {
+      | Some(entity) =>
+        if params.isPreload && entity->Option.isNone {
+          PreloadLookahead.recordAbsent(
+            ~item=params.item,
+            ~entityName=params.entityConfig.name,
+            ~scope=params->entityScope,
+            ~entityId,
+          )
+        }
+        entity
+      | None =>
+        (params :> contextParams)->missOrSuspend(
+          ~absent=None,
+          LoadLayer.loadById(
+            ~loadManager=params.loadManager,
+            ~persistence=params.persistence,
+            ~entityConfig=params.entityConfig,
+            ~scope=params->entityScope,
+            ~indexerState=params.indexerState,
+            ~shouldGroup=params.isPreload,
+            ~item=params.item,
+            ~ecosystem=params.config.ecosystem,
+            ~entityId,
+          ),
+        )
+      }
     }
   }
 
@@ -338,7 +388,8 @@ let getWhereSyncHandler = (params: entityContextParams, filter: dict<dict<unknow
     | None => entities
     }
   | None =>
-    (params :> contextParams)->scheduleAndSuspend(
+    (params :> contextParams)->missOrSuspend(
+      ~absent=[],
       LoadLayer.loadByParsedFilter(
         ~loadManager=params.loadManager,
         ~persistence=params.persistence,
@@ -382,8 +433,23 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
 
+    // Preload's writes are kept only within a round, for the batch's later
+    // preloads to read (PreloadLookahead); never in the store.
     let set = params.isPreload
-      ? noopSet
+      ? (entity: Internal.entity) =>
+          switch params.sync.writes {
+          | Some(writes) if PreloadLookahead.isActive() =>
+            writes->SyncWrites.record(
+              ~entityConfig=params.entityConfig,
+              ~scope=params->entityScope,
+              Set({
+                entityId: entity.id->EntityId.unsafeOfString,
+                checkpointId: params.checkpointId,
+                entity,
+              }),
+            )
+          | _ => noopSet(entity)
+          }
       : (entity: Internal.entity) => {
           // The check lives inside the closure too: a handler that grabbed
           // `context.X.set` before a suspend must not keep writing.
@@ -510,7 +576,16 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
     | "deleteUnsafe" =>
       if params.isPreload {
-        noopDeleteUnsafe
+        entityId =>
+          switch params.sync.writes {
+          | Some(writes) if PreloadLookahead.isActive() =>
+            writes->SyncWrites.record(
+              ~entityConfig=params.entityConfig,
+              ~scope=params->entityScope,
+              Delete({entityId, checkpointId: params.checkpointId}),
+            )
+          | _ => noopDeleteUnsafe(entityId)
+          }
       } else {
         entityId => {
           (params :> contextParams)->checkStatusOrThrow(
@@ -544,24 +619,46 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
   }
   params.sync.status = Active
   params.sync.pending = None
+  params.sync.speculated = 0
   let writes = SyncWrites.make()
   params.sync.writes = Some(writes)
+  let startedAt = PreloadLookahead.roundStarted(~isPreload=params.isPreload)
 
   let suspended = switch fn() {
   | () =>
+    PreloadLookahead.roundEnded(~item=params.item, ~startedAt)
     params.sync.writes = None
     switch params.sync.status {
     // The body caught the suspend and returned anyway, so it didn't see the
     // reads it asked for: it is replayed like any other suspended round.
     | Aborted(_) => true
+    // Ran on reads it was told were absent.
+    | Active | Resolved if params.sync.speculated > 0 => true
     | Active | Resolved =>
-      writes->SyncWrites.commit(~indexerState=params.indexerState)
+      if params.isPreload {
+        writes->SyncWrites.forEachChange((~entityConfig, ~scope, change) =>
+          PreloadLookahead.overlaySet(
+            ~item=params.item,
+            ~entityName=entityConfig.name,
+            ~scope,
+            ~entityId=change->Change.getEntityId->EntityId.toKey,
+            ~entity=change->InMemoryTable.Entity.mapChangeToEntity,
+          )
+        )
+      } else {
+        writes->SyncWrites.commit(~indexerState=params.indexerState)
+      }
       false
     }
   | exception exn =>
+    PreloadLookahead.roundEnded(~item=params.item, ~startedAt)
+
     // Neither a suspended round nor a failed one keeps what it wrote.
     params.sync.writes = None
-    if exn->isSuspend {
+
+    // A round handed a speculated absence may well throw on it: the replay
+    // that sees the real value decides whether the error is the handler's.
+    if exn->isSuspend || params.sync.speculated > 0 {
       true
     } else {
       // The body threw its own error after scheduling a read. Those ops are

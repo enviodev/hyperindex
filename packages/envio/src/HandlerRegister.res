@@ -700,6 +700,8 @@ let registerOnBlock = (
   ~name: string,
   ~where: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
+  ~runsFirst=false,
+  ~contractRegister=?,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => {
   withRegistration(registration => {
@@ -763,7 +765,9 @@ let registerOnBlock = (
         // Off the same object the predicate above was handed, not off
         // `chainConfig`: that one still says whatever config.yaml said, and for
         // `start_block: latest` the resolved head only lives in persisted state.
-        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        let chainStartBlock = (
+          chainObj->(Utils.magic: unknown => {"startBlock": int})
+        )["startBlock"]
         if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
             `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,
@@ -790,6 +794,8 @@ let registerOnBlock = (
               interval: range._every,
               chainId,
               handler,
+              runsFirst,
+              ?contractRegister,
             }: Internal.onBlockRegistration
           ),
         )

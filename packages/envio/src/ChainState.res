@@ -73,6 +73,12 @@ type t = {
   // Timestamp of the committed progress block itself. See
   // `Batch.chainAfterBatch.progressBlockTime`.
   mutable committedProgressBlockTime: option<int>,
+  // Subgraph mode, with a block handler that has a register pass: the chain's
+  // register work runs one unit at a time, a response's passes or a run of
+  // block passes alone, so a pass never runs ahead of a block pass of an
+  // earlier block. Settles when the latest unit is applied.
+  mutable blockRegisterTail: promise<unit>,
+  mutable blockRegisterRuns: int,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -187,6 +193,8 @@ let make = (
     rollbackTargetBlock: None,
     progressLatencyMs: None,
     committedProgressBlockTime,
+    blockRegisterTail: Promise.resolve(),
+    blockRegisterRuns: 0,
   }
 }
 
@@ -213,6 +221,7 @@ let makeInternal = (
   ~knownHeight=0,
   ~isResumed=false,
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
 ): t => {
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
   // are already collected by `HandlerRegister.finishRegistration`, keyed by
@@ -326,7 +335,12 @@ let makeInternal = (
     ~fetchState,
     ~onEventRegistrations,
     ~addressStore,
-    ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
+    ~sourceManager=SourceManager.make(
+      ~sources,
+      ~isRealtime,
+      ~reducedPollingInterval?,
+      ~newBlockStallTimeoutRealtime?,
+    ),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
     ~isInReorgThreshold,
@@ -362,6 +376,7 @@ let makeFromDbState = (
   ~contractMapping,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
+  ~newBlockStallTimeoutRealtime=?,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
@@ -396,6 +411,7 @@ let makeFromDbState = (
     ~knownHeight=resumedChainState.sourceBlockNumber,
     ~isResumed=true,
     ~reducedPollingInterval?,
+    ~newBlockStallTimeoutRealtime?,
   )
 }
 
@@ -405,6 +421,7 @@ let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
 let transactionStore = (cs: t) => cs.transactionStore
 let shouldChecksum = (cs: t) => cs.shouldChecksum
+let fetchState = (cs: t) => cs.fetchState
 let entities = (cs: t) => cs.entities
 
 // Rollback discards every uncommitted change, so this chain's partition is
@@ -493,6 +510,59 @@ let resetPendingQueries = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
   cs.pendingBudget = 0.
 }
+
+// A response that landed with more items than its query was priced at keeps the
+// excess reserved while it waits for its register passes: until then its items
+// are neither in the buffer nor in the query's estimate, and the pool would
+// admit the next queries on top of them. Released when the response is applied.
+let holdExtraBudget = (cs: t, ~items) => {
+  cs.pendingBudget = cs.pendingBudget +. items->Int.toFloat
+}
+
+let releaseExtraBudget = (cs: t, ~items) => {
+  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. items->Int.toFloat)
+}
+
+let hasBlockRegisters = (cs: t) => cs.fetchState.blockRegisterThrough !== None
+let isBlockRegisterIdle = (cs: t) => cs.blockRegisterRuns === 0
+
+// Queues a unit of register work behind the chain's latest one. Returns the
+// promise to wait on before running it, and the callback that settles it,
+// which must be called however the unit ends.
+let queueBlockRegisterRun = (cs: t) => {
+  let previous = cs.blockRegisterTail
+  let settle = ref(() => ())
+  cs.blockRegisterTail = Promise.make((resolve, _) => settle := resolve)
+  cs.blockRegisterRuns = cs.blockRegisterRuns + 1
+  let finish = () => {
+    cs.blockRegisterRuns = cs.blockRegisterRuns - 1
+    settle.contents()
+  }
+  (previous, finish)
+}
+
+let canAdvanceBlockRegisters = (cs: t, ~through) =>
+  cs.fetchState->FetchState.canAdvanceBlockRegisters(~through)
+let nextBlockRegisterItems = (cs: t, ~through, ~limit) =>
+  cs.fetchState->FetchState.nextBlockRegisterItems(~through, ~limit)
+let blockRegisterItemsAfter = (cs: t, ~after, ~through, ~limit) =>
+  cs.fetchState->FetchState.blockRegisterItemsAfter(~after, ~through, ~limit)
+let blockRegisterThrough = (cs: t) => cs.fetchState.blockRegisterThrough
+let blockRegisterFrontier = (cs: t) => cs.fetchState->FetchState.blockRegisterFrontier
+
+// Applies what a run of block passes alone registered, then lets block items
+// through its last block be generated.
+let applyBlockRegisters = (cs: t, ~registrations, ~through) => {
+  let fs = switch registrations {
+  | [] => cs.fetchState
+  | _ =>
+    cs.fetchState->FetchState.registerDynamicContracts(~addressStore=cs.addressStore, registrations)
+  }
+  cs.fetchState = fs->FetchState.setBlockRegisterThrough(~through)
+}
+
+let markBlockRegistered = (cs: t, ~through) =>
+  cs.fetchState = cs.fetchState->FetchState.setBlockRegisterThrough(~through)
 
 let isReady = (cs: t) => cs.timestampCaughtUpToHeadOrEndblock !== None
 

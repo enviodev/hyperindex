@@ -17,13 +17,33 @@ const MAX_SIGNIFICANT_DIGITS = 34;
 const DIVISION_DIGITS = 100;
 const LOG2_10 = 3.3219280949;
 
-const ten = (power: number) => 10n ** BigInt(power);
+/** Every operation reaches for powers of ten; they're computed once. */
+const TENS: bigint[] = [1n];
+function ten(power: number): bigint {
+  if (power > 4096) return 10n ** BigInt(power);
+  while (TENS.length <= power) TENS.push(TENS[TENS.length - 1] * 10n);
+  return TENS[power];
+}
 const abs = (n: bigint) => (n < 0n ? -n : n);
-const bits = (n: bigint) => (n === 0n ? 0 : abs(n).toString(2).length);
+/** The magnitude's bit length, as num-bigint's `bits()`. */
+function bits(n: bigint): number {
+  if (n === 0n) return 0;
+  const hex = abs(n).toString(16);
+  return (hex.length - 1) * 4 + (32 - Math.clz32(parseInt(hex[0], 16)));
+}
 
 /** `count_decimal_digits`: never corrects its guess upward for a negative. */
 function countDigits(n: bigint): number {
   if (n === 0n) return 1;
+  // For a positive the crate's guess never overshoots and its loop corrects
+  // it to the exact count, which a float's log10 finds with fewer steps.
+  const approximate = Number(n);
+  if (n > 0n && approximate < 1e300) {
+    let digits = Math.max(1, Math.floor(Math.log10(approximate)) + 1);
+    while (digits > 1 && n < ten(digits - 1)) digits -= 1;
+    while (n >= ten(digits)) digits += 1;
+    return digits;
+  }
   let digits = Math.floor(bits(n) / LOG2_10);
   let num = ten(digits);
   while (n >= num) {
@@ -33,44 +53,66 @@ function countDigits(n: bigint): number {
   return digits;
 }
 
-/** `get_rounding_term`: 1 when the leading digit of `n` is 5 or more. */
-function roundingTerm(n: bigint): bigint {
-  if (n === 0n) return 0n;
-  let bound = ten(Math.floor(bits(n) / LOG2_10));
-  for (;;) {
-    if (n < bound) return 1n;
-    bound *= 5n;
-    if (n < bound) return 0n;
-    bound *= 2n;
-  }
+/**
+ * `with_prec` of a coefficient with more digits (as `countDigits` counts
+ * them) than `precision`. The crate adds `get_rounding_term(remainder)`, 1
+ * when the remainder's leading digit is 5 or more, if `p < 10 * remainder`:
+ * the remainder then has exactly `diff` digits, so its leading digit is 5 or
+ * more just when `2 * remainder >= p`. A negative remainder never passes the
+ * test, so a negative truncates.
+ */
+function withPrecision({ int, scale }: Decimal, digits: number, precision: number): Decimal {
+  const diff = digits - precision;
+  const p = ten(diff);
+  let quotient = int / p;
+  const remainder = int - quotient * p;
+  if (remainder > 0n && 2n * remainder >= p) quotient += 1n;
+  return { int: quotient, scale: scale - diff };
 }
 
-function withPrecision({ int, scale }: Decimal, precision: number): Decimal {
-  const digits = countDigits(int);
-  if (digits > precision) {
-    const diff = digits - precision;
-    const p = ten(diff);
-    let quotient = int / p;
-    const remainder = int % p;
-    if (p < 10n * remainder) quotient += roundingTerm(remainder);
-    return { int: quotient, scale: scale - diff };
-  }
-  if (digits < precision) {
-    const diff = precision - digits;
-    return { int: int * ten(diff), scale: scale + diff };
-  }
-  return { int, scale };
-}
+const ZERO: Decimal = { int: 0n, scale: 0 };
+const TEN_TO_THE_8 = 10n ** 8n;
 
-/** graph-node's `BigDecimal::normalized`, applied to every value it makes. */
+/**
+ * graph-node's `BigDecimal::normalized`, applied to every value it makes:
+ * `with_prec(34)`, then trailing zeros dropped. A coefficient of 34 digits or
+ * fewer comes out of `with_prec` padded with zeros that the second step drops
+ * again, so only its own trailing zeros are dropped.
+ */
 export function normalize(value: Decimal): Decimal {
-  if (value.int === 0n) return { int: 0n, scale: 0 };
-  let { int, scale } = withPrecision(value, MAX_SIGNIFICANT_DIGITS);
+  if (value.int === 0n) return ZERO;
+  const digits = countDigits(value.int);
+  let { int, scale } =
+    digits > MAX_SIGNIFICANT_DIGITS ? withPrecision(value, digits, MAX_SIGNIFICANT_DIGITS) : value;
+  if (int % 10n !== 0n) return int === value.int ? value : { int, scale };
+  while (int % TEN_TO_THE_8 === 0n) {
+    int /= TEN_TO_THE_8;
+    scale -= 8;
+  }
   while (int % 10n === 0n) {
     int /= 10n;
     scale -= 1;
   }
   return { int, scale };
+}
+
+const NEGATIVE_LIMIT = -(10n ** BigInt(MAX_SIGNIFICANT_DIGITS));
+
+/**
+ * `normalize` of a value `normalize` made, as graph-node does when it reads a
+ * result back from the module (`BigDecimal::new` in `FromAscObj`). It is the
+ * identity except for a negative coefficient of 35 digits or more, which the
+ * first pass's undercount can leave behind; anything shorter, or positive,
+ * already is normal.
+ */
+export function renormalize(value: Decimal): Decimal {
+  return value.int <= NEGATIVE_LIMIT ? normalize(value) : value;
+}
+
+/** The sign of `a - b`. */
+export function compare(a: Decimal, b: Decimal): number {
+  const [x, y] = align(a, b);
+  return x < y ? -1 : x > y ? 1 : 0;
 }
 
 function align(a: Decimal, b: Decimal): [bigint, bigint, number] {
@@ -105,19 +147,23 @@ function longDivision(num: bigint, den: bigint, scale: number): Decimal {
     scale += 1;
     num *= 10n;
   }
-  let quotient = num / den;
-  let remainder = num % den;
-  if (remainder === 0n) return { int: quotient, scale };
-  let precision = countDigits(quotient);
-  remainder *= 10n;
-  while (remainder !== 0n && precision < DIVISION_DIGITS) {
-    quotient = quotient * 10n + remainder / den;
-    remainder = (remainder % den) * 10n;
-    precision += 1;
-    scale += 1;
+  const first = num / den;
+  if (num % den === 0n) return { int: first, scale };
+  // The crate appends one digit at a time until the remainder is zero or the
+  // quotient has DIVISION_DIGITS digits, then rounds half up on the next
+  // digit. One division of `num * 10 ** extra` gives the same digits: the
+  // digit that ends the remainder is never zero, so an early stop shows as
+  // the quotient's trailing zeros.
+  const extra = Math.max(0, DIVISION_DIGITS - countDigits(first));
+  let quotient = (num * ten(extra)) / den;
+  const remainder = (num * ten(extra)) % den;
+  if (remainder !== 0n) return { int: quotient + (2n * remainder >= den ? 1n : 0n), scale: scale + extra };
+  let appended = extra;
+  while (appended > 0 && quotient % 10n === 0n) {
+    quotient /= 10n;
+    appended -= 1;
   }
-  if (remainder !== 0n) quotient += roundingTerm(remainder / den);
-  return { int: quotient, scale };
+  return { int: quotient, scale: scale + appended };
 }
 
 export function divide(a: Decimal, b: Decimal): Decimal {

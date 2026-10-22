@@ -480,6 +480,7 @@ describe("SourceManager fetchNext", () => {
       firstEventBlock: None,
       clientFilterAddressThreshold: None,
       creationBlocks: None,
+      blockRegisterThrough: None,
     }
   }
 

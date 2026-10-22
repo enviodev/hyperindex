@@ -81,9 +81,7 @@ export function handlePairCreated(event: any): void {
 // only shows up at access time.
 export function handleProbe(event: any): void {
   let kind = event.params.kind.toI32();
-  if (kind === 1) {
-    event.transactionLogIndex;
-  } else if (kind === 2) {
+  if (kind === 2) {
     (store as any).timeTravel();
   } else if (kind === 3) {
     let entity = new Entity();
@@ -94,6 +92,11 @@ export function handleProbe(event: any): void {
     // before any create() has happened.
     let host: any = ethereum;
     host.getBalance(event.address);
+  } else if (kind === 5) {
+    let pair = new Entity();
+    pair.set("createdAt", Value.fromTimestamp(BigInt.fromString("1700000000000000").valueOf()));
+    pair.setBigInt("score", event.transactionLogIndex);
+    store.set("Pair", "0x0000000000000000000000000000000000000005", pair);
   }
 }
 `,
@@ -148,18 +151,22 @@ describe("subgraph runtime", () => {
     });
   });
 
-  // The runtime writes its own copy of the translator's refusal text; the
-  // whole of it is pinned so the two can't drift apart.
-  it("refuses event.transactionLogIndex", async () => {
-    await expect(createTestIndexer().process(probe(1n))).rejects.toThrow(
-      \`Envio Subgraph doesn't support event.transactionLogIndex yet.
-  Found in data source "Factory" → "Probe".
-First, make sure you're on the newest Envio Subgraph release — support may have landed:
-  pnpm add -D envio@subgraph
-If you're up to date and need this feature, please open an issue (existing
-issues welcome a 👍 — demand drives prioritization):
-  https://github.com/enviodev/hyperindex/issues\`,
-    );
+  // graph-node answers the log's index in its block (Aave reads it at 54 call
+  // sites to build entity ids).
+  it("answers event.transactionLogIndex with the log index, as graph-node does", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            { contract: "Factory" as const, event: "Probe" as const, params: { kind: 5n }, logIndex: 7 },
+          ],
+        },
+      },
+    });
+    t.expect(
+      (await indexer.Pair.getOrThrow("0x0000000000000000000000000000000000000005")).score,
+    ).toBe(7n);
   });
 
   it("refuses an unknown graph-ts namespace member", async () => {

@@ -102,8 +102,8 @@ describe("a declared field nothing has set", () => {
       await indexer.Domain.getOrThrow("d2"),
       await indexer.Domain.getOrThrow("d3"),
     ]).toEqual([
-      { id: "d2", owner: "0xowner", resolver: undefined, parent_id: "d1", seen: true },
-      { id: "d3", owner: "d1", resolver: undefined, parent_id: undefined, seen: true },
+      { id: "d2", owner: "0xowner", resolver: null, parent_id: "d1", seen: true },
+      { id: "d3", owner: "d1", resolver: null, parent_id: null, seen: true },
     ]);
   });
 

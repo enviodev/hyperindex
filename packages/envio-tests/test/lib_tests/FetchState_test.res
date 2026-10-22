@@ -291,6 +291,7 @@ describe("FetchState.make", () => {
         firstEventBlock: None,
         clientFilterAddressThreshold: None,
         creationBlocks: None,
+        blockRegisterThrough: None,
       }->TestAddresses.fetchState,
     )
   })
@@ -409,6 +410,7 @@ describe("FetchState.make", () => {
         firstEventBlock: None,
         clientFilterAddressThreshold: None,
         creationBlocks: None,
+        blockRegisterThrough: None,
       }->TestAddresses.fetchState,
     )
   })
@@ -483,6 +485,7 @@ describe("FetchState.make", () => {
           firstEventBlock: None,
           clientFilterAddressThreshold: None,
           creationBlocks: None,
+          blockRegisterThrough: None,
         }->TestAddresses.fetchState,
       )
 
@@ -596,6 +599,7 @@ describe("FetchState.make", () => {
           firstEventBlock: None,
           clientFilterAddressThreshold: None,
           creationBlocks: None,
+          blockRegisterThrough: None,
         }->TestAddresses.fetchState,
       )
     },
@@ -1696,6 +1700,7 @@ describe("FetchState.registerDynamicContracts", () => {
           firstEventBlock: None,
           clientFilterAddressThreshold: None,
           creationBlocks: None,
+          blockRegisterThrough: None,
         }->TestAddresses.fetchState,
       )
     },
@@ -1760,6 +1765,7 @@ describe("FetchState.getNextQuery & integration", () => {
       firstEventBlock: None,
       clientFilterAddressThreshold: None,
       creationBlocks: None,
+      blockRegisterThrough: None,
     }
   }
 
@@ -1821,6 +1827,7 @@ describe("FetchState.getNextQuery & integration", () => {
       firstEventBlock: None,
       clientFilterAddressThreshold: None,
       creationBlocks: None,
+      blockRegisterThrough: None,
     }
   }
 
@@ -4287,6 +4294,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       firstEventBlock: Some(0),
       clientFilterAddressThreshold: None,
       creationBlocks: None,
+      blockRegisterThrough: None,
     }
   }
 
@@ -4362,6 +4370,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     firstEventBlock: Some(0),
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
   }
 
   it("fills each partition toward the shared target, then stops at its range end", t => {
@@ -4447,6 +4456,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     firstEventBlock: Some(0),
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
   }
 
   it("hands a known-density partition only the fresh budget, not the mean footprint", t => {
@@ -4672,6 +4682,7 @@ describe("FetchState.getNextQuery target containment", () => {
     firstEventBlock: Some(0),
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
   }
 
   it("gates chunk starts at the target block even when a far mergeBlock allows more", t => {
@@ -4807,6 +4818,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
     firstEventBlock: Some(0),
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
   }
 
   let getChunks = (fetchState: FetchState.t, ~chainTargetItems) =>
@@ -4905,6 +4917,7 @@ describe("Response density and source range capacity update independently", () =
     firstEventBlock: Some(0),
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
   }
 
   let makeQuery = (~isChunk): FetchState.query => {
@@ -5098,6 +5111,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     firstEventBlock: Some(0),
     clientFilterAddressThreshold: None,
     creationBlocks: None,
+    blockRegisterThrough: None,
   }
 
   let countQueries = (fetchState: FetchState.t) =>

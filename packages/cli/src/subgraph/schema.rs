@@ -17,7 +17,7 @@ use serde::Serialize;
 use super::errors::Report;
 
 /// `@entity` arguments graph-node accepts.
-const KNOWN_ENTITY_ARGS: &[&str] = &["immutable", "timeseries"];
+const KNOWN_ENTITY_ARGS: &[&str] = &["immutable", "timeseries", "skipDuplicates"];
 
 /// Scalars a subgraph schema can use, mapped to what envio stores.
 fn map_scalar(name: &str) -> Option<&'static str> {
@@ -65,7 +65,79 @@ pub struct SchemaTranslation {
     /// type, and guessing from the stored value can't tell `Bytes` from
     /// `String` or `Int8` from `Int`.
     pub entity_field_types: BTreeMap<String, BTreeMap<String, FieldType>>,
+    /// `@entity(timeseries: true)` types. The runtime stamps each save with the
+    /// block's timestamp and an auto-generated, increasing `Int8` id.
+    pub timeseries_entities: BTreeSet<String>,
+    /// `@entity(immutable: true, skipDuplicates: true)` types: a save of an id
+    /// stored in an earlier block is skipped, as graph-node's insert is.
+    pub skip_duplicate_entities: BTreeSet<String>,
+    /// `@aggregation` types, rolled up by the runtime into one entity per
+    /// interval, named `<Aggregation>_<interval>`.
+    pub aggregations: Vec<Aggregation>,
+    /// Derived fields that list an aggregation's rows (`stats: [Stat!]
+    /// @derivedFrom(field: "pool")`), by owning entity. envio has no table for
+    /// the aggregation under that name, so they are not part of the entity;
+    /// a query answers them from the `<Aggregation>_<interval>` tables.
+    pub aggregation_derived_fields: BTreeMap<String, Vec<AggregationDerivedField>>,
+    #[serde(skip)]
+    aggregation_names: BTreeSet<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregationDerivedField {
+    pub field: String,
+    pub aggregation: String,
+    /// The dimension of the aggregation that points back at the owner.
+    pub via: String,
+}
+
+/// An `@aggregation(intervals: [...], source: "...")` type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Aggregation {
+    pub name: String,
+    /// The timeseries entity the aggregates are computed over.
+    pub source: String,
+    /// `hour` and/or `day`.
+    pub intervals: Vec<String>,
+    /// Fields without `@aggregate`: the group key, copied from the source row.
+    pub dimensions: Vec<AggregationDimension>,
+    pub aggregates: Vec<Aggregate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregationDimension {
+    pub field: String,
+    /// The column holding it: `<field>_id` for a relation, else the field.
+    pub column: String,
+}
+
+/// One `@aggregate(fn: ..., arg: ..., cumulative: ...)` field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Aggregate {
+    pub field: String,
+    /// The column the aggregation table holds it in: `<field>_id` for an
+    /// entity reference.
+    pub column: String,
+    /// `sum`, `count`, `min`, `max`, `first` or `last`.
+    pub func: String,
+    /// A source field or a SQL expression over source fields. `count` needs none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arg: Option<String>,
+    pub cumulative: bool,
+    /// The declared scalar: `Int`, `Int8`, `BigInt` or `BigDecimal`; for
+    /// `first`/`last` also `String`, `Bytes` or `Reference` (an entity).
+    pub kind: String,
+}
+
+/// The interval names `@aggregation` accepts.
+pub const AGGREGATION_INTERVALS: &[&str] = &["hour", "day"];
+const AGGREGATE_FUNCTIONS: &[&str] = &["sum", "count", "min", "max", "first", "last"];
+/// The envio entity that holds the rollup bookkeeping (see the runtime).
+pub const ROLLUP_STATE_ENTITY: &str = "EnvioSubgraphRollup";
 
 /// A field as the subgraph schema declares it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,6 +154,13 @@ pub struct FieldType {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derived_from: Option<String>,
     pub list: bool,
+    /// Non-null at the top: graph-node refuses to save the entity without it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
+    /// A flat list of scalars whose elements may be null (`[String]`), stored
+    /// as a list of non-null ones.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub nullable_elements: bool,
 }
 
 fn directive_name<'a, 'b>(directive: &'a Directive<'b, String>) -> &'a str {
@@ -99,6 +178,16 @@ fn bool_arg(directive: &Directive<'_, String>, name: &str) -> Option<bool> {
             None
         }
     })
+}
+
+fn string_arg(directive: &Directive<'_, String>, name: &str) -> Option<String> {
+    directive
+        .arguments
+        .iter()
+        .find_map(|(key, value)| match value {
+            Value::String(s) if key == name => Some(s.clone()),
+            _ => None,
+        })
 }
 
 /// Strips wrappers down to the innermost named type, remembering how to put
@@ -142,17 +231,139 @@ fn is_list(wrappers: &[Wrapper]) -> bool {
     wrappers.contains(&Wrapper::List)
 }
 
+/// `[T]` or `[T]!`: one list, its elements nullable.
+fn has_nullable_flat_elements(wrappers: &[Wrapper]) -> bool {
+    matches!(
+        wrappers,
+        [Wrapper::List] | [Wrapper::NonNull, Wrapper::List]
+    )
+}
+
+fn non_null_elements(wrappers: &[Wrapper]) -> Vec<Wrapper> {
+    let mut out = Vec::with_capacity(wrappers.len() + 1);
+    for (index, wrapper) in wrappers.iter().enumerate() {
+        out.push(*wrapper);
+        if *wrapper == Wrapper::List && wrappers.get(index + 1) != Some(&Wrapper::NonNull) {
+            out.push(Wrapper::NonNull);
+        }
+    }
+    out
+}
+
 /// A list graph-node stores and envio's store can't, as the feature to report.
 fn unstorable_list(base: &str, wrappers: &[Wrapper]) -> Option<&'static str> {
     let nullable_element = wrappers.iter().enumerate().any(|(index, wrapper)| {
         *wrapper == Wrapper::List && wrappers.get(index + 1) != Some(&Wrapper::NonNull)
     });
     if nullable_element {
-        Some("lists whose elements can be null, like [String]")
+        Some("nested lists whose elements can be null, like [[Int!]]")
     } else if is_list(wrappers) && base == "Timestamp" {
         Some("lists of Timestamp")
     } else {
         None
+    }
+}
+
+/// The envio scalar an id of this subgraph type is stored as.
+fn id_scalar(base: &str) -> &'static str {
+    match map_scalar(base) {
+        Some(scalar @ ("Int" | "BigInt")) => scalar,
+        _ => "String",
+    }
+}
+
+/// What the schema's interfaces resolve to, collected before any field is
+/// rendered.
+///
+/// graph-node stores a field typed as an interface as the referenced entity's
+/// id, and finds the entity by looking that id up in every implementor. With
+/// one implementor that is a plain relation to it. With several there is no one
+/// table to relate to, so the column holds the id alone — under the `_id` name
+/// a relation's column gets, which is where graph-node consumers look for it.
+#[derive(Default)]
+struct Interfaces {
+    /// The only entity implementing each interface that has exactly one.
+    sole_implementor: BTreeMap<String, String>,
+    /// The id type of each interface with several (or no) implementors.
+    shared_id_type: BTreeMap<String, String>,
+    /// Per type, the stored fields typed as one of those shared interfaces.
+    /// A `@derivedFrom` naming one has to name its id column instead.
+    id_only_fields: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl Interfaces {
+    fn collect(document: &Document<'_, String>) -> Self {
+        let mut implementors: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut id_types: BTreeMap<String, String> = BTreeMap::new();
+        let mut types: Vec<(&str, &[graphql_parser::schema::Field<'_, String>])> = Vec::new();
+        for definition in &document.definitions {
+            match definition {
+                Definition::TypeDefinition(TypeDefinition::Interface(interface)) => {
+                    implementors.entry(interface.name.clone()).or_default();
+                    let id_type = interface
+                        .fields
+                        .iter()
+                        .find(|field| field.name == "id")
+                        .map(|field| unwrap_type(&field.field_type).0)
+                        .unwrap_or_else(|| "ID".to_string());
+                    id_types.insert(interface.name.clone(), id_type);
+                    types.push((&interface.name, &interface.fields));
+                }
+                Definition::TypeDefinition(TypeDefinition::Object(object)) => {
+                    for interface in &object.implements_interfaces {
+                        implementors
+                            .entry(interface.clone())
+                            .or_default()
+                            .push(object.name.clone());
+                    }
+                    types.push((&object.name, &object.fields));
+                }
+                _ => {}
+            }
+        }
+
+        let mut interfaces = Interfaces::default();
+        for (interface, entities) in implementors {
+            match entities.as_slice() {
+                [only] => {
+                    interfaces.sole_implementor.insert(interface, only.clone());
+                }
+                _ => {
+                    let id_type = id_types.remove(&interface).unwrap_or_else(|| "ID".into());
+                    interfaces.shared_id_type.insert(interface, id_type);
+                }
+            }
+        }
+        for (owner, fields) in types {
+            for field in fields {
+                let (base, wrappers) = unwrap_type(&field.field_type);
+                let derived = field
+                    .directives
+                    .iter()
+                    .any(|directive| directive.name == "derivedFrom");
+                if !derived && !is_list(&wrappers) && interfaces.shared_id_type.contains_key(&base)
+                {
+                    interfaces
+                        .id_only_fields
+                        .entry(owner.to_string())
+                        .or_default()
+                        .insert(field.name.clone());
+                }
+            }
+        }
+        interfaces
+    }
+
+    /// The type a field names, with a single-implementor interface replaced by
+    /// its implementor.
+    fn resolve(&self, base: String) -> String {
+        self.sole_implementor.get(&base).cloned().unwrap_or(base)
+    }
+
+    fn is_id_only(&self, owner: &str, field: &str) -> bool {
+        self.id_only_fields
+            .get(owner)
+            .is_some_and(|fields| fields.contains(field))
     }
 }
 
@@ -163,6 +374,7 @@ fn render_fields(
     source: &[graphql_parser::schema::Field<'_, String>],
     entity_names: &BTreeSet<String>,
     enum_names: &BTreeSet<String>,
+    interfaces: &Interfaces,
     translation: &mut SchemaTranslation,
     report: &mut Report,
 ) -> Vec<String> {
@@ -201,6 +413,9 @@ fn render_fields(
         }
 
         let (base, wrappers) = unwrap_type(&field.field_type);
+        let base = interfaces.resolve(base);
+        let nullable_elements =
+            !entity_names.contains(&base) && has_nullable_flat_elements(&wrappers);
 
         translation
             .entity_field_types
@@ -218,26 +433,77 @@ fn render_fields(
                         .then(|| base.clone()),
                     derived_from: derived_from.clone(),
                     list: is_list(&wrappers),
+                    required: wrappers.first() == Some(&Wrapper::NonNull),
+                    nullable_elements,
                 },
             );
 
         if let Some(derived_field) = derived_from {
+            if translation.aggregation_names.contains(&base) {
+                translation
+                    .aggregation_derived_fields
+                    .entry(owner.to_string())
+                    .or_default()
+                    .push(AggregationDerivedField {
+                        field: field.name.clone(),
+                        aggregation: base,
+                        via: derived_field,
+                    });
+                continue;
+            }
+            let column = if interfaces.is_id_only(&base, &derived_field) {
+                format!("{derived_field}_id")
+            } else {
+                derived_field
+            };
             // Rendered as a list whatever the subgraph wrote. The Graph accepts
             // the one-to-one `Registration @derivedFrom(...)` and answers it
             // with the same lookup; envio only spells a derived field as a
             // list, and `graph codegen` reads one back as an array either way.
             fields.push(format!(
                 "  {}: [{}!]! @derivedFrom(field: \"{}\")",
-                field.name, base, derived_field
+                field.name, base, column
             ));
             continue;
         }
+
+        if interfaces.is_id_only(owner, &field.name) {
+            translation
+                .entity_ref_fields
+                .entry(owner.to_string())
+                .or_default()
+                .push(field.name.clone());
+            let id_type = interfaces
+                .shared_id_type
+                .get(&base)
+                .map(String::as_str)
+                .unwrap_or("ID");
+            fields.push(format!(
+                "  {}_id: {}{RELATION_INDEX}",
+                field.name,
+                render_type(id_scalar(id_type), &wrappers)
+            ));
+            continue;
+        }
+
+        // The original Uniswap v2 schema, and most of its forks, declare
+        // `mints: [Mint]!`. A list of entities holds their ids, which a mapping
+        // never leaves null, so its elements are stored as the ids they are.
+        // A flat list of scalars whose elements may be null (QuickSwap's
+        // `whitelist: [String]`) is stored the same way, and the runtime
+        // refuses a save that puts a null in it.
+        let wrappers = if entity_names.contains(&base) || nullable_elements {
+            non_null_elements(&wrappers)
+        } else {
+            wrappers
+        };
 
         if let Some(shape) = unstorable_list(&base, &wrappers) {
             report.unsupported(shape, location.clone());
             continue;
         }
 
+        let mut indexed = false;
         let rendered_base = if let Some(scalar) = map_scalar(&base) {
             if field.name == "id" {
                 if base == "Bytes" {
@@ -276,6 +542,7 @@ fn render_fields(
                     .entry(owner.to_string())
                     .or_default()
                     .push(field.name.clone());
+                indexed = true;
                 base.clone()
             }
         } else {
@@ -284,13 +551,21 @@ fn render_fields(
         };
 
         fields.push(format!(
-            "  {}: {}",
+            "  {}: {}{}",
             field.name,
-            render_type(&rendered_base, &wrappers)
+            render_type(&rendered_base, &wrappers),
+            if indexed { RELATION_INDEX } else { "" }
         ));
     }
     fields
 }
+
+/// graph-node indexes every column (relational/ddl.rs, `add_attribute_indexes`).
+/// A relation's is the one a Graph query can't do without: a nested selection,
+/// a `where` on it and every `@derivedFrom` lookup join on it, and without an
+/// index each is a scan of the whole table. The rest stay unindexed, as every
+/// index slows the backfill's writes.
+const RELATION_INDEX: &str = " @index";
 
 fn inherit_conversions(translation: &mut SchemaTranslation, entity: &str, interface: &str) {
     if translation.bytes_id_entities.contains(interface) {
@@ -340,6 +615,7 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
     };
 
     let mut translation = SchemaTranslation::default();
+    let interfaces = Interfaces::collect(&document);
 
     // Object types are also the set of valid field target types, so collect
     // them before emitting anything.
@@ -349,6 +625,13 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
         match definition {
             Definition::TypeDefinition(TypeDefinition::Object(object)) => {
                 entity_names.insert(object.name.clone());
+                if object
+                    .directives
+                    .iter()
+                    .any(|d| directive_name(d) == "aggregation")
+                {
+                    translation.aggregation_names.insert(object.name.clone());
+                }
             }
             // An interface names a shape shared by entities, so a field may
             // point at it the same way it points at an entity.
@@ -364,6 +647,10 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
 
     let mut out = String::new();
     let mut implementors: Vec<(String, Vec<String>)> = Vec::new();
+    let mut aggregation_defs: Vec<(
+        &graphql_parser::schema::ObjectType<'_, String>,
+        &Directive<'_, String>,
+    )> = Vec::new();
 
     for definition in &document.definitions {
         match definition {
@@ -376,6 +663,7 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     &interface.fields,
                     &entity_names,
                     &enum_names,
+                    &interfaces,
                     &mut translation,
                     report,
                 );
@@ -404,14 +692,13 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                     continue;
                 }
 
-                for directive in &object.directives {
-                    let name = directive_name(directive);
-                    if name == "aggregation" {
-                        report.unsupported(
-                            "timeseries and aggregations",
-                            format!("schema.graphql → type {} @aggregation", object.name),
-                        );
-                    }
+                if let Some(aggregation) = object
+                    .directives
+                    .iter()
+                    .find(|d| directive_name(d) == "aggregation")
+                {
+                    aggregation_defs.push((object, aggregation));
+                    continue;
                 }
 
                 let Some(entity) = object
@@ -434,27 +721,45 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                         );
                     }
                 }
-                if bool_arg(entity, "timeseries") == Some(true) {
-                    report.unsupported(
-                        "timeseries and aggregations",
-                        format!(
-                            "schema.graphql → type {} @entity(timeseries: true)",
-                            object.name
-                        ),
-                    );
+                let timeseries = bool_arg(entity, "timeseries") == Some(true);
+                if timeseries {
+                    check_timeseries(object, report);
+                    translation.timeseries_entities.insert(object.name.clone());
+                }
+                // graph-node reads `skipDuplicates` only on an immutable type
+                // (a timeseries is one) and refuses it on any other.
+                if bool_arg(entity, "skipDuplicates") == Some(true) {
+                    if timeseries || bool_arg(entity, "immutable") == Some(true) {
+                        translation
+                            .skip_duplicate_entities
+                            .insert(object.name.clone());
+                    } else {
+                        report.unknown(
+                            format!(
+                                "skipDuplicates on the mutable type {}, which graph-node refuses \
+                                 as well (it requires immutable: true)",
+                                object.name
+                            ),
+                            format!("schema.graphql → type {}", object.name),
+                        );
+                    }
                 }
                 // `immutable: true` is validated and dropped: graph-node's
                 // write-once check only ever fires for mappings that are
                 // already broken, so a working subgraph loses nothing.
 
-                let fields = render_fields(
+                let mut fields = render_fields(
                     &object.name,
                     &object.fields,
                     &entity_names,
                     &enum_names,
+                    &interfaces,
                     &mut translation,
                     report,
                 );
+                if timeseries {
+                    index_timestamp(&mut fields);
+                }
 
                 implementors.push((object.name.clone(), object.implements_interfaces.clone()));
 
@@ -507,8 +812,241 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
         }
     }
 
+    for (object, directive) in aggregation_defs {
+        translate_aggregation(
+            object,
+            directive,
+            &entity_names,
+            &enum_names,
+            &interfaces,
+            &mut translation,
+            &mut out,
+            report,
+        );
+    }
+    // `aggregation` names the rollup a row belongs to, so a rollup reads every
+    // group's carried values with one lookup.
+    if !translation.aggregations.is_empty() {
+        out.push_str(&format!(
+            "type {ROLLUP_STATE_ENTITY} {{\n  id: ID!\n  aggregation: String! @index\n  payload: String!\n}}\n\n"
+        ));
+    }
+
     translation.text = out.trim_end().to_string();
     translation
+}
+
+/// graph-node's timeseries rules: an `Int8` id and a `Timestamp`.
+fn check_timeseries(object: &graphql_parser::schema::ObjectType<'_, String>, report: &mut Report) {
+    let location = format!("schema.graphql → type {}", object.name);
+    let declared = |name: &str| {
+        object
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .map(|f| unwrap_type(&f.field_type).0)
+    };
+    match declared("id").as_deref() {
+        Some("Int8") => {}
+        Some(other) => report.unsupported(
+            format!("a timeseries with an {other} id (graph-node generates Int8 ids)"),
+            location.clone(),
+        ),
+        None => report.unknown(
+            format!("the timeseries {} without an id", object.name),
+            location.clone(),
+        ),
+    }
+    if declared("timestamp").as_deref() != Some("Timestamp") {
+        report.unknown(
+            format!(
+                "the timeseries {} without a Timestamp `timestamp` field",
+                object.name
+            ),
+            location,
+        );
+    }
+}
+
+/// The rollup and `@aggregation` queries both range-scan by `timestamp`.
+fn index_timestamp(fields: &mut [String]) {
+    for field in fields.iter_mut() {
+        if field.starts_with("  timestamp: ") && !field.contains("@index") {
+            field.push_str(" @index");
+        }
+    }
+}
+
+fn translate_aggregation(
+    object: &graphql_parser::schema::ObjectType<'_, String>,
+    directive: &Directive<'_, String>,
+    entity_names: &BTreeSet<String>,
+    enum_names: &BTreeSet<String>,
+    interfaces: &Interfaces,
+    translation: &mut SchemaTranslation,
+    out: &mut String,
+    report: &mut Report,
+) {
+    let location = format!("schema.graphql → type {} @aggregation", object.name);
+    let source = string_arg(directive, "source");
+    let mut intervals = Vec::new();
+    for (key, value) in &directive.arguments {
+        match (key.as_str(), value) {
+            ("source", _) => {}
+            ("intervals", Value::List(items)) => {
+                for item in items {
+                    match item {
+                        Value::String(name) if AGGREGATION_INTERVALS.contains(&name.as_str()) => {
+                            if !intervals.contains(name) {
+                                intervals.push(name.clone());
+                            }
+                        }
+                        Value::String(name) => report.unknown(
+                            format!("the aggregation interval \"{name}\""),
+                            location.clone(),
+                        ),
+                        _ => report.unknown("an aggregation interval", location.clone()),
+                    }
+                }
+            }
+            (other, _) => report.unknown(
+                format!("the @aggregation argument \"{other}\""),
+                location.clone(),
+            ),
+        }
+    }
+    let Some(source) = source else {
+        report.unknown(
+            format!("the aggregation {} without a source", object.name),
+            location,
+        );
+        return;
+    };
+    if intervals.is_empty() {
+        report.unknown(
+            format!("the aggregation {} without intervals", object.name),
+            location,
+        );
+        return;
+    }
+    if !translation.timeseries_entities.contains(&source) {
+        report.unknown(
+            format!(
+                "the aggregation source {source} (it must be an @entity(timeseries: true) type)"
+            ),
+            location,
+        );
+        return;
+    }
+
+    let mut dimensions = Vec::new();
+    let mut aggregates = Vec::new();
+    for field in &object.fields {
+        if field.name == "id" || field.name == "timestamp" {
+            continue;
+        }
+        let field_location = format!("schema.graphql → {}.{}", object.name, field.name);
+        let (base, wrappers) = unwrap_type(&field.field_type);
+        let Some(aggregate) = field
+            .directives
+            .iter()
+            .find(|d| directive_name(d) == "aggregate")
+        else {
+            let is_ref = entity_names.contains(&base) && !is_list(&wrappers);
+            dimensions.push(AggregationDimension {
+                field: field.name.clone(),
+                column: if is_ref {
+                    format!("{}_id", field.name)
+                } else {
+                    field.name.clone()
+                },
+            });
+            continue;
+        };
+        let func = string_arg(aggregate, "fn").unwrap_or_default();
+        // graph-node v0.42 also takes a String, Bytes or entity reference for
+        // `first`/`last` (schema/input/mod.rs `aggregate_field_types`).
+        let first_last = func == "first" || func == "last";
+        let reference = entity_names.contains(&base);
+        let numeric = ["Int", "Int8", "BigInt", "BigDecimal"].contains(&base.as_str());
+        let picked = first_last && (base == "String" || base == "Bytes" || reference);
+        if !(numeric || picked) || is_list(&wrappers) {
+            report.unknown(
+                format!(
+                    "an aggregate of type {base} (graph-node takes Int, Int8, BigInt or BigDecimal, \
+                     and for first/last also String, Bytes or an entity)"
+                ),
+                field_location.clone(),
+            );
+            continue;
+        }
+        if !AGGREGATE_FUNCTIONS.contains(&func.as_str()) {
+            report.unknown(
+                format!("the aggregate function \"{func}\""),
+                field_location.clone(),
+            );
+            continue;
+        }
+        let arg = string_arg(aggregate, "arg");
+        if func != "count" && arg.is_none() {
+            report.unknown(
+                format!("the {func} aggregate without an arg"),
+                field_location.clone(),
+            );
+            continue;
+        }
+        aggregates.push(Aggregate {
+            column: if reference {
+                format!("{}_id", field.name)
+            } else {
+                field.name.clone()
+            },
+            field: field.name.clone(),
+            func,
+            arg,
+            cumulative: bool_arg(aggregate, "cumulative").unwrap_or(false),
+            kind: if reference {
+                "Reference".to_string()
+            } else {
+                base
+            },
+        });
+    }
+    if aggregates.is_empty() {
+        report.unknown(
+            format!(
+                "the aggregation {} without an @aggregate field",
+                object.name
+            ),
+            location,
+        );
+        return;
+    }
+
+    // One entity per interval, like graph-node's `<aggregation>_<interval>`
+    // tables. Dimensions keep their declared types; the aggregates lose the
+    // directive and keep theirs.
+    for interval in &intervals {
+        let owner = format!("{}_{interval}", object.name);
+        let mut fields = render_fields(
+            &owner,
+            &object.fields,
+            entity_names,
+            enum_names,
+            interfaces,
+            translation,
+            report,
+        );
+        index_timestamp(&mut fields);
+        out.push_str(&format!("type {owner} {{\n{}\n}}\n\n", fields.join("\n")));
+    }
+    translation.aggregations.push(Aggregation {
+        name: object.name.clone(),
+        source,
+        intervals,
+        dimensions,
+        aggregates,
+    });
 }
 
 #[cfg(test)]
@@ -625,11 +1163,11 @@ type Transfer @entity {
                  }\n\n\
                  type Registration {\n  \
                    id: ID!\n  \
-                   domain: Domain!\n\
+                   domain: Domain! @index\n\
                  }\n\n\
                  type Transfer {\n  \
                    id: ID!\n  \
-                   domain: Domain!\n\
+                   domain: Domain! @index\n\
                  }",
                 // The reverse field is what `store.loadRelated` needs and the
                 // manifest never states; only the schema carries it.
@@ -638,6 +1176,8 @@ type Transfer @entity {
                     target: Some("Registration".to_string()),
                     derived_from: Some("domain".to_string()),
                     list: false,
+                    required: false,
+                    nullable_elements: false,
                 }),
             )
         );
@@ -666,6 +1206,12 @@ type Transfer implements DomainEvent @entity {
   txHash: Bytes!
   owner: Bytes!
 }
+
+type Renewal implements DomainEvent @entity {
+  id: ID!
+  domain: Domain!
+  txHash: Bytes!
+}
 "#,
         );
         assert!(report.is_empty(), "{report}");
@@ -673,7 +1219,7 @@ type Transfer implements DomainEvent @entity {
             translation.text.as_str(),
             "interface DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n  \
+               domain: Domain! @index\n  \
                txHash: Bytes!\n\
              }\n\n\
              type Domain {\n  \
@@ -682,10 +1228,225 @@ type Transfer implements DomainEvent @entity {
              }\n\n\
              type Transfer implements DomainEvent {\n  \
                id: ID!\n  \
-               domain: Domain!\n  \
+               domain: Domain! @index\n  \
                txHash: Bytes!\n  \
                owner: Bytes!\n\
+             }\n\n\
+             type Renewal implements DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain! @index\n  \
+               txHash: Bytes!\n\
              }"
+        );
+    }
+
+    // With one implementor, a derived field over the interface is a derived
+    // field over that entity, which envio can answer.
+    #[test]
+    fn derives_a_single_implementor_interface_from_its_implementor() {
+        let (translation, report) = translate_ok(
+            r#"
+interface DomainEvent {
+  id: ID!
+  domain: Domain!
+}
+
+type Domain @entity {
+  id: ID!
+  events: [DomainEvent!]! @derivedFrom(field: "domain")
+}
+
+type Transfer implements DomainEvent @entity {
+  id: ID!
+  domain: Domain!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            translation.text.as_str(),
+            "interface DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain! @index\n\
+             }\n\n\
+             type Domain {\n  \
+               id: ID!\n  \
+               events: [Transfer!]! @derivedFrom(field: \"domain\")\n\
+             }\n\n\
+             type Transfer implements DomainEvent {\n  \
+               id: ID!\n  \
+               domain: Domain! @index\n\
+             }"
+        );
+    }
+
+    // QuickSwap's `Token.whitelist: [String]`: graph-node stores the nulls too;
+    // the runtime refuses a save that has one.
+    #[test]
+    fn stores_a_flat_scalar_list_with_nullable_elements_as_non_null() {
+        let (translation, report) = translate_ok(
+            r#"
+type Token @entity {
+  id: ID!
+  whitelist: [String]
+  amounts: [BigInt]!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        let flags: Vec<(String, bool)> = translation.entity_field_types["Token"]
+            .iter()
+            .map(|(name, field)| (name.clone(), field.nullable_elements))
+            .collect();
+        assert_eq!(
+            (translation.text.as_str(), flags),
+            (
+                "type Token {\n  \
+                   id: ID!\n  \
+                   whitelist: [String!]\n  \
+                   amounts: [BigInt!]!\n\
+                 }",
+                vec![
+                    ("amounts".to_string(), true),
+                    ("id".to_string(), false),
+                    ("whitelist".to_string(), true),
+                ],
+            )
+        );
+    }
+
+    // PancakeSwap and most Uniswap v2 forks: `Transaction.mints: [Mint]!`.
+    #[test]
+    fn stores_an_entity_list_with_nullable_elements_as_ids() {
+        let (translation, report) = translate_ok(
+            r#"
+type Transaction @entity {
+  id: ID!
+  mints: [Mint]!
+  burns: [Burn]
+}
+
+type Mint @entity {
+  id: ID!
+}
+
+type Burn @entity {
+  id: ID!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation.entity_list_fields.get("Transaction").cloned(),
+            ),
+            (
+                "type Transaction {\n  \
+                   id: ID!\n  \
+                   mints: [String!]!\n  \
+                   burns: [String!]\n\
+                 }\n\n\
+                 type Mint {\n  id: ID!\n}\n\n\
+                 type Burn {\n  id: ID!\n}",
+                Some(vec!["mints".to_string(), "burns".to_string()]),
+            )
+        );
+    }
+
+    // CryptoPunks: `NFT` has one implementor, so `Ask.nft: NFT` is a relation to
+    // `Punk`. `Event` has nine, so `Ask.created: Event` holds an event's id, as
+    // graph-node stores it.
+    #[test]
+    fn stores_interface_typed_fields() {
+        let (translation, report) = translate_ok(
+            r#"
+interface NFT {
+  id: ID!
+  owner: Account!
+}
+
+interface Event {
+  id: ID!
+  nft: NFT
+}
+
+type Account @entity {
+  id: Bytes!
+  nftsOwned: [NFT!]! @derivedFrom(field: "owner")
+}
+
+type Punk implements NFT @entity {
+  id: ID!
+  owner: Account!
+  events: [Event!]! @derivedFrom(field: "nft")
+}
+
+type Ask @entity {
+  id: ID!
+  nft: NFT
+  created: Event!
+  history: [Event!]!
+}
+
+type Sale implements Event @entity {
+  id: ID!
+  nft: NFT
+  asks: [Ask!]! @derivedFrom(field: "created")
+}
+
+type Transfer implements Event @entity {
+  id: ID!
+  nft: NFT
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        let ask = translation.entity_field_types.get("Ask").unwrap();
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation.entity_ref_fields.get("Ask").cloned(),
+                ask.get("nft").and_then(|field| field.target.clone()),
+                ask.get("created").and_then(|field| field.target.clone()),
+            ),
+            (
+                "interface NFT {\n  \
+                   id: ID!\n  \
+                   owner: Account! @index\n\
+                 }\n\n\
+                 interface Event {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n\
+                 }\n\n\
+                 type Account {\n  \
+                   id: String!\n  \
+                   nftsOwned: [Punk!]! @derivedFrom(field: \"owner\")\n\
+                 }\n\n\
+                 type Punk implements NFT {\n  \
+                   id: ID!\n  \
+                   owner: Account! @index\n  \
+                   events: [Event!]! @derivedFrom(field: \"nft\")\n\
+                 }\n\n\
+                 type Ask {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n  \
+                   created_id: String! @index\n  \
+                   history: [String!]!\n\
+                 }\n\n\
+                 type Sale implements Event {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n  \
+                   asks: [Ask!]! @derivedFrom(field: \"created_id\")\n\
+                 }\n\n\
+                 type Transfer implements Event {\n  \
+                   id: ID!\n  \
+                   nft: Punk @index\n\
+                 }",
+                Some(vec!["nft".to_string(), "created".to_string()]),
+                Some("Punk".to_string()),
+                Some("Event".to_string()),
+            )
         );
     }
 
@@ -710,14 +1471,9 @@ type Token @entity @regularPolling {
     }
 
     #[test]
-    fn refuses_timeseries_and_unknowns() {
+    fn refuses_unknowns() {
         let (_, report) = translate_ok(
             r#"
-type Stats @entity(timeseries: true) {
-  id: Int8!
-  amount: BigInt!
-}
-
 type Loose {
   id: ID!
 }
@@ -731,11 +1487,130 @@ type Odd @entity {
         let rendered = report.to_string();
         assert_eq!(
             (
-                rendered.contains("doesn't support timeseries and aggregations"),
                 rendered.contains("doesn't know the object type Loose without @entity"),
                 rendered.contains("doesn't know the type NotAType"),
             ),
-            (true, true, true)
+            (true, true)
+        );
+    }
+
+    const TRADES: &str = r#"
+type Token @entity {
+  id: ID!
+}
+
+type Trade @entity(timeseries: true) {
+  id: Int8!
+  timestamp: Timestamp!
+  token: Token!
+  amount: BigDecimal!
+  price: BigDecimal!
+}
+
+type TradeStats @aggregation(intervals: ["hour", "day"], source: "Trade") {
+  id: Int8!
+  timestamp: Timestamp!
+  token: Token!
+  volume: BigDecimal! @aggregate(fn: "sum", arg: "amount")
+  open: BigDecimal! @aggregate(fn: "first", arg: "price")
+  trades: Int8! @aggregate(fn: "count", cumulative: true)
+}
+"#;
+
+    #[test]
+    fn translates_a_timeseries_and_its_aggregation_into_one_entity_per_interval() {
+        let (translation, report) = translate_ok(TRADES);
+        assert!(report.is_empty(), "{report}");
+        let aggregation = translation.aggregations.first().cloned();
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation.timeseries_entities.iter().cloned().collect::<Vec<_>>(),
+                aggregation.as_ref().map(|a| a.intervals.clone()),
+                aggregation.as_ref().map(|a| a
+                    .dimensions
+                    .iter()
+                    .map(|d| d.column.clone())
+                    .collect::<Vec<_>>()),
+                aggregation.as_ref().map(|a| a
+                    .aggregates
+                    .iter()
+                    .map(|g| (g.field.clone(), g.func.clone(), g.arg.clone(), g.cumulative))
+                    .collect::<Vec<_>>()),
+            ),
+            (
+                "type Token {\n  id: ID!\n}\n\n\
+                 type Trade {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
+                   amount: BigDecimal!\n  price: BigDecimal!\n}\n\n\
+                 type TradeStats_hour {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
+                   volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
+                 type TradeStats_day {\n  id: BigInt!\n  timestamp: Timestamp! @index\n  token: Token! @index\n  \
+                   volume: BigDecimal!\n  open: BigDecimal!\n  trades: BigInt!\n}\n\n\
+                 type EnvioSubgraphRollup {\n  id: ID!\n  aggregation: String! @index\n  payload: String!\n}",
+                vec!["Trade".to_string()],
+                Some(vec!["hour".to_string(), "day".to_string()]),
+                Some(vec!["token_id".to_string()]),
+                Some(vec![
+                    ("volume".to_string(), "sum".to_string(), Some("amount".to_string()), false),
+                    ("open".to_string(), "first".to_string(), Some("price".to_string()), false),
+                    ("trades".to_string(), "count".to_string(), None, true),
+                ]),
+            )
+        );
+    }
+
+    #[test]
+    fn leaves_a_derived_list_of_aggregation_rows_out_of_the_entity() {
+        let schema = TRADES.replace(
+            "type Token @entity {\n  id: ID!\n}",
+            "type Token @entity {\n  id: ID!\n  stats: [TradeStats!]! @derivedFrom(field: \"token\")\n}",
+        );
+        let (translation, report) = translate_ok(&schema);
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            (
+                translation
+                    .text
+                    .starts_with("type Token {\n  id: ID!\n}\n\n"),
+                translation.aggregation_derived_fields.get("Token").cloned(),
+            ),
+            (
+                true,
+                Some(vec![AggregationDerivedField {
+                    field: "stats".to_string(),
+                    aggregation: "TradeStats".to_string(),
+                    via: "token".to_string(),
+                }])
+            )
+        );
+    }
+
+    #[test]
+    fn refuses_malformed_timeseries_and_aggregations() {
+        let (_, report) = translate_ok(
+            r#"
+type NoTime @entity(timeseries: true) {
+  id: Int8!
+}
+
+type Plain @entity {
+  id: ID!
+}
+
+type Bad @aggregation(intervals: ["week"], source: "Plain") {
+  id: Int8!
+  timestamp: Timestamp!
+  n: Int! @aggregate(fn: "median", arg: "x")
+}
+"#,
+        );
+        let rendered = report.to_string();
+        assert_eq!(
+            (
+                rendered.contains("without a Timestamp `timestamp` field"),
+                rendered.contains("the aggregation interval \"week\""),
+            ),
+            (true, true)
         );
     }
 

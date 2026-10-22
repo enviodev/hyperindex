@@ -38,21 +38,6 @@ let initRun = (~isolated, ~announceResume=true) =>
     ~announceResume,
   )
 
-let logLines = async path =>
-  switch await NodeJs.Fs.Promises.readFile(~filepath=NodeJs.Path.resolve([path]), ~encoding=Utf8) {
-  | contents =>
-    contents
-    ->String.trim
-    ->String.split("\n")
-    ->Array.filterMap(line =>
-      switch line->JSON.parseOrThrow->JSON.Decode.object {
-      | Some(fields) => fields->Dict.get("msg")->Option.flatMap(JSON.Decode.string)
-      | None => None
-      }
-    )
-  | exception _ => []
-  }
-
 let resumeLines = async (~announceResume) => {
   let path = `${NodeJs.Process.cwd()}/lib/envio-worker-resume-${Date.now()->Float.toString}-${announceResume
       ? "announced"
@@ -70,7 +55,7 @@ let resumeLines = async (~announceResume) => {
   Logging.info("done")
 
   let rec until = async deadline =>
-    switch await logLines(path) {
+    switch await LogFile.messages(path) {
     | lines if lines->Array.includes("done") || Date.now() > deadline => lines
     | _ =>
       await Utils.delay(50)

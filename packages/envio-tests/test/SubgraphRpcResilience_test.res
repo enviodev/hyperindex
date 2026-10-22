@@ -2,8 +2,10 @@
 // error rather than retrying the batch. So a contract call rides out a rate
 // limit, a 5xx and a request that never answers, as graph-node does, and only
 // a deterministic answer — a value or a revert — reaches the mapping.
+let port = FreePort.pick()
+
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8605")]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 1.2.0
 schema:
@@ -101,6 +103,28 @@ beforeAll(async () => {
           }),
         );
       }
+      // blastapi's, with a code of its own and no "rate limit" in the words.
+      if (next === "capacity") {
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32097, message: "Your app has exceeded its compute units per second capacity" },
+          }),
+        );
+      }
+      // A node's own failure, sent as a JSON-RPC error over a 200: dRPC and
+      // Sei's public endpoint answer "Internal error" now and then, and the
+      // same call answers on the next try.
+      if (next === "internal") {
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32603, message: "Internal error" },
+          }),
+        );
+      }
       if (next === "unavailable") {
         res.statusCode = 503;
         return res.end("upstream unavailable");
@@ -108,7 +132,7 @@ beforeAll(async () => {
       res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: word(n * 10n) }));
     });
   });
-  await new Promise<void>((resolve) => server.listen(8605, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
 });
 
 afterAll(async () => {
@@ -121,16 +145,20 @@ afterAll(async () => {
 const ping = (nonce: bigint) => ({ contract: "Token", event: "Ping", params: { nonce } });
 
 describe("a contract call over a flaky RPC", () => {
-  it("rides out a rate limit and a 5xx", async (t) => {
+  it("rides out a rate limit, a 5xx and an internal error", async (t) => {
     plans.set(1n, Array(9).fill("rate-limit"));
     plans.set(2n, Array(9).fill("unavailable"));
+    plans.set(4n, Array(3).fill("capacity"));
+    plans.set(5n, Array(3).fill("internal"));
     const indexer = createTestIndexer();
 
-    await indexer.process({ chains: { 1: { simulate: [ping(1n), ping(2n)] } } });
+    await indexer.process({ chains: { 1: { simulate: [ping(1n), ping(2n), ping(4n), ping(5n)] } } });
 
     t.expect((await indexer.Probe.getAll()).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
       { id: "1", value: 10n },
       { id: "2", value: 20n },
+      { id: "4", value: 40n },
+      { id: "5", value: 50n },
     ]);
   });
 

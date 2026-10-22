@@ -837,6 +837,11 @@ module OptimizedPartitions = {
   }
 }
 
+// Subgraph mode: where a dynamically registered address was registered and in
+// which round of its block (1 for a data source created by the block's own
+// triggers, 2 for one created by those, and so on).
+type creationBlock = {block: int, round: int}
+
 type t = {
   optimizedPartitions: OptimizedPartitions.t,
   startBlock: int,
@@ -869,7 +874,12 @@ type t = {
   // registered in, keyed by contract and lowercase address, until fetching
   // passes it. Its events in that block run after the rest of the block, as
   // graph-node runs a new data source's creation-block triggers.
-  creationBlocks: option<dict<int>>,
+  creationBlocks: option<dict<creationBlock>>,
+  // Set when an onBlock registration has a contractRegister: the last block
+  // whose block-handler register passes have run and whose registrations are
+  // applied. No block item past it is generated, so none is processed before
+  // the data sources its block created are fetched.
+  blockRegisterThrough: option<int>,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -959,6 +969,63 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
   }
 }
 
+// Within a block, graph-node runs a subgraph's triggers in this order: logs and
+// calls by transaction — a transaction's logs, then its calls in trace order —
+// then the block triggers of `filter: call` handlers, one per call, then the
+// block handlers. A call item is told apart by its rank (see
+// `Internal.getItemCallRank`), and only a run that has one pays for this
+// comparison. Creation-block items (rank 4) keep their place after everything
+// else, ordered among themselves by the same transaction rule. A `once`
+// handler's item (rank -1) comes before all of them.
+let blockOrderRank = (item: Internal.item) =>
+  if item->Internal.getItemRunsAfterBlock {
+    3 + item->Internal.getItemCreationRound->Option.getOr(1)
+  } else if item->Internal.getItemKind !== 0 {
+    item->Internal.itemRunsFirst ? -1 : 3
+  } else if item->Internal.getItemCallRank === Some(2) {
+    2
+  } else {
+    0
+  }
+
+let compareWithCalls = (a: Internal.item, b: Internal.item): int => {
+  let ra = blockOrderRank(a)
+  let rb = blockOrderRank(b)
+  if ra !== rb {
+    ra < rb ? -1 : 1
+  } else if ra === 3 || ra === -1 {
+    // Block handlers: as before.
+    let la = a->Internal.getItemLogIndex
+    let lb = b->Internal.getItemLogIndex
+    if la != lb {
+      la < lb ? -1 : 1
+    } else {
+      compareTiebreak(a, b)
+    }
+  } else {
+    let ta = a->Internal.getItemTransactionIndex
+    let tb = b->Internal.getItemTransactionIndex
+    if ta != tb {
+      ta < tb ? -1 : 1
+    } else {
+      // A transaction's logs precede its calls.
+      let ca = a->Internal.getItemCallRank->Option.isSome ? 1 : 0
+      let cb = b->Internal.getItemCallRank->Option.isSome ? 1 : 0
+      if ca !== cb {
+        ca < cb ? -1 : 1
+      } else {
+        let la = a->Internal.getItemLogIndex
+        let lb = b->Internal.getItemLogIndex
+        if la != lb {
+          la < lb ? -1 : 1
+        } else {
+          compareTiebreak(a, b)
+        }
+      }
+    }
+  }
+}
+
 // Total order on buffer items: block, then item kind, then the ecosystem's
 // within-block order, then registration index. Returns a plain int (-1/0/1)
 // with explicit field comparisons so it can be called directly from the
@@ -970,15 +1037,32 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
 // block's handlers by construction. A sentinel log index for block items
 // would put the same guarantee at the mercy of how large an ecosystem's key
 // grows — which is how SVM, keyed by transaction index, came to run slot
-// handlers ahead of most of a slot's instructions.
+// handlers ahead of most of a slot's instructions. A subgraph's `once` handler
+// is the exception: it runs ahead of its block's events.
 let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   let ba = a->Internal.getItemBlockNumber
   let bb = b->Internal.getItemBlockNumber
   if ba != bb {
     ba < bb ? -1 : 1
+  } else if Internal.callOrderingActive.contents {
+    compareWithCalls(a, b)
   } else {
-    let ka = a->Internal.getItemRunsAfterBlock ? 2 : a->Internal.getItemKind
-    let kb = b->Internal.getItemRunsAfterBlock ? 2 : b->Internal.getItemKind
+    let ka = switch a->Internal.getItemCreationRound {
+    | Some(round) => 1 + round
+    | None =>
+      switch a->Internal.getItemKind {
+      | 0 => 0
+      | kind => a->Internal.itemRunsFirst ? -1 : kind
+      }
+    }
+    let kb = switch b->Internal.getItemCreationRound {
+    | Some(round) => 1 + round
+    | None =>
+      switch b->Internal.getItemKind {
+      | 0 => 0
+      | kind => b->Internal.itemRunsFirst ? -1 : kind
+      }
+    }
     if ka !== kb {
       ka < kb ? -1 : 1
     } else {
@@ -1000,6 +1084,7 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
 let isSameLog = (a: Internal.item, b: Internal.item): bool =>
   a->Internal.getItemKind === 0 &&
   b->Internal.getItemKind === 0 &&
+  a->Internal.getItemCallRank === b->Internal.getItemCallRank &&
   a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
   a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
   switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
@@ -1166,6 +1251,10 @@ let updateInternal = (
       },
       knownHeight,
     )
+    let maxBlockNumber = switch fetchState.blockRegisterThrough {
+    | Some(through) => Pervasives.min(maxBlockNumber, through)
+    | None => maxBlockNumber
+    }
     appendOnBlockItems(
       ~mutItems=blockItems,
       ~onBlockRegistrations,
@@ -1195,6 +1284,7 @@ let updateInternal = (
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterAddressThreshold: fetchState.clientFilterAddressThreshold,
     creationBlocks: fetchState.creationBlocks,
+    blockRegisterThrough: fetchState.blockRegisterThrough,
   }
 
   updatedFetchState
@@ -1725,10 +1815,10 @@ let creationBlockKey = (~contractName, ~address: Address.t) =>
 // Marks the response's events that were logged in the block their address was
 // registered in, once the registrations fetching has already passed are
 // dropped: those can't receive another item.
-let markCreationBlockEvents = (creationBlocks: dict<int>, ~newItems, ~fetchedThrough) => {
+let markCreationBlockEvents = (creationBlocks: dict<creationBlock>, ~newItems, ~fetchedThrough) => {
   creationBlocks
   ->Dict.toArray
-  ->Array.forEach(((key, block)) =>
+  ->Array.forEach(((key, {block})) =>
     if block < fetchedThrough {
       creationBlocks->Utils.Dict.deleteInPlace(key)
     }
@@ -1740,12 +1830,32 @@ let markCreationBlockEvents = (creationBlocks: dict<int>, ~newItems, ~fetchedThr
         ~contractName=eventItem.onEventRegistration.eventConfig.contractName,
         ~address=eventItem.payload->Internal.getPayloadSrcAddress,
       )
-      if creationBlocks->Utils.Dict.dangerouslyGetNonOption(key) === Some(eventItem.blockNumber) {
-        item->Internal.markItemRunsAfterBlock(true)
+      switch creationBlocks->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some({block, round}) if block === eventItem.blockNumber =>
+        item->Internal.markItemCreationRound(round)
+      | _ => ()
       }
     }
   )
 }
+
+// The round a registration made by `item`'s handler belongs to: one past the
+// round `item` itself runs in, which is its address's registration round when
+// the event was logged in the block that address was registered in.
+let creationRoundOfRegistration = (fetchState: t, ~item: Internal.item) =>
+  switch fetchState.creationBlocks {
+  | None => 1
+  | Some(creationBlocks) =>
+    let eventItem = item->Internal.castUnsafeEventItem
+    let key = creationBlockKey(
+      ~contractName=eventItem.onEventRegistration.eventConfig.contractName,
+      ~address=eventItem.payload->Internal.getPayloadSrcAddress,
+    )
+    switch creationBlocks->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some({block, round}) if block === eventItem.blockNumber => round + 1
+    | _ => 1
+    }
+  }
 
 let registerDynamicContracts = (
   fetchState: t,
@@ -1788,7 +1898,10 @@ let registerDynamicContracts = (
       | Some(creationBlocks) =>
         creationBlocks->Dict.set(
           creationBlockKey(~contractName=registration.contractName, ~address=registration.address),
-          registration.registrationBlock,
+          {
+            block: registration.registrationBlock,
+            round: registration.creationRound->Option.getOr(1),
+          },
         )
       | None => ()
       }
@@ -1986,6 +2099,65 @@ let handleQueryResult = (fetchState: t, ~query: query, ~latestFetchedBlock: int,
     },
   )
 }
+
+// The items of the block handlers' register passes for the blocks after
+// `after`, through `through`, at most about `limit` of them in whole blocks;
+// and the last block they cover. `nextBlockRegisterItems` starts after the
+// last block passed.
+let capAtEndBlock = (fetchState: t, block) =>
+  switch fetchState.endBlock {
+  | Some(endBlock) => Pervasives.min(block, endBlock)
+  | None => block
+  }
+
+let canAdvanceBlockRegisters = (fetchState: t, ~through) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(after) => fetchState->capAtEndBlock(through) > after
+  | None => false
+  }
+
+let blockRegisterItemsAfter = (fetchState: t, ~after, ~through, ~limit) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(_) if fetchState->capAtEndBlock(through) > after =>
+    let through = fetchState->capAtEndBlock(through)
+    let items = []
+    let covered = appendOnBlockItems(
+      ~mutItems=items,
+      ~onBlockRegistrations=fetchState.onBlockRegistrations->Array.filter((
+        r: Internal.onBlockRegistration,
+      ) => r.contractRegister !== None),
+      ~indexerStartBlock=fetchState.startBlock,
+      ~fromBlock=after,
+      ~maxBlockNumber=through,
+      ~maxOnBlockBufferSize=limit,
+    )
+    Some((items, covered))
+  | _ => None
+  }
+
+let nextBlockRegisterItems = (fetchState: t, ~through, ~limit) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(after) => fetchState->blockRegisterItemsAfter(~after, ~through, ~limit)
+  | None => None
+  }
+
+let setBlockRegisterThrough = (fetchState: t, ~through) =>
+  switch fetchState.blockRegisterThrough {
+  | Some(current) if through > current =>
+    {...fetchState, blockRegisterThrough: Some(through)}->updateInternal
+  | _ => fetchState
+  }
+
+// How far block-handler register passes can run with no response to run them
+// with: through the block every partition has fetched, or the head when there
+// is no partition, and never past the chain's end block.
+let blockRegisterFrontier = (fetchState: t) =>
+  fetchState->capAtEndBlock(
+    switch fetchState.optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+    | Some(block) => Pervasives.min(block, fetchState.knownHeight)
+    | None => fetchState.knownHeight
+    },
+  )
 
 type nextQuery =
   | WaitingForNewBlock
@@ -2831,6 +3003,14 @@ let make = (
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
   let buffer = []
+  // Every block up to the progress block was processed, so its register passes
+  // ran and what they registered is in the seeded rows.
+  let blockRegisterThrough =
+    onBlockRegistrations->Array.some((r: Internal.onBlockRegistration) =>
+      r.contractRegister !== None
+    )
+      ? Some(progressBlockNumber)
+      : None
   let latestOnBlockBlockNumber = switch onBlockRegistrations {
   // As updateInternal keeps it: with nothing to generate per block the pointer
   // is the head cap on the buffer frontier, and left at the progress block it
@@ -2842,6 +3022,10 @@ let make = (
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
     | Some(latestFullyFetchedBlock) => Pervasives.min(latestFullyFetchedBlock, knownHeight)
+    }
+    let maxBlockNumber = switch blockRegisterThrough {
+    | Some(through) => Pervasives.min(maxBlockNumber, through)
+    | None => maxBlockNumber
     }
     appendOnBlockItems(
       ~mutItems=buffer,
@@ -2869,6 +3053,7 @@ let make = (
     firstEventBlock,
     clientFilterAddressThreshold,
     creationBlocks: deferCreationBlockEvents ? Some(Dict.make()) : None,
+    blockRegisterThrough,
   }
 
   fetchState
@@ -3019,6 +3204,11 @@ let rollback = (
     latestOnBlockBlockNumber: Pervasives.min(
       fetchState.latestOnBlockBlockNumber,
       targetBlockNumber,
+    ),
+    // The passes past the target run again on the refetched blocks: what they
+    // registered was pruned from the store above.
+    blockRegisterThrough: fetchState.blockRegisterThrough->Option.map(through =>
+      Pervasives.min(through, targetBlockNumber)
     ),
   }->updateInternal(
     ~optimizedPartitions,

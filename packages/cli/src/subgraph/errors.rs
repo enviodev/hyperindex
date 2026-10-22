@@ -4,6 +4,8 @@
 
 use std::fmt::{self, Display};
 
+use super::RPC_ENV_VAR;
+
 const ISSUES_URL: &str = "https://github.com/enviodev/hyperindex/issues";
 
 /// Subgraph mode ships under its own npm dist-tag (see `publish.yml`), so
@@ -17,6 +19,22 @@ pub enum Finding {
     /// Something we don't recognise at all: a newer subgraph feature, a newer
     /// graph-ts API, or a typo.
     Unknown { thing: String, location: String },
+    /// A kind of subgraph whose data doesn't come from mappings over chain
+    /// data, so no release of a mapping runtime can index it. `why` says where
+    /// its data comes from instead.
+    Unindexable {
+        what: String,
+        why: String,
+        location: String,
+    },
+    /// A `network:` no table names. graph-node takes a network's chain from
+    /// the provider configured for it, so the RPC endpoint is the answer;
+    /// `rpc_failure` is why asking it didn't work, when it was asked.
+    UnknownNetwork {
+        network: String,
+        location: String,
+        rpc_failure: Option<String>,
+    },
 }
 
 impl Finding {
@@ -58,14 +76,67 @@ impl Display for Finding {
                  If you're up to date and this is a real subgraph feature, please open an\n\
                  issue so we can add it: {ISSUES_URL}"
             ),
+            Finding::Unindexable {
+                what,
+                why,
+                location,
+            } => write!(
+                f,
+                "Envio Subgraph can't index {what}.\n  \
+                 Found in {location}.\n\
+                 {why}\n\
+                 If you need this, please open an issue so we can look at your use case:\n  \
+                 {ISSUES_URL}"
+            ),
+            Finding::UnknownNetwork {
+                network,
+                location,
+                rpc_failure: None,
+            } => write!(
+                f,
+                "Envio Subgraph doesn't know the network \"{network}\".\n  \
+                 Found in {location}.\n\
+                 graph-node indexes a network on whatever chain the RPC endpoint configured for it \
+                 serves; set that endpoint and Envio Subgraph asks it which chain it is:\n  \
+                 {RPC_ENV_VAR}=https://..."
+            ),
+            Finding::UnknownNetwork {
+                network,
+                location,
+                rpc_failure: Some(failure),
+            } => write!(
+                f,
+                "Envio Subgraph doesn't know the network \"{network}\".\n  \
+                 Found in {location}.\n\
+                 Envio Subgraph {failure}. Check that {RPC_ENV_VAR} is up and serves this \
+                 subgraph's chain."
+            ),
         }
     }
+}
+
+/// The chain id in envio's "Failed to automatically find HyperSync endpoint for
+/// the chain N" error, which says to edit a config.yaml a subgraph doesn't have.
+fn hypersync_missing_chain(message: &str) -> Option<u64> {
+    let rest = message
+        .split("find HyperSync endpoint for the chain ")
+        .nth(1)?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
 }
 
 /// An error from envio's own schema and config checks, run over what the
 /// translation produced. Their messages speak about envio's config, so they are
 /// framed as a translation gap: something the subgraph didn't do wrong.
 pub fn envio_rejected_translation(error: anyhow::Error) -> anyhow::Error {
+    if let Some(chain_id) = hypersync_missing_chain(&format!("{error:#}")) {
+        return anyhow::anyhow!(
+            "HyperSync doesn't serve chain {chain_id}, so Envio Subgraph has to index it over RPC.\n  \
+             Set an RPC endpoint for chain {chain_id} in .env or the environment:\n  \
+             {RPC_ENV_VAR}=https://...\n\
+             It is one endpoint for the whole subgraph, so it suits a subgraph on this one chain."
+        );
+    }
     anyhow::anyhow!(
         "Envio Subgraph translated this subgraph, but envio can't index the result:\n  \
          {error:#}\n\
@@ -101,6 +172,19 @@ impl Report {
 
     pub fn unknown(&mut self, thing: impl Into<String>, location: impl Into<String>) {
         self.push(Finding::unknown(thing, location));
+    }
+
+    pub fn unindexable(
+        &mut self,
+        what: impl Into<String>,
+        why: impl Into<String>,
+        location: impl Into<String>,
+    ) {
+        self.push(Finding::Unindexable {
+            what: what.into(),
+            why: why.into(),
+            location: location.into(),
+        });
     }
 
     pub fn is_empty(&self) -> bool {

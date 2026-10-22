@@ -113,7 +113,7 @@ describe("a mapping that needs an RPC with none configured", () => {
     t.expect(
       translate(
         ~mapping=`  Token.bind(event.address).try_name();`,
-        ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", "http://127.0.0.1:8599")]),
+        ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${FreePort.pick()}`)]),
       ),
     ).toBe("the translation to fail, but it succeeded")
   })

@@ -717,6 +717,12 @@ type onBlockArgs = {
   context: handlerContext,
 }
 
+type onBlockContractRegisterArgs = {
+  slot?: int,
+  block?: blockEvent,
+  context: contractRegisterContext,
+}
+
 type onBlockRegistration = {
   // When there are multiple onBlock handlers per chain,
   // we want to use the order they are defined for sorting
@@ -727,6 +733,14 @@ type onBlockRegistration = {
   endBlock: option<int>,
   interval: int,
   handler: onBlockArgs => promise<unit>,
+  // Subgraph mode only: a `once` block handler, whose trigger graph-node runs
+  // ahead of everything else in its block (`EthereumBlockTriggerType::Start`).
+  runsFirst?: bool,
+  // Subgraph mode only: the register pass of a block handler that can create a
+  // data source. It runs for each of the handler's blocks at fetch time, and no
+  // block item is processed until every pass up to its block has run and what
+  // they registered is fetched, as an event's contractRegister.
+  contractRegister?: onBlockContractRegisterArgs => promise<unit>,
 }
 
 @tag("kind")
@@ -764,11 +778,53 @@ external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
 external getItemKind: item => int = "kind"
 // Set only in subgraph mode, on an event of an address registered in the very
 // block it was logged in: graph-node runs a new data source's creation-block
-// events after everything else in that block. Absent reads as false.
+// events after everything else in that block. The value is the round, as
+// graph-node counts them: 1 for a data source a block's own triggers created,
+// 2 for one that round-1 handlers created, and so on. Absent reads as false.
 @get
 external getItemRunsAfterBlock: item => bool = "runsAfterBlock"
+@get
+external getItemCreationRound: item => option<int> = "runsAfterBlock"
 @set
-external markItemRunsAfterBlock: (item, bool) => unit = "runsAfterBlock"
+external markItemCreationRound: (item, int) => unit = "runsAfterBlock"
+
+let itemRunsFirst = (item: item) =>
+  switch item {
+  | Block({onBlockRegistration: {runsFirst: true}}) => true
+  | _ => false
+  }
+
+// Subgraph mode only. A call trigger travels through fetch and batching as an
+// event item (see `subgraph/calls-source.ts`), and graph-node orders it by its
+// transaction among the logs, so its item carries a rank: 1 for a call
+// handler's, 2 for the `filter: call` block handler's. Absent on every log.
+@get
+external getItemCallRank: item => option<int> = "callRank"
+@set
+external setItemCallRank: (item, int) => unit = "callRank"
+@get
+external getItemTransactionIndex: item => int = "transactionIndex"
+
+// Flips on when the first call item is built, so a run without call triggers
+// compares items exactly as before.
+let callOrderingActive = ref(false)
+
+// The call trigger an event of this name is, if it is one: the subgraph
+// translator names them `__envio_call_<selector>_<function>`, and the block
+// handler's `__envio_call_any`. No log carries either name.
+let callRankOfEventName = (name: string): option<int> =>
+  if name->String.startsWith("__envio_call_any") {
+    Some(2)
+  } else if name->String.startsWith("__envio_call_") {
+    Some(1)
+  } else {
+    None
+  }
+
+let markItemCall = (item, ~rank) => {
+  item->setItemCallRank(rank)
+  callOrderingActive := true
+}
 
 let getItemChainId = item =>
   switch item {

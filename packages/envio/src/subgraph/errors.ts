@@ -7,9 +7,9 @@ const ISSUES_URL = "https://github.com/enviodev/hyperindex/issues";
 const UPGRADE_COMMAND = "pnpm add -D envio@subgraph";
 
 /** A feature we recognise and deliberately don't implement. */
-export function unsupported(feature: string, location: string): Error {
+export function unsupported(feature: string, location: string, why?: string): Error {
   return new Error(
-    `Envio Subgraph doesn't support ${feature} yet.\n` +
+    `Envio Subgraph doesn't support ${feature} yet${why ? `: ${why}` : ""}.\n` +
       `  Found in ${location}.\n` +
       `First, make sure you're on the newest Envio Subgraph release — support may have landed:\n` +
       `  ${UPGRADE_COMMAND}\n` +
@@ -80,17 +80,6 @@ export function strictNamespace<T extends object>(name: string, target: T): T {
         return Reflect.get(target, prop, receiver);
       }
       throw unknown(`the graph-ts API ${name}.${String(prop)}`, `a mapping handler`);
-    },
-  });
-}
-
-/** A known-but-refused field: enumerable, so a plain throwing getter is enough. */
-export function refusedGetter(object: object, prop: string, feature: string, location: string) {
-  Object.defineProperty(object, prop, {
-    enumerable: true,
-    configurable: true,
-    get() {
-      throw unsupported(feature, location);
     },
   });
 }

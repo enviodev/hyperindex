@@ -13,7 +13,7 @@ let transferAbi = `[{"type":"event","name":"Transfer","anonymous":false,"inputs"
 // The ABI travels with every case: without it translation fails on the ABI
 // rather than on what the case is about, and a case expecting acceptance would
 // never see it.
-let translate = (~manifest, ~schema) =>
+let translate = (~manifest, ~schema, ~extraAbi=?) =>
   try {
     InternalTestIndexer.fromSubgraph(
       ~manifest=manifest->String.replace(
@@ -21,7 +21,15 @@ let translate = (~manifest, ~schema) =>
         "      abis:\n        - name: Token\n          file: ./abis/Token.json",
       ),
       ~schema,
-      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+      ~files=Dict.fromArray([
+        (
+          "./abis/Token.json",
+          switch extraAbi {
+          | Some(entry) => transferAbi->String.replace("[{", "[" ++ entry ++ ",{")
+          | None => transferAbi
+          },
+        ),
+      ]),
     )->ignore
     accepted
   } catch {
@@ -71,7 +79,9 @@ let expectFindingHelper = (message, t, ~headline, ~location) =>
   ).toEqual((true, true))
 
 describe("subgraph translation: unsupported features", () => {
-  it("refuses call handlers", t => {
+  // The manifest's function has to be one the contract's ABI declares, as
+  // graph-node's validation requires of a call handler.
+  it("refuses a call handler whose function the ABI lacks", t => {
     translate(
       ~schema=baseSchema,
       ~manifest=manifestWith(`      callHandlers:
@@ -79,44 +89,30 @@ describe("subgraph translation: unsupported features", () => {
           handler: handleApprove`),
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support call handlers yet.",
+      ~headline=`Envio Subgraph doesn't know a function "approve(address,uint256)" in the ABI.`,
       ~location=`data source "Token" → callHandlers → "handleApprove"`,
     )
   })
 
-  it("does not run when events and call handlers are on the same data source", t => {
+  it("refuses a call handler on a data source without an address, as graph-node does", t => {
     translate(
       ~schema=baseSchema,
       ~manifest=manifestWith(
         `${plainEventHandler}
       callHandlers:
-        - function: approve(address,uint256)
-          handler: handleApprove`,
-      ),
+        - function: transfer(address,uint256)
+          handler: handleTransferCall`,
+      )->String.replace("      address: \"0x1111111111111111111111111111111111111111\"\n", ""),
+      ~extraAbi=`{"type":"function","name":"transfer","stateMutability":"nonpayable","inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"outputs":[{"name":"","type":"bool"}]}`,
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support call handlers yet.",
-      ~location=`data source "Token" → callHandlers → "handleApprove"`,
+      ~headline="Envio Subgraph doesn't know a call handler on a data source without `source.address`, which graph-node refuses as well.",
+      ~location=`data source "Token" → callHandlers`,
     )
   })
 
-  it("refuses a call-filtered block handler", t => {
-    translate(
-      ~schema=baseSchema,
-      ~manifest=manifestWith(`      blockHandlers:
-        - handler: handleCall
-          filter:
-            kind: call`),
-    )->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support block handlers with `filter: call` yet.",
-      ~location=`data source "Token" → blockHandlers → "handleCall"`,
-    )
-  })
-
-  // graph-node runs one per created instance; registered for the chain, it
-  // would run on every block whether or not any instance exists.
-  it("refuses a block handler on a template", t => {
+  // The trace source follows static addresses, not every instance's.
+  it("refuses a call-filtered block handler on a template", t => {
     let manifest =
       manifestWith(plainEventHandler) ++ `templates:
   - kind: ethereum/contract
@@ -132,25 +128,27 @@ describe("subgraph translation: unsupported features", () => {
       abis: []
       blockHandlers:
         - handler: handlePoolBlock
+          filter:
+            kind: call
       file: ./src/pool.ts
 `
     translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support block handlers on templates yet.",
+      ~headline="Envio Subgraph doesn't support call-filtered block handlers on templates yet.",
       ~location=`data source "Pool" → blockHandlers → "handlePoolBlock"`,
     )
   })
 
-  it("refuses grafting", t => {
+  it("refuses an unknown field in a graft block", t => {
     let manifest =
       manifestWith(plainEventHandler)->String.replace(
         "dataSources:",
-        "graft:\n  base: QmBase\n  block: 100\ndataSources:",
+        "graft:\n  base: QmBase\n  block: 100\n  extra: 1\ndataSources:",
       )
     translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support grafting yet.",
-      ~location="graft",
+      ~headline=`Envio Subgraph doesn't know the manifest field "extra".`,
+      ~location="graft.extra",
     )
   })
 
@@ -167,14 +165,140 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
-  it("refuses subgraph composition", t => {
+  // graph-node feeds a `kind: subgraph` data source the immutable entities
+  // another deployment writes (graph/src/data_source/subgraph.rs), and that
+  // deployment is published as compiled WASM, which the shim can't run.
+  it("refuses subgraph composition, naming the source deployment", t => {
+    let manifest = `
+specVersion: 1.3.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: subgraph
+    name: Transfers
+    network: mainnet
+    source:
+      address: QmSourceDeployment
+      startBlock: 0
+    mapping:
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      file: ./src/mapping.ts
+      entities: []
+      handlers:
+        - entity: Transfer
+          handler: handleTransfer
+`
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index subgraph composition (\`kind: subgraph\`).
+  Found in data source "Transfers" → kind.
+graph-node feeds this data source the entities deployment QmSourceDeployment writes. That deployment is published as compiled WASM, which Envio Subgraph can't run, and envio doesn't read another indexer's store. Index the source subgraph's contracts in this subgraph instead.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
+  })
+
+  // A substreams-powered subgraph's entities come out of a Substreams
+  // package, which graph-node read from a Substreams provider until v0.42
+  // removed Substreams support (NEWS.md).
+  it("refuses a substreams-powered subgraph, naming its package", t => {
+    let manifest = `
+specVersion: 0.0.4
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: substreams
+    name: substream_test
+    network: mainnet
+    source:
+      package:
+        moduleName: graph_out
+        file: substreams-test-v1.0.1.spkg
+    mapping:
+      kind: substreams/graph-entities
+      apiVersion: 0.0.5
+`
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index a substreams-powered subgraph (\`kind: substreams\`).
+  Found in data source "substream_test" → kind.
+Its entities come from the module graph_out of the Substreams package substreams-test-v1.0.1.spkg, which graph-node read from a Substreams provider until v0.42 removed Substreams support. Envio Subgraph runs AssemblyScript mappings over chain data and can't run a Substreams module.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
+  })
+
+  // graph-node's SPEC_VERSION_1_5_0 enables Amp data sources, whose tables
+  // are SQL over an Amp dataset (graph/src/amp/manifest/data_source).
+  it("refuses an Amp data source, naming its dataset", t => {
+    let manifest = `
+specVersion: 1.5.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - name: GRT
+    kind: amp
+    network: ethereum-mainnet
+    source:
+      address: "0xc944E90C64B2c07662A292be6244BDf05Cda44a7"
+      dataset: edgeandnode/ethereum_mainnet
+      tables:
+        - logs
+      startBlock: 11446769
+    transformer:
+      apiVersion: 0.0.1
+      tables:
+        - name: Token
+          file: Token.sql
+`
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index an Amp data source (\`kind: amp\`).
+  Found in data source "GRT" → kind.
+Its tables are SQL queries over the Amp dataset edgeandnode/ethereum_mainnet, which only an Amp server answers. Envio Subgraph runs AssemblyScript mappings over chain data.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
+  })
+
+  it("accepts specVersion 1.5.0 on an ethereum data source", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)->String.replace(
+          "specVersion: 0.0.5",
+          "specVersion: 1.5.0",
+        ),
+      ),
+    ).toEqual(accepted)
+  })
+
+  // graph-node's ethereum UnresolvedMapping keeps `kind` and `language` as
+  // free strings and never reads them (chain/ethereum/src/data_source.rs), and
+  // graph-cli's manifest schema types them `String`: rethink-finance writes
+  // `kind: ethereum/call`, an autonolas subgraph `language:
+  // wassm/assemblyscript`, and both deploy.
+  it("accepts any mapping kind and language, which graph-node never reads", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)
+        ->String.replace("kind: ethereum/events", "kind: ethereum/call")
+        ->String.replace("language: wasm/assemblyscript", "language: wassm/assemblyscript"),
+      ),
+    ).toEqual(accepted)
+  })
+
+  it("refuses a NEAR subgraph as one it can't index", t => {
     let manifest =
-      manifestWith(plainEventHandler)->String.replace("kind: ethereum/contract", "kind: subgraph")
-    translate(~schema=baseSchema, ~manifest)->expectFindingHelper(
-      t,
-      ~headline="Envio Subgraph doesn't support subgraph composition yet.",
-      ~location=`data source "Token" → kind`,
-    )
+      manifestWith(plainEventHandler)
+      ->String.replace("kind: ethereum/contract", "kind: near")
+      ->String.replace("network: mainnet", "network: near-mainnet")
+    t.expect(
+      translate(~schema=baseSchema, ~manifest),
+    ).toEqual(`Envio Subgraph can't index a NEAR subgraph (\`kind: near\`).
+  Found in data source "Token" → kind.
+Envio Subgraph runs subgraphs on EVM chains, whose blocks and logs it reads; NEAR's aren't among them.
+If you need this, please open an issue so we can look at your use case:
+  https://github.com/enviodev/hyperindex/issues`)
   })
 
   it("accepts a topic filter on an address", t => {
@@ -233,7 +357,7 @@ type Token @entity {
 `,
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support lists whose elements can be null, like [String] yet.",
+      ~headline="Envio Subgraph doesn't support nested lists whose elements can be null, like [[Int!]] yet.",
       ~location="schema.graphql → Token.grid",
     )
   })
@@ -280,7 +404,7 @@ type Pool @entity {
     ).toEqual((true, true))
   })
 
-  it("refuses timeseries entities", t => {
+  it("refuses a timeseries without a timestamp", t => {
     translate(
       ~manifest=manifestWith(plainEventHandler),
       ~schema=`
@@ -291,8 +415,8 @@ type Token @entity(timeseries: true) {
 `,
     )->expectFindingHelper(
       t,
-      ~headline="Envio Subgraph doesn't support timeseries and aggregations yet.",
-      ~location="schema.graphql → type Token @entity(timeseries: true)",
+      ~headline="Envio Subgraph doesn't know the timeseries Token without a Timestamp `timestamp` field.",
+      ~location="schema.graphql → type Token",
     )
   })
 })
@@ -337,6 +461,21 @@ describe("subgraph translation: unknown things", () => {
     )
   })
 
+  // graph-node reads `nonDeterministicIpfs` as `ipfsOnEthereumContracts`
+  // (`#[serde(alias)]` in graph/src/data/subgraph/features.rs); the VeBetter
+  // DAO subgraph declares it.
+  it("accepts the feature nonDeterministicIpfs, graph-node's older name", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)->String.replace(
+          "dataSources:",
+          "features:\n  - nonDeterministicIpfs\ndataSources:",
+        ),
+      ),
+    ).toEqual(accepted)
+  })
+
   it("accepts specVersion 0.0.2", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,
@@ -349,6 +488,44 @@ describe("subgraph translation: unknown things", () => {
       ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
     )
     t.expect(config.chainMap->ChainMap.keys->Array.length).toEqual(1)
+  })
+
+  // graph-node's SPEC_VERSION_1_4_0 (graph/src/data/subgraph/api_version.rs)
+  // only lets a declared call read a struct field of an event parameter.
+  // Declared calls warm graph-node's call cache ahead of the handler; the
+  // handler's own calls give the same answers without that cache.
+  it("accepts specVersion 1.4.0, whose declared calls may read a struct field", t => {
+    let {config} = InternalTestIndexer.fromSubgraph(
+      ~schema=baseSchema,
+      ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${FreePort.pick()}`)]),
+      ~manifest=manifestWith(
+        `${plainEventHandler}
+          calls:
+            balance: Token[event.address].balanceOf(event.params.order.owner)`,
+      )
+      ->String.replace("specVersion: 0.0.5", "specVersion: 1.4.0")
+      ->String.replace(
+        "      abis: []",
+        "      abis:\n        - name: Token\n          file: ./abis/Token.json",
+      ),
+      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+    )
+    t.expect(config.chainMap->ChainMap.keys->Array.length).toEqual(1)
+  })
+
+  // GRAPH_MAX_API_VERSION defaults to 0.0.10 (graph/src/env/mappings.rs); the
+  // version adds the `ethereum.decodeParams` host function and gates nothing
+  // else.
+  it("accepts apiVersion 0.0.10, the newest graph-node runs", t => {
+    t.expect(
+      translate(
+        ~schema=baseSchema,
+        ~manifest=manifestWith(plainEventHandler)->String.replace(
+          "apiVersion: 0.0.7",
+          "apiVersion: 0.0.10",
+        ),
+      ),
+    ).toEqual(accepted)
   })
 
   it("maps network hyperevm to chain 999", t => {
@@ -431,6 +608,22 @@ type Token @entity(sharded: true) {
     )
   })
 
+  // graph/src/schema/mod.rs: "skipDuplicates requires immutable: true".
+  it("refuses skipDuplicates on a mutable type, as graph-node does", t => {
+    translate(
+      ~manifest=manifestWith(plainEventHandler),
+      ~schema=`
+type Token @entity(skipDuplicates: true) {
+  id: ID!
+}
+`,
+    )->expectFindingHelper(
+      t,
+      ~headline=`Envio Subgraph doesn't know skipDuplicates on the mutable type Token, which graph-node refuses as well (it requires immutable: true).`,
+      ~location="schema.graphql → type Token",
+    )
+  })
+
   it("refuses an object type without @entity", t => {
     translate(
       ~manifest=manifestWith(plainEventHandler),
@@ -472,13 +665,19 @@ describe("subgraph translation: reporting", () => {
   // subgraph project off it.
   it("points an unsupported feature at the subgraph release", t => {
     let message = translate(
-      ~manifest=manifestWith(`      callHandlers:
-        - function: approve(address,uint256)
-          handler: handleApprove`),
+      ~manifest=manifestWith(`      eventHandlers:
+        - event: LOG_CALL(indexed bytes4,indexed address,bytes)
+          topic0: "0x0000000000000000000000000000000000000000000000000000000000000001"
+          topic1:
+            - "0x0000000000000000000000000000000000000000000000000000000000000002"
+          handler: handleLogCall`),
       ~schema=baseSchema,
+      ~extraAbi=`{"type":"event","name":"LOG_CALL","anonymous":true,"inputs":[{"name":"sig","type":"bytes4","indexed":true},{"name":"caller","type":"address","indexed":true},{"name":"data","type":"bytes","indexed":false}]}`,
     )
-    t.expect(message).toEqual(`Envio Subgraph doesn't support call handlers yet.
-  Found in data source "Token" → callHandlers → "handleApprove".
+    t.expect(
+      message,
+    ).toEqual(`Envio Subgraph doesn't support topic1-3 filters on an anonymous event matched on topic0 yet.
+  Found in data source "Token" → eventHandlers → "handleLogCall" → topic0.
 First, make sure you're on the newest Envio Subgraph release — support may have landed:
   pnpm add -D envio@subgraph
 If you're up to date and need this feature, please open an issue (existing
@@ -504,12 +703,10 @@ issue so we can add it: https://github.com/enviodev/hyperindex/issues`)
   })
 
   it("reports every finding in one run", t => {
-    let manifest = manifestWith(`      callHandlers:
-        - function: approve(address,uint256)
-          handler: handleApprove`)->String.replace(
-      "dataSources:",
-      "features:\n  - teleportation\ndataSources:",
-    )
+    let manifest =
+      manifestWith(plainEventHandler)
+      ->String.replace("dataSources:", "features:\n  - teleportation\ndataSources:")
+      ->String.replace("kind: ethereum/contract", "kind: substreams")
     let message = translate(
       ~manifest,
       ~schema=`
@@ -521,7 +718,7 @@ type Token @entity {
     )
     t.expect((
       message->String.includes(`doesn't know the feature "teleportation"`),
-      message->String.includes("doesn't support call handlers"),
+      message->String.includes("can't index a substreams-powered subgraph"),
       message->String.includes("doesn't know the type NotAType"),
     )).toEqual((true, true, true))
   })

@@ -436,13 +436,16 @@ let buildEvmEventConfig = (
   ~contractName: string,
   ~eventName: string,
   ~sighash: string,
+  ~anonymous=false,
   ~params: array<paramMeta>,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
-  let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
+  // An anonymous event has no signature topic: `sighash` is the value of its
+  // first indexed param, and that topic count is how the decoder tells.
+  let topicCount = params->Array.reduce(anonymous ? 0 : 1, (acc, p) => p.indexed ? acc + 1 : acc)
 
   {
     id: sighash ++ "_" ++ topicCount->Int.toString,

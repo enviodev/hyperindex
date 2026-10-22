@@ -261,6 +261,7 @@ let contractEventItemSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
     "sighash": s.matches(S.string),
+    "anonymous": s.matches(S.option(S.bool)),
     "params": s.matches(S.option(S.array(EventConfigBuilder.paramMetaSchema))),
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
@@ -912,6 +913,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~contractName,
             ~eventName,
             ~sighash,
+            ~anonymous=eventItem["anonymous"]->Option.getOr(false),
             ~params,
             ~blockFields=?eventItem["blockFields"],
             ~transactionFields=?eventItem["transactionFields"],
@@ -1161,6 +1163,10 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       }
     })
   | None => []
+  }
+
+  if publicConfig["subgraph"]->Option.isSome {
+    Env.subgraphMode := true
   }
 
   let config = {

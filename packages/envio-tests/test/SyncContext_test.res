@@ -17,6 +17,8 @@ chains:
           - event: Burn(address indexed from, uint256 value)
           - event: Freeze(address indexed who)
           - event: Thaw(address indexed who)
+          - event: Pair(address indexed a, address indexed b)
+          - event: Quote(address indexed who)
 `,
   ~schema=`
 type Account {
@@ -39,6 +41,9 @@ g.effectCalls = 0;
 g.caught = [];
 g.freezeRound = 0;
 g.thawRounds = [];
+g.pairRounds = [];
+g.quoteRounds = [];
+g.quoteInputs = [];
 
 const describeBalance = createEffect(
   {
@@ -53,6 +58,46 @@ const describeBalance = createEffect(
     return "balance:" + input.toString();
   },
 );
+
+const quoteBalance = createEffect(
+  {
+    name: "quoteBalance",
+    input: S.bigint,
+    output: S.string,
+    rateLimit: false,
+    cache: false,
+  },
+  async ({ input }) => {
+    g.quoteInputs.push(input);
+    return "quote:" + input.toString();
+  },
+);
+
+// Two reads that don't depend on each other.
+indexer.onEvent({ contract: "Token", event: "Pair" }, async ({ event, context }) => {
+  const ctx = context as any;
+  let round = 0;
+  await ctx.runSync(() => {
+    round++;
+    const a = ctx.Account.getSync(event.params.a);
+    const b = ctx.Account.getSync(event.params.b);
+    ctx.Account.set({ id: event.params.a, balance: (a?.balance ?? 0n) + (b?.balance ?? 0n) + 1n });
+  });
+  g.pairRounds.push([context.isPreload, round]);
+});
+
+// An effect asked with what a read returned.
+indexer.onEvent({ contract: "Token", event: "Quote" }, async ({ event, context }) => {
+  const ctx = context as any;
+  let round = 0;
+  await ctx.runSync(() => {
+    round++;
+    const account = ctx.Account.getSync(event.params.who);
+    const quote = ctx.effectSync(quoteBalance, account?.balance ?? 0n);
+    ctx.Note.set({ id: event.params.who + "-quote", owner: event.params.who, text: quote });
+  });
+  g.quoteRounds.push([context.isPreload, round]);
+});
 
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
   const ctx = context as any;
@@ -165,6 +210,48 @@ describe("sync context", () => {
     t.expect(await indexer.Account.getOrThrow(to)).toEqual({ id: to, balance: 5n });
     // Preload misses and replays; execute finds the value already loaded.
     t.expect(g.rounds).toEqual([[true, 2], [false, 1]]);
+  });
+
+  // Preload answers a miss as absent and runs on, so the second read joins
+  // the first one's batch instead of costing a round of its own.
+  it("batches independent preload reads into one round", async (t) => {
+    const indexer = createTestIndexer();
+    g.pairRounds = [];
+
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Pair", params: { a: to, b: from } }] },
+      },
+    });
+
+    t.expect(await indexer.Account.getOrThrow(to)).toEqual({ id: to, balance: 1n });
+    t.expect(g.pairRounds).toEqual([[true, 2], [false, 1]]);
+  });
+
+  // An effect is never asked with a value computed from a speculated absence.
+  it("asks an effect only with what the store holds", async (t) => {
+    const indexer = createTestIndexer();
+    g.quoteRounds = [];
+    g.quoteInputs = [];
+
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Transfer", params: { from, to, value: 5n } }] },
+      },
+    });
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Quote", params: { who: to } }] },
+      },
+    });
+
+    t.expect(await indexer.Note.getOrThrow(to + "-quote")).toEqual({
+      id: to + "-quote",
+      owner: to,
+      text: "quote:5",
+    });
+    t.expect(g.quoteInputs).toEqual([5n]);
+    t.expect(g.quoteRounds).toEqual([[true, 3], [false, 1]]);
   });
 
   it("accumulates across batches", async (t) => {

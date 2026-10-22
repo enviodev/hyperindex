@@ -47,6 +47,120 @@ pub fn gather(root: &Path) -> Vec<String> {
     sources
 }
 
+/// `gather`, plus every file the manifest's mappings reach through relative
+/// imports outside the project directory. A monorepo's subgraph may keep its
+/// manifest in `subgraphs/` and its mappings in `../src` (Thales), or share
+/// helpers from `../lib` (KlimaDAO): a read of `event.transaction.hash` there
+/// that the scan never saw selected no transaction field at all, and the
+/// mapping read null.
+pub fn gather_with_mappings(root: &Path, mapping_files: &[String]) -> Vec<String> {
+    let mut sources = gather(root);
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let import =
+        regex::Regex::new(r#"(?:from|import)\s*["']([^"']+)["']"#).expect("valid import pattern");
+    let workspace = super::workspace::packages(&root);
+    let mut seen = std::collections::HashSet::new();
+    let mut queue: std::collections::VecDeque<std::path::PathBuf> = mapping_files
+        .iter()
+        .filter_map(|file| std::fs::canonicalize(root.join(file)).ok())
+        .collect();
+    while let Some(file) = queue.pop_front() {
+        if seen.len() >= 5_000 || !seen.insert(file.clone()) {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        for capture in import.captures_iter(&source) {
+            let specifier = &capture[1];
+            let found = if specifier.starts_with("./") || specifier.starts_with("../") {
+                let base = dir.join(specifier);
+                [
+                    base.clone(),
+                    base.with_extension("ts"),
+                    std::path::PathBuf::from(format!("{}.ts", base.display())),
+                    base.join("index.ts"),
+                ]
+                .into_iter()
+                .find(|candidate| candidate.is_file())
+            } else {
+                package_file(&dir, specifier, &workspace)
+            };
+            if let Some(found) = found.and_then(|found| std::fs::canonicalize(found).ok()) {
+                queue.push_back(found);
+            }
+        }
+        // `gather` has read the project directory already, all but node_modules.
+        let gathered = file.strip_prefix(&root).is_ok_and(|relative| {
+            !relative
+                .components()
+                .any(|part| part.as_os_str() == "node_modules")
+        });
+        if !gathered {
+            sources.push(source);
+        }
+    }
+    sources
+}
+
+/// The AssemblyScript file a bare import names, found the way `asc` finds it:
+/// the package under the nearest `node_modules` (or the workspace's package of
+/// that name, which an install would link there), then its `ascMain`, a `main`
+/// or `types` that is TypeScript, `assembly/index.ts` or `index.ts`; a subpath
+/// is a file in the package. graph-ts is the shim's, not the mappings'.
+fn package_file(
+    from: &Path,
+    specifier: &str,
+    workspace: &std::collections::BTreeMap<String, std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    if specifier.starts_with("@graphprotocol/") || specifier.starts_with("node:") {
+        return None;
+    }
+    let parts: Vec<&str> = specifier.split('/').collect();
+    let name_length = if specifier.starts_with('@') { 2 } else { 1 };
+    if parts.len() < name_length || parts[..name_length].iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    let name = parts[..name_length].join("/");
+    let inner = parts[name_length..].join("/");
+    let package = from
+        .ancestors()
+        .map(|dir| dir.join("node_modules").join(&name))
+        .find(|dir| dir.is_dir())
+        .or_else(|| workspace.get(&name).cloned())?;
+    let is_source = |file: &str| {
+        file.ends_with(".ts") && !file.ends_with(".d.ts") && package.join(file).is_file()
+    };
+    let candidates: Vec<String> = if inner.is_empty() {
+        let manifest = std::fs::read_to_string(package.join("package.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        let field = |key: &str| {
+            manifest
+                .as_ref()
+                .and_then(|manifest| manifest.get(key)?.as_str().map(str::to_string))
+        };
+        ["ascMain", "main", "types"]
+            .into_iter()
+            .filter_map(field)
+            .chain(["assembly/index.ts".to_string(), "index.ts".to_string()])
+            .collect()
+    } else {
+        vec![
+            inner.clone(),
+            format!("{inner}.ts"),
+            format!("{inner}/index.ts"),
+            format!("assembly/{inner}.ts"),
+            format!("assembly/{inner}/index.ts"),
+        ]
+    };
+    candidates
+        .into_iter()
+        .find(|file| is_source(file))
+        .map(|file| package.join(file))
+}
+
 /// `None` means the mappings do something this scan can't account for, so the
 /// full selection stands.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -63,7 +177,8 @@ fn transaction_field(name: &str) -> Option<TransactionField> {
         "from" => TransactionField::From,
         "to" => TransactionField::To,
         "value" => TransactionField::Value,
-        "gasLimit" => TransactionField::Gas,
+        // graph-ts before 0.22 called the gas limit `gasUsed`.
+        "gasLimit" | "gasUsed" => TransactionField::Gas,
         "gasPrice" => TransactionField::GasPrice,
         "input" => TransactionField::Input,
         "nonce" => TransactionField::Nonce,
@@ -215,6 +330,167 @@ pub fn scan(sources: &[String]) -> FieldUsage {
     FieldUsage { transaction, block }
 }
 
+/// The header fields of an `ethereum.Block` that a block handler cannot be
+/// handed for free: envio gives a block handler only the block number, so
+/// everything but `number` and `timestamp` has to be fetched afterwards.
+const FREE_BLOCK_PROPERTIES: &[&str] = &["number", "timestamp"];
+
+/// Whether any of the named block handlers reads a header field (`hash`,
+/// `parentHash`, `author`, ...) off its block, or hands the block to something
+/// the scan can't follow.
+///
+/// Only the handler's own body is read: a variable called `block` elsewhere in
+/// the file isn't the handler's. Textual and timid like `scan`: a block passed
+/// to a helper counts as a read.
+pub fn block_handlers_read_headers(sources: &[String], handlers: &[String]) -> bool {
+    handlers.iter().any(|handler| {
+        sources
+            .iter()
+            .any(|source| handler_reads_headers(source, handler))
+    })
+}
+
+/// The code with its string literals and comments emptied: a `"block-"` in an
+/// id is not a use of the handler's `block`.
+fn strip_literals(code: &str) -> String {
+    let literals = regex::Regex::new(
+        r#""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|//[^\n]*|/\*(?s:.*?)\*/"#,
+    )
+    .expect("valid literal pattern");
+    literals.replace_all(code, "\"\"").into_owned()
+}
+
+fn handler_reads_headers(source: &str, handler: &str) -> bool {
+    let signature = regex::Regex::new(&format!(
+        r"function\s+{}\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)",
+        regex::escape(handler)
+    ))
+    .expect("valid signature pattern");
+    let Some(found) = signature.captures(source) else {
+        return false;
+    };
+    let param = found.get(1).expect("one group").as_str();
+    let after_param = found.get(0).expect("whole match").end();
+    // The body: from the first `{` after the signature to its closing brace.
+    let rest = &source[after_param..];
+    let Some(open) = rest.find('{') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut end = rest.len();
+    for (at, c) in rest[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = open + at;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = strip_literals(&rest[open..end]);
+    let body = body.as_str();
+    let uses = regex::Regex::new(&format!(
+        r"(^|[^A-Za-z0-9_$.]){}\b(\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*))?",
+        regex::escape(param)
+    ))
+    .expect("valid use pattern");
+    let reads = uses
+        .captures_iter(body)
+        .any(|capture| match capture.get(3) {
+            Some(property) => !FREE_BLOCK_PROPERTIES.contains(&property.as_str()),
+            None => true,
+        });
+    reads
+}
+
+#[cfg(test)]
+mod gather_tests {
+    use super::*;
+    use tempdir::TempDir;
+
+    #[test]
+    fn reads_mappings_outside_the_project_directory() {
+        let dir = TempDir::new("envio_subgraph_usage").unwrap();
+        let write = |path: &str, source: &str| {
+            let file = dir.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        };
+        write("subgraphs/subgraph.yaml", "");
+        write(
+            "src/mapping.ts",
+            "import { id } from \"../lib/ids\";\nexport function handle(event: any): void { id(event); }",
+        );
+        write(
+            "lib/ids.ts",
+            "export function id(event: any): string { return event.transaction.hash.toHex(); }",
+        );
+        write("unrelated/other.ts", "export const x = event.block.number;");
+        let sources = gather_with_mappings(
+            &dir.path().join("subgraphs"),
+            &["../src/mapping.ts".to_string()],
+        );
+        assert_eq!(
+            scan(&sources).transaction,
+            Some(vec![TransactionField::Hash])
+        );
+    }
+
+    // Enzyme builds every event id with `uniqueEventId(event)` from its
+    // workspace package `@enzymefinance/subgraph-utils`, imported by name and
+    // linked into node_modules; OpenZeppelin's subgraphs ship their mappings in
+    // node_modules. Neither was scanned, so no transaction field was selected
+    // and `event.transaction.hash` read null.
+    #[test]
+    fn reads_packages_the_mappings_import() {
+        let dir = TempDir::new("envio_subgraph_usage_packages").unwrap();
+        let write = |path: &str, source: &str| {
+            let file = dir.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        };
+        write(
+            "packages/utils/package.json",
+            r#"{"name":"@enzymefinance/subgraph-utils","main":"index.ts"}"#,
+        );
+        write("packages/utils/index.ts", "export * from './utils/id';\n");
+        write(
+            "packages/utils/utils/id.ts",
+            "export function uniqueEventId(event: ethereum.Event): string { return event.transaction.hash.toHex(); }",
+        );
+        write(
+            "subgraph/src/feed.ts",
+            "import { uniqueEventId } from '@enzymefinance/subgraph-utils';\nexport function handle(event: any): void { uniqueEventId(event); }",
+        );
+        write(
+            "subgraph/node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts",
+            "export function handleVote(event: any): void { let from = event.transaction.from; }",
+        );
+        std::fs::create_dir_all(dir.path().join("subgraph/node_modules/@enzymefinance")).unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("packages/utils"),
+            dir.path()
+                .join("subgraph/node_modules/@enzymefinance/subgraph-utils"),
+        )
+        .unwrap();
+        let sources = gather_with_mappings(
+            &dir.path().join("subgraph"),
+            &[
+                "./src/feed.ts".to_string(),
+                "./node_modules/@openzeppelin/subgraphs/src/datasources/voting.ts".to_string(),
+            ],
+        );
+        assert_eq!(
+            scan(&sources).transaction,
+            Some(vec![TransactionField::From, TransactionField::Hash])
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +517,14 @@ mod tests {
                 transaction: Some(vec![TransactionField::Hash, TransactionField::Gas]),
                 block: Some(vec![BlockField::Miner]),
             }
+        );
+    }
+
+    #[test]
+    fn selects_the_gas_limit_for_a_pre_0_22_gas_used() {
+        assert_eq!(
+            scan_one("transaction.gasUsed = event.transaction.gasUsed").transaction,
+            Some(vec![TransactionField::Gas])
         );
     }
 
@@ -339,5 +623,66 @@ mod tests {
             ]),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod block_handler_tests {
+    use super::*;
+
+    fn reads(source: &str) -> bool {
+        block_handlers_read_headers(&[source.to_string()], &["handleBlock".to_string()])
+    }
+
+    #[test]
+    fn number_and_timestamp_are_free() {
+        assert!(!reads(
+            "export function handleBlock(block: ethereum.Block): void { let t = block.timestamp; let n = block.number; }"
+        ));
+    }
+
+    #[test]
+    fn a_header_field_is_a_read() {
+        assert!(reads(
+            "export function handleBlock(block: ethereum.Block): void { let e = new Block(block.hash.toHex()); }"
+        ));
+        assert!(reads(
+            "export function handleBlock(b: ethereum.Block): void { x.parent = b.parentHash; }"
+        ));
+    }
+
+    #[test]
+    fn a_block_named_in_a_string_is_not_a_use() {
+        assert!(!reads(
+            "export function handleBlock(block: ethereum.Block): void { store.set('P', \"block-\" + block.number.toString()); } // block"
+        ));
+    }
+
+    #[test]
+    fn a_block_handed_to_a_helper_is_a_read() {
+        assert!(reads(
+            "export function handleBlock(block: ethereum.Block): void { index(block); }"
+        ));
+    }
+
+    #[test]
+    fn a_block_variable_elsewhere_is_not_the_handlers() {
+        assert!(!reads(
+            "export function handleBlock(block: ethereum.Block): void { let n = block.number; }\n\
+             export function other(event: Ev): void { let block = event.block; block.hash; }"
+        ));
+    }
+
+    #[test]
+    fn a_handler_in_another_file_is_still_found() {
+        let sources = vec![
+            "export const x = 1;".to_string(),
+            "export function handleBlock(block: ethereum.Block): void { block.author; }"
+                .to_string(),
+        ];
+        assert!(block_handlers_read_headers(
+            &sources,
+            &["handleBlock".to_string()]
+        ));
     }
 }

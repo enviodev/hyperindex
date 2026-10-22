@@ -403,6 +403,8 @@ fn abi_type_to_components(
 struct ContractEventItem {
     name: String,
     sighash: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    anonymous: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     params: Vec<EventParam>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -651,6 +653,7 @@ impl SystemConfig {
                             ContractEventItem {
                                 name: e.name.clone(),
                                 sighash: e.sighash.clone(),
+                                anonymous: e.anonymous,
                                 params,
                                 kind,
                                 block_fields: e.field_selection.as_ref().map(|fs| {
