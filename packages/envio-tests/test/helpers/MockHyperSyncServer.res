@@ -44,14 +44,13 @@ let pushResponse = (server, page: page) =>
   server->pushResponseJson(page->JSON.stringifyAny->Option.getOrThrow)
 
 type chain = {
-  blocks?: array<JSON.t>,
-  transactions?: array<JSON.t>,
-  logs?: array<JSON.t>,
+  blocks: array<JSON.t>,
+  logs: array<JSON.t>,
 }
 
 /// Hold `chain`'s rows the way HyperSync holds a chain: a query no queued page
-/// answers gets the logs its selection matches, with their blocks and
-/// transactions, up to the server's height.
+/// answers gets the logs its selection matches, with their blocks, up to the
+/// server's height.
 let serveChain = (server, chain: chain) =>
   server->serveChainJson(chain->JSON.stringifyAny->Option.getOrThrow)
 

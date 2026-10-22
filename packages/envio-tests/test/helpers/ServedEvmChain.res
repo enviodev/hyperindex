@@ -13,7 +13,16 @@ type log = {
   data?: string,
 }
 
-type t = {hyperSync: MockHyperSyncServer.t, rpc: MockRpcServer.t}
+type servers = {hyperSync: MockHyperSyncServer.t, rpc: MockRpcServer.t}
+
+// The config.yaml naming the servers' urls is parsed while vitest collects,
+// before any hook runs, so the ports are fixed and unique to the file.
+type t = {
+  hyperSyncPort: int,
+  rpcPort: int,
+  height: int,
+  mutable servers: option<servers>,
+}
 
 let url = port => `http://127.0.0.1:${port->Int.toString}`
 
@@ -36,14 +45,6 @@ let hyperSyncChain = (~logs, ~height): MockHyperSyncServer.chain => {
       "number": JSON.Number(number->Int.toFloat),
       "timestamp": JSON.Number(number->Int.toFloat),
       "hash": JSON.String(number->blockHash),
-      "parent_hash": JSON.String((number - 1)->Pervasives.max(0)->blockHash),
-    },
-  )),
-  transactions: logs->Array.map(log => JSON.Object(
-    dict{
-      "block_number": JSON.Number(log.blockNumber->Int.toFloat),
-      "transaction_index": JSON.Number(log.logIndex->Int.toFloat),
-      "hash": JSON.String(log->transactionHash),
     },
   )),
   logs: logs->Array.map(log => {
@@ -51,8 +52,6 @@ let hyperSyncChain = (~logs, ~height): MockHyperSyncServer.chain => {
       "block_number": JSON.Number(log.blockNumber->Int.toFloat),
       "log_index": JSON.Number(log.logIndex->Int.toFloat),
       "transaction_index": JSON.Number(log.logIndex->Int.toFloat),
-      "transaction_hash": JSON.String(log->transactionHash),
-      "block_hash": JSON.String(log.blockNumber->blockHash),
       "address": JSON.String(log.address),
       "data": JSON.String(log.data->Option.getOr("0x")),
     }
@@ -86,18 +85,19 @@ let rpcBlock = blockNumber => JSON.Object(
   },
 )
 
+let sameHex = (a, b) => a->String.toLowerCase === b->String.toLowerCase
+
 // eth_getLogs' value matching: null matches anything, a list matches any of
 // its members, and hex compares without regard to case.
 let rpcValueMatches = (filterValue: JSON.t, actual: option<string>) =>
   switch (filterValue, actual) {
   | (JSON.Null, _) => true
   | (_, None) => false
-  | (JSON.String(expected), Some(actual)) =>
-    expected->String.toLowerCase === actual->String.toLowerCase
+  | (JSON.String(expected), Some(actual)) => sameHex(expected, actual)
   | (JSON.Array(expected), Some(actual)) =>
     expected->Array.some(value =>
       switch value {
-      | JSON.String(expected) => expected->String.toLowerCase === actual->String.toLowerCase
+      | JSON.String(expected) => sameHex(expected, actual)
       | _ => false
       }
     )
@@ -142,28 +142,60 @@ let rpcResult = (~logs, ~height, ~method, ~params) => {
   }
 }
 
-// Both servers for a file's whole suite. The config.yaml naming their urls is
-// parsed while vitest collects, before any hook runs, so the ports are fixed
-// and unique to the file.
+// Both servers, for a file's whole suite.
 let serveDuringSuite = (~hyperSyncPort, ~rpcPort, ~height, ~logs) => {
-  let served: ref<option<t>> = ref(None)
+  let served = {hyperSyncPort, rpcPort, height, servers: None}
   Vitest.Async.beforeAll(async () => {
     let hyperSync = MockHyperSyncServer.make(~height, ~port=hyperSyncPort)
     hyperSync->MockHyperSyncServer.serveChain(hyperSyncChain(~logs, ~height))
     let rpc = await MockRpcServer.makeWithParams(~port=rpcPort, ~getResult=(~method, ~params) =>
       rpcResult(~logs, ~height, ~method, ~params)
     )
-    served := Some({hyperSync, rpc})
+    served.servers = Some({hyperSync, rpc})
   })
   Vitest.Async.afterAll(async () =>
-    switch served.contents {
+    switch served.servers {
     | Some({hyperSync, rpc}) =>
       hyperSync->MockHyperSyncServer.close
       await rpc.closeAsync()
     | None => ()
     }
   )
-  () => served.contents->Option.getOrThrow(~message="the served chain was never started")
+  served
+}
+
+let servers = served =>
+  served.servers->Option.getOrThrow(~message="the served chain was never started")
+
+// config.yaml `chains:` entries fetching from the served HyperSync or RPC
+// server, each stopping at the served height. `contracts` is the `contracts:`
+// list every chain gets, indented to sit under it.
+let chainsYaml = (served, ~hyperSync, ~rpc, ~contracts) => {
+  let chain = (id, source) =>
+    `
+  - id: ${id->Int.toString}
+    start_block: 1
+    end_block: ${served.height->Int.toString}${source}
+    contracts:${contracts}`
+  Array.concat(
+    hyperSync->Array.map(id =>
+      chain(
+        id,
+        `
+    hypersync_config:
+      url: ${url(served.hyperSyncPort)}`,
+      )
+    ),
+    rpc->Array.map(id =>
+      chain(
+        id,
+        `
+    rpc:
+      url: ${url(served.rpcPort)}
+      for: sync`,
+      )
+    ),
+  )->Array.join("")
 }
 
 // A log filter as either source sent it: the range start, and per filter the
@@ -181,15 +213,17 @@ let strings = json =>
   | _ => []
   }
 
-let topicsOf = json =>
-  switch json {
+let logFilter = (filter: dict<JSON.t>) => {
+  address: filter->Dict.get("address")->Option.mapOr([], strings)->normalize,
+  topics: switch filter->Dict.get("topics") {
   | Some(JSON.Array(positions)) => positions->Array.map(position => position->strings->normalize)
   | _ => []
-  }
+  },
+}
 
 // Drains the HyperSync queries received so far, oldest first.
-let takeHyperSyncQueries = (served: t) =>
-  served.hyperSync
+let takeHyperSyncQueries = served =>
+  (served->servers).hyperSync
   ->MockHyperSyncServer.takeQueries
   ->Array.map(query => {
     let query = query->JSON.Decode.object->Option.getOrThrow
@@ -201,13 +235,9 @@ let takeHyperSyncQueries = (served: t) =>
       ->Float.toInt,
       filters: switch query->Dict.get("logs") {
       | Some(JSON.Array(selections)) =>
-        selections->Array.map(selection => {
-          let selection = selection->JSON.Decode.object->Option.getOrThrow
-          {
-            address: selection->Dict.get("address")->Option.mapOr([], strings)->normalize,
-            topics: selection->Dict.get("topics")->topicsOf,
-          }
-        })
+        selections->Array.map(selection =>
+          selection->JSON.Decode.object->Option.getOrThrow->logFilter
+        )
       | _ => []
       },
     }
@@ -215,9 +245,10 @@ let takeHyperSyncQueries = (served: t) =>
 
 // Drains the eth_getLogs requests received so far, oldest first. RPC sends one
 // filter per request, so a request reads as a query with a single filter.
-let takeRpcQueries = (served: t) => {
-  let requests = served.rpc.requests->Array.copy
-  served.rpc.requests->Utils.Array.clearInPlace
+let takeRpcQueries = served => {
+  let {rpc} = served->servers
+  let requests = rpc.requests->Array.copy
+  rpc.requests->Utils.Array.clearInPlace
   requests->Array.filterMap(body => {
     let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
     switch request->Dict.get("method") {
@@ -230,42 +261,59 @@ let takeRpcQueries = (served: t) => {
         ->Array.getUnsafe(0)
         ->JSON.Decode.object
         ->Option.getOrThrow
-      Some({
-        fromBlock: filter->Dict.getUnsafe("fromBlock")->quantity,
-        filters: [
-          {
-            address: filter->Dict.get("address")->Option.mapOr([], strings)->normalize,
-            topics: filter->Dict.get("topics")->topicsOf,
-          },
-        ],
-      })
+      Some({fromBlock: filter->Dict.getUnsafe("fromBlock")->quantity, filters: [filter->logFilter]})
     | _ => None
     }
   })
 }
 
-// Drops whatever an earlier test left on the servers, so a test reads only the
-// queries its own run sent.
-let reset = (served: t) => {
+// Runs `scenario` until every chain reaches its `end_block`, which is when
+// everything served has been indexed, then `body`. The queries an earlier run
+// left on the servers are dropped first, so `body` reads only this run's.
+let run = async (served, scenario, ~clientFilterAddressThreshold=?, body) => {
   let _ = served->takeHyperSyncQueries
   let _ = served->takeRpcQueries
-}
-
-// A run whose chains all name an `end_block` exits once they reach it, which is
-// when everything served has been indexed. `onExit` goes to `Scenario.it`, and
-// the body awaits `reachEndBlock`. One per test: a run may exit more than once,
-// so a value shared with another test would already read as exited.
-type endBlock = {onExit: unit => unit, reachEndBlock: unit => promise<unit>}
-
-let endBlock = () => {
   let exited = ref(false)
-  {
-    onExit: () => exited := true,
-    reachEndBlock: () =>
-      Scenario.waitUntil(
+  await scenario->Scenario.run(
+    ~yamlSources=true,
+    ~clientFilterAddressThreshold?,
+    ~onExit=() => exited := true,
+    async (~indexer, ~source as _) => {
+      await Scenario.waitUntil(
         () => exited.contents,
         ~message="every chain to reach its end block",
         ~timeoutMs=20000.,
-      ),
-  }
+      )
+      await body(indexer)
+    },
+  )
+}
+
+// Each handler writes one Routed row per log it is given, keyed by the log and
+// a name for the handler, so the rows say which handler saw which log.
+let routedSchema = `
+type Routed {
+  id: ID!
+}
+`
+
+let routedHandlers = `
+import { indexer } from "envio";
+
+type Routable = { chainId: number; block: { number: number }; logIndex: number };
+const routed = (event: Routable, name: string) => ({
+  id: \`\${event.chainId}-\${event.block.number}-\${event.logIndex}-\${name}\`,
+});
+`
+
+let routed = (~chainId, ~blockNumber, ~logIndex=0, name) =>
+  `${chainId->Int.toString}-${blockNumber->Int.toString}-${logIndex->Int.toString}-${name}`
+
+let sorted = ids => ids->Array.toSorted(String.compare)
+
+type routedRow = {id: string}
+
+let readRouted = async (indexer: IndexerRunner.t) => {
+  let rows: array<routedRow> = await indexer.query("Routed")
+  rows->Array.map(row => row.id)->sorted
 }

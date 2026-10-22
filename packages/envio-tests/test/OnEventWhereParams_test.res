@@ -7,10 +7,6 @@ open Vitest
 // only what the query's filter matches, so a filter a source fails to send, or
 // sends wrong, is a row that shouldn't be there or a row that's missing.
 
-let hyperSyncPort = 18611
-let rpcPort = 18612
-let height = 30
-
 let indexedAddress = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 let wildcardEmitter = "0x3333333333333333333333333333333333333333"
 let zero = "0x0000000000000000000000000000000000000000"
@@ -180,38 +176,14 @@ let logs = Array.concat(
   ],
 )
 
-let served = ServedEvmChain.serveDuringSuite(~hyperSyncPort, ~rpcPort, ~height, ~logs)
+let served = ServedEvmChain.serveDuringSuite(
+  ~hyperSyncPort=18611,
+  ~rpcPort=18612,
+  ~height=30,
+  ~logs,
+)
 
-let chainYaml = (~id, ~source) =>
-  `
-  - id: ${id->Int.toString}
-    start_block: 1
-    end_block: ${height->Int.toString}${source}
-    contracts:
-      - name: Indexed
-        address: "${indexedAddress}"
-      - name: Filtered`
-
-let hyperSyncChain = id =>
-  chainYaml(
-    ~id,
-    ~source=`
-    hypersync_config:
-      url: ${ServedEvmChain.url(hyperSyncPort)}`,
-  )
-let rpcChain = id =>
-  chainYaml(
-    ~id,
-    ~source=`
-    rpc:
-      url: ${ServedEvmChain.url(rpcPort)}
-      for: sync`,
-  )
-
-// Every chain stops at its end block before realtime, so the supervised pass
-// would have no barrier to hold.
 let scenario = Scenario.make(
-  ~supervised=false,
   ~configYaml=`
 name: on-event-where-params
 raw_events: true
@@ -240,30 +212,23 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 amount)
       - event: Dropped(address indexed from)
       - event: Unfiltered(address indexed from)
-chains:${hyperSyncChain(1)}${hyperSyncChain(2)}${rpcChain(3)}${rpcChain(4)}
+chains:${served->ServedEvmChain.chainsYaml(
+      ~hyperSync=[1, 2],
+      ~rpc=[3, 4],
+      ~contracts=`
+      - name: Indexed
+        address: "${indexedAddress}"
+      - name: Filtered`,
+    )}
 `,
-  ~schema=`
-type Routed {
-  id: ID!
-  chainId: Int!
-  event: String!
-}
-
+  ~schema=ServedEvmChain.routedSchema ++ `
 type WhereCalls {
   id: ID!
   count: Int!
 }
 `,
-  ~handlers=`
-import { indexer } from "envio";
-
-type Routable = { chainId: number; block: { number: number }; logIndex: number };
-const routed = (event: Routable, name: string, tag = "") => ({
-  id: \`\${event.chainId}-\${event.block.number}-\${event.logIndex}\${tag}\`,
-  chainId: event.chainId,
-  event: name,
-});
-
+  ~handlers=ServedEvmChain.routedHandlers ++
+  `
 const id = 50n;
 const struct = [id, "test"] satisfies [bigint, string];
 
@@ -306,7 +271,7 @@ indexer.onEvent(
 // A second handler on the same event with its own filter gets its own logs.
 indexer.onEvent(
   { contract: "Indexed", event: "IndexedBool", where: { params: { isTrue: [false] } } },
-  async ({ event, context }) => context.Routed.set(routed(event, "IndexedBool", "-false")),
+  async ({ event, context }) => context.Routed.set(routed(event, "IndexedBool-false")),
 );
 indexer.onEvent(
   { contract: "Indexed", event: "IndexedBytes", where: { params: { dynBytes: ["0x0102030405060709"] } } },
@@ -414,7 +379,7 @@ const countingWhere = ({ chain }: { chain: { id: number } }) => {
 const unfiltered =
   (tag: string) =>
   async ({ event, context }: { event: Routable; context: any }) => {
-    context.Routed.set(routed(event, "Unfiltered", tag));
+    context.Routed.set(routed(event, "Unfiltered-" + tag));
     context.WhereCalls.set({ id: String(event.chainId), count: whereCalls[event.chainId] ?? 0 });
   };
 // Two registrations whose callbacks resolve to the same filter: both handlers run.
@@ -429,44 +394,38 @@ indexer.onEvent(
 `,
 )
 
-type routed = {id: string, chainId: int, event: string}
 type whereCalls = {id: string, count: int}
 type rawEvent = {chain_id: int, event_name: string, block_number: int, log_index: int}
 
-let routed = (~chainId, ~blockNumber, ~logIndex, ~tag="", event) => {
-  id: `${chainId->Int.toString}-${blockNumber->Int.toString}-${logIndex->Int.toString}${tag}`,
-  chainId,
-  event,
-}
+let routed = ServedEvmChain.routed
 
-let byId = (rows: array<routed>) => rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
-
-let isOdd = chainId => mod(chainId, 2) === 1
-
-let expectedRows = [1, 2, 3, 4]->Array.flatMap(chainId =>
-  Array.concat(
-    indexedCases->Array.flatMapWithIndex(({event, matching}, i) =>
-      matching->Array.mapWithIndex(
-        (_, logIndex) => routed(~chainId, ~blockNumber=i + 1, ~logIndex, event),
-      )
-    ),
+let expectedRows =
+  [1, 2, 3, 4]
+  ->Array.flatMap(chainId =>
     Array.concat(
-      isOdd(chainId)
-        ? [
-            routed(~chainId, ~blockNumber=20, ~logIndex=0, "Transfer"),
-            routed(~chainId, ~blockNumber=20, ~logIndex=1, "Transfer"),
-            routed(~chainId, ~blockNumber=21, ~logIndex=0, "Dropped"),
-          ]
-        : [routed(~chainId, ~blockNumber=20, ~logIndex=2, "Transfer")],
-      [
-        // IndexedBool's non-matching log: topic1 is the zero word, false.
-        routed(~chainId, ~blockNumber=4, ~logIndex=1, ~tag="-false", "IndexedBool"),
-        routed(~chainId, ~blockNumber=22, ~logIndex=0, ~tag="a", "Unfiltered"),
-        routed(~chainId, ~blockNumber=22, ~logIndex=0, ~tag="b", "Unfiltered"),
-      ],
-    ),
+      indexedCases->Array.flatMapWithIndex(({event, matching}, i) =>
+        matching->Array.mapWithIndex(
+          (_, logIndex) => routed(~chainId, ~blockNumber=i + 1, ~logIndex, event),
+        )
+      ),
+      Array.concat(
+        mod(chainId, 2) === 1
+          ? [
+              routed(~chainId, ~blockNumber=20, "Transfer"),
+              routed(~chainId, ~blockNumber=20, ~logIndex=1, "Transfer"),
+              routed(~chainId, ~blockNumber=21, "Dropped"),
+            ]
+          : [routed(~chainId, ~blockNumber=20, ~logIndex=2, "Transfer")],
+        [
+          // IndexedBool's non-matching log: topic1 is the zero word, false.
+          routed(~chainId, ~blockNumber=4, ~logIndex=1, "IndexedBool-false"),
+          routed(~chainId, ~blockNumber=22, "Unfiltered-a"),
+          routed(~chainId, ~blockNumber=22, "Unfiltered-b"),
+        ],
+      ),
+    )
   )
-)
+  ->ServedEvmChain.sorted
 
 let readRawEvents = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
@@ -480,34 +439,33 @@ let readRawEvents = async (indexer: IndexerRunner.t) => {
 }
 
 describe("onEvent where params", () => {
-  let endBlock = ServedEvmChain.endBlock()
-
-  scenario->Scenario.it(
+  Async.it(
     "index only the logs each chain's filter matches, over HyperSync and RPC alike",
-    ~servedChains=[1, 2, 3, 4],
-    ~onExit=endBlock.onExit,
-    async (~t, ~indexer, ~source as _) => {
-      await endBlock.reachEndBlock()
-      let whereCalls: array<whereCalls> = await indexer.query("WhereCalls")
-      t.expect((
-        (await indexer.query("Routed"))->byId,
-        whereCalls->Array.toSorted((a, b) => String.compare(a.id, b.id)),
-        await readRawEvents(indexer),
-      )).toEqual((
-        expectedRows->byId,
-        // Two callbacks, each called once per chain.
-        [1, 2, 3, 4]->Array.map(chainId => {id: chainId->Int.toString, count: 2}),
-        // A `false` where drops the event from its chain entirely, raw events
-        // included, while an event with no handler is still kept raw.
-        [
-          {chain_id: 1, event_name: "Dropped", block_number: 21, log_index: 0},
-          {chain_id: 1, event_name: "Bare", block_number: 23, log_index: 0},
-          {chain_id: 2, event_name: "Bare", block_number: 23, log_index: 0},
-          {chain_id: 3, event_name: "Dropped", block_number: 21, log_index: 0},
-          {chain_id: 3, event_name: "Bare", block_number: 23, log_index: 0},
-          {chain_id: 4, event_name: "Bare", block_number: 23, log_index: 0},
-        ],
-      ))
-    },
+    async t =>
+      await served->ServedEvmChain.run(
+        scenario,
+        async indexer => {
+          let whereCalls: array<whereCalls> = await indexer.query("WhereCalls")
+          t.expect((
+            await indexer->ServedEvmChain.readRouted,
+            whereCalls->Array.toSorted((a, b) => String.compare(a.id, b.id)),
+            await readRawEvents(indexer),
+          )).toEqual((
+            expectedRows,
+            // Two callbacks, each called once per chain.
+            [1, 2, 3, 4]->Array.map(chainId => {id: chainId->Int.toString, count: 2}),
+            // A `false` where drops the event from its chain entirely, raw events
+            // included, while an event with no handler is still kept raw.
+            [
+              {chain_id: 1, event_name: "Dropped", block_number: 21, log_index: 0},
+              {chain_id: 1, event_name: "Bare", block_number: 23, log_index: 0},
+              {chain_id: 2, event_name: "Bare", block_number: 23, log_index: 0},
+              {chain_id: 3, event_name: "Dropped", block_number: 21, log_index: 0},
+              {chain_id: 3, event_name: "Bare", block_number: 23, log_index: 0},
+              {chain_id: 4, event_name: "Bare", block_number: 23, log_index: 0},
+            ],
+          ))
+        },
+      ),
   )
 })

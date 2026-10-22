@@ -1,7 +1,6 @@
 open Vitest
 
-// Covers the per-chain immediate resolution in `HandlerRegister`: invalid
-// onBlock options throw at the user's registration call site.
+// Invalid `indexer.onBlock` options throw at the user's registration call site.
 //
 // This file must not import the handler fixtures — it drives the global
 // registry lifecycle itself, relying on vitest's per-file isolation.
@@ -12,7 +11,6 @@ contracts:
   - name: EventFiltersTest
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 amount)
-      - event: EmptyFiltersArray(address indexed from)
 chains:
   - id: 1337
     rpc:

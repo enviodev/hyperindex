@@ -272,7 +272,7 @@ async fn answer_query(
         .context("expected a JSON query body")
         .and_then(|query: Value| {
             let spec = match (spec, chain) {
-                (None, Some(chain)) => Some(chain_page(&chain, &query, height)?),
+                (None, Some(chain)) => Some(chain_page(&chain, &query, height)),
                 (spec, _) => spec,
             };
             build_page(spec.as_ref(), &query, height)
@@ -295,10 +295,9 @@ fn not_cached() -> Result<Vec<u8>> {
 }
 
 /// The page HyperSync would serve `query` from the chain's rows: the logs in
-/// `[from_block, to_block)` some log selection matches, with the blocks and
-/// transactions those logs belong to. The range ends at the server's height,
-/// as HyperSync's does.
-fn chain_page(chain: &Value, query: &Value, height: u64) -> Result<Value> {
+/// `[from_block, to_block)` some log selection matches, with the blocks those
+/// logs belong to. The range ends at the server's height, as HyperSync's does.
+fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
     let from_block = query.get("from_block").and_then(Value::as_u64).unwrap_or(0);
     let next_block = query
         .get("to_block")
@@ -313,11 +312,7 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Result<Value> {
             .cloned()
             .unwrap_or_default()
     };
-    let in_range = |row: &Value, key: &str| {
-        row.get(key)
-            .and_then(Value::as_u64)
-            .is_some_and(|number| number >= from_block && number < next_block)
-    };
+    let number = |row: &Value, key: &str| row.get(key).and_then(Value::as_u64);
     let selections = query
         .get("logs")
         .and_then(Value::as_array)
@@ -327,44 +322,26 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Result<Value> {
     let logs: Vec<Value> = rows("logs")
         .into_iter()
         .filter(|log| {
-            in_range(log, "block_number")
+            number(log, "block_number")
+                .is_some_and(|block| block >= from_block && block < next_block)
                 && selections
                     .iter()
                     .any(|selection| log_matches(log, selection))
         })
         .collect();
-    let include_all_blocks = query
-        .get("include_all_blocks")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let log_key = |log: &Value, key: &str| log.get(key).and_then(Value::as_u64);
     let blocks: Vec<Value> = rows("blocks")
         .into_iter()
         .filter(|block| {
-            in_range(block, "number")
-                && (include_all_blocks
-                    || logs
-                        .iter()
-                        .any(|log| log_key(log, "block_number") == log_key(block, "number")))
-        })
-        .collect();
-    let transactions: Vec<Value> = rows("transactions")
-        .into_iter()
-        .filter(|transaction| {
-            logs.iter().any(|log| {
-                log_key(log, "block_number") == log_key(transaction, "block_number")
-                    && log_key(log, "transaction_index")
-                        == log_key(transaction, "transaction_index")
-            })
+            logs.iter()
+                .any(|log| number(log, "block_number") == number(block, "number"))
         })
         .collect();
 
-    Ok(serde_json::json!({
+    serde_json::json!({
         "nextBlock": next_block,
         "blocks": blocks,
-        "transactions": transactions,
         "logs": logs,
-    }))
+    })
 }
 
 /// HyperSync's log filter: every listed address and topic position must match
@@ -963,14 +940,12 @@ mod tests {
                 }],
             }),
             7,
-        )
-        .expect("chain page");
+        );
         assert_eq!(
             page,
             serde_json::json!({
                 "nextBlock": 8,
                 "blocks": [{"number": 5}],
-                "transactions": [],
                 "logs": [log(5, "0x00000000000000000000000000000000000000AA", "0x0a")],
             })
         );

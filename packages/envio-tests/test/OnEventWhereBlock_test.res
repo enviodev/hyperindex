@@ -6,10 +6,6 @@ open Vitest
 // from the same served logs; a per-chain callback tells chains 1 and 3 from 2
 // and 4.
 
-let hyperSyncPort = 18615
-let rpcPort = 18616
-let height = 40
-
 let ledger = "0x1111111111111111111111111111111111111111"
 // Its config.yaml start_block is above the `where` one.
 let late = "0x2222222222222222222222222222222222222222"
@@ -58,56 +54,28 @@ let log = (event, ~blockNumber, ~from=zero): ServedEvmChain.log => {
   topics: [event.sighash, from->ServedEvmChain.addressTopic],
 }
 
-let logs = [
-  static->log(~blockNumber=5),
-  static->log(~blockNumber=10),
-  static->log(~blockNumber=12),
-  static->log(~blockNumber=13, ~from=outsider),
-  perChain->log(~blockNumber=19),
-  perChain->log(~blockNumber=20),
-  perChain->log(~blockNumber=24),
-  perChain->log(~blockNumber=25),
-  open_->log(~blockNumber=2),
-  always->log(~blockNumber=3),
-  early->log(~blockNumber=14),
-  early->log(~blockNumber=15),
-  early->log(~blockNumber=31),
-  lifted->log(~blockNumber=10),
-  lifted->log(~blockNumber=20),
-]
-
-let served = ServedEvmChain.serveDuringSuite(~hyperSyncPort, ~rpcPort, ~height, ~logs)
-
-let chainYaml = (~id, ~source) =>
-  `
-  - id: ${id->Int.toString}
-    start_block: 1
-    end_block: ${height->Int.toString}${source}
-    contracts:
-      - name: Ledger
-        address: "${ledger}"
-      - name: Late
-        address: "${late}"
-        start_block: 30
-      - name: Soon
-        address: "${soon}"
-        start_block: 5`
-
-let hyperSyncChain = id =>
-  chainYaml(
-    ~id,
-    ~source=`
-    hypersync_config:
-      url: ${ServedEvmChain.url(hyperSyncPort)}`,
-  )
-let rpcChain = id =>
-  chainYaml(
-    ~id,
-    ~source=`
-    rpc:
-      url: ${ServedEvmChain.url(rpcPort)}
-      for: sync`,
-  )
+let served = ServedEvmChain.serveDuringSuite(
+  ~hyperSyncPort=18615,
+  ~rpcPort=18616,
+  ~height=40,
+  ~logs=[
+    static->log(~blockNumber=5),
+    static->log(~blockNumber=10),
+    static->log(~blockNumber=12),
+    static->log(~blockNumber=13, ~from=outsider),
+    perChain->log(~blockNumber=19),
+    perChain->log(~blockNumber=20),
+    perChain->log(~blockNumber=24),
+    perChain->log(~blockNumber=25),
+    open_->log(~blockNumber=2),
+    always->log(~blockNumber=3),
+    early->log(~blockNumber=14),
+    early->log(~blockNumber=15),
+    early->log(~blockNumber=31),
+    lifted->log(~blockNumber=10),
+    lifted->log(~blockNumber=20),
+  ],
+)
 
 let configYaml = `
 name: on-event-where-block
@@ -125,27 +93,22 @@ contracts:
   - name: Soon
     events:
       - event: Lifted(address indexed from)
-chains:${hyperSyncChain(1)}${hyperSyncChain(2)}${rpcChain(3)}${rpcChain(4)}
+chains:${served->ServedEvmChain.chainsYaml(
+    ~hyperSync=[1, 2],
+    ~rpc=[3, 4],
+    ~contracts=`
+      - name: Ledger
+        address: "${ledger}"
+      - name: Late
+        address: "${late}"
+        start_block: 30
+      - name: Soon
+        address: "${soon}"
+        start_block: 5`,
+  )}
 `
 
-let schema = `
-type Routed {
-  id: ID!
-  chainId: Int!
-  event: String!
-}
-`
-
-let handlersPrelude = `
-import { indexer } from "envio";
-
-type Routable = { chainId: number; block: { number: number } };
-const routed = (event: Routable, name: string) => ({
-  id: \`\${event.chainId}-\${event.block.number}-\${name}\`,
-  chainId: event.chainId,
-  event: name,
-});
-
+let earlyHandler = `
 // The \`where\` start block replaces the config.yaml one, even below it.
 indexer.onEvent(
   { contract: "Late", event: "Early", where: { block: { number: { _gte: 15 } } } },
@@ -153,13 +116,11 @@ indexer.onEvent(
 );
 `
 
-// Every chain stops at its end block before realtime, so the supervised pass
-// would have no barrier to hold.
 let scenario = Scenario.make(
-  ~supervised=false,
   ~configYaml,
-  ~schema,
-  ~handlers=handlersPrelude ++ `
+  ~schema=ServedEvmChain.routedSchema,
+  ~handlers=ServedEvmChain.routedHandlers ++
+  earlyHandler ++ `
 indexer.onEvent(
   {
     contract: "Ledger",
@@ -199,92 +160,73 @@ indexer.onEvent(
 `,
 )
 
-type routed = {id: string, chainId: int, event: string}
-
-let byId = (rows: array<routed>) => rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
-
-let isOdd = chainId => mod(chainId, 2) === 1
-
-let expectedRows =
+// The blocks each chain indexes an event at.
+let expectedRows = eventBlocks =>
   [1, 2, 3, 4]
   ->Array.flatMap(chainId =>
-    [
-      (static, [10, 12]),
-      (perChain, isOdd(chainId) ? [20, 24, 25] : [25]),
-      (open_, [2]),
-      (always, [3]),
-      (early, [15, 31]),
-      (lifted, [20]),
-    ]->Array.flatMap(((event, blocks)) =>
-      blocks->Array.map(
-        blockNumber => {
-          id: `${chainId->Int.toString}-${blockNumber->Int.toString}-${event.name}`,
-          chainId,
-          event: event.name,
-        },
-      )
+    chainId
+    ->eventBlocks
+    ->Array.flatMap(((event, blocks)) =>
+      blocks->Array.map(blockNumber => ServedEvmChain.routed(~chainId, ~blockNumber, event.name))
     )
   )
-  ->byId
+  ->ServedEvmChain.sorted
 
-// The block each source first asked for an event from.
-let firstBlocks = (queries: array<ServedEvmChain.query>, ~events) =>
-  events->Array.map(event => (
-    event.name,
-    queries
-    ->Array.filter(query =>
-      query.filters->Array.some(
-        filter =>
-          filter.topics
-          ->Array.get(0)
-          ->Option.mapOr(false, topic0 => topic0->Array.includes(event.sighash)),
-      )
+let earlyBlocks = (early, [15, 31])
+
+// The block a source first asked for `event` from.
+let firstBlock = (queries: array<ServedEvmChain.query>, event) =>
+  queries
+  ->Array.filter(query =>
+    query.filters->Array.some(filter =>
+      filter.topics
+      ->Array.get(0)
+      ->Option.mapOr(false, topic0 => topic0->Array.includes(event.sighash))
     )
-    ->Array.map(query => query.fromBlock)
-    ->Array.reduce(None, (first, fromBlock) => Some(
-      first->Option.mapOr(fromBlock, first => Pervasives.min(first, fromBlock)),
-    )),
+  )
+  ->Array.reduce(None, (first, query) => Some(
+    first->Option.mapOr(query.fromBlock, first => Pervasives.min(first, query.fromBlock)),
   ))
 
 describe("onEvent where block", () => {
-  let endBlock = ServedEvmChain.endBlock()
-
-  scenario->Scenario.it(
+  Async.it(
     "indexes each event only from its own start block, over HyperSync and RPC alike",
-    ~servedChains=[1, 2, 3, 4],
-    ~onExit=endBlock.onExit,
-    async (~t, ~indexer, ~source as _) => {
-      await endBlock.reachEndBlock()
-      t.expect((await indexer.query("Routed"))->byId).toEqual(expectedRows)
-    },
+    async t =>
+      await served->ServedEvmChain.run(
+        scenario,
+        async indexer =>
+          t.expect(await indexer->ServedEvmChain.readRouted).toEqual(
+            expectedRows(
+              chainId => [
+                (static, [10, 12]),
+                (perChain, mod(chainId, 2) === 1 ? [20, 24, 25] : [25]),
+                (open_, [2]),
+                (always, [3]),
+                (lifted, [20]),
+                earlyBlocks,
+              ],
+            ),
+          ),
+      ),
   )
 
   // The only event of a run is fetched from its start block, with no range
   // below it asked for only to be thrown away — here below the contract's
   // config.yaml start block. Above, events share their queries, and each one's
   // start block is enforced on what comes back.
-  let aloneEndBlock = ServedEvmChain.endBlock()
-  Scenario.make(
-    ~supervised=false,
-    ~configYaml,
-    ~schema,
-    ~handlers=handlersPrelude,
-  )->Scenario.it(
-    "starts fetching a lone event at its start block",
-    ~servedChains=[1, 2, 3, 4],
-    ~onExit=aloneEndBlock.onExit,
-    async (~t, ~indexer, ~source as _) => {
-      served()->ServedEvmChain.reset
-      await aloneEndBlock.reachEndBlock()
-      t.expect((
-        (await indexer.query("Routed"))->byId,
-        served()->ServedEvmChain.takeHyperSyncQueries->firstBlocks(~events=[early]),
-        served()->ServedEvmChain.takeRpcQueries->firstBlocks(~events=[early]),
-      )).toEqual((
-        expectedRows->Array.filter(row => row.event === "Early"),
-        [("Early", Some(15))],
-        [("Early", Some(15))],
-      ))
-    },
+  Async.it("starts fetching a lone event at its start block", async t =>
+    await served->ServedEvmChain.run(
+      Scenario.make(
+        ~configYaml,
+        ~schema=ServedEvmChain.routedSchema,
+        ~handlers=ServedEvmChain.routedHandlers ++ earlyHandler,
+      ),
+      async indexer =>
+        t.expect((
+          await indexer->ServedEvmChain.readRouted,
+          served->ServedEvmChain.takeHyperSyncQueries->firstBlock(early),
+          served->ServedEvmChain.takeRpcQueries->firstBlock(early),
+        )).toEqual((expectedRows(_ => [earlyBlocks]), Some(15), Some(15))),
+    )
   )
 })
