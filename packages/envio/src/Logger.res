@@ -42,7 +42,6 @@ type config = {
 type native
 @send external makeNative: (Core.loggerCtor, config) => native = "make"
 @send external makeInMemoryNative: Core.loggerCtor => native = "makeInMemory"
-@send external nativeWrite: (native, NodeJs.Buffer.t, int) => unit = "write"
 @send external nativeMinLevel: native => int = "minLevel"
 @send external nativeFlush: native => unit = "flush"
 @send external nativeInMemoryLines: native => array<dict<JSON.t>> = "inMemoryLines"
@@ -63,7 +62,7 @@ type output = {
 }
 
 let makeOutput: native => output = %raw(`function (native) {
-  var bytes = Buffer.allocUnsafe(1 << 20);
+  var bytes = Buffer.allocUnsafe(1048576);
   return {
     native: native,
     bytes: bytes,
@@ -75,14 +74,18 @@ let makeOutput: native => output = %raw(`function (native) {
   };
 }`)
 
-@send external subarray: (NodeJs.Buffer.t, int, int) => NodeJs.Buffer.t = "subarray"
-
-let handOver = (output: output) =>
-  if output.lines > 0 {
-    output.native->nativeWrite(output.bytes->subarray(0, output.offset), output.lines)
-    output.offset = 0
-    output.lines = 0
+let handOver: output => unit = %raw(`function (output) {
+  if (output.lines > 0) {
+    output.native.write(output.bytes.subarray(0, output.offset), output.lines);
+    output.offset = 0;
+    output.lines = 0;
+    // A line larger than the buffer grew it; the next batch needn't keep it.
+    if (output.bytes.length > 1048576) {
+      output.bytes = Buffer.allocUnsafe(1048576);
+      output.view = new DataView(output.bytes.buffer, output.bytes.byteOffset, output.bytes.byteLength);
+    }
   }
+}`)
 
 // Writes one line into `output`, flushing first when it might not fit. A UTF-16
 // code unit is at most three UTF-8 bytes, which bounds a line before writing it.
@@ -108,26 +111,32 @@ let appendLine: (
   bytes[offset] = level;
   view.setFloat64(offset + 1, time, true);
   offset += 9;
-  var written = bytes.utf8Write(message, offset + 4);
+  var written = bytes.write(message, offset + 4, "utf8");
   view.setUint32(offset, written, true);
   offset += 4 + written;
   bytes[offset++] = bound.length;
   for (var i = 0; i < bound.length; i++) {
-    written = bytes.utf8Write(bound[i], offset + 4);
+    written = bytes.write(bound[i], offset + 4, "utf8");
     view.setUint32(offset, written, true);
     offset += 4 + written;
   }
   if (params === null) { view.setUint32(offset, 0xFFFFFFFF, true); offset += 4; }
-  else { written = bytes.utf8Write(params, offset + 4); view.setUint32(offset, written, true); offset += 4 + written; }
+  else { written = bytes.write(params, offset + 4, "utf8"); view.setUint32(offset, written, true); offset += 4 + written; }
   output.offset = offset;
   output.lines++;
 }`)
 
 // Enough lines that the call costs little per line.
 let maxPendingLines = 1024
-// A line waits at most this long behind a run of microtasks that never yields
-// to the event loop, where the scheduled flush would run.
+// While lines keep coming, none waits longer than this behind microtasks that
+// never yield to the event loop, where the scheduled flush runs.
 let maxPendingMs = 20.
+
+type fields =
+  | NoFields
+  | Fields(unknown)
+  // A JSON object, written by a caller that knows its shape.
+  | FieldsJson(string)
 
 // A logger per query and per event is made whether or not it ever writes, so a
 // derived logger is only a record of its fields. They are serialized, joined to
@@ -139,9 +148,7 @@ type rec t = {
   // sink takes is dropped before its params are serialized.
   minLevel: int,
   parent: option<t>,
-  fields: unknown,
-  // `fields` is already a JSON object, written by a caller that knows its shape.
-  isFieldsJson: bool,
+  fields: fields,
   mutable isBoundFieldsJsonReady: bool,
   // The fields of the logger and its parents as JSON objects, parents first,
   // each kept as its own string so a logger made per event doesn't copy its
@@ -153,8 +160,7 @@ let wrapNative = native => {
   output: makeOutput(native),
   minLevel: native->nativeMinLevel,
   parent: None,
-  fields: %raw(`undefined`),
-  isFieldsJson: false,
+  fields: NoFields,
   isBoundFieldsJsonReady: true,
   boundFieldsJson: [],
 }
@@ -165,11 +171,29 @@ let flush = (logger: t) => {
   logger.output.native->nativeFlush
 }
 
+let loggers: array<t> = []
+
 // Lines are written off the JS thread, so the ones still waiting when the
-// process exits are written before it does.
+// process exits, or is stopped by a signal, are written before it goes. A
+// signal nothing else handles is raised again once its listener is gone, so its
+// default action still ends the process; one that something else handles is
+// left to it, and the exit that follows flushes again.
+let flushOnExit: (unit => unit) => unit = %raw(`function (flushAll) {
+  process.on("exit", flushAll);
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.once(signal, () => {
+      flushAll();
+      if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+    });
+  }
+}`)
+
 let make = (config: config) => {
   let logger = Core.getAddon().logger->makeNative(config)->wrapNative
-  NodeJs.Process.onExit(() => logger->flush)
+  if loggers->Array.length === 0 {
+    flushOnExit(() => loggers->Array.forEach(flush))
+  }
+  loggers->Array.push(logger)
   logger
 }
 
@@ -181,8 +205,7 @@ let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative
 // params lands under `err`. The replacer that does it runs on every key, so
 // params of plain values skip it. Params come from anywhere, so a value that
 // refers to itself says so, and one JSON can't hold says so rather than losing
-// the line.
-// Params repeat the same few keys, so their JSON is kept.
+// the line. Params repeat the same few keys, so their JSON is kept.
 let quotedKeys: unknown = %raw(`new Map()`)
 let paramsToJson: 'a => string = %raw(`function (value) {
   var ancestors = [];
@@ -217,10 +240,15 @@ let paramsToJson: 'a => string = %raw(`function (value) {
   }
   try {
     if (value instanceof Error) value = {err: value};
-    else if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return JSON.stringify(value, replacer);
+    else if (
+      typeof value !== "object" || value === null || typeof value.toJSON === "function" ||
+      (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+    ) {
+      // What JSON can't hold at all, such as a function, is no params.
+      var json = JSON.stringify(value, replacer);
+      return json === undefined ? "{}" : json;
     }
-    // Params are almost always one flat object, written here without the
+    // Params are almost always one flat plain object, written here without the
     // replacer, which costs more than the line; anything nested takes it.
     var json = "{";
     for (var key in value) {
@@ -246,10 +274,11 @@ let paramsToJson: 'a => string = %raw(`function (value) {
 
 let rec getBoundFieldsJson = (logger: t) => {
   if !logger.isBoundFieldsJsonReady {
-    let own = if logger.isFieldsJson {
-      logger.fields->(Utils.magic: unknown => string)
-    } else {
-      let own = logger.fields->paramsToJson
+    let own = switch logger.fields {
+    | NoFields => "{}"
+    | FieldsJson(json) => json
+    | Fields(fields) =>
+      let own = fields->paramsToJson
       own->String.startsWith("{") ? own : `{"params":${own}}`
     }
     let parent = switch logger.parent {
@@ -267,8 +296,7 @@ let withFields = (logger: t, fields: 'a) => {
   output: logger.output,
   minLevel: logger.minLevel,
   parent: Some(logger),
-  fields: fields->(Utils.magic: 'a => unknown),
-  isFieldsJson: false,
+  fields: Fields(fields->(Utils.magic: 'a => unknown)),
   isBoundFieldsJsonReady: false,
   boundFieldsJson: [],
 }
@@ -279,8 +307,7 @@ let withFieldsJson = (logger: t, json: string) => {
   output: logger.output,
   minLevel: logger.minLevel,
   parent: Some(logger),
-  fields: json->(Utils.magic: string => unknown),
-  isFieldsJson: true,
+  fields: FieldsJson(json),
   isBoundFieldsJsonReady: false,
   boundFieldsJson: [],
 }
@@ -368,28 +395,29 @@ type writableClass
 type formatWithOptions
 @module("node:util") external formatWithOptions: formatWithOptions = "formatWithOptions"
 
-// The common methods skip formatting when the level is off, and read a message
-// and one plain object (or an Error) as `context.log`'s message and params;
-// anything else is formatted into the message as Node's console would. The
-// rest write through a `Console` of their level's own, so they format as
-// Node's would, with group indentation kept per level.
+// The common methods skip formatting when no logger takes the line, and read a
+// message and one plain object (or an Error) as `context.log`'s message and
+// params; anything else is formatted into the message as Node's console would.
+// The rest write through a `Console` of their level's own, so they format as
+// Node's would; `console.group` indents only those.
 let routeConsoleTo: (
   consoleClass,
   writableClass,
   formatWithOptions,
-  level => bool,
-  (level, string, Nullable.t<unknown>) => unit,
-) => unit => unit = %raw(`(Console, Writable, formatWithOptions, isEnabled, write) => {
+  level => Nullable.t<t>,
+  (t, level, string, Nullable.t<unknown>) => unit,
+) => unit => unit = %raw(`(Console, Writable, formatWithOptions, loggerFor, write) => {
   const isParams = (value) =>
     value instanceof Error ||
     (typeof value === "object" && value !== null &&
       (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null));
   const direct = (level) => (...args) => {
-    if (!isEnabled(level)) return;
+    const logger = loggerFor(level);
+    if (logger == null) return;
     if (args.length === 2 && typeof args[0] === "string" && !args[0].includes("%") && isParams(args[1])) {
-      write(level, args[0], args[1]);
+      write(logger, level, args[0], args[1]);
     } else {
-      write(level, formatWithOptions({colors: false}, ...args), undefined);
+      write(logger, level, formatWithOptions({colors: false}, ...args), undefined);
     }
   };
   const directByName = {log: "uinfo", info: "uinfo", debug: "udebug", warn: "uwarn", error: "uerror"};
@@ -408,14 +436,17 @@ let routeConsoleTo: (
     const stream = new Writable({
       decodeStrings: false,
       write(chunk, _encoding, callback) {
+        const logger = loggerFor(level);
         // Each call ends its output with a newline, which a line doesn't need.
-        write(level, String(chunk).replace(/\n$/, ""), undefined);
+        if (logger != null) write(logger, level, String(chunk).replace(/\n$/, ""), undefined);
         callback();
       },
     });
     const routed = new Console({stdout: stream, stderr: stream, colorMode: false});
     for (const name of viaConsoleByLevel[level]) replace(name, routed[name].bind(routed));
   }
+  // Clearing the screen would wipe the display and the lines above it.
+  replace("clear", () => {});
   return () => original.forEach(([name, method]) => { console[name] = method; });
 }`)
 
@@ -428,10 +459,10 @@ let routeConsole = (logger: t, ~loggerFor: t => option<t>) =>
     consoleClass,
     writableClass,
     formatWithOptions,
-    level => levelNumber(level) >= logger.minLevel,
-    (level, message, params) =>
-      switch loggerFor(logger) {
-      | Some(logger) => logger->logAt(level, message, ~params=?params->Nullable.toOption)
-      | None => ()
-      },
+    level =>
+      levelNumber(level) >= logger.minLevel
+        ? loggerFor(logger)->Nullable.fromOption
+        : Nullable.null,
+    (logger, level, message, params) =>
+      logger->logAt(level, message, ~params=?params->Nullable.toOption),
   )

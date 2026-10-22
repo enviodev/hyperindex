@@ -697,6 +697,13 @@ type eventItem = private {
   payload: eventPayload,
 }
 
+// The fields of a line about an event item, as a JSON object. `address` is the
+// event's source address, which simulate input can set to any string.
+let eventItemFieldsJson = (eventItem: eventItem, ~address: Address.t) =>
+  `{${eventItem.onEventRegistration.eventConfig->contractAndEventJson},"block":${eventItem.blockNumber->Int.toString},"logIndex":${eventItem.logIndex->Int.toString},"address":${JSON.stringify(
+      JSON.String(address->Address.toString),
+    )}}`
+
 // Row shape for the `raw_events` table. Defined here (rather than in
 // `InternalTable`) so the ecosystem's `toRawEvent` can reference it without
 // pulling in `InternalTable`'s dependency on `Config`.

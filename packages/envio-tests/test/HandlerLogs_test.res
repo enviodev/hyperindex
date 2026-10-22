@@ -130,6 +130,14 @@ describe("context.log", () => {
                       "circular",
                       ~params=circular->(Utils.magic: dict<JSON.t> => {..}),
                     )
+                    context.log.info(
+                      "function",
+                      ~params=(() => ())->(Utils.magic: (unit => unit) => {..}),
+                    )
+                    context.log.info(
+                      "date",
+                      ~params=Date.fromTime(0.)->(Utils.magic: Date.t => {..}),
+                    )
                   },
                 },
               ],
@@ -145,19 +153,7 @@ describe("context.log", () => {
             line =>
               line
               ->Dict.toArray
-              ->Array.filter(
-                ((key, _)) =>
-                  !(
-                    [
-                      "chainId",
-                      "contract",
-                      "event",
-                      "block",
-                      "logIndex",
-                      "address",
-                    ]->Array.includes(key)
-                  ),
-              ),
+              ->Array.filter(((key, _)) => !(eventFieldNames->Array.includes(key))),
           ),
         ).toEqual([
           [
@@ -180,6 +176,12 @@ describe("context.log", () => {
             ("msg", JSON.String("circular")),
             ("kept", JSON.Number(1.)),
             ("self", JSON.String("[Circular]")),
+          ],
+          [("level", JSON.String("uinfo")), ("msg", JSON.String("function"))],
+          [
+            ("level", JSON.String("uinfo")),
+            ("msg", JSON.String("date")),
+            ("params", JSON.String("1970-01-01T00:00:00.000Z")),
           ],
         ])
       },

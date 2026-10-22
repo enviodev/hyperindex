@@ -50,20 +50,17 @@ let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.even
 
 // A line's program and instruction names, and its program id, as JSON object
 // members: built once per instruction, since a logger is made per item.
-let programAndInstructionJson = Utils.WeakMap.memoize((eventConfig: Internal.eventConfig) =>
+let instructionJson = Utils.WeakMap.memoize((eventConfig: Internal.eventConfig) => {
+  let programId =
+    (
+      eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+    ).programId->SvmTypes.Pubkey.toString
   `"program":${JSON.stringify(
       JSON.String(eventConfig.contractName),
-    )},"instruction":${JSON.stringify(JSON.String(eventConfig.name))}`
-)
-let programIdJson = Utils.WeakMap.memoize((eventConfig: Internal.eventConfig) =>
-  `"programId":${JSON.stringify(
-      JSON.String(
-        (
-          eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-        ).programId->SvmTypes.Pubkey.toString,
-      ),
+    )},"instruction":${JSON.stringify(JSON.String(eventConfig.name))},"programId":${JSON.stringify(
+      JSON.String(programId),
     )}`
-)
+})
 
 let make = (): Ecosystem.t => {
   name: Svm,
@@ -82,7 +79,7 @@ let make = (): Ecosystem.t => {
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   withEventFields: (eventItem, ~logger) =>
     logger->Logger.withFieldsJson(
-      `{${eventItem.onEventRegistration.eventConfig->programAndInstructionJson},"slot":${eventItem.blockNumber->Int.toString},${eventItem.onEventRegistration.eventConfig->programIdJson}}`,
+      `{${eventItem.onEventRegistration.eventConfig->instructionJson},"slot":${eventItem.blockNumber->Int.toString}}`,
     ),
   toRawEvent: _ => JsError.throwWithMessage("Raw events are not supported for SVM"),
 }

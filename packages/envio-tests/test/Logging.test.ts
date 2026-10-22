@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { readFileSync } from "fs";
 import { strict as assert } from "assert";
 import path from "path";
@@ -66,6 +66,24 @@ describe("Logging Output (shared with console.log)", () => {
     assert.deepEqual(
       lines,
       Array.from({ length: 50 }, (_, i) => [`console ${i}`, `logger ${i}`]).flat()
+    );
+  });
+});
+
+// Lines wait in a buffer before they are written, so a process stopped by a
+// signal writes what it logged before going.
+describe("Logging Output (stopped by a signal)", () => {
+  it("writes the lines logged before a SIGTERM", () => {
+    const child = spawnSync("node", ["test/fixtures/SignalFlush.res.mjs"], {
+      encoding: "utf-8",
+      env: { ...process.env, ENVIO_TEST_LOGGING_FORMAT: "1" },
+    });
+    assert.deepEqual(
+      {
+        signal: child.signal,
+        messages: child.stdout.trimEnd().split("\n").map((line) => JSON.parse(line).message),
+      },
+      { signal: "SIGTERM", messages: ["before the signal"] }
     );
   });
 });

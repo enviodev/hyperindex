@@ -98,11 +98,13 @@ let initEffect = (params: contextParams) => {
         chainId: handlerChainId,
         checkpointId: params.checkpointId,
       }
-      effectArgs->ConsoleScope.setForEffect(() =>
+      // Made only if the effect logs, then kept for its other lines.
+      let effectLogger = Lazy.make(() =>
         params.indexerState
         ->IndexerState.loggerForItem(params.item)
         ->Logger.withFields({"effect": effect.name})
       )
+      effectArgs->ConsoleScope.setForEffect(() => effectLogger->Lazy.get)
       LoadLayer.loadEffect(
         ~loadManager=params.loadManager,
         ~persistence=params.persistence,

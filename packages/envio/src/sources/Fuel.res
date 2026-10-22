@@ -57,12 +57,9 @@ let make = (): Ecosystem.t => {
     s.field("block", S.option(S.object(s2 => s2.field("height", S.unknown))->S.strict))
   ),
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
-  // An address is hex, so it needs no escaping.
   withEventFields: (eventItem, ~logger) =>
     logger->Logger.withFieldsJson(
-      `{${eventItem.onEventRegistration.eventConfig->Internal.contractAndEventJson},"block":${eventItem.blockNumber->Int.toString},"logIndex":${eventItem.logIndex->Int.toString},"address":"${(
-          eventItem.payload->toPayload
-        ).srcAddress->Address.toString}"}`,
+      eventItem->Internal.eventItemFieldsJson(~address=(eventItem.payload->toPayload).srcAddress),
     ),
   toRawEvent: eventItem => {
     let payload = eventItem.payload->toPayload
