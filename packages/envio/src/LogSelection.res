@@ -1,23 +1,3 @@
-// Expand a resolved topic selection into concrete topic values for a query:
-// `ContractAddresses` markers become the given partition addresses encoded as
-// topics; `Values` pass through.
-let materializeTopicFilter = (filter: Internal.topicFilter, ~addresses: array<Address.t>) =>
-  switch filter {
-  | Values(values) => values
-  | ContractAddresses(_) => addresses->Array.map(TopicFilter.fromAddress)
-  }
-
-let materializeTopicSelections = (
-  topicSelections: array<Internal.resolvedTopicSelection>,
-  ~addresses: array<Address.t>,
-): array<Internal.topicSelection> =>
-  topicSelections->Array.map(({topic0, topic1, topic2, topic3}): Internal.topicSelection => {
-    topic0,
-    topic1: topic1->materializeTopicFilter(~addresses),
-    topic2: topic2->materializeTopicFilter(~addresses),
-    topic3: topic3->materializeTopicFilter(~addresses),
-  })
-
 type parsedWhere = {
   resolvedWhere: Internal.resolvedWhere,
   filterByAddresses: bool,
