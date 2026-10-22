@@ -8,12 +8,15 @@ open Vitest
 
 let vat = "0x1111111111111111111111111111111111111111"
 let jug = "0x2222222222222222222222222222222222222222"
+let outsider = "0x3333333333333333333333333333333333333333"
 let guy = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 let otherGuy = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
 let fileSig = "0x29ae8114"
 let slipSig = "0x7cdd3fde"
 let moveSig = "0xbb35783b"
+let cageSig = "0x69245009"
+let healSig = "0xf37ac61c"
 let unlistedSig = "0xdeadbeef"
 let frobSighash = "0x5d8393492ea0325a1e5b50f999521e134cc91ed12ba0964b67e7751c8c71a88c"
 
@@ -41,7 +44,7 @@ let note = (~address=vat, ~guy=guy, ~blockNumber, sig): ServedEvmChain.log => {
 let served = ServedEvmChain.serveDuringSuite(
   ~hyperSyncPort=18617,
   ~rpcPort=18618,
-  ~height=10,
+  ~height=12,
   ~logs=[
     note(~blockNumber=1, fileSig),
     note(~blockNumber=2, slipSig),
@@ -62,6 +65,10 @@ let served = ServedEvmChain.serveDuringSuite(
     note(~address=jug, ~blockNumber=6, fileSig),
     note(~address=jug, ~guy=otherGuy, ~blockNumber=7, fileSig),
     note(~address=jug, ~blockNumber=8, slipSig),
+    note(~address=outsider, ~blockNumber=9, cageSig),
+    note(~address=outsider, ~blockNumber=10, fileSig),
+    note(~guy=vat, ~blockNumber=11, healSig),
+    note(~blockNumber=12, healSig),
   ],
 )
 
@@ -139,6 +146,18 @@ indexer.onEvent(
   async ({ event, context }) => context.Note.set(note(event, "slip-or-move")),
 );
 indexer.onEvent(
+  { contract: "Vat", event: "LogNote", wildcard: true, where: { params: { sig: "${cageSig}" } } },
+  async ({ event, context }) => context.Note.set(note(event, "any-cage")),
+);
+indexer.onEvent(
+  {
+    contract: "Vat",
+    event: "LogNote",
+    where: ({ chain }) => ({ params: { sig: "${healSig}", guy: chain.Vat.addresses } }),
+  },
+  async ({ event, context }) => context.Note.set(note(event, "heal-by-vat")),
+);
+indexer.onEvent(
   { contract: "Vat", event: "Frob" },
   async ({ event, context }) => context.Routed.set(routed(event, "Frob")),
 );
@@ -169,17 +188,20 @@ let readNotes = async (indexer: IndexerRunner.t) => {
   rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
 }
 
-// Which handler saw which log: each listed sig once, and Jug's sig only for the
-// guy its filter names.
+// Which handler saw which log: each listed sig once, Jug's sig only for the guy
+// its filter names, the wildcard's sig from an emitter outside config, and the
+// heal sig only for a guy that is a Vat address.
 let expectedNotes =
   [1, 2]
   ->Array.flatMap(chainId =>
     [
-      (1, fileSig, "file"),
-      (2, slipSig, "slip-or-move"),
-      (3, moveSig, "slip-or-move"),
-      (6, fileSig, "jug-file"),
-    ]->Array.map(((blockNumber, sig, name)) => {
+      (1, fileSig, "file", guy),
+      (2, slipSig, "slip-or-move", guy),
+      (3, moveSig, "slip-or-move", guy),
+      (6, fileSig, "jug-file", guy),
+      (9, cageSig, "any-cage", guy),
+      (11, healSig, "heal-by-vat", vat),
+    ]->Array.map(((blockNumber, sig, name, guy)) => {
       id: ServedEvmChain.routed(~chainId, ~blockNumber, name),
       sig,
       guy,
@@ -206,10 +228,22 @@ let sentFilters = (queries: array<ServedEvmChain.query>) =>
 let one = value => [value->String.toLowerCase]
 
 // Each contract's own query: Vat's sigs fold into one topic0 list beside
-// Frob's signature, Jug's filter also names the guy. RPC leaves out the
-// trailing positions that match anything.
+// Frob's signature, Jug's filter also names the guy. The heal filter names
+// Vat's registered address as the guy, and the wildcard names no address. RPC
+// leaves out the trailing positions that match anything.
 let expectedFilters = (~trailing) =>
   distinctFilters([
+    {
+      address: [vat],
+      topics: [
+        [healSig->sigTopic->one, vat->ServedEvmChain.addressTopic->one],
+        trailing ? [[], []] : [],
+      ]->Array.flat,
+    },
+    {
+      address: [],
+      topics: [[cageSig->sigTopic->one], trailing ? [[], [], []] : []]->Array.flat,
+    },
     {
       address: [vat],
       topics: [
