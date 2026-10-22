@@ -19,7 +19,8 @@ let projectRoot = pathJoin([
   "resolver-directory",
 ])
 
-let resolverFile = (name, output) => `
+let resolverFile = (name, output) =>
+  `
 import { createResolver, S } from "envio";
 
 export const ${name} = createResolver({
@@ -89,15 +90,16 @@ describe("resolvers: pointing at a directory", () => {
     | Object(d) =>
       switch d->Dict.get("resolvers") {
       | Some(Array(items)) =>
-        items->Array.map(item =>
-          switch item {
-          | Object(r) =>
-            switch r->Dict.get("name") {
-            | Some(String(n)) => n
+        items->Array.map(
+          item =>
+            switch item {
+            | Object(r) =>
+              switch r->Dict.get("name") {
+              | Some(String(n)) => n
+              | _ => "?"
+              }
             | _ => "?"
-            }
-          | _ => "?"
-          }
+            },
         )
       | _ => []
       }

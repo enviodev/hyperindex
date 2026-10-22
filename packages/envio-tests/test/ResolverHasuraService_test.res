@@ -69,9 +69,7 @@ let startFakeHasura = async () => {
       res->end_(answer)
     })
   })
-  await Promise.make((resolve, _reject) =>
-    server->listenOnHost(0, "127.0.0.1", () => resolve())
-  )
+  await Promise.make((resolve, _reject) => server->listenOnHost(0, "127.0.0.1", () => resolve()))
   server
 }
 
@@ -111,8 +109,7 @@ type Position {
 `
 
 let config = InternalTestIndexer.fromUserApi(~configYaml, ~schema).config
-let envioInfo =
-  Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.stripSensitiveData
+let envioInfo = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.toEnvioInfo
 
 let projectRoot = pathJoin([
   pathDirname(fileURLToPath(importMetaUrl)),
@@ -140,9 +137,12 @@ beforeAll(() => {
 })
 
 let clearHasuraEnv = () => {
-  ["HASURA_GRAPHQL_ENDPOINT", "HASURA_GRAPHQL_ADMIN_SECRET", "ENVIO_RESOLVERS_PUBLIC_URL", "ENVIO_RESOLVERS_METADATA_INTERVAL_MS"]->Array.forEach(
-    key => processEnv->Dict.set(key, ""),
-  )
+  [
+    "HASURA_GRAPHQL_ENDPOINT",
+    "HASURA_GRAPHQL_ADMIN_SECRET",
+    "ENVIO_RESOLVERS_PUBLIC_URL",
+    "ENVIO_RESOLVERS_METADATA_INTERVAL_MS",
+  ]->Array.forEach(key => processEnv->Dict.set(key, ""))
 }
 
 describe("envio resolvers, as Hasura's handler", () => {
@@ -167,8 +167,7 @@ describe("envio resolvers, as Hasura's handler", () => {
     let deadline = Date.now() +. 10_000.
     let rec waitForReassert = async () =>
       if (
-        callsOfType("export_metadata")->Array.length > exportsAfterStartup ||
-          Date.now() > deadline
+        callsOfType("export_metadata")->Array.length > exportsAfterStartup || Date.now() > deadline
       ) {
         ()
       } else {
@@ -240,8 +239,9 @@ describe("envio resolvers, as Hasura's handler", () => {
     processEnv->Dict.set("ENVIO_RESOLVERS_METADATA_INTERVAL_MS", "40")
 
     let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
-    let servingAfterRefusal =
-      await getStatus(`http://127.0.0.1:${running.server.port->Int.toString}/healthz`)
+    let servingAfterRefusal = await getStatus(
+      `http://127.0.0.1:${running.server.port->Int.toString}/healthz`,
+    )
 
     // The loop is what converges, so it has to have been started even though
     // the first apply threw. Waited for, not slept past: how quickly a loaded
@@ -349,11 +349,7 @@ describe("envio resolvers, as Hasura's handler", () => {
   Async.it("prints the metadata for anyone applying it by hand", async t => {
     // `envio resolvers metadata`: the same JSON the service would POST, so a
     // deployment that applies metadata elsewhere is not guessing at its shape.
-    let metadata = await ResolverProcess.metadataJson(
-      ~config,
-      ~projectRoot,
-      ~handlerUrl=publicUrl,
-    )
+    let metadata = await ResolverProcess.metadataJson(~config, ~projectRoot, ~handlerUrl=publicUrl)
     t.expect(metadata).toEqual(
       %raw(`{
         customTypes: { scalars: [], enums: [], input_objects: [], objects: [] },

@@ -49,11 +49,7 @@ let postJson = async (url, body) => {
 
 // Inside envio-tests rather than the system temp dir: the module under test
 // imports "envio" by name, which only resolves from within the workspace.
-let projectRoot = pathJoin([
-  pathDirname(fileURLToPath(importMetaUrl)),
-  ".tmp",
-  "resolver-process",
-])
+let projectRoot = pathJoin([pathDirname(fileURLToPath(importMetaUrl)), ".tmp", "resolver-process"])
 
 let resolverSource = `
 import { createResolver, defineType, S } from "envio";
@@ -112,16 +108,14 @@ let config = InternalTestIndexer.fromUserApi(~schema, ~configYaml).config
 // What the indexer would have recorded in `envio_info` for this project.
 // Passed explicitly because `serve` otherwise reads it off disk, and these
 // tests run from the workspace root rather than from the fixture.
-let envioInfo =
-  Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.stripSensitiveData
+let envioInfo = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.toEnvioInfo
 
 // The same project with nothing declared, for the artefacts codegen has to
 // emit either way.
-let configWithoutResolvers =
-  InternalTestIndexer.fromUserApi(
-    ~schema,
-    ~configYaml=configYaml->String.replace("resolvers: src/Resolvers.ts\n", ""),
-  ).config
+let configWithoutResolvers = InternalTestIndexer.fromUserApi(
+  ~schema,
+  ~configYaml=configYaml->String.replace("resolvers: src/Resolvers.ts\n", ""),
+).config
 
 beforeAll(() => {
   // `startForDev` defaults the child's Hasura to localhost:8080, which is a
@@ -202,10 +196,7 @@ extend type Query {
     // Written rather than skipped, so nothing downstream needs a
     // "file missing" branch — and parseable by serve, which registers no
     // custom fields from it rather than failing to start.
-    t.expect((manifest, sdl)).toEqual((
-      %raw(`{ schemaVersion: 1, resolvers: [], types: [] }`),
-      "",
-    ))
+    t.expect((manifest, sdl)).toEqual((%raw(`{ schemaVersion: 1, resolvers: [], types: [] }`), ""))
   })
 
   Async.it("serves the declarations it just imported, and drains on shutdown", async t => {
@@ -310,10 +301,12 @@ extend type Query {
     // cause so they know why. A swallowed cause reads "unknown error" and
     // sends them looking in the wrong place.
     t.expect(
-      caught->Option.map(message => (
-        message->String.includes("src/NotThere.ts"),
-        message->String.includes("Cannot find module"),
-      )),
+      caught->Option.map(
+        message => (
+          message->String.includes("src/NotThere.ts"),
+          message->String.includes("Cannot find module"),
+        ),
+      ),
     ).toEqual(Some((true, true)))
   })
 
@@ -322,29 +315,32 @@ extend type Query {
   // exercises that seam -- the HTTP hop, the pool of its own, the drain -- if
   // it spawns the same command here. It is also what lets a resolver edit be a
   // restart of that process alone, with the indexer keeping its place.
-  Async.it("spawns `envio resolvers` as its own process rather than serving in-process", async t => {
-    processEnv->Dict.set("ENVIO_RESOLVERS_PORT", "9917")
-    let dev = (await ResolverProcess.startForDev(~config, ~projectRoot))->Option.getOrThrow
+  Async.it(
+    "spawns `envio resolvers` as its own process rather than serving in-process",
+    async t => {
+      processEnv->Dict.set("ENVIO_RESOLVERS_PORT", "9917")
+      let dev = (await ResolverProcess.startForDev(~config, ~projectRoot))->Option.getOrThrow
 
-    let answeredWhileRunning = await getStatus("http://127.0.0.1:9917/healthz")
+      let answeredWhileRunning = await getStatus("http://127.0.0.1:9917/healthz")
 
-    // Stopping the resolvers is what a local edit does; nothing about the
-    // parent process goes with it.
-    await dev.stop()
-    let afterStop = try {
-      let _ = await getStatus("http://127.0.0.1:9917/healthz")
-      "answered"
-    } catch {
-    | _ => "refused"
-    }
+      // Stopping the resolvers is what a local edit does; nothing about the
+      // parent process goes with it.
+      await dev.stop()
+      let afterStop = try {
+        let _ = await getStatus("http://127.0.0.1:9917/healthz")
+        "answered"
+      } catch {
+      | _ => "refused"
+      }
 
-    t.expect((
-      dev.pid->Option.isSome,
-      dev.pid == Some(currentPid),
-      answeredWhileRunning,
-      afterStop,
-    )).toEqual((true, false, 200, "refused"))
-  })
+      t.expect((
+        dev.pid->Option.isSome,
+        dev.pid == Some(currentPid),
+        answeredWhileRunning,
+        afterStop,
+      )).toEqual((true, false, 200, "refused"))
+    },
+  )
 
   // Locally the resolvers have to appear in the same GraphQL endpoint as the
   // generated entity fields, or `envio dev` shows a developer everything except
@@ -353,28 +349,30 @@ extend type Query {
   // not the one the process binds.
   Async.it("points its Hasura at the resolvers it just spawned", async t => {
     let seen: ref<array<JSON.t>> = ref([])
-    let hasura = createServer((req, res) => {
-      let body = ref("")
-      req->setEncoding("utf8")
-      req->onData(chunk => body := body.contents ++ chunk)
-      req->onEnd(() => {
-        let parsed = body.contents->JSON.parseOrThrow
-        seen.contents->Array.push(parsed)->ignore
-        let isExport = switch parsed {
-        | Object(dict) =>
-          switch dict->Dict.get("type") {
-          | Some(String("export_metadata")) => true
-          | _ => false
-          }
-        | _ => false
-        }
-        res->writeHead(200, dict{"content-type": "application/json"})
-        res->end_(isExport ? `{"version":3,"sources":[]}` : `[{"message":"success"}]`)
-      })
-    })
-    await Promise.make((resolve, _reject) =>
-      hasura->listenOnHost(0, "127.0.0.1", () => resolve())
+    let hasura = createServer(
+      (req, res) => {
+        let body = ref("")
+        req->setEncoding("utf8")
+        req->onData(chunk => body := body.contents ++ chunk)
+        req->onEnd(
+          () => {
+            let parsed = body.contents->JSON.parseOrThrow
+            seen.contents->Array.push(parsed)->ignore
+            let isExport = switch parsed {
+            | Object(dict) =>
+              switch dict->Dict.get("type") {
+              | Some(String("export_metadata")) => true
+              | _ => false
+              }
+            | _ => false
+            }
+            res->writeHead(200, dict{"content-type": "application/json"})
+            res->end_(isExport ? `{"version":3,"sources":[]}` : `[{"message":"success"}]`)
+          },
+        )
+      },
     )
+    await Promise.make((resolve, _reject) => hasura->listenOnHost(0, "127.0.0.1", () => resolve()))
     processEnv->Dict.set(
       "HASURA_GRAPHQL_ENDPOINT",
       `http://127.0.0.1:${(hasura->address).port->Int.toString}/v1/metadata`,
@@ -396,36 +394,36 @@ extend type Query {
     await Promise.make((resolve, _reject) => hasura->closeServer(() => resolve()))
     processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "http://127.0.0.1:1/v1/metadata")
 
-    let handlers =
-      seen.contents
-      ->Array.flatMap(call =>
+    let handlers = seen.contents->Array.flatMap(
+      call =>
         switch call {
         | Object(dict) =>
           switch (dict->Dict.get("type"), dict->Dict.get("args")) {
           | (Some(String("bulk")), Some(Array(args))) =>
-            args->Array.filterMap(arg =>
-              switch arg {
-              | Object(argDict) =>
-                switch argDict->Dict.get("args") {
-                | Some(Object(actionArgs)) =>
-                  switch actionArgs->Dict.get("definition") {
-                  | Some(Object(definition)) =>
-                    switch definition->Dict.get("handler") {
-                    | Some(String(handler)) => Some(handler)
+            args->Array.filterMap(
+              arg =>
+                switch arg {
+                | Object(argDict) =>
+                  switch argDict->Dict.get("args") {
+                  | Some(Object(actionArgs)) =>
+                    switch actionArgs->Dict.get("definition") {
+                    | Some(Object(definition)) =>
+                      switch definition->Dict.get("handler") {
+                      | Some(String(handler)) => Some(handler)
+                      | _ => None
+                      }
                     | _ => None
                     }
                   | _ => None
                   }
                 | _ => None
-                }
-              | _ => None
-              }
+                },
             )
           | _ => []
           }
         | _ => []
-        }
-      )
+        },
+    )
 
     t.expect(handlers).toEqual([
       "http://host.docker.internal:9918/hasura-action",
