@@ -897,20 +897,48 @@ let buildFuelEventConfig = (
 
 // Enrich a Fuel definition into a registration (handler binding +
 // wildcard-derived address gate; Fuel never filters by addresses).
+// `where.block.height._gte` overrides the contract-level startBlock.
 let buildFuelOnEventRegistration = (
   ~eventConfig: Internal.fuelEventConfig,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
+  ~where: option<JSON.t>,
+  ~chainId: ChainId.t,
+  ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
-  index: -1,
-  eventConfig: (eventConfig :> Internal.eventConfig),
-  handler,
-  contractRegister,
-  isWildcard,
-  filterByAddresses: false,
-  dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  startBlock,
-  fieldSelection: eventConfig.fieldSelection,
+  let contractName = eventConfig.contractName
+  let whereValue = where->Option.map(LogSelection.evaluateWhere(_, ~contractName, ~chainId))
+  switch whereValue {
+  | Some(Object(obj)) =>
+    obj->Utils.Dict.forEachWithKey((_, key) =>
+      if key !== "block" {
+        JsError.throwWithMessage(
+          `Invalid where configuration for ${contractName}. Unknown field "${key}". Fuel events can only be filtered by \`block\`.`,
+        )
+      }
+    )
+  | _ => ()
+  }
+  let whereStartBlock =
+    whereValue->Option.flatMap(
+      LogSelection.extractStartBlock(_, ~onEventBlockFilterSchema, ~contractName),
+    )
+
+  {
+    index: -1,
+    eventConfig: (eventConfig :> Internal.eventConfig),
+    handler,
+    contractRegister,
+    isWildcard,
+    filterByAddresses: false,
+    dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
+    startBlock: whereStartBlock->Option.orElse(startBlock),
+    fieldSelection: eventConfig.fieldSelection,
+    skippedByWhere: switch whereValue {
+    | Some(Boolean(false)) => true
+    | _ => false
+    },
+  }
 }

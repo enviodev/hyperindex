@@ -5,7 +5,7 @@ type options = {
   endpointUrl: string,
   apiToken: option<string>,
   // The chain's registrations, indexed by their sequential `index`.
-  onEventRegistrations: array<Internal.fuelOnEventRegistration>,
+  onEventRegistrations: array<Internal.onEventRegistration>,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
 }
