@@ -96,7 +96,7 @@ let chainRows = async (indexer: IndexerRunner.t) =>
 let startBlocks = async (indexer: IndexerRunner.t) =>
   (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.startBlock))
 
-let counterPartitions = async ({sql, pgSchema}: IndexerRunner.pg) => {
+let counterPartitions = async (sql, ~pgSchema) => {
   let rows: array<{
     "name": string,
   }> = await sql->Sql.queryForTests(
@@ -153,10 +153,10 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
           ),
         ],
       ))
-      await resumed.inPostgres(
-        async pg =>
+      await resumed.usePostgresSql(
+        async sql =>
           t.expect(
-            await counterPartitions(pg),
+            await sql->counterPartitions(~pgSchema=resumed.pgSchema),
             ~message="Chain 137 gets a partition beside chain 1's",
           ).toEqual(["Counter$1", "Counter$137"]),
       )

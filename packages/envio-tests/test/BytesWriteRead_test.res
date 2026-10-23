@@ -146,7 +146,7 @@ describe("Bytes as Uint8Array", () => {
         | #postgres => None
         },
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(await (indexer.queryHistory("Blob"): promise<array<Change.t<blob>>>)).toEqual([
             Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),

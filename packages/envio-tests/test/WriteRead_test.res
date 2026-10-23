@@ -318,7 +318,7 @@ describe("Write/read tests", () => {
       t.expect(
         await (indexer.query("EntityWithAllTypes"): promise<array<entityWithAllTypes>>),
       ).toEqual([entityWithAllTypes])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await (
@@ -340,7 +340,7 @@ describe("Write/read tests", () => {
           indexer.query("EntityWithAllNonArrayTypes"): promise<array<entityWithAllNonArrayTypes>>
         ),
       ).toEqual([entityWithAllNonArrayTypes])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await (
@@ -364,7 +364,7 @@ describe("Write/read tests", () => {
           >
         ),
       ).toEqual([{id: "1"}])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await (
@@ -383,7 +383,7 @@ describe("Write/read tests", () => {
           >
         ),
       ).toEqual([{id: "2"}])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await (
@@ -444,7 +444,7 @@ describe("Write/read tests", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),

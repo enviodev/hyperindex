@@ -51,8 +51,7 @@ let setToken: MockSource.itemMock = {
     }),
 }
 
-let columns = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
+let columns = async (sql, ~pgSchema) => {
   let postgres: array<{
     "name": string,
   }> = await sql->Sql.queryForTests(
@@ -77,6 +76,7 @@ let columns = async (indexer: IndexerRunner.t) => {
 let writeAndRead = async (
   ~indexer: IndexerRunner.t,
   ~source: (int, ~index: int=?) => MockSource.t,
+  ~sql,
 ) => {
   let source = source(1)
   source.resolveGetHeightOrThrow(100)
@@ -84,7 +84,7 @@ let writeAndRead = async (
     {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [setToken]})},
   ])
   await indexer.getBatchWritePromise()
-  await indexer->columns
+  await sql->columns(~pgSchema=indexer.pgSchema)
 }
 
 let isEntityColumn = name => name === "id" || name->String.toLowerCase->String.includes("token")
@@ -99,11 +99,15 @@ describe("Column names per storage", () => {
     ~indexer,
     ~source,
   ) => {
-    let (postgres, clickhouse) = await writeAndRead(~indexer, ~source)
-    t.expect((postgres, clickhouse->Array.filter(isEntityColumn))).toEqual((
-      ["id", "token_id"],
-      ["id", "tokenId"],
-    ))
+    await indexer.usePostgresSql(
+      async sql => {
+        let (postgres, clickhouse) = await writeAndRead(~indexer, ~source, ~sql)
+        t.expect((postgres, clickhouse->Array.filter(isEntityColumn))).toEqual((
+          ["id", "token_id"],
+          ["id", "tokenId"],
+        ))
+      },
+    )
   })
 
   Scenario.make(
@@ -115,10 +119,14 @@ describe("Column names per storage", () => {
     ~indexer,
     ~source,
   ) => {
-    let (postgres, clickhouse) = await writeAndRead(~indexer, ~source)
-    t.expect((postgres, clickhouse->Array.filter(isEntityColumn))).toEqual((
-      ["id", "tokenId"],
-      ["id", "token_id"],
-    ))
+    await indexer.usePostgresSql(
+      async sql => {
+        let (postgres, clickhouse) = await writeAndRead(~indexer, ~source, ~sql)
+        t.expect((postgres, clickhouse->Array.filter(isEntityColumn))).toEqual((
+          ["id", "tokenId"],
+          ["id", "token_id"],
+        ))
+      },
+    )
   })
 })

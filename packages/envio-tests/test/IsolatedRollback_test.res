@@ -493,7 +493,7 @@ describe("Isolated multichain rollback", () => {
         [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 13372n, chainId: 1337}],
         progress(~chain100="102", ~chain1337="102"),
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -540,7 +540,7 @@ describe("Isolated multichain rollback", () => {
         [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
         progress(~chain100="102", ~chain1337="102"),
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -650,7 +650,7 @@ describe("Isolated multichain rollback", () => {
         [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
         progress(~chain100="102", ~chain1337="102"),
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -705,7 +705,7 @@ describe("Isolated multichain rollback", () => {
         ],
         [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -982,7 +982,7 @@ describe("Isolated multichain rollback", () => {
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -1238,7 +1238,7 @@ describe("Isolated multichain rollback", () => {
         ],
         [{id: "total", count: 999n, chainId: 100}],
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),

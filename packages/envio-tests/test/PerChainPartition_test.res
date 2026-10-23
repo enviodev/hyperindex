@@ -155,8 +155,8 @@ describe("Per-chain entity partitions against Postgres", () => {
         {id: "total", count: 10n, owner: "alice", chainId: 137},
       ])
 
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) => {
+      await indexer.usePostgresSql(
+        async sql => {
           // Every relation the Counter entity owns: the parent, its partitions, and
           // its history table — with what each one is attached to.
           let relations: array<relation> = await sql->Sql.queryForTests(
@@ -165,7 +165,7 @@ describe("Per-chain entity partitions against Postgres", () => {
            JOIN pg_namespace n ON n.oid = c.relnamespace
            LEFT JOIN pg_inherits inh ON inh.inhrelid = c.oid
            LEFT JOIN pg_class p ON p.oid = inh.inhparent
-           WHERE n.nspname = '${pgSchema}'
+           WHERE n.nspname = '${indexer.pgSchema}'
              AND c.relkind IN ('r', 'p')
              AND c.relname ~ '^(envio_history_)?Counter([$][0-9]+)?$'
            ORDER BY c.relname`,
@@ -174,7 +174,7 @@ describe("Per-chain entity partitions against Postgres", () => {
           // Postgres cascades a partitioned index down to every partition. The
           // indexer declared its index on the parent, so that is what has to
           // satisfy the declaration — a child's copy must never stand in for it.
-          let catalog = await sql->PgCatalog.indexes(~pgSchema)
+          let catalog = await sql->PgCatalog.indexes(~pgSchema=indexer.pgSchema)
           let ownerIndex =
             catalog
             ->Array.find(index => index.tableName === "Counter" && index.columns == ["owner"])
@@ -183,7 +183,7 @@ describe("Per-chain entity partitions against Postgres", () => {
           let plan: array<{
             "QUERY PLAN": string,
           }> = await sql->Sql.queryForTests(
-            `EXPLAIN SELECT * FROM "${pgSchema}"."Counter" WHERE "chainId" = 137`,
+            `EXPLAIN SELECT * FROM "${indexer.pgSchema}"."Counter" WHERE "chainId" = 137`,
           )
 
           t.expect((
@@ -239,7 +239,7 @@ describe("A chain-scoped load", () => {
       await Utils.delay(0)
       await indexer.stop()
 
-      let {pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
       let filter =
         dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
         ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)

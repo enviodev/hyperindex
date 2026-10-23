@@ -34,8 +34,9 @@ let expectOlderVersionRefusal = async (
   ~indexer: IndexerRunner.t,
   alter,
 ) => {
-  let {sql, pgSchema} = indexer.pg
-  let _ = await sql->Sql.queryForTests(alter(pgSchema))
+  await indexer.usePostgresSql(async sql => {
+    let _ = await sql->Sql.queryForTests(alter(indexer.pgSchema))
+  })
 
   let message = switch await indexer.restart() {
   | _ => "the restart to fail, but it succeeded"
@@ -49,23 +50,34 @@ let expectOlderVersionRefusal = async (
 }
 
 describe("Restarting onto a schema an older envio wrote", () => {
-  scenario->Scenario.it("refuses, naming the older envio version", ~sources=[{chain: 1}], async (
-    ~t,
-    ~indexer,
-    ~source as _,
-  ) =>
-    await expectOlderVersionRefusal(
-      ~t,
-      ~indexer,
-      pgSchema => `DROP TABLE "${pgSchema}"."envio_contracts";`,
-    )
+  scenario->Scenario.it(
+    "refuses, naming the older envio version",
+    ~unsupported=[
+      {
+        backend: #clickhouse,
+        reason: "drops envio_contracts with Postgres SQL, which a run keeping no entity in Postgres skips",
+      },
+    ],
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source as _) =>
+      await expectOlderVersionRefusal(
+        ~t,
+        ~indexer,
+        pgSchema => `DROP TABLE "${pgSchema}"."envio_contracts";`,
+      ),
   )
 
   // An older envio kept no instance to pair its Postgres with the ClickHouse
   // beside it, which says nothing about either being another deployment's.
   scenario->Scenario.it(
     "refuses one with no instance pairing it with ClickHouse, naming the older envio version",
-    ~unsupported=[{backend: #postgres, reason: "pairs Postgres with a ClickHouse beside it"}],
+    ~unsupported=[
+      {backend: #postgres, reason: "pairs Postgres with a ClickHouse beside it"},
+      {
+        backend: #clickhouse,
+        reason: "drops envio_info's instance with Postgres SQL, which a run keeping no entity in Postgres skips",
+      },
+    ],
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source as _) =>
       await expectOlderVersionRefusal(

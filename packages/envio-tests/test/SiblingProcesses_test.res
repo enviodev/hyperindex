@@ -88,10 +88,10 @@ describe("Two processes indexing one schema", () => {
         (await indexer.queryChains())->Array.map(
           chain => (chain.id->ChainId.toInt, chain.firstEventBlock, chain.readyAt->Option.isSome),
         )
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
-            (await sql->PgCatalog.indexes(~pgSchema))
+            (await sql->PgCatalog.indexes(~pgSchema=indexer.pgSchema))
             ->Array.filter(index => index.columns == ["owner"])
             ->Array.map(index => (index.tableName, index.isValid))
             ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b)),

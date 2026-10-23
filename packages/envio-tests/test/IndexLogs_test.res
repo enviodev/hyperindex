@@ -92,8 +92,13 @@ describe("Index logs", () => {
         },
       ])
       await indexer.waitUntilReady()
-      let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Sql.queryForTests(`ALTER TABLE "${pgSchema}"."Token" DROP COLUMN "owner";`)
+      await indexer.usePostgresSql(
+        async sql => {
+          let _ = await sql->Sql.queryForTests(
+            `ALTER TABLE "${indexer.pgSchema}"."Token" DROP COLUMN "owner";`,
+          )
+        },
+      )
 
       source.setAutoHeight(100)
       let restarted = await indexer.restart()

@@ -3,11 +3,6 @@ type metric = {
   labels: dict<string>,
 }
 
-// The schema this indexer's tables live in, and the run's own client — closed
-// with it. A test needing raw SQL should reach for these rather than opening a
-// client the run won't clean up.
-type pg = {sql: StorageClient.t, pgSchema: string}
-
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
 // Which persistence a run is exercised against: Postgres alone, every entity
@@ -77,12 +72,10 @@ type rec t = {
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
-  // For the indexer's own state, which Postgres keeps on every leg. Entity
-  // tables, history, indexes and partitions are read inside `inPostgres`.
-  pg: pg,
-  // Runs a check of Postgres' entity tables, history, indexes or partitions.
-  // Skipped on the ClickHouse leg, where the entities live in ClickHouse alone.
-  inPostgres: (pg => promise<unit>) => promise<unit>,
+  pgSchema: string,
+  // Skipped, without calling back, when the run's config keeps no entity in
+  // Postgres, as the harness ClickHouse leg does.
+  usePostgresSql: (StorageClient.t => promise<unit>) => promise<unit>,
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
@@ -277,7 +270,6 @@ let run = async (
     // indexer can expose persisted state. Without it every `indexer.chains[N]`
     // getter silently falls back to static config.
     Main.setGlobalPersistence(persistence)
-    let pg = {sql, pgSchema}
 
     let onError = switch onError {
     | Some(onError) => onError
@@ -738,11 +730,12 @@ let run = async (
           }
         )
       },
-      pg,
-      inPostgres: check =>
-        switch selectedBackend {
-        | #postgres | #both => check(pg)
-        | #clickhouse => Promise.resolve()
+      pgSchema,
+      usePostgresSql: check =>
+        if config.userEntities->Array.some(e => e.storage.postgres) {
+          check(sql)
+        } else {
+          Promise.resolve()
         },
       stop,
       logs: () =>

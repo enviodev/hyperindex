@@ -56,7 +56,7 @@ let read = async (indexer: IndexerRunner.t) => {
 }
 
 let readHistory = (indexer: IndexerRunner.t, ~into) =>
-  indexer.inPostgres(async _ => {
+  indexer.usePostgresSql(async _ => {
     let history: array<Change.t<tally>> = await indexer.queryHistory("Tally")
     into->Array.push(history->Array.length)
   })
@@ -126,7 +126,7 @@ describe("A batch the server refuses", () => {
         committed,
         {tallies: [{id: "kept", count: 2}], checkpoints: 2, progress: [2]},
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             historyLengths,

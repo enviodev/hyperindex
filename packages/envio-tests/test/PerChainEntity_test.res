@@ -629,79 +629,83 @@ describe("Per-chain history prune", () => {
 
       let globalEntityConfig =
         pruneScenario.config->IndexerRunner.entityConfigByName("GlobalCounter")
-      let {sql, pgSchema} = indexer.pg
-      let historyTableOf = (entityConfig: Internal.entityConfig) =>
-        EntityHistory.historyTableName(
-          ~entityName=entityConfig.name,
-          ~entityIndex=entityConfig.index,
-        )
-      let historyTable = entityConfig->historyTableOf
-      let globalHistoryTable = globalEntityConfig->historyTableOf
+      await indexer.usePostgresSql(
+        async sql => {
+          let pgSchema = indexer.pgSchema
+          let historyTableOf = (entityConfig: Internal.entityConfig) =>
+            EntityHistory.historyTableName(
+              ~entityName=entityConfig.name,
+              ~entityIndex=entityConfig.index,
+            )
+          let historyTable = entityConfig->historyTableOf
+          let globalHistoryTable = globalEntityConfig->historyTableOf
 
-      // Chain 137 straddles the safe checkpoint (10 below, 40 above), chain 1's
-      // "shared" sits entirely below it and its "above" entirely above.
-      let _ = await sql->Sql.queryForTests(
-        `INSERT INTO "${pgSchema}"."${historyTable}"
+          // Chain 137 straddles the safe checkpoint (10 below, 40 above), chain 1's
+          // "shared" sits entirely below it and its "above" entirely above.
+          let _ = await sql->Sql.queryForTests(
+            `INSERT INTO "${pgSchema}"."${historyTable}"
            ("id", "count", "chainId", "envio_checkpoint_id", "envio_change")
          VALUES ('shared', 1, 137, 10, 'SET'),
                 ('shared', 2, 137, 40, 'SET'),
                 ('shared', 3, 1, 20, 'SET'),
                 ('above', 4, 1, 50, 'SET')`,
-      )
-      // The same three shapes without a chain column, so the cross-chain form of
-      // the query is exercised too.
-      let _ = await sql->Sql.queryForTests(
-        `INSERT INTO "${pgSchema}"."${globalHistoryTable}"
+          )
+          // The same three shapes without a chain column, so the cross-chain form of
+          // the query is exercised too.
+          let _ = await sql->Sql.queryForTests(
+            `INSERT INTO "${pgSchema}"."${globalHistoryTable}"
            ("id", "count", "envio_checkpoint_id", "envio_change")
          VALUES ('straddle', 1, 10, 'SET'),
                 ('straddle', 2, 40, 'SET'),
                 ('below', 3, 20, 'SET'),
                 ('above', 4, 50, 'SET')`,
-      )
+          )
 
-      let storage = Storage.make(~client=TestPgSchema.client(~pgSchema), ~ecosystem=Evm)
-      let prune = entityConfig =>
-        storage.pruneStaleEntityHistory(
-          ~entityConfig,
-          ~safeCheckpoints={
-            CheckpointSequence.sequence: SharedAcrossChains,
-            byChain: Frontier.fromEntries([(1->ChainId.fromInt, 30n)]),
-          },
-        )
-      await prune(entityConfig)
-      await prune(globalEntityConfig)
-      await storage.close()
+          let storage = Storage.make(~client=TestPgSchema.client(~pgSchema), ~ecosystem=Evm)
+          let prune = entityConfig =>
+            storage.pruneStaleEntityHistory(
+              ~entityConfig,
+              ~safeCheckpoints={
+                CheckpointSequence.sequence: SharedAcrossChains,
+                byChain: Frontier.fromEntries([(1->ChainId.fromInt, 30n)]),
+              },
+            )
+          await prune(entityConfig)
+          await prune(globalEntityConfig)
+          await storage.close()
 
-      let remaining: array<{
-        "chainId": int,
-        "envio_checkpoint_id": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT "chainId", "envio_checkpoint_id"::text FROM "${pgSchema}"."${historyTable}"
+          let remaining: array<{
+            "chainId": int,
+            "envio_checkpoint_id": string,
+          }> = await sql->Sql.queryForTests(
+            `SELECT "chainId", "envio_checkpoint_id"::text FROM "${pgSchema}"."${historyTable}"
            ORDER BY "chainId", "envio_checkpoint_id"`,
-      )
-      let globalRemaining: array<{
-        "id": string,
-        "envio_checkpoint_id": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT "id", "envio_checkpoint_id"::text FROM "${pgSchema}"."${globalHistoryTable}"
+          )
+          let globalRemaining: array<{
+            "id": string,
+            "envio_checkpoint_id": string,
+          }> = await sql->Sql.queryForTests(
+            `SELECT "id", "envio_checkpoint_id"::text FROM "${pgSchema}"."${globalHistoryTable}"
            ORDER BY "id", "envio_checkpoint_id"`,
-      )
-      let _ = await sql->Sql.queryForTests(`DELETE FROM "${pgSchema}"."${historyTable}"`)
-      let _ = await sql->Sql.queryForTests(`DELETE FROM "${pgSchema}"."${globalHistoryTable}"`)
+          )
+          let _ = await sql->Sql.queryForTests(`DELETE FROM "${pgSchema}"."${historyTable}"`)
+          let _ = await sql->Sql.queryForTests(`DELETE FROM "${pgSchema}"."${globalHistoryTable}"`)
 
-      t.expect((
-        remaining->Array.map(row => (row["chainId"], row["envio_checkpoint_id"])),
-        globalRemaining->Array.map(row => (row["id"], row["envio_checkpoint_id"])),
-      )).toEqual((
-        [
-          // Nothing of chain 1's "above" is stale yet, and chain 137 keeps its
-          // anchor at 10 because it has a later row at 40.
-          (1, "50"),
-          (137, "10"),
-          (137, "40"),
-        ],
-        [("above", "50"), ("straddle", "10"), ("straddle", "40")],
-      ))
+          t.expect((
+            remaining->Array.map(row => (row["chainId"], row["envio_checkpoint_id"])),
+            globalRemaining->Array.map(row => (row["id"], row["envio_checkpoint_id"])),
+          )).toEqual((
+            [
+              // Nothing of chain 1's "above" is stale yet, and chain 137 keeps its
+              // anchor at 10 because it has a later row at 40.
+              (1, "50"),
+              (137, "10"),
+              (137, "40"),
+            ],
+            [("above", "50"), ("straddle", "10"), ("straddle", "40")],
+          ))
+        },
+      )
     },
   )
 })

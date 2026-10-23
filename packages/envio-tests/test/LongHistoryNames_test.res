@@ -109,13 +109,13 @@ describe("Two entities whose names truncate alike", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) => {
+      await indexer.usePostgresSql(
+        async sql => {
           let historyTables: array<{
             "name": string,
           }> = await sql->Sql.queryForTests(
             `SELECT table_name AS "name" FROM information_schema.tables
-            WHERE table_schema = '${pgSchema}' AND table_name LIKE 'envio_history_BBB%'
+            WHERE table_schema = '${indexer.pgSchema}' AND table_name LIKE 'envio_history_BBB%'
             ORDER BY table_name`,
           )
           let historyTables =

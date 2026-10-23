@@ -78,29 +78,15 @@ type persistedChain = {
   isReady: bool,
 }
 
-let persistedChains = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": int,
-    "progress_block": int,
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "progress_block", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => {
-    id: row["id"],
-    progressBlock: row["progress_block"],
-    isReady: row["ready_at"]->Null.toOption->Option.isSome,
+let persistedChains = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(chain => {
+    id: chain.id->ChainId.toString->Int.fromString->Option.getOrThrow,
+    progressBlock: chain.progressBlock,
+    isReady: chain.readyAt->Option.isSome,
   })
-}
 
-let persistedReadyAt = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => row["ready_at"]->Null.toOption->Option.map(Date.toISOString))
-}
+let persistedReadyAt = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(chain => chain.readyAt->Option.map(Date.toISOString))
 
 let dropIndex = async (name, ~sql, ~pgSchema) => {
   let _ = await sql->Sql.queryForTests(`DROP INDEX "${pgSchema}"."${name}";`)
@@ -145,7 +131,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -154,10 +140,10 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="The first run reached the head, then died before committing anything",
       ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: false}]))
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The first run died before committing the indexes",
@@ -171,7 +157,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         (
           finalizeCalls.contents,
-          await persistedChains(~sql, ~pgSchema),
+          await persistedChains(restarted),
           await restarted.metric("envio_progress_ready"),
         ),
         ~message="The resumed run finalizes even with no work left",
@@ -180,7 +166,7 @@ describe("Resuming a backfill that never finalized", () => {
         [{id: 1337, progressBlock: 100, isReady: true}],
         [{value: "1", labels: dict{"chainId": "1337"}}],
       ))
-      await restarted.inPostgres(async ({sql, pgSchema}) =>
+      await restarted.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The resumed run owes the schema its indexes even with no work left",
@@ -222,7 +208,6 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -231,9 +216,9 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 
-      let readyAtBefore = await persistedReadyAt(~sql, ~pgSchema)
+      let readyAtBefore = await persistedReadyAt(indexer)
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="The first run finalized normally",
       ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: true}]))
 
@@ -243,7 +228,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         (
           finalizeCalls.contents,
-          await persistedReadyAt(~sql, ~pgSchema),
+          await persistedReadyAt(restarted),
           await restarted.metric("envio_progress_ready"),
         ),
         ~message="A restart inherits the readiness it already earned",
@@ -264,7 +249,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -276,7 +261,7 @@ describe("Resuming a backfill that never finalized", () => {
         finalizeCalls.contents,
         ~message="The first run reached the head, then died before finalizing",
       ).toBe(1)
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The first run died before committing the indexes",
@@ -290,10 +275,10 @@ describe("Resuming a backfill that never finalized", () => {
       await restarted.waitUntilIdle()
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(restarted)),
         ~message="A progressing batch doesn't excuse the finalization the resumed run still owes",
       ).toEqual((2, [{id: 1337, progressBlock: 101, isReady: true}]))
-      await restarted.inPostgres(async ({sql, pgSchema}) =>
+      await restarted.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="A progressing batch doesn't excuse the indexes the resumed run still owes",
@@ -317,7 +302,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onExit=() => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -326,10 +311,10 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="The first run reached its endBlock, then died before committing anything",
       ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: false}]))
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The first run died before committing the indexes",
@@ -342,7 +327,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         (
           finalizeCalls.contents,
-          await persistedChains(~sql, ~pgSchema),
+          await persistedChains(restarted),
           await restarted.metric("envio_progress_ready"),
         ),
         ~message="A chain at its endBlock is durably caught up on resume",
@@ -351,7 +336,7 @@ describe("Resuming a backfill that never finalized", () => {
         [{id: 1337, progressBlock: 100, isReady: true}],
         [{value: "1", labels: dict{"chainId": "1337"}}],
       ))
-      await restarted.inPostgres(async ({sql, pgSchema}) =>
+      await restarted.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="A chain at its endBlock gets its indexes on resume",
@@ -374,7 +359,7 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)
@@ -387,7 +372,7 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="Both chains reached their own head, then the run died before committing",
       ).toEqual((
         1,
@@ -396,7 +381,7 @@ describe("Resuming a backfill that never finalized", () => {
           {id: 1337, progressBlock: 100, isReady: false},
         ],
       ))
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The run died before committing the indexes",
@@ -409,7 +394,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         (
           finalizeCalls.contents,
-          await persistedChains(~sql, ~pgSchema),
+          await persistedChains(restarted),
           await restarted.metric("envio_progress_ready"),
         ),
         ~message="Each chain is measured against its own persisted head",
@@ -418,7 +403,7 @@ describe("Resuming a backfill that never finalized", () => {
         [{id: 1, progressBlock: 55, isReady: true}, {id: 1337, progressBlock: 100, isReady: true}],
         [{value: "1", labels: dict{"chainId": "1"}}, {value: "1", labels: dict{"chainId": "1337"}}],
       ))
-      await restarted.inPostgres(async ({sql, pgSchema}) =>
+      await restarted.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The resumed run commits the indexes",
@@ -441,7 +426,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -450,10 +435,10 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="The first run reached the head, then died before committing anything",
       ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: false}]))
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The first run died before committing the indexes",
@@ -467,10 +452,10 @@ describe("Resuming a backfill that never finalized", () => {
       await restarted.waitUntilReady()
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(restarted)),
         ~message="Readiness is owed to the progress that was committed, not to the current head",
       ).toEqual((2, [{id: 1337, progressBlock: 100, isReady: true}]))
-      await restarted.inPostgres(async ({sql, pgSchema}) =>
+      await restarted.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The indexes are owed to the progress that was committed",
@@ -485,6 +470,12 @@ describe("Resuming a backfill that never finalized", () => {
 
   scenario->Scenario.it(
     "Stamps readiness without rebuilding indexes that already exist",
+    ~unsupported=[
+      {
+        backend: #clickhouse,
+        reason: "clears envio_chains' ready_at with Postgres SQL, which a run keeping no entity in Postgres skips",
+      },
+    ],
     ~sources=[{chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it
@@ -492,7 +483,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -502,13 +493,13 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.waitUntilReady()
 
       // Rewind only the readiness stamp, leaving the indexes the first run built.
-      await clearReadyAt(~sql, ~pgSchema)
+      await indexer.usePostgresSql(sql => clearReadyAt(~sql, ~pgSchema))
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="Readiness is gone",
       ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: false}]))
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The indexes are in place",
@@ -521,7 +512,7 @@ describe("Resuming a backfill that never finalized", () => {
       t.expect(
         (
           finalizeCalls.contents,
-          await persistedChains(~sql, ~pgSchema),
+          await persistedChains(restarted),
           await restarted.metric("envio_progress_ready"),
         ),
         ~message="Finalizing over an already-indexed schema only stamps readiness",
@@ -530,7 +521,7 @@ describe("Resuming a backfill that never finalized", () => {
         [{id: 1337, progressBlock: 100, isReady: true}],
         [{value: "1", labels: dict{"chainId": "1337"}}],
       ))
-      await restarted.inPostgres(async ({sql, pgSchema}) =>
+      await restarted.usePostgresSql(async sql =>
         t.expect(
           await hasIndex(aBIdIndex, ~sql, ~pgSchema),
           ~message="The indexes the first run built are kept",
@@ -559,7 +550,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -568,31 +559,33 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.getBatchWritePromise()
       await indexer.waitUntilReady()
 
-      let readyAtBefore = await persistedReadyAt(~sql, ~pgSchema)
-      await dropIndex(aBIdIndex, ~sql, ~pgSchema)
-      t.expect(
-        (finalizeCalls.contents, await hasIndex(aBIdIndex, ~sql, ~pgSchema)),
-        ~message="The index is gone but the chain is still stamped ready",
-      ).toEqual((1, false))
+      await indexer.usePostgresSql(async sql => {
+        let readyAtBefore = await persistedReadyAt(indexer)
+        await dropIndex(aBIdIndex, ~sql, ~pgSchema)
+        t.expect(
+          (finalizeCalls.contents, await hasIndex(aBIdIndex, ~sql, ~pgSchema)),
+          ~message="The index is gone but the chain is still stamped ready",
+        ).toEqual((1, false))
 
-      let restarted = await indexer.restart()
-      await restarted.waitUntilReady()
-      // The repair runs alongside indexing rather than blocking the loop, so it
-      // isn't done by the time readiness is observable.
-      let attempts = ref(0)
-      while !(await hasIndex(aBIdIndex, ~sql, ~pgSchema)) && attempts.contents < 100 {
-        attempts := attempts.contents + 1
-        await Utils.delay(10)
-      }
+        let restarted = await indexer.restart()
+        await restarted.waitUntilReady()
+        // The repair runs alongside indexing rather than blocking the loop, so it
+        // isn't done by the time readiness is observable.
+        let attempts = ref(0)
+        while !(await hasIndex(aBIdIndex, ~sql, ~pgSchema)) && attempts.contents < 100 {
+          attempts := attempts.contents + 1
+          await Utils.delay(10)
+        }
 
-      t.expect(
-        (
-          finalizeCalls.contents,
-          await hasIndex(aBIdIndex, ~sql, ~pgSchema),
-          await persistedReadyAt(~sql, ~pgSchema),
-        ),
-        ~message="The index is restored without re-running finalization or moving readiness",
-      ).toEqual((1, true, readyAtBefore))
+        t.expect(
+          (
+            finalizeCalls.contents,
+            await hasIndex(aBIdIndex, ~sql, ~pgSchema),
+            await persistedReadyAt(restarted),
+          ),
+          ~message="The index is restored without re-running finalization or moving readiness",
+        ).toEqual((1, true, readyAtBefore))
+      })
     },
   )
 
@@ -624,7 +617,6 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([
@@ -633,7 +625,7 @@ describe("Resuming a backfill that never finalized", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="The first run reached the head, then died before committing anything",
       ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: false}]))
 
@@ -684,6 +676,12 @@ describe("Resuming a backfill that never finalized", () => {
 
   multichainScenario->Scenario.it(
     "Leaves the timestamps of already-ready chains alone",
+    ~unsupported=[
+      {
+        backend: #clickhouse,
+        reason: "clears chain 1337's ready_at with Postgres SQL, which a run keeping no entity in Postgres skips",
+      },
+    ],
     ~sources=[{chain: 1, methods}, {chain: 1337, methods}],
     ~mapStorage,
     // The simulated crash reaches the loop's error boundary; swallow it so it
@@ -692,7 +690,6 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)
@@ -707,12 +704,14 @@ describe("Resuming a backfill that never finalized", () => {
 
       // Stand in for a chain joining a synced indexer: chain 1 keeps the stamp it
       // earned, chain 1337 arrives without one.
-      let _ = await sql->Sql.queryForTests(
-        `UPDATE "${pgSchema}"."envio_chains" SET "ready_at" = NULL WHERE "id" = 1337;`,
-      )
-      let readyAtBefore = await persistedReadyAt(~sql, ~pgSchema)
+      await indexer.usePostgresSql(async sql => {
+        let _ = await sql->Sql.queryForTests(
+          `UPDATE "${indexer.pgSchema}"."envio_chains" SET "ready_at" = NULL WHERE "id" = 1337;`,
+        )
+      })
+      let readyAtBefore = await persistedReadyAt(indexer)
       t.expect(
-        (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
+        (finalizeCalls.contents, await persistedChains(indexer)),
         ~message="Only chain 1337 is missing its stamp",
       ).toEqual((
         1,
@@ -722,7 +721,7 @@ describe("Resuming a backfill that never finalized", () => {
       let restarted = await indexer.restart()
       await restarted.waitUntilReady()
 
-      let readyAtAfter = await persistedReadyAt(~sql, ~pgSchema)
+      let readyAtAfter = await persistedReadyAt(restarted)
       t.expect(
         (
           finalizeCalls.contents,

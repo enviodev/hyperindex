@@ -110,7 +110,7 @@ describe("Scenario rollback and history", () => {
       let source = source(1)
       await enterThresholdAndIndex(~indexer, ~source)
 
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ => {
           let history: array<Change.t<counter>> = await indexer.queryHistory("Counter")
           t.expect(

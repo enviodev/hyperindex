@@ -63,7 +63,7 @@ describe("A migration beside a run that is indexing", () => {
     let config = scenario.config
     let storage = Storage.makeStorageFromEnv(
       ~config,
-      ~pgSchema=indexer.pg.pgSchema,
+      ~pgSchema=indexer.pgSchema,
       ~isHasuraEnabled=false,
     )
     await Storage.makePersistenceFromConfig(~config, ~storage)->Main.migrateStorage(

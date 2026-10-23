@@ -147,12 +147,12 @@ describe("Deferred schema indexes", () => {
         await readyAtByChainId(indexer),
         ~message="A chain with nothing to do is caught up",
       ).toEqual([(ChainId.fromInt(1337), true)])
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
-            (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
-              entry => entry.name,
-            ),
+            (
+              await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema=indexer.pgSchema)
+            )->Array.map(entry => entry.name),
             ~message="The indexes are owed on being caught up",
           ).toEqual([aBIdIndexName]),
       )
@@ -176,12 +176,12 @@ describe("Deferred schema indexes", () => {
         await readyAtByChainId(indexer),
         ~message="Sitting at the head is what readiness is owed on, not reaching the end block",
       ).toEqual([(ChainId.fromInt(1337), true)])
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
-            (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
-              entry => entry.name,
-            ),
+            (
+              await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema=indexer.pgSchema)
+            )->Array.map(entry => entry.name),
             ~message="Sitting at the head is what the indexes are owed on, not reaching the end block",
           ).toEqual([aBIdIndexName]),
       )
@@ -190,6 +190,12 @@ describe("Deferred schema indexes", () => {
 
   scenario->Scenario.it(
     "Are absent through backfill, committed with ready_at, and kept across a restart",
+    ~unsupported=[
+      {
+        backend: #clickhouse,
+        reason: "restarts inside a Postgres catalog check, which a run keeping no entity in Postgres skips",
+      },
+    ],
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -199,10 +205,10 @@ describe("Deferred schema indexes", () => {
         (await readyAtByChainId(indexer), await indexer.metric("envio_progress_ready")),
         ~message="Nothing is ready through backfill",
       ).toEqual(([(ChainId.fromInt(1337), false)], [{value: "0", labels: dict{"chainId": "1337"}}]))
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
-            await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
+            await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema=indexer.pgSchema),
             ~message="Backfill runs without the schema's read indexes",
           ).toEqual([]),
       )
@@ -217,25 +223,29 @@ describe("Deferred schema indexes", () => {
         (await readyAtByChainId(indexer), await indexer.metric("envio_progress_ready")),
         ~message="ready_at is committed once the chain is caught up",
       ).toEqual(([(ChainId.fromInt(1337), true)], [{value: "1", labels: dict{"chainId": "1337"}}]))
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
-            (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
-              entry => (entry.name, entry.isValid, entry.isPartial, entry.method),
-            ),
+            (
+              await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema=indexer.pgSchema)
+            )->Array.map(entry => (entry.name, entry.isValid, entry.isPartial, entry.method)),
             ~message="ready_at is only committed once every schema-defined index exists",
           ).toEqual([(aBIdIndexName, true, false, "btree")]),
       )
 
-      let {sql, pgSchema} = indexer.pg
-      let indexesBeforeRestart = await indexNames(~sql, ~pgSchema)
-      let restarted = await indexer.restart()
-      await restarted.waitUntilIdle()
+      await indexer.usePostgresSql(
+        async sql => {
+          let pgSchema = indexer.pgSchema
+          let indexesBeforeRestart = await indexNames(~sql, ~pgSchema)
+          let restarted = await indexer.restart()
+          await restarted.waitUntilIdle()
 
-      t.expect(
-        (await indexNames(~sql, ~pgSchema), await readyAtByChainId(indexer)),
-        ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
-      ).toEqual((indexesBeforeRestart, [(ChainId.fromInt(1337), true)]))
+          t.expect(
+            (await indexNames(~sql, ~pgSchema), await readyAtByChainId(indexer)),
+            ~message="A resume rediscovers the indexes from the catalog — none are dropped or recreated",
+          ).toEqual((indexesBeforeRestart, [(ChainId.fromInt(1337), true)]))
+        },
+      )
     },
   )
 
@@ -266,9 +276,9 @@ describe("Deferred schema indexes", () => {
         (await readyAtByChainId(indexer), await indexer.metric("envio_progress_ready")),
         ~message="Caught up to the head, but the indexes aren't committed so nothing is ready",
       ).toEqual(([(ChainId.fromInt(1337), false)], [{value: "0", labels: dict{"chainId": "1337"}}]))
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
-          await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
+          await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema=indexer.pgSchema),
           ~message="The indexes aren't committed while finalization is held",
         ).toEqual([])
       )
@@ -277,11 +287,11 @@ describe("Deferred schema indexes", () => {
       await indexer.waitUntilReady()
 
       t.expect(await readyAtByChainId(indexer)).toEqual([(ChainId.fromInt(1337), true)])
-      await indexer.inPostgres(async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(async sql =>
         t.expect(
-          (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
-            entry => entry.name,
-          ),
+          (
+            await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema=indexer.pgSchema)
+          )->Array.map(entry => entry.name),
         ).toEqual([aBIdIndexName])
       )
     },
@@ -430,35 +440,46 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
-      // The height is unresolved, so the tables exist but the backfill is stalled
-      // and no schema index has been created yet.
-      await Utils.delay(0)
+      let pgSchema = indexer.pgSchema
+      await indexer.usePostgresSql(
+        async sql => {
+          // The height is unresolved, so the tables exist but the backfill is stalled
+          // and no schema index has been created yet.
+          await Utils.delay(0)
 
-      let _ = await sql->Sql.queryForTests(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
+          let _ = await sql->Sql.queryForTests(
+            `CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`,
+          )
 
-      source.resolveGetHeightOrThrow(100)
-      await source.expectItemsQueries([
-        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
-      ])
-      await indexer.waitUntilReady()
+          source.resolveGetHeightOrThrow(100)
+          await source.expectItemsQueries([
+            {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+          ])
+          await indexer.waitUntilReady()
 
-      let conflicting = await findIndexes(~sql, ~tableName="B", ~columns=["c_id"], ~pgSchema)
-      let aIndexes = await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema)
+          let conflicting = await findIndexes(~sql, ~tableName="B", ~columns=["c_id"], ~pgSchema)
+          let aIndexes = await findIndexes(
+            ~sql,
+            ~tableName="A",
+            ~columns=["b_id"],
+            ~pgSchema=indexer.pgSchema,
+          )
 
-      t.expect(
-        (
-          await indexer.metric("envio_progress_ready"),
-          conflicting->Array.map(entry => entry.name),
-          aIndexes->Array.map(entry => (entry.isValid, entry.isPartial)),
-        ),
-        ~message="The conflicting index is left alone and A(b_id) still gets a usable index of its own",
-      ).toEqual(([{value: "1", labels: dict{"chainId": "1337"}}], ["A_b_id"], [(true, false)]))
+          t.expect(
+            (
+              await indexer.metric("envio_progress_ready"),
+              conflicting->Array.map(entry => entry.name),
+              aIndexes->Array.map(entry => (entry.isValid, entry.isPartial)),
+            ),
+            ~message="The conflicting index is left alone and A(b_id) still gets a usable index of its own",
+          ).toEqual(([{value: "1", labels: dict{"chainId": "1337"}}], ["A_b_id"], [(true, false)]))
 
-      t.expect(
-        aIndexes->Array.map(entry => entry.name),
-        ~message="The generated name can't be the one an unrelated index took",
-      ).toEqual([aBIdIndexName])
+          t.expect(
+            aIndexes->Array.map(entry => entry.name),
+            ~message="The generated name can't be the one an unrelated index took",
+          ).toEqual([aBIdIndexName])
+        },
+      )
     },
   )
 })
@@ -511,10 +532,15 @@ describe("Automatic getWhere indexes", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
-            await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema),
+            await findIndexes(
+              ~sql,
+              ~tableName="A",
+              ~columns=[optionalColumn],
+              ~pgSchema=indexer.pgSchema,
+            ),
             ~message="Nothing has queried the field yet, so no index exists for it",
           ).toEqual([]),
       )
@@ -546,14 +572,24 @@ describe("Automatic getWhere indexes", () => {
         (matched.contents, await readyAtByChainId(indexer)),
         ~message="The query returns the right rows during backfill",
       ).toEqual((["1", "3"], [(ChainId.fromInt(1337), false)]))
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
             (
               (
-                await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema)
+                await findIndexes(
+                  ~sql,
+                  ~tableName="A",
+                  ~columns=[optionalColumn],
+                  ~pgSchema=indexer.pgSchema,
+                )
               )->Array.map(entry => (entry.name, entry.isValid)),
-              await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema),
+              await findIndexes(
+                ~sql,
+                ~tableName="A",
+                ~columns=["b_id"],
+                ~pgSchema=indexer.pgSchema,
+              ),
             ),
             ~message="The query builds its own index during backfill, while the schema's own indexes stay deferred",
           ).toEqual(([("A_optionalStringToTestLinkedEntities_cedvgf89cu", true)], [])),
@@ -566,16 +602,26 @@ describe("Automatic getWhere indexes", () => {
       await indexer.waitUntilReady()
 
       t.expect(await readyAtByChainId(indexer)).toEqual([(ChainId.fromInt(1337), true)])
-      await indexer.inPostgres(
-        async ({sql, pgSchema}) =>
+      await indexer.usePostgresSql(
+        async sql =>
           t.expect(
             (
               (
-                await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema)
+                await findIndexes(
+                  ~sql,
+                  ~tableName="A",
+                  ~columns=[optionalColumn],
+                  ~pgSchema=indexer.pgSchema,
+                )
               )->Array.length,
-              (await findIndexes(~sql, ~tableName="A", ~columns=["b_id"], ~pgSchema))->Array.map(
-                entry => entry.name,
-              ),
+              (
+                await findIndexes(
+                  ~sql,
+                  ~tableName="A",
+                  ~columns=["b_id"],
+                  ~pgSchema=indexer.pgSchema,
+                )
+              )->Array.map(entry => entry.name),
             ),
             ~message="Reaching ready adds the schema indexes without disturbing the automatic one",
           ).toEqual((1, [aBIdIndexName])),

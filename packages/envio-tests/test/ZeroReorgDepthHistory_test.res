@@ -111,7 +111,7 @@ describe("A chain with no reorg depth keeps no history", () => {
         ),
         ~message="A chain no rollback can reach writes no checkpoints",
       ).toEqual(([{IndexerRunner.value: "1", labels: Dict.make()}], 0))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ => {
           let history: array<Change.t<counter>> = await indexer.queryHistory("Counter")
           t.expect(

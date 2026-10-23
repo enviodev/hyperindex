@@ -124,14 +124,15 @@ describe("Rollback with a ClickHouse-only entity", () => {
       ])
       await indexer.getBatchWritePromise()->raiseOnIndexerError
 
-      let {sql, pgSchema} = indexer.pg
-      let postgresHistory: array<unknown> = await sql->Sql.queryForTests(
-        `SELECT 1 FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND table_name = 'envio_history_${chOnlyEntityName}'`,
-      )
-      t.expect(
-        (postgresHistory, await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)),
-        ~message="The ClickHouse-only entity should have no Postgres history table, while the Postgres entity is written",
-      ).toEqual(([], [{id: "1", value: "value-2"}]))
+      await indexer.usePostgresSql(async sql => {
+        let postgresHistory: array<unknown> = await sql->Sql.queryForTests(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema = '${indexer.pgSchema}' AND table_name = 'envio_history_${chOnlyEntityName}'`,
+        )
+        t.expect(
+          (postgresHistory, await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)),
+          ~message="The ClickHouse-only entity should have no Postgres history table, while the Postgres entity is written",
+        ).toEqual(([], [{id: "1", value: "value-2"}]))
+      })
 
       // Should trigger rollback
       await sourceMock.expectItemsQueries([

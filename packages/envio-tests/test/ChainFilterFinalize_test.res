@@ -79,10 +79,10 @@ describe("envio start --chain", () => {
         (await readyByChainId(first), await first.metric("envio_progress_ready")),
         ~message="Chain 1 reports itself ready. Chain 137 has never been started, and holds nothing back",
       ).toEqual(([("1", true), ("137", false)], [{value: "1", labels: dict{"chainId": "1"}}]))
-      await first.inPostgres(
-        async ({sql, pgSchema}) =>
+      await first.usePostgresSql(
+        async sql =>
           t.expect(
-            await indexedTables(~sql, ~pgSchema),
+            await indexedTables(~sql, ~pgSchema=first.pgSchema),
             ~message="Chain 1 indexes its own partition",
           ).toEqual(["A$1"]),
       )
@@ -94,10 +94,10 @@ describe("envio start --chain", () => {
         await readyByChainId(second),
         ~message="Chain 137's process stamps only its own row",
       ).toEqual([("1", true), ("137", true)])
-      await second.inPostgres(
-        async ({sql, pgSchema}) =>
+      await second.usePostgresSql(
+        async sql =>
           t.expect(
-            await indexedTables(~sql, ~pgSchema),
+            await indexedTables(~sql, ~pgSchema=second.pgSchema),
             ~message="Chain 137's process adds its own partition's index",
           ).toEqual(["A$1", "A$137"]),
       )

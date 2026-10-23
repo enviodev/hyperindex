@@ -179,7 +179,7 @@ describe("Concurrent batch write and processing", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(writeBatchErrors).toEqual([])
-      await indexer.inPostgres(async _ =>
+      await indexer.usePostgresSql(async _ =>
         t.expect(
           await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
           ~message="The delete history row persisted by the in-flight write must not be written again by the next write",

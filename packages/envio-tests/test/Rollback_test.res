@@ -261,7 +261,7 @@ describe("E2E rollback tests", () => {
         },
       ],
     ))
-    await indexer.inPostgres(async _ =>
+    await indexer.usePostgresSql(async _ =>
       t.expect(await simpleEntityHistory(indexer)).toEqual([
         Set({
           checkpointId: firstHistoryCheckpointId,
@@ -403,7 +403,7 @@ describe("E2E rollback tests", () => {
         },
       ],
     ))
-    await indexer.inPostgres(async _ =>
+    await indexer.usePostgresSql(async _ =>
       t.expect(await simpleEntityHistory(indexer)).toEqual([
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
@@ -636,7 +636,7 @@ describe("E2E rollback tests", () => {
         await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
         ~message="Should hold the recreated entity before the rollback",
       ).toEqual([{id: "1", value: "after-recreate"}])
-      await indexer.inPostgres(async _ =>
+      await indexer.usePostgresSql(async _ =>
         t.expect(
           await simpleEntityHistory(indexer),
           ~message="Should establish SET -> DELETE -> SET history before the rollback",
@@ -1604,7 +1604,7 @@ describe("E2E rollback tests", () => {
           },
         ],
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await simpleEntityHistory(indexer),
@@ -1911,7 +1911,7 @@ describe("E2E rollback tests", () => {
           },
         ],
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(await simpleEntityHistory(indexer)).toEqual([
             Set({
@@ -2134,7 +2134,7 @@ describe("E2E rollback tests", () => {
           },
         ],
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await simpleEntityHistory(indexer),
@@ -2191,7 +2191,7 @@ describe("E2E rollback tests", () => {
           bigDecimal: BigDecimal.fromFloat(0.),
         },
       ])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await (
@@ -2335,7 +2335,7 @@ describe("E2E rollback tests", () => {
           },
         ],
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(await simpleEntityHistory(indexer)).toEqual([
             Set({
@@ -2373,7 +2373,7 @@ describe("E2E rollback tests", () => {
           bigDecimal: BigDecimal.fromFloat(0.),
         },
       ])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await (
@@ -3732,7 +3732,7 @@ describe("E2E rollback tests", () => {
         ],
         [{value: "2", labels: Dict.make()}],
       ))
-      await indexer.inPostgres(async _ =>
+      await indexer.usePostgresSql(async _ =>
         t.expect(await simpleEntityHistory(indexer)).toEqual([
           Set({
             checkpointId: 4n,

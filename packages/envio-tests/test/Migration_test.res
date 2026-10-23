@@ -306,10 +306,12 @@ Pick one:
       let refusal = await refusalAfterLosing(
         ~indexer,
         ~source=source(1),
-        async () => {
-          let {sql, pgSchema} = indexer.pg
-          let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
-        },
+        () =>
+          indexer.usePostgresSql(
+            async sql => {
+              let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${indexer.pgSchema}" CASCADE;`)
+            },
+          ),
       )
 
       t.expect(refusal).toEqual(

@@ -230,7 +230,7 @@ describe("Per-chain history pruning", () => {
         await checkpointsByChain(indexer),
         ~message="Chain 100 dropped the checkpoints its own safe block put out of reach, keeping the anchor; chain 1337 kept everything, having nothing safe yet",
       ).toEqual([(1n, 1337), (2n, 100), (2n, 1337), (3n, 100), (4n, 100)])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -259,7 +259,7 @@ describe("Per-chain history pruning", () => {
         await checkpointsByChain(indexer),
         ~message="No checkpoint is pruned while chain 1337 has nothing safe yet",
       ).toEqual([(1n, 100), (2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -285,7 +285,7 @@ describe("Per-chain history pruning", () => {
         await checkpointsByChain(indexer),
         ~message="Chain 1337 holds nothing back, so every chain's checkpoints pruned to chain 100's safe checkpoint",
       ).toEqual([(4n, 100), (5n, 100), (6n, 100)])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
@@ -376,7 +376,7 @@ describe("Per-chain history pruning", () => {
         // One, so chain 300 is bounded at 1 and keeps everything it has.
         [1n, 2n, 3n],
       ))
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ => {
           let history = (await counterHistory(indexer))->Array.map(
             change =>
@@ -442,7 +442,7 @@ describe("Per-chain history pruning", () => {
         await checkpointsByChain(restarted),
         ~message="Chain 1337 wrote no checkpoints; chain 100 pruned to its own safe checkpoint",
       ).toEqual([(3n, 100), (4n, 100), (5n, 100), (6n, 100)])
-      await restarted.inPostgres(
+      await restarted.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(restarted),
@@ -469,7 +469,7 @@ describe("Per-chain history pruning", () => {
         await checkpointsByChain(indexer),
         ~message="No checkpoint is pruned while chain 5 has nothing safe yet",
       ).toEqual([(1n, 5), (2n, 5), (3n, 100), (4n, 100), (5n, 100), (6n, 100)])
-      await indexer.inPostgres(
+      await indexer.usePostgresSql(
         async _ =>
           t.expect(
             await counterHistory(indexer),
