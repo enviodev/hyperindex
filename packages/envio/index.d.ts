@@ -519,7 +519,6 @@ type IndexerConfigTypes = {
   fuel?: {
     chains: Record<string, { id: number }>;
     contracts?: Record<string, Record<string, { eventName: string }>>;
-    eventFilters?: Record<string, Record<string, { readonly params: object }>>;
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
@@ -546,10 +545,6 @@ type FuelContracts<Config extends IndexerConfigTypes = GlobalConfig> =
 // payload and keep the two lookup tables independently composable.
 type EvmEventFilters<Config extends IndexerConfigTypes = GlobalConfig> =
   Config["evm"] extends { eventFilters: infer F extends Record<string, Record<string, any>> }
-    ? F : {};
-
-type FuelEventFilters<Config extends IndexerConfigTypes = GlobalConfig> =
-  Config["fuel"] extends { eventFilters: infer F extends Record<string, Record<string, any>> }
     ? F : {};
 
 // Extract contract names for contract registration
@@ -725,9 +720,9 @@ export type FuelOnEventWhereChain<ContractName extends string> = EvmOnEventWhere
 /** Arguments passed to the Fuel dynamic `where` callback form. */
 export type FuelOnEventWhereArgs<ContractName extends string> = EvmOnEventWhereArgs<ContractName>;
 /** A single Fuel `where` filter condition. Keyed on `block.height` instead
- * of `block.number`. */
-export type FuelOnEventWhereFilter<Params> = {
-  readonly params?: Params | readonly Params[];
+ * of `block.number`. Fuel events have no indexed params, so there's no
+ * `params` filter. */
+export type FuelOnEventWhereFilter = {
   readonly block?: {
     readonly height?: {
       readonly _gte?: number;
@@ -735,9 +730,9 @@ export type FuelOnEventWhereFilter<Params> = {
   };
 };
 /** The `where` option value of `indexer.onEvent` / `indexer.contractRegister` in the Fuel ecosystem. */
-export type FuelOnEventWhere<Params, ContractName extends string> =
-  | FuelOnEventWhereFilter<Params>
-  | ((args: FuelOnEventWhereArgs<ContractName>) => FuelOnEventWhereFilter<Params> | boolean);
+export type FuelOnEventWhere<ContractName extends string> =
+  | FuelOnEventWhereFilter
+  | ((args: FuelOnEventWhereArgs<ContractName>) => FuelOnEventWhereFilter | boolean);
 
 // When the matching ecosystem isn't configured, `EvmEvent` / `FuelEvent` resolve
 // to the error-message string. Filter back to a structural `EventLike` so the
@@ -963,13 +958,12 @@ export type FuelOnEvent<
  * `block.height` (Fuel) instead of `block.number` (EVM). */
 export type FuelOnEventOptions<
   Event extends EventLike = _ProjectFuelEvent,
-  Params = {},
 > = Event extends EventLike
   ? {
       readonly contract: Event["contractName"];
       readonly event: Event["eventName"];
       readonly wildcard?: boolean;
-      readonly where?: FuelOnEventWhere<Params, Event["contractName"] & string>;
+      readonly where?: FuelOnEventWhere<Event["contractName"] & string>;
     }
   : never;
 
@@ -983,8 +977,7 @@ export type FuelOnEventHandler<
  * `FuelOnEventOptions` so the `where` filter uses `block.height`. */
 export type FuelContractRegisterOptions<
   Event extends EventLike = _ProjectFuelEvent,
-  Params = {},
-> = FuelOnEventOptions<Event, Params>;
+> = FuelOnEventOptions<Event>;
 
 /** Handler function for a Fuel contractRegister registration. */
 export type FuelContractRegisterHandler<
@@ -1718,14 +1711,7 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: FuelOnEventWhere<
-                      FuelEventFilters<Config>[C] extends Record<string, any>
-                        ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
+                    readonly where?: FuelOnEventWhere<C>;
                   },
                   handler: FuelOnEventHandler<Contracts[C][E], FuelOnEventContext<Config>>
                 ) => void;
@@ -1738,14 +1724,7 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: FuelOnEventWhere<
-                      FuelEventFilters<Config>[C] extends Record<string, any>
-                        ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
+                    readonly where?: FuelOnEventWhere<C>;
                   },
                   handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
                 ) => void;

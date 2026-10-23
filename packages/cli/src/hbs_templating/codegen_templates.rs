@@ -1985,7 +1985,6 @@ type testIndexer = {{
         let evm_event_filters_body: String;
         let fuel_chains_body: String;
         let fuel_contracts_body: String;
-        let fuel_event_filters_body: String;
         let svm_chains_body: String;
         let svm_programs_body: String;
         let entities_body: String;
@@ -2162,8 +2161,7 @@ type testIndexer = {{
                 ));
             }
 
-            // Fuel contracts table (inlined). Fuel events have no indexed-param
-            // filters, so the eventFilters body is always `{}`.
+            // Fuel contracts table (inlined).
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 let fuel_fs = system_config::FieldSelection::fuel();
                 let aggregated = FieldSelection::new_without_defaults(FieldSelectionOptions {
@@ -2198,7 +2196,6 @@ type testIndexer = {{
             } else {
                 format!("{{\n{}\n      }}", fuel_contracts_entries.join("\n"))
             };
-            fuel_event_filters_body = "{}".to_string();
 
             // FuelTypes namespace at file scope (referenced by Fuel event
             // payloads). No prefix — doesn't collide with envio.
@@ -2435,7 +2432,6 @@ type testIndexer = {{
                     evm_event_filters: &evm_event_filters_body,
                     fuel_chains: &fuel_chains_body,
                     fuel_contracts: &fuel_contracts_body,
-                    fuel_event_filters: &fuel_event_filters_body,
                     svm_chains: &svm_chains_body,
                     svm_programs: &svm_programs_body,
                     entities: &entities_body,
@@ -2497,10 +2493,9 @@ type testIndexer = {{
                 filters = bodies.evm_event_filters,
             ),
             Ecosystem::Fuel => format!(
-                "fuel: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                "fuel: {{ chains: {chains}; contracts: {contracts} }};",
                 chains = bodies.fuel_chains,
                 contracts = bodies.fuel_contracts,
-                filters = bodies.fuel_event_filters,
             ),
             Ecosystem::Svm => format!(
                 "svm: {{ chains: {chains}; programs: {programs} }};",
@@ -2561,7 +2556,6 @@ struct ConfigBodies<'a> {
     evm_event_filters: &'a str,
     fuel_chains: &'a str,
     fuel_contracts: &'a str,
-    fuel_event_filters: &'a str,
     svm_chains: &'a str,
     svm_programs: &'a str,
     entities: &'a str,
@@ -3927,7 +3921,6 @@ type Swap {
                 evm_event_filters: "{}",
                 fuel_chains: "{}",
                 fuel_contracts: "{}",
-                fuel_event_filters: "{}",
                 svm_chains: "{}",
                 svm_programs: "{}",
                 entities: "Entities",

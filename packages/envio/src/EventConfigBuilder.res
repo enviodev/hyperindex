@@ -909,11 +909,22 @@ let buildFuelOnEventRegistration = (
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
   let contractName = eventConfig.contractName
-  let whereStartBlock = where->Option.flatMap(where =>
-    where
-    ->LogSelection.evaluateWhere(~contractName, ~chainId)
-    ->LogSelection.extractStartBlock(~onEventBlockFilterSchema, ~contractName)
-  )
+  let whereValue = where->Option.map(LogSelection.evaluateWhere(_, ~contractName, ~chainId))
+  switch whereValue {
+  | Some(Object(obj)) =>
+    obj->Utils.Dict.forEachWithKey((_, key) =>
+      if key !== "block" {
+        JsError.throwWithMessage(
+          `Invalid where configuration for ${contractName}. Unknown field "${key}". Fuel events can only be filtered by \`block\`.`,
+        )
+      }
+    )
+  | _ => ()
+  }
+  let whereStartBlock =
+    whereValue->Option.flatMap(
+      LogSelection.extractStartBlock(_, ~onEventBlockFilterSchema, ~contractName),
+    )
 
   {
     index: -1,
@@ -925,5 +936,9 @@ let buildFuelOnEventRegistration = (
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
     startBlock: whereStartBlock->Option.orElse(startBlock),
     fieldSelection: eventConfig.fieldSelection,
+    skippedByWhere: switch whereValue {
+    | Some(Boolean(false)) => true
+    | _ => false
+    },
   }
 }

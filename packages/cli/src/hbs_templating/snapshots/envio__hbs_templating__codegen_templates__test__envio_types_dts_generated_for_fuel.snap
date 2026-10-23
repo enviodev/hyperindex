@@ -83,7 +83,7 @@ declare module "envio" {
       readonly srcAddress: Address;
     };
   };
-      }; eventFilters: {} };
+      } };
       entities: Entities;
       perChainEntities: never;
       enums: Enums;
