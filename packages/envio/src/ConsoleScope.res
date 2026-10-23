@@ -1,11 +1,19 @@
 // What a `console` call inside user code is about, so its line carries the same
 // fields as `context.log` would.
+
+// One handler run. Entered around each run, so work the run starts without
+// awaiting it still finds its own run, however late it finishes.
+type handlerFrame = {
+  item: Internal.item,
+  checkpointId: Internal.checkpointId,
+  isPreload: bool,
+  mutable isResolved: bool,
+  loggerFor: Internal.item => Logger.t,
+}
+
+@unboxed
 type t =
-  // A handler's preload run, whose lines its run proper says again.
-  | Silent({mutable isOver: bool})
-  // A batch's handlers, which run one at a time: the scope is entered once per
-  // batch, and the item swapped in before each handler.
-  | Item({mutable item: Internal.item, loggerFor: Internal.item => Logger.t, mutable isOver: bool})
+  | Handler(handlerFrame)
   // Code that runs alongside others, such as an effect or a contract register.
   | Logger(unit => Logger.t)
 
@@ -13,6 +21,7 @@ type storage
 @module("node:async_hooks") @new external makeStorage: unit => storage = "AsyncLocalStorage"
 @send external runInStorage: (storage, t, unit => 'a) => 'a = "run"
 @send external getStore: storage => Nullable.t<t> = "getStore"
+@send external runInStorage2: (storage, t, ('a, 'b) => 'c, 'a, 'b) => 'c = "run"
 
 // Cheap where Node keeps async context in frames, the default from Node 24.
 // Before that, using it at all makes every `await` in the process slower.
@@ -20,40 +29,22 @@ let storage = makeStorage()
 
 let run = (scope, f) => storage->runInStorage(scope, f)
 
-let finish = scope =>
-  switch scope {
-  | Silent(scope) => scope.isOver = true
-  | Item(scope) => scope.isOver = true
-  | Logger(_) => ()
-  }
+// `run` with the callback's arguments passed through, so a hot caller can hand
+// it a function made once rather than a closure per call.
+let run2 = (scope, f, a, b) => storage->runInStorage2(scope, f, a, b)
 
-// Code a run starts can outlive it, in a timer or a promise nobody awaits. Its
-// lines then go to the root logger, rather than being dropped for good or
-// named after whichever item the batch ended on.
-let runToEnd = async (scope, f) => {
-  let result = try await run(scope, f) catch {
-  | exn =>
-    scope->finish
-    throw(exn)
-  }
-  scope->finish
-  result
-}
-
-let setItem = (scope, item) =>
-  switch scope {
-  | Item(scope) => scope.item = item
-  | Silent(_) | Logger(_) => ()
-  }
+let current = () => storage->getStore
 
 // The logger a `console` line goes through: the scope's, or `root` outside any.
-// `None` drops the line.
+// `None` drops the line. A preload run is silent only until it resolves: work
+// it started that finishes later prints like any other code.
 let loggerFor = (root: Logger.t) =>
   switch storage->getStore->Nullable.toOption {
-  | Some(Silent({isOver: false})) => None
-  | Some(Item({isOver: false, item, loggerFor})) => Some(loggerFor(item))
+  | Some(Handler({isPreload: true, isResolved: false})) => None
+  | Some(Handler({isPreload: true, isResolved: true})) => Some(root)
+  | Some(Handler({isPreload: false, item, loggerFor})) => Some(loggerFor(item))
   | Some(Logger(logger)) => Some(logger())
-  | None | Some(Silent({isOver: true})) | Some(Item({isOver: true})) => Some(root)
+  | None => Some(root)
   }
 
 // The logger of an effect call, kept by its context: the effect runs with its

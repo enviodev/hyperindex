@@ -26,94 +26,82 @@ let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
 
 exception ProcessingError({message: string, exn: exn, item: Internal.item})
 
-let runEventHandlerOrThrow = async (
-  item: Internal.item,
-  ~checkpointId,
-  ~handler,
-  ~indexerState,
-  ~loadManager,
-  ~persistence,
-  ~chains: Internal.chains,
-  ~config: Config.t,
-) => {
-  let eventItem = item->Internal.castUnsafeEventItem
-
-  //Include the load in time before handler
-  let timeBeforeHandler = Performance.now()
-
-  try {
-    let contextParams: UserContext.contextParams = {
-      item,
-      checkpointId,
-      indexerState,
-      loadManager,
-      persistence,
-      isPreload: false,
-      chains,
-      config,
-      isResolved: false,
-    }
-    await handler(
-      (
-        {
-          event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
-          context: UserContext.getHandlerContext(contextParams),
-        }: Internal.handlerArgs
-      ),
-    )
-    contextParams.isResolved = true
-  } catch {
-  | exn =>
-    throw(
-      ProcessingError({
-        message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
-        item,
-        exn,
-      }),
-    )
-  }
-  let handlerDuration = timeBeforeHandler->Performance.secondsSince
-  let eventConfig = eventItem.onEventRegistration.eventConfig
-  indexerState->IndexerState.recordHandlerDuration(
-    ~contract=eventConfig.contractName,
-    ~event=eventConfig.name,
-    ~duration=handlerDuration,
-  )
+// What a pass shares across its handler runs: one context serves them all, and
+// each run is told apart by the frame it's entered with.
+type pass = {
+  context: Internal.handlerContext,
+  isPreload: bool,
+  loggerFor: Internal.item => Logger.t,
+  config: Config.t,
+  indexerState: IndexerState.t,
+  stats: Utils.Map.t<Internal.eventConfig, IndexerState.handlerStat>,
 }
 
-let runHandlerOrThrow = async (
-  item: Internal.item,
-  ~checkpointId,
-  ~indexerState,
-  ~loadManager,
-  ~persistence: Persistence.t,
-  ~config: Config.t,
-  ~chains: Internal.chains,
-) => {
+let makePass = (params: UserContext.batchParams) => {
+  context: UserContext.makeHandlerContext(params),
+  isPreload: params.isPreload,
+  loggerFor: item => params.indexerState->IndexerState.loggerForItem(item),
+  config: params.config,
+  indexerState: params.indexerState,
+  stats: Utils.Map.make(),
+}
+
+let handlerStatFor = (pass: pass, eventConfig: Internal.eventConfig) =>
+  switch pass.stats->Utils.Map.get(eventConfig) {
+  | Some(stat) => stat
+  | None =>
+    let stat =
+      pass.indexerState->IndexerState.getHandlerStat(
+        ~contract=eventConfig.contractName,
+        ~event=eventConfig.name,
+      )
+    pass.stats->Utils.Map.set(eventConfig, stat)->ignore
+    stat
+  }
+
+let makeFrame = (pass: pass, ~item, ~checkpointId): ConsoleScope.handlerFrame => {
+  item,
+  checkpointId,
+  isPreload: pass.isPreload,
+  isResolved: false,
+  loggerFor: pass.loggerFor,
+}
+
+let invokeHandler = (pass: pass, item: Internal.item) =>
   switch item {
   | Block({onBlockRegistration: {handler}, blockNumber}) =>
+    handler(
+      Ecosystem.makeOnBlockArgs(
+        ~blockNumber,
+        ~ecosystem=pass.config.ecosystem,
+        ~context=pass.context,
+      ),
+    )
+  | Event(_) =>
+    switch (item->Internal.castUnsafeEventItem).onEventRegistration.handler {
+    | Some(handler) =>
+      handler({
+        event: item->Ecosystem.getItemEvent(~ecosystem=pass.config.ecosystem),
+        context: pass.context,
+      })
+    | None => Promise.resolve()
+    }
+  }
+
+// Throws whatever the handler throws, even before its first await.
+let enterFrame = (pass: pass, frame: ConsoleScope.handlerFrame) =>
+  ConsoleScope.run2(Handler(frame), invokeHandler, pass, frame.item)
+
+let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~pass) => {
+  let frame = pass->makeFrame(~item, ~checkpointId)
+  switch item {
+  | Block(_) =>
     try {
-      let contextParams: UserContext.contextParams = {
-        item,
-        indexerState,
-        loadManager,
-        persistence,
-        checkpointId,
-        isPreload: false,
-        chains,
-        config,
-        isResolved: false,
-      }
-      await handler(
-        Ecosystem.makeOnBlockArgs(
-          ~blockNumber,
-          ~ecosystem=config.ecosystem,
-          ~context=UserContext.getHandlerContext(contextParams),
-        ),
-      )
-      contextParams.isResolved = true
+      await pass->enterFrame(frame)
+      frame.isResolved = true
     } catch {
     | exn =>
+      frame.isResolved = true
       throw(
         ProcessingError({
           message: "Unexpected error in the block handler. Please handle the error to keep the indexer running smoothly.",
@@ -123,30 +111,49 @@ let runHandlerOrThrow = async (
       )
     }
   | Event(_) =>
-    switch (item->Internal.castUnsafeEventItem).onEventRegistration.handler {
-    | Some(handler) =>
-      await item->runEventHandlerOrThrow(
-        ~handler,
-        ~checkpointId,
-        ~indexerState,
-        ~loadManager,
-        ~persistence,
-        ~chains,
-        ~config,
-      )
-    | None => ()
+    let {?handler, eventConfig} = (item->Internal.castUnsafeEventItem).onEventRegistration
+    if handler !== None {
+      //Include the load in time before handler
+      let timeBeforeHandler = Performance.now()
+      try {
+        await pass->enterFrame(frame)
+        frame.isResolved = true
+      } catch {
+      | exn =>
+        frame.isResolved = true
+        throw(
+          ProcessingError({
+            message: "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
+            item,
+            exn,
+          }),
+        )
+      }
+      pass
+      ->handlerStatFor(eventConfig)
+      ->IndexerState.recordHandlerDuration(~duration=timeBeforeHandler->Performance.secondsSince)
     }
   }
 }
 
-let preloadBatchOrThrow = async (
-  batch: Batch.t,
-  ~loadManager,
-  ~persistence,
-  ~config: Config.t,
-  ~indexerState,
-  ~chains: Internal.chains,
-) => {
+// A preload run's errors are dropped: the run proper reports them.
+let startPreload = (pass: pass, ~item, ~checkpointId, ~onResolved) => {
+  let frame = pass->makeFrame(~item, ~checkpointId)
+  let promise = try pass->enterFrame(frame) catch {
+  | exn => Promise.reject(exn)
+  }
+  promise
+  ->Promise.thenResolve(_ => {
+    frame.isResolved = true
+    onResolved()
+  })
+  ->Promise.catch(_ => {
+    frame.isResolved = true
+    Promise.resolve()
+  })
+}
+
+let preloadBatchOrThrow = async (batch: Batch.t, ~pass) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
   // We'll rerun the loader again right before the handler run,
@@ -163,73 +170,18 @@ let preloadBatchOrThrow = async (
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event(_) =>
-        let {?handler, eventConfig: {contractName, name: eventName}} = (
-          item->Internal.castUnsafeEventItem
-        ).onEventRegistration
-        switch handler {
-        | None => ()
-        | Some(handler) =>
-          try {
-            let timerRef =
-              indexerState->IndexerState.startPreloadHandler(
-                ~contract=contractName,
-                ~event=eventName,
-              )
-            promises->Array.push(
-              handler({
-                event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem),
-                context: UserContext.getHandlerContext({
-                  item,
-                  indexerState,
-                  loadManager,
-                  persistence,
-                  checkpointId,
-                  isPreload: true,
-                  chains,
-                  isResolved: false,
-                  config,
-                }),
-              })
-              ->Promise.thenResolve(_ => {
-                indexerState->IndexerState.endPreloadHandler(
-                  timerRef,
-                  ~contract=contractName,
-                  ~event=eventName,
-                )
-              })
-              ->Utils.Promise.silentCatch,
-              // Must have Promise.catch as well as normal catch,
-              // because if user throws an error before await in the handler,
-              // it won't create a rejected promise
-            )
-          } catch {
-          | _ => ()
-          }
-        }
-      | Block({onBlockRegistration: {handler}, blockNumber}) =>
-        try {
+        let {?handler, eventConfig} = (item->Internal.castUnsafeEventItem).onEventRegistration
+        if handler !== None {
+          let stat = pass->handlerStatFor(eventConfig)
+          let timerRef = stat->IndexerState.startPreloadHandler
           promises->Array.push(
-            handler({
-              Ecosystem.makeOnBlockArgs(
-                ~blockNumber,
-                ~ecosystem=config.ecosystem,
-                ~context=UserContext.getHandlerContext({
-                  item,
-                  indexerState,
-                  loadManager,
-                  persistence,
-                  checkpointId,
-                  isPreload: true,
-                  chains,
-                  isResolved: false,
-                  config,
-                }),
-              )
-            })->Utils.Promise.silentCatch,
+            pass->startPreload(~item, ~checkpointId, ~onResolved=() =>
+              stat->IndexerState.endPreloadHandler(timerRef)
+            ),
           )
-        } catch {
-        | _ => ()
         }
+      | Block(_) =>
+        promises->Array.push(pass->startPreload(~item, ~checkpointId, ~onResolved=() => ()))
       }
     }
 
@@ -239,15 +191,7 @@ let preloadBatchOrThrow = async (
   let _ = await Promise.all(promises)
 }
 
-let runBatchHandlersOrThrow = async (
-  batch: Batch.t,
-  ~indexerState,
-  ~loadManager,
-  ~persistence,
-  ~config,
-  ~chains: Internal.chains,
-  ~consoleScope,
-) => {
+let runBatchHandlersOrThrow = async (batch: Batch.t, ~pass) => {
   let itemIdx = ref(0)
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
@@ -256,17 +200,7 @@ let runBatchHandlersOrThrow = async (
 
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
-      consoleScope->ConsoleScope.setItem(item)
-
-      await runHandlerOrThrow(
-        item,
-        ~checkpointId,
-        ~indexerState,
-        ~loadManager,
-        ~persistence,
-        ~config,
-        ~chains,
-      )
+      await runHandlerOrThrow(item, ~checkpointId, ~pass)
     }
     itemIdx := itemIdx.contents + checkpointItemsCount
   }
@@ -355,33 +289,20 @@ let processEventBatch = async (
 
     let timeRef = Performance.now()
 
+    let makePass = isPreload =>
+      makePass({indexerState, loadManager, persistence, isPreload, chains, config})
+
     if batch.items->Utils.Array.notEmpty {
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
       await materializeBatchEvents(batch, ~chainStates)
-      await ConsoleScope.runToEnd(Silent({isOver: false}), () =>
-        batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
-      )
+      await batch->preloadBatchOrThrow(~pass=makePass(true))
     }
 
     let elapsedTimeAfterLoaders = timeRef->Performance.secondsSince
 
     if batch.items->Utils.Array.notEmpty {
-      let consoleScope = ConsoleScope.Item({
-        item: batch.items->Array.getUnsafe(0),
-        loggerFor: item => indexerState->IndexerState.loggerForItem(item),
-        isOver: false,
-      })
-      await ConsoleScope.runToEnd(consoleScope, () =>
-        batch->runBatchHandlersOrThrow(
-          ~indexerState,
-          ~loadManager,
-          ~persistence,
-          ~config,
-          ~chains,
-          ~consoleScope,
-        )
-      )
+      await batch->runBatchHandlersOrThrow(~pass=makePass(false))
     }
 
     let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince

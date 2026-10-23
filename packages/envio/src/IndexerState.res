@@ -716,23 +716,21 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
   }
 }
 
-let recordHandlerDuration = (state: t, ~contract, ~event, ~duration) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let recordHandlerDuration = (stat: handlerStat, ~duration) => {
   stat.processingSeconds = stat.processingSeconds +. duration
   stat.processingCount = stat.processingCount +. 1.
 }
 
-let startPreloadHandler = (state: t, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let startPreloadHandler = (stat: handlerStat) => {
+  let timerRef = Performance.now()
   if stat.preloadPendingCount === 0 {
-    stat.preloadPendingTimerRef = Performance.now()
+    stat.preloadPendingTimerRef = timerRef
   }
   stat.preloadPendingCount = stat.preloadPendingCount + 1
-  Performance.now()
+  timerRef
 }
 
-let endPreloadHandler = (state: t, timerRef, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let endPreloadHandler = (stat: handlerStat, timerRef) => {
   stat.preloadPendingCount = stat.preloadPendingCount - 1
   if stat.preloadPendingCount === 0 {
     stat.preloadSeconds =
