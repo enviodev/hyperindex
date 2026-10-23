@@ -14,6 +14,7 @@ type clickHouseSinkCtor
 type pgStorageCtor
 type addressStoreCtor
 type tuiCtor
+type loggerCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
 type fromUserApiOptions = {
@@ -100,6 +101,10 @@ type addon = {
   pgStorage: pgStorageCtor,
   @as("Tui")
   tui: tuiCtor,
+  @as("Logger")
+  logger: loggerCtor,
+  writeStdoutLine: string => unit,
+  writeStderrLine: string => unit,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,

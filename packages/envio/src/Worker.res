@@ -72,10 +72,10 @@ type workerMessage =
 // that, a worker gone on its own would read as a failure to the supervisor
 // still deciding what the interrupt meant. A supervisor that dies can't tear
 // the group down, so losing the channel is what ends the worker then.
-let bindToSupervisor = () => {
+let bindToSupervisor = (~logger) => {
   NodeJs.Process.onSignal("SIGINT", () => ())
   NodeJs.Process.onDisconnect(() => {
-    Logging.error("The indexer supervisor is gone. Stopping this chain's process.")
+    logger->Logger.error("The indexer supervisor is gone. Stopping this chain's process.")
     NodeJs.process->NodeJs.exitWithCode(Failure)
   })
 }

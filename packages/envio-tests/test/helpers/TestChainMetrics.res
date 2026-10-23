@@ -43,6 +43,7 @@ let makeChainState = (
   ~config=TestConfig.default,
 ): ChainState.t =>
   ChainState.makeFromDbState(
+    ~logger=Logger.makeInMemory(),
     chainConfig,
     ~resumedChainState={
       id: chainId,

@@ -74,7 +74,7 @@ describe("Supervisor.fork", () => {
       // share rather than the whole of each.
       bufferSize: (CrossChainState.calculateTargetBufferSize() / 4)->Int.toString,
       objectsTarget: (Env.inMemoryObjectsTarget->Float.toInt / 4)->Int.toString,
-      logFile: Supervisor.logFilePath(~workerIndex=1),
+      logFile: Supervisor.workerLogFilePath(~workerIndex=1),
       // Proof the channel clones rather than stringifies: a JSON round trip
       // would have turned this into a string.
       startTime: Date.fromTime(1700000000000.),
@@ -85,7 +85,7 @@ describe("Supervisor.fork", () => {
 
 describe("Supervisor.awaitExit", () => {
   let outcome = async group =>
-    switch await group->Supervisor.awaitExit {
+    switch await group->Supervisor.awaitExit(~logger=Logger.makeInMemory()) {
     | outcome => Ok(outcome)
     | exception _ => Error()
     }
@@ -191,13 +191,44 @@ describe("Supervisor.fork output", () => {
       stopping: false,
       holdingRealtime: false,
     }
-    let _ = await group->Supervisor.awaitExit
+    let _ = await group->Supervisor.awaitExit(~logger=Logger.makeInMemory())
 
     t.expect(lines->Array.toSorted(((_, a), (_, b)) => String.compare(a, b))).toStrictEqual([
       ("stdout", "first line"),
       ("stderr", "from stderr"),
       ("stdout", "second line"),
     ])
+  })
+
+  // A worker's pipes close only once every process holding them has, so a
+  // supervisor waiting for that alone would never see the worker go.
+  Async.it("Sees a worker's exit while a process it started holds its output", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "orphan")
+    let lines = []
+    let group: Supervisor.group = {
+      running: [
+        forkFixture(
+          ~chainIds=[1],
+          ~pipeOutput=true,
+          ~onOutput=line => lines->Array.push(line)->ignore,
+        ),
+      ],
+      stopping: false,
+      holdingRealtime: false,
+    }
+    let exited = await Promise.race([
+      group->Supervisor.awaitExit(~logger=Logger.makeInMemory())->Promise.thenResolve(_ => true),
+      Utils.delay(5000)->Promise.thenResolve(_ => false),
+    ])
+    lines->Array.forEach(
+      line =>
+        switch line->String.split(" ") {
+        | ["helper", pid] =>
+          NodeJs.Process.kill(pid->Int.fromString->Option.getOr(0), "SIGKILL")->ignore
+        | _ => ()
+        },
+    )
+    t.expect(exited).toBe(true)
   })
 })
 
@@ -245,7 +276,7 @@ describe("Supervisor.isRunAtHead", () => {
       []->Supervisor.isRunAtHead,
     )
     group->Supervisor.stop
-    let _ = await group->Supervisor.awaitExit
+    let _ = await group->Supervisor.awaitExit(~logger=Logger.makeInMemory())
 
     t.expect(readings).toStrictEqual((false, true, false))
   })
@@ -293,9 +324,9 @@ describe("Supervisor.isRunAtHead", () => {
           ),
       )
 
-    t.expect((await group->Supervisor.awaitExit, group.holdingRealtime)).toStrictEqual((
-      Supervisor.Finished,
-      false,
-    ))
+    t.expect((
+      await group->Supervisor.awaitExit(~logger=Logger.makeInMemory()),
+      group.holdingRealtime,
+    )).toStrictEqual((Supervisor.Finished, false))
   })
 })

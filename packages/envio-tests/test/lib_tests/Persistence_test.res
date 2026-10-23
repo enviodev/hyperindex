@@ -26,6 +26,7 @@ describe("Test Persistence layer init", () => {
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -99,6 +100,7 @@ describe("Test Persistence layer init", () => {
     await p
 
     await persistence->Persistence.init(
+      ~logger=Logger.makeInMemory(),
       ~chainConfigs=[],
       ~contractMapping=ContractMapping.empty,
       ~envioInfo,
@@ -116,6 +118,7 @@ describe("Test Persistence layer init", () => {
 
     let _p2 =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~reset=true,
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
@@ -156,6 +159,7 @@ describe("Test Persistence layer init", () => {
 
     let p =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -165,6 +169,7 @@ describe("Test Persistence layer init", () => {
     // Additional calls to init should not do anything
     let _ =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -173,6 +178,7 @@ describe("Test Persistence layer init", () => {
       )
     let _ =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -227,6 +233,7 @@ Although it should load effect caches metadata.`,
     let settled = (
       async () =>
         switch await persistence->Persistence.init(
+          ~logger=Logger.makeInMemory(),
           ~chainConfigs=[],
           ~contractMapping=ContractMapping.empty,
           ~envioInfo=current,

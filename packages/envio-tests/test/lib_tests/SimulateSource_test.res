@@ -71,7 +71,7 @@ let getItems = async (
     ~selection,
     ~itemsTarget=None,
     ~retry=0,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
   response.parsedQueueItems->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem

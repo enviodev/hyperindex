@@ -276,6 +276,17 @@ jobs:
           ENVIO_TEST_STORAGE: ${{ matrix.storage }}
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
+      # A failing test names its logs file in its failure message.
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: envio-tests-logs-${{ matrix.storage }}
+          path: packages/envio-tests/.test-logs
+          # The folder's own name starts with a dot.
+          include-hidden-files: true
+          if-no-files-found: ignore
+
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1
         if: failure() && github.event_name == 'push'

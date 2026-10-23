@@ -221,7 +221,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       payload,
     })->Internal.castUnsafeEventItem
 
-    let ecosystem = Evm.make(~logger=Logging.getLogger())
+    let ecosystem = Evm.make()
     t.expect(ecosystem.toRawEvent(eventItem)).toEqual({
       chain_id: 137->ChainId.fromInt,
       event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),

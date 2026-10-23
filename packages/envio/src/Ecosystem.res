@@ -31,17 +31,14 @@ type t = {
       `LogSelection.res`. SVM parses its own `where` (including the
       `block.slot` chunk), so its schema always surfaces `None`. */
   onEventBlockFilterSchema: S.t<option<unknown>>,
-  /** Base logger injected at construction. Used to build per-item child
-      loggers (see `getItemLogger`). */
-  logger: Pino.t,
   /** Materialise the user-facing event handed to handlers and contract
       registration from an item's opaque payload. `event.transaction` is written
       onto the payload at batch prep (HyperSync) or inline (RPC/simulate). */
   toEvent: Internal.eventItem => Internal.event,
   /** Build the per-item child logger for an event item, with
       ecosystem-specific log fields (EVM/Fuel: contract/event/address; SVM:
-      program/instruction/programId). Closes over the injected logger. */
-  toEventLogger: Internal.eventItem => Pino.t,
+      program/instruction/programId), on top of the logger it's given. */
+  withEventFields: (Internal.eventItem, ~logger: Logger.t) => Logger.t,
   /** Build a raw event row for the `raw_events` table. Unsupported on SVM,
       where the implementation throws. */
   toRawEvent: Internal.eventItem => Internal.rawEvent,
@@ -64,33 +61,18 @@ let getItemEvent = {
   }
 }
 
-let getItemLogger = {
-  let cacheKey = "_logger"
-  (item: Internal.item, ~ecosystem: t): Pino.t => {
-    let cache = item->(Utils.magic: Internal.item => dict<Pino.t>)
-    switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
-    | Some(logger) => logger
-    | None =>
-      let logger = switch item {
-      | Internal.Event(_) => ecosystem.toEventLogger(item->Internal.castUnsafeEventItem)
-      | Block({blockNumber, onBlockRegistration}) =>
-        Logging.createChildFrom(
-          ~logger=ecosystem.logger,
-          ~params={
-            "onBlock": onBlockRegistration.name,
-            "chainId": onBlockRegistration.chainId,
-            "block": blockNumber,
-          },
-        )
-      }
-      cache->Dict.set(cacheKey, logger)
-      logger
-    }
+// Made for each line rather than kept on the item: building one costs a few
+// hundred nanoseconds, and only a line that passes the level asks for it.
+let loggerForItem = (item: Internal.item, ~ecosystem: t, ~logger: Logger.t): Logger.t =>
+  switch item {
+  | Internal.Event(_) => ecosystem.withEventFields(item->Internal.castUnsafeEventItem, ~logger)
+  | Block({blockNumber, onBlockRegistration}) =>
+    logger->Logger.withFieldsJson(
+      `{"onBlock":${JSON.stringify(
+          JSON.String(onBlockRegistration.name),
+        )},"block":${blockNumber->Int.toString}}`,
+    )
   }
-}
-
-let getItemUserLogger = (item: Internal.item, ~ecosystem: t): Envio.logger =>
-  getItemLogger(item, ~ecosystem)->Logging.userLogger
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
   switch ecosystem.name {
