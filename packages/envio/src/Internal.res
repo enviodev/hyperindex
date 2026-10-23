@@ -477,7 +477,6 @@ let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection
 // ecosystem variant (fields never overwritten), which lets sources cast the
 // base back down to evm/fuel/svm safely.
 type eventConfig = private {
-  id: string,
   name: string,
   contractName: string,
   paramsRawEventSchema: S.schema<eventParams>,
@@ -503,13 +502,6 @@ type fuelEventConfig = {
 type fuelContractConfig = {
   name: string,
   events: array<fuelEventConfig>,
-}
-
-type topicSelection = {
-  topic0: array<EvmTypes.Hex.t>,
-  topic1: array<EvmTypes.Hex.t>,
-  topic2: array<EvmTypes.Hex.t>,
-  topic3: array<EvmTypes.Hex.t>,
 }
 
 // A single topic position of a resolved `where`: either static pre-encoded

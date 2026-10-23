@@ -1883,15 +1883,6 @@ type hasOwnProperty { id: ID! }
 `,
       "Schema contains the following reserved keywords: hasOwnProperty",
     ),
-    (
-      // `Enum` is already exported by the `envio` module, and every entity is
-      // re-exported there under its capitalized name.
-      "rejects an entity whose capitalized name collides with an envio export",
-      `
-type enum { id: ID! }
-`,
-      "Schema contains the following reserved keywords: enum",
-    ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))
   })

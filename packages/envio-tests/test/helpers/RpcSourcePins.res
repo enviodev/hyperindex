@@ -3,7 +3,7 @@
 // event order, selected payload fields, reorg hashes, and retry decisions.
 
 type pinnedEvent = {
-  registrationId: string,
+  registrationIndex: int,
   chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
@@ -55,7 +55,7 @@ let normalizeEvent = item =>
     }) => {
       let payload = payload->Evm.toPayload
       {
-        registrationId: onEventRegistration.eventConfig.id,
+        registrationIndex: onEventRegistration.index,
         chainId,
         blockNumber,
         logIndex,
