@@ -245,7 +245,12 @@ describe("A chain-scoped load", () => {
         ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)
         ->EntityFilter.scoped(~table=counter.table, ~scope=Chain(137->ChainId.fromInt))
       let client = TestPgSchema.client(~pgSchema, ~maxConnections=1)
-      let storage = Storage.make(~client, ~entities=[counter], ~ecosystem=Evm)
+      let storage = Storage.make(
+        ~client,
+        ~logger=Logger.makeInMemory(),
+        ~entities=[counter],
+        ~ecosystem=Evm,
+      )
       let _ = await storage.loadOrThrow(~filter, ~table=counter.table)
       let prepared: array<{
         "statement": string,

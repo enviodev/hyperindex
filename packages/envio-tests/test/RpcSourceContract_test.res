@@ -11,11 +11,11 @@ let minerAddress = "0x00000000000000000000000000000000000000CC"
 let normalizedMinerAddress = minerAddress->String.toLowerCase
 let address = normalizedContractAddress->Address.unsafeFromString
 
-let topicSelection: Internal.resolvedTopicSelection = {
-  topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-  topic1: Values([]),
-  topic2: Values([]),
-  topic3: Values([]),
+let topicFilter: Internal.topicFilter = {
+  topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
+  topic1: Any,
+  topic2: Any,
+  topic3: Any,
 }
 
 let makeRegistration = (~index=0, ~receiptOnly=false) => {
@@ -25,7 +25,7 @@ let makeRegistration = (~index=0, ~receiptOnly=false) => {
     ~transactionFieldNames=receiptOnly
       ? [GasUsed]
       : [Hash, TransactionIndex, From, Gas, GasUsed, Status],
-    ~eventFilters=[topicSelection],
+    ~eventFilters=[topicFilter],
   ),
   index,
 }
@@ -34,7 +34,7 @@ let makeRoutingRegistration = (
   ~index=0,
   ~contractName="ERC20",
   ~isWildcard=false,
-  ~eventFilters=[topicSelection],
+  ~eventFilters=[topicFilter],
   // topicCount is derived from paramsMetadata inside evmOnEventRegistration.
   ~paramsMetadata: array<Internal.paramMeta>=[],
 ) => {
@@ -110,7 +110,7 @@ let invoke = (
     },
     ~itemsTarget=Some(5_000),
     ~retry,
-    ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC source contract pin"}),
   )
 }
 
@@ -439,7 +439,7 @@ describe("RPC source public contract", () => {
         let (source, _) = makeSource(~url=mock.url, ~registration)
         let {result} = await source.getBlockHashes(
           ~blockNumbers=[100],
-          ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+          ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC source contract pin"}),
         )
         switch result {
         | Error(Source.SourceBehindHead({blockNumber})) => Some(blockNumber)
@@ -596,7 +596,7 @@ describe("RPC source public contract", () => {
                 },
                 ~itemsTarget=Some(5_000),
                 ~retry=0,
-                ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
+                ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC interval pin"}),
               ),
           )
         (await call(), await call())
@@ -633,16 +633,16 @@ describe("RPC source public contract", () => {
       ],
       ~eventFilters=[
         {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+          Internal.topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
           topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
-          topic2: Values([]),
-          topic3: Values([]),
+          topic2: Any,
+          topic3: Any,
         },
         {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([]),
+          Internal.topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
+          topic1: Any,
           topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
-          topic3: Values([]),
+          topic3: Any,
         },
       ],
     )
@@ -729,7 +729,7 @@ describe("RPC source public contract", () => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
+              ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC skip-all pin"}),
             ),
         ) {
         | Ok(page) => page
@@ -757,10 +757,10 @@ describe("RPC source public contract", () => {
     let filterA = "0x000000000000000000000000000000000000000000000000000000000000000a"
     let selectionFor = filter => [
       {
-        Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+        Internal.topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
         topic1: Values([filter->EvmTypes.Hex.fromStringUnsafe]),
-        topic2: Values([]),
-        topic3: Values([]),
+        topic2: Any,
+        topic3: Any,
       },
     ]
     // One indexed param so each contract's topic1-filtered log decodes.
@@ -778,7 +778,7 @@ describe("RPC source public contract", () => {
       ~index=1,
       ~contractName="ContractB",
       ~paramsMetadata=addressParam,
-      ~eventFilters=[topicSelection],
+      ~eventFilters=[topicFilter],
     )
     // A real provider's log for a topic1-filtered request carries that
     // contract's filtered topic1 value; routing re-checks it per registration.
@@ -859,7 +859,9 @@ describe("RPC source public contract", () => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
+              ~logger=Logger.makeInMemory()->Logger.withFields({
+                "test": "RPC contract scoping pin",
+              }),
             ),
         ) {
         | Ok(page) => page

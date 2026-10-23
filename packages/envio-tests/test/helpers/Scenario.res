@@ -185,9 +185,6 @@ let withInternalOverrides = (
   ),
 }
 
-@set external setErrorMessage: (JsExn.t, string) => unit = "message"
-type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
-
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
@@ -205,7 +202,6 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   ~provideClickHouse=?,
   ~chains=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
@@ -255,11 +251,13 @@ let run = async (
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
   // already cached.
-  let registration = HandlerRegister.makeRegistration(~config)
+  let logger = Logger.makeInMemory()
+  let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
 
   await IndexerRunner.run(
     ~config,
+    ~logger,
     ~resolveRegistrations=(~config) =>
       registration->HandlerRegister.useRegistration(async () => {
         switch (scenario.handlers, imported.contents) {
@@ -280,7 +278,6 @@ let run = async (
     ~onError?,
     ~onExit?,
     ~mapStorage?,
-    ~captureLogs?,
     ~provideClickHouse?,
     ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
@@ -290,18 +287,14 @@ let run = async (
       // A failure says what the mocks were left holding, so finding out what
       // the indexer asked for doesn't take a probe of its own.
       | exception exn if mocks->Array.length > 0 =>
-        let report = message =>
-          [message, ...mocks->Array.map(((_, mock)) => mock.describeState())]->Array.join("\n\n")
+        exn->IndexerRunner.appendToFailureMessage(
+          mocks
+          ->Array.map(((_, mock)) => "\n\n" ++ mock.describeState())
+          ->Array.join(""),
+        )
         switch exn {
-        | JsExn(error) =>
-          error->setErrorMessage(report(error->JsExn.message->Option.getOr("")))
-          JsExn.throw(error)
-        | exn =>
-          // A ReScript exception is thrown as a plain object, so the report goes
-          // on it directly and it still matches as the same exception.
-          let raw = exn->(Utils.magic: exn => rescriptExn)
-          raw.message = Some(report(raw.id))
-          throw(exn)
+        | JsExn(error) => JsExn.throw(error)
+        | exn => throw(exn)
         }
       }
       // Only after the body passed: a failing body has its own error to report,
@@ -339,7 +332,6 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   ~timeout=?,
   ~retry=?,
   body: (
@@ -370,7 +362,6 @@ let it = (
           ~onError?,
           ~onExit?,
           ~mapStorage?,
-          ~captureLogs?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>

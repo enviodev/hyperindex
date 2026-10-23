@@ -6,8 +6,13 @@ type contractRegisterParams = {
   item: Internal.item,
   onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
   config: Config.t,
+  // The chain's logger: an item's is built on it.
+  logger: Logger.t,
   mutable isResolved: bool,
 }
+
+let loggerForItem = (params: contractRegisterParams) =>
+  params.item->Ecosystem.loggerForItem(~ecosystem=params.config.ecosystem, ~logger=params.logger)
 
 // Helper to create a validated add function for contract registration.
 // The isResolved check has to live inside the returned closure (not just in the
@@ -19,7 +24,7 @@ let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): 
   (contractAddress: Address.t) => {
     if params.isResolved {
       Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->ErrorHandling.mkLogAndRaise(
-        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
+        ~logger=params->loggerForItem,
       )
     }
     // The value is passed from user-land, so validate and checksum/lowercase it.
@@ -62,15 +67,10 @@ let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
     if params.isResolved {
       Utils.Error.make(
         `Impossible to access context.${prop} after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(
-        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
-      )
+      )->ErrorHandling.mkLogAndRaise(~logger=params->loggerForItem)
     }
     switch prop {
-    | "log" =>
-      Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)->(
-        Utils.magic: Envio.logger => unknown
-      )
+    | "log" => params->loggerForItem->Logger.asContextLog->(Utils.magic: Envio.logger => unknown)
 
     | "chain" =>
       params

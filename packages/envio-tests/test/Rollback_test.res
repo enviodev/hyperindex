@@ -630,7 +630,7 @@ describe("E2E rollback tests", () => {
       waitTimeoutId.contents->Option.forEach(clearTimeout)
       switch waitResult {
       | Ok() => ()
-      | Error(Some(errHandler)) => errHandler->ErrorHandling.raiseExn
+      | Error(Some(errHandler)) => errHandler->ErrorHandling.toExn->throw
       | Error(None) => JsError.throwWithMessage("Timed out waiting for the recreated entity")
       }
 
@@ -687,7 +687,7 @@ describe("E2E rollback tests", () => {
         indexerErrorPromise->Promise.thenResolve(errHandler => Error(errHandler)),
       ]) {
       | Ok() => ()
-      | Error(errHandler) => errHandler->ErrorHandling.raiseExn
+      | Error(errHandler) => errHandler->ErrorHandling.toExn->throw
       }
 
       // Commit the rollback diff without recreating the entity on the canonical chain.

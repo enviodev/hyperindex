@@ -52,7 +52,7 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
     ~blockMaskFn=Evm.eventBlockFieldMask,
     ~transactionMaskFn=Evm.eventTransactionFieldMask,
   ),
-  sighash: pairCreatedTopic0,
+  sighash: Some(pairCreatedTopic0),
   topicCount: 3,
   paramsMetadata: pairCreatedAbi,
 }
@@ -63,18 +63,16 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   isWildcard: false,
   filterByAddresses: false,
   dependsOnAddresses: true,
-  addressFilterParamGroups: [],
   startBlock: None,
-  handler: None,
   contractRegister: None,
   fieldSelection: pairCreatedEventConfig.fieldSelection,
   resolvedWhere: {
-    topicSelections: [
+    topicFilters: [
       {
-        topic0: [pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe],
-        topic1: Values([]),
-        topic2: Values([]),
-        topic3: Values([]),
+        topic0: Values([pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe]),
+        topic1: Any,
+        topic2: Any,
+        topic3: Any,
       },
     ],
     startBlock: None,
@@ -108,6 +106,7 @@ let makeHyperSyncSource = () =>
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
     addressStore,
+    logger: Logger.makeInMemory(),
   })
 
 let makeRpcSource = () =>
@@ -134,7 +133,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~selection=makeSelection(),
     ~itemsTarget=Some(5000),
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SourceBlockHashes"}),
   ) catch {
   | Source.GetItemsError(err) =>
     let detail = switch err {

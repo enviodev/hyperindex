@@ -5,8 +5,8 @@
 @val external pid: int = "process.pid"
 
 // A storage with Postgres alone, for what a test reads or sets up itself.
-let client = (~pgSchema=?, ~maxConnections=?) =>
-  Storage.makeClient(~postgres=Storage.postgresOptions(~pgSchema?, ~maxConnections?))
+let client = (~logger=Logger.makeInMemory(), ~pgSchema=?, ~maxConnections=?) =>
+  Storage.makeClient(~logger, ~postgres=Storage.postgresOptions(~pgSchema?, ~maxConnections?))
 
 let prefix = "envio_test_"
 

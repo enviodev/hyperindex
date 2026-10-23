@@ -43,7 +43,7 @@ describe("Starting with ClickHouse storage but no ClickHouse settings", () => {
       async (~indexer as _, ~source as _) => (),
     ) {
     | () => "the start to fail, but it succeeded"
-    | exception JsExn(error) => error->JsExn.message->Option.getOr("")
+    | exception JsExn(error) => error->JsExn.message->Option.getOr("")->IndexerRunner.stripLogsLink
     | exception error => `an unexpected failure: ${error->JSON.stringifyAny->Option.getOr("")}`
     }
     restore()

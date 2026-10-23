@@ -9,7 +9,8 @@ type outcome =
 
 let incompatibleHeader = "The following config changes are incompatible with the existing indexer data:"
 
-let outcomeOfRefusal = message =>
+let outcomeOfRefusal = message => {
+  let message = message->IndexerRunner.stripLogsLink
   if message->String.startsWith(incompatibleHeader) {
     Refused(
       message
@@ -21,6 +22,7 @@ let outcomeOfRefusal = message =>
   } else {
     Failed(message)
   }
+}
 
 let storedChainIds = async (indexer: IndexerRunner.t) =>
   (await indexer.queryChains())->Array.map(row => row.id->ChainId.toInt)

@@ -76,7 +76,7 @@ let indexesOn = async (sql, ~pgSchema, ~tableName) =>
 // What the storage told the operator about its indexes, with build timings
 // left out.
 let storageMessages = (indexer: IndexerRunner.t) =>
-  indexer.logs()
+  indexer.infoAndAboveLogs()
   ->Array.filter(entry => entry.params->Dict.get("storage") === Some(JSON.String("postgres")))
   ->Array.map(entry => entry.msg->String.replaceRegExp(/[0-9.]+s\b/g, "Ns"))
 
@@ -214,7 +214,6 @@ describe("Indexes on a database that already holds some", () => {
       },
     ],
     ~sources=[{chain: 1337}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
@@ -267,7 +266,6 @@ describe("Indexes on a database that already holds some", () => {
   scenario->Scenario.it(
     "reuse the index a getWhere already built for a declared one",
     ~sources=[{chain: 1337}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)

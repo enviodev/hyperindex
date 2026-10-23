@@ -1,11 +1,6 @@
 type parsedWhere = {
   resolvedWhere: Internal.resolvedWhere,
   filterByAddresses: bool,
-  // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
-  // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
-  // Applied natively by every source while routing; carried on the registration
-  // for the simulate source, which has no native query boundary.
-  addressFilterParamGroups: array<array<string>>,
 }
 
 // Inner schema for the event `block` filter chunk: `{_gte?}`.
@@ -80,8 +75,8 @@ let makeChainArg = (
 
 // Sentinel returned by `chain.<Contract>.addresses`. A Proxy
 // whose traps throw on any access, so the only non-throwing use is passing it
-// straight through as a param filter value — which `extractAddressFilterGroups`
-// then finds by identity. Misuse (spread/map/index/...) fails loud at the site.
+// straight through as a param filter value — which `parseWhereOrThrow` then
+// finds by identity. Misuse (spread/map/index/...) fails loud at the site.
 let makeAddressesProbe: (
   ~contractName: string,
 ) => array<Address.t> = %raw(`function (contractName) {
@@ -96,179 +91,206 @@ let makeAddressesProbe: (
   return new Proxy([], {get: trap});
 }`)
 
-let parseWhereOrThrow = {
-  let emptyTopics = []
-  let noopGetter = _ => emptyTopics
+// A callback `where` is called once per chain at registration time; a static
+// value applies to every chain as is.
+let evaluateWhere = (
+  where: JSON.t,
+  ~contractName,
+  ~chainId,
+  ~getAddresses=() => makeAddressesProbe(~contractName),
+) =>
+  if typeof(where) === #function {
+    let fn = where->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
+    fn({chain: makeChainArg(~contractName, ~chainId, ~getAddresses)->Obj.magic})
+  } else {
+    where
+  }
 
-  (
-    ~where: option<JSON.t>,
-    ~sighash,
-    ~params: array<string>,
-    ~contractName: string,
-    ~chainId: ChainId.t,
-    ~onEventBlockFilterSchema: S.t<option<unknown>>,
-    ~topic1=noopGetter,
-    ~topic2=noopGetter,
-    ~topic3=noopGetter,
-  ): parsedWhere => {
-    let addressFilterParamGroups = []
-    let readAddresses = ref(false)
-    let addressesSentinel = makeAddressesProbe(~contractName)
-    let sentinelJson = addressesSentinel->(Utils.magic: array<Address.t> => JSON.t)
-    let topic0 = [sighash->EvmTypes.Hex.fromStringUnsafe]
-    let default = {
-      Internal.topic0,
-      topic1: Values(emptyTopics),
-      topic2: Values(emptyTopics),
-      topic3: Values(emptyTopics),
-    }
+// An indexed event param, in declaration order: its name and how a `where`
+// value for it encodes to topic values.
+type indexedParam = {name: string, toTopics: JSON.t => array<EvmTypes.Hex.t>}
 
-    // Topic positions map 1:1 onto the event's indexed params in declared
-    // order, so the sentinel check keys off `params[index]`. The sentinel must
-    // be detected before the topic getter runs — the getter would otherwise
-    // touch the throwing Proxy while encoding.
-    let topicFilterAt = (paramsFilter: dict<JSON.t>, ~index, ~getter) =>
-      switch params
-      ->Array.get(index)
-      ->Option.flatMap(name => paramsFilter->Utils.Dict.dangerouslyGetNonOption(name)) {
-      | Some(value) if value === sentinelJson =>
-        Internal.ContractAddresses({contractName: contractName})
-      | _ => Values(getter(paramsFilter))
-      }
+type topicPosition =
+  | Signature(EvmTypes.Hex.t)
+  | Param(indexedParam)
 
-    // Build a single topic selection from one indexed-param record (the
-    // inside of `params`). Validates that the keys are actual indexed
-    // parameters of the event — TS type checking doesn't catch this when
-    // `where` is a callback.
-    let paramsRecordToTopicSelection = (paramsFilter: dict<JSON.t>) => {
-      if paramsFilter->Utils.Dict.isEmpty {
-        default
-      } else {
-        let sentinelParamNames = []
-        paramsFilter->Utils.Dict.forEachWithKey((value, key) => {
-          if params->Array.includes(key)->not {
-            JsError.throwWithMessage(
-              `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
-            )
-          }
-          if value === sentinelJson {
-            sentinelParamNames->Array.push(key)->ignore
-          }
-        })
-        if sentinelParamNames->Utils.Array.isEmpty->not {
-          addressFilterParamGroups->Array.push(sentinelParamNames)->ignore
-        }
-        {
-          Internal.topic0,
-          topic1: paramsFilter->topicFilterAt(~index=0, ~getter=topic1),
-          topic2: paramsFilter->topicFilterAt(~index=1, ~getter=topic2),
-          topic3: paramsFilter->topicFilterAt(~index=2, ~getter=topic3),
+let parseWhereOrThrow = (
+  ~where: option<JSON.t>,
+  ~sighash: option<string>,
+  ~indexedParams: array<indexedParam>,
+  ~contractName: string,
+  ~eventName: string,
+  ~chainId: ChainId.t,
+  ~onEventBlockFilterSchema: S.t<option<unknown>>,
+): parsedWhere => {
+  let readAddresses = ref(false)
+  let addressesSentinel = makeAddressesProbe(~contractName)
+  let sentinelJson = addressesSentinel->(Utils.magic: array<Address.t> => JSON.t)
+
+  // The signature takes topic0 when the event has one; the indexed params
+  // follow in declared order.
+  let positions = switch sighash {
+  | Some(sighash) => [Signature(sighash->EvmTypes.Hex.fromStringUnsafe)]
+  | None => []
+  }->Array.concat(indexedParams->Array.map(param => Param(param)))
+  let constraintAt = (paramsFilter: dict<JSON.t>, position) =>
+    switch positions->Array.get(position) {
+    | None => Internal.Any
+    | Some(Signature(sighash)) => Values([sighash])
+    | Some(Param({name, toTopics})) =>
+      switch paramsFilter->Utils.Dict.dangerouslyGetNonOption(name) {
+      | None => Any
+      // Detected before encoding, which would touch the throwing Proxy.
+      | Some(value) if value === sentinelJson => ContractAddresses({contractName: contractName})
+      | Some(value) =>
+        switch toTopics(value) {
+        | [] => Any
+        | values => Values(values)
         }
       }
     }
+  let filterOf = (paramsFilter): Internal.topicFilter => {
+    topic0: paramsFilter->constraintAt(0),
+    topic1: paramsFilter->constraintAt(1),
+    topic2: paramsFilter->constraintAt(2),
+    topic3: paramsFilter->constraintAt(3),
+  }
+  let default = filterOf(Dict.make())
 
-    // Known top-level `where` keys. `block` is a sibling of `params` — its
-    // `_gte` promotes to the event's `startBlock` (extracted separately
-    // by `extractStartBlock`). Unknown keys are rejected to catch typos
-    // like `parmas` or `blocks` at registration time.
-    let acceptedWhereKeys = ["params", "block"]
-
-    // Parse a `where` value (or the result of calling the dynamic callback)
-    // into a list of topic selections.
-    //
-    // Accepted shapes:
-    // - `true`  → KeepAll → match the event signature with no narrowing
-    // - `false` → SkipAll → no events
-    // - `{}` (or `{params: undefined}`) → no narrowing
-    // - `{params: {...}}` → single AND-conjunction
-    // - `{params: [{...}, {...}]}` → OR of multiple AND-conjunctions
-    // - `{block: {number: {_gte: N}}}` → no topic narrowing; startBlock only
-    // - `{params: ..., block: ...}` → combined
-    //
-    // The runtime accepts both the function form (the only form ReScript
-    // exposes) and a top-level static object form (TypeScript convenience).
-    let parse = (where: JSON.t): array<Internal.resolvedTopicSelection> => {
-      if where === Obj.magic(true) {
-        [default]
-      } else if where === Obj.magic(false) {
-        []
-      } else {
-        // A `where` condition is shaped as `{params?: ..., block?: ...}`.
-        // `params` carries the indexed-parameter filter record; `block`
-        // carries the per-event block-range filter handled by
-        // `extractStartBlock`.
-        switch where {
-        | Object(obj) => {
-            // Catch typos (e.g. `parmas:`) and the legacy flat-filter
-            // shape (`{from: ...}`) by rejecting any unknown sibling.
-            obj->Utils.Dict.forEachWithKey((_, key) => {
-              if acceptedWhereKeys->Array.includes(key)->not {
-                JsError.throwWithMessage(
-                  `Invalid where configuration. Unknown field "${key}". Indexed parameter filters must be nested under \`params\` and block-range filters under \`block\``,
-                )
-              }
-            })
-            switch obj->Dict.get("params") {
-            | None => [default]
-            | Some(Object(p)) => [paramsRecordToTopicSelection(p)]
-            | Some(Array([])) => [default]
-            | Some(Array(arr)) =>
-              arr->Array.map(item =>
-                switch item {
-                | Object(p) => paramsRecordToTopicSelection(p)
-                | _ =>
-                  JsError.throwWithMessage(
-                    "Invalid where configuration. Each entry in `params` must be an object",
-                  )
-                }
-              )
-            | Some(_) =>
-              JsError.throwWithMessage(
-                "Invalid where configuration. Expected `params` to be an object or an array of objects",
-              )
-            }
-          }
-        | _ => JsError.throwWithMessage("Invalid where configuration. Expected an object")
-        }
-      }
-    }
-
-    // The callback is invoked exactly once per chain, at registration time,
-    // with the chain's real configured id. `chain.<Contract>.addresses` yields
-    // the throwing-Proxy sentinel, which the param parser turns into a
-    // `ContractAddresses` marker; addresses are expanded from the marker only
-    // when a source query is built.
-    // A misused Proxy (or any throw from the callback) propagates as-is —
-    // the Proxy's guidance message surfaces without wrapping.
-    let (topicSelections, startBlock) = switch where {
-    | None => ([default], None)
-    | Some(where) =>
-      let whereValue = if typeof(where) === #function {
-        let fn = where->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
-        let chain = makeChainArg(~contractName, ~chainId, ~getAddresses=() => {
-          readAddresses := true
-          addressesSentinel
-        })
-        fn({chain: chain->Obj.magic})
-      } else {
-        where
-      }
-      let topicSelections = whereValue->parse
-      if readAddresses.contents && addressFilterParamGroups->Utils.Array.isEmpty {
+  // Build a single topic filter from one indexed-param record (the inside of
+  // `params`). Validates that the keys are actual indexed parameters of the
+  // event — TS type checking doesn't catch this when `where` is a callback.
+  let paramsRecordToTopicFilter = (paramsFilter: dict<JSON.t>) => {
+    paramsFilter->Utils.Dict.forEachWithKey((_, key) => {
+      if indexedParams->Array.some(param => param.name === key)->not {
         JsError.throwWithMessage(
-          `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+          `Invalid where configuration. The event doesn't have an indexed parameter "${key}" and can't use it for filtering`,
         )
       }
-      (topicSelections, extractStartBlock(~onEventBlockFilterSchema, ~contractName, whereValue))
-    }
+    })
+    filterOf(paramsFilter)
+  }
 
-    {
-      resolvedWhere: {
-        topicSelections,
-        startBlock,
-      },
-      filterByAddresses: addressFilterParamGroups->Utils.Array.isEmpty->not,
-      addressFilterParamGroups,
+  // Known top-level `where` keys. `block` is a sibling of `params` — its
+  // `_gte` promotes to the event's `startBlock` (extracted separately
+  // by `extractStartBlock`). Unknown keys are rejected to catch typos
+  // like `parmas` or `blocks` at registration time.
+  let acceptedWhereKeys = ["params", "block"]
+
+  // Parse a `where` value (or the result of calling the dynamic callback)
+  // into a list of topic filters.
+  //
+  // Accepted shapes:
+  // - `true`  → KeepAll → match the event signature with no narrowing
+  // - `false` → SkipAll → no events
+  // - `{}` (or `{params: undefined}`) → no narrowing
+  // - `{params: {...}}` → single AND-conjunction
+  // - `{params: [{...}, {...}]}` → OR of multiple AND-conjunctions
+  // - `{block: {number: {_gte: N}}}` → no topic narrowing; startBlock only
+  // - `{params: ..., block: ...}` → combined
+  //
+  // The runtime accepts both the function form (the only form ReScript
+  // exposes) and a top-level static object form (TypeScript convenience).
+  let parse = (where: JSON.t): array<Internal.topicFilter> => {
+    if where === Obj.magic(true) {
+      [default]
+    } else if where === Obj.magic(false) {
+      []
+    } else {
+      // A `where` condition is shaped as `{params?: ..., block?: ...}`.
+      // `params` carries the indexed-parameter filter record; `block`
+      // carries the per-event block-range filter handled by
+      // `extractStartBlock`.
+      switch where {
+      | Object(obj) => {
+          // Catch typos (e.g. `parmas:`) and the legacy flat-filter
+          // shape (`{from: ...}`) by rejecting any unknown sibling.
+          obj->Utils.Dict.forEachWithKey((_, key) => {
+            if acceptedWhereKeys->Array.includes(key)->not {
+              JsError.throwWithMessage(
+                `Invalid where configuration. Unknown field "${key}". Indexed parameter filters must be nested under \`params\` and block-range filters under \`block\``,
+              )
+            }
+          })
+          switch obj->Dict.get("params") {
+          | None => [default]
+          | Some(Object(p)) => [paramsRecordToTopicFilter(p)]
+          | Some(Array([])) => [default]
+          | Some(Array(arr)) =>
+            arr->Array.map(item =>
+              switch item {
+              | Object(p) => paramsRecordToTopicFilter(p)
+              | _ =>
+                JsError.throwWithMessage(
+                  "Invalid where configuration. Each entry in `params` must be an object",
+                )
+              }
+            )
+          | Some(_) =>
+            JsError.throwWithMessage(
+              "Invalid where configuration. Expected `params` to be an object or an array of objects",
+            )
+          }
+        }
+      | _ => JsError.throwWithMessage("Invalid where configuration. Expected an object")
+      }
     }
+  }
+
+  // The callback is invoked exactly once per chain, at registration time,
+  // with the chain's real configured id. `chain.<Contract>.addresses` yields
+  // the throwing-Proxy sentinel, which the param parser turns into a
+  // `ContractAddresses` marker; addresses are expanded from the marker only
+  // when a source query is built.
+  // A misused Proxy (or any throw from the callback) propagates as-is —
+  // the Proxy's guidance message surfaces without wrapping.
+  let (topicFilters, startBlock) = switch where {
+  | None => ([default], None)
+  | Some(where) =>
+    let whereValue = where->evaluateWhere(~contractName, ~chainId, ~getAddresses=() => {
+      readAddresses := true
+      addressesSentinel
+    })
+    (whereValue->parse, extractStartBlock(~onEventBlockFilterSchema, ~contractName, whereValue))
+  }
+
+  let filterByAddresses = topicFilters->Array.some(filter =>
+    [filter.topic0, filter.topic1, filter.topic2, filter.topic3]->Array.some(topicConstraint =>
+      switch topicConstraint {
+      | ContractAddresses(_) => true
+      | Any | Values(_) => false
+      }
+    )
+  )
+  if readAddresses.contents && !filterByAddresses {
+    JsError.throwWithMessage(
+      `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+    )
+  }
+
+  // Unlike a signature, an anonymous event's topic0 can't be left open: the
+  // query would fetch every log of the contract, or of the chain for a
+  // wildcard.
+  if (
+    sighash->Option.isNone &&
+      topicFilters->Array.some(filter =>
+        switch filter.topic0 {
+        | Values(_) => false
+        | Any | ContractAddresses(_) => true
+        }
+      )
+  ) {
+    let firstParam = indexedParams->Array.getUnsafe(0)
+    JsError.throwWithMessage(
+      `Invalid where configuration for the anonymous event "${eventName}" on contract "${contractName}". An anonymous event has no signature topic to select its logs by, so every \`where\` filter must name values for its first indexed parameter "${firstParam.name}", e.g. { params: { ${firstParam.name}: [...] } }.`,
+    )
+  }
+
+  {
+    resolvedWhere: {
+      topicFilters,
+      startBlock,
+    },
+    filterByAddresses,
   }
 }

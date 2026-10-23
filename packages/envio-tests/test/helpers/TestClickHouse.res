@@ -99,6 +99,7 @@ let savedEnv = () => {
 // before its first statement.
 let offlineClient = (~chainIdMode=ChainId.Int32) =>
   Storage.makeClient(
+    ~logger=Logger.makeInMemory(),
     ~chainIdMode,
     ~postgres=Storage.postgresOptions(~maxConnections=1),
     ~clickhouse={

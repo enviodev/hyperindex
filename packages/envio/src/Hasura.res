@@ -78,7 +78,7 @@ let rawBodyRoute = Rest.route(() => {
   responses,
 })
 
-let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
+let sendOperation = async (~logger, ~endpoint, ~auth, ~operation: JSON.t) => {
   let maxRetries = 3
   let rec retry = async (~attempt) => {
     try {
@@ -96,34 +96,34 @@ let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
         await retry(~attempt=attempt + 1)
       } else {
-        Logging.warn({
-          "msg": "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
-          "err": exn->Utils.prettifyExn,
-        })
+        logger->Logger.warn(
+          "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
+          ~params={"err": exn->Utils.prettifyExn},
+        )
       }
     }
   }
   await retry(~attempt=0)
 }
 
-let clearHasuraMetadata = async (~endpoint, ~auth) => {
+let clearHasuraMetadata = async (~logger, ~endpoint, ~auth) => {
   try {
     let result = await clearMetadataRoute->Rest.fetch(auth, ~client=Rest.client(endpoint))
     let msg = switch result {
     | QuerySucceeded => "Hasura metadata cleared"
     | AlreadyDone => "Hasura metadata already cleared"
     }
-    Logging.trace(msg)
+    logger->Logger.trace(msg)
   } catch {
   | exn =>
-    Logging.error({
-      "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-      "err": exn->Utils.prettifyExn,
-    })
+    logger->Logger.error(
+      `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      ~params={"err": exn->Utils.prettifyExn},
+    )
   }
 }
 
-let reloadHasuraMetadata = async (~endpoint, ~auth) => {
+let reloadHasuraMetadata = async (~logger, ~endpoint, ~auth) => {
   try {
     let result = await reloadMetadataRoute->Rest.fetch(
       {
@@ -138,13 +138,13 @@ let reloadHasuraMetadata = async (~endpoint, ~auth) => {
     | QuerySucceeded => "Hasura metadata reloaded"
     | AlreadyDone => "Hasura metadata reload acknowledged"
     }
-    Logging.trace(msg)
+    logger->Logger.trace(msg)
   } catch {
   | exn =>
-    Logging.error({
-      "msg": `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
-      "err": exn->Utils.prettifyExn,
-    })
+    logger->Logger.error(
+      `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
+      ~params={"err": exn->Utils.prettifyExn},
+    )
   }
 }
 
@@ -182,7 +182,13 @@ let makeColumnConfigs = (table: Table.table): dict<columnConfig> => {
   columnConfigs
 }
 
-let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<trackTableConfig>) => {
+let trackTables = async (
+  ~logger,
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~tableConfigs: array<trackTableConfig>,
+) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
       {
@@ -236,21 +242,21 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<track
     | QuerySucceeded => "Hasura finished tracking tables"
     | AlreadyDone => "Hasura tables already tracked"
     }
-    Logging.trace({
-      "msg": msg,
-      "tableNames": tableConfigs->Array.map(c => c.tableName),
-    })
+    logger->Logger.trace(msg, ~params={"tableNames": tableConfigs->Array.map(c => c.tableName)})
   } catch {
   | exn =>
-    Logging.error({
-      "msg": `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-      "tableNames": tableConfigs->Array.map(c => c.tableName),
-      "err": exn->Utils.prettifyExn,
-    })
+    logger->Logger.error(
+      `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      ~params={
+        "tableNames": tableConfigs->Array.map(c => c.tableName),
+        "err": exn->Utils.prettifyExn,
+      },
+    )
   }
 }
 
 let createSelectPermission = async (
+  ~logger,
   ~endpoint,
   ~auth,
   ~tableName: string,
@@ -259,6 +265,7 @@ let createSelectPermission = async (
   ~aggregateEntities,
 ) => {
   await sendOperation(
+    ~logger,
     ~endpoint,
     ~auth,
     ~operation={
@@ -306,6 +313,7 @@ type relationship = {
 }
 
 let createEntityRelationship = async (
+  ~logger,
   ~endpoint,
   ~auth,
   ~pgSchema,
@@ -347,6 +355,7 @@ let createEntityRelationship = async (
   }
 
   await sendOperation(
+    ~logger,
     ~endpoint,
     ~auth,
     ~operation={
@@ -447,6 +456,7 @@ let makeRelationships = (~userEntities: array<Internal.entityConfig>, ~schema) =
 }
 
 let trackDatabase = async (
+  ~logger,
   ~endpoint,
   ~auth,
   ~pgSchema,
@@ -458,20 +468,21 @@ let trackDatabase = async (
   let tableConfigs = makeTableConfigs(~userEntities)
   let tableNames = tableConfigs->Array.map(c => c.tableName)
 
-  Logging.info("Tracking tables in Hasura")
+  logger->Logger.info("Tracking tables in Hasura")
 
-  let _ = await clearHasuraMetadata(~endpoint, ~auth)
+  let _ = await clearHasuraMetadata(~logger, ~endpoint, ~auth)
 
   // Force Hasura to re-introspect the source schema before tracking, otherwise
   // freshly-created user tables may be invisible to pg_track_tables and the call
   // returns `metadata-warnings` (HTTP 400), leaving tracking permanently broken.
-  await reloadHasuraMetadata(~endpoint, ~auth)
+  await reloadHasuraMetadata(~logger, ~endpoint, ~auth)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableConfigs)
+  await trackTables(~logger, ~endpoint, ~auth, ~pgSchema, ~tableConfigs)
 
   for i in 0 to tableNames->Array.length - 1 {
     let tableName = tableNames->Array.getUnsafe(i)
     await createSelectPermission(
+      ~logger,
       ~endpoint,
       ~auth,
       ~tableName,
@@ -482,8 +493,8 @@ let trackDatabase = async (
   }
 
   await makeRelationships(~userEntities, ~schema)->Utils.Array.awaitEach(relationship =>
-    createEntityRelationship(~endpoint, ~auth, ~pgSchema, relationship)
+    createEntityRelationship(~logger, ~endpoint, ~auth, ~pgSchema, relationship)
   )
 
-  Logging.info("Hasura configuration completed")
+  logger->Logger.info("Hasura configuration completed")
 }

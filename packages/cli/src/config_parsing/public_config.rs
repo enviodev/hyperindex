@@ -397,7 +397,9 @@ fn abi_type_to_components(
 #[serde(rename_all = "camelCase")]
 struct ContractEventItem {
     name: String,
-    sighash: String,
+    /// Absent for an anonymous EVM event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sighash: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     params: Vec<EventParam>,
     #[serde(skip_serializing_if = "Option::is_none")]

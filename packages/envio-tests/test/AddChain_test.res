@@ -115,7 +115,6 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
   deployed->Scenario.it(
     "Adds the chain and indexes it, leaving the deployed chain as it was",
     ~sources=[{chain: 1}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
 
@@ -137,7 +136,9 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
           (await resumed.queryAddresses())->Array.map(
             row => (row.chainId->ChainId.toString, row.contractName),
           ),
-          resumed.logs()->Array.filter(entry => entry.msg->String.startsWith("Adding the chain")),
+          resumed.infoAndAboveLogs()->Array.filter(
+            entry => entry.msg->String.startsWith("Adding the chain"),
+          ),
         ),
         ~message="Chain 137 gets a row and its config addresses, and indexes into them. Chain 1 keeps what it had, and the operator is told once",
       ).toEqual((

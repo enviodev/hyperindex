@@ -15,7 +15,7 @@ use std::{
     fs::File,
     io::{self, IsTerminal, Read, Write},
     os::fd::{AsRawFd, FromRawFd},
-    sync::{mpsc, Arc, Mutex},
+    sync::{mpsc, Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -204,20 +204,48 @@ fn run(mut session: Session<Tty>, tty: Tty, mut state: State, commands: mpsc::Re
 /// The running display, for Rust code that writes to the terminal itself.
 static DISPLAY: Mutex<Option<mpsc::Sender<Command>>> = Mutex::new(None);
 
-/// Sends a log record above the display when there is one and stderr is the
-/// terminal it draws on. Returns whether it did.
-fn print_log(
-    record: &[u8],
-    display: Option<&mpsc::Sender<Command>>,
-    stderr_is_terminal: bool,
-) -> bool {
-    let text = String::from_utf8_lossy(record);
-    stderr_is_terminal
+/// Sends output above the display when there is one and `is_terminal`, whether
+/// the stream it was meant for is the terminal the display draws on. Returns
+/// whether it did.
+fn print_above(output: &[u8], display: Option<&mpsc::Sender<Command>>, is_terminal: bool) -> bool {
+    is_terminal
         && display.is_some_and(|display| {
-            display
-                .send(Command::Print(text.trim_end_matches('\n').to_string()))
-                .is_ok()
+            let text = String::from_utf8_lossy(output);
+            // The display ends each print with a newline of its own.
+            let text = text.strip_suffix('\n').unwrap_or(&text);
+            display.send(Command::Print(text.to_string())).is_ok()
         })
+}
+
+fn running_display() -> Option<mpsc::Sender<Command>> {
+    DISPLAY
+        .lock()
+        .map(|display| display.clone())
+        .unwrap_or(None)
+}
+
+// Whether a standard stream is a terminal is asked once: it is the same
+// descriptor for the life of the process, and every line would otherwise pay a
+// syscall to ask again.
+
+/// Sends output meant for stdout above the display when there is one and
+/// stdout is the terminal it draws on. Returns whether it did.
+pub fn print_above_stdout(output: &[u8]) -> bool {
+    static IS_TERMINAL: OnceLock<bool> = OnceLock::new();
+    print_above(
+        output,
+        running_display().as_ref(),
+        *IS_TERMINAL.get_or_init(|| io::stdout().is_terminal()),
+    )
+}
+
+pub fn print_above_stderr(output: &[u8]) -> bool {
+    static IS_TERMINAL: OnceLock<bool> = OnceLock::new();
+    print_above(
+        output,
+        running_display().as_ref(),
+        *IS_TERMINAL.get_or_init(|| io::stderr().is_terminal()),
+    )
 }
 
 /// Where Rust loggers write: above the display while one is running, since a
@@ -227,11 +255,7 @@ pub struct LogWriter;
 
 impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let display = DISPLAY
-            .lock()
-            .map(|display| display.clone())
-            .unwrap_or(None);
-        if !print_log(buf, display.as_ref(), io::stderr().is_terminal()) {
+        if !print_above_stderr(buf) {
             io::stderr().write_all(buf)?;
         }
         Ok(buf.len())
@@ -300,12 +324,6 @@ impl Tui {
         ));
     }
 
-    /// `false` once the display is gone, so the text needs printing elsewhere.
-    #[napi]
-    pub fn print(&self, text: String) -> bool {
-        self.commands.send(Command::Print(text)).is_ok()
-    }
-
     /// Draws the final frame and returns once it is on screen, so it can run
     /// from an exit handler.
     #[napi]
@@ -343,7 +361,7 @@ mod tests {
     #[test]
     fn prints_rust_logs_above_a_running_display() {
         let (display, received) = mpsc::channel();
-        let shown = print_log(
+        let shown = print_above(
             b"[ERROR hypersync_client] failed to get height\n",
             Some(&display),
             true,
@@ -355,8 +373,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        let without_display = print_log(b"after\n", None, true);
-        let to_a_redirected_stderr = print_log(b"after\n", Some(&display), false);
+        let without_display = print_above(b"after\n", None, true);
+        let to_a_redirected_stderr = print_above(b"after\n", Some(&display), false);
         assert_eq!(
             (shown, printed, without_display, to_a_redirected_stderr),
             (

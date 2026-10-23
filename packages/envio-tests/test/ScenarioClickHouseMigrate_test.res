@@ -61,13 +61,16 @@ describe("A migration beside a run that is indexing", () => {
     await indexer.getBatchWritePromise()
 
     let config = scenario.config
+    let logger = Logger.makeInMemory()
     let storage = Storage.makeStorageFromEnv(
       ~config,
+      ~logger,
       ~pgSchema=indexer.pgSchema,
       ~isHasuraEnabled=false,
     )
-    await Storage.makePersistenceFromConfig(~config, ~storage)->Main.migrateStorage(
+    await Storage.makePersistenceFromConfig(~config, ~logger, ~storage)->Main.migrateStorage(
       ~config,
+      ~logger,
       ~reset=false,
     )
     await storage.close()

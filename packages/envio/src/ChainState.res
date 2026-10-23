@@ -3,7 +3,7 @@
 // change them through the sanctioned mutators.
 
 type t = {
-  logger: Pino.t,
+  logger: Logger.t,
   // The registrations used to build this chain's sources and route native items.
   onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
@@ -150,7 +150,7 @@ let make = (
   ~shouldChecksum=false,
   ~reorgThresholdReadyTolerance=100,
   ~perChainEntities: array<Internal.entityConfig>=[],
-  ~logger: Pino.t,
+  ~logger: Logger.t,
 ): t => {
   validateOnEventRegistrations(~chainId=chainConfig.id, onEventRegistrations)
   {
@@ -189,6 +189,50 @@ let make = (
     committedProgressBlockTime,
   }
 }
+
+let logFetchStateNotice = (logger, notice: FetchState.notice) =>
+  switch notice {
+  | SwitchedToClientSideFiltering({contractName, addressCount, threshold}) =>
+    logger->Logger.trace(
+      "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
+      ~params={"contractName": contractName, "addressCount": addressCount, "threshold": threshold},
+    )
+  | SkippedReRegistration({
+      contractName,
+      contractAddress,
+      registeredFromBlock,
+      requestedFromBlock,
+    }) =>
+    logger->Logger.warn(
+      "Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.",
+      ~params={
+        "contractName": contractName,
+        "contractAddress": contractAddress,
+        "registeredFromBlock": registeredFromBlock,
+        "requestedFromBlock": requestedFromBlock,
+      },
+    )
+  | SkippedInvalidAddress({contractName, contractAddress}) =>
+    logger->Logger.warn(
+      "Skipping contract registration: Not a valid address for this chain's ecosystem.",
+      ~params={"contractName": contractName, "contractAddress": contractAddress},
+    )
+  | SkippedStoredDuplicate({
+      contractName,
+      contractAddress,
+      registeredFromBlock,
+      requestedFromBlock,
+    }) =>
+    logger->Logger.warn(
+      "Skipping a stored address: it is already registered for this contract.",
+      ~params={
+        "contractName": contractName,
+        "contractAddress": contractAddress,
+        "registeredFromBlock": registeredFromBlock,
+        "requestedFromBlock": requestedFromBlock,
+      },
+    )
+  }
 
 let makeInternal = (
   ~chainConfig: Config.chain,
@@ -254,6 +298,7 @@ let makeInternal = (
     ~maxOnBlockBufferSize=2 * config.batchSize,
     ~knownHeight,
     ~chainId=chainConfig.id,
+    ~onNotice=notice => logger->logFetchStateNotice(notice),
     // FIXME: Shouldn't set with full history
     // The resumed depth, not the config one: the pre-threshold lag must match
     // the window reorg detection compares, or a reduced config depth would let
@@ -296,6 +341,7 @@ let makeInternal = (
     ~lowercaseAddresses,
     ~blockStore,
     ~transactionStore,
+    ~logger,
   )
 
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
@@ -328,6 +374,7 @@ let makeInternal = (
     ~addressStore,
     ~sourceManager=SourceManager.make(
       ~sources,
+      ~logger,
       ~isRealtime,
       ~reducedPollingInterval?,
       ~newBlockStallTimeoutRealtime?,
@@ -366,11 +413,12 @@ let makeFromDbState = (
   ~config,
   ~contractMapping,
   ~registrationsByChainId,
+  // The indexer's root logger; the chain's own adds its id.
+  ~logger,
   ~reducedPollingInterval=?,
   ~newBlockStallTimeoutRealtime=?,
 ) => {
-  let chainId = chainConfig.id
-  let logger = Logging.createChild(~params={"chainId": chainId})
+  let logger = logger->Logger.withChainId(chainConfig.id)
 
   let progressBlockNumber =
     // Can be -1 when not set
@@ -479,7 +527,6 @@ let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers)
 let hasAddressesToWrite = (cs: t) => cs.addressStore->AddressStore.pendingCount > 0
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount
-let getProgressPercentage = (cs: t) => cs.fetchState->FetchState.getProgressPercentage
 let chainDensity = (cs: t) => cs.chainDensity
 let hasReadyItem = (cs: t) =>
   cs.fetchState->FetchState.isActivelyIndexing && cs.fetchState->FetchState.hasReadyItem
@@ -735,8 +782,6 @@ let getHighestBlockBelowThreshold = (cs: t): int => {
   highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
 }
 
-let isActivelyIndexing = (cs: t) => cs.fetchState->FetchState.isActivelyIndexing
-
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
 
@@ -941,6 +986,7 @@ let handleQueryResult = (
   | _ =>
     cs.fetchState->FetchState.registerDynamicContracts(
       ~addressStore=cs.addressStore,
+      ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
       // This response is applied below, after the addresses land. It was routed
       // before they existed, so whatever it claims has to be inside the
       // catch-up range - and an unbounded query can reach past the height that

@@ -171,16 +171,17 @@ module QueryTypes = {
 type query = QueryTypes.query
 
 module Registration = {
-  // One topic position of the resolved `where`: static topic values, or
-  // `None` — the "currently registered addresses of this contract" marker,
-  // expanded to padded address topics when Rust builds a query.
-  type topicFilterInput = option<array<string>>
+  // One topic position of the resolved `where`: `Some([])` matches any value,
+  // `Some(values)` one of them, and `None` is the "currently registered
+  // addresses of this contract" marker, expanded to padded address topics
+  // when Rust builds a query.
+  type topicConstraintInput = option<array<string>>
 
-  type topicSelectionInput = {
-    topic0: array<string>,
-    topic1: topicFilterInput,
-    topic2: topicFilterInput,
-    topic3: topicFilterInput,
+  type topicFilterInput = {
+    topic0: topicConstraintInput,
+    topic1: topicConstraintInput,
+    topic2: topicConstraintInput,
+    topic3: topicConstraintInput,
   }
 
   // The full per-(event, chain) registration passed to the Rust clients at
@@ -189,7 +190,8 @@ module Registration = {
   type input = {
     // Chain-scoped sequential registration index, echoed back on routed items.
     index: int,
-    sighash: string,
+    // `None` for an anonymous event.
+    sighash: option<string>,
     topicCount: int,
     eventName: string,
     contractName: string,
@@ -200,15 +202,16 @@ module Registration = {
     // registration back when a sibling declares no start block.
     startBlock: option<int>,
     params: array<Internal.paramMeta>,
-    topicSelections: array<topicSelectionInput>,
+    topicFilters: array<topicFilterInput>,
     // Capitalized field names matching the Rust BlockField/TransactionField
     // string enums.
     blockFields: array<string>,
     transactionFields: array<string>,
   }
 
-  let toTopicFilterInput = (filter: Internal.topicFilter): topicFilterInput =>
-    switch filter {
+  let toTopicConstraintInput = (topicConstraint: Internal.topicConstraint): topicConstraintInput =>
+    switch topicConstraint {
+    | Any => Some([])
     | Values(values) => Some(values->EvmTypes.Hex.toStrings)
     | ContractAddresses(_) => None
     }
@@ -228,11 +231,11 @@ module Registration = {
         dependsOnAddresses: reg.dependsOnAddresses,
         startBlock: reg.startBlock,
         params: event.paramsMetadata,
-        topicSelections: reg.resolvedWhere.topicSelections->Array.map((ts): topicSelectionInput => {
-          topic0: ts.topic0->EvmTypes.Hex.toStrings,
-          topic1: ts.topic1->toTopicFilterInput,
-          topic2: ts.topic2->toTopicFilterInput,
-          topic3: ts.topic3->toTopicFilterInput,
+        topicFilters: reg.resolvedWhere.topicFilters->Array.map((filter): topicFilterInput => {
+          topic0: filter.topic0->toTopicConstraintInput,
+          topic1: filter.topic1->toTopicConstraintInput,
+          topic2: filter.topic2->toTopicConstraintInput,
+          topic3: filter.topic3->toTopicConstraintInput,
         }),
         // Capitalized to match the Rust BlockField/TransactionField string
         // enums.
@@ -282,9 +285,7 @@ module EventItems = {
 type t = {
   // Block-hash query construction and pagination live in Rust; only the
   // aggregate response store crosses the boundary.
-  getBlockHashes: (
-    ~blockNumbers: array<int>,
-  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
   getEventItems: (

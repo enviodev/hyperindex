@@ -163,7 +163,7 @@ let preloadBatchOrThrow = async (
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event(_) =>
-        let {handler, eventConfig: {contractName, name: eventName}} = (
+        let {?handler, eventConfig: {contractName, name: eventName}} = (
           item->Internal.castUnsafeEventItem
         ).onEventRegistration
         switch handler {
@@ -246,6 +246,7 @@ let runBatchHandlersOrThrow = async (
   ~persistence,
   ~config,
   ~chains: Internal.chains,
+  ~consoleScope,
 ) => {
   let itemIdx = ref(0)
 
@@ -255,6 +256,7 @@ let runBatchHandlersOrThrow = async (
 
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
+      consoleScope->ConsoleScope.setItem(item)
 
       await runHandlerOrThrow(
         item,
@@ -278,12 +280,14 @@ let registerProcessEventBatchMetrics = (
   ~handlerDuration,
 ) => {
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
-    logger->Logging.childTrace({
-      "msg": "Finished processing",
-      "chainId": chainId,
-      "batchSize": chainAfterBatch.batchSize,
-      "progress": chainAfterBatch.progressBlockNumber,
-    })
+    logger->Logger.trace(
+      "Finished processing",
+      ~params={
+        "chainId": chainId,
+        "batchSize": chainAfterBatch.batchSize,
+        "progress": chainAfterBatch.progressBlockNumber,
+      },
+    )
   })
 
   indexerState->IndexerState.recordBatchDurations(~loadDuration, ~handlerDuration)
@@ -336,14 +340,13 @@ let processEventBatch = async (
   // Compute chains state for this batch
   let chains: Internal.chains = chainStates->computeChainsState
 
-  let logger = Logging.getLogger()
+  let logger = indexerState->IndexerState.logger
 
   batch.progressedChainsById->Dict.forEachWithKey((chainAfterBatch, chainId) => {
-    logger->Logging.childTrace({
-      "msg": "Started processing",
-      "chainId": chainId,
-      "batchSize": chainAfterBatch.batchSize,
-    })
+    logger->Logger.trace(
+      "Started processing",
+      ~params={"chainId": chainId, "batchSize": chainAfterBatch.batchSize},
+    )
   })
 
   try {
@@ -356,18 +359,28 @@ let processEventBatch = async (
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
       await materializeBatchEvents(batch, ~chainStates)
-      await batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
+      await ConsoleScope.runToEnd(Silent({isOver: false}), () =>
+        batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
+      )
     }
 
     let elapsedTimeAfterLoaders = timeRef->Performance.secondsSince
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->runBatchHandlersOrThrow(
-        ~indexerState,
-        ~loadManager,
-        ~persistence,
-        ~config,
-        ~chains,
+      let consoleScope = ConsoleScope.Item({
+        item: batch.items->Array.getUnsafe(0),
+        loggerFor: item => indexerState->IndexerState.loggerForItem(item),
+        isOver: false,
+      })
+      await ConsoleScope.runToEnd(consoleScope, () =>
+        batch->runBatchHandlersOrThrow(
+          ~indexerState,
+          ~loadManager,
+          ~persistence,
+          ~config,
+          ~chains,
+          ~consoleScope,
+        )
       )
     }
 
@@ -390,10 +403,7 @@ let processEventBatch = async (
     reason->ErrorHandling.make(~msg=message, ~logger)->Error
   | ProcessingError({message, exn, item}) =>
     exn
-    ->ErrorHandling.make(
-      ~msg=message,
-      ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
-    )
+    ->ErrorHandling.make(~msg=message, ~logger=indexerState->IndexerState.loggerForItem(item))
     ->Error
   | exn => exn->ErrorHandling.make(~msg="Failed processing batch", ~logger)->Error
   }

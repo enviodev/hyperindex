@@ -72,7 +72,7 @@ type pollOutcome =
 
 type t = {
   source: Source.t,
-  logger: Pino.t,
+  logger: Logger.t,
   recordRequestStats: array<Source.requestStat> => unit,
   getHeightRetryInterval: (~retry: int) => int,
   mutable knownHeight: int,
@@ -100,9 +100,9 @@ type t = {
   mutable subscribeRejectedWarned: bool,
 }
 
-let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t => {
+let make = (~source: Source.t, ~logger, ~recordRequestStats, ~getHeightRetryInterval): t => {
   source,
-  logger: Logging.createChild(~params={"chainId": source.chainId, "source": source.name}),
+  logger: logger->Logger.withFields({"source": source.name}),
   recordRequestStats,
   getHeightRetryInterval,
   knownHeight: 0,
@@ -185,10 +185,10 @@ let fireWaiters = (feed: t, height) => {
     satisfied->Array.forEach(waiter =>
       try waiter.onHeight(height) catch {
       | exn =>
-        feed.logger->Logging.childError({
-          "msg": "A height waiter threw. Dropping it rather than losing the height for the others.",
-          "err": exn->Utils.prettifyExn,
-        })
+        feed.logger->Logger.error(
+          "A height waiter threw. Dropping it rather than losing the height for the others.",
+          ~params={"err": exn->Utils.prettifyExn},
+        )
       }
     )
     // Answering the last waiter is one of the ways the loop stops being needed,
@@ -316,10 +316,10 @@ let nextRetryInterval = (feed: t) => {
 // said about it stay one thing.
 let backOff = (feed: t, ~what, ~exn=?) => {
   let retryInterval = feed->nextRetryInterval
-  feed.logger->Logging.childTrace({
-    "msg": `Height retrieval from ${feed.source.name} source ${what}. Retrying in ${retryInterval->Int.toString}ms.`,
-    "err": exn->Option.map(Utils.prettifyExn),
-  })
+  feed.logger->Logger.trace(
+    `Height retrieval from ${feed.source.name} source ${what}. Retrying in ${retryInterval->Int.toString}ms.`,
+    ~params={"err": exn->Option.map(Utils.prettifyExn)},
+  )
   (retryInterval, Backoff)
 }
 
@@ -354,10 +354,10 @@ let runPollLoop = async (feed: t) => {
     // it calls to be total.
     let (interval, kind) = try await feed->pollOnce catch {
     | exn =>
-      feed.logger->Logging.childError({
-        "msg": "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.",
-        "err": exn->Utils.prettifyExn,
-      })
+      feed.logger->Logger.error(
+        "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.",
+        ~params={"err": exn->Utils.prettifyExn},
+      )
       (feed->nextRetryInterval, Backoff)
     }
     if feed->shouldPoll {
@@ -479,24 +479,24 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
     // never heal on their own: silently polling forever against a stream that
     // could be working is worth one line an operator can see. Once each: both
     // conditions repeat on every retry for as long as their cause is there.
-    let log = switch reason {
+    let level = switch reason {
     | Unreadable if !feed.unreadableWarned =>
       feed.unreadableWarned = true
-      Logging.childWarn
+      #warn
     // Refused without this feed ever having had a connection accepted, which
     // makes it the endpoint's answer about itself rather than a bad moment: the
     // url cannot serve heights, and no amount of retrying will change that.
     | SubscribeRejected if !feed.subscribeRejectedWarned && feed.connects === 0 =>
       feed.subscribeRejectedWarned = true
-      Logging.childWarn
-    | _ => Logging.childTrace
+      #warn
+    | _ => #trace
     }
     let label = reason->Source.downReasonLabel
-    feed.logger->log({
-      "msg": `Height subscription for ${feed.source.name} source went down (${label}). Polling for the height until it reconnects.`,
-      "reason": label,
-      "detail": down.detail,
-    })
+    feed.logger->Logger.logAt(
+      level,
+      `Height subscription for ${feed.source.name} source went down (${label}). Polling for the height until it reconnects.`,
+      ~params={"reason": label, "detail": down.detail},
+    )
   }
 
 // Explicit and lazy: the caller subscribes when it starts wanting heights in

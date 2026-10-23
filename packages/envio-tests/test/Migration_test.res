@@ -337,7 +337,6 @@ describe("What a refused restart tells the operator", () => {
     "Names every change and the ways forward, and logs nothing else about it",
     ~sources=[{chain: 1}],
     ~supervised=false,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)
@@ -354,7 +353,7 @@ describe("What a refused restart tells the operator", () => {
         deployment(
           ~chains=[chain(1, ~endBlock=1000, ~maxReorgDepth=10)],
         ).config->Scenario.withMockSources(~sources=[(1, source)])
-      let logged = indexer.logs()->Array.length
+      let logged = indexer.infoAndAboveLogs()->Array.length
 
       let refusal = switch await indexer.restart(~config, ()) {
       | _ => None
@@ -362,7 +361,7 @@ describe("What a refused restart tells the operator", () => {
       }
 
       t.expect(
-        (refusal, indexer.logs()->Array.slice(~start=logged)),
+        (refusal, indexer.infoAndAboveLogs()->Array.slice(~start=logged)),
         ~message="The refusal is the whole of what the operator reads: it isn't also logged as a storage failure",
       ).toEqual((
         Some(

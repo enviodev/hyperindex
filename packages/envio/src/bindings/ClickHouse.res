@@ -1,5 +1,3 @@
-let logger = Logging.createChild(~params={"storage": "clickhouse"})
-
 let fieldTypeName = (fieldType: Table.fieldType) =>
   switch fieldType {
   | String => "String"

@@ -1,9 +1,14 @@
 open Vitest
 
-let makeFeed = (mock: MockSource.t, ~getHeightRetryInterval=(~retry as _) => 1_000) => {
+let makeFeed = (
+  mock: MockSource.t,
+  ~logger=Logger.makeInMemory(),
+  ~getHeightRetryInterval=(~retry as _) => 1_000,
+) => {
   let stats = []
   let feed = HeightFeed.make(
     ~source=mock.source,
+    ~logger,
     ~recordRequestStats=requestStats =>
       requestStats->Array.forEach(stat => stats->Array.push(stat)->ignore),
     ~getHeightRetryInterval,
@@ -919,49 +924,24 @@ describe("HeightFeed poll failures", () => {
 })
 
 describe("HeightFeed operator warnings", () => {
-  // A feed builds its logger out of the global one when it is made, so a test
-  // that wants to read what an operator was told installs its own first.
-  let captureWarnings = () => {
-    let warnings = []
-    let ignoreMessage = _ => ()
-    let loggerRef = ref(None)
-    let logger = {
-      "trace": ignoreMessage,
-      "debug": ignoreMessage,
-      "info": ignoreMessage,
-      "warn": message =>
-        warnings
-        ->Array.push(message->(Utils.magic: Pino.pinoMessageBlob => {"reason": string}))
-        ->ignore,
-      "error": ignoreMessage,
-      "fatal": ignoreMessage,
-      "child": _ => loggerRef.contents->Option.getOrThrow,
-    }->(
-      Utils.magic: {
-        "trace": Pino.pinoMessageBlob => unit,
-        "debug": Pino.pinoMessageBlob => unit,
-        "info": Pino.pinoMessageBlob => unit,
-        "warn": Pino.pinoMessageBlob => unit,
-        "error": Pino.pinoMessageBlob => unit,
-        "fatal": Pino.pinoMessageBlob => unit,
-        "child": Pino.childParams => Pino.t,
-      } => Pino.t
+  // The reason each warning an operator was told gives.
+  let warningReasons = logger =>
+    logger
+    ->Logger.inMemoryLines
+    ->Array.filterMap(line =>
+      switch (line->Dict.get("level"), line->Dict.get("reason")) {
+      | (Some(String("warn")), Some(String(reason))) => Some(reason)
+      | _ => None
+      }
     )
-    loggerRef := Some(logger)
-    Logging.setLogger(logger)
-    warnings
-  }
-
-  let originalLogger = Logging.getLogger()
-  afterEach(() => Logging.setLogger(originalLogger))
 
   Async.it("Says once that a provider is refusing the subscription", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
-    let warnings = captureWarnings()
-    let (feed, _stats) = makeFeed(mock)
+    let logger = Logger.makeInMemory()
+    let (feed, _stats) = makeFeed(mock, ~logger)
     feed->HeightFeed.enableStream
 
     // A url that cannot serve heights answers every retry the same way, and the
@@ -970,9 +950,7 @@ describe("HeightFeed operator warnings", () => {
     mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected, detail: "not supported"}))
     mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected, detail: "not supported"}))
 
-    t.expect(warnings->Array.map(warning => warning["reason"])).toStrictEqual([
-      "subscribe-rejected",
-    ])
+    t.expect(logger->warningReasons).toStrictEqual(["subscribe-rejected"])
   })
 
   Async.it("Stays quiet about a refusal from a stream that has served before", async t => {
@@ -980,8 +958,8 @@ describe("HeightFeed operator warnings", () => {
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
-    let warnings = captureWarnings()
-    let (feed, _stats) = makeFeed(mock)
+    let logger = Logger.makeInMemory()
+    let (feed, _stats) = makeFeed(mock, ~logger)
     feed->HeightFeed.enableStream
 
     // This endpoint does serve subscriptions, so a refusal is a moment rather
@@ -989,6 +967,6 @@ describe("HeightFeed operator warnings", () => {
     mock.setHeightSubscriptionStatus(Live)
     mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected}))
 
-    t.expect(warnings->Array.map(warning => warning["reason"])).toStrictEqual([])
+    t.expect(logger->warningReasons).toStrictEqual([])
   })
 })

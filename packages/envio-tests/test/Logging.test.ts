@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import { readFileSync } from "fs";
 import { strict as assert } from "assert";
 import path from "path";
@@ -27,25 +27,19 @@ const runWithStrategy = (strategy: string): string => {
       ...process.env,
       LOG_STRATEGY: strategy,
       ENVIO_TEST_LOGGING_FORMAT: "1",
+      // Pins the pretty format's colors, which otherwise follow the terminal.
+      FORCE_COLOR: "1",
     },
     cwd: process.cwd(),
   });
 };
-
-// pino writes through worker threads, so the order in which two statements
-// reach stdout isn't guaranteed once the machine is busy — both the pretty and
-// the ECS transport have been seen interleaving under load. Compare the lines
-// as a multiset instead: a missing, extra or altered line still fails, only
-// their relative order is allowed to differ.
-const sortLines = (s: string) => s.split("\n").sort().join("\n");
-const compare = (s: string) => sortLines(normalize(s));
 
 const testLogStrategy = (strategy: string) => {
   it(`LOG_STRATEGY=${strategy}`, () => {
     const output = runWithStrategy(strategy);
     const snapshotPath = path.join(SNAPSHOTS_DIR, `Logging.${strategy}.snap`);
     const expected = readFileSync(snapshotPath, "utf-8");
-    assert.equal(compare(output), compare(expected));
+    assert.equal(normalize(output), normalize(expected));
   });
 };
 
@@ -53,6 +47,78 @@ describe("Logging Output", () => {
   testLogStrategy("console-pretty");
   testLogStrategy("console-raw");
   testLogStrategy("ecs-console");
+});
+
+// Node queues a write a full pipe can't take yet, while the logger writes
+// synchronously, so a `console.log` writing stdout itself would be overtaken
+// and split by the logger's lines; routed through the logger, it can't be.
+describe("Logging Output (shared with console.log)", () => {
+  it("keeps lines whole and in call order on a piped stdout", () => {
+    const output = execSync("node test/fixtures/ConsoleOrder.res.mjs", {
+      encoding: "utf-8",
+      env: { ...process.env, ENVIO_TEST_LOGGING_FORMAT: "1" },
+      maxBuffer: 1 << 26,
+    });
+    const lines = output
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line).message.split(" ").slice(0, 2).join(" "));
+    assert.deepEqual(
+      lines,
+      Array.from({ length: 50 }, (_, i) => [`console ${i}`, `logger ${i}`]).flat()
+    );
+  });
+});
+
+// Lines wait in a buffer before they are written, so however the process ends,
+// it writes what it logged before going.
+describe("Logging Output (process ending)", () => {
+  const runToEnd = (exit: string) => {
+    const child = spawnSync("node", ["test/fixtures/ExitFlush.res.mjs"], {
+      encoding: "utf-8",
+      env: { ...process.env, ENVIO_TEST_LOGGING_FORMAT: "1", ENVIO_TEST_EXIT: exit },
+      maxBuffer: 1 << 26,
+    });
+    return {
+      status: child.status,
+      signal: child.signal,
+      messages: child.stdout
+        .trimEnd()
+        .split("\n")
+        .map((line) => {
+          const message: string = JSON.parse(line).message;
+          return message.length > 100 ? `${message.length} characters` : message;
+        }),
+    };
+  };
+
+  it("writes the lines logged before a signal, which still ends the process", () => {
+    assert.deepEqual(runToEnd("signal"), {
+      status: null,
+      signal: "SIGTERM",
+      messages: ["before"],
+    });
+  });
+
+  it("leaves a signal something else handles to it", () => {
+    assert.deepEqual(runToEnd("handled signal"), {
+      status: 0,
+      signal: null,
+      messages: ["before", "handled"],
+    });
+  });
+
+  it("writes the lines logged before process.exit", () => {
+    assert.deepEqual(runToEnd("exit"), { status: 3, signal: null, messages: ["before"] });
+  });
+
+  it("writes a line larger than the buffer, and the lines after it", () => {
+    assert.deepEqual(runToEnd("long line"), {
+      status: 0,
+      signal: null,
+      messages: ["before", "3000000 characters", "after"],
+    });
+  });
 });
 
 // These strategies write to file, not stdout - test separately
@@ -75,6 +141,6 @@ describe("Logging Output (file strategies)", () => {
       "Logging.both-prettyconsole.snap"
     );
     const expected = readFileSync(snapshotPath, "utf-8");
-    assert.equal(compare(output), compare(expected));
+    assert.equal(normalize(output), normalize(expected));
   });
 });

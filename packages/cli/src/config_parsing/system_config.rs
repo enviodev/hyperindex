@@ -1360,7 +1360,7 @@ impl SystemConfig {
                                     accounts,
                                     args,
                                 }),
-                                sighash: normalized_discriminator.unwrap_or_default(),
+                                sighash: Some(normalized_discriminator.unwrap_or_default()),
                                 event_signature: String::new(),
                                 field_selection: None,
                             }
@@ -2145,7 +2145,12 @@ impl Contract {
         let mut seen_by_name: HashMap<&str, &Event> = HashMap::new();
         for event in &events {
             if let Some(existing) = seen_by_name.insert(&event.name, event) {
-                if existing.sighash == event.sighash {
+                let is_duplicate = match (&existing.sighash, &event.sighash) {
+                    // Anonymous events have no sighash to tell overloads apart by.
+                    (None, None) => existing.event_signature == event.event_signature,
+                    (existing_sighash, sighash) => existing_sighash == sighash,
+                };
+                if is_duplicate {
                     return Err(anyhow!(
                         "Contract {name} defines the event \"{}\" more than once. Please remove \
                          the duplicate.",
@@ -2161,6 +2166,44 @@ impl Contract {
             }
         }
 
+        // A log holds at most 4 topics. A regular event spends the first on its
+        // signature; an anonymous one is selected by its first indexed param,
+        // so it needs one.
+        for event in &events {
+            if let EventKind::Params(params) = &event.kind {
+                let indexed_count = params.iter().filter(|p| p.indexed).count();
+                match &event.sighash {
+                    None if indexed_count == 0 => {
+                        return Err(anyhow!(
+                            "Contract {name} has the anonymous event \"{}\" with no indexed \
+                             parameters. An anonymous event's logs are selected by its first \
+                             indexed parameter, which takes the place of the signature topic, \
+                             so it needs at least one.",
+                            event.name,
+                        ));
+                    }
+                    None if indexed_count > 4 => {
+                        return Err(anyhow!(
+                            "Contract {name} has the anonymous event \"{}\" with \
+                             {indexed_count} indexed parameters, but a log holds at most 4 \
+                             topics.",
+                            event.name,
+                        ));
+                    }
+                    Some(_) if indexed_count > 3 => {
+                        return Err(anyhow!(
+                            "Contract {name} has the event \"{}\" with {indexed_count} indexed \
+                             parameters, but a log holds at most 4 topics and the first is the \
+                             event signature, so an event can index at most 3. Mark it \
+                             anonymous if it is declared anonymous in Solidity.",
+                            event.name,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Two events on one contract that share a dispatch key are
         // indistinguishable at routing time — one log would decode to both —
         // so reject them here. Routing keys on the sighash plus indexed-topic
@@ -2169,17 +2212,19 @@ impl Contract {
         // call routes to every instruction whose prefix it carries, each
         // decoding with its own layout and dropped on its own when the layout
         // rejects the data, so two instructions sharing a prefix are two
-        // instructions, not an ambiguity. Names are unique by the check above,
-        // so a collision here is always between two differently-named events.
+        // instructions, not an ambiguity. So are anonymous events: every
+        // registration of one names its topic0 values in `where`, and those
+        // decide which logs it gets. Names are unique by the check above, so a
+        // collision here is always between two differently-named events.
         let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
         for event in &events {
-            let dispatch_key = match &event.kind {
-                EventKind::Params(params) => {
+            let dispatch_key = match (&event.kind, &event.sighash) {
+                (EventKind::Params(params), Some(sighash)) => {
                     let indexed_count = params.iter().filter(|p| p.indexed).count();
-                    Some(format!("{}_{}", event.sighash, indexed_count))
+                    Some(format!("{sighash}_{indexed_count}"))
                 }
-                EventKind::Svm(_) => None,
-                EventKind::Fuel(_) => Some(event.sighash.clone()),
+                (EventKind::Fuel(_), Some(sighash)) => Some(sighash.clone()),
+                (EventKind::Svm(_), _) | (_, None) => None,
             };
             if let Some(dispatch_key) = dispatch_key {
                 if let Some(existing) =
@@ -2255,7 +2300,9 @@ pub enum EventKind {
 pub struct Event {
     pub kind: EventKind,
     pub name: String,
-    pub sighash: String,
+    /// `None` only for an anonymous EVM event: its logs carry no signature
+    /// topic, topic0 holds its first indexed param.
+    pub sighash: Option<String>,
     /// Full event signature (e.g. "Transfer(address indexed from, address indexed to, uint256 value)")
     /// Only set for EVM events; empty for Fuel events.
     pub event_signature: String,
@@ -2371,9 +2418,9 @@ impl Event {
 
         for event_config in events_config.iter() {
             let alloy_event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
-            // Use alloy's selector() method which computes keccak256 of the signature
-            // Note: selector() returns B256 which formats as lowercase hex with 0x prefix
-            let sighash = alloy_event.selector().to_string();
+            // selector() is keccak256 of the signature, a B256 formatted as
+            // lowercase 0x-prefixed hex.
+            let sighash = (!alloy_event.anonymous).then(|| alloy_event.selector().to_string());
 
             let abi_name = alloy_event.name.clone();
             let name = event_config.name.clone().unwrap_or(abi_name.clone());
@@ -2476,7 +2523,7 @@ impl Event {
                     Event {
                         name: event_config.name.clone(),
                         kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
-                        sighash: log.id,
+                        sighash: Some(log.id),
                         event_signature: String::new(),
                         field_selection: None,
                     }
@@ -2484,28 +2531,28 @@ impl Event {
                 EventType::Mint => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Mint),
-                    sighash: "mint".to_string(),
+                    sighash: Some("mint".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
                 },
                 EventType::Burn => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Burn),
-                    sighash: "burn".to_string(),
+                    sighash: Some("burn".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
                 },
                 EventType::Transfer => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Transfer),
-                    sighash: "transfer".to_string(),
+                    sighash: Some("transfer".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Call),
-                    sighash: "call".to_string(),
+                    sighash: Some("call".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
                 },
