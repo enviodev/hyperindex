@@ -909,20 +909,11 @@ let buildFuelOnEventRegistration = (
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
   let contractName = eventConfig.contractName
-  let whereStartBlock = switch where {
-  | None => None
-  | Some(where) =>
-    let whereValue = if typeof(where) === #function {
-      let fn = where->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
-      let chain = LogSelection.makeChainArg(~contractName, ~chainId, ~getAddresses=() =>
-        LogSelection.makeAddressesProbe(~contractName)
-      )
-      fn({chain: chain->Obj.magic})
-    } else {
-      where
-    }
-    whereValue->LogSelection.extractStartBlock(~onEventBlockFilterSchema, ~contractName)
-  }
+  let whereStartBlock = where->Option.flatMap(where =>
+    where
+    ->LogSelection.evaluateWhere(~contractName, ~chainId)
+    ->LogSelection.extractStartBlock(~onEventBlockFilterSchema, ~contractName)
+  )
 
   {
     index: -1,
@@ -932,10 +923,7 @@ let buildFuelOnEventRegistration = (
     isWildcard,
     filterByAddresses: false,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-    startBlock: switch whereStartBlock {
-    | Some(_) as sb => sb
-    | None => startBlock
-    },
+    startBlock: whereStartBlock->Option.orElse(startBlock),
     fieldSelection: eventConfig.fieldSelection,
   }
 }
