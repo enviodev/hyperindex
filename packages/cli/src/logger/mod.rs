@@ -174,7 +174,7 @@ fn spawn_writer(sinks: Vec<Sink>) -> io::Result<mpsc::SyncSender<Message>> {
                     Message::Batch(batch) => {
                         batch.with_records(|record| {
                             for (sink, out) in sinks.iter().zip(outs.iter_mut()) {
-                                if record.level >= sink.level {
+                                if record.level.severity() >= sink.level.severity() {
                                     sink.render(record, out);
                                 }
                             }
@@ -393,7 +393,7 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
         "ecs-file" => vec![Sink {
             format: Format::Ecs,
             target: file()?,
-            level: file_level.max(Level::INFO),
+            level: file_level.at_least(Level::INFO),
         }],
         "ecs-console" | "ecs-console-multistream" => {
             vec![Sink {
@@ -421,7 +421,7 @@ fn sinks_for_strategy(config: &LoggerConfig) -> napi::Result<Vec<Sink>> {
             Sink {
                 format: Format::Json,
                 target: file()?,
-                level: file_level.max(level),
+                level: file_level.at_least(level),
             },
         ],
         other => {
@@ -515,7 +515,7 @@ impl Logger {
         let min_level = sinks
             .iter()
             .map(|sink| sink.level)
-            .min()
+            .min_by_key(|level| level.severity())
             .unwrap_or(Level::SILENT);
         let sender = spawn_writer(sinks).map_err(|error| {
             napi::Error::from_reason(format!("Failed to start the log writer: {error}"))
@@ -560,7 +560,7 @@ impl Logger {
     /// the caller can skip a line no sink would take before building it.
     #[napi]
     pub fn min_level(&self) -> u32 {
-        self.min_level.value()
+        self.min_level.severity()
     }
 
     #[napi]
@@ -740,6 +740,43 @@ mod tests {
         filling.join().unwrap();
         flushing.join().unwrap();
         assert!(returned);
+    }
+
+    #[test]
+    fn a_users_level_passes_where_its_standard_counterpart_does() {
+        let dir = tempdir::TempDir::new("envio-logger").unwrap();
+        let written_at = |file_level: &str| {
+            let path = dir.path().join(format!("{file_level}.log"));
+            let logger = Logger::make(LoggerConfig {
+                strategy: "file-only".into(),
+                log_file: path.to_string_lossy().into(),
+                level: "silent".into(),
+                file_level: file_level.into(),
+            })
+            .unwrap();
+            for level in Level::ALL {
+                logger.log(level, level.name(), None, None);
+            }
+            logger.flush();
+            let names: Vec<String> = fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap()["msg"].to_string())
+                .collect();
+            (logger.min_level(), names.join(" ").replace('"', ""))
+        };
+        assert_eq!(
+            [
+                written_at("warn"),
+                written_at("uerror"),
+                written_at("uinfo")
+            ],
+            [
+                (40, "uwarn uerror warn error fatal".to_string()),
+                (50, "uerror error fatal".to_string()),
+                (30, "info uinfo uwarn uerror warn error fatal".to_string()),
+            ]
+        );
     }
 
     #[test]

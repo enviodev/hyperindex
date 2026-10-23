@@ -94,6 +94,9 @@ logUserLevels(~shown=#udebug, ~child="userLogs debug")
 logUserLevels(~shown=#uinfo, ~child="userLogs info")
 logUserLevels(~shown=#uwarn, ~child="userLogs warn")
 logUserLevels(~shown=#uerror, ~child="userLogs error")
+// A user's level passes where the level it's named after does.
+logUserLevels(~shown=#warn, ~child="userLogs at warn")
+logAtEveryLevel(~shown=#uerror)
 
 logAtEveryLevel(~shown=#warn)
 logAtEveryLevel(~shown=#error)

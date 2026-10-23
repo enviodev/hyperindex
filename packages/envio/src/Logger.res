@@ -30,6 +30,17 @@ let levelNumber = (level: level) =>
   | #silent => 2147483647
   }
 
+// How a filter ranks a level, as Rust's `Level::severity`: a user's error is an
+// error, wherever its own number puts it.
+let levelSeverity = (level: level) =>
+  switch level {
+  | #udebug => 20
+  | #uinfo => 30
+  | #uwarn => 40
+  | #uerror => 50
+  | level => levelNumber(level)
+  }
+
 // Where the lines go: a `LOG_STRATEGY` value, which Rust validates, with the
 // terminal's level and the log file's.
 type config = {
@@ -307,7 +318,7 @@ let withFields = (logger: t, fields: 'a) => logger->withFieldsJson(fields->param
 let withChainId = (logger: t, chainId: ChainId.t) => logger->withFields({"chainId": chainId})
 
 let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
-  if levelNumber(level) >= logger.minLevel {
+  if levelSeverity(level) >= logger.minLevel {
     let output = logger.output
     let time = Date.now()
     output->appendLine(
@@ -459,7 +470,7 @@ let routeConsole = (logger: t, ~loggerFor: t => option<t>) =>
     writableClass,
     formatWithOptions,
     level =>
-      levelNumber(level) >= logger.minLevel
+      levelSeverity(level) >= logger.minLevel
         ? loggerFor(logger)->Nullable.fromOption
         : Nullable.null,
     (logger, level, message, params) =>

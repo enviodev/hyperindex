@@ -45,6 +45,8 @@
 [HH:MM:SS.mmm] [41mFATAL[49m: [36mThis is a fatal message.[39m
     [35mextra[39m: "another"
 
+[HH:MM:SS.mmm] [32mINFO[39m: [36m##Current log level: udebug[39m
+
 [HH:MM:SS.mmm] [44mUDEBUG[49m: [36mThis is a user debug message.[39m
     [35mchainId[39m: 1337
     [35mcontract[39m: "Gravatar"
@@ -96,6 +98,8 @@
       "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
+
+[HH:MM:SS.mmm] [32mINFO[39m: [36m##Current log level: uinfo[39m
 
 [HH:MM:SS.mmm] [42mUINFO[49m: [36mThis is a user info message.[39m
     [35mchainId[39m: 1337
@@ -194,6 +198,49 @@
       "RE_EXN_ID": "LogTesting.SomethingWrong",
       "myMessage": "example exception"
     }
+
+[HH:MM:SS.mmm] [43mUWARN[49m: [36mThis is a user warn message.[39m
+    [35mchainId[39m: 1337
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs at warn"
+    [35mtype[39m: "warn"
+    [35mdata[39m: {
+      "blockHash": "0x123"
+    }
+
+[HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error message.[39m
+    [35mchainId[39m: 1337
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    [35mchild[39m: "userLogs at warn"
+
+[HH:MM:SS.mmm] [41mUERROR[49m: [36mThis is a user error with exception.[39m
+    [35mchainId[39m: 1337
+    [35mcontract[39m: "Gravatar"
+    [35mevent[39m: "NewGravatar"
+    [35mblock[39m: 1
+    [35mlogIndex[39m: 11
+    [35maddress[39m: "0xabc0000000000000000000000000000000000000"
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [31mERROR[39m: [36mThis is an error message.[39m
+    err: {
+      "RE_EXN_ID": "LogTesting.SomethingWrong",
+      "myMessage": "example exception"
+    }
+
+[HH:MM:SS.mmm] [41mFATAL[49m: [36mThis is a fatal message.[39m
+    [35mextra[39m: "another"
 
 [HH:MM:SS.mmm] [33mWARN[39m: [36mThis is a warning message.[39m
 

@@ -1,6 +1,6 @@
-/// The numbers JSON lines carry. The `u*` levels for user handler logs sit
-/// between info and warn, so a level filter can let a user's logs through
-/// without the indexer's own.
+/// The numbers JSON lines carry, with the `u*` levels of user handler logs
+/// between info and warn so a line still says whose it is. A filter ranks each
+/// `u*` level as the level it is named after: see `severity`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Level(u32);
 
@@ -59,5 +59,27 @@ impl Level {
 
     pub fn value(self) -> u32 {
         self.0
+    }
+
+    /// How a filter ranks the level: a user's error is an error, so a
+    /// threshold of `warn` lets `uerror` through and one of `uerror` lets
+    /// `warn` through no more than `error` would.
+    pub fn severity(self) -> u32 {
+        match self {
+            Level::UDEBUG => Level::DEBUG.0,
+            Level::UINFO => Level::INFO.0,
+            Level::UWARN => Level::WARN.0,
+            Level::UERROR => Level::ERROR.0,
+            level => level.0,
+        }
+    }
+
+    /// The stricter of two thresholds.
+    pub fn at_least(self, floor: Level) -> Level {
+        if self.severity() >= floor.severity() {
+            self
+        } else {
+            floor
+        }
     }
 }
