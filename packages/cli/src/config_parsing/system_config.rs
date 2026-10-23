@@ -17,6 +17,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::address_store::normalize_evm_address;
 use crate::clickhouse::ch_type;
 use crate::utils::project_env::ProjectEnv;
 use crate::{
@@ -1060,6 +1061,12 @@ impl SystemConfig {
                     }
                 }
 
+                let lowercase_addresses = matches!(
+                    evm_config.address_format,
+                    Some(super::human_config::evm::AddressFormat::Lowercase)
+                );
+                let should_checksum = !lowercase_addresses;
+
                 for network in &evm_config.chains {
                     for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
@@ -1124,12 +1131,22 @@ impl SystemConfig {
                         .unwrap_or(&vec![])
                         .iter()
                         .cloned()
-                        .map(|c| ChainContract {
-                            name: c.name,
-                            addresses: c.address.into(),
-                            start_block: c.start_block,
+                        .map(|c| {
+                            let addresses = c
+                                .address
+                                .into_iter()
+                                .map(|address| {
+                                    normalize_evm_address(address.clone(), should_checksum)
+                                        .ok_or_else(|| anyhow!("Invalid address {address:?}"))
+                                })
+                                .collect::<Result<_>>()?;
+                            Ok(ChainContract {
+                                name: c.name,
+                                addresses,
+                                start_block: c.start_block,
+                            })
                         })
-                        .collect();
+                        .collect::<Result<_>>()?;
 
                     let chain = Chain {
                         id: network.id,
@@ -1176,10 +1193,7 @@ impl SystemConfig {
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
                     storage,
-                    lowercase_addresses: matches!(
-                        evm_config.address_format,
-                        Some(super::human_config::evm::AddressFormat::Lowercase)
-                    ),
+                    lowercase_addresses,
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,

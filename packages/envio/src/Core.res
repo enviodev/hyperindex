@@ -104,6 +104,7 @@ type addon = {
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
+  normalizeEvmAddress: (~address: string, ~shouldChecksum: bool) => Null.t<Address.t>,
   renderAddresses: (
     ~ecosystem: string,
     ~shouldChecksum: bool,

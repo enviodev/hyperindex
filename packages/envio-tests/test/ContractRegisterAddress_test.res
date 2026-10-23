@@ -11,12 +11,19 @@ chains:
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
           - event: "FactoryEvent(address indexed contract, string testCase)"
+          - event: "Register(string addressInput)"
       - name: SimpleNft
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
       - name: OtherNft
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+      - name: Token
+        address:
+          - "0x1E645469f354BB4F5c8a05B3b30A929361cf77eC"
+          - "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"
+        events:
+          - event: Approval(address indexed owner)
 `,
   ~schema=`
 type Probe {
@@ -24,7 +31,7 @@ type Probe {
 }
 `,
   ~handlers=`
-import { indexer } from "envio";
+import { indexer, type Address } from "envio";
 
 indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event, context }) => {
   switch (event.params.testCase) {
@@ -48,13 +55,6 @@ indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async 
         } catch {}
       }, 0);
       return;
-    case "validatesAddress":
-      // @ts-expect-error deliberately not an address
-      context.chain.SimpleNft.add("invalid-address");
-      return;
-    case "checksumsAddress":
-      context.chain.SimpleNft.add(event.params.contract);
-      return;
     case "registersTwice":
       context.chain.SimpleNft.add(event.params.contract);
       context.chain.SimpleNft.add(event.params.contract);
@@ -66,8 +66,15 @@ indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async 
   }
 });
 
+indexer.contractRegister({ contract: "Gravatar", event: "Register" }, async ({ event, context }) => {
+  context.chain.SimpleNft.add(event.params.addressInput as Address);
+});
+
 indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
 indexer.onEvent({ contract: "OtherNft", event: "Transfer" }, async () => {});
+indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ event, context }) => {
+  context.Probe.set({ id: event.srcAddress });
+});
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -87,6 +94,17 @@ const run = (
         simulate: [
           { contract: "Gravatar", event: "FactoryEvent", params, block: { number: 2 } },
         ],
+      },
+    },
+  });
+
+const register = (addressInput: string) =>
+  createTestIndexer().process({
+    chains: {
+      1: {
+        startBlock: 1,
+        endBlock: 100,
+        simulate: [{ contract: "Gravatar", event: "Register", params: { addressInput }, block: { number: 2 } }],
       },
     },
   });
@@ -117,27 +135,73 @@ describe("contractRegister address handling", () => {
     t.expect(result.changes[0]?.addresses).toBe(undefined);
   });
 
-  it("rejects an address that isn't 20 hex bytes", async (t) => {
+  // The first config address carries a wrong checksum, the second is all
+  // uppercase: both are listed, and routed to, in their checksummed spelling.
+  it("checksums config addresses and routes a lowercase srcAddress to them", async (t) => {
     const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Token",
+              event: "Approval",
+              srcAddress: "0x1e645469f354bb4f5c8a05b3b30a929361cf77ec",
+              params: { owner: dcAddress },
+              block: { number: 2 },
+            },
+          ],
+        },
+      },
+    });
 
-    await t.expect(run(indexer, { contract: dcAddress, testCase: "validatesAddress" })).rejects.toThrow(
-      'Address "invalid-address" is invalid. Expected a 20-byte hex string starting with 0x.'
+    t.expect({
+      addresses: indexer.chains[1].Token.addresses,
+      probes: await indexer.Probe.getAll(),
+    }).toEqual({
+      addresses: [
+        "0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec",
+        "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC",
+      ],
+      probes: [{ id: "0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec" }],
+    });
+  });
+
+  it("checksums any casing of a valid address", async (t) => {
+    const inputs = [
+      "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "0xF39FD6E51AAD88F6F4CE6AB8827279CFFFB92266",
+      "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    ];
+    const registered = [];
+    for (const input of inputs) {
+      registered.push((await register(input)).changes[0]?.addresses);
+    }
+
+    t.expect(registered).toEqual(
+      inputs.map(() => ({
+        sets: [{ address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", contract: "SimpleNft" }],
+      }))
     );
   });
 
-  it("checksums a lowercase address on registration", async (t) => {
-    const indexer = createTestIndexer();
-    const result = await run(indexer, {
-      contract: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-      testCase: "checksumsAddress",
+  for (const input of [
+    "invalid-address",
+    "0x12",
+    "f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0Xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0xg39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb9226600",
+  ]) {
+    it(\`rejects \${input}\`, async (t) => {
+      await t.expect(register(input)).rejects.toThrow(
+        \`Address "\${input}" is invalid. Expected a 20-byte hex string starting with 0x.\`
+      );
     });
-
-    t.expect(result.changes[0]?.addresses).toEqual({
-      sets: [
-        { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", contract: "SimpleNft" },
-      ],
-    });
-  });
+  }
 
   it("keeps the same address registered twice for one contract a single registration", async (t) => {
     const indexer = createTestIndexer();
