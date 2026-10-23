@@ -1213,20 +1213,29 @@ impl ProjectTemplate {
     /// an empty record. Mirrors `generate_event_filter_type` on the ReScript
     /// side, which intentionally renders indexed-struct filters as positional
     /// tuples — at runtime they're delivered as keccak256 topic hashes anyway.
+    /// An anonymous event is marked `anonymous: true`, which makes `where`
+    /// required, and its first indexed param — its topic0 — is required in
+    /// every filter.
     fn generate_event_where_ts(event: &system_config::Event) -> String {
+        let anonymous = event.sighash.is_none();
         let params_ts = match &event.kind {
             system_config::EventKind::Params(params) => {
                 let indexed_fields: Vec<String> = params
                     .iter()
                     .filter(|p| p.indexed)
-                    .map(|p| {
+                    .enumerate()
+                    .map(|(position, p)| {
                         let ts_type = Self::to_envio_dts_type(
                             &crate::config_parsing::event_parsing::abi_to_rescript_type_positional(
                                 &p.into(),
                             )
                             .to_ts_type_string(),
                         );
-                        format!("readonly {}?: SingleOrMultiple<{}>", p.name, ts_type)
+                        let optional = if anonymous && position == 0 { "" } else { "?" };
+                        format!(
+                            "readonly {}{}: SingleOrMultiple<{}>",
+                            p.name, optional, ts_type
+                        )
                     })
                     .collect();
                 if indexed_fields.is_empty() {
@@ -1237,7 +1246,14 @@ impl ProjectTemplate {
             }
             _ => "{}".to_string(),
         };
-        format!("{{ readonly params: {} }}", params_ts)
+        if anonymous {
+            format!(
+                "{{ readonly anonymous: true; readonly params: {} }}",
+                params_ts
+            )
+        } else {
+            format!("{{ readonly params: {} }}", params_ts)
+        }
     }
 
     /// Build `src/Indexer.res` — the ReScript surface for the project's
@@ -1985,7 +2001,6 @@ type testIndexer = {{
         let evm_event_filters_body: String;
         let fuel_chains_body: String;
         let fuel_contracts_body: String;
-        let fuel_event_filters_body: String;
         let svm_chains_body: String;
         let svm_programs_body: String;
         let entities_body: String;
@@ -2162,8 +2177,7 @@ type testIndexer = {{
                 ));
             }
 
-            // Fuel contracts table (inlined). Fuel events have no indexed-param
-            // filters, so the eventFilters body is always `{}`.
+            // Fuel contracts table (inlined).
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 let fuel_fs = system_config::FieldSelection::fuel();
                 let aggregated = FieldSelection::new_without_defaults(FieldSelectionOptions {
@@ -2198,7 +2212,6 @@ type testIndexer = {{
             } else {
                 format!("{{\n{}\n      }}", fuel_contracts_entries.join("\n"))
             };
-            fuel_event_filters_body = "{}".to_string();
 
             // FuelTypes namespace at file scope (referenced by Fuel event
             // payloads). No prefix — doesn't collide with envio.
@@ -2435,7 +2448,6 @@ type testIndexer = {{
                     evm_event_filters: &evm_event_filters_body,
                     fuel_chains: &fuel_chains_body,
                     fuel_contracts: &fuel_contracts_body,
-                    fuel_event_filters: &fuel_event_filters_body,
                     svm_chains: &svm_chains_body,
                     svm_programs: &svm_programs_body,
                     entities: &entities_body,
@@ -2497,10 +2509,9 @@ type testIndexer = {{
                 filters = bodies.evm_event_filters,
             ),
             Ecosystem::Fuel => format!(
-                "fuel: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                "fuel: {{ chains: {chains}; contracts: {contracts} }};",
                 chains = bodies.fuel_chains,
                 contracts = bodies.fuel_contracts,
-                filters = bodies.fuel_event_filters,
             ),
             Ecosystem::Svm => format!(
                 "svm: {{ chains: {chains}; programs: {programs} }};",
@@ -2561,7 +2572,6 @@ struct ConfigBodies<'a> {
     evm_event_filters: &'a str,
     fuel_chains: &'a str,
     fuel_contracts: &'a str,
-    fuel_event_filters: &'a str,
     svm_chains: &'a str,
     svm_programs: &'a str,
     entities: &'a str,
@@ -2993,8 +3003,10 @@ mod test {
             &system_config::Event {
                 name: "NewGravatar".to_string(),
                 kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
+                sighash: Some(
+                    "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                        .to_string(),
+                ),
                 event_signature: String::new(),
                 field_selection: None,
             },
@@ -3097,8 +3109,9 @@ mod test {
                     indexed: false,
                 },
             ]),
-            sighash: "0x0000000000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
+            sighash: Some(
+                "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            ),
             event_signature: String::new(),
             field_selection: None,
         }
@@ -3150,8 +3163,10 @@ mod test {
             &system_config::Event {
                 name: "NewGravatar".to_string(),
                 kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
+                sighash: Some(
+                    "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                        .to_string(),
+                ),
                 event_signature: String::new(),
                 field_selection: Some(FieldSelection {
                     block_fields: vec![],
@@ -3927,7 +3942,6 @@ type Swap {
                 evm_event_filters: "{}",
                 fuel_chains: "{}",
                 fuel_contracts: "{}",
-                fuel_event_filters: "{}",
                 svm_chains: "{}",
                 svm_programs: "{}",
                 entities: "Entities",

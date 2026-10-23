@@ -337,10 +337,7 @@ external payloadBlockHolder: eventPayload => blockHolder = "%identity"
 // The log's emitting address (EVM/Fuel; the program id carries it for SVM).
 @get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
 
-// The decoded params, read by name for the address-valued ones a `where`
-// filters on. Only those names are ever looked up, so the address type is
-// accurate at every use site.
-@get external getPayloadAddressParams: eventPayload => dict<Address.t> = "params"
+@get external getPayloadParams: eventPayload => dict<unknown> = "params"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -510,25 +507,29 @@ type fuelContractConfig = {
   events: array<fuelEventConfig>,
 }
 
-// A single topic position of a resolved `where`: either static pre-encoded
-// values, or a marker for "the currently registered addresses of this
-// contract", expanded to topic values when a source query is built.
-type topicFilter =
+// A single topic position of a resolved `where`: any value, static
+// pre-encoded values (never empty), or a marker for "the currently registered
+// addresses of this contract", expanded to topic values when a source query is
+// built.
+type topicConstraint =
+  | Any
   | Values(array<EvmTypes.Hex.t>)
   | ContractAddresses({contractName: string})
 
-type resolvedTopicSelection = {
-  topic0: array<EvmTypes.Hex.t>,
-  topic1: topicFilter,
-  topic2: topicFilter,
-  topic3: topicFilter,
+// topic0 is the event signature, or for an anonymous event its first indexed
+// param.
+type topicFilter = {
+  topic0: topicConstraint,
+  topic1: topicConstraint,
+  topic2: topicConstraint,
+  topic3: topicConstraint,
 }
 
 // The registered `where` fully resolved at registration time for one chain.
-// `topicSelections` is in disjunctive normal form (outer array is OR);
+// `topicFilters` is in disjunctive normal form (outer array is OR);
 // an empty array means the `where` returned `false` for this chain.
 type resolvedWhere = {
-  topicSelections: array<resolvedTopicSelection>,
+  topicFilters: array<topicFilter>,
   startBlock: option<int>,
 }
 
@@ -540,7 +541,8 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type evmEventConfig = {
   ...eventConfig,
-  sighash: string,
+  // `None` for an anonymous event.
+  sighash: option<string>,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
 }
@@ -602,11 +604,9 @@ type svmInstructionEventConfig = {
 // Per-(event, chain) registration produced when user handler code registers an
 // event (`onEvent`) or a dynamic contract registers. References its definition
 // by value as `.eventConfig` and adds the handler binding plus the
-// registration/`where`-derived fetch state. Not `private`: Fuel registrations
-// add no ecosystem-specific fields (so the alias must stay directly
-// constructable), and the ecosystem→base casts in sources are sound by
-// ecosystem homogeneity — an EVM chain only ever holds
-// `evmOnEventRegistration`s.
+// registration/`where`-derived fetch state. Not `private`: the
+// ecosystem→base casts in sources are sound by ecosystem homogeneity — an EVM
+// chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
   // Chain-scoped sequential index — the registration's position in the
   // chain's onEventRegistrations array, assigned when registration finishes
@@ -614,7 +614,11 @@ type onEventRegistration = {
   // index across the napi boundary; sources resolve it before creating an item.
   index: int,
   eventConfig: eventConfig,
-  handler: option<handler>,
+  // Keep at least one field optional: with every field required, ReScript
+  // compiles a `{...registration, ...}` spread into an explicit field-by-field
+  // copy, which drops the ecosystem-only fields an `evmOnEventRegistration`
+  // carries.
+  handler?: handler,
   contractRegister: option<contractRegister>,
   isWildcard: bool,
   // Whether the event has an event filter which uses addresses.
@@ -622,15 +626,6 @@ type onEventRegistration = {
   // Usually always false for wildcard events, but might be true for a wildcard
   // event with a dynamic event filter by addresses.
   dependsOnAddresses: bool,
-  // Indexed address params this event filters on, in disjunctive normal form
-  // (OR of AND-groups), from `where: {params: {to: chain.C.addresses}}`. Every
-  // source applies this natively while routing; it's carried here for the
-  // simulate source, which has no native query boundary. Absent otherwise.
-  //
-  // Keep it optional: with every field required, ReScript compiles a
-  // `{...registration, ...}` spread into an explicit field-by-field copy, which
-  // drops the ecosystem-only fields an `evmOnEventRegistration` carries.
-  addressFilterParamGroups?: array<array<string>>,
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
@@ -645,9 +640,12 @@ type evmOnEventRegistration = {
   resolvedWhere: resolvedWhere,
 }
 
-// Fuel registrations add no ecosystem-specific fetch state, so it's a bare
-// alias of the base registration.
-type fuelOnEventRegistration = onEventRegistration
+type fuelOnEventRegistration = {
+  ...onEventRegistration,
+  // The `where` is `false` for this chain. Kept until
+  // registration finishes so the event still counts as registered, then dropped.
+  skippedByWhere: bool,
+}
 
 type svmOnEventRegistration = {
   ...onEventRegistration,

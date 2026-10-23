@@ -206,7 +206,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~blockFields=[],
   ): HyperSyncClient.Registration.input => {
     index,
-    sighash: transferSighash,
+    sighash: Some(transferSighash),
     topicCount,
     eventName: "Transfer",
     contractName: "ERC20",
@@ -214,9 +214,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     dependsOnAddresses,
     startBlock,
     params,
-    topicSelections: [
+    topicFilters: [
       {
-        topic0: [transferSighash],
+        topic0: Some([transferSighash]),
         topic1: Some([]),
         topic2: Some([]),
         topic3: Some([]),

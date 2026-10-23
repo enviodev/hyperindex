@@ -32,9 +32,9 @@ module Registration = {
     abi?: JSON.t,
   }
 
-  let fromOnEventRegistrations = (
-    onEventRegistrations: array<Internal.fuelOnEventRegistration>,
-  ): array<input> =>
+  let fromOnEventRegistrations = (onEventRegistrations: array<Internal.onEventRegistration>): array<
+    input,
+  > =>
     onEventRegistrations->Array.map(reg => {
       let eventConfig =
         reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.fuelEventConfig)

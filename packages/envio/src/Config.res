@@ -260,7 +260,8 @@ let svmAbiSchema = S.schema(s =>
 let contractEventItemSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
-    "sighash": s.matches(S.string),
+    // Absent for an anonymous EVM event.
+    "sighash": s.matches(S.option(S.string)),
     "params": s.matches(S.option(S.array(EventConfigBuilder.paramMetaSchema))),
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
@@ -850,7 +851,13 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               ~contractName,
               ~eventName,
               ~kind=fuelKind,
-              ~sighash,
+              ~sighash=switch sighash {
+              | Some(sighash) => sighash
+              | None =>
+                JsError.throwWithMessage(
+                  `Fuel event ${contractName}.${eventName} is missing "sighash" in internal config`,
+                )
+              },
               ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
             ) :> Internal.eventConfig)
           | None =>

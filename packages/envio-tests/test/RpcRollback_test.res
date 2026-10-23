@@ -28,11 +28,11 @@ let blockHash = (~blockNumber, ~fork) =>
 
 let hex = n => "0x" ++ n->Int.toString(~radix=16)
 
-let topicSelection: Internal.resolvedTopicSelection = {
-  topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-  topic1: Values([]),
-  topic2: Values([]),
-  topic3: Values([]),
+let topicFilter: Internal.topicFilter = {
+  topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
+  topic1: Any,
+  topic2: Any,
+  topic3: Any,
 }
 
 let registration: Internal.evmOnEventRegistration = {
@@ -42,7 +42,7 @@ let registration: Internal.evmOnEventRegistration = {
     // anyway, so it is what a later range can be served from the store.
     ~blockFieldNames=[Number, Timestamp, Hash, ParentHash, GasUsed],
     ~transactionFieldNames=[],
-    ~eventFilters=[topicSelection],
+    ~eventFilters=[topicFilter],
   ),
   index: 0,
 }

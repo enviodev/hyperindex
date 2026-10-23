@@ -17,7 +17,7 @@ let transferParams: array<Internal.paramMeta> = [
 
 let transferEventRegistration: HyperSyncClient.Registration.input = {
   index: 42,
-  sighash: transferSighash,
+  sighash: Some(transferSighash),
   topicCount: 3,
   eventName: "Transfer",
   contractName: "ERC20",
@@ -25,9 +25,9 @@ let transferEventRegistration: HyperSyncClient.Registration.input = {
   dependsOnAddresses: true,
   startBlock: None,
   params: transferParams,
-  topicSelections: [
+  topicFilters: [
     {
-      topic0: [transferSighash],
+      topic0: Some([transferSighash]),
       topic1: Some([]),
       topic2: Some([]),
       topic3: Some([]),
@@ -135,7 +135,7 @@ describe("HyperSync client getItems (live)", () => {
       // unrelated 1-topic signature — every fetched log routes nowhere.
       let unrelatedEventRegistration: HyperSyncClient.Registration.input = {
         index: 0,
-        sighash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+        sighash: Some("0x0000000000000000000000000000000000000000000000000000000000000001"),
         topicCount: 1,
         eventName: "Unrelated",
         contractName: "Unrelated",
@@ -143,9 +143,9 @@ describe("HyperSync client getItems (live)", () => {
         dependsOnAddresses: false,
         startBlock: None,
         params: [],
-        topicSelections: [
+        topicFilters: [
           {
-            topic0: [transferSighash],
+            topic0: Some([transferSighash]),
             topic1: Some([]),
             topic2: Some([]),
             topic3: Some([]),
