@@ -14,7 +14,8 @@ metadata:
 
 By default every entity row and effect cache is shared by all chains, so the same
 entity id on two chains resolves to one row. Set `disable_default_cross_chain`
-to make entities and effect caches per-chain instead:
+to make entities and effect caches per-chain instead. This is recommended, and
+`envio init` turns it on for new projects:
 
 ```yaml
 name: my-indexer
@@ -48,8 +49,8 @@ type GlobalCounter @crossChain {   # one row shared by every chain
 `@crossChain` is only valid when `disable_default_cross_chain: true` — without
 the flag entities are already cross-chain and codegen rejects the directive.
 
-Per-chain entities reserve the `chainId` column name (`chain_id` under
-`column_name_format: snake_case`), so a schema field can't claim it.
+Per-chain entities reserve the field names `chainId` and `chain_id`: codegen
+rejects either one unless the entity is `@crossChain`.
 
 Outside a handler there is no chain in context, so the test indexer's
 chain-agnostic operations take one: `indexer.Counter.set({ id, count, chainId })`,
@@ -96,15 +97,17 @@ Global contract definitions + chain-specific addresses:
 contracts:
   - name: ERC20
     events:
-      - event: Transfer(indexed address from, indexed address to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
 
 chains:
   - id: 1
+    start_block: 0
     contracts:
       - name: ERC20
         address:
           - 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
   - id: 137
+    start_block: 0
     contracts:
       - name: ERC20
         address:

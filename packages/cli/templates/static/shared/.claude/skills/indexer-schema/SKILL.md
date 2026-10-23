@@ -15,6 +15,7 @@ metadata:
 - Every type is an entity — **no `@entity` decorator** (unlike TheGraph)
 - Must have an `id` field first — `ID!` (recommended), or `String!`, `Int!`, `BigInt!`
 - Names: 1-63 chars, alphanumeric + underscore, no reserved words
+- With `disable_default_cross_chain: true`, `chainId` and `chain_id` are reserved field names on every entity not marked `@crossChain` (see `indexer-multichain`)
 - Relationship fields use the **entity type directly**: `collection: NftCollection!` — **never** add `_id` in the schema field name
 - The `_id` suffix only appears in TypeScript handlers (added by codegen): schema field `collection` → handler field `collection_id`, typed as the referenced entity's id
 
@@ -110,13 +111,15 @@ type Token {
 }
 ```
 
-- `BigInt` default precision: 76 digits
-- `BigDecimal` default: precision 76, scale 32
+- Without `@config`, `BigInt` and `BigDecimal` columns are unbounded Postgres
+  `NUMERIC` (no precision or scale limit), and `String` in ClickHouse
+- `BigDecimal`'s `@config` needs both `precision` and `scale`
 
 ## Array Rules
 
 - Supported: `[Type!]!` — non-nullable elements, non-nullable array
-- **Not supported**: `[Type]!` (nullable elements), nested arrays, `[Boolean!]!`, `[Timestamp!]!`
+- **Not supported**: `[Type]!` (nullable elements), `[Boolean!]!`, `[Timestamp!]!`
+- **Nested arrays** (`[[Int!]!]!`) are rejected by codegen: "a list of lists, which is not supported. Store it as Json, or as a list of a type of its own."
 - Entity arrays require `@derivedFrom` — bare `[Swap!]!` without it causes a codegen error
 
 ## Example
