@@ -82,26 +82,18 @@ let runOf = (pass: pass, ~item, ~checkpointId) =>
     item,
   )
 
+let handlerErrorMessage = (item: Internal.item) =>
+  `Unexpected error in the ${switch item {
+    | Block(_) => "block"
+    | Event(_) => "event"
+    }} handler. Please handle the error to keep the indexer running smoothly.`
+
 let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~pass) =>
   if item->hasHandler {
     //Include the load in time before handler
     let timeBeforeHandler = Performance.now()
     switch await pass->runOf(~item, ~checkpointId) {
-    | exception exn =>
-      throw(
-        ProcessingError({
-          message: switch item {
-          | Block(
-              _,
-            ) => "Unexpected error in the block handler. Please handle the error to keep the indexer running smoothly."
-          | Event(
-              _,
-            ) => "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly."
-          },
-          item,
-          exn,
-        }),
-      )
+    | exception exn => throw(ProcessingError({message: item->handlerErrorMessage, item, exn}))
     | () =>
       switch pass->eventStat(item) {
       | Some(stat) =>
@@ -129,13 +121,14 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~pass) => {
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       if item->hasHandler {
-        let run = pass->runOf(~item, ~checkpointId)
         promises->Array.push(
           switch pass->eventStat(item) {
           | Some(stat) =>
             let timerRef = stat->IndexerState.startPreloadHandler
-            run->Promise.finally(() => stat->IndexerState.endPreloadHandler(timerRef))
-          | None => run
+            pass
+            ->runOf(~item, ~checkpointId)
+            ->Promise.finally(() => stat->IndexerState.endPreloadHandler(timerRef))
+          | None => pass->runOf(~item, ~checkpointId)
           }->Utils.Promise.silentCatch,
         )
       }

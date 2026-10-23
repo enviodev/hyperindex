@@ -37,20 +37,18 @@ type storage
 // Before that, using it at all makes every `await` in the process slower.
 let storage = makeStorage()
 
-let enter = (scope, f) => storage->runInStorage(scope, f)
-
 // Runs user code as a run of its own and marks the run resolved once it
 // settles either way. Code that throws before its first await rejects like
 // code that throws after. `f` takes its argument rather than closing over it,
 // so a hot caller passes a function made once instead of one per run.
 let run = async (~kind, ~item, ~checkpointId=?, ~loggerFor, f: 'a => promise<'r>, arg: 'a) => {
-  let run = {kind, item, checkpointId, isResolved: false, loggerFor}
-  switch await storage->runInStorage1(Run(run), f, arg) {
+  let entered = {kind, item, checkpointId, isResolved: false, loggerFor}
+  switch await storage->runInStorage1(Run(entered), f, arg) {
   | exception exn =>
-    run.isResolved = true
+    entered.isResolved = true
     throw(exn)
   | result =>
-    run.isResolved = true
+    entered.isResolved = true
     result
   }
 }
@@ -100,6 +98,6 @@ let effectLogger = context => effectLoggers->Utils.WeakMap.unsafeGet(context)
 
 let enterEffect = (args: Internal.effectArgs, f) =>
   switch effectLoggers->Utils.WeakMap.get(args.context) {
-  | Some(logger) => enter(Effect(logger), f)
+  | Some(logger) => storage->runInStorage(Effect(logger), f)
   | None => f()
   }

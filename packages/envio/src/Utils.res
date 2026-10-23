@@ -972,9 +972,6 @@ module Promise = {
   // interoperate with raw JS values.
   external unsafe_async: 'a => promise<'a> = "%identity"
   external unsafe_await: promise<'a> => 'a = "?await"
-
-  // Detects Thenable-like values at runtime (anything with a `.catch` method).
-  let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }
 
 // `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no
