@@ -951,13 +951,6 @@ module Promise = {
   external makeAsync: ((@uncurry ('a => unit), 'e => unit) => promise<unit>) => promise<'a> =
     "Promise"
 
-  // `catch` that swallows rejections silently. Handy for fire-and-forget
-  // promises that must not take the process down on failure.
-  %%private(let noop = (() => ())->Obj.magic)
-  let silentCatch = (promise: promise<'a>): promise<'a> => {
-    promise->Promise.catch(_ => noop())
-  }
-
   // Like `catch`, but the callback returns a plain value instead of a new
   // promise. Used when the fallback is a ready-made default.
   @send

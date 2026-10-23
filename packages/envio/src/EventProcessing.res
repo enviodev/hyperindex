@@ -26,33 +26,42 @@ let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
 
 exception ProcessingError({message: string, exn: exn, item: Internal.item})
 
-// What a pass shares across its handler runs: one context serves them all, and
-// each run is told apart by the RunScope it's entered with.
-type pass = {
-  kind: RunScope.kind,
+// What every handler run of an indexer shares: one context for both passes,
+// each run told apart by the RunScope it's entered with. Built on the
+// indexer's first batch, so a batch allocates no functions of its own.
+type runner = {
+  params: UserContext.params,
   invokeHandler: Internal.item => promise<unit>,
   loggerFor: Internal.item => Logger.t,
-  indexerState: IndexerState.t,
 }
 
-let makePass = (params: UserContext.batchParams) => {
-  let context = UserContext.makeHandlerContext(params)
-  let ecosystem = params.config.ecosystem
-  {
-    kind: params.isPreload ? Preload : Handler,
-    invokeHandler: item =>
-      switch item {
-      | Block({onBlockRegistration: {handler}, blockNumber}) =>
-        handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~ecosystem, ~context))
-      | Event(_) =>
-        let handler =
-          (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
-        handler({event: item->Ecosystem.getItemEvent(~ecosystem), context})
-      },
-    loggerFor: item => params.indexerState->IndexerState.loggerForItem(item),
-    indexerState: params.indexerState,
+let runners: Utils.WeakMap.t<IndexerState.t, runner> = Utils.WeakMap.make()
+
+let runnerFor = (indexerState, ~loadManager, ~persistence, ~config: Config.t, ~chains) =>
+  switch runners->Utils.WeakMap.get(indexerState) {
+  | Some(runner) =>
+    runner.params.chains = chains
+    runner
+  | None =>
+    let params: UserContext.params = {indexerState, loadManager, persistence, config, chains}
+    let context = UserContext.makeHandlerContext(params)
+    let ecosystem = config.ecosystem
+    let runner = {
+      params,
+      invokeHandler: item =>
+        switch item {
+        | Block({onBlockRegistration: {handler}, blockNumber}) =>
+          handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~ecosystem, ~context))
+        | Event(_) =>
+          let handler =
+            (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
+          handler({event: item->Ecosystem.getItemEvent(~ecosystem), context})
+        },
+      loggerFor: item => indexerState->IndexerState.loggerForItem(item),
+    }
+    runners->Utils.WeakMap.set(indexerState, runner)->ignore
+    runner
   }
-}
 
 // An event registered only for its contract register has no handler to run.
 let hasHandler = (item: Internal.item) =>
@@ -61,26 +70,19 @@ let hasHandler = (item: Internal.item) =>
   | Event(_) => (item->Internal.castUnsafeEventItem).onEventRegistration.handler !== None
   }
 
-let eventStat = (pass: pass, item: Internal.item) =>
+let eventStat = (runner: runner, item: Internal.item) =>
   switch item {
   | Event(_) =>
     Some(
-      pass.indexerState->IndexerState.handlerStatFor(
+      runner.params.indexerState->IndexerState.handlerStatFor(
         (item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig,
       ),
     )
   | Block(_) => None
   }
 
-let runOf = (pass: pass, ~item, ~checkpointId) =>
-  RunScope.run(
-    ~kind=pass.kind,
-    ~item,
-    ~checkpointId,
-    ~loggerFor=pass.loggerFor,
-    pass.invokeHandler,
-    item,
-  )
+let runOf = (runner: runner, ~kind, ~item, ~checkpointId) =>
+  RunScope.run(~kind, ~item, ~checkpointId, ~loggerFor=runner.loggerFor, runner.invokeHandler, item)
 
 let handlerErrorMessage = (item: Internal.item) =>
   `Unexpected error in the ${switch item {
@@ -88,14 +90,14 @@ let handlerErrorMessage = (item: Internal.item) =>
     | Event(_) => "event"
     }} handler. Please handle the error to keep the indexer running smoothly.`
 
-let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~pass) =>
+let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runner) =>
   if item->hasHandler {
     //Include the load in time before handler
     let timeBeforeHandler = Performance.now()
-    switch await pass->runOf(~item, ~checkpointId) {
+    switch await runner->runOf(~kind=Handler, ~item, ~checkpointId) {
     | exception exn => throw(ProcessingError({message: item->handlerErrorMessage, item, exn}))
     | () =>
-      switch pass->eventStat(item) {
+      switch runner->eventStat(item) {
       | Some(stat) =>
         stat->IndexerState.recordHandlerDuration(
           ~duration=timeBeforeHandler->Performance.secondsSince,
@@ -105,7 +107,23 @@ let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~pass) =>
     }
   }
 
-let preloadBatchOrThrow = async (batch: Batch.t, ~pass) => {
+// A preload run's errors are dropped: the run proper reports them. It is still
+// timed either way, so one that throws doesn't leave its handler's timing open.
+let preload = async (runner, ~item, ~checkpointId) =>
+  switch runner->eventStat(item) {
+  | Some(stat) =>
+    let timerRef = stat->IndexerState.startPreloadHandler
+    try await runner->runOf(~kind=Preload, ~item, ~checkpointId) catch {
+    | _ => ()
+    }
+    stat->IndexerState.endPreloadHandler(timerRef)
+  | None =>
+    try await runner->runOf(~kind=Preload, ~item, ~checkpointId) catch {
+    | _ => ()
+    }
+  }
+
+let preloadBatchOrThrow = async (batch: Batch.t, ~runner) => {
   // On the first run of loaders, we don't care about the result,
   // whether it's an error or a return type.
   // We'll rerun the loader again right before the handler run,
@@ -121,16 +139,7 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~pass) => {
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       if item->hasHandler {
-        promises->Array.push(
-          switch pass->eventStat(item) {
-          | Some(stat) =>
-            let timerRef = stat->IndexerState.startPreloadHandler
-            pass
-            ->runOf(~item, ~checkpointId)
-            ->Promise.finally(() => stat->IndexerState.endPreloadHandler(timerRef))
-          | None => pass->runOf(~item, ~checkpointId)
-          }->Utils.Promise.silentCatch,
-        )
+        promises->Array.push(runner->preload(~item, ~checkpointId))
       }
     }
 
@@ -140,7 +149,7 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~pass) => {
   let _ = await Promise.all(promises)
 }
 
-let runBatchHandlersOrThrow = async (batch: Batch.t, ~pass) => {
+let runBatchHandlersOrThrow = async (batch: Batch.t, ~runner) => {
   let itemIdx = ref(0)
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
@@ -149,7 +158,7 @@ let runBatchHandlersOrThrow = async (batch: Batch.t, ~pass) => {
 
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
-      await runHandlerOrThrow(item, ~checkpointId, ~pass)
+      await runHandlerOrThrow(item, ~checkpointId, ~runner)
     }
     itemIdx := itemIdx.contents + checkpointItemsCount
   }
@@ -238,20 +247,19 @@ let processEventBatch = async (
 
     let timeRef = Performance.now()
 
-    let makePass = isPreload =>
-      makePass({indexerState, loadManager, persistence, isPreload, chains, config})
+    let runner = runnerFor(indexerState, ~loadManager, ~persistence, ~config, ~chains)
 
     if batch.items->Utils.Array.notEmpty {
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
       await materializeBatchEvents(batch, ~chainStates)
-      await batch->preloadBatchOrThrow(~pass=makePass(true))
+      await batch->preloadBatchOrThrow(~runner)
     }
 
     let elapsedTimeAfterLoaders = timeRef->Performance.secondsSince
 
     if batch.items->Utils.Array.notEmpty {
-      await batch->runBatchHandlersOrThrow(~pass=makePass(false))
+      await batch->runBatchHandlersOrThrow(~runner)
     }
 
     let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince

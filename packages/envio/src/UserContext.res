@@ -1,14 +1,17 @@
-// What every handler run of one batch pass shares. The run itself — its item
-// and checkpoint — is read from the RunScope it was entered with, so one
-// context object serves every run of the pass, concurrent ones included.
-type batchParams = {
+// What every handler run of an indexer shares. The run itself — its item,
+// checkpoint and whether it's a preload — is read from the RunScope it was
+// entered with, so one context object serves every run, concurrent ones and
+// both passes included, and is built once rather than per batch.
+type params = {
   indexerState: IndexerState.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
-  isPreload: bool,
-  chains: Internal.chains,
   config: Config.t,
+  // As of the batch being processed.
+  mutable chains: Internal.chains,
 }
+
+let isPreload = (run: RunScope.run) => run.kind === Preload
 
 let effectContextPrototype = %raw(`Object.create(null)`)
 Utils.Object.defineProperty(
@@ -48,7 +51,7 @@ external makeEffectContext: (
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
 ) => Internal.effectContext = "EffectContext"
 
-let initEffect = (params: batchParams, ~run: RunScope.run, ~checkpointId) => {
+let initEffect = (params: params, ~run: RunScope.run, ~checkpointId) => {
   let handlerChainId = run.item->Internal.getItemChainId
   // An effect that didn't state a scope follows the config: cross-chain by
   // default, per-chain under `disable_default_cross_chain`.
@@ -97,7 +100,7 @@ let initEffect = (params: batchParams, ~run: RunScope.run, ~checkpointId) => {
         ~effectArgs,
         ~scope,
         ~indexerState=params.indexerState,
-        ~shouldGroup=params.isPreload,
+        ~shouldGroup=run->isPreload,
       )
     }
   }
@@ -114,9 +117,6 @@ let checkpointIdOf = (run: RunScope.run, ~prop) =>
       `Impossible to access context.${prop} outside of the handler it was passed to.`,
     )
   }
-
-let noopSet = (_entity: Internal.entity) => ()
-let noopDeleteUnsafe = (_entityId: EntityId.t) => ()
 
 // Reads against ClickHouse-only entities have no Postgres table to hit;
 // surface a friendly error instead of letting the SQL layer fail with
@@ -135,7 +135,7 @@ type entityContext = {
   deleteUnsafe: EntityId.t => unit,
 }
 
-let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConfig) => {
+let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) => {
   let prop = entityConfig.name
   // The handler context is always chain-scoped, so a per-chain entity resolves
   // to the chain the handler runs on and a cross-chain one to the shared
@@ -143,16 +143,18 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
   let scopeOf = (run: RunScope.run) =>
     entityConfig->InMemoryStore.entityScope(~chainId=run.item->Internal.getItemChainId)
 
-  let loadById = entityId =>
+  let loadById = entityId => {
+    let run = RunScope.currentRunOrThrow(~prop)
     LoadLayer.loadById(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
       ~entityConfig,
-      ~scope=RunScope.currentRunOrThrow(~prop)->scopeOf,
+      ~scope=run->scopeOf,
       ~indexerState=params.indexerState,
-      ~shouldGroup=params.isPreload,
+      ~shouldGroup=run->isPreload,
       ~entityId,
     )
+  }
 
   let write = (change: Change.t<Internal.entity>, ~scope) =>
     params.indexerState
@@ -162,26 +164,27 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
       change,
     )
 
-  let set = params.isPreload
-    ? noopSet
-    : (entity: Internal.entity) => {
-        let run = RunScope.currentRunOrThrow(~prop)
-        write(
-          Set({
-            entityId: entity.id->EntityId.unsafeOfString,
-            checkpointId: run->checkpointIdOf(~prop),
-            entity,
-          }),
-          ~scope=run->scopeOf,
-        )
-      }
+  // A preload run's writes are no-ops: its run proper makes them.
+  let set = (entity: Internal.entity) => {
+    let run = RunScope.currentRunOrThrow(~prop)
+    if !(run->isPreload) {
+      write(
+        Set({
+          entityId: entity.id->EntityId.unsafeOfString,
+          checkpointId: run->checkpointIdOf(~prop),
+          entity,
+        }),
+        ~scope=run->scopeOf,
+      )
+    }
+  }
 
-  let deleteUnsafe = params.isPreload
-    ? noopDeleteUnsafe
-    : entityId => {
-        let run = RunScope.currentRunOrThrow(~prop)
-        write(Delete({entityId, checkpointId: run->checkpointIdOf(~prop)}), ~scope=run->scopeOf)
-      }
+  let deleteUnsafe = entityId => {
+    let run = RunScope.currentRunOrThrow(~prop)
+    if !(run->isPreload) {
+      write(Delete({entityId, checkpointId: run->checkpointIdOf(~prop)}), ~scope=run->scopeOf)
+    }
+  }
 
   let entityContext: entityContext = if !entityConfig.storage.postgres {
     {
@@ -195,16 +198,18 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
   } else {
     {
       get: loadById,
-      getWhere: filter =>
+      getWhere: filter => {
+        let run = RunScope.currentRunOrThrow(~prop)
         LoadLayer.loadByFilter(
           ~loadManager=params.loadManager,
           ~persistence=params.persistence,
           ~entityConfig,
-          ~scope=RunScope.currentRunOrThrow(~prop)->scopeOf,
+          ~scope=run->scopeOf,
           ~indexerState=params.indexerState,
-          ~shouldGroup=params.isPreload,
+          ~shouldGroup=run->isPreload,
           ~filter,
-        ),
+        )
+      },
       getOrThrow: (entityId, ~message=?) =>
         loadById(entityId)->Promise.thenResolve(entity =>
           switch entity {
@@ -239,7 +244,7 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
 }
 
 // One context for every handler run of a batch pass.
-let makeHandlerContext = (params: batchParams): Internal.handlerContext => {
+let makeHandlerContext = (params: params): Internal.handlerContext => {
   let context = Utils.StrictObject.make(
     Utils.StrictObject.makePrototype(prop =>
       JsError.throwWithMessage(
@@ -256,7 +261,7 @@ let makeHandlerContext = (params: batchParams): Internal.handlerContext => {
     ->ignore
 
   define("log", (run: RunScope.run) =>
-    (params.isPreload ? Logger.silentContextLog : run.loggerFor(run.item)->Logger.asContextLog)->(
+    (run->isPreload ? Logger.silentContextLog : run.loggerFor(run.item)->Logger.asContextLog)->(
       Utils.magic: Envio.logger => unknown
     )
   )
@@ -267,7 +272,7 @@ let makeHandlerContext = (params: batchParams): Internal.handlerContext => {
       ) => unknown
     )
   )
-  define("isPreload", _ => params.isPreload->(Utils.magic: bool => unknown))
+  define("isPreload", run => run->isPreload->(Utils.magic: bool => unknown))
   define("chain", run =>
     params.chains
     ->ChainId.Dict.dangerouslyGetNonOption(run.item->Internal.getItemChainId)

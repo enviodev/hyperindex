@@ -131,9 +131,9 @@ type t = {
   // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
   mutable processingStalledOnFetchSince: option<Performance.timeRef>,
   mutable processingStalledOnStorageWriteSeconds: float,
-  handlerStats: dict<handlerStat>,
-  // Per-chain event configs share a contract/event series, so this only
-  // spares a run from building the series key; handlerStats stays the source.
+  // One stat per contract/event metric series. Per-chain event configs share a
+  // series, so the by-config map only spares a run from building the key.
+  handlerStatBySeries: dict<handlerStat>,
   handlerStatByEventConfig: Utils.Map.t<Internal.eventConfig, handlerStat>,
   storageLoadStats: dict<storageLoadStat>,
   storageWriteStats: dict<storageWriteStat>,
@@ -213,7 +213,7 @@ let make = (
     processingStalledOnFetchSeconds: 0.,
     processingStalledOnFetchSince: None,
     processingStalledOnStorageWriteSeconds: 0.,
-    handlerStats: Dict.make(),
+    handlerStatBySeries: Dict.make(),
     handlerStatByEventConfig: Utils.Map.make(),
     storageLoadStats: Dict.make(),
     storageWriteStats: Dict.make(),
@@ -654,7 +654,7 @@ let toMetrics = (state: t): Metrics.t => {
     rollbackCount: state.rollbackCount,
     rollbackEventsCount: state.rollbackEventsCount,
     chains: chainStates->Dict.valuesToArray->Array.map(ChainState.toMetrics),
-    handlers: state.handlerStats
+    handlers: state.handlerStatBySeries
     ->Dict.valuesToArray
     ->Array.map(s => {
       Metrics.contract: s.contract,
@@ -701,7 +701,7 @@ let recordBatchDurations = (state: t, ~loadDuration, ~handlerDuration) => {
 let getHandlerStat = (state: t, ~contract, ~event) => {
   // Length-prefixed so names containing the separator can't collide.
   let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
-  switch state.handlerStats->Utils.Dict.dangerouslyGetNonOption(key) {
+  switch state.handlerStatBySeries->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(stat) => stat
   | None =>
     let stat: handlerStat = {
@@ -715,7 +715,7 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
       preloadPendingCount: 0,
       preloadPendingTimerRef: %raw(`null`),
     }
-    state.handlerStats->Dict.set(key, stat)
+    state.handlerStatBySeries->Dict.set(key, stat)
     stat
   }
 }
