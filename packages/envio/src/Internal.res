@@ -598,11 +598,9 @@ type svmInstructionEventConfig = {
 // Per-(event, chain) registration produced when user handler code registers an
 // event (`onEvent`) or a dynamic contract registers. References its definition
 // by value as `.eventConfig` and adds the handler binding plus the
-// registration/`where`-derived fetch state. Not `private`: Fuel registrations
-// add no ecosystem-specific fields (so the alias must stay directly
-// constructable), and the ecosystem→base casts in sources are sound by
-// ecosystem homogeneity — an EVM chain only ever holds
-// `evmOnEventRegistration`s.
+// registration/`where`-derived fetch state. Not `private`: the
+// ecosystem→base casts in sources are sound by ecosystem homogeneity — an EVM
+// chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
   // Chain-scoped sequential index — the registration's position in the
   // chain's onEventRegistrations array, assigned when registration finishes
@@ -636,9 +634,12 @@ type evmOnEventRegistration = {
   resolvedWhere: resolvedWhere,
 }
 
-// Fuel registrations add no ecosystem-specific fetch state, so it's a bare
-// alias of the base registration.
-type fuelOnEventRegistration = onEventRegistration
+type fuelOnEventRegistration = {
+  ...onEventRegistration,
+  // The `where` is `false` for this chain. Kept until
+  // registration finishes so the event still counts as registered, then dropped.
+  skippedByWhere: bool,
+}
 
 type svmOnEventRegistration = {
   ...onEventRegistration,

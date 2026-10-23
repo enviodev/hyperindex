@@ -91,6 +91,21 @@ let makeAddressesProbe: (
   return new Proxy([], {get: trap});
 }`)
 
+// A callback `where` is called once per chain at registration time; a static
+// value applies to every chain as is.
+let evaluateWhere = (
+  where: JSON.t,
+  ~contractName,
+  ~chainId,
+  ~getAddresses=() => makeAddressesProbe(~contractName),
+) =>
+  if typeof(where) === #function {
+    let fn = where->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
+    fn({chain: makeChainArg(~contractName, ~chainId, ~getAddresses)->Obj.magic})
+  } else {
+    where
+  }
+
 // An indexed event param, in declaration order: its name and how a `where`
 // value for it encodes to topic values.
 type indexedParam = {name: string, toTopics: JSON.t => array<EvmTypes.Hex.t>}
@@ -232,16 +247,10 @@ let parseWhereOrThrow = (
   let (topicFilters, startBlock) = switch where {
   | None => ([default], None)
   | Some(where) =>
-    let whereValue = if typeof(where) === #function {
-      let fn = where->(Utils.magic: JSON.t => Internal.onEventWhereArgs<_> => JSON.t)
-      let chain = makeChainArg(~contractName, ~chainId, ~getAddresses=() => {
-        readAddresses := true
-        addressesSentinel
-      })
-      fn({chain: chain->Obj.magic})
-    } else {
-      where
-    }
+    let whereValue = where->evaluateWhere(~contractName, ~chainId, ~getAddresses=() => {
+      readAddresses := true
+      addressesSentinel
+    })
     (whereValue->parse, extractStartBlock(~onEventBlockFilterSchema, ~contractName, whereValue))
   }
 
