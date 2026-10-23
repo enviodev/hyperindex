@@ -24,27 +24,6 @@ let topicAt = (eventConfig: Internal.evmEventConfig, ~params: dict<unknown>, pos
     )
   }
 
-let topicFilterMatches = (
-  filter: Internal.topicFilter,
-  ~topicAt,
-  ~isContractAddressAt: (int, ~contractName: string) => bool,
-) => {
-  let matchesAt = (topicConstraint: Internal.topicConstraint, position) =>
-    switch topicConstraint {
-    | Any => true
-    | ContractAddresses({contractName}) => isContractAddressAt(position, ~contractName)
-    | Values(values) =>
-      switch topicAt(position) {
-      | Some(topic) => values->Array.includes(topic)
-      | None => false
-      }
-    }
-  filter.topic0->matchesAt(0) &&
-  filter.topic1->matchesAt(1) &&
-  filter.topic2->matchesAt(2) &&
-  filter.topic3->matchesAt(3)
-}
-
 let make = (
   ~items: array<Internal.item>,
   ~endBlock: int,
@@ -133,20 +112,29 @@ let make = (
           let eventConfig =
             registration.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
           let params = eventItem.payload->Internal.getPayloadParams
-          let isContractAddressAt = (position, ~contractName) =>
-            switch eventConfig->indexedParamAt(position) {
-            | Some(param) =>
-              params
-              ->Dict.getUnsafe(param.name)
-              ->(Utils.magic: unknown => Address.t)
-              ->isAddressAllowed(~contractName, ~blockNumber=eventItem.blockNumber)
-            | None => false
+          let matchesAt = (topicConstraint: Internal.topicConstraint, position) =>
+            switch topicConstraint {
+            | Any => true
+            | ContractAddresses({contractName}) =>
+              switch eventConfig->indexedParamAt(position) {
+              | Some(param) =>
+                params
+                ->Dict.getUnsafe(param.name)
+                ->(Utils.magic: unknown => Address.t)
+                ->isAddressAllowed(~contractName, ~blockNumber=eventItem.blockNumber)
+              | None => false
+              }
+            | Values(values) =>
+              switch eventConfig->topicAt(~params, position) {
+              | Some(topic) => values->Array.includes(topic)
+              | None => false
+              }
             }
           registration.resolvedWhere.topicFilters->Array.some(filter =>
-            filter->topicFilterMatches(
-              ~topicAt=topicAt(eventConfig, ~params, ...),
-              ~isContractAddressAt,
-            )
+            filter.topic0->matchesAt(0) &&
+            filter.topic1->matchesAt(1) &&
+            filter.topic2->matchesAt(2) &&
+            filter.topic3->matchesAt(3)
           )
         | Fuel | Svm => true
         }

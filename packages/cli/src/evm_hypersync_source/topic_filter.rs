@@ -20,7 +20,7 @@ pub struct TopicFilterInput {
     pub topic3: Option<Vec<String>>,
 }
 
-pub(crate) enum TopicConstraint {
+enum TopicConstraint {
     Any,
     /// Never empty: an empty value list crosses the boundary as `Any`.
     Values(Vec<[u8; 32]>),

@@ -609,7 +609,7 @@ mod tests {
     /// `Note(bytes4 indexed sig, address indexed guy, uint256 wad) anonymous`,
     /// registered for the logs whose `sig` is `sig`.
     fn anonymous_note_reg(index: i64, sig: &str) -> OnEventRegistrationInput {
-        let mut reg = value_reg(index, "C", true, VALID_SIGHASH);
+        let mut reg = value_reg(index, "C", true, sig);
         reg.sighash = None;
         reg.topic_count = 2;
         reg.params = vec![
@@ -617,12 +617,6 @@ mod tests {
             pm("guy", "address", true),
             pm("wad", "uint256", false),
         ];
-        reg.topic_filters = vec![TopicFilterInput {
-            topic0: Some(vec![sig.to_string()]),
-            topic1: Some(vec![]),
-            topic2: Some(vec![]),
-            topic3: Some(vec![]),
-        }];
         reg
     }
 

@@ -141,13 +141,6 @@ let parseWhereOrThrow = (
     topic3: paramsFilter->constraintAt(3),
   }
   let default = filterOf(Dict.make())
-  let filtersByContractAddresses = (filter: Internal.topicFilter) =>
-    [filter.topic0, filter.topic1, filter.topic2, filter.topic3]->Array.some(topicConstraint =>
-      switch topicConstraint {
-      | ContractAddresses(_) => true
-      | Any | Values(_) => false
-      }
-    )
 
   // Build a single topic filter from one indexed-param record (the inside of
   // `params`). Validates that the keys are actual indexed parameters of the
@@ -249,13 +242,21 @@ let parseWhereOrThrow = (
     } else {
       where
     }
-    let topicFilters = whereValue->parse
-    if readAddresses.contents && !(topicFilters->Array.some(filtersByContractAddresses)) {
-      JsError.throwWithMessage(
-        `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
-      )
-    }
-    (topicFilters, extractStartBlock(~onEventBlockFilterSchema, ~contractName, whereValue))
+    (whereValue->parse, extractStartBlock(~onEventBlockFilterSchema, ~contractName, whereValue))
+  }
+
+  let filterByAddresses = topicFilters->Array.some(filter =>
+    [filter.topic0, filter.topic1, filter.topic2, filter.topic3]->Array.some(topicConstraint =>
+      switch topicConstraint {
+      | ContractAddresses(_) => true
+      | Any | Values(_) => false
+      }
+    )
+  )
+  if readAddresses.contents && !filterByAddresses {
+    JsError.throwWithMessage(
+      `Invalid where configuration for ${contractName}. The callback reads \`chain.${contractName}.addresses\` but doesn't use it as an indexed-param filter value. Use it directly, e.g. { params: { to: chain.${contractName}.addresses } }.`,
+    )
   }
 
   // Unlike a signature, an anonymous event's topic0 can't be left open: the
@@ -281,6 +282,6 @@ let parseWhereOrThrow = (
       topicFilters,
       startBlock,
     },
-    filterByAddresses: topicFilters->Array.some(filtersByContractAddresses),
+    filterByAddresses,
   }
 }
