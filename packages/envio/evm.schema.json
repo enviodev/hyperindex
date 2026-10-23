@@ -137,6 +137,13 @@
           "type": "null"
         }
       ]
+    },
+    "strict_hex_type": {
+      "description": "If true, the `Hex` type of bytes params, block and transaction hashes and `Bytes` fields is `0x${string}` instead of `string` (default: false)",
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "additionalProperties": false,

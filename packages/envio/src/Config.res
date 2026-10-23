@@ -1232,33 +1232,6 @@ let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
   | Ecosystem.Fuel | Ecosystem.Svm => address
   }
 
-// Look up an event config by (contract, event) name. When `chainId` is given,
-// returns that chain's per-chain event config (matters for where-callback
-// probe detection, which runs with the chain's real id). Without `chainId`,
-// falls back to the first chain that declares this event.
-let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<ChainId.t>=?) => {
-  let chains = switch chainId {
-  | Some(chainId) =>
-    switch config.chainMap->ChainMap.get(chainId) {
-    | chainConfig => [chainConfig]
-    | exception _ =>
-      JsError.throwWithMessage(
-        `Chain ${chainId->ChainId.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
-      )
-    }
-  | None => config.chainMap->ChainMap.values
-  }
-  chains->Array.reduce(None, (acc, chain) => {
-    switch acc {
-    | Some(_) => acc
-    | None =>
-      chain.contracts
-      ->Array.find(c => c.name == contractName)
-      ->Option.flatMap(contract => contract.events->Array.find(e => e.name == eventName))
-    }
-  })
-}
-
 // A CLI command payload already contains the resolved JSON; priming lets
 // downstream callers skip the NAPI `getConfigJson` round-trip. Calling
 // `prime` again invalidates the memo.

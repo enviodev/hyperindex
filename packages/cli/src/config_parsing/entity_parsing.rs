@@ -2454,7 +2454,7 @@ impl GqlScalar {
             GqlScalar::BigDecimal(_) => TypeIdent::BigDecimal,
             GqlScalar::Float => TypeIdent::Float,
             GqlScalar::Bytes => match schema.bytes_type {
-                BytesType::Hex => TypeIdent::String,
+                BytesType::Hex => TypeIdent::Hex,
                 BytesType::Uint8Array => TypeIdent::Bytes,
             },
             GqlScalar::Json => TypeIdent::Json,

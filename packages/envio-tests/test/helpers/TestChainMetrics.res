@@ -33,8 +33,6 @@ let registrationsByChainId: HandlerRegister.registrationsByChainId = {
   d
 }
 
-let caughtUpAt = Date.fromTime(1700000000000.)
-
 let makeChainState = (
   ~endBlock=None,
   ~progressBlockNumber,

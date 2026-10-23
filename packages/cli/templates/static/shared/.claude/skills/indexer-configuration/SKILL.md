@@ -3,7 +3,7 @@ name: indexer-configuration
 description: >-
   Use when writing or editing config.yaml. Chain/contract structure, addresses,
   start_block, event selection, field_selection, custom event names, env vars,
-  address_format, bytes_type, schema/output paths, YAML validation, and
+  address_format, bytes_type, strict_hex_type, schema/output paths, YAML validation, and
   deprecated options.
 metadata:
   managed-by: envio
@@ -19,6 +19,7 @@ description: Optional description
 schema: schema.graphql         # custom path (default: schema.graphql)
 address_format: checksum       # checksum (default) | lowercase
 bytes_type: hex                # hex (default) | uint8array — see bytes_type
+strict_hex_type: true          # false (default) | true — see strict_hex_type
 
 contracts:
   - name: MyContract
@@ -113,6 +114,20 @@ bytes_type: uint8array
 
 Available on EVM and Fuel. SVM always uses `Uint8Array` and has no option.
 Changing it changes the column types, so resync from scratch.
+
+## strict_hex_type
+
+Makes the `Hex` type from `envio` mean `` `0x${string}` `` instead of `string`,
+so a plain `string` is rejected where a hex value is expected. `Hex` types bytes
+params (including `where` filters and test `simulate` params), block and
+transaction hashes, and `Bytes` fields. `StrictHex` is always `` `0x${string}` ``.
+
+```yaml
+strict_hex_type: true
+```
+
+Off by default; `envio init` turns it on for new projects. Available on EVM and
+Fuel. Types only, so no resync is needed.
 
 ## Environment Variables
 
