@@ -27,21 +27,31 @@ let computeChainsState = (chainStates: dict<ChainState.t>): Internal.chains => {
 exception ProcessingError({message: string, exn: exn, item: Internal.item})
 
 // What a pass shares across its handler runs: one context serves them all, and
-// each run is told apart by the frame it's entered with.
+// each run is told apart by the RunScope it's entered with.
 type pass = {
-  context: Internal.handlerContext,
-  isPreload: bool,
+  kind: RunScope.kind,
+  invokeHandler: Internal.item => promise<unit>,
   loggerFor: Internal.item => Logger.t,
-  ecosystem: Ecosystem.t,
   indexerState: IndexerState.t,
 }
 
 let makePass = (params: UserContext.batchParams) => {
-  context: UserContext.makeHandlerContext(params),
-  isPreload: params.isPreload,
-  loggerFor: item => params.indexerState->IndexerState.loggerForItem(item),
-  ecosystem: params.config.ecosystem,
-  indexerState: params.indexerState,
+  let context = UserContext.makeHandlerContext(params)
+  let ecosystem = params.config.ecosystem
+  {
+    kind: params.isPreload ? Preload : Handler,
+    invokeHandler: item =>
+      switch item {
+      | Block({onBlockRegistration: {handler}, blockNumber}) =>
+        handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~ecosystem, ~context))
+      | Event(_) =>
+        let handler =
+          (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
+        handler({event: item->Ecosystem.getItemEvent(~ecosystem), context})
+      },
+    loggerFor: item => params.indexerState->IndexerState.loggerForItem(item),
+    indexerState: params.indexerState,
+  }
 }
 
 // An event registered only for its contract register has no handler to run.
@@ -62,41 +72,21 @@ let eventStat = (pass: pass, item: Internal.item) =>
   | Block(_) => None
   }
 
-let invokeHandler = (pass: pass, item: Internal.item) =>
-  switch item {
-  | Block({onBlockRegistration: {handler}, blockNumber}) =>
-    handler(
-      Ecosystem.makeOnBlockArgs(~blockNumber, ~ecosystem=pass.ecosystem, ~context=pass.context),
-    )
-  | Event(_) =>
-    let handler = (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
-    handler({event: item->Ecosystem.getItemEvent(~ecosystem=pass.ecosystem), context: pass.context})
-  }
-
-// Runs an item's handler in a frame of its own, and marks the frame resolved
-// once it settles either way. A handler that throws before its first await
-// rejects like one that throws after.
-let runInFrame = async (pass: pass, ~item, ~checkpointId) => {
-  let frame: ConsoleScope.handlerFrame = {
+let runOf = (pass: pass, ~item, ~checkpointId) =>
+  RunScope.run(
+    ~kind=pass.kind,
+    ~item,
+    ~checkpointId,
+    ~loggerFor=pass.loggerFor,
+    pass.invokeHandler,
     item,
-    checkpointId,
-    isPreload: pass.isPreload,
-    isResolved: false,
-    loggerFor: pass.loggerFor,
-  }
-  switch await ConsoleScope.run2(Handler(frame), invokeHandler, pass, item) {
-  | exception exn =>
-    frame.isResolved = true
-    throw(exn)
-  | () => frame.isResolved = true
-  }
-}
+  )
 
 let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~pass) =>
   if item->hasHandler {
     //Include the load in time before handler
     let timeBeforeHandler = Performance.now()
-    switch await pass->runInFrame(~item, ~checkpointId) {
+    switch await pass->runOf(~item, ~checkpointId) {
     | exception exn =>
       throw(
         ProcessingError({
@@ -139,7 +129,7 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~pass) => {
     for idx in 0 to checkpointItemsCount - 1 {
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       if item->hasHandler {
-        let run = pass->runInFrame(~item, ~checkpointId)
+        let run = pass->runOf(~item, ~checkpointId)
         promises->Array.push(
           switch pass->eventStat(item) {
           | Some(stat) =>

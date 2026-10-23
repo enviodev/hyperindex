@@ -800,6 +800,25 @@ module Map = {
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
 }
 
+// An object that names the property it doesn't have, for user-facing APIs
+// where `undefined` would only surface later as a confusing error. The check
+// lives on the prototype, so reading a property the object has costs nothing.
+module StrictObject = {
+  type prototype
+
+  let makePrototype: (string => unit) => prototype = %raw(`function (onUnknown) {
+    return new Proxy(Object.create(null), {
+      get(_target, prop) {
+        if (typeof prop === "string") onUnknown(prop);
+        return undefined;
+      },
+    });
+  }`)
+
+  @val @scope("Object") external make: prototype => 'a = "create"
+  @val @scope("Object") external assign: ('a, 'a) => 'a = "assign"
+}
+
 module Proxy = {
   type propertyDescriptor = {
     value: unknown,

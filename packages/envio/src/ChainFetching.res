@@ -35,9 +35,15 @@ let runContractRegistersOrThrow = async (
     })
   }
 
-  let promises = []
-  for idx in 0 to itemsWithContractRegister->Array.length - 1 {
-    let item = itemsWithContractRegister->Array.getUnsafe(idx)
+  let context = ContractRegisterContext.make(~config, ~onRegister)
+  let loggerFor = item =>
+    item->Ecosystem.loggerForItem(
+      ~ecosystem=config.ecosystem,
+      ~logger=chainState->ChainState.logger,
+    )
+
+  let _ = await itemsWithContractRegister
+  ->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem
     let contractRegister = switch eventItem.onEventRegistration {
     | {contractRegister: Some(contractRegister)} => contractRegister
@@ -45,55 +51,20 @@ let runContractRegistersOrThrow = async (
       // Unexpected case, since we should pass only events with contract register to this function
       JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
     }
-
-    let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
-
-    let params: ContractRegisterContext.contractRegisterParams = {
-      item,
-      onRegister,
-      config,
-      logger: chainState->ChainState.logger,
-      isResolved: false,
-    }
-    // Catch sync and async errors
-    try {
-      let result = ConsoleScope.run(
-        Logger(() => params->ContractRegisterContext.loggerForItem),
-        () => contractRegister(ContractRegisterContext.getContractRegisterArgs(params)),
-      )
-
-      // Even though `contractRegister` always returns a promise,
-      // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Utils.Promise.isCatchable {
-        promises->Array.push(
-          result
-          ->Promise.thenResolve(r => {
-            params.isResolved = true
-            r
-          })
-          ->Promise.catch(exn => {
-            params.isResolved = true
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg=errorMessage,
-              ~logger=params->ContractRegisterContext.loggerForItem,
-            )
-          }),
-        )
-      } else {
-        params.isResolved = true
-      }
-    } catch {
-    | exn =>
+    RunScope.run(
+      ~kind=ContractRegister,
+      ~item,
+      ~loggerFor,
+      contractRegister,
+      {event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem), context},
+    )->Promise.catch(exn =>
       exn->ErrorHandling.mkLogAndRaise(
-        ~msg=errorMessage,
-        ~logger=params->ContractRegisterContext.loggerForItem,
+        ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
+        ~logger=loggerFor(item),
       )
-    }
-  }
-
-  if promises->Utils.Array.notEmpty {
-    let _ = await Promise.all(promises)
-  }
+    )
+  })
+  ->Promise.all
 
   registrations
 }

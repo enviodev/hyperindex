@@ -1,6 +1,6 @@
 // What every handler run of one batch pass shares. The run itself — its item
-// and checkpoint — is read from the ConsoleScope frame it was entered with, so
-// one context object serves every run of the pass, concurrent ones included.
+// and checkpoint — is read from the RunScope it was entered with, so one
+// context object serves every run of the pass, concurrent ones included.
 type batchParams = {
   indexerState: IndexerState.t,
   loadManager: LoadManager.t,
@@ -16,7 +16,7 @@ Utils.Object.defineProperty(
   "log",
   {
     // Wrap with toMethod so `this` binds to the EffectContext instance.
-    get: Utils.toMethod(() => ConsoleScope.effectLogger(%raw(`this`))()->Logger.asContextLog),
+    get: Utils.toMethod(() => RunScope.effectLogger(%raw(`this`))()->Logger.asContextLog),
   },
 )
 %%raw(`
@@ -48,8 +48,8 @@ external makeEffectContext: (
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
 ) => Internal.effectContext = "EffectContext"
 
-let initEffect = (params: batchParams, ~frame: ConsoleScope.handlerFrame) => {
-  let handlerChainId = frame.item->Internal.getItemChainId
+let initEffect = (params: batchParams, ~run: RunScope.run, ~checkpointId) => {
+  let handlerChainId = run.item->Internal.getItemChainId
   // An effect that didn't state a scope follows the config: cross-chain by
   // default, per-chain under `disable_default_cross_chain`.
   let isCrossChain = (effect: Internal.effect) =>
@@ -85,10 +85,10 @@ let initEffect = (params: batchParams, ~frame: ConsoleScope.handlerFrame) => {
         context: effectContext,
         cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
         chainId: handlerChainId,
-        checkpointId: frame.checkpointId,
+        checkpointId,
       }
-      effectContext->ConsoleScope.setEffectLogger(() =>
-        frame.loggerFor(frame.item)->Logger.withFields({"effect": effect.name})
+      effectContext->RunScope.setEffectLogger(() =>
+        run.loggerFor(run.item)->Logger.withFields({"effect": effect.name})
       )
       LoadLayer.loadEffect(
         ~loadManager=params.loadManager,
@@ -104,19 +104,12 @@ let initEffect = (params: batchParams, ~frame: ConsoleScope.handlerFrame) => {
   makeCaller(~caller=None)
 }
 
-// The run a context call belongs to. Work a handler starts without awaiting
-// keeps its run's frame, so it is caught here once the run has resolved. A
-// preload run's calls stay harmless after it resolves: its writes are no-ops.
-let currentFrame = (~prop) =>
-  switch ConsoleScope.current()->Nullable.toOption {
-  | Some(Handler(frame)) =>
-    if frame.isResolved && !frame.isPreload {
-      Utils.Error.make(
-        `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=frame.loggerFor(frame.item))
-    }
-    frame
-  | Some(Logger(_)) | None =>
+// Only a handler run has a checkpoint to write under. A contract register that
+// reaches a handler context it kept from elsewhere has none.
+let checkpointIdOf = (run: RunScope.run, ~prop) =>
+  switch run.checkpointId {
+  | Some(checkpointId) => checkpointId
+  | None =>
     JsError.throwWithMessage(
       `Impossible to access context.${prop} outside of the handler it was passed to.`,
     )
@@ -133,23 +126,6 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
-type prototype
-
-// A prototype that names the property a context doesn't have. Only reached for
-// properties the context itself lacks, so the ones it has cost nothing extra.
-let makeStrictPrototype: (string => unit) => prototype = %raw(`function (onUnknown) {
-  return new Proxy(Object.create(null), {
-    get(_target, prop) {
-      if (typeof prop === "string") onUnknown(prop);
-      return undefined;
-    },
-  });
-}`)
-
-@val @scope("Object") external createWithPrototype: prototype => 'a = "create"
-@val @scope("Object")
-external assignEntityContext: ('entityContext, 'entityContext) => 'entityContext = "assign"
-
 type entityContext = {
   get: string => promise<option<Internal.entity>>,
   getWhere: dict<dict<unknown>> => promise<array<Internal.entity>>,
@@ -164,15 +140,15 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
   // The handler context is always chain-scoped, so a per-chain entity resolves
   // to the chain the handler runs on and a cross-chain one to the shared
   // partition.
-  let scopeOf = (frame: ConsoleScope.handlerFrame) =>
-    entityConfig->InMemoryStore.entityScope(~chainId=frame.item->Internal.getItemChainId)
+  let scopeOf = (run: RunScope.run) =>
+    entityConfig->InMemoryStore.entityScope(~chainId=run.item->Internal.getItemChainId)
 
   let loadById = entityId =>
     LoadLayer.loadById(
       ~loadManager=params.loadManager,
       ~persistence=params.persistence,
       ~entityConfig,
-      ~scope=currentFrame(~prop)->scopeOf,
+      ~scope=RunScope.currentRunOrThrow(~prop)->scopeOf,
       ~indexerState=params.indexerState,
       ~shouldGroup=params.isPreload,
       ~entityId,
@@ -189,22 +165,22 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
   let set = params.isPreload
     ? noopSet
     : (entity: Internal.entity) => {
-        let frame = currentFrame(~prop)
+        let run = RunScope.currentRunOrThrow(~prop)
         write(
           Set({
             entityId: entity.id->EntityId.unsafeOfString,
-            checkpointId: frame.checkpointId,
+            checkpointId: run->checkpointIdOf(~prop),
             entity,
           }),
-          ~scope=frame->scopeOf,
+          ~scope=run->scopeOf,
         )
       }
 
   let deleteUnsafe = params.isPreload
     ? noopDeleteUnsafe
     : entityId => {
-        let frame = currentFrame(~prop)
-        write(Delete({entityId, checkpointId: frame.checkpointId}), ~scope=frame->scopeOf)
+        let run = RunScope.currentRunOrThrow(~prop)
+        write(Delete({entityId, checkpointId: run->checkpointIdOf(~prop)}), ~scope=run->scopeOf)
       }
 
   let entityContext: entityContext = if !entityConfig.storage.postgres {
@@ -224,7 +200,7 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
           ~loadManager=params.loadManager,
           ~persistence=params.persistence,
           ~entityConfig,
-          ~scope=currentFrame(~prop)->scopeOf,
+          ~scope=RunScope.currentRunOrThrow(~prop)->scopeOf,
           ~indexerState=params.indexerState,
           ~shouldGroup=params.isPreload,
           ~filter,
@@ -255,18 +231,17 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
     }
   }
 
-  let strict: entityContext = createWithPrototype(
-    makeStrictPrototype(op =>
+  Utils.StrictObject.make(
+    Utils.StrictObject.makePrototype(op =>
       JsError.throwWithMessage(`Invalid context.${entityConfig.name}.${op} operation.`)
     ),
-  )
-  strict->assignEntityContext(entityContext)
+  )->Utils.StrictObject.assign(entityContext)
 }
 
 // One context for every handler run of a batch pass.
 let makeHandlerContext = (params: batchParams): Internal.handlerContext => {
-  let context = createWithPrototype(
-    makeStrictPrototype(prop =>
+  let context = Utils.StrictObject.make(
+    Utils.StrictObject.makePrototype(prop =>
       JsError.throwWithMessage(
         `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
       )
@@ -276,26 +251,26 @@ let makeHandlerContext = (params: batchParams): Internal.handlerContext => {
     context
     ->Utils.Object.defineProperty(
       name,
-      {enumerable: true, get: () => get(currentFrame(~prop=name))},
+      {enumerable: true, get: () => get(RunScope.currentRunOrThrow(~prop=name))},
     )
     ->ignore
 
-  define("log", (frame: ConsoleScope.handlerFrame) =>
-    (
-      params.isPreload ? Logger.silentContextLog : frame.loggerFor(frame.item)->Logger.asContextLog
-    )->(Utils.magic: Envio.logger => unknown)
+  define("log", (run: RunScope.run) =>
+    (params.isPreload ? Logger.silentContextLog : run.loggerFor(run.item)->Logger.asContextLog)->(
+      Utils.magic: Envio.logger => unknown
+    )
   )
-  define("effect", frame =>
-    initEffect(params, ~frame)->(
+  define("effect", run =>
+    initEffect(params, ~run, ~checkpointId=run->checkpointIdOf(~prop="effect"))->(
       Utils.magic: (
         (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
       ) => unknown
     )
   )
   define("isPreload", _ => params.isPreload->(Utils.magic: bool => unknown))
-  define("chain", frame =>
+  define("chain", run =>
     params.chains
-    ->ChainId.Dict.dangerouslyGetNonOption(frame.item->Internal.getItemChainId)
+    ->ChainId.Dict.dangerouslyGetNonOption(run.item->Internal.getItemChainId)
     ->(Utils.magic: option<Internal.chainInfo> => unknown)
   )
   params.config.userEntitiesByName->Utils.Dict.forEachWithKey((entityConfig, name) => {
