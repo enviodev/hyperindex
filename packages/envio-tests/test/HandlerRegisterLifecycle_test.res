@@ -30,7 +30,7 @@ chains:
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 `)
 
-HandlerRegister.startRegistration(~config)
+HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
 
 describe("HandlerRegister — onBlock validation at registration", () => {
   let noopBlockHandler = async (_: Internal.onBlockArgs) => ()

@@ -18,6 +18,8 @@ type registrationsByChainId = dict<chainRegistrations>
 // builds a fresh per-config output, never mutating the store.
 type activeRegistration = {
   config: Config.t,
+  // What registering itself has to say, e.g. an `onBlock` matching no chain.
+  logger: Logger.t,
   registrationsByChainId: dict<chainRegistrations>,
   mutable finished: bool,
 }
@@ -63,12 +65,13 @@ let withRegistration = (fn: activeRegistration => unit) => {
 // the registration and every later call reuses it. `config` must be the full
 // chain set — registrations resolve for all its chains here, and
 // `finishRegistration` later narrows to whatever config it's given.
-let startRegistration = (~config: Config.t) => {
+let startRegistration = (~config: Config.t, ~logger) => {
   switch getActiveRegistration() {
   | Some(_) => ()
   | None =>
     let r = {
       config,
+      logger,
       registrationsByChainId: Dict.make(),
       finished: false,
     }
@@ -88,8 +91,9 @@ let startRegistration = (~config: Config.t) => {
 // written for.
 type registration = activeRegistration
 
-let makeRegistration = (~config: Config.t): registration => {
+let makeRegistration = (~config: Config.t, ~logger): registration => {
   config,
+  logger,
   registrationsByChainId: Dict.make(),
   finished: false,
 }
@@ -608,9 +612,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             `${contractName} (${eventNames->Utils.Set.toArray->Array.joinUnsafe(", ")})`
           )
           ->Array.joinUnsafe(", ")
-        Logging.getLogger()->Logging.childInfo(
-          `Events without a handler, skipped for indexing: ${groups}`,
-        )
+        r.logger->Logger.info(`Events without a handler, skipped for indexing: ${groups}`)
       }
 
       registrationsByChainId
@@ -619,13 +621,6 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
     JsError.throwWithMessage(
       "The indexer has not started registering handlers, so can't finish it.",
     )
-  }
-}
-
-let isPendingRegistration = () => {
-  switch getActiveRegistration() {
-  | Some(r) => !r.finished
-  | None => false
   }
 }
 
@@ -711,7 +706,7 @@ let registerOnBlock = (
     let ecosystem = config.ecosystem
     let blockFieldMask = EventConfigBuilder.resolveOnBlockFieldMask(fields, ~name, ~ecosystem)
     let chainsDict = getChainsObject(config)
-    let logger = Logging.createChild(~params={"onBlock": name})
+    let logger = registration.logger->Logger.withFields({"onBlock": name})
 
     // `where` must be a function (unlike onEvent, which also accepts a static
     // value). A static value would have to be evaluated against every chain
@@ -810,7 +805,7 @@ let registerOnBlock = (
     // Includes the ecosystem-specific method name so SVM users see "onSlot"
     // and don't get confused looking for a "Block handler" they never wrote.
     if !matchedAny.contents {
-      logger->Logging.childWarn(
+      logger->Logger.warn(
         `\`indexer.${ecosystem.onBlockMethodName}\` matched 0 chains. Check the \`where\` predicate.`,
       )
     }

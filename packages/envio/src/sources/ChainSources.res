@@ -9,6 +9,7 @@ let make = (
   ~lowercaseAddresses: bool,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
+  ~logger: Logger.t,
 ): array<Source.t> => {
   let chainId = chainConfig.id
   switch chainConfig.sourceConfig {
@@ -37,6 +38,7 @@ let make = (
       ~addressStore,
       ~blockStore,
       ~transactionStore,
+      ~logger,
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
@@ -46,6 +48,7 @@ let make = (
         onEventRegistrations,
         onBlockRegistrations,
         addressStore,
+        logger,
       }),
     ]
   | Config.SvmSourceConfig({hypersync}) => [

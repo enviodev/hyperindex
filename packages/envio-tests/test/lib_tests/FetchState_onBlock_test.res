@@ -4,22 +4,8 @@ let chainId = 0->ChainId.fromInt
 
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
-let defaultQuery: FetchState.query = {
-  partitionId: "0",
-  fromBlock: 0,
-  toBlock: None,
-  isChunk: false,
-  itemsTarget: Some(0),
-  itemsEst: 0,
-  selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[]),
-  addresses: TestAddresses.setOf([]),
-}
 
 let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
-
-let getTimestamp = (~blockNumber) => blockNumber * 15
-
-let getBlockData = (~blockNumber): int => blockNumber
 
 let baseEventConfig = (EventRegistration.evmOnEventRegistration(
   ~id="0",
@@ -54,6 +40,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBloc
   ]
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   FetchState.make(
+    ~onNotice=ignore,
     ~onEventRegistrations,
     ~addressStore,
     ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),

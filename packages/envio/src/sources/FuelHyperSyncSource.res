@@ -9,6 +9,7 @@ type options = {
   onBlockRegistrations?: array<Internal.onBlockRegistration>,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
+  logger: Logger.t,
 }
 
 let make = (
@@ -19,6 +20,7 @@ let make = (
     onEventRegistrations,
     ?onBlockRegistrations,
     addressStore,
+    logger,
   }: options,
 ): t => {
   let name = "HyperFuel"
@@ -43,7 +45,7 @@ let make = (
   ) {
   | client => client
   | exception exn =>
-    exn->ErrorHandling.mkLogAndRaise(~msg="Failed to instantiate the HyperFuel client")
+    exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to instantiate the HyperFuel client")
   }
 
   let getItemsOrThrow = async (
@@ -130,15 +132,16 @@ let make = (
         let eventConfig = (
           onEventRegistrations->Array.getUnsafe(rejected.onEventRegistrationIndex)
         ).eventConfig
-        logger->Logging.childWarn({
-          "msg": `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
-          "chainId": chainId,
-          "blockNumber": rejected.blockHeight,
-          "logIndex": rejected.receiptIndex,
-          "txId": rejected.txId,
-          "dataLength": rejected.dataLength,
-          "skippedInPage": rejected.count,
-        })
+        logger->Logger.warn(
+          `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
+          ~params={
+            "blockNumber": rejected.blockHeight,
+            "logIndex": rejected.receiptIndex,
+            "txId": rejected.txId,
+            "dataLength": rejected.dataLength,
+            "skippedInPage": rejected.count,
+          },
+        )
       }
     })
 
@@ -235,7 +238,11 @@ let make = (
       let timerRef = Performance.now()
       let height = try await client->FuelHyperSyncClient.getHeight catch {
       | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(~warned=unauthorizedWarned, ~product="HyperFuel")
+        exn->HyperSync.rethrowLoggingUnauthorized(
+          ~logger,
+          ~warned=unauthorizedWarned,
+          ~product="HyperFuel",
+        )
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

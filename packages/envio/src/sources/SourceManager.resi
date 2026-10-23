@@ -10,6 +10,7 @@ let getSourceRole: (
 
 let make: (
   ~sources: array<Source.t>,
+  ~logger: Logger.t,
   ~isRealtime: bool,
   ~newBlockStallTimeout: int=?,
   ~newBlockStallTimeoutRealtime: int=?,
@@ -96,9 +97,6 @@ let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.
 let getRateLimitTimeMs: t => float
-
-// True if at least one request is currently waiting on a rate-limit reset.
-let isRateLimited: t => bool
 
 // Milliseconds remaining until the longest active rate-limit window resets,
 // or None if not currently waiting (or the window has already elapsed).

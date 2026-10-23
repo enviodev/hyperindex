@@ -77,6 +77,7 @@ let makeHyperSyncSource = (~url) => {
     enableQueryCaching: false,
     logLevel: #error,
     addressStore,
+    logger: Logger.makeInMemory(),
   })
   (source, addressStore->AddressStore.emptySet)
 }
@@ -96,7 +97,7 @@ let fetch = (source: Source.t, ~addressSet, ~onBlockRegistrations=named("headers
     ),
     ~itemsTarget=None,
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "onBlock source contract"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "onBlock source contract"}),
   )
 
 let header = number =>

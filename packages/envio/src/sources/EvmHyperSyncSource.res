@@ -14,6 +14,7 @@ type options = {
   logLevel: HyperSyncClient.logLevel,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
+  logger: Logger.t,
 }
 
 let make = (
@@ -29,6 +30,7 @@ let make = (
     enableQueryCaching,
     logLevel,
     addressStore,
+    logger,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -55,6 +57,7 @@ let make = (
   | client => client
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(
+      ~logger,
       ~msg="Failed to instantiate the hypersync client, please double check your ABI",
     )
   }
@@ -191,7 +194,11 @@ let make = (
         await client.getHeight()
       } catch {
       | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(~warned=unauthorizedWarned, ~product="HyperSync")
+        exn->HyperSync.rethrowLoggingUnauthorized(
+          ~logger,
+          ~warned=unauthorizedWarned,
+          ~product="HyperSync",
+        )
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

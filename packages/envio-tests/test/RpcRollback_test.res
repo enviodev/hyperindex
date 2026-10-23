@@ -160,13 +160,14 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
     },
     ~itemsTarget=None,
     ~retry=0,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 
 let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
   let chainConfig = TestConfig.make(~chainId=1337).chainMap->ChainMap.get(chainId)
   let store = addressStore()
   let fetchState = FetchState.make(
+    ~onNotice=ignore,
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
     ~addressStore=store,
     ~addressRows=TestAddresses.addressRows(
@@ -185,12 +186,16 @@ let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
     ~chainConfig,
     ~fetchState={...fetchState, FetchState.knownHeight},
     ~addressStore=store,
-    ~sourceManager=SourceManager.make(~sources=[source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(
+      ~logger=Logger.makeInMemory(),
+      ~sources=[source],
+      ~isRealtime=false,
+    ),
     ~shouldRollbackOnReorg=true,
     ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
     ~blockStore,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 

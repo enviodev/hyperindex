@@ -45,7 +45,21 @@ let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.even
   }
 }
 
-let make = (~logger: Pino.t): Ecosystem.t => {
+// A line's program and instruction names, and its program id, as JSON object
+// members: built once per instruction, since a logger is made per item.
+let instructionJson = Utils.WeakMap.memoize((eventConfig: Internal.eventConfig) => {
+  let programId =
+    (
+      eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+    ).programId->SvmTypes.Pubkey.toString
+  `"program":${JSON.stringify(
+      JSON.String(eventConfig.contractName),
+    )},"instruction":${JSON.stringify(JSON.String(eventConfig.name))},"programId":${JSON.stringify(
+      JSON.String(programId),
+    )}`
+})
+
+let make = (): Ecosystem.t => {
   name: Svm,
   blockTimestampName: "time",
   blockFields,
@@ -60,23 +74,10 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   // SVM has no event handlers, so there is no `onEvent` `where` value to
   // parse. The schema is a no-op object that always surfaces `None`.
   onEventBlockFilterSchema: S.object(_ => None),
-  logger,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
-  toEventLogger: eventItem => {
-    let eventConfig =
-      eventItem.onEventRegistration.eventConfig->(
-        Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
-      )
-    Logging.createChildFrom(
-      ~logger,
-      ~params={
-        "program": eventConfig.contractName,
-        "instruction": eventConfig.name,
-        "chainId": eventItem.chainId,
-        "slot": eventItem.blockNumber,
-        "programId": eventConfig.programId,
-      },
-    )
-  },
+  withEventFields: (eventItem, ~logger) =>
+    logger->Logger.withFieldsJson(
+      `{${eventItem.onEventRegistration.eventConfig->instructionJson},"slot":${eventItem.blockNumber->Int.toString}}`,
+    ),
   toRawEvent: _ => JsError.throwWithMessage("Raw events are not supported for SVM"),
 }

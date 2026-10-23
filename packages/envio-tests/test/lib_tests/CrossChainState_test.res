@@ -27,6 +27,7 @@ let makeChainState = (
   let addresses = []
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let base = FetchState.make(
+    ~onNotice=ignore,
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
     ~onEventRegistrations,
@@ -67,12 +68,16 @@ let makeChainState = (
     ~fetchState,
     ~onEventRegistrations,
     ~addressStore,
-    ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(
+      ~logger=Logger.makeInMemory(),
+      ~sources=[mockSource.source],
+      ~isRealtime=false,
+    ),
     ~maxReorgDepth=200,
     ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 
@@ -140,13 +145,17 @@ let makeFetchingChainState = (
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
     ~addressStore,
-    ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(
+      ~logger=Logger.makeInMemory(),
+      ~sources=[mockSource.source],
+      ~isRealtime=false,
+    ),
     ~maxReorgDepth=200,
     ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~chainDensity,
     ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 
@@ -547,11 +556,15 @@ describe("CrossChainState fetch control", () => {
       ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
       ~fetchState=fetchState1,
       ~addressStore=addressStore1,
-      ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(
+        ~logger=Logger.makeInMemory(),
+        ~sources=[mockSource1.source],
+        ~isRealtime=false,
+      ),
       ~maxReorgDepth=200,
       ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.getLogger(),
+      ~logger=Logger.makeInMemory(),
     )
 
     // Chain 2 (less behind, visited second): its density-bearing partition

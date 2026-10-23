@@ -111,7 +111,7 @@ let invoke = (
     },
     ~itemsTarget=Some(5_000),
     ~retry,
-    ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC source contract pin"}),
   )
 }
 
@@ -440,7 +440,7 @@ describe("RPC source public contract", () => {
         let (source, _) = makeSource(~url=mock.url, ~registration)
         let {result} = await source.getBlockHashes(
           ~blockNumbers=[100],
-          ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+          ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC source contract pin"}),
         )
         switch result {
         | Error(Source.SourceBehindHead({blockNumber})) => Some(blockNumber)
@@ -598,7 +598,7 @@ describe("RPC source public contract", () => {
                 },
                 ~itemsTarget=Some(5_000),
                 ~retry=0,
-                ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
+                ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC interval pin"}),
               ),
           )
         (await call(), await call())
@@ -732,7 +732,7 @@ describe("RPC source public contract", () => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
+              ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC skip-all pin"}),
             ),
         ) {
         | Ok(page) => page
@@ -863,7 +863,9 @@ describe("RPC source public contract", () => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
+              ~logger=Logger.makeInMemory()->Logger.withFields({
+                "test": "RPC contract scoping pin",
+              }),
             ),
         ) {
         | Ok(page) => page

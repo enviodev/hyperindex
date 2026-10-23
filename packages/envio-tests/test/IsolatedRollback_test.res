@@ -360,7 +360,7 @@ describe("Isolated multichain rollback", () => {
     "Rolls back a per-chain entity whose chain column is named chain_id",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
-    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+    ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
     async (~t, ~indexer, ~source) => {
       let source100 = source(100)
       let source1337 = source(1337)
