@@ -67,6 +67,15 @@ let makeSelection = (
   ),
 }
 
+// A query for blocks alone reads up to the height the chain knows when it is
+// open-ended: the source picks the blocks to read within that range and
+// answers for the gaps between them, which can't run past the head.
+let queryToBlock = (selection: selection, ~toBlock, ~knownHeight) =>
+  switch (toBlock, selection.onEventRegistrations) {
+  | (None, []) => Some(knownHeight)
+  | _ => toBlock
+  }
+
 // A partition's frontier never sits below the block before its selection can
 // first match: the blocks below hold nothing for it, so they count as fetched
 // the same way the blocks before an address's start block do. The chain's

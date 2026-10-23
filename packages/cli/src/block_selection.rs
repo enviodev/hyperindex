@@ -124,6 +124,32 @@ impl BlockRegistrations {
     }
 }
 
+/// Past this many blocks to the next one a handler runs on, a request for the
+/// one block costs less than reading every block up to it.
+const SPARSE_GAP: u64 = 1000;
+
+/// The blocks a query selecting no other table reads, inclusive.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct BlocksRead {
+    pub(crate) from_block: u64,
+    pub(crate) to_block: u64,
+    /// No handler runs past `to_block` up to here, so a page that read all of
+    /// `[from_block, to_block]` has fetched this far.
+    claimed_to_block: u64,
+}
+
+impl BlocksRead {
+    /// Where the fetched range ends (exclusive), for a page that read up to
+    /// `next_block` (exclusive).
+    pub(crate) fn fetched_until(&self, next_block: u64) -> u64 {
+        if next_block > self.to_block {
+            self.claimed_to_block + 1
+        } else {
+            next_block
+        }
+    }
+}
+
 /// The block handlers a query runs, all of which run on some block of its
 /// range.
 #[derive(Default)]
@@ -178,6 +204,37 @@ impl BlockSelection {
                     })
             })
             .collect()
+    }
+
+    /// What a query for blocks alone reads of `[from_block, to_block]`: from
+    /// the first block a handler runs on, and that block by itself when the
+    /// next is over `SPARSE_GAP` blocks further. `None` when no handler runs in
+    /// the range.
+    pub(crate) fn blocks_read(&self, from_block: u64, to_block: u64) -> Option<BlocksRead> {
+        let first = self.first_from(from_block).filter(|&b| b <= to_block)?;
+        let next = first
+            .checked_add(1)
+            .and_then(|b| self.first_from(b))
+            .filter(|&b| b <= to_block);
+        Some(match next {
+            Some(next) if next - first <= SPARSE_GAP => BlocksRead {
+                from_block: first,
+                to_block,
+                claimed_to_block: to_block,
+            },
+            _ => BlocksRead {
+                from_block: first,
+                to_block: first,
+                claimed_to_block: next.map_or(to_block, |next| next - 1),
+            },
+        })
+    }
+
+    fn first_from(&self, block_number: u64) -> Option<u64> {
+        self.registrations
+            .iter()
+            .filter_map(|r| r.first_from(block_number))
+            .min()
     }
 
     fn runs_any(&self, block_number: u64) -> bool {
@@ -270,6 +327,38 @@ mod tests {
             (selection.range_end(1, 100, 2), selection.range_end(1, 5, 2)),
             (6, 5)
         );
+    }
+
+    #[test]
+    fn reads_every_block_between_handler_blocks_a_short_gap_apart() {
+        let selection = select(&[input(0, 10, None, 1000)], 0, Some(5000));
+        let read = selection.blocks_read(0, 5000).unwrap();
+        assert_eq!(
+            (read.from_block, read.to_block, read.fetched_until(5001)),
+            (10, 5000, 5001)
+        );
+    }
+
+    #[test]
+    fn reads_a_handler_block_alone_when_the_next_is_far() {
+        let selection = select(&[input(0, 10, None, 5000)], 0, Some(20_000));
+        let read = selection.blocks_read(0, 20_000).unwrap();
+        let last = selection.blocks_read(15_000, 16_000).unwrap();
+        assert_eq!(
+            (
+                (read.from_block, read.to_block),
+                read.fetched_until(11),
+                read.fetched_until(10),
+                (last.from_block, last.to_block, last.fetched_until(15_011)),
+            ),
+            ((10, 10), 5010, 10, (15_010, 15_010, 16_001))
+        );
+    }
+
+    #[test]
+    fn reads_nothing_when_no_handler_runs_in_the_range() {
+        let selection = select(&[input(0, 10, None, 5000)], 0, None);
+        assert_eq!(selection.blocks_read(11, 5009), None);
     }
 
     #[test]

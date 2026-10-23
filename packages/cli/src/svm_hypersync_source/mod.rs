@@ -225,6 +225,12 @@ impl SvmHyperSyncClient {
             .block_registrations
             .select(&params.on_block_registration_indexes, from_slot, to_slot)
             .map_err(map_err)?;
+        let blocks_read = to_slot
+            .filter(|_| params.on_event_registration_indexes.is_empty())
+            .and_then(|to| block_selection.blocks_read(from_slot, to));
+        let (from_slot, to_slot) = blocks_read.as_ref().map_or((from_slot, to_slot), |read| {
+            (read.from_block, Some(read.to_block))
+        });
         let mut block_columns = built.block_columns.clone();
         for column in fields::block_mask_columns(block_selection.mask()).map_err(map_err)? {
             fields::push_unique(&mut block_columns, column);
@@ -343,9 +349,11 @@ impl SvmHyperSyncClient {
             take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
 
         let response = ItemsResponse {
-            next_slot: i64::try_from(resp.next_slot)
-                .context("next_slot overflow")
-                .map_err(map_err)?,
+            next_slot: i64::try_from(
+                blocks_read.map_or(resp.next_slot, |read| read.fetched_until(resp.next_slot)),
+            )
+            .context("next_slot overflow")
+            .map_err(map_err)?,
             blocks: block_headers,
             event_items: items,
             block_items,

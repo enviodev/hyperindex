@@ -214,6 +214,12 @@ impl EvmHyperSyncClient {
             .block_registrations
             .select(&params.on_block_registration_indexes, from_block, to_block)
             .map_err(map_err)?;
+        let blocks_read = to_block
+            .filter(|_| !selects_logs)
+            .and_then(|to| block_selection.blocks_read(from_block, to));
+        let (read_from, read_to) = blocks_read.as_ref().map_or((from_block, to_block), |read| {
+            (read.from_block, Some(read.to_block))
+        });
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
@@ -249,8 +255,8 @@ impl EvmHyperSyncClient {
         }
 
         let query = Query {
-            from_block: from_block as i64,
-            to_block: to_block.map(|b| b as i64 + 1),
+            from_block: read_from as i64,
+            to_block: read_to.map(|b| b as i64 + 1),
             logs: selects_logs.then(|| {
                 built
                     .log_selections
@@ -325,7 +331,7 @@ impl EvmHyperSyncClient {
                 &block_selection,
                 // The range the page covered: `include_all_blocks` leaves no
                 // gaps in it.
-                from_block..(next_block as u64),
+                read_from..(next_block as u64),
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -355,7 +361,9 @@ impl EvmHyperSyncClient {
                 .transpose()
                 .context("convert archive_height")
                 .map_err(map_err)?,
-            next_block,
+            next_block: blocks_read.map_or(next_block, |read| {
+                read.fetched_until(next_block as u64) as i64
+            }),
             event_items,
             block_items,
             response_blocks,

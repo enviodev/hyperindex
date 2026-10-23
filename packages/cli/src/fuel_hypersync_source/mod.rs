@@ -98,6 +98,12 @@ impl FuelHyperSyncClient {
             .block_registrations
             .select(&params.on_block_registration_indexes, from_block, to_block)
             .map_err(map_err)?;
+        let blocks_read = to_block
+            .filter(|_| params.on_event_registration_indexes.is_empty())
+            .and_then(|to| block_selection.blocks_read(from_block, to));
+        let (from_block, to_block) = blocks_read.as_ref().map_or((from_block, to_block), |read| {
+            (read.from_block, Some(read.to_block))
+        });
 
         let query = build_query(from_block, to_block, &built, !block_selection.is_empty())
             .context("build query")
@@ -159,7 +165,9 @@ impl FuelHyperSyncClient {
 
         let response = ItemsResponse {
             archive_height: raw.archive_height,
-            next_block: raw.next_block,
+            next_block: blocks_read.map_or(raw.next_block, |read| {
+                read.fetched_until(u64::try_from(raw.next_block).unwrap_or(0)) as i64
+            }),
             event_items: items,
             block_items,
             rejected_log_data,

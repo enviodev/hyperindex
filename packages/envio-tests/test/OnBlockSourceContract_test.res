@@ -43,6 +43,17 @@ indexer.onBlock(
 
 indexer.onBlock(
   {
+    name: "sparse",
+    where: () => ({ block: { number: { _gte: 10, _every: 5000 } } }),
+    fields: { block: ["miner"] },
+  },
+  async ({ block }) => {
+    block.miner;
+  },
+);
+
+indexer.onBlock(
+  {
     name: "early",
     where: () => ({ block: { number: { _gte: 0, _lte: 5 } } }),
     fields: { block: ["miner"] },
@@ -82,13 +93,19 @@ let makeHyperSyncSource = (~url) => {
   (source, addressStore->AddressStore.emptySet)
 }
 
-let fetch = (source: Source.t, ~addressSet, ~onBlockRegistrations=named("headers")) =>
+let fetch = (
+  source: Source.t,
+  ~addressSet,
+  ~onBlockRegistrations=named("headers"),
+  ~toBlock=Some(13),
+  ~knownHeight=100,
+) =>
   source.getItemsOrThrow(
     ~fromBlock=10,
-    ~toBlock=Some(13),
+    ~toBlock,
     ~addressSet,
     ~includeAllBlocks=false,
-    ~knownHeight=100,
+    ~knownHeight,
     ~partitionId="0",
     ~selection=FetchState.makeSelection(
       ~dependsOnAddresses=false,
@@ -247,6 +264,73 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
         "field_selection": {"block": ["hash", "number", "timestamp"]}
       }`),
     ])
+  })
+
+  // Every block between two a handler runs on would cost more to read than a
+  // request per handler block, so the page reads the one block and answers for
+  // the gap up to the next.
+  Async.it("reads a sparse handler's block alone and claims the gap after it", async t => {
+    let (queries, page) = await MockHyperSyncServer.withServer(
+      ~height=20_000,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({blocks: [header(10)]})
+        let page = await source->fetch(
+          ~addressSet,
+          ~onBlockRegistrations=named("sparse"),
+          ~toBlock=Some(20_000),
+          ~knownHeight=20_000,
+        )
+        (server->MockHyperSyncServer.takeQueries, page)
+      },
+    )
+
+    t.expect((
+      queries,
+      page.latestFetchedBlockNumber,
+      page.parsedQueueItems->Array.map(Internal.getItemBlockNumber),
+    )).toEqual((
+      [
+        JSON.parseOrThrow(`{
+        "from_block": 10,
+        "to_block": 11,
+        "include_all_blocks": true,
+        "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
+      }`),
+      ],
+      5009,
+      [10],
+    ))
+  })
+
+  // A query open to the head reads up to the height the chain knows, so the
+  // gap a page claims never runs past it.
+  Async.it("bounds an open-ended sparse page at the known height", async t => {
+    let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({blocks: [header(10)]})
+        let page = await source->fetch(
+          ~addressSet,
+          ~onBlockRegistrations=named("sparse"),
+          ~toBlock=None,
+        )
+        (server->MockHyperSyncServer.takeQueries, page.latestFetchedBlockNumber)
+      },
+    )
+
+    t.expect((queries, latestFetchedBlockNumber)).toEqual((
+      [
+        JSON.parseOrThrow(`{
+        "from_block": 10,
+        "to_block": 11,
+        "include_all_blocks": true,
+        "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
+      }`),
+      ],
+      100,
+    ))
   })
 
   Async.it("routes the blocks the handler runs on, with its fields", async t => {
