@@ -47,6 +47,13 @@ type native
 @send external nativeInMemoryLines: native => array<dict<JSON.t>> = "inMemoryLines"
 @send
 external nativeWriteInMemoryLinesToFile: (native, string) => unit = "writeInMemoryLinesToFile"
+@send external nativeWrite: (native, NodeJs.Buffer.t, int) => unit = "write"
+
+@val @scope("Buffer") external allocUnsafe: int => NodeJs.Buffer.t = "allocUnsafe"
+@get external bufferArrayBuffer: NodeJs.Buffer.t => ArrayBuffer.t = "buffer"
+@get external bufferByteOffset: NodeJs.Buffer.t => int = "byteOffset"
+@get external bufferLength: NodeJs.Buffer.t => int = "length"
+@send external subarray: (NodeJs.Buffer.t, int, int) => NodeJs.Buffer.t = "subarray"
 
 // Lines wait here and cross into Rust many at a time, already UTF-8: a call or
 // a string copy per line would cost more than the line. Every logger derived
@@ -54,58 +61,70 @@ external nativeWriteInMemoryLinesToFile: (native, string) => unit = "writeInMemo
 type output = {
   native: native,
   mutable bytes: NodeJs.Buffer.t,
-  mutable view: unknown,
+  mutable view: DataView.t,
   mutable offset: int,
   mutable lines: int,
   mutable isFlushScheduled: bool,
   mutable lastFlushTime: float,
 }
 
-let makeOutput: native => output = %raw(`function (native) {
-  var bytes = Buffer.allocUnsafe(1048576);
-  return {
-    native: native,
-    bytes: bytes,
-    view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+let bufferSize = 1048576
+
+let viewOf = bytes =>
+  DataView.fromBuffer(
+    bytes->bufferArrayBuffer,
+    ~byteOffset=bytes->bufferByteOffset,
+    ~length=bytes->bufferLength,
+  )
+
+let setBytes = (output, size) => {
+  let bytes = allocUnsafe(size)
+  output.bytes = bytes
+  output.view = viewOf(bytes)
+}
+
+let makeOutput = native => {
+  let bytes = allocUnsafe(bufferSize)
+  {
+    native,
+    bytes,
+    view: viewOf(bytes),
     offset: 0,
     lines: 0,
     isFlushScheduled: false,
-    lastFlushTime: 0,
-  };
-}`)
+    lastFlushTime: 0.,
+  }
+}
 
-let handOver: output => unit = %raw(`function (output) {
-  if (output.lines > 0) {
-    output.native.write(output.bytes.subarray(0, output.offset), output.lines);
-    output.offset = 0;
-    output.lines = 0;
+let handOver = output =>
+  if output.lines > 0 {
+    output.native->nativeWrite(output.bytes->subarray(0, output.offset), output.lines)
+    output.offset = 0
+    output.lines = 0
+
     // A line larger than the buffer grew it; the next batch needn't keep it.
-    if (output.bytes.length > 1048576) {
-      output.bytes = Buffer.allocUnsafe(1048576);
-      output.view = new DataView(output.bytes.buffer, output.bytes.byteOffset, output.bytes.byteLength);
+    if output.bytes->bufferLength > bufferSize {
+      output->setBytes(bufferSize)
     }
   }
-}`)
 
 // Writes one line into `output`, flushing first when it might not fit. A UTF-16
 // code unit is at most three UTF-8 bytes, which bounds a line before writing it.
 let appendLine: (
   output,
   ~handOver: output => unit,
+  ~setBytes: (output, int) => unit,
   ~level: int,
   ~time: float,
   ~message: string,
   ~boundFieldsJson: array<string>,
   ~paramsJson: Null.t<string>,
-) => unit = %raw(`function (output, handOver, level, time, message, bound, params) {
+) => unit = %raw(`function (output, handOver, setBytes, level, time, message, bound, params) {
   var need = 18 + 3 * (message.length + (params === null ? 0 : params.length));
   for (var i = 0; i < bound.length; i++) need += 4 + 3 * bound[i].length;
   if (output.offset + need > output.bytes.length) {
     handOver(output);
-    if (need > output.bytes.length) {
-      output.bytes = Buffer.allocUnsafe(need);
-      output.view = new DataView(output.bytes.buffer, output.bytes.byteOffset, output.bytes.byteLength);
-    }
+    if (need > output.bytes.length) setBytes(output, need);
   }
   var bytes = output.bytes, view = output.view, offset = output.offset;
   bytes[offset] = level;
@@ -206,8 +225,7 @@ let makeInMemory = () => Core.getAddon().logger->makeInMemoryNative->wrapNative
 // params of plain values skip it. Params come from anywhere, so a value that
 // refers to itself says so, and one JSON can't hold says so rather than losing
 // the line. Params repeat the same few keys, so their JSON is kept.
-let quotedKeys: unknown = %raw(`new Map()`)
-let paramsToJson: 'a => string = %raw(`function (value) {
+let unknownToJson: unknown => string = %raw(`(() => {
   var ancestors = [];
   function replacer(_key, value) {
     if (typeof value === "bigint") return value.toString();
@@ -219,6 +237,8 @@ let paramsToJson: 'a => string = %raw(`function (value) {
       var out = {type: value.name, message: value.message, stack: value.stack};
       for (var key of Object.keys(value)) out[key] = value[key];
       if (value.cause !== undefined) out.cause = value.cause;
+      // An AggregateError's own errors aren't enumerable.
+      if (Array.isArray(value.errors)) out.errors = value.errors;
       ancestors.push(out);
       return out;
     }
@@ -230,6 +250,7 @@ let paramsToJson: 'a => string = %raw(`function (value) {
   function quote(text) {
     return plain.test(text) ? '"' + text + '"' : JSON.stringify(text);
   }
+  var quotedKeys = new Map();
   function quoteKey(key) {
     var quoted = quotedKeys.get(key);
     if (quoted === undefined) {
@@ -238,6 +259,18 @@ let paramsToJson: 'a => string = %raw(`function (value) {
     }
     return quoted;
   }
+  // A toJSON or getter the replacer runs may log, so a nested call keeps its
+  // own ancestors.
+  function stringify(value) {
+    var outer = ancestors;
+    ancestors = [];
+    try {
+      return JSON.stringify(value, replacer);
+    } finally {
+      ancestors = outer;
+    }
+  }
+  return function (value) {
   try {
     if (value instanceof Error) value = {err: value};
     else if (
@@ -245,7 +278,7 @@ let paramsToJson: 'a => string = %raw(`function (value) {
       (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
     ) {
       // What JSON can't hold at all, such as a function, is no params.
-      var json = JSON.stringify(value, replacer);
+      var json = stringify(value);
       return json === undefined ? "{}" : json;
     }
     // Params are almost always one flat plain object, written here without the
@@ -261,7 +294,7 @@ let paramsToJson: 'a => string = %raw(`function (value) {
         case "boolean": fieldJson = field ? "true" : "false"; break;
         case "undefined": case "function": case "symbol": continue;
         default:
-          if (field !== null) return JSON.stringify(value, replacer);
+          if (field !== null) return stringify(value);
           fieldJson = "null";
       }
       json += (json.length === 1 ? "" : ",") + quoteKey(key) + ":" + fieldJson;
@@ -270,16 +303,16 @@ let paramsToJson: 'a => string = %raw(`function (value) {
   } catch (error) {
     return JSON.stringify({unserializable: String(error)});
   }
-}`)
+  };
+})()`)
+let paramsToJson = (value: 'a) => value->(Utils.magic: 'a => unknown)->unknownToJson
 
 let rec getBoundFieldsJson = (logger: t) => {
   if !logger.isBoundFieldsJsonReady {
     let own = switch logger.fields {
     | NoFields => "{}"
     | FieldsJson(json) => json
-    | Fields(fields) =>
-      let own = fields->paramsToJson
-      own->String.startsWith("{") ? own : `{"params":${own}}`
+    | Fields(fields) => fields->paramsToJson
     }
     let parent = switch logger.parent {
     | Some(parent) => parent->getBoundFieldsJson
@@ -321,6 +354,7 @@ let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
     let time = Date.now()
     output->appendLine(
       ~handOver,
+      ~setBytes,
       ~level=levelNumber(level),
       ~time,
       ~message,
@@ -337,6 +371,7 @@ let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
       output.isFlushScheduled = true
       NodeJs.setImmediate(() => {
         output.isFlushScheduled = false
+        output.lastFlushTime = Date.now()
         output->handOver
       })
     }
@@ -443,7 +478,13 @@ let routeConsoleTo: (
       },
     });
     const routed = new Console({stdout: stream, stderr: stream, colorMode: false});
-    for (const name of viaConsoleByLevel[level]) replace(name, routed[name].bind(routed));
+    // A line that would be dropped mustn't move a counter or a timer either,
+    // or the preload run would count every call twice.
+    for (const name of viaConsoleByLevel[level]) {
+      replace(name, (...args) => {
+        if (loggerFor(level) != null) routed[name](...args);
+      });
+    }
   }
   // Clearing the screen would wipe the display and the lines above it.
   replace("clear", () => {});

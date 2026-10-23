@@ -70,21 +70,54 @@ describe("Logging Output (shared with console.log)", () => {
   });
 });
 
-// Lines wait in a buffer before they are written, so a process stopped by a
-// signal writes what it logged before going.
-describe("Logging Output (stopped by a signal)", () => {
-  it("writes the lines logged before a SIGTERM", () => {
-    const child = spawnSync("node", ["test/fixtures/SignalFlush.res.mjs"], {
+// Lines wait in a buffer before they are written, so however the process ends,
+// it writes what it logged before going.
+describe("Logging Output (process ending)", () => {
+  const runToEnd = (exit: string) => {
+    const child = spawnSync("node", ["test/fixtures/ExitFlush.res.mjs"], {
       encoding: "utf-8",
-      env: { ...process.env, ENVIO_TEST_LOGGING_FORMAT: "1" },
+      env: { ...process.env, ENVIO_TEST_LOGGING_FORMAT: "1", ENVIO_TEST_EXIT: exit },
+      maxBuffer: 1 << 26,
     });
-    assert.deepEqual(
-      {
-        signal: child.signal,
-        messages: child.stdout.trimEnd().split("\n").map((line) => JSON.parse(line).message),
-      },
-      { signal: "SIGTERM", messages: ["before the signal"] }
-    );
+    return {
+      status: child.status,
+      signal: child.signal,
+      messages: child.stdout
+        .trimEnd()
+        .split("\n")
+        .map((line) => {
+          const message: string = JSON.parse(line).message;
+          return message.length > 100 ? `${message.length} characters` : message;
+        }),
+    };
+  };
+
+  it("writes the lines logged before a signal, which still ends the process", () => {
+    assert.deepEqual(runToEnd("signal"), {
+      status: null,
+      signal: "SIGTERM",
+      messages: ["before"],
+    });
+  });
+
+  it("leaves a signal something else handles to it", () => {
+    assert.deepEqual(runToEnd("handled signal"), {
+      status: 0,
+      signal: null,
+      messages: ["before", "handled"],
+    });
+  });
+
+  it("writes the lines logged before process.exit", () => {
+    assert.deepEqual(runToEnd("exit"), { status: 3, signal: null, messages: ["before"] });
+  });
+
+  it("writes a line larger than the buffer, and the lines after it", () => {
+    assert.deepEqual(runToEnd("long line"), {
+      status: 0,
+      signal: null,
+      messages: ["before", "3000000 characters", "after"],
+    });
   });
 });
 

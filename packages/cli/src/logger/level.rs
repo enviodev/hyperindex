@@ -1,6 +1,6 @@
-/// Pino's numeric levels, which the `u*` levels for user handler logs sit
-/// between, so a level filter can let a user's logs through without the
-/// indexer's own.
+/// The numbers JSON lines carry. The `u*` levels for user handler logs sit
+/// between info and warn, so a level filter can let a user's logs through
+/// without the indexer's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Level(u32);
 

@@ -11,11 +11,12 @@ use serde_json::Value;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, IsTerminal, Write},
+    mem::ManuallyDrop,
     os::fd::FromRawFd,
     path::Path,
     sync::{mpsc, Mutex, OnceLock},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 enum Format {
@@ -194,11 +195,9 @@ fn spawn_writer(sinks: Vec<Sink>) -> io::Result<mpsc::SyncSender<Message>> {
     Ok(sender)
 }
 
-/// A standard stream through a descriptor of the logger's own: Node may switch
-/// a terminal or pipe to non-blocking mode, and a write that would block waits
-/// instead of being dropped with `EAGAIN`.
 struct Stream {
-    file: Option<File>,
+    /// The process's own descriptor, which the stream must never close.
+    file: ManuallyDrop<File>,
     /// Workers share their supervisor's pipe, and only a write of at most
     /// `PIPE_BUF` bytes reaches it whole, so a batch is cut into such writes at
     /// line ends.
@@ -206,35 +205,33 @@ struct Stream {
 }
 
 impl Stream {
-    fn dup(fd: libc::c_int) -> Stream {
-        // SAFETY: `dup` returns a new descriptor or -1.
-        let fd = unsafe { libc::dup(fd) };
-        // SAFETY: the descriptor was just created and nothing else owns it.
-        let file = (fd >= 0).then(|| unsafe { File::from_raw_fd(fd) });
-        let is_pipe = file.as_ref().is_some_and(|file| {
-            file.metadata().is_ok_and(|metadata| {
-                std::os::unix::fs::FileTypeExt::is_fifo(&metadata.file_type())
-            })
-        });
+    fn new(fd: libc::c_int) -> Stream {
+        // SAFETY: the standard streams stay open for the life of the process,
+        // and `ManuallyDrop` keeps the `File` from closing one.
+        let file = ManuallyDrop::new(unsafe { File::from_raw_fd(fd) });
+        let is_pipe = file
+            .metadata()
+            .is_ok_and(|metadata| std::os::unix::fs::FileTypeExt::is_fifo(&metadata.file_type()));
         Stream { file, is_pipe }
     }
 
     fn write_all(&self, bytes: &[u8]) -> io::Result<()> {
-        let Some(file) = &self.file else {
-            return Err(io::Error::other("no descriptor for the stream"));
-        };
         if self.is_pipe {
-            line_chunks(bytes, libc::PIPE_BUF).try_for_each(|chunk| write_waiting(file, chunk))
+            line_chunks(bytes, libc::PIPE_BUF)
+                .try_for_each(|chunk| write_waiting(&self.file, chunk))
         } else {
-            write_waiting(file, bytes)
+            write_waiting(&self.file, bytes)
         }
     }
 }
 
+/// Node may switch a terminal or pipe to non-blocking mode, so a write that
+/// would block is retried instead of being dropped with `EAGAIN`.
 fn write_waiting(mut file: &File, bytes: &[u8]) -> io::Result<()> {
     let mut rest = bytes;
     while !rest.is_empty() {
         match file.write(rest) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
             Ok(written) => rest = &rest[written..],
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(1))
@@ -273,20 +270,18 @@ fn line_chunks(bytes: &[u8], max: usize) -> impl Iterator<Item = &[u8]> {
 
 fn stdout() -> &'static Stream {
     static STDOUT: OnceLock<Stream> = OnceLock::new();
-    STDOUT.get_or_init(|| Stream::dup(libc::STDOUT_FILENO))
+    STDOUT.get_or_init(|| Stream::new(libc::STDOUT_FILENO))
 }
 
 fn stderr() -> &'static Stream {
     static STDERR: OnceLock<Stream> = OnceLock::new();
-    STDERR.get_or_init(|| Stream::dup(libc::STDERR_FILENO))
+    STDERR.get_or_init(|| Stream::new(libc::STDERR_FILENO))
 }
 
 /// Above the display while one is running, which a direct write would land in
 /// the middle of, and to stdout otherwise.
 fn write_to_stdout_or_above_display(bytes: &[u8]) -> io::Result<()> {
-    // A record's trailing blank line separates it from the next one printed.
-    let text = String::from_utf8_lossy(bytes);
-    if crate::tui::print_above_stdout(text.strip_suffix('\n').unwrap_or(&text)) {
+    if crate::tui::print_above_stdout(bytes) {
         return Ok(());
     }
     stdout().write_all(bytes)
@@ -299,18 +294,18 @@ pub fn write_stdout_line(line: String) {
     let _ = write_to_stdout_or_above_display(format!("{line}\n").as_bytes());
 }
 
-/// The same for a worker's stderr.
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
 pub fn write_stderr_line(line: String) {
-    if !crate::tui::print_above_stderr(&line) {
-        let _ = stderr().write_all(format!("{line}\n").as_bytes());
+    let line = format!("{line}\n");
+    if !crate::tui::print_above_stderr(line.as_bytes()) {
+        let _ = stderr().write_all(line.as_bytes());
     }
 }
 
 /// `NO_COLOR` wins over `FORCE_COLOR`, which the supervisor sets for workers
-/// whose output it pipes to a terminal. CI logs are coloured even though they
-/// aren't a terminal, as colorette (used by pino-pretty before) did.
+/// whose output it pipes to a terminal. CI log viewers render colour, so CI
+/// output is coloured though it isn't a terminal.
 fn supports_color(
     force_color: Option<&str>,
     no_color: bool,
@@ -340,23 +335,23 @@ fn stdout_supports_color() -> bool {
     )
 }
 
-fn open_log_file(path: &str) -> io::Result<File> {
-    if let Some(dir) = Path::new(path)
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-    {
-        fs::create_dir_all(dir)?;
+fn create_parent_dir(path: &str) -> io::Result<()> {
+    match Path::new(path).parent() {
+        Some(dir) => fs::create_dir_all(dir),
+        None => Ok(()),
     }
+}
+
+fn open_log_file(path: &str) -> io::Result<File> {
+    create_parent_dir(path)?;
     OpenOptions::new().create(true).append(true).open(path)
 }
 
-/// Where a run's logs go and how they read there, as `LOG_STRATEGY` names it.
 #[napi(object)]
 pub struct LoggerConfig {
-    /// One of `LOG_STRATEGIES`.
     pub strategy: String,
     pub log_file: String,
-    /// The level for the terminal.
+    /// The terminal's level.
     pub level: String,
     pub file_level: String,
 }
@@ -480,7 +475,6 @@ impl Logger {
         }
     }
 
-    /// One line, the way `write` takes each of its lines.
     #[cfg(test)]
     fn log(&self, level: Level, msg: &str, bindings: Option<&str>, params: Option<&str>) {
         let mut batch = Batch::default();
@@ -488,10 +482,27 @@ impl Logger {
         self.take(batch);
     }
 
-    fn read_in_memory_lines(&self) -> Vec<Value> {
-        match &self.output {
-            Output::Memory(lines) => lines.lock().map(|lines| lines.clone()).unwrap_or_default(),
-            Output::Written(_) => Vec::new(),
+    /// The writer may be stuck on a full queue as well as on a write, so the
+    /// request to flush waits within the same deadline as its answer.
+    fn flush_within(&self, timeout: Duration) {
+        let Output::Written(sender) = &self.output else {
+            return;
+        };
+        let deadline = Instant::now() + timeout;
+        let (written, done) = mpsc::sync_channel(1);
+        let mut message = Message::Flush(written);
+        loop {
+            match sender.try_send(message) {
+                Ok(()) => {
+                    let _ = done.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+                    return;
+                }
+                Err(mpsc::TrySendError::Full(unsent)) if Instant::now() < deadline => {
+                    message = unsent;
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(_) => return,
+            }
         }
     }
 }
@@ -542,12 +553,7 @@ impl Logger {
     /// reader that has stopped reading can't keep the process from exiting.
     #[napi]
     pub fn flush(&self) {
-        if let Output::Written(sender) = &self.output {
-            let (written, done) = mpsc::sync_channel(1);
-            if sender.send(Message::Flush(written)).is_ok() {
-                let _ = done.recv_timeout(Duration::from_secs(5));
-            }
-        }
+        self.flush_within(Duration::from_secs(5));
     }
 
     /// The lowest level any sink writes, read once when the logger is made so
@@ -557,25 +563,23 @@ impl Logger {
         self.min_level.value()
     }
 
-    /// Every line an in-memory logger has taken, oldest first.
     #[napi]
     pub fn in_memory_lines(&self) -> Vec<Value> {
-        self.read_in_memory_lines()
+        match &self.output {
+            Output::Memory(lines) => lines.lock().map(|lines| lines.clone()).unwrap_or_default(),
+            Output::Written(_) => Vec::new(),
+        }
     }
 
-    /// Writes what an in-memory logger has taken to `path`, a line of JSON
-    /// each.
     #[napi]
     pub fn write_in_memory_lines_to_file(&self, path: String) -> napi::Result<()> {
         let mut out = String::new();
-        for line in self.read_in_memory_lines() {
+        for line in self.in_memory_lines() {
             out.push_str(&line.to_string());
             out.push('\n');
         }
-        if let Some(dir) = Path::new(&path).parent() {
-            fs::create_dir_all(dir).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        }
-        fs::write(&path, out)
+        create_parent_dir(&path)
+            .and_then(|()| fs::write(&path, out))
             .map_err(|e| napi::Error::from_reason(format!("Failed to write {path}: {e}")))
     }
 }
@@ -609,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn file_level_is_capped_by_the_terminal_level_where_pino_capped_it() {
+    fn file_level_is_capped_for_ecs_file_and_both_prettyconsole() {
         let dir = tempdir::TempDir::new("envio-logger").unwrap();
         let min_level = |strategy: &str, level: &str, file_level: &str| {
             Logger::make(LoggerConfig {
@@ -675,6 +679,67 @@ mod tests {
                 .map(|index| json!({"level": 20, "chainId": 1, "msg": format!("kept {index}")}))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn a_damaged_batch_keeps_the_lines_before_the_damage() {
+        let logger = Logger::make_in_memory();
+        let mut cut_short = Batch::default();
+        cut_short.push(Level::INFO, "whole", None, None);
+        cut_short.push(Level::INFO, "cut", None, Some(r#"{"a":1}"#));
+        cut_short.bytes.truncate(cut_short.bytes.len() - 3);
+        cut_short.lines += 1;
+        logger.take(cut_short);
+        let mut unknown_level = Batch::default();
+        unknown_level.push(Level::INFO, "unknown level", None, None);
+        unknown_level.bytes[0] = 99;
+        logger.take(unknown_level);
+        assert_eq!(
+            logger.in_memory_lines(),
+            vec![json!({"level": "info", "msg": "whole"})]
+        );
+    }
+
+    #[test]
+    fn flush_gives_up_on_a_writer_stuck_on_a_reader_that_stopped_reading() {
+        let mut fds = [0; 2];
+        // SAFETY: `pipe` fills both descriptors, which the `File`s then own.
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (reader, writer) = unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
+        let logger = std::sync::Arc::new(Logger {
+            min_level: Level::TRACE,
+            output: Output::Written(
+                spawn_writer(vec![Sink {
+                    format: Format::Json,
+                    target: Target::File(writer),
+                    level: Level::TRACE,
+                }])
+                .unwrap(),
+            ),
+        });
+        let line = "x".repeat(1 << 17);
+        let filling = {
+            let logger = logger.clone();
+            thread::spawn(move || {
+                for _ in 0..QUEUE_CAPACITY * 2 {
+                    logger.log(Level::INFO, &line, None, None);
+                }
+            })
+        };
+        thread::sleep(Duration::from_millis(200));
+        let (flushed, gave_up) = mpsc::channel();
+        let flushing = {
+            let logger = logger.clone();
+            thread::spawn(move || {
+                logger.flush_within(Duration::from_millis(100));
+                let _ = flushed.send(());
+            })
+        };
+        let returned = gave_up.recv_timeout(Duration::from_secs(3)).is_ok();
+        drop(reader);
+        filling.join().unwrap();
+        flushing.join().unwrap();
+        assert!(returned);
     }
 
     #[test]

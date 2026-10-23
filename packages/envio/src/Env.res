@@ -63,20 +63,7 @@ let hypersyncLogLevel =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
 
 module Logger = {
-  type level = [
-    | #trace
-    | #debug
-    | #info
-    | #udebug
-    | #uinfo
-    | #uwarn
-    | #uerror
-    | #warn
-    | #error
-    | #fatal
-    | #silent
-  ]
-  let levelSchema: S.t<level> = S.enum([
+  let levelSchema: S.t<Logger.level> = S.enum([
     #trace,
     #debug,
     #info,

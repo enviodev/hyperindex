@@ -106,6 +106,12 @@ describe("context.log", () => {
   // message that isn't a string, an object that refers to itself.
   Async.it("keeps what a handler passes when it isn't plain JSON", async t => {
     let error = JsError.make("boom")
+    let aggregate: JsError.t = %raw(`new AggregateError([new Error("inner")], "several")`)
+    let innerStack =
+      (aggregate->(Utils.magic: JsError.t => {"errors": array<JsError.t>}))["errors"]
+      ->Array.getUnsafe(0)
+      ->JsError.stack
+      ->Option.getOr("")
     let circular = Dict.make()
     circular->Dict.set("kept", JSON.Number(1.))
     circular->Dict.set("self", circular->(Utils.magic: dict<JSON.t> => JSON.t))
@@ -125,6 +131,10 @@ describe("context.log", () => {
                     let context =
                       args.context->(Utils.magic: Internal.handlerContext => handlerContext)
                     context.log.error("as params", ~params=error->(Utils.magic: JsError.t => {..}))
+                    context.log.error(
+                      "aggregate",
+                      ~params=aggregate->(Utils.magic: JsError.t => {..}),
+                    )
                     context.log.info(5->(Utils.magic: int => string))
                     context.log.info(
                       "circular",
@@ -166,6 +176,29 @@ describe("context.log", () => {
                   "type": JSON.String("Error"),
                   "message": JSON.String("boom"),
                   "stack": JSON.String(error->JsError.stack->Option.getOr("")),
+                },
+              ),
+            ),
+          ],
+          [
+            ("level", JSON.String("uerror")),
+            ("msg", JSON.String("aggregate")),
+            (
+              "err",
+              JSON.Object(
+                dict{
+                  "type": JSON.String("AggregateError"),
+                  "message": JSON.String("several"),
+                  "stack": JSON.String(aggregate->JsError.stack->Option.getOr("")),
+                  "errors": JSON.Array([
+                    JSON.Object(
+                      dict{
+                        "type": JSON.String("Error"),
+                        "message": JSON.String("inner"),
+                        "stack": JSON.String(innerStack),
+                      },
+                    ),
+                  ]),
                 },
               ),
             ),
@@ -344,8 +377,9 @@ describe("console in a handler", () => {
         output: S.string,
         rateLimit: Disable,
       },
-      async ({input}) => {
+      async ({input, context}) => {
         log("effect ran")
+        context.log.info("effect logged")
         input
       },
     )
@@ -396,7 +430,94 @@ describe("console in a handler", () => {
         ).toEqual([
           line("registering", eventFields),
           line("effect ran", [...eventFields, ("effect", JSON.String("lookup"))]),
+          line("effect logged", [...eventFields, ("effect", JSON.String("lookup"))]),
           line("handled", eventFields),
+        ])
+      },
+    )
+  })
+
+  // The preload run is silent, so it mustn't leave state its run proper then
+  // prints, and work it starts that finishes later isn't silenced for good.
+  Async.it("leaves no trace of the preload run in later lines", async t => {
+    let count: string => unit = %raw(`label => console.count(label)`)
+    let laterLine: ref<option<{"resolve": unit => unit, "logged": promise<unit>}>> = ref(None)
+    await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      async (~indexer, ~source) => {
+        let mock = source(1)
+        mock.resolveGetHeightOrThrow(300)
+        await mock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 5,
+                  logIndex: 2,
+                  preloadHandler: async _ => {
+                    count("runs")
+                    laterLine :=
+                      Some(
+                        %raw(`(() => {
+                          let resolve;
+                          const logged = new Promise(r => { resolve = r }).then(() =>
+                            console.log("after the preload run"),
+                          );
+                          return {resolve, logged};
+                        })()`),
+                      )
+                  },
+                  handler: async _ => {
+                    count("runs")
+                    switch laterLine.contents {
+                    | Some(later) =>
+                      later["resolve"]()
+                      await later["logged"]
+                    | None => ()
+                    }
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        t.expect(
+          indexer.allLogsAsJson()
+          ->Array.filter(isHandlerLine)
+          ->Array.map(line => line->Dict.get("msg")),
+        ).toEqual([Some(JSON.String("runs: 1")), Some(JSON.String("after the preload run"))])
+      },
+    )
+  })
+
+  Async.it("names each event of a batch on its own lines", async t => {
+    let log: string => unit = %raw(`message => console.log(message)`)
+    await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      async (~indexer, ~source) => {
+        let mock = source(1)
+        mock.resolveGetHeightOrThrow(300)
+        await mock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {blockNumber: 5, logIndex: 1, handler: async _ => log("first")},
+                {blockNumber: 6, logIndex: 2, handler: async _ => log("second")},
+              ],
+              latestFetchedBlockNumber: 100,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        t.expect(
+          indexer.allLogsAsJson()
+          ->Array.filter(isHandlerLine)
+          ->Array.map(line => (line->Dict.get("msg"), line->Dict.get("block"))),
+        ).toEqual([
+          (Some(JSON.String("first")), Some(JSON.Number(5.))),
+          (Some(JSON.String("second")), Some(JSON.Number(6.))),
         ])
       },
     )

@@ -10,10 +10,8 @@ type contextParams = {
   mutable isResolved: bool,
 }
 
-// We don't want to expose the params to the user
-// so instead of storing _params on the context object,
-// we use an external WeakMap
-let paramsByThis: Utils.WeakMap.t<unknown, contextParams> = Utils.WeakMap.make()
+// Kept off the context object, which the user sees.
+let loggerByThis: Utils.WeakMap.t<unknown, Lazy.t<Logger.t>> = Utils.WeakMap.make()
 
 let effectContextPrototype = %raw(`Object.create(null)`)
 Utils.Object.defineProperty(
@@ -21,10 +19,9 @@ Utils.Object.defineProperty(
   "log",
   {
     // Wrap with toMethod so `this` binds to the EffectContext instance.
-    get: Utils.toMethod(() => {
-      let params = paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))
-      params.indexerState->IndexerState.loggerForItem(params.item)->Logger.asContextLog
-    }),
+    get: Utils.toMethod(() =>
+      loggerByThis->Utils.WeakMap.unsafeGet(%raw(`this`))->Lazy.get->Logger.asContextLog
+    ),
   },
 )
 %%raw(`
@@ -34,8 +31,8 @@ function throwCrossChainChainAccess() {
   throw new Error('context.chain is not available on the cross-chain effect "' + this._effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
 }
 var crossChainChainDescriptor = { get: throwCrossChainChainAccess, enumerable: true };
-var EffectContext = function(params, chainId, effectName, defaultShouldCache, callEffect) {
-  paramsByThis.set(this, params);
+var EffectContext = function(logger, chainId, effectName, defaultShouldCache, callEffect) {
+  loggerByThis.set(this, logger);
   this.effect = callEffect;
   this.cache = defaultShouldCache;
   if (chainId === undefined) {
@@ -51,7 +48,7 @@ EffectContext.prototype = effectContextPrototype;
 
 @new
 external makeEffectContext: (
-  contextParams,
+  Lazy.t<Logger.t>,
   ~chainId: option<ChainId.t>,
   ~effectName: string,
   ~defaultShouldCache: bool,
@@ -81,8 +78,14 @@ let initEffect = (params: contextParams) => {
       | _ => ()
       }
 
+      // Made only if the effect logs, then kept for its other lines.
+      let effectLogger = Lazy.make(() =>
+        params.indexerState
+        ->IndexerState.loggerForItem(params.item)
+        ->Logger.withFields({"effect": effect.name})
+      )
       let effectContext = makeEffectContext(
-        params,
+        effectLogger,
         ~chainId=switch scope {
         | Internal.Chain(chainId) => Some(chainId)
         | Internal.CrossChain => None
@@ -98,12 +101,6 @@ let initEffect = (params: contextParams) => {
         chainId: handlerChainId,
         checkpointId: params.checkpointId,
       }
-      // Made only if the effect logs, then kept for its other lines.
-      let effectLogger = Lazy.make(() =>
-        params.indexerState
-        ->IndexerState.loggerForItem(params.item)
-        ->Logger.withFields({"effect": effect.name})
-      )
       effectArgs->ConsoleScope.setForEffect(() => effectLogger->Lazy.get)
       LoadLayer.loadEffect(
         ~loadManager=params.loadManager,

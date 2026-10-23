@@ -73,8 +73,8 @@ let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Arr
 
 let label = (worker: worker) => `[chain ${worker->name}]`
 
-// Workers append to files of their own. The logger writes a line per call, and
-// several processes appending to one file can still tear a long line apart.
+// Workers append to files of their own: several processes appending to one file
+// can tear a long write apart.
 let workerLogFilePath = (~workerIndex, ~path=Env.Logger.file) => {
   let suffix = `.worker-${workerIndex->Int.toString}`
   // A dot in a directory name isn't an extension, and a path with no dot at

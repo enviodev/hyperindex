@@ -3,7 +3,6 @@ use chrono::{DateTime, Local};
 use serde_json::{value::RawValue, Map, Value};
 use std::io::Write;
 
-/// One logged line, before it is rendered for a sink.
 pub struct Record<'a> {
     pub level: Level,
     pub millis: i64,
@@ -39,7 +38,7 @@ const JSON_KEYS: [&str; 3] = ["level", "time", "msg"];
 const ECS_KEYS: [&str; 4] = ["log.level", "@timestamp", "ecs.version", "message"];
 const CAPTURED_KEYS: [&str; 2] = ["level", "msg"];
 
-/// What pino writes: the line a log shipper or `jq` reads.
+/// The line a log shipper or `jq` reads.
 pub fn write_json_line(record: &Record, out: &mut Vec<u8>) {
     let _ = write!(
         out,
@@ -58,7 +57,7 @@ pub fn write_json_line(record: &Record, out: &mut Vec<u8>) {
     out.extend_from_slice(b"}\n");
 }
 
-/// Elastic Common Schema, as `@elastic/ecs-pino-format` wrote it.
+/// Elastic Common Schema 1.6.
 pub fn write_ecs_line(record: &Record, out: &mut Vec<u8>) {
     let _ = write!(
         out,
@@ -67,17 +66,21 @@ pub fn write_ecs_line(record: &Record, out: &mut Vec<u8>) {
     );
     write_utc_timestamp(record.millis, out);
     out.extend_from_slice(b"\",\"ecs.version\":\"1.6.0\"");
+    // An `err` written as ECS's `error` takes the place of a field of that name.
+    let error = record
+        .fields
+        .iter()
+        .find(|(key, _)| *key == "err")
+        .and_then(|(_, value)| error_fields(&parse(value)));
     for (key, value) in fields_not_written_by_format(record, &ECS_KEYS) {
-        out.push(b',');
-        match (*key == "err")
-            .then(|| error_fields(&parse(value)))
-            .flatten()
-        {
-            Some(error) => {
-                out.extend_from_slice(b"\"error\":");
-                let _ = serde_json::to_writer(&mut *out, &error);
+        match (*key, &error) {
+            ("error", Some(_)) => {}
+            ("err", Some(error)) => {
+                out.extend_from_slice(b",\"error\":");
+                let _ = serde_json::to_writer(&mut *out, error);
             }
-            None => {
+            _ => {
+                out.push(b',');
                 push_str(out, key);
                 out.push(b':');
                 out.extend_from_slice(value.get().as_bytes());
@@ -142,9 +145,8 @@ fn level_color(level: Level) -> (&'static str, &'static str) {
     (color, reset)
 }
 
-/// For a person at a terminal, laid out the way `pino-pretty` laid it out.
-/// Ends with a blank line, as `pino-pretty` through `console.log` printed it,
-/// which keeps multi-line params apart.
+/// For a person at a terminal. Ends with a blank line, which keeps multi-line
+/// params apart.
 pub fn write_pretty_line(record: &Record, colorize: bool, out: &mut Vec<u8>) {
     let painted = |out: &mut Vec<u8>, color: &str, reset: &str, text: &[u8]| {
         if colorize {
@@ -172,7 +174,7 @@ pub fn write_pretty_line(record: &Record, colorize: bool, out: &mut Vec<u8>) {
         painted(out, CYAN, RESET_FG, record.msg.as_bytes());
     }
     out.push(b'\n');
-    for (key, value) in record.fields {
+    for (key, value) in fields_not_written_by_format(record, &JSON_KEYS) {
         let is_error = *key == "err" || *key == "error";
         out.extend_from_slice(b"    ");
         if is_error {
@@ -220,10 +222,15 @@ fn write_utc_timestamp(millis: i64, out: &mut Vec<u8>) {
         }
         out.extend_from_slice(date.1.as_bytes());
     });
+    write_time_of_day(millis, out);
+    out.push(b'Z');
+}
+
+fn write_time_of_day(millis: i64, out: &mut Vec<u8>) {
     let of_day = millis.rem_euclid(86_400_000);
     let _ = write!(
         out,
-        "{:02}:{:02}:{:02}.{:03}Z",
+        "{:02}:{:02}:{:02}.{:03}",
         of_day / 3_600_000,
         of_day / 60_000 % 60,
         of_day / 1000 % 60,
@@ -251,15 +258,7 @@ fn write_local_time(millis: i64, out: &mut Vec<u8>) {
             offset
         }
     });
-    let of_day = millis.saturating_add(offset_millis).rem_euclid(86_400_000);
-    let _ = write!(
-        out,
-        "{:02}:{:02}:{:02}.{:03}",
-        of_day / 3_600_000,
-        of_day / 60_000 % 60,
-        of_day / 1000 % 60,
-        of_day % 1000
-    );
+    write_time_of_day(millis.saturating_add(offset_millis), out);
 }
 
 fn pretty_json(value: &Value) -> String {
@@ -356,19 +355,37 @@ mod tests {
             msg: "hi",
             fields: &merged,
         };
+        let pretty = render(Level::INFO, "hi", &params, |record, out| {
+            write_pretty_line(record, false, out)
+        });
         assert_eq!(
             (
                 render(Level::INFO, "hi", &params, write_json_line),
                 render(Level::INFO, "hi", &params, write_ecs_line),
-                to_captured_line(&record)
+                to_captured_line(&record),
+                pretty.split_once("] ").unwrap().1.to_string(),
             ),
             (
                 "{\"level\":30,\"time\":1700000000123,\"message\":\"x\",\"n\":1,\"msg\":\"hi\"}\n"
                     .to_string(),
                 "{\"log.level\":\"info\",\"@timestamp\":\"2023-11-14T22:13:20.123Z\",\"ecs.version\":\"1.6.0\",\"level\":\"x\",\"time\":\"x\",\"msg\":\"x\",\"n\":1,\"message\":\"hi\"}\n"
                     .to_string(),
-                serde_json::json!({"level": "info", "msg": "hi", "time": "x", "message": "x", "n": 1})
+                serde_json::json!({"level": "info", "msg": "hi", "time": "x", "message": "x", "n": 1}),
+                "INFO: hi\n    message: \"x\"\n    n: 1\n\n".to_string(),
             )
+        );
+    }
+
+    #[test]
+    fn ecs_line_writes_error_once_when_err_is_written_as_it() {
+        assert_eq!(
+            render(
+                Level::ERROR,
+                "failed",
+                &fields(r#"{"error":"x","err":{"type":"Error","message":"boom","stack":"s"}}"#),
+                write_ecs_line
+            ),
+            "{\"log.level\":\"error\",\"@timestamp\":\"2023-11-14T22:13:20.123Z\",\"ecs.version\":\"1.6.0\",\"error\":{\"type\":\"Error\",\"message\":\"boom\",\"stack_trace\":\"s\"},\"message\":\"failed\"}\n"
         );
     }
 

@@ -359,7 +359,7 @@ let processEventBatch = async (
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
       await materializeBatchEvents(batch, ~chainStates)
-      await ConsoleScope.run(Silent, () =>
+      await ConsoleScope.runToEnd(Silent({isOver: false}), () =>
         batch->preloadBatchOrThrow(~loadManager, ~persistence, ~indexerState, ~chains, ~config)
       )
     }
@@ -370,8 +370,9 @@ let processEventBatch = async (
       let consoleScope = ConsoleScope.Item({
         item: batch.items->Array.getUnsafe(0),
         loggerFor: item => indexerState->IndexerState.loggerForItem(item),
+        isOver: false,
       })
-      await ConsoleScope.run(consoleScope, () =>
+      await ConsoleScope.runToEnd(consoleScope, () =>
         batch->runBatchHandlersOrThrow(
           ~indexerState,
           ~loadManager,
