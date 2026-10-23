@@ -277,7 +277,7 @@ impl Client {
                     Ok(response) => return Ok(response),
                     Err(failure) => failure,
                 },
-                Err(error) => Failure::of_send(error, "ClickHouse request failed"),
+                Err(error) => Failure::of_send(error, "ClickHouse request failed", &self.url),
             };
             if failure.retry != Retry::SameRows || retries_left == 0 {
                 return Err(failure.error);
@@ -415,10 +415,9 @@ impl Client {
             .basic_auth(&self.username, Some(&self.password))
             .header("Content-Type", "application/octet-stream")
             .body(body);
-        let response = request
-            .send()
-            .await
-            .map_err(|error| Failure::of_send(error, "ClickHouse insert request failed"))?;
+        let response = request.send().await.map_err(|error| {
+            Failure::of_send(error, "ClickHouse insert request failed", &self.url)
+        })?;
         self.answer(response).await.map(drop)
     }
 
@@ -456,16 +455,39 @@ impl Failure {
     /// batch meets differently, whether it ran out mid-upload or waiting on the
     /// server to finish. A connect timeout never reached the server, so it is
     /// resent whole.
-    fn of_send(error: reqwest::Error, context: &'static str) -> Self {
+    fn of_send(error: reqwest::Error, context: &'static str, url: &str) -> Self {
+        let context = if error.is_connect() {
+            format!(
+                "Couldn't connect to ClickHouse at {url}. Check that it is running and that \
+                 ENVIO_CLICKHOUSE_HOST points at it"
+            )
+        } else {
+            context.to_string()
+        };
         Self {
             retry: if error.is_timeout() && !error.is_connect() {
                 Retry::Halved
             } else {
                 Retry::SameRows
             },
-            error: anyhow::Error::new(error).context(context),
+            error: anyhow!(said_once(&error)).context(context),
         }
     }
+}
+
+/// An error and its causes, each said once: hyper's messages already end with
+/// their sources', so the plain chain repeats a refused connection four times.
+fn said_once(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let said = cause.to_string();
+        if !text.ends_with(&said) {
+            text = format!("{text}: {said}");
+        }
+        source = cause.source();
+    }
+    text
 }
 
 /// What sending a failed insert again can change. Whether the server already
@@ -1170,7 +1192,7 @@ mod tests {
 
         assert_eq!(
             (
-                err.contains("ClickHouse insert request failed"),
+                err.contains("Couldn't connect to ClickHouse"),
                 client.warnings().len(),
                 client
                     .warnings()
@@ -1180,6 +1202,32 @@ mod tests {
             (true, 3, true),
             "expected three retries counted down from three, got: {:?} / {err}",
             client.warnings(),
+        );
+    }
+
+    /// What an operator reads when nothing answers at the configured host: the
+    /// setting to check, and the cause said once.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unreachable_server_names_the_host_setting() {
+        let url = refused_url().await;
+        let client = client_at(
+            url.clone(),
+            Tuning {
+                retries: 0,
+                ..Tuning::default()
+            },
+        );
+
+        let err = reason(client.statement("SELECT 1".to_string()).await.unwrap_err());
+
+        assert_eq!(
+            err,
+            format!(
+                "Couldn't connect to ClickHouse at {url}. Check that it is running and that \
+                 ENVIO_CLICKHOUSE_HOST points at it: error sending request for url \
+                 ({url}/?wait_end_of_query=1): error trying to connect: tcp connect error: \
+                 Connection refused (os error 111)"
+            ),
         );
     }
 
@@ -1288,7 +1336,7 @@ mod tests {
         assert_eq!(
             (
                 retried_row_counts(&client),
-                err.contains("ClickHouse insert request failed"),
+                err.contains("Couldn't connect to ClickHouse"),
             ),
             (Vec::<String>::new(), true),
             "expected the first failure to end the batch, got: {err}"
