@@ -190,6 +190,9 @@ describe("A run whose chains have a reorg depth", () => {
     async (~t, ~indexer, ~source) => {
       await Scenario.enterReorgThreshold(~indexer, ~source=source(1))
       await Scenario.enterReorgThreshold(~indexer, ~source=source(137))
+      // The batch after the last chain's write is the one that enters the
+      // threshold.
+      await indexer.waitUntilIdle()
 
       t.expect(
         await indexer.metric("envio_reorg_threshold"),

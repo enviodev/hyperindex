@@ -662,8 +662,9 @@ async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() 
         ),
     )
     .await;
+    let query_id = format!("{}late", super::client::insert_tag(&live.database, &[1]));
     let late = tokio::spawn(send_as(
-        format!("{}late", super::client::insert_tag(&live.database, &[1])),
+        query_id.clone(),
         format!(
             "INSERT INTO `{}`.envio_history_Account (id, owner, balance, envio_checkpoint_id, \
              envio_change) SELECT toString(number), 'mallory', '9', 2, 'SET' FROM numbers(3) \
@@ -671,7 +672,7 @@ async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() 
             live.database
         ),
     ));
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    until_running(&live, &query_id).await;
 
     resume(&live.another_process(), vec![account], 1, 10).await;
     let _ = late.await;
@@ -684,6 +685,23 @@ async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() 
 
     live.drop_database().await;
     assert_eq!(landed, "0");
+}
+
+async fn until_running(live: &Live, query_id: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while live
+        .execute(format!(
+            "SELECT count() FROM system.processes WHERE query_id = '{query_id}'"
+        ))
+        .await
+        == "0"
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{query_id} never started"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 }
 
 /// Sends `statement` under `query_id`, answering whether it succeeded.
@@ -977,6 +995,58 @@ async fn a_resume_trims_back_to_what_postgres_committed() {
             "1".to_string(),
             "1".to_string()
         )
+    );
+}
+
+/// A process can die between Postgres committing a batch and ClickHouse
+/// recording it as readable. The batch's rows are there, so the resume
+/// publishes them rather than trimming them.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn a_resume_publishes_a_batch_postgres_committed_and_clickhouse_never_recorded() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    write(
+        &live,
+        batch(
+            &account,
+            &[("a", Some(("alice", "1")), 1)],
+            &[(1, 1, 10)],
+            (1, 1),
+        ),
+    )
+    .await;
+    let unpublished = live
+        .storage
+        .write_batch(
+            batch(
+                &account,
+                &[("a", Some(("alice", "2")), 2)],
+                &[(2, 1, 20)],
+                (1, 2),
+            ),
+            Handoff {
+                landed: None,
+                commit: Some(Box::pin(async { false })),
+                committed: None,
+            },
+        )
+        .await;
+
+    let resumed = live.another_process();
+    resume(&resumed, vec![account.clone()], 2, 20).await;
+    let loaded = rows(
+        &resumed
+            .load_where(&account, vec![eq("id", "a")])
+            .await
+            .unwrap(),
+    );
+    let frontier = live.frontier().await;
+    live.drop_database().await;
+    assert_eq!(
+        (unpublished.is_ok(), loaded, frontier),
+        (false, vec![row(&["a", "alice", "2"])], "2".to_string())
     );
 }
 
