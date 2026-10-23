@@ -19,6 +19,7 @@ type timing = {
   getHeightRetryInterval?: (~retry: int) => int,
   // Multiplies every query retry's sleep, not the backoff it logs.
   retryBackoffScale?: float,
+  heightPollTimeout?: int,
 }
 
 let make: (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime: bool, ~timing: timing=?) => t

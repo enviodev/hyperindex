@@ -347,6 +347,7 @@ type timing = {
   recoveryTimeout?: float,
   getHeightRetryInterval?: (~retry: int) => int,
   retryBackoffScale?: float,
+  heightPollTimeout?: int,
 }
 
 let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: timing={}) => {
@@ -382,6 +383,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
           ~logger,
           ~recordRequestStats=stats => requestStats->recordStatsInto(stats),
           ~getHeightRetryInterval,
+          ~pollTimeoutMillis=timing.heightPollTimeout->Option.getOr(60_000),
         ),
         disabled: false,
         lastFailedAt: None,

@@ -27,44 +27,8 @@ type Gravatar {
 `,
 )
 
-let streaming: array<MockSource.method> = [
-  #getHeightOrThrow,
-  #getItemsOrThrow,
-  #createHeightSubscription,
-]
-
-let polls = (mock: MockSource.t) => mock.getHeightOrThrowCalls->Array.length
-
-let upTo = toBlock => MockSource.Respond({items: [], latestFetchedBlockNumber: toBlock})
-
-// Backfills `query` to `head` on the source `sync`, after which the chain's
-// realtime wait subscribes `mock` and polls it once beside the stream.
-let reachRealtime = async (~sync: MockSource.t, ~mock=sync, ~head=100) => {
-  sync.resolveGetHeightOrThrow(head)
-  await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(head)}])
-  await Scenario.waitUntil(
-    () => mock.heightSubscriptionCalls->Array.length > 0,
-    ~message="the height subscription",
-  )
-}
-
-// Answers the query a new head starts, which puts the chain back to waiting.
-let answerQuery = async (mock: MockSource.t, ~fromBlock, ~toBlock) =>
-  await mock.expectItemsQueries([{fromBlock, reply: upTo(toBlock)}])
-
-// Takes a freshly subscribed source to a live stream that has delivered: the
-// catch-up poll its connect fires is answered, the stream pushes `head + 1`,
-// and the query for it is answered. The chain is left waiting above `head + 1`
-// with no poll in flight, the stream carrying the wait on its own.
-let goLive = async (mock: MockSource.t, ~head=100) => {
-  mock.resolveGetHeightOrThrow(head)
-  let pollsBeforeLive = mock->polls
-  mock.setHeightSubscriptionStatus(Live)
-  await mock.expectHeightCalls(pollsBeforeLive + 1)
-  mock.resolveGetHeightOrThrow(head)
-  mock.triggerHeightSubscription(head + 1)
-  await mock->answerQuery(~fromBlock=head + 1, ~toBlock=head + 1)
-}
+open RealtimeChain
+let reachRealtime = reach
 
 let streamMetrics = async (indexer: IndexerRunner.t) => {
   let samples = async name =>
@@ -136,7 +100,7 @@ describe("Height subscription", () => {
   scenario->Scenario.it(
     "Polls in realtime when the source can't push heights",
     ~sources=[{chain: 1337, pollingInterval: 1}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       mock.resolveGetHeightOrThrow(100)
       await mock->answerQuery(~fromBlock=1, ~toBlock=100)
@@ -144,7 +108,8 @@ describe("Height subscription", () => {
       await mock.expectHeightCalls(mock->polls + 2)
       mock.setAutoHeight(101)
       await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      t.expect(mock.heightSubscriptionCalls).toEqual([])
+      // No stream to report on, so none of its metric families render.
+      t.expect((mock.heightSubscriptionCalls, await indexer->streamMetrics)).toEqual(([], ([], [])))
     },
   )
 
@@ -262,10 +227,13 @@ describe("Height subscription", () => {
       // The fallback is the only source left to find the next block.
       fallback.setAutoHeight(102)
       await fallback.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+      // Later realtime waits never subscribe a benched source again.
       t.expect((
+        mock.heightSubscriptionCalls->Array.length,
         mock.heightSubscriptionCloseCalls->Array.length,
         await indexer->streamMetrics,
       )).toEqual((
+        1,
         1,
         // The connection was delivering until it was closed, so it is counted
         // as lost — otherwise the source would read as still pushing heights
