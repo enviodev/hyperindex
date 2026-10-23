@@ -221,24 +221,27 @@ let counterSet = (~checkpointId, ~chain, ~count): Change.t<counter> => Set({
 describe("Per-chain history pruning", () => {
   scenario->Scenario.it(
     "Prunes a chain down to its own safe checkpoint while a sibling's head sits still",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
-        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
-        ~message="Chain 100 dropped what its own safe block put out of reach, keeping the anchor; chain 1337 kept everything, having nothing safe yet",
-      ).toEqual((
-        [
-          counterSet(~checkpointId=1n, ~chain=1337, ~count=20n),
-          // The anchor: chain 100's last state at or below its own safe block.
-          counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
-        ],
-        [(1n, 1337), (2n, 100), (2n, 1337), (3n, 100), (4n, 100)],
-      ))
+        await checkpointsByChain(indexer),
+        ~message="Chain 100 dropped the checkpoints its own safe block put out of reach, keeping the anchor; chain 1337 kept everything, having nothing safe yet",
+      ).toEqual([(1n, 1337), (2n, 100), (2n, 1337), (3n, 100), (4n, 100)])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await counterHistory(indexer),
+            ~message="Chain 100 dropped what its own safe block put out of reach, keeping the anchor; chain 1337 kept everything, having nothing safe yet",
+          ).toEqual([
+            counterSet(~checkpointId=1n, ~chain=1337, ~count=20n),
+            // The anchor: chain 100's last state at or below its own safe block.
+            counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
+            counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
+          ]),
+      )
     },
   )
 
@@ -247,45 +250,51 @@ describe("Per-chain history pruning", () => {
   // in which chain is visited first, which the checkpoint ids follow.
   crossChainScenario->Scenario.it(
     "Holds every chain at the lowest safe checkpoint when one entity is cross-chain",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
-        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
-        ~message="Nothing is pruned while chain 1337 has nothing safe yet",
-      ).toEqual((
-        [
-          counterSet(~checkpointId=1n, ~chain=100, ~count=1n),
-          counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=3n, ~chain=1337, ~count=20n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-        ],
-        [(1n, 100), (2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)],
-      ))
+        await checkpointsByChain(indexer),
+        ~message="No checkpoint is pruned while chain 1337 has nothing safe yet",
+      ).toEqual([(1n, 100), (2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await counterHistory(indexer),
+            ~message="No history is pruned while chain 1337 has nothing safe yet",
+          ).toEqual([
+            counterSet(~checkpointId=1n, ~chain=100, ~count=1n),
+            counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
+            counterSet(~checkpointId=3n, ~chain=1337, ~count=20n),
+            counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+          ]),
+      )
     },
   )
 
   crossChainZeroDepthScenario->Scenario.it(
     "Prunes past an idle chain with no reorg depth under a shared sequence",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
-        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
-        ~message="Chain 1337 holds nothing back, so every chain pruned to chain 100's safe checkpoint, keeping its anchor",
-      ).toEqual((
-        [
-          counterSet(~checkpointId=4n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-        ],
-        [(4n, 100), (5n, 100), (6n, 100)],
-      ))
+        await checkpointsByChain(indexer),
+        ~message="Chain 1337 holds nothing back, so every chain's checkpoints pruned to chain 100's safe checkpoint",
+      ).toEqual([(4n, 100), (5n, 100), (6n, 100)])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await counterHistory(indexer),
+            ~message="Chain 1337 holds nothing back, so every chain pruned to chain 100's safe checkpoint, keeping its anchor",
+          ).toEqual([
+            counterSet(~checkpointId=4n, ~chain=100, ~count=2n),
+            counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+          ]),
+      )
     },
   )
 
@@ -295,7 +304,6 @@ describe("Per-chain history pruning", () => {
   // ids: bounds crossed between chains would survive a symmetric setup.
   manyBoundsScenario->Scenario.it(
     "Holds each chain to its own bound when several chains prune at once",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 200, methods}, {chain: 300, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -354,31 +362,40 @@ describe("Per-chain history pruning", () => {
       await indexer.waitUntilIdle()
 
       let checkpoints = await checkpointsByChain(indexer)
-      let history = (await counterHistory(indexer))->Array.map(
-        change =>
-          switch change {
-          | Set({checkpointId, entity}) => (checkpointId, entity.chainId, entity.count)
-          | Delete({checkpointId}) => (checkpointId, 0, 0n)
-          },
-      )
-      let forChain = chain => (
-        checkpoints->Array.filterMap(((id, rowChain)) => rowChain === chain ? Some(id) : None),
-        history->Array.filterMap(
-          ((id, rowChain, count)) => rowChain === chain ? Some((id, count)) : None,
-        ),
-      )
+      let checkpointsOf = chain =>
+        checkpoints->Array.filterMap(((id, rowChain)) => rowChain === chain ? Some(id) : None)
 
       t.expect(
-        (forChain(100), forChain(200), forChain(300)),
-        ~message="Each chain kept its own anchor and dropped only what its own safe block put out of reach",
+        (checkpointsOf(100), checkpointsOf(200), checkpointsOf(300)),
+        ~message="Each chain kept its own anchor checkpoint and dropped only what its own safe block put out of reach",
       ).toEqual((
         // Two blocks below its safe block, so chain 100 is bounded at id 2.
-        ([2n, 3n, 4n], [(2n, 2n), (3n, 3n)]),
+        [2n, 3n, 4n],
         // Three, so chain 200 is bounded at 3.
-        ([3n, 4n, 5n], [(3n, 13n), (4n, 14n)]),
+        [3n, 4n, 5n],
         // One, so chain 300 is bounded at 1 and keeps everything it has.
-        ([1n, 2n, 3n], [(1n, 21n), (2n, 22n)]),
+        [1n, 2n, 3n],
       ))
+      await indexer.inPostgres(
+        async _ => {
+          let history = (await counterHistory(indexer))->Array.map(
+            change =>
+              switch change {
+              | Set({checkpointId, entity}) => (checkpointId, entity.chainId, entity.count)
+              | Delete({checkpointId}) => (checkpointId, 0, 0n)
+              },
+          )
+          let historyOf = chain =>
+            history->Array.filterMap(
+              ((id, rowChain, count)) => rowChain === chain ? Some((id, count)) : None,
+            )
+
+          t.expect(
+            (historyOf(100), historyOf(200), historyOf(300)),
+            ~message="Each chain kept its own anchor and dropped only what its own safe block put out of reach",
+          ).toEqual(([(2n, 2n), (3n, 3n)], [(3n, 13n), (4n, 14n)], [(1n, 21n), (2n, 22n)]))
+        },
+      )
     },
   )
 
@@ -386,7 +403,6 @@ describe("Per-chain history pruning", () => {
   // observed: it sees both chains' committed rows with a fresh interval.
   zeroDepthScenario->Scenario.it(
     "Writes neither history nor checkpoints for a chain with no reorg depth",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -423,15 +439,19 @@ describe("Per-chain history pruning", () => {
       await restarted.waitUntilIdle()
 
       t.expect(
-        await Promise.all2((counterHistory(restarted), checkpointsByChain(restarted))),
-        ~message="Chain 1337 wrote neither history nor the checkpoints that would anchor it; chain 100 pruned to its own safe checkpoint",
-      ).toEqual((
-        [
-          counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=4n),
-        ],
-        [(3n, 100), (4n, 100), (5n, 100), (6n, 100)],
-      ))
+        await checkpointsByChain(restarted),
+        ~message="Chain 1337 wrote no checkpoints; chain 100 pruned to its own safe checkpoint",
+      ).toEqual([(3n, 100), (4n, 100), (5n, 100), (6n, 100)])
+      await restarted.inPostgres(
+        async _ =>
+          t.expect(
+            await counterHistory(restarted),
+            ~message="Chain 1337 wrote no history; chain 100 pruned to its own safe checkpoint",
+          ).toEqual([
+            counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
+            counterSet(~checkpointId=5n, ~chain=100, ~count=4n),
+          ]),
+      )
     },
   )
 
@@ -440,24 +460,27 @@ describe("Per-chain history pruning", () => {
   // whichever chain the fold happened to see last.
   crossChainLaggingFirstScenario->Scenario.it(
     "Holds every chain at the lowest safe checkpoint when the lagging chain comes first",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 5, methods}, {chain: 100, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       await driveChain100Ahead(~indexer, ~source100=source(100), ~lagging=source(5))
 
       t.expect(
-        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
-        ~message="Nothing is pruned while chain 5 has nothing safe yet",
-      ).toEqual((
-        [
-          counterSet(~checkpointId=1n, ~chain=5, ~count=20n),
-          counterSet(~checkpointId=3n, ~chain=100, ~count=1n),
-          counterSet(~checkpointId=4n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-        ],
-        [(1n, 5), (2n, 5), (3n, 100), (4n, 100), (5n, 100), (6n, 100)],
-      ))
+        await checkpointsByChain(indexer),
+        ~message="No checkpoint is pruned while chain 5 has nothing safe yet",
+      ).toEqual([(1n, 5), (2n, 5), (3n, 100), (4n, 100), (5n, 100), (6n, 100)])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await counterHistory(indexer),
+            ~message="No history is pruned while chain 5 has nothing safe yet",
+          ).toEqual([
+            counterSet(~checkpointId=1n, ~chain=5, ~count=20n),
+            counterSet(~checkpointId=3n, ~chain=100, ~count=1n),
+            counterSet(~checkpointId=4n, ~chain=100, ~count=2n),
+            counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+          ]),
+      )
     },
   )
 })

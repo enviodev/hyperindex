@@ -84,27 +84,29 @@ describe("Two processes indexing one schema", () => {
 
       // Chain metadata goes out on a throttle of its own; stopping flushes it.
       let _ = await Promise.all2((first.stop(), second.stop()))
-      let {sql, pgSchema} = indexer.pg
       let chains =
         (await indexer.queryChains())->Array.map(
           chain => (chain.id->ChainId.toInt, chain.firstEventBlock, chain.readyAt->Option.isSome),
         )
-      let indexes =
-        (await sql->PgCatalog.indexes(~pgSchema))
-        ->Array.filter(index => index.columns == ["owner"])
-        ->Array.map(index => (index.tableName, index.isValid))
-        ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
+      await indexer.inPostgres(
+        async ({sql, pgSchema}) =>
+          t.expect(
+            (await sql->PgCatalog.indexes(~pgSchema))
+            ->Array.filter(index => index.columns == ["owner"])
+            ->Array.map(index => (index.tableName, index.isValid))
+            ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b)),
+            ~message="Each built the owner index on its own chain's partition only",
+          ).toEqual([("Item$1", true), ("Item$137", true)]),
+      )
       // A ClickHouse read stops at the progress its own run knew of, so the rows
       // are read by a run resumed after both siblings — once nothing else is
       // left to read, since that run builds indexes of its own.
       let items: array<item> = await (await indexer.restart()).query("Item")
 
-      t.expect((items->Array.length, chains, indexes)).toEqual((
+      t.expect((items->Array.length, chains)).toEqual((
         rowsPerSibling * 2,
         // Each sibling stamped its own chain and left the other's alone.
         [(1, Some(1), true), (137, Some(137), true)],
-        // Each built the owner index on its own chain's partition only.
-        [("Item$1", true), ("Item$137", true)]->Scenario.expectedInPostgres(~absent=[]),
       ))
     },
   )

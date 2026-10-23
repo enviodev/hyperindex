@@ -77,7 +77,12 @@ type rec t = {
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
+  // For the indexer's own state, which Postgres keeps on every leg. Entity
+  // tables, history, indexes and partitions are read inside `inPostgres`.
   pg: pg,
+  // Runs a check of Postgres' entity tables, history, indexes or partitions.
+  // Skipped on the ClickHouse leg, where the entities live in ClickHouse alone.
+  inPostgres: (pg => promise<unit>) => promise<unit>,
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
@@ -734,6 +739,11 @@ let run = async (
         )
       },
       pg,
+      inPostgres: check =>
+        switch selectedBackend {
+        | #postgres | #both => check(pg)
+        | #clickhouse => Promise.resolve()
+        },
       stop,
       logs: () =>
         switch capture {

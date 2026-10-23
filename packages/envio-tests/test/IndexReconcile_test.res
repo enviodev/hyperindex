@@ -15,9 +15,15 @@ chains:
           - event: "TestEvent()"
 `
 
+let shapesPostgresEntityTable: array<Scenario.unsupported> = [
+  {
+    backend: #clickhouse,
+    reason: "shapes a Postgres entity table before the indexer reconciles its indexes, and the ClickHouse leg has none",
+  },
+]
+
 let scenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=Scenario.assertsPostgresIndexes,
   ~configYaml,
   ~schema=`
 type A {
@@ -37,7 +43,6 @@ type B {
 let longName = `Entity${"x"->String.repeat(57)}`
 let longNameScenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=Scenario.assertsPostgresIndexes,
   ~configYaml,
   ~schema=`
 type ${longName} {
@@ -49,7 +54,7 @@ type ${longName} {
 
 let tripleScenario = Scenario.make(
   ~supervised=false,
-  ~unsupported=Scenario.assertsPostgresIndexes,
+  ~unsupported=shapesPostgresEntityTable,
   ~configYaml,
   ~schema=`
 type Triple {
@@ -113,26 +118,28 @@ type handlerContext = {@as("A") a: aOps}
 describe("Indexes on a database that already holds some", () => {
   // A WHERE clause covers only the rows inside its predicate, so it can't
   // answer the unrestricted lookups a filter makes.
-  scenario->Scenario.it("build a full index beside a partial one", ~sources=[{chain: 1337}], async (
-    ~t,
-    ~indexer,
-    ~source,
-  ) => {
-    await indexer->shape(
-      pgSchema => `CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id") WHERE "b_id" IS NOT NULL;`,
-    )
-    let restarted = await indexer->restartToReady(~source=source(1337))
+  scenario->Scenario.it(
+    "build a full index beside a partial one",
+    ~unsupported=shapesPostgresEntityTable,
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      await indexer->shape(
+        pgSchema => `CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id") WHERE "b_id" IS NOT NULL;`,
+      )
+      let restarted = await indexer->restartToReady(~source=source(1337))
 
-    t.expect((await restarted->indexesOn(~tableName="A"))->Array.map(describeIndex)).toEqual([
-      ("A_b_id", ["b_id"], true, true),
-      (aBIdName, ["b_id"], true, false),
-    ])
-  })
+      t.expect((await restarted->indexesOn(~tableName="A"))->Array.map(describeIndex)).toEqual([
+        ("A_b_id", ["b_id"], true, true),
+        (aBIdName, ["b_id"], true, false),
+      ])
+    },
+  )
 
   // Same identity under an older name: matching on what an index covers keeps
   // it instead of building a duplicate.
   scenario->Scenario.it(
     "keep a usable index the indexer didn't name",
+    ~unsupported=shapesPostgresEntityTable,
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       await indexer->shape(pgSchema => `CREATE INDEX "A_b_id" ON "${pgSchema}"."A"("b_id");`)
@@ -149,6 +156,7 @@ describe("Indexes on a database that already holds some", () => {
   // count as coverage.
   scenario->Scenario.it(
     "build a usable index beside one a failed build left invalid",
+    ~unsupported=shapesPostgresEntityTable,
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       await indexer->shape(
@@ -184,7 +192,8 @@ describe("Indexes on a database that already holds some", () => {
       source.resolveGetHeightOrThrow(100)
       await source.expectItemsQueries([fetchToHead])
       await indexer.waitUntilReady()
-      let built = await indexer->indexesOn(~tableName=longName)
+      let built = ref([])
+      await indexer.inPostgres(async _ => built := (await indexer->indexesOn(~tableName=longName)))
 
       // Unstamped, the restart finalizes again rather than resuming ready.
       // Stopped first: its last flush carries the stamp it already holds.
@@ -194,19 +203,23 @@ describe("Indexes on a database that already holds some", () => {
       let restarted = await indexer.restart()
       await restarted.waitUntilReady()
 
-      t.expect((
-        built->Array.map(index => (index.columns, index.isValid)),
-        (await restarted->indexesOn(~tableName=longName))->Array.map(index => index.name),
-        restarted->storageMessages,
-      )).toEqual((
-        [(["owner"], true)],
-        built->Array.map(index => index.name),
-        [
-          `Creating the 1 remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. This can take a long time on a large database.`,
-          `Committed 1 schema indexes and the ready timestamp in Ns.`,
-          `All 1 schema indexes are already in place. Marking the indexer ready.`,
-        ],
-      ))
+      t.expect(await restarted->readyAt).toEqual([true])
+      await restarted.inPostgres(
+        async _ =>
+          t.expect((
+            built.contents->Array.map(index => (index.columns, index.isValid)),
+            (await restarted->indexesOn(~tableName=longName))->Array.map(index => index.name),
+            restarted->storageMessages,
+          )).toEqual((
+            [(["owner"], true)],
+            built.contents->Array.map(index => index.name),
+            [
+              `Creating the 1 remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. This can take a long time on a large database.`,
+              `Committed 1 schema indexes and the ready timestamp in Ns.`,
+              `All 1 schema indexes are already in place. Marking the indexer ready.`,
+            ],
+          )),
+      )
     },
   )
 
@@ -241,27 +254,32 @@ describe("Indexes on a database that already holds some", () => {
         },
       ])
       await indexer.getBatchWritePromise()
-      let beforeReady = await indexer->indexesOn(~tableName="A")
+      let beforeReady = ref([])
+      await indexer.inPostgres(async _ => beforeReady := (await indexer->indexesOn(~tableName="A")))
       await source.expectItemsQueries([
         {fromBlock: 11, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
       ])
       await indexer.waitUntilReady()
 
+      t.expect(await indexer->readyAt).toEqual([true])
       // The name is the same either way, so the logs are what tell a reuse from
       // a create that lost to the index already there.
-      t.expect((
-        beforeReady->Array.map(index => index.name),
-        (await indexer->indexesOn(~tableName="A"))->Array.map(index => index.name),
-        indexer->storageMessages,
-      )).toEqual((
-        [aBIdName],
-        [aBIdName],
-        [
-          `Creating index "${aBIdName}" to serve a getWhere query on "A". Writes to the table are paused until it completes. This can take a long time on a large database.`,
-          `Index "${aBIdName}" is ready after Ns. Resuming indexing.`,
-          `All 1 schema indexes are already in place. Marking the indexer ready.`,
-        ],
-      ))
+      await indexer.inPostgres(
+        async _ =>
+          t.expect((
+            beforeReady.contents->Array.map(index => index.name),
+            (await indexer->indexesOn(~tableName="A"))->Array.map(index => index.name),
+            indexer->storageMessages,
+          )).toEqual((
+            [aBIdName],
+            [aBIdName],
+            [
+              `Creating index "${aBIdName}" to serve a getWhere query on "A". Writes to the table are paused until it completes. This can take a long time on a large database.`,
+              `Index "${aBIdName}" is ready after Ns. Resuming indexing.`,
+              `All 1 schema indexes are already in place. Marking the indexer ready.`,
+            ],
+          )),
+      )
     },
   )
 

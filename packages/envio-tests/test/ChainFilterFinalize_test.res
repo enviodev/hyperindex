@@ -70,33 +70,37 @@ let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
 describe("envio start --chain", () => {
   scenario->Scenario.it(
     "Indexes and stamps each chain as it catches up, with the other chain never started",
-    ~unsupported=Scenario.assertsPostgresIndexes,
     ~sources=[{chain: 1}, {chain: 137}],
     async (~t, ~indexer, ~source) => {
       let first = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
-      let {sql, pgSchema} = first.pg
       await catchUp(~indexer=first, ~source=source(1))
 
       t.expect(
-        (
-          await indexedTables(~sql, ~pgSchema),
-          await readyByChainId(first),
-          await first.metric("envio_progress_ready"),
-        ),
-        ~message="Chain 1 indexes its own partition and reports itself ready. Chain 137 has never been started, and holds nothing back",
-      ).toEqual((
-        ["A$1"],
-        [("1", true), ("137", false)],
-        [{value: "1", labels: dict{"chainId": "1"}}],
-      ))
+        (await readyByChainId(first), await first.metric("envio_progress_ready")),
+        ~message="Chain 1 reports itself ready. Chain 137 has never been started, and holds nothing back",
+      ).toEqual(([("1", true), ("137", false)], [{value: "1", labels: dict{"chainId": "1"}}]))
+      await first.inPostgres(
+        async ({sql, pgSchema}) =>
+          t.expect(
+            await indexedTables(~sql, ~pgSchema),
+            ~message="Chain 1 indexes its own partition",
+          ).toEqual(["A$1"]),
+      )
 
       let second = await first.restart(~chains=[ChainId.fromInt(137)], ())
       await catchUp(~indexer=second, ~source=source(137))
 
       t.expect(
-        (await indexedTables(~sql, ~pgSchema), await readyByChainId(second)),
-        ~message="Chain 137's process adds its own partition's index and stamps only its own row",
-      ).toEqual((["A$1", "A$137"], [("1", true), ("137", true)]))
+        await readyByChainId(second),
+        ~message="Chain 137's process stamps only its own row",
+      ).toEqual([("1", true), ("137", true)])
+      await second.inPostgres(
+        async ({sql, pgSchema}) =>
+          t.expect(
+            await indexedTables(~sql, ~pgSchema),
+            ~message="Chain 137's process adds its own partition's index",
+          ).toEqual(["A$1", "A$137"]),
+      )
     },
   )
 })

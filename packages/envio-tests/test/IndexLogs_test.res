@@ -73,7 +73,12 @@ describe("Index logs", () => {
   // fails on the server.
   indexed->Scenario.it(
     "carry the server's code when a build fails",
-    ~unsupported=Scenario.assertsPostgresIndexes,
+    ~unsupported=[
+      {
+        backend: #clickhouse,
+        reason: "drops a column off a Postgres entity table, which the ClickHouse leg has none of",
+      },
+    ],
     ~sources=[{chain: 1337}],
     ~captureLogs=true,
     async (~t, ~indexer, ~source) => {

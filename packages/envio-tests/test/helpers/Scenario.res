@@ -7,35 +7,6 @@ type backend = IndexerRunner.backend
 // skip message — an opt-out nobody can explain is an opt-out nobody revisits.
 type unsupported = {backend: backend, reason: string}
 
-// What Postgres keeps of an entity it stores, which an entity kept in
-// ClickHouse alone has no counterpart of.
-let assertsPostgresHistory = [
-  {backend: #clickhouse, reason: "asserts the history Postgres keeps of an entity"},
-]
-// On the ClickHouse leg an entity is kept in ClickHouse alone, with no
-// Postgres history: both sides read `None` there, so a case asserting state
-// and history together still checks the state on every leg.
-let postgresHistory = (indexer: IndexerRunner.t, name): promise<option<array<Change.t<'entity>>>> =>
-  switch IndexerRunner.selectedBackend {
-  | #postgres | #both => indexer.queryHistory(name)->Promise.thenResolve(history => Some(history))
-  | #clickhouse => Promise.resolve(None)
-  }
-// What Postgres holds for the scenario's entities on this leg: `expected`
-// where it keeps them, `absent` where they live in ClickHouse alone.
-let expectedInPostgres = (expected, ~absent) =>
-  switch IndexerRunner.selectedBackend {
-  | #postgres | #both => expected
-  | #clickhouse => absent
-  }
-let expectedPostgresHistory = (history: array<Change.t<'entity>>) =>
-  Some(history)->expectedInPostgres(~absent=None)
-
-let assertsPostgresIndexes = [
-  {backend: #clickhouse, reason: "asserts the indexes Postgres builds on an entity"},
-]
-let assertsPostgresPartitions = [
-  {backend: #clickhouse, reason: "asserts the partitions Postgres keeps an entity in"},
-]
 let configuresOwnStorage = [#postgres, #both]->Array.map((backend): unsupported => {
   backend,
   reason: "configures its own storage, so it runs the same on the ClickHouse leg",

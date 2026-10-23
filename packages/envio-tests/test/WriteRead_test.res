@@ -240,7 +240,6 @@ let firstQuery = (items): MockSource.expectedItemsQuery => {
 describe("Write/read tests", () => {
   scenario->Scenario.it(
     "Test writing and reading entities with special cases",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -319,36 +318,44 @@ describe("Write/read tests", () => {
       t.expect(
         await (indexer.query("EntityWithAllTypes"): promise<array<entityWithAllTypes>>),
       ).toEqual([entityWithAllTypes])
-      t.expect(
-        await (
-          indexer.queryHistory("EntityWithAllTypes"): promise<array<Change.t<entityWithAllTypes>>>
-        ),
-      ).toEqual([
-        Set({
-          checkpointId: 1n,
-          entityId: "1"->EntityId.unsafeOfString,
-          entity: entityWithAllTypes,
-        }),
-      ])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await (
+              indexer.queryHistory("EntityWithAllTypes"): promise<
+                array<Change.t<entityWithAllTypes>>,
+              >
+            ),
+          ).toEqual([
+            Set({
+              checkpointId: 1n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: entityWithAllTypes,
+            }),
+          ]),
+      )
 
       t.expect(
         await (
           indexer.query("EntityWithAllNonArrayTypes"): promise<array<entityWithAllNonArrayTypes>>
         ),
       ).toEqual([entityWithAllNonArrayTypes])
-      t.expect(
-        await (
-          indexer.queryHistory("EntityWithAllNonArrayTypes"): promise<
-            array<Change.t<entityWithAllNonArrayTypes>>,
-          >
-        ),
-      ).toEqual([
-        Set({
-          checkpointId: 1n,
-          entityId: "1"->EntityId.unsafeOfString,
-          entity: entityWithAllNonArrayTypes,
-        }),
-      ])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await (
+              indexer.queryHistory("EntityWithAllNonArrayTypes"): promise<
+                array<Change.t<entityWithAllNonArrayTypes>>,
+              >
+            ),
+          ).toEqual([
+            Set({
+              checkpointId: 1n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: entityWithAllNonArrayTypes,
+            }),
+          ]),
+      )
 
       t.expect(
         await (
@@ -357,15 +364,18 @@ describe("Write/read tests", () => {
           >
         ),
       ).toEqual([{id: "1"}])
-      t.expect(
-        await (
-          indexer.queryHistory(
-            "EntityWith63LenghtName______________________________________one",
-          ): promise<array<Change.t<idOnly>>>
-        ),
-      ).toEqual([
-        Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: {id: "1"}}),
-      ])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await (
+              indexer.queryHistory(
+                "EntityWith63LenghtName______________________________________one",
+              ): promise<array<Change.t<idOnly>>>
+            ),
+          ).toEqual([
+            Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: {id: "1"}}),
+          ]),
+      )
       t.expect(
         await (
           indexer.query("EntityWith63LenghtName______________________________________two"): promise<
@@ -373,21 +383,23 @@ describe("Write/read tests", () => {
           >
         ),
       ).toEqual([{id: "2"}])
-      t.expect(
-        await (
-          indexer.queryHistory(
-            "EntityWith63LenghtName______________________________________two",
-          ): promise<array<Change.t<idOnly>>>
-        ),
-      ).toEqual([
-        Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: {id: "2"}}),
-      ])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await (
+              indexer.queryHistory(
+                "EntityWith63LenghtName______________________________________two",
+              ): promise<array<Change.t<idOnly>>>
+            ),
+          ).toEqual([
+            Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: {id: "2"}}),
+          ]),
+      )
     },
   )
 
   scenario->Scenario.it(
     "Keeps committed entities across batches without rewriting their history",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -432,25 +444,28 @@ describe("Write/read tests", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      t.expect(
-        await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
-      ).toEqual([
-        Set({
-          checkpointId: 1n,
-          entityId: "untouched"->EntityId.unsafeOfString,
-          entity: {id: "untouched", value: "batch1"},
-        }),
-        Set({
-          checkpointId: 1n,
-          entityId: "updated"->EntityId.unsafeOfString,
-          entity: {id: "updated", value: "batch1"},
-        }),
-        Set({
-          checkpointId: 3n,
-          entityId: "updated"->EntityId.unsafeOfString,
-          entity: {id: "updated", value: "batch2"},
-        }),
-      ])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+          ).toEqual([
+            Set({
+              checkpointId: 1n,
+              entityId: "untouched"->EntityId.unsafeOfString,
+              entity: {id: "untouched", value: "batch1"},
+            }),
+            Set({
+              checkpointId: 1n,
+              entityId: "updated"->EntityId.unsafeOfString,
+              entity: {id: "updated", value: "batch1"},
+            }),
+            Set({
+              checkpointId: 3n,
+              entityId: "updated"->EntityId.unsafeOfString,
+              entity: {id: "updated", value: "batch2"},
+            }),
+          ]),
+      )
     },
   )
 

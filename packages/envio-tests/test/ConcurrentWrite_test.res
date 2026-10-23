@@ -44,7 +44,6 @@ let stallWriteBatch: ref<option<promise<unit>>> = ref(None)
 describe("Concurrent batch write and processing", () => {
   scenario->Scenario.it(
     "Should not rewrite a history change already persisted by an in-flight write",
-    ~unsupported=Scenario.assertsPostgresHistory,
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     ~mapStorage=storage => {
       ...storage,
@@ -179,15 +178,12 @@ describe("Concurrent batch write and processing", () => {
       resolveStall.contents()
       await indexer.getBatchWritePromise()
 
-      t.expect(
-        (
-          writeBatchErrors,
+      t.expect(writeBatchErrors).toEqual([])
+      await indexer.inPostgres(async _ =>
+        t.expect(
           await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
-        ),
-        ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
-      ).toEqual((
-        [],
-        [
+          ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
+        ).toEqual([
           Set({
             checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -202,8 +198,8 @@ describe("Concurrent batch write and processing", () => {
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "recreated"},
           }),
-        ],
-      ))
+        ])
+      )
     },
   )
 })

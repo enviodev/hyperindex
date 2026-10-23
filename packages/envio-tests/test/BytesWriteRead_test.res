@@ -117,10 +117,6 @@ describe("Bytes as Uint8Array", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      let postgresStored: option<array<Change.t<blob>>> = await Scenario.postgresHistory(
-        indexer,
-        "Blob",
-      )
       let clickHouseStored = switch IndexerRunner.selectedBackend {
       | #clickhouse | #both =>
         let database = TestClickHouse.currentDatabase()
@@ -135,15 +131,10 @@ describe("Bytes as Uint8Array", () => {
       t.expect((
         blobs->Array.toSorted((a, b) => String.compare(a.id, b.id)),
         queried,
-        postgresStored,
         clickHouseStored,
       )).toEqual((
         [first, second],
         dict{"eq": [first], "in": [second]},
-        Scenario.expectedPostgresHistory([
-          Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
-          Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
-        ]),
         switch IndexerRunner.selectedBackend {
         | #clickhouse | #both =>
           Some(
@@ -155,6 +146,13 @@ describe("Bytes as Uint8Array", () => {
         | #postgres => None
         },
       ))
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(await (indexer.queryHistory("Blob"): promise<array<Change.t<blob>>>)).toEqual([
+            Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
+            Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
+          ]),
+      )
     },
   )
 })

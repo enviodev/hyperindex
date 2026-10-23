@@ -26,7 +26,12 @@ type Domain {
   name: String @index
 }
 `,
-  ~unsupported=Scenario.assertsPostgresIndexes,
+  ~unsupported=[
+    {
+      backend: #clickhouse,
+      reason: "the refusal is a Postgres index's row limit, and ClickHouse keeps the entity with no such index",
+    },
+  ],
 )
 
 type domain = {id: string, name: string}

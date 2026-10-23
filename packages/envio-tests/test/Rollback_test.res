@@ -123,9 +123,8 @@ let querySimpleEntities = (indexer: IndexerRunner.t) =>
     rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
   )
 
-let simpleEntityHistory = (indexer: IndexerRunner.t): promise<
-  option<array<Change.t<simpleEntity>>>,
-> => Scenario.postgresHistory(indexer, "SimpleEntity")
+let simpleEntityHistory = (indexer: IndexerRunner.t): promise<array<Change.t<simpleEntity>>> =>
+  indexer.queryHistory("SimpleEntity")
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
@@ -228,11 +227,7 @@ describe("E2E rollback tests", () => {
     await indexer.getBatchWritePromise()
 
     t.expect(
-      await Promise.all3((
-        indexer.queryCheckpoints(),
-        querySimpleEntities(indexer),
-        simpleEntityHistory(indexer),
-      )),
+      await Promise.all2((indexer.queryCheckpoints(), querySimpleEntities(indexer))),
       ~message="Should have two entities in the db",
     ).toEqual((
       [
@@ -265,7 +260,9 @@ describe("E2E rollback tests", () => {
           value: "value-1",
         },
       ],
-      Scenario.expectedPostgresHistory([
+    ))
+    await indexer.inPostgres(async _ =>
+      t.expect(await simpleEntityHistory(indexer)).toEqual([
         Set({
           checkpointId: firstHistoryCheckpointId,
           entityId: "1"->EntityId.unsafeOfString,
@@ -302,8 +299,8 @@ describe("E2E rollback tests", () => {
           checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
           entityId: "4"->EntityId.unsafeOfString,
         }),
-      ]),
-    ))
+      ])
+    )
 
     // Should trigger rollback
     await sourceMock.expectItemsQueries([
@@ -383,11 +380,7 @@ describe("E2E rollback tests", () => {
     await indexer.getBatchWritePromise()
 
     t.expect(
-      await Promise.all3((
-        indexer.queryCheckpoints(),
-        querySimpleEntities(indexer),
-        simpleEntityHistory(indexer),
-      )),
+      await Promise.all2((indexer.queryCheckpoints(), querySimpleEntities(indexer))),
       ~message="Should correctly rollback entities",
     ).toEqual((
       [
@@ -409,7 +402,9 @@ describe("E2E rollback tests", () => {
           value: "value-2",
         },
       ],
-      Scenario.expectedPostgresHistory([
+    ))
+    await indexer.inPostgres(async _ =>
+      t.expect(await simpleEntityHistory(indexer)).toEqual([
         Set({
           checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "1"->EntityId.unsafeOfString,
@@ -426,8 +421,8 @@ describe("E2E rollback tests", () => {
             value: "value-2",
           },
         }),
-      ]),
-    ))
+      ])
+    )
   }
 
   multichainScenario->Scenario.it(
@@ -638,14 +633,14 @@ describe("E2E rollback tests", () => {
       }
 
       t.expect(
-        await Promise.all2((
-          (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          simpleEntityHistory(indexer),
-        )),
-        ~message="Should establish SET -> DELETE -> SET history before the rollback",
-      ).toEqual((
-        [{id: "1", value: "after-recreate"}],
-        Scenario.expectedPostgresHistory([
+        await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+        ~message="Should hold the recreated entity before the rollback",
+      ).toEqual([{id: "1", value: "after-recreate"}])
+      await indexer.inPostgres(async _ =>
+        t.expect(
+          await simpleEntityHistory(indexer),
+          ~message="Should establish SET -> DELETE -> SET history before the rollback",
+        ).toEqual([
           Set({
             checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -657,8 +652,8 @@ describe("E2E rollback tests", () => {
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "after-recreate"},
           }),
-        ]),
-      ))
+        ])
+      )
 
       // Detect a reorg at block 103, then establish block 102 (the DELETE
       // checkpoint) as the latest valid block.
@@ -1550,12 +1545,11 @@ describe("E2E rollback tests", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Promise.all2((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          simpleEntityHistory(indexer),
         )),
-        ~message=`Should create history rows and checkpoints`,
+        ~message=`Should create checkpoints`,
       ).toEqual((
         [
           {
@@ -1609,49 +1603,55 @@ describe("E2E rollback tests", () => {
             value: "call-5",
           },
         ],
-        Scenario.expectedPostgresHistory([
-          Set({
-            checkpointId: 3n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-0",
-            },
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-2",
-            },
-          }),
-          Set({
-            checkpointId: 5n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-3",
-            },
-          }),
-          Set({
-            checkpointId: 6n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-4",
-            },
-          }),
-          Set({
-            checkpointId: 7n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-5",
-            },
-          }),
-        ]),
       ))
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await simpleEntityHistory(indexer),
+            ~message=`Should create history rows`,
+          ).toEqual([
+            Set({
+              checkpointId: 3n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-0",
+              },
+            }),
+            Set({
+              checkpointId: 4n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-2",
+              },
+            }),
+            Set({
+              checkpointId: 5n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-3",
+              },
+            }),
+            Set({
+              checkpointId: 6n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-4",
+              },
+            }),
+            Set({
+              checkpointId: 7n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-5",
+              },
+            }),
+          ]),
+      )
 
       t.expect(
         {
@@ -1866,10 +1866,9 @@ describe("E2E rollback tests", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Promise.all2((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          simpleEntityHistory(indexer),
         )),
       ).toEqual((
         [
@@ -1911,33 +1910,36 @@ describe("E2E rollback tests", () => {
             value: "call-4",
           },
         ],
-        Scenario.expectedPostgresHistory([
-          Set({
-            checkpointId: 3n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-0",
-            },
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-2",
-            },
-          }),
-          Set({
-            checkpointId: 11n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-4",
-            },
-          }),
-        ]),
       ))
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(await simpleEntityHistory(indexer)).toEqual([
+            Set({
+              checkpointId: 3n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-0",
+              },
+            }),
+            Set({
+              checkpointId: 4n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-2",
+              },
+            }),
+            Set({
+              checkpointId: 11n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-4",
+              },
+            }),
+          ]),
+      )
     },
   )
 
@@ -2073,12 +2075,11 @@ describe("E2E rollback tests", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Promise.all2((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          simpleEntityHistory(indexer),
         )),
-        ~message=`Should create history rows and checkpoints`,
+        ~message=`Should create checkpoints`,
       ).toEqual((
         [
           {
@@ -2132,77 +2133,84 @@ describe("E2E rollback tests", () => {
             value: "call-5",
           },
         ],
-        Scenario.expectedPostgresHistory([
-          Set({
-            checkpointId: 3n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-0",
-            },
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-2",
-            },
-          }),
-          Set({
-            checkpointId: 5n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-3",
-            },
-          }),
-          Set({
-            checkpointId: 6n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-4",
-            },
-          }),
-          Set({
-            checkpointId: 7n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-5",
-            },
-          }),
-        ]),
       ))
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await simpleEntityHistory(indexer),
+            ~message=`Should create history rows`,
+          ).toEqual([
+            Set({
+              checkpointId: 3n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-0",
+              },
+            }),
+            Set({
+              checkpointId: 4n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-2",
+              },
+            }),
+            Set({
+              checkpointId: 5n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-3",
+              },
+            }),
+            Set({
+              checkpointId: 6n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-4",
+              },
+            }),
+            Set({
+              checkpointId: 7n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-5",
+              },
+            }),
+          ]),
+      )
       t.expect(
-        await Promise.all2((
-          (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
-          (
-            Scenario.postgresHistory(indexer, "EntityWithBigDecimal"): promise<
-              option<array<Change.t<entityWithBigDecimal>>>,
-            >
-          ),
-        )),
+        await (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
-      ).toEqual((
-        [
-          {
-            id: "foo",
-            bigDecimal: BigDecimal.fromFloat(0.),
-          },
-        ],
-        Scenario.expectedPostgresHistory([
-          Set({
-            checkpointId: 6n,
-            entityId: "foo"->EntityId.unsafeOfString,
-            entity: {
-              id: "foo",
-              bigDecimal: BigDecimal.fromFloat(0.),
-            },
-          }),
-        ]),
-      ))
+      ).toEqual([
+        {
+          id: "foo",
+          bigDecimal: BigDecimal.fromFloat(0.),
+        },
+      ])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await (
+              indexer.queryHistory("EntityWithBigDecimal"): promise<
+                array<Change.t<entityWithBigDecimal>>,
+              >
+            ),
+            ~message="Should also add history for the non-reorg chain's entity",
+          ).toEqual([
+            Set({
+              checkpointId: 6n,
+              entityId: "foo"->EntityId.unsafeOfString,
+              entity: {
+                id: "foo",
+                bigDecimal: BigDecimal.fromFloat(0.),
+              },
+            }),
+          ]),
+      )
 
       // Should trigger rollback
       await sourceMock1337.expectItemsQueries([
@@ -2282,10 +2290,9 @@ describe("E2E rollback tests", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await Promise.all3((
+        await Promise.all2((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-          simpleEntityHistory(indexer),
         )),
       ).toEqual((
         [
@@ -2327,61 +2334,65 @@ describe("E2E rollback tests", () => {
             value: "call-4",
           },
         ],
-        Scenario.expectedPostgresHistory([
-          Set({
-            checkpointId: 3n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-0",
-            },
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-2",
-            },
-          }),
-          Set({
-            checkpointId: 11n,
-            entityId: "1"->EntityId.unsafeOfString,
-            entity: {
-              id: "1",
-              value: "call-4",
-            },
-          }),
-        ]),
       ))
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(await simpleEntityHistory(indexer)).toEqual([
+            Set({
+              checkpointId: 3n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-0",
+              },
+            }),
+            Set({
+              checkpointId: 4n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-2",
+              },
+            }),
+            Set({
+              checkpointId: 11n,
+              entityId: "1"->EntityId.unsafeOfString,
+              entity: {
+                id: "1",
+                value: "call-4",
+              },
+            }),
+          ]),
+      )
       t.expect(
-        await Promise.all2((
-          (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
-          (
-            Scenario.postgresHistory(indexer, "EntityWithBigDecimal"): promise<
-              option<array<Change.t<entityWithBigDecimal>>>,
-            >
-          ),
-        )),
+        await (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked (theoretically)",
-      ).toEqual((
-        [
-          {
-            id: "foo",
-            bigDecimal: BigDecimal.fromFloat(0.),
-          },
-        ],
-        Scenario.expectedPostgresHistory([
-          Set({
-            checkpointId: 11n,
-            entityId: "foo"->EntityId.unsafeOfString,
-            entity: {
-              id: "foo",
-              bigDecimal: BigDecimal.fromFloat(0.),
-            },
-          }),
-        ]),
-      ))
+      ).toEqual([
+        {
+          id: "foo",
+          bigDecimal: BigDecimal.fromFloat(0.),
+        },
+      ])
+      await indexer.inPostgres(
+        async _ =>
+          t.expect(
+            await (
+              indexer.queryHistory("EntityWithBigDecimal"): promise<
+                array<Change.t<entityWithBigDecimal>>,
+              >
+            ),
+            ~message="Should also add history for the non-reorg chain's entity",
+          ).toEqual([
+            Set({
+              checkpointId: 11n,
+              entityId: "foo"->EntityId.unsafeOfString,
+              entity: {
+                id: "foo",
+                bigDecimal: BigDecimal.fromFloat(0.),
+              },
+            }),
+          ]),
+      )
     },
   )
 
@@ -3706,11 +3717,7 @@ describe("E2E rollback tests", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (
-          await querySimpleEntities(indexer),
-          await simpleEntityHistory(indexer),
-          await indexer.metric("envio_rollback_events"),
-        ),
+        (await querySimpleEntities(indexer), await indexer.metric("envio_rollback_events")),
         ~message="Chain 100's in-flight entity change should be rolled back together with its progress and reapplied on refetch",
       ).toEqual((
         [
@@ -3723,7 +3730,10 @@ describe("E2E rollback tests", () => {
             value: "reapplied",
           },
         ],
-        Scenario.expectedPostgresHistory([
+        [{value: "2", labels: Dict.make()}],
+      ))
+      await indexer.inPostgres(async _ =>
+        t.expect(await simpleEntityHistory(indexer)).toEqual([
           Set({
             checkpointId: 4n,
             entityId: "reorg"->EntityId.unsafeOfString,
@@ -3748,9 +3758,8 @@ describe("E2E rollback tests", () => {
               value: "reapplied",
             },
           }),
-        ]),
-        [{value: "2", labels: Dict.make()}],
-      ))
+        ])
+      )
     },
   )
 })

@@ -96,8 +96,7 @@ let chainRows = async (indexer: IndexerRunner.t) =>
 let startBlocks = async (indexer: IndexerRunner.t) =>
   (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.startBlock))
 
-let counterPartitions = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
+let counterPartitions = async ({sql, pgSchema}: IndexerRunner.pg) => {
   let rows: array<{
     "name": string,
   }> = await sql->Sql.queryForTests(
@@ -135,17 +134,15 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
         (
           rows->Array.toSorted((a, b) => Int.compare(a.chainId, b.chainId)),
           await chainRows(resumed),
-          await counterPartitions(resumed),
           (await resumed.queryAddresses())->Array.map(
             row => (row.chainId->ChainId.toString, row.contractName),
           ),
           resumed.logs()->Array.filter(entry => entry.msg->String.startsWith("Adding the chain")),
         ),
-        ~message="Chain 137 gets a row, a partition and its config addresses, and indexes into them. Chain 1 keeps what it had, and the operator is told once",
+        ~message="Chain 137 gets a row and its config addresses, and indexes into them. Chain 1 keeps what it had, and the operator is told once",
       ).toEqual((
         [{id: "total", count: 1n, chainId: 1}, {id: "total", count: 10n, chainId: 137}],
         [("1", 100), ("137", 100)],
-        ["Counter$1", "Counter$137"]->Scenario.expectedInPostgres(~absent=[]),
         [("1", "Token"), ("137", "Token")],
         [
           (
@@ -156,6 +153,13 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
           ),
         ],
       ))
+      await resumed.inPostgres(
+        async pg =>
+          t.expect(
+            await counterPartitions(pg),
+            ~message="Chain 137 gets a partition beside chain 1's",
+          ).toEqual(["Counter$1", "Counter$137"]),
+      )
     },
   )
 
