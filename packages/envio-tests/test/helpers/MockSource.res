@@ -43,6 +43,7 @@ type mockSourceHandler = Internal.handlerArgs => promise<unit>
 type mockSourceContractRegister = Internal.contractRegisterArgs => promise<unit>
 type mockSourceEvent = {
   __mockHandler?: mockSourceHandler,
+  __mockPreloadHandler?: mockSourceHandler,
   __mockContractRegister?: mockSourceContractRegister,
 }
 
@@ -57,7 +58,10 @@ let makeMockSourceRegistration = (
   let handler: Internal.handler = args => {
     let event = args.event->(Utils.magic: Internal.event => mockSourceEvent)
     if args.context.isPreload {
-      Promise.resolve()
+      switch event.__mockPreloadHandler {
+      | Some(handler) => handler(args)
+      | None => Promise.resolve()
+      }
     } else {
       switch event.__mockHandler {
       | Some(handler) => handler(args)
@@ -172,6 +176,9 @@ type itemMock = {
   blockNumber: int,
   logIndex: int,
   handler?: mockSourceHandler,
+  // Run in the handler's place while its batch preloads; the handler itself
+  // only runs once preloading is done.
+  preloadHandler?: mockSourceHandler,
   contractRegister?: mockSourceContractRegister,
   // Laid over the number, timestamp and hash every item's block carries.
   blockFields?: dict<unknown>,
@@ -780,6 +787,7 @@ let make = (
         }
         let _ = %raw(`Object.defineProperties(payload, {
           __mockHandler: {value: item.handler},
+          __mockPreloadHandler: {value: item.preloadHandler},
           __mockContractRegister: {value: item.contractRegister},
         })`)
         Internal.Event({

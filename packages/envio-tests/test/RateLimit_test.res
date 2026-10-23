@@ -5,7 +5,6 @@ open Vitest
 let evmHash = hex =>
   "0x" ++ hex->String.slice(~start=2, ~end=hex->String.length)->String.padStart(64, "0")
 
-
 let chainId = 1->ChainId.fromInt
 
 // Mock source that throws Source.RateLimited on the first N calls, then
@@ -24,7 +23,7 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
       let current = callCount.contents
       callCount := current + 1
       if current < rateLimitedCalls {
-        throw(Source.RateLimited({resetMs: resetMs, requestStats: []}))
+        throw(Source.RateLimited({resetMs, requestStats: []}))
       }
       let data = BlockStore.fromJs(
         blockNumbers->Array.map(n => {
@@ -79,12 +78,13 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       },
       onReorg: () => reorgCalls := reorgCalls.contents + 1,
     }
-    let sourceManager = SourceManager.make(~sources=[source], ~isRealtime=false)
-
-    let _ = await sourceManager->SourceManager.getBlockHashes(
-      ~blockNumbers=[1],
+    let sourceManager = SourceManager.make(
+      ~logger=Logger.makeInMemory(),
+      ~sources=[source],
       ~isRealtime=false,
     )
+
+    let _ = await sourceManager->SourceManager.getBlockHashes(~blockNumbers=[1], ~isRealtime=false)
 
     t.expect(reorgCalls.contents).toEqual(1)
   })
@@ -93,15 +93,13 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     // 500ms resetMs * 2 rate-limited calls = ~1s minimum total wait
     let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)
     let sourceManager = SourceManager.make(
+      ~logger=Logger.makeInMemory(),
       ~sources=[source],
       ~isRealtime=false,
     )
 
     let blockNumbers = [100, 101, 102]
-    let result = await sourceManager->SourceManager.getBlockHashes(
-      ~blockNumbers,
-      ~isRealtime=false,
-    )
+    let result = await sourceManager->SourceManager.getBlockHashes(~blockNumbers, ~isRealtime=false)
 
     t.expect(result->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=103)).toEqual(
       blockNumbers,
@@ -112,6 +110,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
   Async.it("succeeds immediately when no rate limit", async t => {
     let source = makeMockSource(~rateLimitedCalls=0, ~resetMs=100)
     let sourceManager = SourceManager.make(
+      ~logger=Logger.makeInMemory(),
       ~sources=[source],
       ~isRealtime=false,
     )
@@ -130,6 +129,7 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
     async t => {
       let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=500)
       let sourceManager = SourceManager.make(
+        ~logger=Logger.makeInMemory(),
         ~sources=[source],
         ~isRealtime=false,
       )
@@ -138,11 +138,10 @@ describe("SourceManager.getBlockHashes rate limit handling", () => {
       // Sequential accounting would yield ~4 * 500ms = 2000ms; the dedup'd
       // wall-clock total should be roughly half that (~1000ms).
       let start = Date.now()
-      let _ =
-        await [
-          sourceManager->SourceManager.getBlockHashes(~blockNumbers=[1], ~isRealtime=false),
-          sourceManager->SourceManager.getBlockHashes(~blockNumbers=[2], ~isRealtime=false),
-        ]->Promise.all
+      let _ = await [
+        sourceManager->SourceManager.getBlockHashes(~blockNumbers=[1], ~isRealtime=false),
+        sourceManager->SourceManager.getBlockHashes(~blockNumbers=[2], ~isRealtime=false),
+      ]->Promise.all
       let elapsed = Date.now() -. start
 
       let rateLimitTime = sourceManager->SourceManager.getRateLimitTimeMs

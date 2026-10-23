@@ -8,9 +8,12 @@ type options = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
+  logger: Logger.t,
 }
 
-let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}: options): t => {
+let make = (
+  {chainId, endpointUrl, apiToken, onEventRegistrations, addressStore, logger}: options,
+): t => {
   let name = "HyperFuel"
 
   // Per source, so one rejected token is reported once rather than on every
@@ -31,7 +34,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
   ) {
   | client => client
   | exception exn =>
-    exn->ErrorHandling.mkLogAndRaise(~msg="Failed to instantiate the HyperFuel client")
+    exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to instantiate the HyperFuel client")
   }
 
   let getItemsOrThrow = async (
@@ -115,15 +118,16 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
         let eventConfig = (
           onEventRegistrations->Array.getUnsafe(rejected.onEventRegistrationIndex)
         ).eventConfig
-        logger->Logging.childWarn({
-          "msg": `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
-          "chainId": chainId,
-          "blockNumber": rejected.blockHeight,
-          "logIndex": rejected.receiptIndex,
-          "txId": rejected.txId,
-          "dataLength": rejected.dataLength,
-          "skippedInPage": rejected.count,
-        })
+        logger->Logger.warn(
+          `Skipped ${eventConfig.contractName}.${eventConfig.name} LogData receipts whose data doesn't decode against the contract ABI. Check that the ABI matches the deployed contract.`,
+          ~params={
+            "blockNumber": rejected.blockHeight,
+            "logIndex": rejected.receiptIndex,
+            "txId": rejected.txId,
+            "dataLength": rejected.dataLength,
+            "skippedInPage": rejected.count,
+          },
+        )
       }
     })
 
@@ -218,7 +222,11 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
       let timerRef = Performance.now()
       let height = try await client->FuelHyperSyncClient.getHeight catch {
       | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(~warned=unauthorizedWarned, ~product="HyperFuel")
+        exn->HyperSync.rethrowLoggingUnauthorized(
+          ~logger,
+          ~warned=unauthorizedWarned,
+          ~product="HyperFuel",
+        )
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

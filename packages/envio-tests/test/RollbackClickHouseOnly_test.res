@@ -78,7 +78,7 @@ let raiseOnIndexerError = promise =>
   ])->Promise.thenResolve(result =>
     switch result {
     | None => ()
-    | Some(errHandler) => errHandler->ErrorHandling.raiseExn
+    | Some(errHandler) => errHandler->ErrorHandling.toExn->throw
     }
   )
 

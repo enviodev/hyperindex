@@ -10,21 +10,13 @@ type contextParams = {
   mutable isResolved: bool,
 }
 
-// We don't want to expose the params to the user
-// so instead of storing _params on the context object,
-// we use an external WeakMap
-let paramsByThis: Utils.WeakMap.t<unknown, contextParams> = Utils.WeakMap.make()
-
 let effectContextPrototype = %raw(`Object.create(null)`)
 Utils.Object.defineProperty(
   effectContextPrototype,
   "log",
   {
     // Wrap with toMethod so `this` binds to the EffectContext instance.
-    get: Utils.toMethod(() => {
-      let params = paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))
-      Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
-    }),
+    get: Utils.toMethod(() => ConsoleScope.effectLogger(%raw(`this`))()->Logger.asContextLog),
   },
 )
 %%raw(`
@@ -34,8 +26,7 @@ function throwCrossChainChainAccess() {
   throw new Error('context.chain is not available on the cross-chain effect "' + this._effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
 }
 var crossChainChainDescriptor = { get: throwCrossChainChainAccess, enumerable: true };
-var EffectContext = function(params, chainId, effectName, defaultShouldCache, callEffect) {
-  paramsByThis.set(this, params);
+var EffectContext = function(chainId, effectName, defaultShouldCache, callEffect) {
   this.effect = callEffect;
   this.cache = defaultShouldCache;
   if (chainId === undefined) {
@@ -51,7 +42,6 @@ EffectContext.prototype = effectContextPrototype;
 
 @new
 external makeEffectContext: (
-  contextParams,
   ~chainId: option<ChainId.t>,
   ~effectName: string,
   ~defaultShouldCache: bool,
@@ -82,7 +72,6 @@ let initEffect = (params: contextParams) => {
       }
 
       let effectContext = makeEffectContext(
-        params,
         ~chainId=switch scope {
         | Internal.Chain(chainId) => Some(chainId)
         | Internal.CrossChain => None
@@ -98,6 +87,11 @@ let initEffect = (params: contextParams) => {
         chainId: handlerChainId,
         checkpointId: params.checkpointId,
       }
+      effectContext->ConsoleScope.setEffectLogger(() =>
+        params.indexerState
+        ->IndexerState.loggerForItem(params.item)
+        ->Logger.withFields({"effect": effect.name})
+      )
       LoadLayer.loadEffect(
         ~loadManager=params.loadManager,
         ~persistence=params.persistence,
@@ -106,8 +100,6 @@ let initEffect = (params: contextParams) => {
         ~scope,
         ~indexerState=params.indexerState,
         ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~ecosystem=params.config.ecosystem,
       )
     }
   }
@@ -132,8 +124,6 @@ let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>)
     ~scope=params->entityScope,
     ~indexerState=params.indexerState,
     ~shouldGroup=params.isPreload,
-    ~item=params.item,
-    ~ecosystem=params.config.ecosystem,
     ~filter,
   )
 
@@ -187,8 +177,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~ecosystem=params.config.ecosystem,
               ~entityId,
             )
         )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
@@ -220,8 +208,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~ecosystem=params.config.ecosystem,
               ~entityId,
             )->Promise.thenResolve(entity => {
               switch entity {
@@ -251,8 +237,6 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
               ~scope=params->entityScope,
               ~indexerState=params.indexerState,
               ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~ecosystem=params.config.ecosystem,
               ~entityId=entity.id,
             )->Promise.thenResolve(storageEntity => {
               switch storageEntity {
@@ -295,15 +279,15 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       Utils.Error.make(
         `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
       )->ErrorHandling.mkLogAndRaise(
-        ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
+        ~logger=params.indexerState->IndexerState.loggerForItem(params.item),
       )
     }
     switch prop {
     | "log" =>
       (
         params.isPreload
-          ? Logging.noopLogger
-          : Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
+          ? Logger.silentContextLog
+          : params.indexerState->IndexerState.loggerForItem(params.item)->Logger.asContextLog
       )->(Utils.magic: Envio.logger => unknown)
 
     | "effect" =>

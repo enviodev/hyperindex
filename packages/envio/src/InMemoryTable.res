@@ -42,14 +42,10 @@ module Entity = {
   // Helper to extract an entity's id as a dict key. The raw id may be a
   // string/int/bigint, so it's stringified to a stable key for in-memory
   // indexing.
-  exception UnexpectedIdNotDefinedOnEntity
   let getEntityIdUnsafe = (entity: Internal.entity): string =>
     switch (entity->(Utils.magic: Internal.entity => {"id": option<EntityId.t>}))["id"] {
     | Some(id) => id->EntityId.toKey
-    | None =>
-      UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
-        ~msg="Property 'id' does not exist on expected entity object",
-      )
+    | None => JsError.throwWithMessage("Property 'id' does not exist on expected entity object")
     }
 
   let addToIndex = (self: t, ~index: index, ~entityId) => {

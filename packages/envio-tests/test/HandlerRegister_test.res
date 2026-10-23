@@ -132,7 +132,7 @@ let describeRegistrations = (
 
 let register = fn => {
   HandlerRegister.resetOnEventRegistrations()
-  HandlerRegister.startRegistration(~config)
+  HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
   fn()
   HandlerRegister.finishRegistration(~config)
 }
@@ -223,7 +223,7 @@ describe("HandlerRegister multiple registrations", () => {
     // handler (the MockIndexer register-once, narrow-per-run case).
     let h1 = makeHandler()
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config=configMultichain)
+    HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config=configMultichain)
     setHandler(h1)
     let registrations1 = HandlerRegister.finishRegistration(~config)
     let registrations137 = HandlerRegister.finishRegistration(~config=config137)
@@ -242,7 +242,7 @@ describe("HandlerRegister multiple registrations", () => {
     HandlerRegister.resetOnEventRegistrations()
     setHandler(h1)
     setHandler(h2)
-    HandlerRegister.startRegistration(~config)
+    HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
     let registrations = HandlerRegister.finishRegistration(~config)
     t.expect(
       registrations->describeRegistrations(~labels=[(h1, "h1"), (h2, "h2")], ~crLabels=[]),
@@ -253,7 +253,7 @@ describe("HandlerRegister multiple registrations", () => {
   // is reported at the call site instead of silently doing nothing.
   it("throws when the event is not configured on the contract", t => {
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config)
+    HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
     t->toThrowErrorEqual(
       () => setHandler(~eventName="Nonexistent", makeHandler()),
       `Event "Nonexistent" is not configured on contract "ERC20", so its handler would never run. Add it to your config, or remove the registration. Configured events on "ERC20": "Approval", "Transfer".`,
@@ -262,7 +262,7 @@ describe("HandlerRegister multiple registrations", () => {
 
   it("throws when the contract is not configured on any chain", t => {
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config)
+    HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
     t->toThrowErrorEqual(
       () => setContractRegister(~contractName="Missing", makeContractRegister()),
       `Contract "Missing" is not configured on any chain, so its handler for "Transfer" would never run. Add it to your config, or remove the registration. Configured contracts: "ERC20", "ERC721".`,

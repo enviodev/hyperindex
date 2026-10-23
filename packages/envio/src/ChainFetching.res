@@ -48,15 +48,19 @@ let runContractRegistersOrThrow = async (
 
     let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
 
+    let params: ContractRegisterContext.contractRegisterParams = {
+      item,
+      onRegister,
+      config,
+      logger: chainState->ChainState.logger,
+      isResolved: false,
+    }
     // Catch sync and async errors
     try {
-      let params: ContractRegisterContext.contractRegisterParams = {
-        item,
-        onRegister,
-        config,
-        isResolved: false,
-      }
-      let result = contractRegister(ContractRegisterContext.getContractRegisterArgs(params))
+      let result = ConsoleScope.run(
+        Logger(() => params->ContractRegisterContext.loggerForItem),
+        () => contractRegister(ContractRegisterContext.getContractRegisterArgs(params)),
+      )
 
       // Even though `contractRegister` always returns a promise,
       // in the ReScript type, but it might return a non-promise value for TS API.
@@ -71,7 +75,7 @@ let runContractRegistersOrThrow = async (
             params.isResolved = true
             exn->ErrorHandling.mkLogAndRaise(
               ~msg=errorMessage,
-              ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+              ~logger=params->ContractRegisterContext.loggerForItem,
             )
           }),
         )
@@ -82,7 +86,7 @@ let runContractRegistersOrThrow = async (
     | exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg=errorMessage,
-        ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+        ~logger=params->ContractRegisterContext.loggerForItem,
       )
     }
   }
@@ -127,46 +131,55 @@ let rec onQueryResponse = async (
       eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
     })
     if numContractRegisterEvents === 0 {
-      Logging.trace({
-        "msg": "Finished querying",
-        "chainId": chainId,
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": parsedQueueItems->Array.length,
-      })
+      chainState
+      ->ChainState.logger
+      ->Logger.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": parsedQueueItems->Array.length,
+        },
+      )
     } else {
-      Logging.trace({
-        "msg": "Finished querying",
-        "chainId": chainId,
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": parsedQueueItems->Array.length,
-        "numContractRegisterEvents": numContractRegisterEvents,
-      })
+      chainState
+      ->ChainState.logger
+      ->Logger.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": parsedQueueItems->Array.length,
+          "numContractRegisterEvents": numContractRegisterEvents,
+        },
+      )
     }
 
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockStore, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
-    | ReorgDetected(reorgDetected) => {
+    | ReorgDetected({scannedBlock, receivedBlock}) => {
         chainState
         ->ChainState.logger
-        ->Logging.childInfo(
-          reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-            ~shouldRollbackOnReorg=chainState->ChainState.shouldRollbackOnReorg,
-          ),
+        ->Logger.info(
+          `Blockchain reorg detected. ${chainState->ChainState.shouldRollbackOnReorg
+              ? "Initiating indexer rollback"
+              : "NOT initiating indexer rollback due to configuration"}.`,
+          ~params={
+            "blockNumber": scannedBlock.blockNumber,
+            "indexedBlockHash": scannedBlock.blockHash,
+            "receivedBlockHash": receivedBlock.blockHash,
+          },
         )
-        chainState->ChainState.recordReorgDetected(
-          ~blockNumber=reorgDetected.scannedBlock.blockNumber,
-        )
+        chainState->ChainState.recordReorgDetected(~blockNumber=scannedBlock.blockNumber)
 
         // Must agree with the `reportOnly` flag registerReorgGuard passed to
         // the merge: a discarded page (rollback mode) needs the rollback to
         // actually happen, or the stale stored hash re-reports forever.
         if chainState->ChainState.shouldRollbackOnReorg {
-          Some(reorgDetected.scannedBlock.blockNumber)
+          Some(scannedBlock.blockNumber)
         } else {
           None
         }
@@ -252,7 +265,11 @@ let rec onQueryResponse = async (
           ~config=state->IndexerState.config,
           ~chainState,
         ) {
-        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+        | exception exn =>
+          IndexerState.errorExit(
+            state,
+            exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
+          )
         | newRegistrations => proceed(~newRegistrations)
         }
       }
@@ -362,7 +379,11 @@ let fetchChain = async (
               ~scheduleRollback,
             )
           } catch {
-          | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+          | exn =>
+            IndexerState.errorExit(
+              state,
+              exn->ErrorHandling.make(~logger=state->IndexerState.logger),
+            )
           }
         },
         ~action,
@@ -370,7 +391,13 @@ let fetchChain = async (
       )
     } catch {
     | exn =>
-      IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
+      IndexerState.errorExit(
+        state,
+        exn->ErrorHandling.make(
+          ~logger=state->IndexerState.logger,
+          ~msg=IndexerState.unexpectedErrorMsg,
+        ),
+      )
     }
   }
 }

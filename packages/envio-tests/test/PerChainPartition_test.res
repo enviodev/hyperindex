@@ -236,8 +236,13 @@ describe("A chain-scoped load", () => {
         dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
         ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)
         ->EntityFilter.scoped(~table=counter.table, ~scope=Chain(137->ChainId.fromInt))
-      let client = PgStorage.makeClient(~pgSchema, ~maxConnections=1)
-      let storage = PgStorage.make(~pgSchema, ~sql=client, ~ecosystem=Evm)
+      let client = PgStorage.makeClient(~logger=Logger.makeInMemory(), ~pgSchema, ~maxConnections=1)
+      let storage = PgStorage.make(
+        ~logger=Logger.makeInMemory(),
+        ~pgSchema,
+        ~sql=client,
+        ~ecosystem=Evm,
+      )
       let _ = await storage.loadOrThrow(~filter, ~table=counter.table)
       let prepared: array<{
         "statement": string,

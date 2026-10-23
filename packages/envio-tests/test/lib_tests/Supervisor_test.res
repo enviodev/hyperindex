@@ -207,11 +207,11 @@ describe("Supervisor worker plumbing", () => {
 
   it("Gives every worker a log file of its own", t => {
     t.expect([
-      Supervisor.logFilePath(~workerIndex=0, ~path="logs/envio.log"),
-      Supervisor.logFilePath(~workerIndex=1, ~path="logs/envio.log"),
+      Supervisor.workerLogFilePath(~workerIndex=0, ~path="logs/envio.log"),
+      Supervisor.workerLogFilePath(~workerIndex=1, ~path="logs/envio.log"),
       // A dot in a directory name is not an extension.
-      Supervisor.logFilePath(~workerIndex=1, ~path="./logs/envio"),
-      Supervisor.logFilePath(~workerIndex=2, ~path="envio"),
+      Supervisor.workerLogFilePath(~workerIndex=1, ~path="./logs/envio"),
+      Supervisor.workerLogFilePath(~workerIndex=2, ~path="envio"),
     ]).toStrictEqual([
       "logs/envio.worker-0.log",
       "logs/envio.worker-1.log",

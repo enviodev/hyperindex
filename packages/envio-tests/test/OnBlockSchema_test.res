@@ -16,7 +16,9 @@ describe("blockRangeSchema (shared inner range validation)", () => {
   it("parses all three fields", t => {
     let parsed =
       %raw(`{_gte: 100, _lte: 200, _every: 5}`)->S.parseOrThrow(HandlerRegister.blockRangeSchema)
-    t.expect(parsed).toEqual(({_gte: Some(100), _lte: Some(200), _every: 5}: HandlerRegister.blockRange))
+    t.expect(parsed).toEqual(
+      ({_gte: Some(100), _lte: Some(200), _every: 5}: HandlerRegister.blockRange),
+    )
   })
 
   it("defaults _every to 1 when omitted", t => {
@@ -53,11 +55,10 @@ describe("blockRangeSchema (shared inner range validation)", () => {
 })
 
 describe("Evm ecosystem onBlockFilterSchema", () => {
-  let schema = Evm.make(~logger=Logging.getLogger()).onBlockFilterSchema
+  let schema = Evm.make().onBlockFilterSchema
 
   it("surfaces the inner range chunk as Some(unknown) when block.number is present", t => {
-    let parsed =
-      %raw(`{block: {number: {_gte: 10, _every: 2}}}`)->S.parseOrThrow(schema)
+    let parsed = %raw(`{block: {number: {_gte: 10, _every: 2}}}`)->S.parseOrThrow(schema)
     // Feed the inner chunk through the shared range schema (mirrors
     // `extractRange` in HandlerRegister.res) to prove it carries the raw payload.
     let range = parsed->Option.getOrThrow->S.parseOrThrow(HandlerRegister.blockRangeSchema)
@@ -82,20 +83,21 @@ describe("Evm ecosystem onBlockFilterSchema", () => {
     // Net effect: the user gets a clear parse error instead of a silent
     // no-filter registration.
     let parsed = %raw(`{block: {}}`)->S.parseOrThrow(schema)
-    t.expect(() =>
-      parsed->Option.getOrThrow->S.parseOrThrow(HandlerRegister.blockRangeSchema)->ignore
+    t.expect(
+      () => parsed->Option.getOrThrow->S.parseOrThrow(HandlerRegister.blockRangeSchema)->ignore,
     ).toThrow()
   })
 })
 
 describe("Fuel ecosystem onBlockFilterSchema", () => {
-  let schema = Fuel.make(~logger=Logging.getLogger()).onBlockFilterSchema
+  let schema = Fuel.make().onBlockFilterSchema
 
   it("surfaces the inner range chunk from block.height", t => {
-    let parsed =
-      %raw(`{block: {height: {_gte: 1, _lte: 100}}}`)->S.parseOrThrow(schema)
+    let parsed = %raw(`{block: {height: {_gte: 1, _lte: 100}}}`)->S.parseOrThrow(schema)
     let range = parsed->Option.getOrThrow->S.parseOrThrow(HandlerRegister.blockRangeSchema)
-    t.expect(range).toEqual(({_gte: Some(1), _lte: Some(100), _every: 1}: HandlerRegister.blockRange))
+    t.expect(range).toEqual(
+      ({_gte: Some(1), _lte: Some(100), _every: 1}: HandlerRegister.blockRange),
+    )
   })
 
   it("returns None when `block` is missing", t => {
@@ -105,7 +107,7 @@ describe("Fuel ecosystem onBlockFilterSchema", () => {
 })
 
 describe("Svm ecosystem onBlockFilterSchema", () => {
-  let schema = Svm.make(~logger=Logging.getLogger()).onBlockFilterSchema
+  let schema = Svm.make().onBlockFilterSchema
 
   it("surfaces the inner range chunk from the flat `slot` key", t => {
     let parsed = %raw(`{slot: {_gte: 42, _every: 3}}`)->S.parseOrThrow(schema)
@@ -126,12 +128,12 @@ describe("Svm ecosystem onBlockFilterSchema", () => {
 
 describe("Ecosystem.t wires the correct onBlockMethodName", () => {
   it("EVM exposes onBlock", t => {
-    t.expect(Evm.make(~logger=Logging.getLogger()).onBlockMethodName).toBe("onBlock")
+    t.expect(Evm.make().onBlockMethodName).toBe("onBlock")
   })
   it("Fuel exposes onBlock", t => {
-    t.expect(Fuel.make(~logger=Logging.getLogger()).onBlockMethodName).toBe("onBlock")
+    t.expect(Fuel.make().onBlockMethodName).toBe("onBlock")
   })
   it("SVM exposes onSlot", t => {
-    t.expect(Svm.make(~logger=Logging.getLogger()).onBlockMethodName).toBe("onSlot")
+    t.expect(Svm.make().onBlockMethodName).toBe("onSlot")
   })
 })
