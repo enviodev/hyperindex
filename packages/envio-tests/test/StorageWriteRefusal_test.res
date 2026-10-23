@@ -44,22 +44,18 @@ let setTally = (~block, ~logIndex=0, ~id, ~count): MockSource.itemMock => {
 // the refusal comes from the server.
 let tooLarge = 2147483648.->(Utils.magic: float => int)
 
-type stored = {tallies: array<tally>, checkpoints: int, progress: array<int>}
+type stored = {tallies: array<tally>, history: int, checkpoints: int, progress: array<int>}
 
 let read = async (indexer: IndexerRunner.t) => {
   let tallies: array<tally> = await indexer.query("Tally")
+  let history: array<Change.t<tally>> = await indexer.queryHistory("Tally")
   {
     tallies: tallies->Array.toSorted((a, b) => String.compare(a.id, b.id)),
+    history: history->Array.length,
     checkpoints: (await indexer.queryCheckpoints())->Array.length,
     progress: (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
   }
 }
-
-let readHistory = (indexer: IndexerRunner.t, ~into) =>
-  indexer.usePostgresSql(async _ => {
-    let history: array<Change.t<tally>> = await indexer.queryHistory("Tally")
-    into->Array.push(history->Array.length)
-  })
 
 describe("A batch the server refuses", () => {
   let refusal = Scenario.captureRefusal()
@@ -70,7 +66,6 @@ describe("A batch the server refuses", () => {
     ~onError=refusal.onError,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      let historyLengths = []
       await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
 
       await sourceMock.expectItemsQueries([
@@ -84,7 +79,6 @@ describe("A batch the server refuses", () => {
       ])
       await indexer.getBatchWritePromise()
       let committed = await read(indexer)
-      await indexer->readHistory(~into=historyLengths)
 
       await sourceMock.expectItemsQueries([
         {
@@ -100,7 +94,6 @@ describe("A batch the server refuses", () => {
       ])
       let reason = await refusal.awaitRefusalReason()
       let afterRefusal = await read(indexer)
-      await indexer->readHistory(~into=historyLengths)
 
       sourceMock.setAutoHeight(100)
       let restarted = await indexer.restart()
@@ -115,7 +108,6 @@ describe("A batch the server refuses", () => {
       ])
       await restarted.getBatchWritePromise()
       let resumed = await read(restarted)
-      await restarted->readHistory(~into=historyLengths)
 
       t.expect((
         reason->Option.map(reason => reason->String.includes("out of range")),
@@ -124,15 +116,8 @@ describe("A batch the server refuses", () => {
       )).toEqual((
         Some(true),
         committed,
-        {tallies: [{id: "kept", count: 2}], checkpoints: 2, progress: [2]},
+        {tallies: [{id: "kept", count: 2}], history: 2, checkpoints: 2, progress: [2]},
       ))
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            historyLengths,
-            ~message="The refused batch left no history row, and the resumed one wrote its own",
-          ).toEqual([1, 1, 2]),
-      )
     },
   )
 })

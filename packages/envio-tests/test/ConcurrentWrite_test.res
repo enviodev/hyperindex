@@ -178,12 +178,15 @@ describe("Concurrent batch write and processing", () => {
       resolveStall.contents()
       await indexer.getBatchWritePromise()
 
-      t.expect(writeBatchErrors).toEqual([])
-      await indexer.usePostgresSql(async _ =>
-        t.expect(
+      t.expect(
+        (
+          writeBatchErrors,
           await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
-          ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
-        ).toEqual([
+        ),
+        ~message="The delete history row persisted by the in-flight write must not be written again by the next write",
+      ).toEqual((
+        [],
+        [
           Set({
             checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -198,8 +201,8 @@ describe("Concurrent batch write and processing", () => {
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "recreated"},
           }),
-        ])
-      )
+        ],
+      ))
     },
   )
 })

@@ -364,8 +364,8 @@ let run = async (
     // keeps the entity, so the table is registered as ClickHouse's alone.
     // Registered once per client: the handle is what a read names the table by.
     let clickHouseTables = Dict.make()
-    let clickHouseRows = (entityConfig: Internal.entityConfig) => {
-      let handle = switch clickHouseTables->Dict.get(entityConfig.name) {
+    let clickHouseTable = (entityConfig: Internal.entityConfig) =>
+      switch clickHouseTables->Dict.get(entityConfig.name) {
       | Some(handle) => handle
       | None =>
         let handle = (
@@ -377,10 +377,10 @@ let run = async (
         clickHouseTables->Dict.set(entityConfig.name, handle)
         handle
       }
+    let clickHouseRows = (entityConfig: Internal.entityConfig) =>
       client
-      ->StorageClient.loadWhere(~table=handle, ~conditions=[])
+      ->StorageClient.loadWhere(~table=clickHouseTable(entityConfig), ~conditions=[])
       ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<unknown>>)
-    }
     let postgresRows = (entityConfig: Internal.entityConfig) =>
       sql->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
 
@@ -459,19 +459,31 @@ let run = async (
           }
       }
 
+    // ClickHouse's history is its state, so it holds every change: those a
+    // rollback reverted stay, followed by the rows restoring them. Postgres's
+    // holds only changes in the reorg window, pruned, and a rollback deletes
+    // what it reverts.
+    let historyRows = (entityConfig: Internal.entityConfig): promise<array<unknown>> =>
+      switch entityConfig.storage {
+      | {postgres: false} =>
+        client
+        ->StorageClient.historyForTests(~table=clickHouseTable(entityConfig))
+        ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<unknown>>)
+      | _ =>
+        sql->Sql.queryForTests(
+          loadAllQuery(
+            ~pgSchema,
+            ~tableName=EntityHistory.historyTableName(
+              ~entityName=entityConfig.name,
+              ~entityIndex=entityConfig.index,
+            ),
+          ),
+        )
+      }
+
     let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
       let chainIdOfRow = chainIdOfRow(entityConfig)
-      sql
-      ->Sql.queryForTests(
-        loadAllQuery(
-          ~pgSchema,
-          ~tableName=EntityHistory.historyTableName(
-            ~entityName=entityConfig.name,
-            ~entityIndex=entityConfig.index,
-          ),
-        ),
-      )
-      ->Promise.thenResolve(items => {
+      historyRows(entityConfig)->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
         let changes = items->S.parseOrThrow(

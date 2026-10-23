@@ -318,44 +318,36 @@ describe("Write/read tests", () => {
       t.expect(
         await (indexer.query("EntityWithAllTypes"): promise<array<entityWithAllTypes>>),
       ).toEqual([entityWithAllTypes])
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await (
-              indexer.queryHistory("EntityWithAllTypes"): promise<
-                array<Change.t<entityWithAllTypes>>,
-              >
-            ),
-          ).toEqual([
-            Set({
-              checkpointId: 1n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: entityWithAllTypes,
-            }),
-          ]),
-      )
+      t.expect(
+        await (
+          indexer.queryHistory("EntityWithAllTypes"): promise<array<Change.t<entityWithAllTypes>>>
+        ),
+      ).toEqual([
+        Set({
+          checkpointId: 1n,
+          entityId: "1"->EntityId.unsafeOfString,
+          entity: entityWithAllTypes,
+        }),
+      ])
 
       t.expect(
         await (
           indexer.query("EntityWithAllNonArrayTypes"): promise<array<entityWithAllNonArrayTypes>>
         ),
       ).toEqual([entityWithAllNonArrayTypes])
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await (
-              indexer.queryHistory("EntityWithAllNonArrayTypes"): promise<
-                array<Change.t<entityWithAllNonArrayTypes>>,
-              >
-            ),
-          ).toEqual([
-            Set({
-              checkpointId: 1n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: entityWithAllNonArrayTypes,
-            }),
-          ]),
-      )
+      t.expect(
+        await (
+          indexer.queryHistory("EntityWithAllNonArrayTypes"): promise<
+            array<Change.t<entityWithAllNonArrayTypes>>,
+          >
+        ),
+      ).toEqual([
+        Set({
+          checkpointId: 1n,
+          entityId: "1"->EntityId.unsafeOfString,
+          entity: entityWithAllNonArrayTypes,
+        }),
+      ])
 
       t.expect(
         await (
@@ -364,18 +356,15 @@ describe("Write/read tests", () => {
           >
         ),
       ).toEqual([{id: "1"}])
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await (
-              indexer.queryHistory(
-                "EntityWith63LenghtName______________________________________one",
-              ): promise<array<Change.t<idOnly>>>
-            ),
-          ).toEqual([
-            Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: {id: "1"}}),
-          ]),
-      )
+      t.expect(
+        await (
+          indexer.queryHistory(
+            "EntityWith63LenghtName______________________________________one",
+          ): promise<array<Change.t<idOnly>>>
+        ),
+      ).toEqual([
+        Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: {id: "1"}}),
+      ])
       t.expect(
         await (
           indexer.query("EntityWith63LenghtName______________________________________two"): promise<
@@ -383,18 +372,15 @@ describe("Write/read tests", () => {
           >
         ),
       ).toEqual([{id: "2"}])
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await (
-              indexer.queryHistory(
-                "EntityWith63LenghtName______________________________________two",
-              ): promise<array<Change.t<idOnly>>>
-            ),
-          ).toEqual([
-            Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: {id: "2"}}),
-          ]),
-      )
+      t.expect(
+        await (
+          indexer.queryHistory(
+            "EntityWith63LenghtName______________________________________two",
+          ): promise<array<Change.t<idOnly>>>
+        ),
+      ).toEqual([
+        Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: {id: "2"}}),
+      ])
     },
   )
 
@@ -444,28 +430,25 @@ describe("Write/read tests", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
-          ).toEqual([
-            Set({
-              checkpointId: 1n,
-              entityId: "untouched"->EntityId.unsafeOfString,
-              entity: {id: "untouched", value: "batch1"},
-            }),
-            Set({
-              checkpointId: 1n,
-              entityId: "updated"->EntityId.unsafeOfString,
-              entity: {id: "updated", value: "batch1"},
-            }),
-            Set({
-              checkpointId: 3n,
-              entityId: "updated"->EntityId.unsafeOfString,
-              entity: {id: "updated", value: "batch2"},
-            }),
-          ]),
-      )
+      t.expect(
+        await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
+      ).toEqual([
+        Set({
+          checkpointId: 1n,
+          entityId: "untouched"->EntityId.unsafeOfString,
+          entity: {id: "untouched", value: "batch1"},
+        }),
+        Set({
+          checkpointId: 1n,
+          entityId: "updated"->EntityId.unsafeOfString,
+          entity: {id: "updated", value: "batch1"},
+        }),
+        Set({
+          checkpointId: 3n,
+          entityId: "updated"->EntityId.unsafeOfString,
+          entity: {id: "updated", value: "batch2"},
+        }),
+      ])
     },
   )
 

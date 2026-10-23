@@ -394,6 +394,11 @@ external loadWhereRaw: (t, int, array<LoadCondition.t>) => promise<queryResult> 
 let loadWhere = async (client, ~table, ~conditions) =>
   client->read(await client->loadWhereRaw(table, conditions))
 
+@send external historyForTestsRaw: (t, int) => promise<queryResult> = "historyForTests"
+
+let historyForTests = async (client, ~table) =>
+  client->read(await client->historyForTestsRaw(table))
+
 // What the storage holds before anything is initialized or resumed.
 type holding =
   | Nothing

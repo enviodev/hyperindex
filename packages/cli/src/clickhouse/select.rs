@@ -534,6 +534,21 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
     ))
 }
 
+/// Every committed row of the table's history, each with its checkpoint and
+/// change.
+pub fn history(database: &str, table: &Table, frontier: &Frontier) -> String {
+    let checkpoint = quoted(CHECKPOINT_ID_COLUMN);
+    format!(
+        "SELECT {}, {checkpoint}, {} FROM {} WHERE {checkpoint} <= {} ORDER BY {}, {checkpoint} \
+         FORMAT RowBinary",
+        as_row_names(&table.columns),
+        quoted(CHANGE_COLUMN),
+        table_ref(database, &table.entity.history_table),
+        frontier_of(table.entity.chain_id_column.as_deref(), frontier),
+        quoted_list(table.entity.key()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,6 +668,28 @@ mod tests {
              `db`.`envio_history_Account` WHERE `id` = 'a' AND `chain_id` = 137 AND \
              `envio_checkpoint_id` <= multiIf(`chain_id` = 1, 7, `chain_id` = 137, 9, 0) GROUP \
              BY `id`, `chain_id`)) WHERE `envio_change` = 'SET' FORMAT RowBinary"
+        );
+    }
+
+    /// History past the frontier belongs to a write that hasn't committed.
+    #[test]
+    fn history_reads_every_committed_row() {
+        assert_eq!(
+            (
+                history("db", &account(), &frontier(&[(1, 7), (137, 9)])),
+                history("db", &per_chain_account(), &frontier(&[(1, 7), (137, 9)])),
+            ),
+            (
+                "SELECT `id` AS `id`, `owner_name` AS `ownerName`, `balance` AS `balance`, \
+                 `envio_checkpoint_id`, `envio_change` FROM `db`.`envio_history_Account` WHERE \
+                 `envio_checkpoint_id` <= 9 ORDER BY `id`, `envio_checkpoint_id` FORMAT RowBinary"
+                    .to_string(),
+                "SELECT `id` AS `id`, `chain_id` AS `chainId`, `envio_checkpoint_id`, \
+                 `envio_change` FROM `db`.`envio_history_Account` WHERE `envio_checkpoint_id` <= \
+                 multiIf(`chain_id` = 1, 7, `chain_id` = 137, 9, 0) ORDER BY `id`, `chain_id`, \
+                 `envio_checkpoint_id` FORMAT RowBinary"
+                    .to_string(),
+            )
         );
     }
 

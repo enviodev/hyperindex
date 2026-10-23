@@ -128,13 +128,19 @@ describe("Bytes as Uint8Array", () => {
       }
 
       let blobs: array<blob> = await indexer.query("Blob")
+      let history: array<Change.t<blob>> = await indexer.queryHistory("Blob")
       t.expect((
         blobs->Array.toSorted((a, b) => String.compare(a.id, b.id)),
         queried,
+        history,
         clickHouseStored,
       )).toEqual((
         [first, second],
         dict{"eq": [first], "in": [second]},
+        [
+          Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
+          Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
+        ],
         switch IndexerRunner.selectedBackend {
         | #clickhouse | #both =>
           Some(
@@ -146,13 +152,6 @@ describe("Bytes as Uint8Array", () => {
         | #postgres => None
         },
       ))
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(await (indexer.queryHistory("Blob"): promise<array<Change.t<blob>>>)).toEqual([
-            Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
-            Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
-          ]),
-      )
     },
   )
 })

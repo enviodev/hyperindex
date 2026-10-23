@@ -477,9 +477,10 @@ describe("Isolated multichain rollback", () => {
       await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
 
       t.expect(
-        await Promise.all3((
+        await Promise.all4((
           indexer.queryCheckpoints(),
           counters(indexer),
+          counterHistory(indexer),
           progressByChain(indexer),
         )),
         ~message="Both chains reached block 102, each counting off its own checkpoint ids",
@@ -491,20 +492,14 @@ describe("Isolated multichain rollback", () => {
           checkpoint(~id=3n, ~chain=1337, ~block=102, ~events=1),
         ],
         [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 13372n, chainId: 1337}],
+        [
+          counterSet(~checkpointId=2n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=2n, ~chain=1337, ~count=1337n),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=1002n),
+          counterSet(~checkpointId=3n, ~chain=1337, ~count=13372n),
+        ],
         progress(~chain100="102", ~chain1337="102"),
       ))
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await counterHistory(indexer),
-            ~message="Each chain's history counts off its own checkpoint ids",
-          ).toEqual([
-            counterSet(~checkpointId=2n, ~chain=100, ~count=100n),
-            counterSet(~checkpointId=2n, ~chain=1337, ~count=1337n),
-            counterSet(~checkpointId=3n, ~chain=100, ~count=1002n),
-            counterSet(~checkpointId=3n, ~chain=1337, ~count=13372n),
-          ]),
-      )
 
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 

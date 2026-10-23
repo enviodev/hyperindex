@@ -23,7 +23,8 @@ use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::storage::rows::{self, Cell, ColumnRead, ReadKind, ResultSet};
 use crate::storage::types::{
-    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, INFO_TABLE,
+    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE,
+    CHECKPOINT_ID_COLUMN, INFO_TABLE,
 };
 use crate::storage::{Batch, Failure, Handoff, Initialize, Resume, WriteError};
 
@@ -844,6 +845,20 @@ impl Storage {
         let read = select::load(self.database(), table, &conditions, &self.frontier())?;
         let body = self.client.read_with(read).await?;
         let (types, reads) = table.reads();
+        rows::lay_out(&row_binary::decode(&body, &types)?, reads)
+    }
+
+    pub async fn history(&self, table: &crate::storage::Table) -> Result<ResultSet> {
+        let table = table.clickhouse()?;
+        let body = self
+            .client
+            .read(select::history(self.database(), table, &self.frontier()))
+            .await?;
+        let (mut types, mut reads) = table.reads();
+        types.push((ChType::UInt64, ReadKind::Text));
+        reads.push(ColumnRead::scalar(CHECKPOINT_ID_COLUMN, ReadKind::Text));
+        types.push((ddl::change_type(), ReadKind::Text));
+        reads.push(ColumnRead::scalar(CHANGE_COLUMN, ReadKind::Text));
         rows::lay_out(&row_binary::decode(&body, &types)?, reads)
     }
 

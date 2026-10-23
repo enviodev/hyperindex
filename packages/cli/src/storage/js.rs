@@ -659,6 +659,20 @@ impl JsStorage {
         Ok(self.hold(postgres::rows::into_result(&rows, &columns).map_err(to_napi)?))
     }
 
+    /// Every committed history row of a table ClickHouse keeps, for tests to
+    /// read back.
+    #[napi]
+    pub async fn history_for_tests(&self, table: u32) -> napi::Result<QueryResult> {
+        let table = self.table(table)?;
+        let clickhouse = self
+            .inner
+            .clickhouse
+            .as_ref()
+            .ok_or_else(|| napi::Error::from_reason("No ClickHouse is configured"))?;
+        let result = clickhouse.history(&table).await.map_err(to_napi)?;
+        Ok(self.hold(result))
+    }
+
     #[napi]
     pub async fn load_where(
         &self,

@@ -110,20 +110,16 @@ describe("Scenario rollback and history", () => {
       let source = source(1)
       await enterThresholdAndIndex(~indexer, ~source)
 
-      await indexer.usePostgresSql(
-        async _ => {
-          let history: array<Change.t<counter>> = await indexer.queryHistory("Counter")
-          t.expect(
-            history->Array.map(
-              change =>
-                switch change {
-                | Set({entityId, entity}) => (entityId->EntityId.toKey, Some(entity.count))
-                | Delete({entityId}) => (entityId->EntityId.toKey, None)
-                },
-            ),
-          ).toEqual([("total", Some(1n))])
-        },
-      )
+      let history: array<Change.t<counter>> = await indexer.queryHistory("Counter")
+      t.expect(
+        history->Array.map(
+          change =>
+            switch change {
+            | Set({entityId, entity}) => (entityId->EntityId.toKey, Some(entity.count))
+            | Delete({entityId}) => (entityId->EntityId.toKey, None)
+            },
+        ),
+      ).toEqual([("total", Some(1n))])
     },
   )
 

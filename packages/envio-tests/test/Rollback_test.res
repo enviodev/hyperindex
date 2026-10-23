@@ -227,7 +227,11 @@ describe("E2E rollback tests", () => {
     await indexer.getBatchWritePromise()
 
     t.expect(
-      await Promise.all2((indexer.queryCheckpoints(), querySimpleEntities(indexer))),
+      await Promise.all3((
+        indexer.queryCheckpoints(),
+        querySimpleEntities(indexer),
+        simpleEntityHistory(indexer),
+      )),
       ~message="Should have two entities in the db",
     ).toEqual((
       [
@@ -260,9 +264,7 @@ describe("E2E rollback tests", () => {
           value: "value-1",
         },
       ],
-    ))
-    await indexer.usePostgresSql(async _ =>
-      t.expect(await simpleEntityHistory(indexer)).toEqual([
+      [
         Set({
           checkpointId: firstHistoryCheckpointId,
           entityId: "1"->EntityId.unsafeOfString,
@@ -299,8 +301,8 @@ describe("E2E rollback tests", () => {
           checkpointId: firstHistoryCheckpointId->BigInt.add(1n),
           entityId: "4"->EntityId.unsafeOfString,
         }),
-      ])
-    )
+      ],
+    ))
 
     // Should trigger rollback
     await sourceMock.expectItemsQueries([
@@ -633,14 +635,14 @@ describe("E2E rollback tests", () => {
       }
 
       t.expect(
-        await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-        ~message="Should hold the recreated entity before the rollback",
-      ).toEqual([{id: "1", value: "after-recreate"}])
-      await indexer.usePostgresSql(async _ =>
-        t.expect(
-          await simpleEntityHistory(indexer),
-          ~message="Should establish SET -> DELETE -> SET history before the rollback",
-        ).toEqual([
+        await Promise.all2((
+          (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+          simpleEntityHistory(indexer),
+        )),
+        ~message="Should establish SET -> DELETE -> SET history before the rollback",
+      ).toEqual((
+        [{id: "1", value: "after-recreate"}],
+        [
           Set({
             checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
@@ -652,8 +654,8 @@ describe("E2E rollback tests", () => {
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "after-recreate"},
           }),
-        ])
-      )
+        ],
+      ))
 
       // Detect a reorg at block 103, then establish block 102 (the DELETE
       // checkpoint) as the latest valid block.
@@ -1545,11 +1547,12 @@ describe("E2E rollback tests", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await Promise.all2((
+        await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+          simpleEntityHistory(indexer),
         )),
-        ~message=`Should create checkpoints`,
+        ~message=`Should create history rows and checkpoints`,
       ).toEqual((
         [
           {
@@ -1603,55 +1606,49 @@ describe("E2E rollback tests", () => {
             value: "call-5",
           },
         ],
+        [
+          Set({
+            checkpointId: 3n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-0",
+            },
+          }),
+          Set({
+            checkpointId: 4n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-2",
+            },
+          }),
+          Set({
+            checkpointId: 5n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-3",
+            },
+          }),
+          Set({
+            checkpointId: 6n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-4",
+            },
+          }),
+          Set({
+            checkpointId: 7n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-5",
+            },
+          }),
+        ],
       ))
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await simpleEntityHistory(indexer),
-            ~message=`Should create history rows`,
-          ).toEqual([
-            Set({
-              checkpointId: 3n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-0",
-              },
-            }),
-            Set({
-              checkpointId: 4n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-2",
-              },
-            }),
-            Set({
-              checkpointId: 5n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-3",
-              },
-            }),
-            Set({
-              checkpointId: 6n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-4",
-              },
-            }),
-            Set({
-              checkpointId: 7n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-5",
-              },
-            }),
-          ]),
-      )
 
       t.expect(
         {
@@ -2075,11 +2072,12 @@ describe("E2E rollback tests", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await Promise.all2((
+        await Promise.all3((
           indexer.queryCheckpoints(),
           (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+          simpleEntityHistory(indexer),
         )),
-        ~message=`Should create checkpoints`,
+        ~message=`Should create history rows and checkpoints`,
       ).toEqual((
         [
           {
@@ -2133,84 +2131,77 @@ describe("E2E rollback tests", () => {
             value: "call-5",
           },
         ],
+        [
+          Set({
+            checkpointId: 3n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-0",
+            },
+          }),
+          Set({
+            checkpointId: 4n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-2",
+            },
+          }),
+          Set({
+            checkpointId: 5n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-3",
+            },
+          }),
+          Set({
+            checkpointId: 6n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-4",
+            },
+          }),
+          Set({
+            checkpointId: 7n,
+            entityId: "1"->EntityId.unsafeOfString,
+            entity: {
+              id: "1",
+              value: "call-5",
+            },
+          }),
+        ],
       ))
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await simpleEntityHistory(indexer),
-            ~message=`Should create history rows`,
-          ).toEqual([
-            Set({
-              checkpointId: 3n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-0",
-              },
-            }),
-            Set({
-              checkpointId: 4n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-2",
-              },
-            }),
-            Set({
-              checkpointId: 5n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-3",
-              },
-            }),
-            Set({
-              checkpointId: 6n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-4",
-              },
-            }),
-            Set({
-              checkpointId: 7n,
-              entityId: "1"->EntityId.unsafeOfString,
-              entity: {
-                id: "1",
-                value: "call-5",
-              },
-            }),
-          ]),
-      )
       t.expect(
-        await (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
+        await Promise.all2((
+          (indexer.query("EntityWithBigDecimal"): promise<array<entityWithBigDecimal>>),
+          (
+            indexer.queryHistory("EntityWithBigDecimal"): promise<
+              array<Change.t<entityWithBigDecimal>>,
+            >
+          ),
+        )),
         ~message="Should also add another entity for a non-reorg chain, which should also be rollbacked",
-      ).toEqual([
-        {
-          id: "foo",
-          bigDecimal: BigDecimal.fromFloat(0.),
-        },
-      ])
-      await indexer.usePostgresSql(
-        async _ =>
-          t.expect(
-            await (
-              indexer.queryHistory("EntityWithBigDecimal"): promise<
-                array<Change.t<entityWithBigDecimal>>,
-              >
-            ),
-            ~message="Should also add history for the non-reorg chain's entity",
-          ).toEqual([
-            Set({
-              checkpointId: 6n,
-              entityId: "foo"->EntityId.unsafeOfString,
-              entity: {
-                id: "foo",
-                bigDecimal: BigDecimal.fromFloat(0.),
-              },
-            }),
-          ]),
-      )
+      ).toEqual((
+        [
+          {
+            id: "foo",
+            bigDecimal: BigDecimal.fromFloat(0.),
+          },
+        ],
+        [
+          Set({
+            checkpointId: 6n,
+            entityId: "foo"->EntityId.unsafeOfString,
+            entity: {
+              id: "foo",
+              bigDecimal: BigDecimal.fromFloat(0.),
+            },
+          }),
+        ],
+      ))
 
       // Should trigger rollback
       await sourceMock1337.expectItemsQueries([
