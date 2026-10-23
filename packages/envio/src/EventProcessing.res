@@ -144,7 +144,7 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~pass) => {
           switch pass->eventStat(item) {
           | Some(stat) =>
             let timerRef = stat->IndexerState.startPreloadHandler
-            run->Promise.thenResolve(() => stat->IndexerState.endPreloadHandler(timerRef))
+            run->Promise.finally(() => stat->IndexerState.endPreloadHandler(timerRef))
           | None => run
           }->Utils.Promise.silentCatch,
         )
