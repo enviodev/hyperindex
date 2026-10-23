@@ -318,9 +318,17 @@ let awaitExit = async (group, ~logger): outcome => {
       }
 
     group.running->Array.forEach(r => {
-      // A worker's last lines are still in its pipe when it exits.
-      r.child->NodeJs.ChildProcess.Child.onClose(
-        (code, signal) => r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping)),
+      // A worker's last lines are still in its pipe when it exits, so its exit
+      // counts once the pipe closes. A process the worker started can hold the
+      // pipe open past that, so the wait is cut short.
+      let closeDeadline = ref(None)
+      let onEnd = (code, signal) => {
+        closeDeadline->Utils.clearTimeoutRef
+        r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping))
+      }
+      r.child->NodeJs.ChildProcess.Child.onClose(onEnd)
+      r.child->NodeJs.ChildProcess.Child.onExit(
+        (code, signal) => closeDeadline := Some(setTimeout(() => onEnd(code, signal), 1000)),
       )
       r.child->NodeJs.ChildProcess.Child.onError(
         exn => {

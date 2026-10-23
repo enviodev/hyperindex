@@ -37,6 +37,20 @@ if (mode === "print") {
   setTimeout(() => process.exit(0), 50);
 }
 
+// Leaves behind a process holding its output pipes open, as a handler that
+// starts a helper process can, so the pipes outlive the worker. Prints the
+// helper's pid for the test to clean up.
+if (mode === "orphan") {
+  const { spawn } = await import("node:child_process");
+  const helper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {
+    stdio: ["ignore", "inherit", "inherit"],
+    detached: true,
+  });
+  helper.unref();
+  process.stdout.write(`helper ${helper.pid}\n`);
+  setTimeout(() => process.exit(0), 50);
+}
+
 // Nothing else keeps a "linger" worker alive; it waits to be stopped.
 if (mode === "linger") setInterval(() => {}, 1000);
 

@@ -16,7 +16,7 @@ describe("ErrorHandling.log", () => {
       ->Array.map(line => (line->Dict.get("level"), line->Dict.get("msg"))),
     ).toEqual([
       (Some(JSON.String("error")), Some(JSON.String("No events found"))),
-      (Some(JSON.String("error")), Some(JSON.String("Unexpected error"))),
+      (Some(JSON.String("error")), Some(JSON.String("thrown string"))),
     ])
   })
 })

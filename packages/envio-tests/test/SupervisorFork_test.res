@@ -199,6 +199,37 @@ describe("Supervisor.fork output", () => {
       ("stdout", "second line"),
     ])
   })
+
+  // A worker's pipes close only once every process holding them has, so a
+  // supervisor waiting for that alone would never see the worker go.
+  Async.it("Sees a worker's exit while a process it started holds its output", async t => {
+    NodeJs.Process.process.env->Dict.set("FAKE_WORKER", "orphan")
+    let lines = []
+    let group: Supervisor.group = {
+      running: [
+        forkFixture(
+          ~chainIds=[1],
+          ~pipeOutput=true,
+          ~onOutput=line => lines->Array.push(line)->ignore,
+        ),
+      ],
+      stopping: false,
+      holdingRealtime: false,
+    }
+    let exited = await Promise.race([
+      group->Supervisor.awaitExit(~logger=Logger.makeInMemory())->Promise.thenResolve(_ => true),
+      Utils.delay(5000)->Promise.thenResolve(_ => false),
+    ])
+    lines->Array.forEach(
+      line =>
+        switch line->String.split(" ") {
+        | ["helper", pid] =>
+          NodeJs.Process.kill(pid->Int.fromString->Option.getOr(0), "SIGKILL")->ignore
+        | _ => ()
+        },
+    )
+    t.expect(exited).toBe(true)
+  })
 })
 
 describe("Supervisor.isRunAtHead", () => {

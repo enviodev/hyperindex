@@ -6,7 +6,13 @@ let log = ({logger, exn, msg}: t) =>
   logger->Logger.errorWithExn(
     switch msg {
     | Some(msg) => msg
-    | None => exn->Utils.exnMessage->Option.getOr("Unexpected error")
+    | None =>
+      switch (exn->Utils.exnMessage, exn->(Utils.magic: exn => unknown)) {
+      | (Some(message), _) => message
+      // User code can throw a string, which is then the whole of what it says.
+      | (None, thrown) if typeof(thrown) == #string => thrown->(Utils.magic: unknown => string)
+      | (None, _) => "Unexpected error"
+      }
     },
     exn,
   )

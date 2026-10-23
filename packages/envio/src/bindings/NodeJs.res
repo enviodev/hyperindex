@@ -208,6 +208,8 @@ module ChildProcess = {
     // `exit` doesn't wait for.
     @send
     external onClose: (t, @as("close") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
+    @send
+    external onExit: (t, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
     @send external onError: (t, @as("error") _, exn => unit) => unit = "on"
     @send external kill: (t, string) => bool = "kill"
     // Whether the IPC channel is still open. Node closes it before it reports

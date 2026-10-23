@@ -151,36 +151,20 @@ let maxPendingLines = 1024
 // never yield to the event loop, where the scheduled flush runs.
 let maxPendingMs = 20.
 
-type fields =
-  | NoFields
-  | Fields(unknown)
-  // A JSON object, written by a caller that knows its shape.
-  | FieldsJson(string)
-
-// A logger per query and per event is made whether or not it ever writes, so a
-// derived logger is only a record of its fields. They are serialized, joined to
-// its parent's and kept the first time a line passes the level, and Rust merges
-// them into each line it writes.
-type rec t = {
+type t = {
   output: output,
   // The lowest level any sink takes, fixed when the logger is made, so a line no
   // sink takes is dropped before its params are serialized.
   minLevel: int,
-  parent: option<t>,
-  fields: fields,
-  mutable isBoundFieldsJsonReady: bool,
   // The fields of the logger and its parents as JSON objects, parents first,
-  // each kept as its own string so a logger made per event doesn't copy its
-  // parents' into one.
-  mutable boundFieldsJson: array<string>,
+  // each kept as its own string so a logger made per line doesn't copy its
+  // parents' into one. Rust merges them into each line it writes.
+  boundFieldsJson: array<string>,
 }
 
 let wrapNative = native => {
   output: makeOutput(native),
   minLevel: native->nativeMinLevel,
-  parent: None,
-  fields: NoFields,
-  isBoundFieldsJsonReady: true,
   boundFieldsJson: [],
 }
 
@@ -307,43 +291,17 @@ let unknownToJson: unknown => string = %raw(`(() => {
 })()`)
 let paramsToJson = (value: 'a) => value->(Utils.magic: 'a => unknown)->unknownToJson
 
-let rec getBoundFieldsJson = (logger: t) => {
-  if !logger.isBoundFieldsJsonReady {
-    let own = switch logger.fields {
-    | NoFields => "{}"
-    | FieldsJson(json) => json
-    | Fields(fields) => fields->paramsToJson
-    }
-    let parent = switch logger.parent {
-    | Some(parent) => parent->getBoundFieldsJson
-    | None => []
-    }
-    logger.boundFieldsJson = own === "{}" ? parent : parent->Array.concat([own])
-    logger.isBoundFieldsJsonReady = true
-  }
-  logger.boundFieldsJson
+// A logger adding the fields of `json`, a JSON object: for a logger made per
+// line, whose fields' JSON is cheaper built from parts than serialized.
+let withFieldsJson = (logger: t, json: string) => {
+  ...logger,
+  boundFieldsJson: json === "{}"
+    ? logger.boundFieldsJson
+    : logger.boundFieldsJson->Array.concat([json]),
 }
 
 // A logger adding `fields` to every line it writes.
-let withFields = (logger: t, fields: 'a) => {
-  output: logger.output,
-  minLevel: logger.minLevel,
-  parent: Some(logger),
-  fields: Fields(fields->(Utils.magic: 'a => unknown)),
-  isBoundFieldsJsonReady: false,
-  boundFieldsJson: [],
-}
-
-// A logger adding the fields of `json`, a JSON object: for a logger made per
-// event, whose fields' JSON is cheaper built from parts than serialized.
-let withFieldsJson = (logger: t, json: string) => {
-  output: logger.output,
-  minLevel: logger.minLevel,
-  parent: Some(logger),
-  fields: FieldsJson(json),
-  isBoundFieldsJsonReady: false,
-  boundFieldsJson: [],
-}
+let withFields = (logger: t, fields: 'a) => logger->withFieldsJson(fields->paramsToJson)
 
 // Every line about one chain names it, so the run's lines can be told apart.
 let withChainId = (logger: t, chainId: ChainId.t) => logger->withFields({"chainId": chainId})
@@ -358,7 +316,7 @@ let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
       ~level=levelNumber(level),
       ~time,
       ~message,
-      ~boundFieldsJson=logger->getBoundFieldsJson,
+      ~boundFieldsJson=logger.boundFieldsJson,
       ~paramsJson=switch params {
       | Some(params) => Null.Value(params->paramsToJson)
       | None => Null.Null

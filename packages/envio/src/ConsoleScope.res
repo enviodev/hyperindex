@@ -56,15 +56,17 @@ let loggerFor = (root: Logger.t) =>
   | None | Some(Silent({isOver: true})) | Some(Item({isOver: true})) => Some(root)
   }
 
-// An effect is called with its arguments only, after the calls that asked for
-// it are grouped, so its scope is kept by those arguments.
-let effectScopes: Utils.WeakMap.t<Internal.effectArgs, t> = Utils.WeakMap.make()
+// The logger of an effect call, kept by its context: the effect runs with its
+// arguments only, after the calls that asked for it are grouped, and its
+// `context.log` is read off that same context.
+let effectLoggers: Utils.WeakMap.t<Internal.effectContext, unit => Logger.t> = Utils.WeakMap.make()
 
-let setForEffect = (args: Internal.effectArgs, logger) =>
-  effectScopes->Utils.WeakMap.set(args, Logger(logger))->ignore
+let setEffectLogger = (context, logger) => effectLoggers->Utils.WeakMap.set(context, logger)->ignore
+
+let effectLogger = context => effectLoggers->Utils.WeakMap.unsafeGet(context)
 
 let runEffect = (args: Internal.effectArgs, f) =>
-  switch effectScopes->Utils.WeakMap.get(args) {
-  | Some(scope) => run(scope, f)
+  switch effectLoggers->Utils.WeakMap.get(args.context) {
+  | Some(logger) => run(Logger(logger), f)
   | None => f()
   }

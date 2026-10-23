@@ -61,27 +61,18 @@ let getItemEvent = {
   }
 }
 
-let loggerForItem = {
-  let cacheKey = "_logger"
-  (item: Internal.item, ~ecosystem: t, ~logger: Logger.t): Logger.t => {
-    let cache = item->(Utils.magic: Internal.item => dict<Logger.t>)
-    switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
-    | Some(logger) => logger
-    | None =>
-      let logger = switch item {
-      | Internal.Event(_) => ecosystem.withEventFields(item->Internal.castUnsafeEventItem, ~logger)
-      | Block({blockNumber, onBlockRegistration}) =>
-        logger->Logger.withFieldsJson(
-          `{"onBlock":${JSON.stringify(
-              JSON.String(onBlockRegistration.name),
-            )},"block":${blockNumber->Int.toString}}`,
-        )
-      }
-      cache->Dict.set(cacheKey, logger)
-      logger
-    }
+// Made for each line rather than kept on the item: building one costs a few
+// hundred nanoseconds, and only a line that passes the level asks for it.
+let loggerForItem = (item: Internal.item, ~ecosystem: t, ~logger: Logger.t): Logger.t =>
+  switch item {
+  | Internal.Event(_) => ecosystem.withEventFields(item->Internal.castUnsafeEventItem, ~logger)
+  | Block({blockNumber, onBlockRegistration}) =>
+    logger->Logger.withFieldsJson(
+      `{"onBlock":${JSON.stringify(
+          JSON.String(onBlockRegistration.name),
+        )},"block":${blockNumber->Int.toString}}`,
+    )
   }
-}
 
 let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
   switch ecosystem.name {
