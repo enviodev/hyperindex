@@ -48,12 +48,19 @@ let chain = (
 `
 }
 
-let deployment = (~name="migration", ~chains, ~contracts=["Token"], ~schema=schema) =>
+let deployment = (
+  ~name="migration",
+  ~chains,
+  ~contracts=["Token"],
+  ~schema=schema,
+  ~addressFormat="checksum",
+) =>
   Scenario.make(
     ~schema,
     ~configYaml=`
 name: ${name}
 disable_default_cross_chain: true
+address_format: ${addressFormat}
 contracts:${contracts
       ->Array.map(contract =>
         `
@@ -85,6 +92,19 @@ describe("Resuming a chain against the stored config", () => {
     ),
     ~edited=deployment(
       ~chains=[chain(1, ~addresses=["0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"])],
+    ),
+    ~expected=Resumed([1]),
+  )
+
+  Migration.it(
+    "Resumes when address_format: lowercase config switches an address to its checksum",
+    ~deployed=deployment(
+      ~addressFormat="lowercase",
+      ~chains=[chain(1, ~addresses=["0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"])],
+    ),
+    ~edited=deployment(
+      ~addressFormat="lowercase",
+      ~chains=[chain(1, ~addresses=["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"])],
     ),
     ~expected=Resumed([1]),
   )

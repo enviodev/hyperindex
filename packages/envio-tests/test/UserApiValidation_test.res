@@ -175,6 +175,7 @@ describe("EVM config YAML", () => {
     ("checksum", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
     ("lowercase", "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"),
     ("lowercase", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
+    ("lowercase", "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"),
     ("checksum", "0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"),
     ("lowercase", "0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"),
   ]->Array.forEach(((addressFormat, address)) => {

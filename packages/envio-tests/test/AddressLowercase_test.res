@@ -19,6 +19,7 @@ chains:
         address:
           - "0x1E645469f354BB4F5c8a05B3b30A929361cf77eC"
           - "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"
+          - "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
         events:
           - event: Approval(address indexed owner)
 `,
@@ -82,6 +83,7 @@ describe("contractRegister with address_format: lowercase", () => {
       addresses: [
         "0x1e645469f354bb4f5c8a05b3b30a929361cf77ec",
         "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac",
+        "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
       ],
       probes: [{ id: "0x1e645469f354bb4f5c8a05b3b30a929361cf77ec" }],
     });
