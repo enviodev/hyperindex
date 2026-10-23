@@ -18,7 +18,7 @@ let makeReg = (~name, ~params): Internal.evmOnEventRegistration =>
     ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
       ~contractName=name,
       ~eventName="Transfer",
-      ~sighash=transferSighash,
+      ~sighash=Some(transferSighash),
       ~params,
     ),
     ~isWildcard=false,

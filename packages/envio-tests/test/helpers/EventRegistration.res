@@ -13,7 +13,7 @@ let evmOnEventRegistration = (
   ~dependsOnAddresses=?,
   ~filterByAddresses=false,
   ~startBlock: option<int>=?,
-  ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
+  ~eventFilters: option<array<Internal.topicFilter>>=?,
   // Override the event's ABI when a test needs indexed params (so its logs
   // carry the topics its `where` filters on). Defaults to a no-param,
   // single-topic event. `topicCount` is derived from the indexed params the
@@ -37,7 +37,7 @@ let evmOnEventRegistration = (
       ~blockMaskFn=Evm.eventBlockFieldMask,
       ~transactionMaskFn=Evm.eventTransactionFieldMask,
     ),
-    sighash: id,
+    sighash: Some(id),
     topicCount,
     paramsMetadata,
   }
@@ -47,26 +47,24 @@ let evmOnEventRegistration = (
     isWildcard,
     filterByAddresses,
     dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
-    addressFilterParamGroups: [],
     startBlock,
-    handler: None,
     contractRegister: None,
     fieldSelection: eventConfig.fieldSelection,
     resolvedWhere: {
-      topicSelections: switch eventFilters {
-      | Some(topicSelections) => topicSelections
+      topicFilters: switch eventFilters {
+      | Some(topicFilters) => topicFilters
       | None => [
           {
-            topic0: [
+            topic0: Values([
               // This is a sighash in the original code
               id->EvmTypes.Hex.fromStringUnsafe,
-            ],
+            ]),
             topic1: switch dependsOnAddresses {
             | Some(true) => ContractAddresses({contractName: contractName})
-            | _ => Values([])
+            | _ => Any
             },
-            topic2: Values([]),
-            topic3: Values([]),
+            topic2: Any,
+            topic3: Any,
           },
         ]
       },

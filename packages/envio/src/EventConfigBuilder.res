@@ -234,19 +234,18 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
   }
 }
 
-// ============== Build topic filter getters ==============
+// ============== Indexed param topic encoders ==============
 
 let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) =>
   value => Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
-let buildTopicGetter = (p: paramMeta) => {
+let buildIndexedParam = (p: paramMeta): LogSelection.indexedParam => {
   let encoder = getTopicEncoder(p.abiType)
   let isTuple = p.abiType->String.startsWith("(")
-  (eventFilter: dict<JSON.t>) =>
-    eventFilter
-    ->Utils.Dict.dangerouslyGetNonOption(p.name)
-    ->Option.mapOr([], topicFilters => {
-      let raw = topicFilters->(Utils.magic: JSON.t => unknown)
+  {
+    name: p.name,
+    toTopics: value => {
+      let raw = value->(Utils.magic: JSON.t => unknown)
 
       // A tuple filter value is itself an array, so a directly-passed tuple is
       // indistinguishable from an OR-list by shape alone. A single tuple is
@@ -260,7 +259,8 @@ let buildTopicGetter = (p: paramMeta) => {
       } else {
         raw->normalizeOrThrow->Array.map(encoder)
       }
-    })
+    },
+  }
 }
 
 // ============== Field selection ==============
@@ -435,14 +435,15 @@ let resolveInlineFieldSelection = (
 let buildEvmEventConfig = (
   ~contractName: string,
   ~eventName: string,
-  ~sighash: string,
+  ~sighash: option<string>,
   ~params: array<paramMeta>,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
-  let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
+  let topicCount =
+    params->Array.reduce(sighash->Option.isSome ? 1 : 0, (acc, p) => p.indexed ? acc + 1 : acc)
 
   {
     name: eventName,
@@ -477,18 +478,16 @@ let buildEvmOnEventRegistration = (
   ~fieldSelection: option<Internal.fieldSelection>=?,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
-  let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)
-
-  let {resolvedWhere, filterByAddresses, addressFilterParamGroups} = LogSelection.parseWhereOrThrow(
+  let {resolvedWhere, filterByAddresses} = LogSelection.parseWhereOrThrow(
     ~where,
     ~sighash=eventConfig.sighash,
-    ~params=indexedParams->Array.map(p => p.name),
+    ~indexedParams=eventConfig.paramsMetadata->Array.filterMap(p =>
+      p.indexed ? Some(buildIndexedParam(p)) : None
+    ),
     ~contractName=eventConfig.contractName,
+    ~eventName=eventConfig.name,
     ~chainId,
     ~onEventBlockFilterSchema,
-    ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
-    ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
-    ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),
   )
 
   // `where.block.number._gte` overrides the contract-level startBlock when
@@ -503,11 +502,10 @@ let buildEvmOnEventRegistration = (
     index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
-    handler,
+    ?handler,
     contractRegister,
     resolvedWhere,
     filterByAddresses,
-    addressFilterParamGroups,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     startBlock: resolvedStartBlock,
     fieldSelection: switch fieldSelection {
@@ -823,7 +821,7 @@ let buildSvmOnEventRegistration = (
   {
     index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
-    handler,
+    ?handler,
     contractRegister,
     isWildcard,
     filterByAddresses: false,
@@ -929,7 +927,7 @@ let buildFuelOnEventRegistration = (
   {
     index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
-    handler,
+    ?handler,
     contractRegister,
     isWildcard,
     filterByAddresses: false,
