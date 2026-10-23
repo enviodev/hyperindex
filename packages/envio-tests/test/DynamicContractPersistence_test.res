@@ -56,8 +56,8 @@ let queryAddresses = (indexer: IndexerRunner.t) =>
     ->Array.map(r => (r.address, r.contractName, r.registrationBlock))
   )
 
-let dcAddress = "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow
-let lateDcAddress = "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow
+let dcAddress = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
+let lateDcAddress = "0x2222222222222222222222222222222222222222"->Address.unsafeFromString
 
 let row = (address, contractName, registrationBlock) => (address, contractName, registrationBlock)
 

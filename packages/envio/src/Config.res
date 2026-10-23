@@ -915,19 +915,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     }
   }
 
-  // Parse address based on ecosystem and address format
-  let parseAddress = addressString => {
-    switch ecosystemName {
-    | Ecosystem.Evm =>
-      if lowercaseAddresses {
-        addressString->Address.Evm.fromStringLowercaseOrThrow
-      } else {
-        addressString->Address.Evm.fromStringOrThrow
-      }
-    | Ecosystem.Fuel | Ecosystem.Svm => addressString->Address.unsafeFromString
-    }
-  }
-
   // Helper to convert parsed RPC config to evmRpcConfig
   let parseRpcSourceFor = (sourceFor: rpcSourceFor): Source.sourceFor => {
     switch sourceFor {
@@ -964,7 +951,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             chainContract
             ->Option.flatMap(cc => cc["addresses"])
             ->Option.getOr([])
-          let addresses = rawAddresses->Array.map(parseAddress)
+          let addresses = rawAddresses->Array.map(Address.unsafeFromString)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
           // Build event definitions from JSON (field selections resolved
@@ -1191,6 +1178,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 }
 
+let normalizeEvmAddress = (config: t, address: Address.t) =>
+  Core.getAddon().normalizeEvmAddress(
+    ~address=address->Address.toString,
+    ~shouldChecksum=!config.lowercaseAddresses,
+  )->Null.toOption
+
 // Canonicalize a user-provided address to the configured casing so it matches
 // addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
 // already canonical; only user-land input (simulate srcAddress, contractRegister
@@ -1198,10 +1191,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
   switch config.ecosystem.name {
   | Ecosystem.Evm =>
-    if config.lowercaseAddresses {
-      address->Address.Evm.fromAddressLowercaseOrThrow
-    } else {
-      address->Address.Evm.fromAddressOrThrow
+    switch config->normalizeEvmAddress(address) {
+    | Some(normalized) => normalized
+    | None =>
+      JsError.throwWithMessage(
+        `Address "${address->Address.toString}" is invalid. Expected a 20-byte hex string starting with 0x.`,
+      )
     }
   // TODO: Ideally we should do the same for other ecosystems
   | Ecosystem.Fuel | Ecosystem.Svm => address
@@ -1210,10 +1205,9 @@ let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
 // Relaxed counterpart to normalizeUserAddress, used only for simulate srcAddress.
 // Tests commonly use short placeholder strings like "0xfoo" as a stand-in
 // identity (e.g. for a wildcard event whose srcAddress doesn't need to resolve
-// to any real contract), so only the "0x" prefix is enforced here. Under
-// address_format: checksum, a real address is checksummed even if the input
-// casing doesn't match (getAddress doesn't require the input to already be
-// checksummed) — a placeholder that isn't valid hex falls back unchanged.
+// to any real contract), so only the "0x" prefix is enforced here. A real
+// address is normalized whatever its input casing; a placeholder that isn't
+// valid hex only follows the configured casing.
 let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
   switch config.ecosystem.name {
   | Ecosystem.Evm =>
@@ -1223,14 +1217,10 @@ let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
         `simulate: srcAddress "${str}" is invalid. Expected a string starting with "0x".`,
       )
     }
-    if config.lowercaseAddresses {
-      address->Address.Evm.fromAddressLowercaseOrThrow
-    } else {
-      try {
-        address->Address.Evm.fromAddressOrThrow
-      } catch {
-      | _ => address
-      }
+    switch config->normalizeEvmAddress(address) {
+    | Some(normalized) => normalized
+    | None if config.lowercaseAddresses => str->String.toLowerCase->Address.unsafeFromString
+    | None => address
     }
   | Ecosystem.Fuel | Ecosystem.Svm => address
   }

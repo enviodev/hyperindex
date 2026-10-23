@@ -54,8 +54,8 @@ indexer.contractRegister(
 `,
 )
 
-let shared = "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow
-let late = "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow
+let shared = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
+let late = "0x2222222222222222222222222222222222222222"->Address.unsafeFromString
 
 let registering = (~blockNumber, ~event, addresses: array<Address.t>): MockSource.itemMock => {
   event,

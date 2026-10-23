@@ -2872,7 +2872,8 @@ mod test {
     #[tokio::test]
     async fn chain_configs_parsed_case_2() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-        let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
+        // config2.yaml spells it with a wrong checksum, which parsing corrects.
+        let address2 = String::from("0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec");
 
         let network1 = NetworkTemplate {
             id: 1,
