@@ -24,7 +24,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         ~eventRegistrations=[
           {
             index: 0,
-            sighash: transferSighash,
+            sighash: Some(transferSighash),
             topicCount: 3,
             eventName: "Transfer",
             contractName: "ERC20",
@@ -32,9 +32,9 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
             dependsOnAddresses: false,
             startBlock: None,
             params: [],
-            topicSelections: [
+            topicFilters: [
               {
-                topic0: [transferSighash],
+                topic0: Some([transferSighash]),
                 topic1: Some([]),
                 topic2: Some([]),
                 topic3: Some([]),

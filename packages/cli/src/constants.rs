@@ -102,6 +102,8 @@ pub mod reserved_keywords {
         "EnumName",
         "EvmAllBlockFields",
         "EvmAllTransactionFields",
+        "EvmAnonymousOnEventWhere",
+        "EvmAnonymousOnEventWhereFilter",
         "EvmBlockFieldName",
         "EvmChainId",
         "EvmChainName",
