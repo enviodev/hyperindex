@@ -263,7 +263,7 @@ describe("E2E tests", () => {
                     () => {
                       try {
                         context.chain.gravatar.add(
-                          "0x1234567890123456789012345678901234567890"->Address.Evm.fromStringOrThrow,
+                          "0x1234567890123456789012345678901234567890"->Address.unsafeFromString,
                         )
                       } catch {
                       | exn => contextAfterResolveErrors->Array.push(exn->Utils.prettifyExn)
@@ -1494,7 +1494,7 @@ describe("E2E tests", () => {
                 contractRegister: async args => {
                   let context = args.context->asRegisterContext
                   context.chain.gravatar.add(
-                    "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
+                    "0x1111111111111111111111111111111111111111"->Address.unsafeFromString,
                   )
                 },
               },
@@ -1504,7 +1504,7 @@ describe("E2E tests", () => {
                 contractRegister: async args => {
                   let context = args.context->asRegisterContext
                   context.chain.gravatar.add(
-                    "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
+                    "0x2222222222222222222222222222222222222222"->Address.unsafeFromString,
                   )
                 },
               },

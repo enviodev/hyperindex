@@ -35,7 +35,7 @@ let makeAddress = (rng: unit => float) => {
   let chars = Array.fromInitializer(~length=40, _ =>
     hex->String.charAt((rng() *. 16.)->Float.toInt)
   )
-  ("0x" ++ chars->Array.join(""))->Address.Evm.fromStringOrThrow
+  ("0x" ++ chars->Array.join(""))->Address.unsafeFromString
 }
 
 type run = {
