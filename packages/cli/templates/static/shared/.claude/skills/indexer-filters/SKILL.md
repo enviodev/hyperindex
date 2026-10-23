@@ -150,6 +150,32 @@ indexer.onEvent(
 
 On Fuel, key the block range on `block.height` instead of `block.number`. Fuel events have no indexed params, so a Fuel `where` takes only `block` — `params` is rejected. SVM has no event handlers. Only `_gte` is accepted on event filters. The `block` filter is only valid at the top level of `where`, not nested inside `params` array entries.
 
+## Anonymous Events
+
+An event declared `anonymous` in Solidity emits no signature topic: its first indexed parameter takes topic0. Declare it with the `anonymous` keyword in `config.yaml` (or let `"anonymous": true` in the ABI file mark it):
+
+```yaml
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed sig, address indexed usr, bytes32 indexed arg1, bytes32 indexed arg2, bytes data) anonymous
+```
+
+Every registration of an anonymous event **must** have a `where` whose every `params` entry names values for the first indexed parameter — that's how the indexer selects its logs. A missing `where`, `true`, `{}`, a block-only filter, an empty `params` list, an entry without the first parameter or with an empty list for it, or `chain.<Contract>.addresses` on it fails at registration. A callback may return `false` to skip a chain.
+
+```ts
+indexer.onEvent(
+  {
+    contract: "Vat",
+    event: "LogNote",
+    where: { params: { sig: ["0x29ae8114", "0x7cdd3fde"] } },
+  },
+  async ({ event, context }) => {
+    /* ... */
+  },
+);
+```
+
 ## Filter Semantics
 
 - Filter fields inside each `params` entry correspond to the event's **indexed parameters** only
@@ -158,6 +184,6 @@ On Fuel, key the block range on `block.height` instead of `block.number`. Fuel e
 - Array value in a field → match any value in the array
 - `block.number._gte` (EVM) / `block.height._gte` (Fuel) → per-event startBlock, overrides contract `start_block`
 - `return false` → skip the chain entirely (no events processed for that chain)
-- `return true` → accept all events (no filtering, default topic0-only selection)
+- `return true` → accept all events (no filtering, default topic0-only selection); not allowed for anonymous events
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

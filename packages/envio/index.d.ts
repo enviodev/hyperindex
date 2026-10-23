@@ -715,6 +715,39 @@ export type EvmOnEventWhere<Params, ContractName extends string> =
   | EvmOnEventWhereFilter<Params>
   | ((args: EvmOnEventWhereArgs<ContractName>) => EvmOnEventWhereFilter<Params> | boolean);
 
+/** A single `where` filter condition of an anonymous EVM event. An anonymous
+ * event's logs carry no signature topic — topic0 holds its first indexed
+ * param — so every filter names values for that param (it's required in
+ * `Params`). An empty list is rejected when the handler registers. */
+export type EvmAnonymousOnEventWhereFilter<Params> = {
+  readonly params: Params | readonly Params[];
+  readonly block?: {
+    readonly number?: {
+      readonly _gte?: number;
+    };
+  };
+};
+
+/** The `where` option value of `indexer.onEvent` / `indexer.contractRegister`
+ * for an anonymous EVM event. Required: without it the indexer would fetch
+ * every log. The dynamic callback may return `false` to skip a chain, but
+ * not `true`. */
+export type EvmAnonymousOnEventWhere<Params, ContractName extends string> =
+  | EvmAnonymousOnEventWhereFilter<Params>
+  | ((args: EvmOnEventWhereArgs<ContractName>) => EvmAnonymousOnEventWhereFilter<Params> | false);
+
+// The `where` option for an event's `eventFilters` entry: required for an
+// anonymous event, optional otherwise.
+type EvmOnEventWhereOption<Filter, ContractName extends string> =
+  Filter extends { readonly anonymous: true; readonly params: infer P }
+    ? { readonly where: EvmAnonymousOnEventWhere<P, ContractName> }
+    : {
+        readonly where?: EvmOnEventWhere<
+          Filter extends { readonly params: infer P } ? P : {},
+          ContractName
+        >;
+      };
+
 /** The chain object passed into the Fuel dynamic `where` callback form. */
 export type FuelOnEventWhereChain<ContractName extends string> = EvmOnEventWhereChain<ContractName>;
 /** Arguments passed to the Fuel dynamic `where` callback form. */
@@ -911,19 +944,40 @@ export type EvmOnEventOptions<
   Params = {},
   Fields extends EvmFieldsSelection | undefined = undefined,
 > = Event extends EventLike
-  ? {
-      readonly contract: Event["contractName"];
-      readonly event: Event["eventName"];
-      readonly wildcard?: boolean;
-      readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
-      /** Pass the selection's literal type as the `Fields` generic to get the
-       * same narrowing `indexer.onEvent` infers from the call site. Defaults to
-       * no selection: `EvmFieldsSelection` names no fields in particular, so an
-       * options value declared without the generic would carry a selection
-       * `onEvent` can only reject. */
-      readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
-    }
+  ? _EvmEventFilterOf<Event> extends { readonly anonymous: true }
+    ? {
+        readonly contract: Event["contractName"];
+        readonly event: Event["eventName"];
+        readonly wildcard?: boolean;
+        readonly where: EvmAnonymousOnEventWhere<Params, Event["contractName"] & string>;
+        /** Pass the selection's literal type as the `Fields` generic to get the
+         * same narrowing `indexer.onEvent` infers from the call site. Defaults to
+         * no selection: `EvmFieldsSelection` names no fields in particular, so an
+         * options value declared without the generic would carry a selection
+         * `onEvent` can only reject. */
+        readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
+      }
+    : {
+        readonly contract: Event["contractName"];
+        readonly event: Event["eventName"];
+        readonly wildcard?: boolean;
+        readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
+        /** Pass the selection's literal type as the `Fields` generic to get the
+         * same narrowing `indexer.onEvent` infers from the call site. Defaults to
+         * no selection: `EvmFieldsSelection` names no fields in particular, so an
+         * options value declared without the generic would carry a selection
+         * `onEvent` can only reject. */
+        readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
+      }
   : never;
+
+// The project's `eventFilters` entry for an event, or `{}` when it has none.
+type _EvmEventFilterOf<Event extends EventLike> =
+  Event["contractName"] extends keyof EvmEventFilters
+    ? Event["eventName"] extends keyof EvmEventFilters[Event["contractName"]]
+      ? EvmEventFilters[Event["contractName"]][Event["eventName"]]
+      : {}
+    : {};
 
 /** Handler function for an EVM onEvent registration. Context is provided as a separate generic so the project alias can bind it. */
 export type EvmOnEventHandler<
@@ -1624,18 +1678,15 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: EvmOnEventWhere<
-                      EvmEventFilters<Config>[C] extends Record<string, any>
-                        ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
                     readonly fields?: F & EvmFieldsLiteralCheck<F>;
-                  },
+                  } & EvmOnEventWhereOption<
+                    EvmEventFilters<Config>[C] extends Record<string, any>
+                      ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]]
+                      : {},
+                    C
+                  >,
                   handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
                 /** Register a contract register handler for dynamic contract indexing. */
@@ -1648,18 +1699,15 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: EvmOnEventWhere<
-                      EvmEventFilters<Config>[C] extends Record<string, any>
-                        ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
                     readonly fields?: F & EvmFieldsLiteralCheck<F>;
-                  },
+                  } & EvmOnEventWhereOption<
+                    EvmEventFilters<Config>[C] extends Record<string, any>
+                      ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]]
+                      : {},
+                    C
+                  >,
                   handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;
               }

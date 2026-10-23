@@ -1,23 +1,10 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use napi_derive::napi;
 
 use crate::address_store::AddressSet;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
-
-/// Topic positions 1..3: static topic values, or `None` — the "currently
-/// registered addresses of this contract" marker, expanded to padded address
-/// topics when a query is built. Spelled as `Option<...>` directly (not an
-/// alias) so the napi macro sees the field as optional.
-#[napi(object)]
-#[derive(Clone)]
-pub struct TopicSelectionInput {
-    pub topic0: Vec<String>,
-    pub topic1: Option<Vec<String>>,
-    pub topic2: Option<Vec<String>>,
-    pub topic3: Option<Vec<String>>,
-}
+use crate::evm_hypersync_source::topic_filter::{TopicFilter, TopicFilters};
 
 /// One log selection of a built query: `addresses` scopes the selection to
 /// specific emitters (empty = any address), `topics` is the 4-position topic
@@ -28,105 +15,44 @@ pub struct BuiltLogSelection {
     pub topics: Vec<Vec<String>>,
 }
 
-#[derive(Clone)]
-enum TopicFilter {
-    Values(Vec<String>),
-    ContractAddresses,
-}
-
-impl TopicFilter {
-    fn parse(input: &Option<Vec<String>>) -> Self {
-        match input {
-            Some(values) => TopicFilter::Values(values.clone()),
-            None => TopicFilter::ContractAddresses,
-        }
-    }
-
-    fn materialize(&self, address_topics: &[String]) -> Vec<String> {
-        match self {
-            TopicFilter::Values(values) => values.clone(),
-            TopicFilter::ContractAddresses => address_topics.to_vec(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct TopicSelection {
-    topic0: Vec<String>,
-    topic1: TopicFilter,
-    topic2: TopicFilter,
-    topic3: TopicFilter,
-}
-
-impl TopicSelection {
-    fn materialize(&self, address_topics: &[String]) -> MaterializedTopicSelection {
-        MaterializedTopicSelection {
-            topic0: self.topic0.clone(),
-            topic1: self.topic1.materialize(address_topics),
-            topic2: self.topic2.materialize(address_topics),
-            topic3: self.topic3.materialize(address_topics),
-        }
-    }
-}
-
-#[derive(PartialEq, Eq)]
-struct MaterializedTopicSelection {
-    topic0: Vec<String>,
-    topic1: Vec<String>,
-    topic2: Vec<String>,
-    topic3: Vec<String>,
-}
-
-impl MaterializedTopicSelection {
-    fn has_filters(&self) -> bool {
-        !(self.topic1.is_empty() && self.topic2.is_empty() && self.topic3.is_empty())
-    }
-
-    fn into_topics(self) -> Vec<Vec<String>> {
-        vec![self.topic0, self.topic1, self.topic2, self.topic3]
-    }
-}
+/// A topic filter's values per position, as a query sends them.
+type MaterializedTopics = [Vec<String>; 4];
 
 struct RegistrationSelection {
     contract_name: String,
     is_wildcard: bool,
     depends_on_addresses: bool,
-    topic_selections: Vec<TopicSelection>,
+    topic_filters: TopicFilters,
     block_fields: Vec<BlockField>,
     transaction_fields: Vec<TransactionField>,
 }
 
-/// Fold selections without topic1..3 filters into one selection combining
+/// Fold selections constraining topic0 alone into one selection combining
 /// their topic0s, keeping the common case at a single log selection/request.
-/// Repeated topic0s and identical filtered selections are deduplicated —
-/// several registrations may select the same signature now that routing fans
-/// one log out to all of them.
-fn compress(selections: Vec<MaterializedTopicSelection>) -> Vec<MaterializedTopicSelection> {
-    let mut filterless_topic0s: Vec<String> = Vec::new();
-    let mut with_filters: Vec<MaterializedTopicSelection> = Vec::new();
+/// Any other selection stays on its own: folding one that leaves topic0
+/// unconstrained would widen the fold to every log. Repeated topic0s and
+/// identical selections are deduplicated — several registrations may select
+/// the same signature now that routing fans one log out to all of them.
+fn compress(selections: Vec<MaterializedTopics>) -> Vec<MaterializedTopics> {
+    let mut folded_topic0s: Vec<String> = Vec::new();
+    let mut separate: Vec<MaterializedTopics> = Vec::new();
     for selection in selections {
-        if selection.has_filters() {
-            if !with_filters.contains(&selection) {
-                with_filters.push(selection);
-            }
-        } else {
-            for topic0 in selection.topic0 {
-                if !filterless_topic0s.contains(&topic0) {
-                    filterless_topic0s.push(topic0);
+        let [topic0, topic1, topic2, topic3] = &selection;
+        if !topic0.is_empty() && topic1.is_empty() && topic2.is_empty() && topic3.is_empty() {
+            for value in topic0 {
+                if !folded_topic0s.contains(value) {
+                    folded_topic0s.push(value.clone());
                 }
             }
+        } else if !separate.contains(&selection) {
+            separate.push(selection);
         }
     }
-    let mut result = Vec::with_capacity(with_filters.len() + 1);
-    if !filterless_topic0s.is_empty() {
-        result.push(MaterializedTopicSelection {
-            topic0: filterless_topic0s,
-            topic1: Vec::new(),
-            topic2: Vec::new(),
-            topic3: Vec::new(),
-        });
+    let mut result = Vec::with_capacity(separate.len() + 1);
+    if !folded_topic0s.is_empty() {
+        result.push([folded_topic0s, Vec::new(), Vec::new(), Vec::new()]);
     }
-    result.extend(with_filters);
+    result.extend(separate);
     result
 }
 
@@ -160,16 +86,7 @@ impl SelectionBuilder {
                 contract_name: reg.contract_name.clone(),
                 is_wildcard: reg.is_wildcard,
                 depends_on_addresses: reg.depends_on_addresses,
-                topic_selections: reg
-                    .topic_selections
-                    .iter()
-                    .map(|ts| TopicSelection {
-                        topic0: ts.topic0.clone(),
-                        topic1: TopicFilter::parse(&ts.topic1),
-                        topic2: TopicFilter::parse(&ts.topic2),
-                        topic3: TopicFilter::parse(&ts.topic3),
-                    })
-                    .collect(),
+                topic_filters: TopicFilters::parse(reg)?,
                 block_fields: reg.block_fields.clone(),
                 transaction_fields: reg.transaction_fields.clone(),
             };
@@ -194,9 +111,9 @@ impl SelectionBuilder {
         // logs (routing never re-applies the sibling's filter). Wildcard
         // events that filter an indexed param by registered addresses fold
         // the addresses into topics, so their query stays address-unbound.
-        let mut no_address: Vec<MaterializedTopicSelection> = Vec::new();
-        let mut by_contract: HashMap<&str, Vec<&TopicSelection>> = HashMap::new();
-        let mut wildcard_by_contract: HashMap<&str, Vec<&TopicSelection>> = HashMap::new();
+        let mut no_address: Vec<MaterializedTopics> = Vec::new();
+        let mut by_contract: HashMap<&str, Vec<&TopicFilter>> = HashMap::new();
+        let mut wildcard_by_contract: HashMap<&str, Vec<&TopicFilter>> = HashMap::new();
         // First-appearance order of address-bound contracts, so the built
         // query is byte-stable across calls (query caching keys on it).
         let mut ordered_contracts: Vec<&str> = Vec::new();
@@ -220,6 +137,7 @@ impl SelectionBuilder {
                     transaction_fields.push(field);
                 }
             }
+            let alternatives = reg.topic_filters.alternatives();
             if reg.depends_on_addresses && !client_filtered.applies(&reg.contract_name) {
                 if !ordered_contracts.contains(&reg.contract_name.as_str()) {
                     ordered_contracts.push(reg.contract_name.as_str());
@@ -232,26 +150,25 @@ impl SelectionBuilder {
                 bucket
                     .entry(reg.contract_name.as_str())
                     .or_default()
-                    .extend(reg.topic_selections.iter());
+                    .extend(alternatives.iter());
             } else {
                 // Address-free: genuine wildcards, plus client-filtered contracts
                 // whose ContractAddresses markers materialize to match-any (empty
                 // address topics). Routing re-applies the address gate on the
                 // returned items, against the store alone.
-                no_address.extend(reg.topic_selections.iter().map(|ts| ts.materialize(&[])));
+                no_address.extend(alternatives.iter().map(|filter| filter.materialize(&[])));
             }
         }
 
         let mut log_selections: Vec<BuiltLogSelection> = Vec::new();
-        let mut push_selections =
-            |addresses: &[String], selections: Vec<MaterializedTopicSelection>| {
-                for selection in compress(selections) {
-                    log_selections.push(BuiltLogSelection {
-                        addresses: addresses.to_vec(),
-                        topics: selection.into_topics(),
-                    });
-                }
-            };
+        let mut push_selections = |addresses: &[String], selections: Vec<MaterializedTopics>| {
+            for topics in compress(selections) {
+                log_selections.push(BuiltLogSelection {
+                    addresses: addresses.to_vec(),
+                    topics: topics.into(),
+                });
+            }
+        };
 
         push_selections(&[], no_address);
 
@@ -264,21 +181,21 @@ impl SelectionBuilder {
                 Some(slice) if !slice.addresses.is_empty() => slice,
                 _ => continue,
             };
-            if let Some(selections) = by_contract.get(contract_name) {
+            if let Some(filters) = by_contract.get(contract_name) {
                 push_selections(
                     &slice.addresses,
-                    selections
+                    filters
                         .iter()
-                        .map(|ts| ts.materialize(&slice.topics))
+                        .map(|filter| filter.materialize(&slice.topics))
                         .collect(),
                 );
             }
-            if let Some(selections) = wildcard_by_contract.get(contract_name) {
+            if let Some(filters) = wildcard_by_contract.get(contract_name) {
                 push_selections(
                     &[],
-                    selections
+                    filters
                         .iter()
-                        .map(|ts| ts.materialize(&slice.topics))
+                        .map(|filter| filter.materialize(&slice.topics))
                         .collect(),
                 );
             }
@@ -296,6 +213,7 @@ impl SelectionBuilder {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{evm_store, set_of};
+    use crate::evm_hypersync_source::topic_filter::TopicFilterInput;
     use crate::evm_hypersync_source::types::OnEventRegistrationInput;
 
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -317,7 +235,7 @@ mod tests {
     ) -> OnEventRegistrationInput {
         OnEventRegistrationInput {
             index: id,
-            sighash: sighash.to_string(),
+            sighash: Some(sighash.to_string()),
             topic_count: 1,
             event_name: "E".to_string(),
             contract_name: contract_name.to_string(),
@@ -325,8 +243,8 @@ mod tests {
             depends_on_addresses,
             start_block: None,
             params: vec![],
-            topic_selections: vec![TopicSelectionInput {
-                topic0: vec![sighash.to_string()],
+            topic_filters: vec![TopicFilterInput {
+                topic0: Some(vec![sighash.to_string()]),
                 topic1,
                 topic2: Some(vec![]),
                 topic3: Some(vec![]),
@@ -469,6 +387,69 @@ mod tests {
                     ],
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn compress_keeps_an_unconstrained_topic0_selection_separate() {
+        // An alternative filtering only topic1 must not fold into the topic0
+        // list of its siblings: folded, it would either vanish or narrow to
+        // their signatures.
+        let mut topic1_only = reg(1, SIGHASH_B, "C", true, false, None);
+        topic1_only.topic_filters = vec![TopicFilterInput {
+            topic0: Some(vec![]),
+            topic1: Some(vec![ADDR_TOPIC.to_string()]),
+            topic2: Some(vec![]),
+            topic3: Some(vec![]),
+        }];
+        let builder = SelectionBuilder::from_registrations(&[
+            reg(0, SIGHASH_A, "C", true, false, Some(vec![])),
+            topic1_only,
+        ])
+        .unwrap();
+        let built = builder
+            .build(&[0, 1], &no_addresses().1, &Default::default())
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                },
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![vec![], vec![ADDR_TOPIC.to_string()], vec![], vec![]],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn anonymous_registration_without_topic0_values_is_rejected() {
+        let mut anonymous = reg(0, SIGHASH_A, "C", false, true, Some(vec![]));
+        anonymous.sighash = None;
+        anonymous.topic_filters = vec![
+            TopicFilterInput {
+                topic0: Some(vec![SIGHASH_A.to_string()]),
+                topic1: Some(vec![]),
+                topic2: Some(vec![]),
+                topic3: Some(vec![]),
+            },
+            TopicFilterInput {
+                topic0: Some(vec![]),
+                topic1: Some(vec![ADDR_TOPIC.to_string()]),
+                topic2: Some(vec![]),
+                topic3: Some(vec![]),
+            },
+        ];
+        let err = SelectionBuilder::from_registrations(&[anonymous])
+            .err()
+            .unwrap();
+        assert_eq!(
+            format!("{err:#}"),
+            "Registration 0 of the anonymous event E must filter topic0 by values in every \
+             alternative"
         );
     }
 

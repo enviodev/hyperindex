@@ -163,7 +163,7 @@ let preloadBatchOrThrow = async (
       let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
       switch item {
       | Event(_) =>
-        let {handler, eventConfig: {contractName, name: eventName}} = (
+        let {?handler, eventConfig: {contractName, name: eventName}} = (
           item->Internal.castUnsafeEventItem
         ).onEventRegistration
         switch handler {
