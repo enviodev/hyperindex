@@ -40,8 +40,8 @@ indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async () 
 `,
 )
 
-let shared = "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow
-let late = "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow
+let shared = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
+let late = "0x2222222222222222222222222222222222222222"->Address.unsafeFromString
 
 type contractOps = {add: Address.t => unit}
 type registerContext = {chain: {"Gravatar": contractOps, "NftFactory": contractOps}}

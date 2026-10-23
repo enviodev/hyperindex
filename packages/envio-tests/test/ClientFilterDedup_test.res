@@ -65,13 +65,13 @@ describe("Client-side address filtering item dedup", () => {
                   let context =
                     args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)
                   context.chain["Gravatar"].add(
-                    "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
+                    "0x1111111111111111111111111111111111111111"->Address.unsafeFromString,
                   )
                   context.chain["Gravatar"].add(
-                    "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
+                    "0x2222222222222222222222222222222222222222"->Address.unsafeFromString,
                   )
                   context.chain["Gravatar"].add(
-                    "0x3333333333333333333333333333333333333333"->Address.Evm.fromStringOrThrow,
+                    "0x3333333333333333333333333333333333333333"->Address.unsafeFromString,
                   )
                 },
               },

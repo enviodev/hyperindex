@@ -88,7 +88,7 @@ let registerToken = (~block): MockSource.itemMock => {
   contractRegister: async args => {
     let context = args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)
     context.chain["Token"].add(
-      "0x0000000000000000000000000000000000000003"->Address.Evm.fromStringOrThrow,
+      "0x0000000000000000000000000000000000000003"->Address.unsafeFromString,
     )
   },
 }
