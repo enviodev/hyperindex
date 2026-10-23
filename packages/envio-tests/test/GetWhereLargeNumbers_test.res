@@ -134,3 +134,65 @@ describe("getWhere on a large or scaled number", () => {
     },
   )
 })
+
+describe("getWhere on a scaled BigDecimal", () => {
+  scenario->Scenario.it(
+    "compares the digits a filter has past the column's scale",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args =>
+                  (args.context->asContext).price.set({
+                    id: "price",
+                    value: BigDecimal.fromStringUnsafe("1.55"),
+                  }),
+              },
+            ],
+            latestFetchedBlockNumber: 5,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      let restarted = await indexer.restart()
+      let found = ref(None)
+      source.resolveGetHeightOrThrow(10)
+      let readFilters: MockSource.itemMock = {
+        blockNumber: 6,
+        logIndex: 0,
+        handler: async args => {
+          let context = args.context->asContext
+          let prices = async filter =>
+            (await context.price.getWhere({value: filter}))->Array.map(row => row.id)
+          // A row one read loads answers every later read from memory, which
+          // would cover a later read whose own query missed it. `_lt` is the
+          // read a filter cut to the column's scale misses, so it goes first.
+          let lt = await prices({_lt: BigDecimal.fromStringUnsafe("1.559")})
+          let gt = await prices({_gt: BigDecimal.fromStringUnsafe("1.549")})
+          let eq = await prices({_eq: BigDecimal.fromStringUnsafe("1.555")})
+          found := Some((eq, lt, gt))
+        },
+      }
+      await source.expectItemsQueries([
+        {
+          fromBlock: 6,
+          toBlock: Unbounded,
+          reply: Respond({items: [readFilters], latestFetchedBlockNumber: 10}),
+        },
+      ])
+      await restarted.getBatchWritePromise()
+
+      t.expect(found.contents).toEqual(Some(([], ["price"], ["price"])))
+    },
+  )
+})

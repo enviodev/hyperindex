@@ -687,6 +687,36 @@ async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() 
     assert_eq!(landed, "0");
 }
 
+/// A sibling process driving chain 137 is still writing while chain 1's
+/// process resumes, so the resume has to leave the sibling's inserts alone.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn resuming_one_chain_leaves_another_chains_insert_running() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    let query_id = format!(
+        "{}sibling",
+        super::client::insert_tag(&live.database, &[137])
+    );
+    let sibling = tokio::spawn(send_as(
+        query_id.clone(),
+        format!(
+            "INSERT INTO `{}`.envio_history_Account (id, owner, balance, envio_checkpoint_id, \
+             envio_change) SELECT toString(number), 'bob', '1', 1, 'SET' FROM numbers(3) \
+             WHERE sleepEachRow(1) = 0 SETTINGS max_block_size = 1",
+            live.database
+        ),
+    ));
+    until_running(&live, &query_id).await;
+
+    resume(&live.another_process(), vec![account], 0, 0).await;
+    let succeeded = sibling.await.unwrap();
+
+    live.drop_database().await;
+    assert!(succeeded, "{query_id} was stopped by chain 1's resume");
+}
+
 async fn until_running(live: &Live, query_id: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while live

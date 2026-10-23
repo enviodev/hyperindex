@@ -1,6 +1,7 @@
 // A TTL drops an entity's rows whenever ClickHouse merges them, so for one kept
 // in ClickHouse alone what a handler reads would change from one run to the
-// next. Reading it is refused with what to do instead; writing it is not.
+// next. Reading it is refused with what to do instead; writing it is not. One
+// kept in Postgres too reads from there, which no TTL touches.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: clickhouse-ttl-read
@@ -21,6 +22,11 @@ type Expiring @storage(clickhouse: { ttl: "toDateTime(at) + INTERVAL 1 DAY" }) {
   at: Timestamp!
 }
 
+type Kept @storage(postgres: true, clickhouse: { ttl: "toDateTime(at) + INTERVAL 1 DAY" }) {
+  id: ID!
+  at: Timestamp!
+}
+
 type Probe {
   id: ID!
 }
@@ -32,21 +38,25 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ contex
   if (context.isPreload) {
     return;
   }
+  const probe = async (read: () => Promise<{ id: string } | undefined>) => {
+    try {
+      context.Probe.set({ id: (await read())?.id ?? "missing" });
+    } catch (error) {
+      context.Probe.set({ id: (error as Error).message });
+    }
+  };
   context.Expiring.set({ id: "written", at: new Date(0) });
-  try {
-    await context.Expiring.get("written");
-    context.Probe.set({ id: "read" });
-  } catch (error) {
-    context.Probe.set({ id: (error as Error).message });
-  }
+  context.Kept.set({ id: "kept", at: new Date(0) });
+  await probe(() => context.Expiring.get("written"));
+  await probe(() => context.Kept.get("kept"));
 });
 `,
   ~test=`
 import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
-describe("An entity kept in ClickHouse alone with a TTL", () => {
-  it("is written by handlers but not read by them", async (t) => {
+describe("An entity with a ClickHouse TTL", () => {
+  it("is written by handlers, and read by them only when Postgres keeps it too", async (t) => {
     const result = await createTestIndexer().process({
       chains: {
         1: {
@@ -72,6 +82,7 @@ describe("An entity kept in ClickHouse alone with a TTL", () => {
           {
             id: "context.Expiring.get() is unavailable: Expiring is kept in ClickHouse alone with a ttl, which drops its rows whenever ClickHouse merges them, so a handler would read it differently from one run to the next. Keep it in Postgres too, with @storage(postgres: true, clickhouse: {...}), or drop the ttl.",
           },
+          { id: "kept" },
         ],
       },
       1,

@@ -43,6 +43,7 @@ let setTally = (~block, ~logIndex=0, ~id, ~count): MockSource.itemMock => {
 // Past what an `integer` column holds. JavaScript has no trouble with it, so
 // the refusal comes from the server.
 let tooLarge = 2147483648.->(Utils.magic: float => int)
+let tooSmall = -2147483649.->(Utils.magic: float => int)
 
 type stored = {tallies: array<tally>, history: int, checkpoints: int, progress: array<int>}
 
@@ -118,6 +119,34 @@ describe("A batch the server refuses", () => {
         committed,
         {tallies: [{id: "kept", count: 2}], history: 2, checkpoints: 2, progress: [2]},
       ))
+    },
+  )
+})
+
+describe("A value below what an integer column holds", () => {
+  let refusal = Scenario.captureRefusal()
+
+  scenario->Scenario.it(
+    "is refused like one above it",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=refusal.onError,
+    async (~t, ~indexer as _, ~source) => {
+      let sourceMock = source(1337)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [setTally(~block=1, ~id="refused", ~count=tooSmall)],
+            latestFetchedBlockNumber: 1,
+          }),
+        },
+      ])
+      let reason = await refusal.awaitRefusalReason()
+
+      t.expect(reason->Option.map(reason => reason->String.includes("out of range"))).toEqual(
+        Some(true),
+      )
     },
   )
 })
