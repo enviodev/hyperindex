@@ -347,7 +347,7 @@ impl Storage {
                 .map(|chain| chain.id)
                 .collect::<Vec<_>>(),
         ))
-        .await;
+        .await?;
         // Read before the reset empties it: a previous run's commit still in
         // flight lands in the tables built here, and its rows must lose. A
         // table an older envio built has no version column, and a database or
@@ -494,9 +494,8 @@ impl Storage {
     /// `chain_ids` — on any chain, given none — and tags this one's inserts as
     /// writing them. An insert keeps running on the server after the process
     /// that sent it is gone, and one landing after a trim would leave rows the
-    /// next batches reuse the checkpoints of. Stopping one is best effort: a
-    /// server that refuses is warned about, and the run goes on.
-    async fn stop_inserts_left_running(&self, chain_ids: Option<&[i64]>) {
+    /// next batches reuse the checkpoints of.
+    async fn stop_inserts_left_running(&self, chain_ids: Option<&[i64]>) -> Result<()> {
         let mut filter = format!(
             "startsWith(query_id, {})",
             literal(&insert_tag_prefix(self.database()))
@@ -510,19 +509,17 @@ impl Storage {
                 .join(", ");
             filter.push_str(&format!(" AND multiSearchAny(query_id, [{needles}])"));
         }
-        let stopped = self
-            .client
+        self.client
             .statement(format!(
                 "KILL QUERY{} WHERE {filter} SYNC FORMAT TabSeparated",
                 ddl::on_cluster_clause(self.topology().replicated),
             ))
-            .await;
-        if let Err(error) = stopped {
-            (self.client.warn)(&format!(
-                "Couldn't stop the ClickHouse inserts a previous run may have left running: \
-                 {error:#}"
-            ));
-        }
+            .await
+            .context(
+                "Couldn't stop the ClickHouse inserts a previous run may have left running. Start \
+                 again once ClickHouse answers.",
+            )?;
+        Ok(())
     }
 
     /// Emptied rather than dropped, so a database the operator provisioned
@@ -737,7 +734,7 @@ impl Storage {
         let names = tables
             .iter()
             .map(|table| table.entity.history_table.as_str())
-            .chain([CHECKPOINTS_TABLE]);
+            .chain([CHECKPOINTS_TABLE, CHAINS_TABLE]);
         try_join_all(names.map(|name| {
             self.client.statement(format!(
                 "SYSTEM SYNC REPLICA {} LIGHTWEIGHT",
@@ -802,7 +799,7 @@ impl Storage {
                 .map(|chain| chain.id)
                 .collect::<Vec<_>>(),
         ))
-        .await;
+        .await?;
         let version = self.read_version().await?.max(unix_micros());
         *self.chains.lock().unwrap() = Chains {
             frontier: Frontier::new(),
@@ -946,7 +943,7 @@ impl Storage {
     /// Refuses a database it may not empty, as initializing would.
     pub async fn reset(&self) -> Result<()> {
         self.check_for_initialize().await?;
-        self.stop_inserts_left_running(None).await;
+        self.stop_inserts_left_running(None).await?;
         self.reset_database().await?;
         *self.chains.lock().unwrap() = Chains::default();
         Ok(())
@@ -1205,47 +1202,120 @@ mod tests {
         );
     }
 
-    /// A restart after a clean stop finds nothing above the frontier, so it
-    /// schedules no mutation: each one rewrites parts.
+    /// What a database a run stopped cleanly at checkpoint 7 answers.
+    fn after_a_clean_stop(statement: &str) -> (u16, String) {
+        if statement.contains("_envio_holds") {
+            (
+                200,
+                "envio_history_Account\t0\nenvio_checkpoints\t0".to_string(),
+            )
+        } else if statement.contains("max(`version`)") {
+            (200, "3".to_string())
+        } else if statement.contains("FROM `mock`.`envio_checkpoints`") {
+            (200, "1\t7".to_string())
+        } else {
+            (200, String::new())
+        }
+    }
+
+    fn resume_at_checkpoint_7(table: Arc<crate::storage::Table>) -> Resume {
+        Resume {
+            // A cross-chain entity has no chain column, which only a shared
+            // sequence bounds.
+            sequence: Sequence::SharedAcrossChains,
+            tables: vec![table],
+            committed: vec![ResumedChain {
+                id: 1,
+                start_block: 0,
+                end_block: None,
+                max_reorg_depth: 0,
+                first_event_block: None,
+                ready_at: None,
+                events_processed: 0.0,
+                progress_block: 10,
+                progress_block_time: None,
+                source_block: 10,
+                checkpoint_id: 7,
+            }],
+        }
+    }
+
+    /// An insert a previous run left running can land after the trim. One
+    /// that can't be stopped leaves the resume nothing safe to do but wait
+    /// for a later start.
     #[tokio::test(flavor = "multi_thread")]
-    async fn resuming_after_a_clean_stop_rewrites_nothing() {
+    async fn a_resume_refuses_when_it_cannot_stop_what_a_previous_run_left_running() {
         let server = MockClickHouse::answering_statements(Arc::new(|statement: &str| {
-            if statement.contains("_envio_holds") {
+            if statement.starts_with("KILL QUERY") {
                 (
-                    200,
-                    "envio_history_Account\t0\nenvio_checkpoints\t0".to_string(),
+                    500,
+                    "Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)".to_string(),
                 )
-            } else if statement.contains("max(`version`)") {
-                (200, "3".to_string())
-            } else if statement.contains("FROM `mock`.`envio_checkpoints`") {
-                (200, "1\t7".to_string())
             } else {
-                (200, String::new())
+                after_a_clean_stop(statement)
             }
         }))
         .await;
         let storage = storage_at(&server);
         let account = account(&storage);
+
+        let resumed = storage.resume(&resume_at_checkpoint_7(account)).await;
+
+        assert_eq!(
+            resumed.map_err(|error| format!("{error:#}").contains("ACCESS_DENIED")),
+            Err(true)
+        );
+    }
+
+    /// A replica that hasn't fetched the chains' rows yet reads an older
+    /// version, and the resume's frontier rows would lose to the ones it
+    /// hasn't fetched.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_replicated_resume_waits_for_the_chains_rows_too() {
+        let server = MockClickHouse::answering_statements(Arc::new(after_a_clean_stop)).await;
+        let storage = Storage::new(
+            crate::clickhouse::client::test_support::connection(server.url.clone()),
+            Tuning::default(),
+            Arc::new(|_: &str| {}),
+            Settings {
+                chain_id_mode: ChainIdMode::Int32,
+                replicated: true,
+                database_engine: None,
+            },
+        )
+        .unwrap();
+        let account = account(&storage);
+
         storage
-            .resume(&Resume {
-                // A cross-chain entity has no chain column, which only a
-                // shared sequence bounds.
-                sequence: Sequence::SharedAcrossChains,
-                tables: vec![account],
-                committed: vec![ResumedChain {
-                    id: 1,
-                    start_block: 0,
-                    end_block: None,
-                    max_reorg_depth: 0,
-                    first_event_block: None,
-                    ready_at: None,
-                    events_processed: 0.0,
-                    progress_block: 10,
-                    progress_block_time: None,
-                    source_block: 10,
-                    checkpoint_id: 7,
-                }],
-            })
+            .resume(&resume_at_checkpoint_7(account))
+            .await
+            .unwrap();
+
+        let mut synced = server
+            .statements_seen()
+            .into_iter()
+            .filter(|statement| statement.starts_with("SYSTEM SYNC REPLICA"))
+            .collect::<Vec<_>>();
+        synced.sort();
+        assert_eq!(
+            synced,
+            vec![
+                "SYSTEM SYNC REPLICA `mock`.`envio_chains` LIGHTWEIGHT".to_string(),
+                "SYSTEM SYNC REPLICA `mock`.`envio_checkpoints` LIGHTWEIGHT".to_string(),
+                "SYSTEM SYNC REPLICA `mock`.`envio_history_Account` LIGHTWEIGHT".to_string(),
+            ]
+        );
+    }
+
+    /// A restart after a clean stop finds nothing above the frontier, so it
+    /// schedules no mutation: each one rewrites parts.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resuming_after_a_clean_stop_rewrites_nothing() {
+        let server = MockClickHouse::answering_statements(Arc::new(after_a_clean_stop)).await;
+        let storage = storage_at(&server);
+        let account = account(&storage);
+        storage
+            .resume(&resume_at_checkpoint_7(account))
             .await
             .unwrap();
         assert_eq!(
