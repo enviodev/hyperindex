@@ -114,31 +114,21 @@ let changes = [
 ]
 
 describe("ClickHouse staging", () => {
-  let tableFor = () => {
-    let registry = ClickHouse.makeRegistry()
-    let table =
-      ClickHouse.makeSink(
-        ~logger=Logger.makeInMemory(),
-        ~host="http://127.0.0.1:1",
-        ~username="default",
-        ~password="",
-        ~database="unused",
-        ~chainIdMode=Int32,
-      )->ClickHouse.entityTable(~registry, ~entityConfig)
-    (registry, table)
-  }
+  let tableFor = () => TestClickHouse.offlineClient()->TestClickHouse.entityTable(entityConfig)
 
-  it("writes every column of every row shape into its own position", t => {
-    let (registry, table) = tableFor()
-    let (mock, sink) = MockArena.make(~columns=table.columns)
-
-    let _ = ClickHouse.stageUpdatesOrThrow(
-      sink,
-      ~registry,
-      ~changes,
+  let stage = (table, arena, ~changes) =>
+    arena->ClickHouse.stageChangesOrThrow(
+      table,
       ~entityConfig,
       ~scope=Chain(ChainId.fromInt(137)),
+      ~changes,
     )
+
+  it("writes every column of every row shape into its own position", t => {
+    let table = tableFor()
+    let (mock, arena) = MockArena.make(~columns=table.columns)
+
+    let _ = table->stage(arena, ~changes)
 
     t.expect(mock->MockArena.staged).toEqual([
       {name: "id", values: Texts(["a", "b", "c"]), nulls: [0, 0, 0]},
@@ -165,8 +155,8 @@ describe("ClickHouse staging", () => {
   // text is deliberately not ASCII — a string is given room for one byte per
   // UTF-16 unit first, and only the short encode says it needs more.
   it("keeps a value that outgrows the payload it was given", t => {
-    let (registry, table) = tableFor()
-    let (mock, sink) = MockArena.make(~columns=table.columns)
+    let table = tableFor()
+    let (mock, arena) = MockArena.make(~columns=table.columns)
     let long = "xé😀"->String.repeat(1500)
     let changes = [
       Change.Set({
@@ -190,13 +180,7 @@ describe("ClickHouse staging", () => {
       }),
     ]
 
-    let _ = ClickHouse.stageUpdatesOrThrow(
-      sink,
-      ~registry,
-      ~changes,
-      ~entityConfig,
-      ~scope=Chain(ChainId.fromInt(137)),
-    )
+    let _ = table->stage(arena, ~changes)
 
     let staged = mock->MockArena.staged
     t.expect((staged->Array.getUnsafe(0), staged->Array.getUnsafe(10))).toEqual((
@@ -213,8 +197,8 @@ describe("ClickHouse staging", () => {
   // has to hand it back rather than leave it to a garbage collector that owns
   // none of it.
   it("aborts the stage when a row cannot be converted", t => {
-    let (registry, table) = tableFor()
-    let (mock, sink) = MockArena.make(~columns=table.columns)
+    let table = tableFor()
+    let (mock, arena) = MockArena.make(~columns=table.columns)
     let changes = [
       Change.Set({
         entityId: entityId("a"),
@@ -238,13 +222,7 @@ describe("ClickHouse staging", () => {
     ]
 
     let failed = try {
-      let _ = ClickHouse.stageUpdatesOrThrow(
-        sink,
-        ~registry,
-        ~changes,
-        ~entityConfig,
-        ~scope=Chain(ChainId.fromInt(137)),
-      )
+      let _ = table->stage(arena, ~changes)
       false
     } catch {
     | _ => true
@@ -260,17 +238,10 @@ describe("ClickHouse staging", () => {
 // read of memory something can still write and no test that could see it.
 describe("Staged buffer checks", () => {
   let staged = () => {
-    let sink = ClickHouse.makeSink(
-      ~logger=Logger.makeInMemory(),
-      ~host="http://127.0.0.1:1",
-      ~username="default",
-      ~password="",
-      ~database="unused",
-      ~chainIdMode=Int32,
-    )
-    let registered = sink->ClickHouseSink.registerCheckpointsTable(ClickHouse.checkpointColumnSpecs)
-    let begun = sink->ClickHouseSink.beginStage(~table=registered.handle, ~rows=4)
-    (sink, registered, begun)
+    let client = TestClickHouse.offlineClient()
+    let table = client->TestClickHouse.entityTable(entityConfig)
+    let begun = client->StorageClient.beginStage(~table=table.handle, ~store=ClickHouse, ~rows=4)
+    (client, table, begun)
   }
 
   let messageOf = body =>
@@ -282,24 +253,24 @@ describe("Staged buffer checks", () => {
     }
 
   // The first text column, and where its buffers start in the lent array.
-  let textColumn = (registered: ClickHouseSink.registeredTable) => {
-    let columns = ClickHouseSink.makeTable(~name="checkpoints", registered).columns
-    let column = columns->Array.findIndexOpt(({kind}) => kind === Staging.Text)->Option.getOrThrow
-    (column, MockArena.slotOf(columns, ~column))
+  let textColumn = (table: ClickHouse.table) => {
+    let column =
+      table.columns->Array.findIndexOpt(({kind}) => kind === Staging.Text)->Option.getOrThrow
+    (column, MockArena.slotOf(table.columns, ~column))
   }
 
   // A buffer left attached is a view into the arena, so the batch is dropped
   // without freeing it — and the handle goes with it, which is what the abort
   // that follows finds.
   it("refuses a commit that leaves a buffer attached, and abandons the batch", t => {
-    let (sink, _, begun) = staged()
+    let (client, _, begun) = staged()
     let refused = messageOf(
-      () => sink->ClickHouseSink.commitStage(~handle=begun.handle, ~buffers=[]),
+      () => client->StorageClient.commitStage(~handle=begun.handle, ~buffers=[]),
     )
     // The caller that forgot a buffer forgets it here too, so the arena cannot
     // be handed back — and must not be freed under the view that is still on it.
     let aborted = messageOf(
-      () => sink->ClickHouseSink.abortStage(~handle=begun.handle, ~buffers=[]),
+      () => client->StorageClient.abortStage(~handle=begun.handle, ~buffers=[]),
     )
     t.expect((refused, aborted)).toEqual((
       "Buffer 0 of the staged batch was not handed back to be detached.",
@@ -312,8 +283,8 @@ describe("Staged buffer checks", () => {
   // buffer would replace the reason the batch failed with a complaint about the
   // cleanup.
   it("lets the abort after a commit that could not seal through", t => {
-    let (sink, registered, begun) = staged()
-    let (column, slot) = textColumn(registered)
+    let (client, table, begun) = staged()
+    let (column, slot) = textColumn(table)
     // Offsets only a bug in the writer could leave behind: a row ending before
     // the row before it.
     let ends = Uint32Array.fromBuffer(begun.buffers->Array.getUnsafe(slot + 1))
@@ -321,29 +292,28 @@ describe("Staged buffer checks", () => {
     ends->TypedArray.set(1, 4)
 
     let refused = messageOf(
-      () => sink->ClickHouseSink.commitStage(~handle=begun.handle, ~buffers=begun.buffers),
+      () => client->StorageClient.commitStage(~handle=begun.handle, ~buffers=begun.buffers),
     )
     let aborted = messageOf(
-      () => sink->ClickHouseSink.abortStage(~handle=begun.handle, ~buffers=begun.buffers),
+      () => client->StorageClient.abortStage(~handle=begun.handle, ~buffers=begun.buffers),
     )
 
     t.expect((refused, aborted)).toEqual((
-      `column \`${registered.names->Array.getUnsafe(column)}\` row 1 ends at 4, before row 0 at 8`,
+      `column \`${(
+          table.columns->Array.getUnsafe(column)
+        ).name}\` row 1 ends at 4, before row 0 at 8`,
       "returned without complaint",
     ))
   })
 
   it("refuses to grow against a buffer that is not the column's payload", t => {
-    let (sink, registered, begun) = staged()
-    let column =
-      registered.kinds
-      ->Array.findIndexOpt(kind => kind->Staging.kindOfOrdinal === Text)
-      ->Option.getOrThrow
+    let (client, table, begun) = staged()
+    let (column, _) = textColumn(table)
     t.expect(
       messageOf(
         () =>
-          sink
-          ->ClickHouseSink.growStage(
+          client
+          ->StorageClient.growStage(
             ~handle=begun.handle,
             ~column,
             ~needed=4096,

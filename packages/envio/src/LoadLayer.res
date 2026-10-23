@@ -20,8 +20,8 @@ let loadById = (
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    let timerRef =
-      indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
+    let storageName = storage.entityStoreName(entityConfig)
+    let timerRef = indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
 
     // Since LoadManager.call prevents registering entities already in the in-memory store,
     // we can be sure that we load only the new ones.
@@ -61,7 +61,7 @@ let loadById = (
 
     indexerState->IndexerState.endStorageLoad(
       timerRef,
-      ~storage=storage.name,
+      ~storage=storageName,
       ~operation=key,
       ~whereSize=idsToLoad->Array.length,
       ~size=dbEntities->Array.length,
@@ -344,9 +344,9 @@ let loadByParsedFilter = (
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
+    let storageName = storage.entityStoreName(entityConfig)
 
-    let timerRef =
-      indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
+    let timerRef = indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
 
     let size = ref(0)
 
@@ -412,7 +412,7 @@ let loadByParsedFilter = (
 
     indexerState->IndexerState.endStorageLoad(
       timerRef,
-      ~storage=storage.name,
+      ~storage=storageName,
       ~operation=key,
       ~whereSize=queries->Array.reduce(0, (acc, query) => acc + query->EntityFilter.valuesCount),
       ~size=size.contents,

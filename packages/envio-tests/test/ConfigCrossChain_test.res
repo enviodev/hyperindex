@@ -262,7 +262,7 @@ describe("Per-chain entity columns", () => {
   let primaryKey = (entityConfig: Internal.entityConfig) =>
     entityConfig.table
     ->Table.getFields
-    ->Array.map(PgStorage.pgColumnInput)
+    ->Array.map(Storage.pgColumnInput)
     ->Array.filter(column => column.isPrimaryKey === Some(true))
     ->Array.map(column => column.name)
 
@@ -335,7 +335,7 @@ describe("Per-chain entities under snake_case columns", () => {
   })
 
   it("Keys the row schema and the getWhere filter by the API name", t => {
-    let locations = switch (PgStorage.getRowSchema(snakeCounter)->S.classify: S.tagged) {
+    let locations = switch (Storage.getRowSchema(snakeCounter)->S.classify: S.tagged) {
     | Object({items}) => items->Array.map(item => item.location)
     | _ => []
     }
@@ -355,53 +355,36 @@ describe("Per-chain ClickHouse view", () => {
     // The chain id column is what makes the view dedup on (id, chain id)
     // instead of id alone; a global entity carries none.
     t.expect((
-      ClickHouse.entitySpec(~entityConfig=counter).chainIdColumn,
-      ClickHouse.entitySpec(~entityConfig=globalCounter).chainIdColumn,
+      ClickHouse.entityTable(counter).chainIdColumn,
+      ClickHouse.entityTable(globalCounter).chainIdColumn,
     )).toEqual((Some("chainId"), None))
   })
 })
 
-// The ClickHouse sink caches a compiled serializer per (entity, scope) because
-// a DELETE row carries no entity to stamp — the chain id is baked into the
-// schema instead. A cache keyed only by entity would serve chain 1's schema to
-// chain 137.
+// The ClickHouse cells are compiled once per (entity, scope) because a DELETE
+// row carries no entity to stamp — the chain id is baked into the cells
+// instead. Cells keyed only by entity would serve chain 1's to chain 137.
 describe("Per-chain ClickHouse writes", () => {
   // Registers the table for real — that needs no server, and it is what
-  // resolves each column's wire kind — then mocks the sink at the `stage`
-  // boundary to read back the chain-id column, a Float64Array in the default
-  // Int32 chain-id mode.
-  let columnSpecs = entityConfig => ClickHouse.entitySpec(~entityConfig).columns
-
+  // resolves each column's wire kind — then mocks the arena to read back the
+  // chain-id column, a Float64Array in the default Int32 chain-id mode.
   let stagedChainIds = (
     ~changes,
     ~entityConfig: Internal.entityConfig,
     ~scope,
-    ~registry: ClickHouse.registry,
+    ~table: ClickHouse.table,
   ) => {
-    let table = registry.entities->Dict.getUnsafe(entityConfig.name)
-    let chainIdIndex = columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
-    let (mock, sink) = MockArena.make(~columns=table.columns)
-    let _ = ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope)
+    let chainIdIndex = table.columns->Array.findIndex(({name}) => name === "chainId")
+    let (mock, arena) = MockArena.make(~columns=table.columns)
+    let _ = arena->ClickHouse.stageChangesOrThrow(table, ~entityConfig, ~scope, ~changes)
     switch mock->MockArena.staged->Array.get(chainIdIndex) {
     | Some({values: Numbers(numbers)}) => numbers->Array.map(number => Some(number))
     | _ => changes->Array.map(_ => None)
     }
   }
 
-  // Registration only parses the column types, so it never reaches this host.
-  let registryFor = (entityConfig: Internal.entityConfig) => {
-    let registry = ClickHouse.makeRegistry()
-    let sink = ClickHouse.makeSink(
-      ~logger=Logger.makeInMemory(),
-      ~host="http://127.0.0.1:1",
-      ~username="default",
-      ~password="",
-      ~database="unused",
-      ~chainIdMode=Int32,
-    )
-    let _ = sink->ClickHouse.entityTable(~registry, ~entityConfig)
-    registry
-  }
+  let tableFor = entityConfig =>
+    TestClickHouse.offlineClient()->TestClickHouse.entityTable(entityConfig)
 
   let set = (~id, ~count): Change.t<Internal.entity> => Set({
     entityId: id->EntityId.unsafeOfString,
@@ -415,20 +398,20 @@ describe("Per-chain ClickHouse writes", () => {
   })
 
   it("Stamps set rows and tags delete rows with the flush group's chain", t => {
-    let registry = registryFor(counter)
+    let table = tableFor(counter)
     let chain1 = stagedChainIds(
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(1->ChainId.fromInt),
-      ~registry,
+      ~table,
     )
-    // Same cache, different scope: a per-entity cache would reuse chain 1's
-    // schema and tag the delete row with chain 1.
+    // Same table, different scope: cells kept per entity would reuse chain 1's
+    // and tag the delete row with chain 1.
     let chain137 = stagedChainIds(
       ~changes=[set(~id="a", ~count=2n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(137->ChainId.fromInt),
-      ~registry,
+      ~table,
     )
 
     t.expect((chain1, chain137)).toEqual(([Some(1.), Some(1.)], [Some(137.), Some(137.)]))
@@ -439,7 +422,7 @@ describe("Per-chain ClickHouse writes", () => {
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=globalCounter,
       ~scope=CrossChain,
-      ~registry=registryFor(globalCounter),
+      ~table=tableFor(globalCounter),
     )
     t.expect(captured).toEqual([None, None])
   })
@@ -496,7 +479,7 @@ describe("Chain-id stamping", () => {
 
   it("Adds the chain id to the row schema of a per-chain entity only", t => {
     let locations = entityConfig =>
-      switch (PgStorage.getRowSchema(entityConfig)->S.classify: S.tagged) {
+      switch (Storage.getRowSchema(entityConfig)->S.classify: S.tagged) {
       | Object({items}) => items->Array.map(item => item.location)
       | _ => []
       }

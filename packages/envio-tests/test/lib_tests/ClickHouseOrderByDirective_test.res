@@ -53,9 +53,7 @@ type Token @storage(clickhouse: {orderBy: ["id", "timestamp"]}) {
 `)
 
     t.expect(
-      ClickHouse.entitySpec(
-        ~entityConfig=config.userEntitiesByName->Dict.getUnsafe("Token"),
-      ).orderBy,
+      ClickHouse.entityTable(config.userEntitiesByName->Dict.getUnsafe("Token")).orderBy,
       ~message="id leads a sorting key that narrows further",
     ).toEqual(Some(["id", "timestamp"]))
   })
@@ -164,9 +162,7 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
   it("Sorts by a BigInt that fits a Decimal", t => {
     let config = parse(schema("BigInt", " @config(precision: 38)"))
 
-    let spec = ClickHouse.entitySpec(
-      ~entityConfig=config.userEntitiesByName->Dict.getUnsafe("Token"),
-    )
+    let spec = ClickHouse.entityTable(config.userEntitiesByName->Dict.getUnsafe("Token"))
 
     t.expect(
       (spec.columns->Array.map(column => (column.fieldType, column.precision)), spec.orderBy),

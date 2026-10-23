@@ -121,14 +121,14 @@ pub fn lend_for_reading<'env>(
     expose(env, arena).inspect_err(|_| arena.finish_lending())
 }
 
-/// A batch lent to JavaScript to fill, and what its sink needs to write it.
+/// A batch lent to JavaScript to fill, and what its store needs to write it.
 pub struct Staged<M> {
     pub meta: M,
     pub arena: Arena,
 }
 
-/// The batches a sink has lent out, by handle, from `begin` until the sink
-/// takes them to write.
+/// The batches lent out, by handle, from `begin` until a store takes them to
+/// write.
 pub struct Stages<M> {
     batches: Mutex<HashMap<u32, Staged<M>>>,
 }

@@ -9,10 +9,10 @@ let defaultPersistence = (~config=config) =>
   switch defaultPersistenceRef.contents {
   | Some((memoizedConfig, persistence)) if memoizedConfig === config => persistence
   | _ =>
-    let persistence = PgStorage.makePersistenceFromConfig(
+    let persistence = Storage.makePersistenceFromConfig(
       ~logger=Logger.makeInMemory(),
       ~config,
-      ~storage=PgStorage.makeStorageFromEnv(
+      ~storage=Storage.makeStorageFromEnv(
         ~logger=Logger.makeInMemory(),
         ~config,
         ~pgSchema=TestPgSchema.make(),
@@ -26,7 +26,7 @@ let defaultPersistence = (~config=config) =>
 // A persistence over `storage` that reports itself already initialized, so the
 // state writes through it instead of stalling on the init handshake.
 let readyPersistence = (~config=config, ~storage) => {
-  ...PgStorage.makePersistenceFromConfig(~logger=Logger.makeInMemory(), ~config, ~storage),
+  ...Storage.makePersistenceFromConfig(~logger=Logger.makeInMemory(), ~config, ~storage),
   storageStatus: Persistence.Ready({
     cleanRun: false,
     contractMapping: config.contractMapping,

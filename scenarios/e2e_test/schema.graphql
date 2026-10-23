@@ -38,7 +38,7 @@ type TransferPgOnly @crossChain @storage(postgres: true) {
   value: BigInt!
 }
 
-# Mirror override: this entity only lives in ClickHouse, so it is
+# Per-entity storage override: this entity only lives in ClickHouse, so it is
 # absent from the Postgres-backed `pgUserEntities` (and from Hasura).
 type TransferChOnly @crossChain @storage(clickhouse: true) {
   id: ID!

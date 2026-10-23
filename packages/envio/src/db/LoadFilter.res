@@ -22,7 +22,6 @@ let kindOf = (fieldType: Table.fieldType): valueKind =>
     Number
   }
 
-@val @scope("JSON") external stringify: unknown => string = "stringify"
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))
 @send external toISOString: unknown => string = "toISOString"
 
@@ -33,8 +32,9 @@ let render = (value: unknown, ~kind) =>
   | Some(value) =>
     Null.make(
       switch kind {
-      // A document is its JSON text even when it is a bare string or number.
-      | Json => stringify(value)->Utils.replaceLoneSurrogateEscapes
+      // A document is its JSON text even when it is a bare string or number,
+      // spelled as ClickHouse stores it.
+      | Json => value->Sql.canonicalDocument
       | _ =>
         switch value->typeof {
         | #boolean => value->(Utils.magic: unknown => bool) ? "true" : "false"

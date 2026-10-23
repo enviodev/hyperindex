@@ -184,7 +184,7 @@ describe("Isolated dependency e2e", () => {
           ENVIO_TUI: "false",
           ENVIO_API_TOKEN: process.env.ENVIO_API_TOKEN ?? "",
           // e2e_test config.yaml declares `storage.clickhouse: true`, so
-          // PgStorage validates these env vars at indexer start. The
+          // the storage validates these env vars at indexer start. The
           // database must match what `test:e2e` wrote to in the prior job
           // step, otherwise resume from the persisted Postgres checkpoint
           // finds no corresponding ClickHouse row.

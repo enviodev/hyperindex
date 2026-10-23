@@ -34,9 +34,12 @@ mod registration_start_block;
 mod request_stats;
 pub mod scripts;
 mod service_health;
+mod storage;
 mod svm;
 mod svm_hypersync_source;
 mod template_dirs;
+#[cfg(test)]
+mod test_servers;
 mod text_position;
 mod transaction_store;
 mod ts_loader;

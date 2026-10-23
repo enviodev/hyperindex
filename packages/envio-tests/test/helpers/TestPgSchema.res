@@ -4,6 +4,10 @@
 
 @val external pid: int = "process.pid"
 
+// A storage with Postgres alone, for what a test reads or sets up itself.
+let client = (~logger=Logger.makeInMemory(), ~pgSchema=?, ~maxConnections=?) =>
+  Storage.makeClient(~logger, ~postgres=Storage.postgresOptions(~pgSchema?, ~maxConnections?))
+
 let prefix = "envio_test_"
 
 let counter = ref(0)
@@ -62,7 +66,7 @@ let sweep = async sql => {
   dropped
 }
 
-let emptyBatch: PgClient.batch = {
+let emptyBatch: StorageClient.batch = {
   progress: [],
   entities: [],
   chainMeta: [],
@@ -74,6 +78,7 @@ let emptyBatch: PgClient.batch = {
     blockNumbers: [],
     blockHashes: [],
     eventsProcessed: [],
+    keepsHistory: [],
   },
   effectCaches: [],
 }
@@ -88,27 +93,29 @@ let write = async (
   ~items: array<unknown>,
   ~create=false,
 ) => {
-  let sql = PgStorage.makeClient(~logger=Logger.makeInMemory(), ~pgSchema, ~maxConnections=1)
-  let registered = sql->PgStorage.register(~table, ~itemSchema)
+  let sql = client(~pgSchema, ~maxConnections=1)
+  let registered = sql->Storage.register(~table, ~itemSchema)
   try {
-    await sql->PgClient.writeBatch(
-      {
-        ...emptyBatch,
-        effectCaches: [
-          {
-            table: registered.handle,
-            create,
-            rows: sql->PgStorage.rowsOrThrow(registered, ~itemSchema, items, ~staged=[]),
-          },
-        ],
-      },
-      Null.null,
-    )
+    let _ = await sql->StorageClient.writeBatch({
+      ...emptyBatch,
+      effectCaches: [
+        {
+          table: registered.handle,
+          create,
+          rows: sql->Storage.rowsOrThrow(
+            registered,
+            ~itemSchema,
+            items,
+            ~staged={handles: [], seconds: Dict.make()},
+          ),
+        },
+      ],
+    })
   } catch {
   | exn =>
-    await sql->Sql.close
+    await sql->StorageClient.close
     throw(exn)
   }
-  await sql->Sql.close
+  await sql->StorageClient.close
   registered
 }

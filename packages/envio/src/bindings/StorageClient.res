@@ -1,6 +1,3 @@
-// The addon's Postgres storage: its connections, and every statement the
-// indexer runs against one schema. A storage operation is one call here.
-//
 // Rows cross in arenas both ways. A write stages its rows into memory the addon
 // lends (`beginStage` to `commitStage`); a read lands its rows in a Rust-owned
 // arena that `lendResult` hands over and `releaseResult` takes back. Reading or
@@ -10,7 +7,7 @@
 
 type t
 
-type options = {
+type postgresOptions = {
   host: string,
   port: int,
   user: string,
@@ -21,8 +18,22 @@ type options = {
   maxConnections: int,
   applicationName: string,
   pgSchema: string,
-  chainIdMode: string,
   isHasuraEnabled: bool,
+}
+
+type clickHouseOptions = {
+  url: string,
+  username: string,
+  password: string,
+  database: string,
+  replicated: bool,
+  databaseEngine?: string,
+}
+
+type options = {
+  chainIdMode: string,
+  postgres: postgresOptions,
+  clickhouse?: clickHouseOptions,
 }
 
 type queryResult = {
@@ -34,12 +45,69 @@ type queryResult = {
   rows: int,
 }
 
-// A table the storage writes or creates, and the slot each of its write
-// columns travels in when its batches can be staged.
-type registeredTable = {handle: int, kinds?: array<Staging.kind>}
+// A ClickHouse column. The rows read back are keyed by `rowName`, the name the
+// read schemas parse every store's rows by.
+type clickHouseColumn = {
+  name: string,
+  rowName?: string,
+  // The schema field, which `@storage(clickhouse: {...})` expressions name a
+  // column by even when a rename is configured.
+  fieldName?: string,
+  fieldType: string,
+  isNullable?: bool,
+  isArray?: bool,
+  precision?: int,
+  scale?: int,
+  enumVariants?: array<string>,
+}
+
+type skippingIndex = {
+  name: string,
+  expr: string,
+  indexType: string,
+  granularity?: int,
+}
+
+type clickHouseTable = {
+  name: string,
+  historyTable: string,
+  columns: array<clickHouseColumn>,
+  chainIdColumn?: string,
+  partitionBy?: string,
+  orderBy?: array<string>,
+  ttl?: string,
+  skippingIndexes?: array<skippingIndex>,
+}
+
+// A table described for every store that keeps it: an entity for each store its
+// schema names, the indexer's own tables for Postgres alone.
+type tableInput = {
+  name: string,
+  postgres?: Core.pgTableInput,
+  clickhouse?: clickHouseTable,
+}
+
+type postgresRegistered = {kinds?: array<int>}
+
+type clickHouseRegistered = {
+  names: array<string>,
+  kinds: array<int>,
+  nullable: array<bool>,
+}
+
+type store = Postgres | ClickHouse
+
+// What each store made of a table: present for the stores that keep it.
+type registeredTable = {
+  handle: int,
+  // The store the table is read from.
+  home: store,
+  postgres?: postgresRegistered,
+  clickhouse?: clickHouseRegistered,
+}
 
 type bounds = {
-  sequence: string,
+  sequence: CheckpointSequence.t,
   chainIds: array<ChainId.t>,
   checkpointIds: array<string>,
 }
@@ -83,8 +151,7 @@ type partition = {table: int, chainId: ChainId.t, name: string}
 type enum = {name: string, variants: array<string>}
 
 type initialize = {
-  sequence: string,
-  isEmptySchema: bool,
+  sequence: CheckpointSequence.t,
   tables: array<int>,
   partitions: array<partition>,
   enums: array<enum>,
@@ -98,6 +165,14 @@ type addChain = {
   chain: chainConfig,
   partitions: array<partition>,
   addresses: addresses,
+}
+
+type resume = {
+  sequence: CheckpointSequence.t,
+  // Every entity table.
+  tables: array<int>,
+  // The chains this run drives, which are the only ones trimmed.
+  chainIds: array<ChainId.t>,
 }
 
 type storedChain = {
@@ -173,19 +248,32 @@ type historyWrite = {
   deleteCheckpointIds: array<string>,
 }
 
-type entityWrite = {
-  table: int,
-  chainId?: ChainId.t,
+type postgresEntityWrite = {
   sets?: rows,
   deletes: array<string>,
   history?: historyWrite,
 }
 
+type entityWrite = {
+  table: int,
+  chainId?: ChainId.t,
+  postgres?: postgresEntityWrite,
+  // Every change as a history row, staged.
+  clickhouse?: int,
+}
+
+type diffCheckpoint = {
+  chainId: ChainId.t,
+  checkpointId: string,
+  blockNumber: int,
+}
+
 type rollbackWrite = {
   bounds: bounds,
-  histories: array<int>,
+  tables: array<int>,
   progress: array<progress>,
   removedAddresses: addresses,
+  diffCheckpoints: array<diffCheckpoint>,
 }
 
 type checkpoints = {
@@ -194,25 +282,28 @@ type checkpoints = {
   blockNumbers: array<int>,
   blockHashes: array<Null.t<string>>,
   eventsProcessed: array<int>,
+  keepsHistory: array<bool>,
 }
 
 type frontier = {chainIds: array<ChainId.t>, checkpointIds: array<string>}
 
-type tableWrite = {table: int, create: bool, rows: rows}
+type tableWrite = {table: int, rows: rows}
 
-type rawEventsWrite = {table: int, rows: rows}
+type effectCacheWrite = {table: int, create: bool, rows: rows}
 
 type batch = {
   rollback?: rollbackWrite,
   progress: array<progress>,
-  rawEvents?: rawEventsWrite,
+  rawEvents?: tableWrite,
   entities: array<entityWrite>,
   chainMeta: array<chainMeta>,
   addresses: addresses,
   frontier: frontier,
   checkpoints: checkpoints,
-  effectCaches: array<tableWrite>,
+  effectCaches: array<effectCacheWrite>,
 }
+
+type writeTiming = {store: store, seconds: float}
 
 // What a build was for, which decides how much an existing index has to match.
 type indexPurpose = | @as("Query") Query | @as("Schema") Schema
@@ -235,13 +326,16 @@ type indexEvent =
   | Committed({count: int, seconds: float})
 
 @send
-external classCreate: (Core.pgStorageCtor, options, indexEvent => unit) => t = "create"
+external classCreate: (Core.storageCtor, options, indexEvent => unit, string => unit) => t =
+  "create"
 
-let make = (options, ~onIndexEvent) => Core.getAddon().pgStorage->classCreate(options, onIndexEvent)
+let make = (options, ~onIndexEvent, ~onWarning) =>
+  Core.getAddon().storage->classCreate(options, onIndexEvent, onWarning)
 
-@send external registerTable: (t, Core.pgTableInput) => registeredTable = "registerTable"
+@send external registerTable: (t, tableInput) => registeredTable = "registerTable"
 
-@send external beginStage: (t, ~table: int, ~rows: int) => Staging.begun = "beginStage"
+@send
+external beginStage: (t, ~table: int, ~store: store, ~rows: int) => Staging.begun = "beginStage"
 
 @send
 external growStage: (
@@ -259,8 +353,8 @@ external commitStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit 
 
 @send external discardStaged: (t, array<int>) => unit = "discardStaged"
 
-let arena = (client): Staging.arena => {
-  beginStage: (~table, ~rows) => client->beginStage(~table, ~rows),
+let arena = (client, ~store): Staging.arena => {
+  beginStage: (~table, ~rows) => client->beginStage(~table, ~store, ~rows),
   growStage: (~handle, ~column, ~needed, ~stale) =>
     client->growStage(~handle, ~column, ~needed, ~stale),
   commitStage: (~handle, ~buffers) => client->commitStage(~handle, ~buffers),
@@ -295,14 +389,29 @@ let queryForTests = async (client, sql, ~params=[]) =>
   client->read(await client->queryForTestsRaw(sql, params))
 
 @send
-external loadWhereRaw: (t, string, array<LoadCondition.t>) => promise<queryResult> = "loadWhere"
+external loadWhereRaw: (t, int, array<LoadCondition.t>) => promise<queryResult> = "loadWhere"
 
-let loadWhere = async (client, ~tableName, ~conditions) =>
-  client->read(await client->loadWhereRaw(tableName, conditions))
+let loadWhere = async (client, ~table, ~conditions) =>
+  client->read(await client->loadWhereRaw(table, conditions))
 
-@send external isInitialized: t => promise<bool> = "isInitialized"
+@send external historyForTestsRaw: (t, int) => promise<queryResult> = "historyForTests"
 
-@send external checkSchemaForInitialize: t => promise<bool> = "checkSchemaForInitialize"
+let historyForTests = async (client, ~table) =>
+  client->read(await client->historyForTestsRaw(table))
+
+// What the storage holds before anything is initialized or resumed.
+type holding =
+  | Nothing
+  | Initialized
+  // ClickHouse holds indexed data Postgres has none of.
+  | Stranded
+  // Postgres holds indexed data the ClickHouse beside it doesn't.
+  | Diverged
+  // Postgres was built by an older envio, which kept nothing to pair it with
+  // the ClickHouse beside it.
+  | Outdated
+
+@send external holding: t => promise<holding> = "holding"
 
 @send external initialize: (t, initialize) => promise<unit> = "initialize"
 
@@ -310,7 +419,7 @@ let loadWhere = async (client, ~tableName, ~conditions) =>
 
 @send external readStoredConfig: t => promise<storedConfig> = "readStoredConfig"
 
-@send external resume: t => promise<resumed> = "resume"
+@send external resume: (t, resume) => promise<resumed> = "resume"
 
 @send external setChainMeta: (t, array<chainMeta>) => promise<unit> = "setChainMeta"
 
@@ -321,9 +430,10 @@ external finalizeBackfill: (t, array<Core.pgIndexInput>, array<ChainId.t>, float
 @send
 external ensureSchemaIndexes: (t, array<Core.pgIndexInput>) => promise<unit> = "ensureSchemaIndexes"
 
-// Null when the indexes are already there, which is every call but the first.
+// Null when the indexes are already there, which is every call but the first,
+// and every call for a table no store builds query indexes for.
 @send
-external ensureQueryIndexes: (t, string, array<string>) => Null.t<promise<unit>> =
+external ensureQueryIndexes: (t, int, string, array<string>) => Null.t<promise<unit>> =
   "ensureQueryIndexes"
 
 @send external pruneCheckpoints: (t, bounds) => promise<unit> = "pruneCheckpoints"
@@ -331,8 +441,12 @@ external ensureQueryIndexes: (t, string, array<string>) => Null.t<promise<unit>>
 @send external pruneHistory: (t, int, bounds) => promise<unit> = "pruneHistory"
 
 @send
-external rollbackTargetCheckpoint: (t, ChainId.t, int) => promise<Nullable.t<string>> =
-  "rollbackTargetCheckpoint"
+external rollbackTargetCheckpoint: (
+  t,
+  ChainId.t,
+  int,
+  CheckpointSequence.t,
+) => promise<Nullable.t<string>> = "rollbackTargetCheckpoint"
 
 @send
 external rollbackProgressDiff: (t, bounds) => promise<array<progressDiff>> = "rollbackProgressDiff"
@@ -351,10 +465,9 @@ type cacheDump = {tableName: string, path: string}
 
 @send external reset: t => promise<unit> = "reset"
 
-// `sink` settles once the sink has written its half: `true` lets the batch
-// commit, `false` rolls it back. A failed statement rejects with what it was
-// doing as the message and the server's error as the `cause`.
-@send
-external writeBatch: (t, batch, Null.t<promise<bool>>) => promise<unit> = "writeBatch"
+// Writes the batch to every store, answering how long each took. A failed
+// write rejects with what it was doing as the message and the store's error as
+// the `cause`.
+@send external writeBatch: (t, batch) => promise<array<writeTiming>> = "writeBatch"
 
 @send external close: t => promise<unit> = "close"

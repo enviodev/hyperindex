@@ -104,7 +104,7 @@ let configStorageRows = (
 }
 
 // Seeds an in-memory address table with every chain's config-declared
-// addresses, the twin of what `PgStorage.initialize` writes in one insert.
+// addresses, the twin of what `Storage.initialize` writes in one insert.
 let seedConfigAddresses = (
   table: AddressRows.Table.t,
   ~chainConfigs: array<Config.chain>,
