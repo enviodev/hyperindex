@@ -48,10 +48,13 @@ let countPolls = async (~source: MockSource.t) => {
 }
 
 describe("Polling while the chain waits for new blocks", () => {
-  makeScenario(~name="unknown-height", ~rollbackOnReorg=false)->Scenario.it(
+  makeScenario(
+    ~name="unknown-height",
+    ~rollbackOnReorg=false,
+  )->Scenario.it(
     "Polls at the source interval while the chain has no known height",
     ~sources=sources(~height=0),
-    ~reducedPollingInterval,
+    ~sourceTiming={reducedPollingInterval: reducedPollingInterval},
     async (~t, ~indexer as _, ~source) => {
       let calls = await countPolls(~source=source(1337))
 
@@ -67,10 +70,13 @@ describe("Polling while the chain waits for new blocks", () => {
     },
   )
 
-  makeScenario(~name="height-below-reorg-lag", ~rollbackOnReorg=true)->Scenario.it(
+  makeScenario(
+    ~name="height-below-reorg-lag",
+    ~rollbackOnReorg=true,
+  )->Scenario.it(
     "Keeps reduced polling when the known height is below the lag holding the head back",
     ~sources=sources(~height=50),
-    ~reducedPollingInterval,
+    ~sourceTiming={reducedPollingInterval: reducedPollingInterval},
     async (~t, ~indexer as _, ~source) => {
       let calls = await countPolls(~source=source(1337))
 

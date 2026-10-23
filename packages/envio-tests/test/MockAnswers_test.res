@@ -540,3 +540,58 @@ describe("MockSource.expectBlockHashLookup", () => {
     },
   )
 })
+
+// A test that starts expecting while a burst is still landing has to see the
+// whole burst, not match whichever call happened to arrive first.
+describe("MockSource waits for a burst to fully arrive", () => {
+  Async.it("matches a fan-out of item queries only once all of it is pending", async t => {
+    let mock = MockSource.make([#getItemsOrThrow])
+    let query = partitionId =>
+      mock.source.getItemsOrThrow(
+        ~fromBlock=0,
+        ~toBlock=None,
+        ~addressSet=TestAddresses.setOf([]),
+        ~includeAllBlocks=false,
+        ~knownHeight=100,
+        ~partitionId,
+        ~selection={dependsOnAddresses: false, onEventRegistrations: []},
+        ~itemsTarget=None,
+        ~retry=0,
+        ~logger=Logger.makeInMemory(),
+      )->ignore
+    query("0")
+    let expectation = mock.expectItemsQueries([{reply: Respond({items: []})}])
+    query("1")
+    t.expect(await failureOf(expectation)).toEqual(
+      Some(`expectItemsQueries can reply to more than one pending query with entry #0 {reply: Respond(…)}:
+  {partitionId: "0", fromBlock: 0, toBlock: Unbounded, retryCount: 0}
+  {partitionId: "1", fromBlock: 0, toBlock: Unbounded, retryCount: 0}
+Give each query its own entry, told apart by partitionId:
+  {partitionId: "0", reply: …}
+  {partitionId: "1", reply: …}`),
+    )
+    mock.drainPendingItemsQueries()
+  })
+
+  Async.it("counts height calls only once all of them have arrived", async t => {
+    let mock = MockSource.make([#getHeightOrThrow])
+    let _ = mock.source.getHeightOrThrow()
+    let expectation = mock.expectHeightCalls(1)
+    let _ = mock.source.getHeightOrThrow()
+    t.expect(await failureOf(expectation)).toEqual(
+      Some("expectHeightCalls expected 1 height calls, but the source has taken 2"),
+    )
+  })
+
+  Async.it("answers a block-hash lookup only once all of them have arrived", async t => {
+    let mock = MockSource.make([#getBlockHashes])
+    let lookUp = blockNumbers =>
+      mock.source.getBlockHashes(~blockNumbers, ~logger=Logger.makeInMemory())->ignore
+    lookUp([10])
+    let expectation = mock.expectBlockHashLookup({blockNumbers: [10], reply: []})
+    lookUp([20])
+    t.expect(await failureOf(expectation)).toEqual(
+      Some("expectBlockHashLookup can't tell which of 2 pending lookups to answer: [10], [20]"),
+    )
+  })
+})

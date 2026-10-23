@@ -46,7 +46,7 @@ describe("Sparse-density target overflow", () => {
       },
     ],
     ~targetBufferSize=100_000,
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
 

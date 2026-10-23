@@ -180,8 +180,7 @@ let run = async (
   // reads the resumed indexer's lines after the ones that led to them.
   ~logger=Logger.makeInMemory(),
   ~backend: backend=selectedBackend,
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  ~sourceTiming=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
@@ -293,8 +292,7 @@ let run = async (
       ~logger,
       ~persistence,
       ~registrationsByChainId,
-      ~reducedPollingInterval?,
-      ~newBlockStallTimeoutRealtime?,
+      ~sourceTiming?,
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,

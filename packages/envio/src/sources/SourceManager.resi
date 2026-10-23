@@ -8,17 +8,20 @@ let getSourceRole: (
   ~hasRealtime: bool,
 ) => option<sourceRole>
 
-let make: (
-  ~sources: array<Source.t>,
-  ~logger: Logger.t,
-  ~isRealtime: bool,
-  ~newBlockStallTimeout: int=?,
-  ~newBlockStallTimeoutRealtime: int=?,
-  ~stalledPollingInterval: int=?,
-  ~reducedPollingInterval: int=?,
-  ~recoveryTimeout: float=?,
-  ~getHeightRetryInterval: (~retry: int) => int=?,
-) => t
+// Every field defaults to the production value. Only tests shorten them, to
+// reach a stall or a recovery without waiting out the real window.
+type timing = {
+  newBlockStallTimeout?: int,
+  newBlockStallTimeoutRealtime?: int,
+  stalledPollingInterval?: int,
+  reducedPollingInterval?: int,
+  recoveryTimeout?: float,
+  getHeightRetryInterval?: (~retry: int) => int,
+  // Multiplies every query retry's sleep, not the backoff it logs.
+  retryBackoffScale?: float,
+}
+
+let make: (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime: bool, ~timing: timing=?) => t
 
 let getActiveSource: t => Source.t
 

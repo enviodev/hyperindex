@@ -116,8 +116,7 @@ let resolveHeadOrThrow = async (
       ~sources,
       ~logger,
       ~isRealtime=false,
-      ~getHeightRetryInterval?,
-      ~newBlockStallTimeout?,
+      ~timing={?getHeightRetryInterval, ?newBlockStallTimeout},
     )
     await sourceManager->SourceManager.waitForNewBlock(
       ~knownHeight=0,

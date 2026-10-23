@@ -180,8 +180,7 @@ let run = async (
   // Leaves every chain on the source its YAML names, for a scenario whose YAML
   // points each chain at a local server the test runs.
   ~yamlSources=false,
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  ~sourceTiming=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -257,8 +256,7 @@ let run = async (
         }
         HandlerRegister.finishRegistration(~config)
       }),
-    ~reducedPollingInterval?,
-    ~newBlockStallTimeoutRealtime?,
+    ~sourceTiming?,
     ~targetBufferSize?,
     ~holdRealtime?,
     ~superviseRun?,
@@ -301,8 +299,9 @@ let it = (
   scenario: t,
   name,
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Shortens the stall, recovery and polling windows a test would otherwise
+  // have to wait out in real time.
+  ~sourceTiming=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -334,8 +333,7 @@ let it = (
       async (t: Vitest.testContext) =>
         await scenario->run(
           ~sources,
-          ~reducedPollingInterval?,
-          ~newBlockStallTimeoutRealtime?,
+          ~sourceTiming?,
           ~targetBufferSize?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,
