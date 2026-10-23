@@ -88,9 +88,7 @@ let initEffect = (params: batchParams, ~frame: ConsoleScope.handlerFrame) => {
         checkpointId: frame.checkpointId,
       }
       effectContext->ConsoleScope.setEffectLogger(() =>
-        params.indexerState
-        ->IndexerState.loggerForItem(frame.item)
-        ->Logger.withFields({"effect": effect.name})
+        frame.loggerFor(frame.item)->Logger.withFields({"effect": effect.name})
       )
       LoadLayer.loadEffect(
         ~loadManager=params.loadManager,
@@ -109,15 +107,13 @@ let initEffect = (params: batchParams, ~frame: ConsoleScope.handlerFrame) => {
 // The run a context call belongs to. Work a handler starts without awaiting
 // keeps its run's frame, so it is caught here once the run has resolved. A
 // preload run's calls stay harmless after it resolves: its writes are no-ops.
-let currentFrame = (params: batchParams, ~prop) =>
+let currentFrame = (~prop) =>
   switch ConsoleScope.current()->Nullable.toOption {
   | Some(Handler(frame)) =>
     if frame.isResolved && !frame.isPreload {
       Utils.Error.make(
         `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(
-        ~logger=params.indexerState->IndexerState.loggerForItem(frame.item),
-      )
+      )->ErrorHandling.mkLogAndRaise(~logger=frame.loggerFor(frame.item))
     }
     frame
   | Some(Logger(_)) | None =>
@@ -171,27 +167,16 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
   let scopeOf = (frame: ConsoleScope.handlerFrame) =>
     entityConfig->InMemoryStore.entityScope(~chainId=frame.item->Internal.getItemChainId)
 
-  // A row already in memory is final for both passes, so it skips the load
-  // manager: grouping it with the batch's loads would only resolve it a tick
-  // later to the same value.
-  let loadById = (entityId: string) => {
-    let scope = params->currentFrame(~prop)->scopeOf
-    switch (
-      params.indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
-    ).latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
-    | Some(change) => Promise.resolve(change->InMemoryTable.Entity.mapChangeToEntity)
-    | None =>
-      LoadLayer.loadById(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~entityConfig,
-        ~scope,
-        ~indexerState=params.indexerState,
-        ~shouldGroup=params.isPreload,
-        ~entityId,
-      )
-    }
-  }
+  let loadById = entityId =>
+    LoadLayer.loadById(
+      ~loadManager=params.loadManager,
+      ~persistence=params.persistence,
+      ~entityConfig,
+      ~scope=currentFrame(~prop)->scopeOf,
+      ~indexerState=params.indexerState,
+      ~shouldGroup=params.isPreload,
+      ~entityId,
+    )
 
   let write = (change: Change.t<Internal.entity>, ~scope) =>
     params.indexerState
@@ -204,7 +189,7 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
   let set = params.isPreload
     ? noopSet
     : (entity: Internal.entity) => {
-        let frame = params->currentFrame(~prop)
+        let frame = currentFrame(~prop)
         write(
           Set({
             entityId: entity.id->EntityId.unsafeOfString,
@@ -218,7 +203,7 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
   let deleteUnsafe = params.isPreload
     ? noopDeleteUnsafe
     : entityId => {
-        let frame = params->currentFrame(~prop)
+        let frame = currentFrame(~prop)
         write(Delete({entityId, checkpointId: frame.checkpointId}), ~scope=frame->scopeOf)
       }
 
@@ -239,7 +224,7 @@ let makeEntityContext = (params: batchParams, ~entityConfig: Internal.entityConf
           ~loadManager=params.loadManager,
           ~persistence=params.persistence,
           ~entityConfig,
-          ~scope=params->currentFrame(~prop)->scopeOf,
+          ~scope=currentFrame(~prop)->scopeOf,
           ~indexerState=params.indexerState,
           ~shouldGroup=params.isPreload,
           ~filter,
@@ -291,15 +276,13 @@ let makeHandlerContext = (params: batchParams): Internal.handlerContext => {
     context
     ->Utils.Object.defineProperty(
       name,
-      {enumerable: true, get: () => get(currentFrame(params, ~prop=name))},
+      {enumerable: true, get: () => get(currentFrame(~prop=name))},
     )
     ->ignore
 
   define("log", (frame: ConsoleScope.handlerFrame) =>
     (
-      params.isPreload
-        ? Logger.silentContextLog
-        : params.indexerState->IndexerState.loggerForItem(frame.item)->Logger.asContextLog
+      params.isPreload ? Logger.silentContextLog : frame.loggerFor(frame.item)->Logger.asContextLog
     )->(Utils.magic: Envio.logger => unknown)
   )
   define("effect", frame =>

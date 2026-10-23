@@ -129,10 +129,8 @@ let toMetrics: t => Metrics.t
 // Metric counters.
 let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit
 let recordStalledOnStorageWrite: (t, ~seconds: float) => unit
-// One handler's counters. Resolved once per pass and reused for its runs, so a
-// run doesn't build the stat's key.
 type handlerStat
-let getHandlerStat: (t, ~contract: string, ~event: string) => handlerStat
+let handlerStatFor: (t, Internal.eventConfig) => handlerStat
 let recordHandlerDuration: (handlerStat, ~duration: float) => unit
 let startPreloadHandler: handlerStat => Performance.timeRef
 let endPreloadHandler: (handlerStat, Performance.timeRef) => unit

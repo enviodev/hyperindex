@@ -132,6 +132,9 @@ type t = {
   mutable processingStalledOnFetchSince: option<Performance.timeRef>,
   mutable processingStalledOnStorageWriteSeconds: float,
   handlerStats: dict<handlerStat>,
+  // Per-chain event configs share a contract/event series, so this only
+  // spares a run from building the series key; handlerStats stays the source.
+  handlerStatByEventConfig: Utils.Map.t<Internal.eventConfig, handlerStat>,
   storageLoadStats: dict<storageLoadStat>,
   storageWriteStats: dict<storageWriteStat>,
   historyPruneStats: dict<historyPruneStat>,
@@ -211,6 +214,7 @@ let make = (
     processingStalledOnFetchSince: None,
     processingStalledOnStorageWriteSeconds: 0.,
     handlerStats: Dict.make(),
+    handlerStatByEventConfig: Utils.Map.make(),
     storageLoadStats: Dict.make(),
     storageWriteStats: Dict.make(),
     historyPruneStats: Dict.make(),
@@ -715,6 +719,15 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
     stat
   }
 }
+
+let handlerStatFor = (state: t, eventConfig: Internal.eventConfig) =>
+  switch state.handlerStatByEventConfig->Utils.Map.get(eventConfig) {
+  | Some(stat) => stat
+  | None =>
+    let stat = state->getHandlerStat(~contract=eventConfig.contractName, ~event=eventConfig.name)
+    state.handlerStatByEventConfig->Utils.Map.set(eventConfig, stat)->ignore
+    stat
+  }
 
 let recordHandlerDuration = (stat: handlerStat, ~duration) => {
   stat.processingSeconds = stat.processingSeconds +. duration
