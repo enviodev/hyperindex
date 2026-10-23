@@ -262,7 +262,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           reorgCount: 2,
           reorgDetectedBlock: Some(199),
           rollbackTargetBlock: Some(180),
-          rateLimitTimeMs: 0.,
+          rateLimitTimeMs: 1500.,
           rateLimitResetInMs: None,
         },
       ],
@@ -466,6 +466,10 @@ envio_indexing_source_waiting_seconds{chainId="1"} 2.5
 # HELP envio_indexing_source_querying_seconds The time spent performing queries to the chain data-source.
 # TYPE envio_indexing_source_querying_seconds counter
 envio_indexing_source_querying_seconds{chainId="1"} 3.5
+
+# HELP envio_indexing_source_rate_limited_seconds The time the chain spent waiting for a data-source rate limit to reset. Rate limits that overlap in time are counted once. A steadily climbing value means the source plan's limits are holding the indexer back.
+# TYPE envio_indexing_source_rate_limited_seconds counter
+envio_indexing_source_rate_limited_seconds{chainId="1"} 1.5
 
 # HELP envio_indexing_buffer_size The current number of items in the indexing buffer.
 # TYPE envio_indexing_buffer_size gauge
