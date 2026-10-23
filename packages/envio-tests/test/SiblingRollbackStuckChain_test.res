@@ -11,7 +11,8 @@ name: ${name}${extra}
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 value)
+      - event: Deployed()
 chains:
   - id: 1
     rpc:
@@ -45,7 +46,15 @@ type Counter {
 let handlers = `
 import { indexer } from "envio";
 
-indexer.onEvent({ contract: "Token", event: "Transfer" }, async () => {});
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.value });
+});
+
+// Registers a dynamic Token address, like the factory events the incident
+// chain indexed. Re-runs when the block is re-fetched after a rollback.
+indexer.contractRegister({ contract: "Token", event: "Deployed" }, async ({ context }) => {
+  context.chain.Token.add("0x0000000000000000000000000000000000000003");
+});
 `
 
 // The default cross-chain Counter keeps this on the global rollback path, where
@@ -64,33 +73,17 @@ let perChainScenario = Scenario.make(
   ~handlers,
 )
 
-type counterOps = {set: {"id": string, "count": bigint} => unit}
-type handlerContext = {@as("Counter") counter: counterOps}
-
 let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-    context.counter.set({"id": "total", "count": count})
-  },
+  params: dict{"value": count->(Utils.magic: bigint => unknown)},
 }
 
-type tokenOps = {add: Address.t => unit}
-type registerContext = {chain: {"Token": tokenOps}}
-
-// Registers a dynamic Token address, like the factory events the incident
-// chain indexed. Re-runs when the block is re-fetched after a rollback.
 let registerToken = (~block): MockSource.itemMock => {
+  event: "Token.Deployed",
   blockNumber: block,
   logIndex: 1,
-  handler: async _ => (),
-  contractRegister: async args => {
-    let context = args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)
-    context.chain["Token"].add(
-      "0x0000000000000000000000000000000000000003"->Address.unsafeFromString,
-    )
-  },
 }
 
 let sources: array<Scenario.sourceMock> = [
