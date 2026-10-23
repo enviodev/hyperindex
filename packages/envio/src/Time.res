@@ -5,7 +5,7 @@ let rec retryAsyncWithExponentialBackOff = async (
   ~multiplicative=4,
   ~retryCount=0,
   ~maxRetries=5,
-  ~logger: Pino.t,
+  ~logger: Logger.t,
   f: unit => promise<'a>,
 ) => {
   try {
@@ -14,11 +14,11 @@ let rec retryAsyncWithExponentialBackOff = async (
   | exn =>
     if retryCount < maxRetries {
       let nextRetryCount = retryCount + 1
-      let log = retryCount === 0 ? Logging.childTrace : Logging.childWarn
-      logger->log({
-        "msg": `Retrying query ${nextRetryCount->Int.toString}/${maxRetries->Int.toString} in ${backOffMillis->Int.toString}ms - waiting for correct result.`,
-        "err": exn->Utils.prettifyExn,
-      })
+      logger->Logger.logAt(
+        retryCount === 0 ? #trace : #warn,
+        `Retrying query ${nextRetryCount->Int.toString}/${maxRetries->Int.toString} in ${backOffMillis->Int.toString}ms - waiting for correct result.`,
+        ~params={"err": exn->Utils.prettifyExn},
+      )
       await resolvePromiseAfterDelay(~delayMilliseconds=backOffMillis)
 
       await f->retryAsyncWithExponentialBackOff(

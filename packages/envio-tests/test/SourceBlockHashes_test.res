@@ -106,6 +106,7 @@ let makeHyperSyncSource = () =>
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
     addressStore,
+    logger: Logger.makeInMemory(),
   })
 
 let makeRpcSource = () =>
@@ -132,7 +133,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~selection=makeSelection(),
     ~itemsTarget=Some(5000),
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SourceBlockHashes"}),
   ) catch {
   | Source.GetItemsError(err) =>
     let detail = switch err {

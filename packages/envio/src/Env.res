@@ -43,23 +43,6 @@ let serverPort =
 
 let tuiEnvVar = envSafe->EnvSafe.get("ENVIO_TUI", S.option(S.bool))
 
-let logLevelSchema = S.enum([
-  #trace,
-  #debug,
-  #info,
-  #warn,
-  #error,
-  #fatal,
-  #udebug,
-  #uinfo,
-  #uwarn,
-  #uerror,
-  #silent,
-])
-let logFilePath = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/envio.log")
-let userLogLevel = envSafe->EnvSafe.get("LOG_LEVEL", S.option(logLevelSchema))
-let defaultFileLogLevel = envSafe->EnvSafe.get("FILE_LOG_LEVEL", logLevelSchema, ~fallback=#trace)
-
 let prodEnvioAppUrl = "https://envio.dev"
 let envioAppUrl = envSafe->EnvSafe.get("ENVIO_APP", S.string, ~fallback=prodEnvioAppUrl)
 let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
@@ -79,29 +62,28 @@ let hypersyncClientEnableQueryCaching =
 let hypersyncLogLevel =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
 
-let logStrategy =
-  envSafe->EnvSafe.get(
-    "LOG_STRATEGY",
-    S.enum([
-      Logging.EcsFile,
-      EcsConsole,
-      EcsConsoleMultistream,
-      FileOnly,
-      ConsoleRaw,
-      ConsolePretty,
-      Both,
-    ]),
-    ~fallback=ConsolePretty,
-  )
-
-Logging.setLogger(
-  Logging.makeLogger(
-    ~logStrategy,
-    ~logFilePath,
-    ~defaultFileLogLevel,
-    ~userLogLevel=userLogLevel->Option.getOr(#info),
-  ),
-)
+module Logger = {
+  let levelSchema: S.t<Logger.level> = S.enum([
+    #trace,
+    #debug,
+    #info,
+    #warn,
+    #error,
+    #fatal,
+    #udebug,
+    #uinfo,
+    #uwarn,
+    #uerror,
+    #silent,
+  ])
+  // Checked by the Rust logger, which knows what each value means.
+  let strategy = envSafe->EnvSafe.get("LOG_STRATEGY", S.string, ~fallback="console-pretty")
+  let file = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/envio.log")
+  // Unset means the entry point's own default: info for a run, silent for a
+  // test indexer.
+  let level = envSafe->EnvSafe.get("LOG_LEVEL", S.option(levelSchema))
+  let fileLevel = envSafe->EnvSafe.get("FILE_LOG_LEVEL", levelSchema, ~fallback=#trace)
+}
 
 module Db = {
   let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")

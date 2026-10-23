@@ -1709,8 +1709,6 @@ module SingleOrMultiple: {{
   external castMultiple: t<'a> => array<'a> = "%identity"
   external castSingle: t<'a> => 'a = "%identity"
 
-  exception AmbiguousEmptyNestedArray
-
   let rec isMultiple = (t: t<'a>, ~nestedArrayDepth): bool =>
     if !Array.isArray(t) {{
       false
@@ -1719,9 +1717,8 @@ module SingleOrMultiple: {{
       if nestedArrayDepth == 0 {{
         true
       }} else if arr->Array.length == 0 {{
-        AmbiguousEmptyNestedArray->ErrorHandling.mkLogAndRaise(
-          ~msg="The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous,
-          please pass in a nested empty array if the intention is to provide an empty array as a value",
+        JsError.throwWithMessage(
+          "The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous, please pass in a nested empty array if the intention is to provide an empty array as a value",
         )
       }} else {{
         arr->Utils.Array.firstUnsafe->isMultiple(~nestedArrayDepth=nestedArrayDepth - 1)

@@ -486,6 +486,14 @@ type eventConfig = private {
   fieldSelection: fieldSelection,
 }
 
+// The contract and event names of a line about one of this event's items, as
+// JSON object members: built once, since a logger is made per item.
+let contractAndEventJson = Utils.WeakMap.memoize((eventConfig: eventConfig) =>
+  `"contract":${JSON.stringify(JSON.String(eventConfig.contractName))},"event":${JSON.stringify(
+      JSON.String(eventConfig.name),
+    )}`
+)
+
 type fuelEventKind =
   | LogData({logId: string, abi: JSON.t})
   | Mint
@@ -679,6 +687,13 @@ type eventItem = private {
   transactionIndex: int,
   payload: eventPayload,
 }
+
+// The fields of a line about an event item, as a JSON object. `address` is the
+// event's source address, which simulate input can set to any string.
+let eventItemFieldsJson = (eventItem: eventItem, ~address: Address.t) =>
+  `{${eventItem.onEventRegistration.eventConfig->contractAndEventJson},"block":${eventItem.blockNumber->Int.toString},"logIndex":${eventItem.logIndex->Int.toString},"address":${JSON.stringify(
+      JSON.String(address->Address.toString),
+    )}}`
 
 // Row shape for the `raw_events` table. Defined here (rather than in
 // `InternalTable`) so the ecosystem's `toRawEvent` can reference it without

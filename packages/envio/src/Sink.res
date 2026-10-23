@@ -20,8 +20,10 @@ let makeClickHouse = (
   ~password,
   ~sequence: CheckpointSequence.t,
   ~chainIdMode: ChainId.mode=Int32,
+  ~logger: Logger.t,
 ): t => {
-  let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode)
+  let logger = logger->Logger.withFields({"context": "ClickHouse"})
+  let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode, ~logger)
   let registry = ClickHouse.makeRegistry()
   let mirrored = (entities: array<Internal.entityConfig>) =>
     entities->Array.filter(e => e.storage.clickhouse)
@@ -29,10 +31,10 @@ let makeClickHouse = (
   {
     name: "clickhouse",
     initialize: (~entities) => {
-      ClickHouse.initialize(sink, ~entities=mirrored(entities))
+      ClickHouse.initialize(sink, ~logger, ~entities=mirrored(entities))
     },
     resume: (~frontier, ~chains, ~entities) => {
-      ClickHouse.resume(sink, ~sequence, ~frontier, ~chains, ~entities=mirrored(entities))
+      ClickHouse.resume(sink, ~logger, ~sequence, ~frontier, ~chains, ~entities=mirrored(entities))
     },
     writeBatch: async (~batch, ~diffCheckpoints, ~updatedEntities) => {
       // Staging reads JS values, so it holds the isolate and runs here. The

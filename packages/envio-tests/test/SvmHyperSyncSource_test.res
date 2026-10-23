@@ -181,7 +181,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         dependsOnAddresses: true,
       },
       ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SvmHyperSyncSource"}),
     )
 
     let item = switch response.parsedQueueItems {
@@ -357,7 +357,7 @@ describe("SvmHyperSyncSource include_all_blocks", () => {
         dependsOnAddresses: true,
       },
       ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SvmHyperSyncSource"}),
     )
 
     t.expect(capturedQueries->Array.map(query => query.includeAllBlocks)).toEqual([Some(true)])

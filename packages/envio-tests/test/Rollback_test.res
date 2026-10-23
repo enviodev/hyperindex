@@ -620,7 +620,7 @@ describe("E2E rollback tests", () => {
       historyWaitTimeoutId.contents->Option.forEach(clearTimeout)
       switch historyWaitResult {
       | Ok() => ()
-      | Error(Some(errHandler)) => errHandler->ErrorHandling.raiseExn
+      | Error(Some(errHandler)) => errHandler->ErrorHandling.toExn->throw
       | Error(None) =>
         JsError.throwWithMessage("Timed out waiting for SET -> DELETE -> SET history")
       }
@@ -678,7 +678,7 @@ describe("E2E rollback tests", () => {
         indexerErrorPromise->Promise.thenResolve(errHandler => Error(errHandler)),
       ]) {
       | Ok() => ()
-      | Error(errHandler) => errHandler->ErrorHandling.raiseExn
+      | Error(errHandler) => errHandler->ErrorHandling.toExn->throw
       }
 
       // Commit the rollback diff without recreating the entity on the canonical chain.
