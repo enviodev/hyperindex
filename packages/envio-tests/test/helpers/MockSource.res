@@ -292,6 +292,9 @@ type t = {
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
+  // Answers every block-hash lookup in flight with a failure the source
+  // reported, and throws when there is none.
+  failGetBlockHashes: exn => unit,
   // Waits for the rollback's block-hash lookup of exactly `blockNumbers`, then
   // replies with `reply`. A lookup of other blocks, or more than one pending,
   // fails at once naming what was asked. A rollback only looks up hashes when
@@ -999,6 +1002,16 @@ let make = (
       let lookups = pendingBlockHashLookups->Array.copy
       pendingBlockHashLookups->Utils.Array.clearInPlace
       lookups->Array.forEach(lookup => lookup["resolve"](response))
+    },
+    failGetBlockHashes: exn => {
+      if pendingBlockHashLookups->Utils.Array.isEmpty {
+        JsError.throwWithMessage("failGetBlockHashes has no pending lookup to answer")
+      }
+      let lookups = pendingBlockHashLookups->Array.copy
+      pendingBlockHashLookups->Utils.Array.clearInPlace
+      lookups->Array.forEach(lookup =>
+        lookup["resolve"]({Source.result: Error(exn), requestStats: []})
+      )
     },
     expectBlockHashLookup: async ({blockNumbers, reply}) => {
       let deadline = realNow() +. 2000.

@@ -54,41 +54,9 @@ let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
   }
 }
 
-describe("SourceManager.getBlockHashes rate limit handling", () => {
-  Async.it("calls source.onReorg after an inconsistent hash response", async t => {
-    let reorgCalls = ref(0)
-    let attempt = ref(0)
-    let source: Source.t = {
-      ...makeMockSource(~rateLimitedCalls=0, ~resetMs=0),
-      getBlockHashes: (~blockNumbers, ~logger as _) => {
-        let blockNumber = blockNumbers->Utils.Array.firstUnsafe
-        let response = BlockStore.fromJs(
-          [{BlockStore.blockNumber, blockHash: evmHash("0x01")}],
-          ~ecosystem=Evm,
-        )
-        if attempt.contents === 0 {
-          attempt := 1
-          let conflictingPage = BlockStore.fromJs(
-            [{BlockStore.blockNumber, blockHash: evmHash("0x02")}],
-            ~ecosystem=Evm,
-          )
-          response->BlockStore.appendPage(conflictingPage)
-        }
-        Promise.resolve({Source.result: Ok(response), requestStats: []})
-      },
-      onReorg: () => reorgCalls := reorgCalls.contents + 1,
-    }
-    let sourceManager = SourceManager.make(
-      ~logger=Logger.makeInMemory(),
-      ~sources=[source],
-      ~isRealtime=false,
-    )
-
-    let _ = await sourceManager->SourceManager.getBlockHashes(~blockNumbers=[1], ~isRealtime=false)
-
-    t.expect(reorgCalls.contents).toEqual(1)
-  })
-
+// The time spent rate-limited only reaches the TUI, so it is read off the
+// manager here; the retry itself is covered by BlockHashLookup_test.
+describe("SourceManager rate-limit time accounting", () => {
   Async.it("recovers after a rate limit and tracks wait time", async t => {
     // 500ms resetMs * 2 rate-limited calls = ~1s minimum total wait
     let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)

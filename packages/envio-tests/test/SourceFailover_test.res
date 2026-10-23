@@ -85,6 +85,73 @@ describe("Source failover", () => {
   )
 
   scenario->Scenario.it(
+    "Keeps retrying a source behind the head for about 10 seconds before failing over",
+    ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
+    ~sourceTiming={retryBackoffScale: 0.01},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      // A replica only briefly behind its siblings must not be traded away
+      // within a few retries.
+      for retryCount in 0 to 12 {
+        await sync.expectItemsQueries([
+          {
+            retryCount,
+            reply: Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
+          },
+        ])
+      }
+      await fallback.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
+      // 100ms doubling to a 1s cap: about 10s on the source before the 13th
+      // attempt moves to the fallback.
+      t.expect(
+        indexer.allLogsAsJson()->Array.filterMap(
+          line =>
+            switch line->Dict.get("backOffMilliseconds") {
+            | Some(Number(ms)) => Some(ms)
+            | _ => None
+            },
+        ),
+      ).toEqual([
+        100.,
+        200.,
+        400.,
+        800.,
+        1000.,
+        1000.,
+        1000.,
+        1000.,
+        1000.,
+        1000.,
+        1000.,
+        1000.,
+        1000.,
+      ])
+    },
+  )
+
+  scenario->Scenario.it(
+    "Stays on a healthy primary however short the recovery timeout",
+    ~sources=[
+      {chain: 1337, pollingInterval: 1},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 1},
+    ],
+    ~sourceTiming={recoveryTimeout: 0.},
+    async (~t, ~indexer as _, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
+      for head in 101 to 105 {
+        sync.setAutoHeight(head)
+        await sync.expectItemsQueries([{fromBlock: head, reply: upTo(head)}])
+      }
+      t.expect(fallback.pendingItemsQueries).toEqual([])
+    },
+  )
+
+  scenario->Scenario.it(
     "Queries the primary right after a fallback answered the wait, since it never failed",
     ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
     // Recruits the fallback for the very first wait.

@@ -308,3 +308,93 @@ describe("Chain sources", () => {
     )
   })
 })
+
+// A rollback starts a fresh wait on every chain without cancelling the one it
+// supersedes, so a chain waiting at the head while its sibling rolls back has
+// two waits on the same source.
+let siblingScenario = Scenario.make(
+  ~configYaml=`
+name: new-block-wait-sibling-rollback
+disable_default_cross_chain: true
+contracts:
+  - name: Gravatar
+    events:
+      - event: "TestEvent()"
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    max_reorg_depth: 200
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+  - id: 137
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    max_reorg_depth: 200
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+`,
+  ~schema,
+)
+
+describe("Waiting across a sibling's rollback", () => {
+  siblingScenario->Scenario.it(
+    "Subscribes once and fetches the next block once",
+    ~sources=[
+      {chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow, #createHeightSubscription]},
+      {
+        chain: 137,
+        methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        pollingInterval: 1,
+      },
+    ],
+    async (~t, ~indexer, ~source) => {
+      let waiting = source(1)
+      let sibling = source(137)
+      waiting.resolveGetHeightOrThrow(300)
+      sibling.resolveGetHeightOrThrow(300)
+      await waiting.expectItemsQueries([{fromBlock: 1, toBlock: Bounded(100), reply: upTo(100)}])
+      await sibling.expectItemsQueries([{fromBlock: 1, toBlock: Bounded(100), reply: upTo(100)}])
+      await indexer.getBatchWritePromise()
+      await waiting.expectItemsQueries([{fromBlock: 101, reply: upTo(300)}])
+      await sibling.expectItemsQueries([{fromBlock: 101, reply: upTo(300)}])
+      await indexer.waitUntilReady()
+      await Scenario.waitUntil(
+        () => waiting.heightSubscriptionCalls->Array.length > 0,
+        ~message="the height subscription",
+      )
+
+      // The sibling finds block 300 re-orged and rolls back.
+      sibling.setAutoHeight(301)
+      await sibling.expectItemsQueries([
+        {
+          fromBlock: 301,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 301,
+            prevRangeLastBlock: {blockNumber: 300, blockHash: "0x300a"},
+          }),
+        },
+      ])
+      await indexer.getRollbackReadyPromise()
+      // No stored block to look up, so it refetches from the threshold.
+      await sibling.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+
+      waiting.setHeightSubscriptionStatus(Live)
+      waiting.setAutoHeight(300)
+      waiting.triggerHeightSubscription(301)
+      await waiting.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
+      await Utils.delay(20)
+      t.expect((
+        waiting.heightSubscriptionCalls->Array.length,
+        waiting.pendingItemsQueries->Array.length,
+      )).toEqual((1, 1))
+    },
+  )
+})
