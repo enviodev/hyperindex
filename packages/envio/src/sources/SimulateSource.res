@@ -24,9 +24,9 @@ let topicAt = (eventConfig: Internal.evmEventConfig, ~params: dict<unknown>, pos
     )
   }
 
-// A block item for every block in [fromBlock, toBlock] the simulated chain has
-// and a selected registration runs on, each carrying its block inline — the
-// way `block_selection.rs` routes a native source's blocks.
+// A block item for every block in [fromBlock, toBlock] a selected registration
+// runs on, each carrying its block inline — the way `block_selection.rs` routes
+// a native source's blocks. One the simulated chain has no block for is skipped.
 let blockItems = (
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   ~fromBlock,
@@ -41,13 +41,17 @@ let blockItems = (
           reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0)
         )
       if running->Utils.Array.notEmpty {
-        switch getBlock(blockNumber) {
-        | Some(block) =>
-          running->Array.forEach(onBlockRegistration =>
-            items->Array.push(Internal.Block({onBlockRegistration, blockNumber, block}))
+        let block = getBlock(blockNumber)
+        running->Array.forEach(onBlockRegistration =>
+          items->Array.push(
+            Internal.Block({
+              onBlockRegistration,
+              blockNumber,
+              ?block,
+              skipped: ?(block->Option.isNone ? Some(true) : None),
+            }),
           )
-        | None => ()
-        }
+        )
       }
     }
   }

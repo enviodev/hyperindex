@@ -30,6 +30,9 @@ pub struct OnBlockRegistrationInput {
 pub struct BlockItem {
     pub block_number: i64,
     pub on_block_registration_index: i64,
+    /// The chain produced no block at this number: an SVM skipped slot. The
+    /// handler still runs on it, without a block.
+    pub skipped: bool,
 }
 
 #[derive(Clone)]
@@ -171,6 +174,7 @@ impl BlockSelection {
                     .map(move |r| BlockItem {
                         block_number: block_number as i64,
                         on_block_registration_index: r.index,
+                        skipped: false,
                     })
             })
             .collect()
@@ -216,6 +220,7 @@ mod tests {
         BlockItem {
             block_number,
             on_block_registration_index,
+            skipped: false,
         }
     }
 

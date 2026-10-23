@@ -1,6 +1,7 @@
 // A slot handler names the block fields it reads with the same `fields`
-// option. Only a slot that produced a block has them, so a handler selecting
-// fields runs on those slots alone — in a simulation, the slots given a block.
+// option. Selecting fields doesn't change which slots it runs on: a slot the
+// chain skipped produced no block, so there the handler gets none — in a
+// simulation, every slot not given a block.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: svm-onslot-fields
@@ -13,8 +14,8 @@ chains:
   ~schema=`
 type SlotBlock {
   id: ID!
-  time: Int!
-  hash: String!
+  time: Int
+  hash: String
 }
 `,
   ~handlers=`
@@ -23,9 +24,11 @@ import { indexer } from "envio";
 indexer.onSlot(
   { name: "blocks", fields: { block: ["time", "hash"] } },
   async ({ slot, block, context }) => {
+    // @ts-expect-error - a skipped slot has no block
+    const _time = () => block.time;
     // @ts-expect-error - only time and hash are selected
-    const _height: number = block.height;
-    context.SlotBlock.set({ id: \`\${slot}\`, time: block.time, hash: block.hash });
+    const _height: number | undefined = block?.height;
+    context.SlotBlock.set({ id: \`\${slot}\`, time: block?.time, hash: block?.hash });
   },
 );
 
@@ -40,7 +43,7 @@ import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 
 describe("onSlot field selection", () => {
-  it("hands the handler the selected fields of each slot's block", async (t) => {
+  it("runs on every slot, with the selected fields where the slot has a block", async (t) => {
     const indexer = createTestIndexer();
     await indexer.process({
       chains: {
@@ -55,10 +58,13 @@ describe("onSlot field selection", () => {
       },
     });
     t.expect(
-      (await indexer.SlotBlock.getAll()).sort((a, b) => a.time - b.time),
+      (await indexer.SlotBlock.getAll()).sort((a, b) => Number(a.id) - Number(b.id)),
     ).toEqual([
+      { id: "0", time: undefined, hash: undefined },
       { id: "1", time: 1_700_000_001, hash: "slot1" },
+      { id: "2", time: undefined, hash: undefined },
       { id: "3", time: 1_700_000_003, hash: "slot3" },
+      { id: "4", time: undefined, hash: undefined },
     ]);
   });
 });

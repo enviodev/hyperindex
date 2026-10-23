@@ -315,16 +315,24 @@ impl SvmHyperSyncClient {
             .iter()
             .map(|(slot, _)| *slot)
             .collect();
-        // Only a slot that produced a block has one to read, so a slot handler
-        // selecting fields runs on the blocks returned — a skipped slot has none.
+        // `include_all_blocks` returns every block of the covered range, so a
+        // slot missing from it was skipped and produced none.
         let returned_slots: HashSet<u64> =
             resp.blocks.iter().filter_map(|block| block.slot).collect();
         let block_items: Vec<BlockItem> = block_selection
             .route(from_slot..resp.next_slot)
             .into_iter()
-            .filter(|item| returned_slots.contains(&(item.block_number as u64)))
+            .map(|item| BlockItem {
+                skipped: !returned_slots.contains(&(item.block_number as u64)),
+                ..item
+            })
             .collect();
-        referenced_slots.extend(block_items.iter().map(|item| item.block_number as u64));
+        referenced_slots.extend(
+            block_items
+                .iter()
+                .filter(|item| !item.skipped)
+                .map(|item| item.block_number as u64),
+        );
 
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),

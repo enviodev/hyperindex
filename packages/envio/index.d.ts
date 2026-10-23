@@ -1272,12 +1272,11 @@ export type SvmOnSlotHandlerArgs<
   ? {}
   : {
       /** The slot's block: the fields listed in the registration's
-          `fields.block`. */
-      readonly block: SelectedFields<
-        SvmAllBlockFields,
-        "slot" | ListedFields<Fields, "block">,
-        "block"
-      >;
+          `fields.block`. Undefined on a slot the chain skipped, which
+          produced no block. */
+      readonly block:
+        | SelectedFields<SvmAllBlockFields, "slot" | ListedFields<Fields, "block">, "block">
+        | undefined;
     });
 
 /** Handler function for an SVM `indexer.onSlot` registration. */
@@ -1298,9 +1297,8 @@ export type SvmOnSlotOptions<
       time. Return `false` to skip a chain, `true` to match every slot, or
       a filter object to restrict by slot range and stride. */
   readonly where?: (args: SvmOnSlotWhereArgs<Config>) => SvmOnSlotWhereResult;
-  /** Fields of the slot's block this handler reads. A skipped slot has no
-      block, so selecting any runs the handler only on slots that produced
-      one. */
+  /** Fields of the slot's block this handler reads. The handler still runs
+      on a skipped slot, with no block. */
   readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
 };
 
@@ -2123,8 +2121,7 @@ type SvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
     : never;
 
 /** A simulated slot's block, read by the slot handlers that select fields.
- * Those run only on the slots given one, as a real chain's skipped slots have
- * none. */
+ * A slot not given one is skipped: those handlers get no block there. */
 type SvmSimulateBlock = {
   /** Block fields, keyed by the names `fields.block` selects. */
   block: { readonly slot: number } & Partial<SvmAllBlockFields>;

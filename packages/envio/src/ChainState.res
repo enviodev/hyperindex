@@ -884,6 +884,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
         ->addBlockHolder(~blockNumber, ~mask=eventItem.onEventRegistration.fieldSelection.blockMask)
       }
     | Internal.Block({block: ?Some(_)}) => () // Simulate carries the block inline.
+    | Internal.Block({skipped: ?Some(true)}) => ()
     | Internal.Block({onBlockRegistration: {blockFieldMask: Some(mask)}, blockNumber}) =>
       item->Internal.itemBlockHolder->addBlockHolder(~blockNumber, ~mask)
     // A handler reading only the block number gets its block built from the

@@ -4,6 +4,7 @@
 type t = {
   blockNumber: int,
   onBlockRegistrationIndex: int,
+  skipped: bool,
 }
 
 let isFetched = (reg: Internal.onBlockRegistration) => reg.blockFieldMask->Option.isSome
@@ -47,7 +48,8 @@ let toInternalItems = (
   items: array<t>,
   ~onBlockRegistrations: array<Internal.onBlockRegistration>,
 ): array<Internal.item> =>
-  items->Array.map(({blockNumber, onBlockRegistrationIndex}) => Internal.Block({
+  items->Array.map(({blockNumber, onBlockRegistrationIndex, skipped}) => Internal.Block({
     onBlockRegistration: onBlockRegistrations->Array.getUnsafe(onBlockRegistrationIndex),
     blockNumber,
+    skipped: ?(skipped ? Some(true) : None),
   }))

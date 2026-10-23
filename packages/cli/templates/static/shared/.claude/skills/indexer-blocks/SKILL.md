@@ -72,7 +72,7 @@ In `createTestIndexer`, give the fields of a block as its own simulate item: `si
 ## Other ecosystems
 
 - **Fuel**: same `indexer.onBlock` API; filter is keyed by `block.height` instead of `block.number`, and `fields.block` selects from `id` and `time`.
-- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}`. With `fields: { block: ["time", "hash", ...] }` it also gets `block` — and runs only on slots that produced a block, since a skipped slot has none. In `createTestIndexer` that means the slots given a `{ block: { slot, ... } }` simulate item.
+- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}`. With `fields: { block: ["time", "hash", ...] }` it also gets `block`, which is `undefined` on a slot the chain skipped; the handler still runs on every matching slot. In `createTestIndexer` a slot has a block only when given a `{ block: { slot, ... } }` simulate item.
 
 ## Notes
 

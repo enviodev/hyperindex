@@ -769,6 +769,9 @@ type item =
       // otherwise written at batch prep from the chain's block store. Absent
       // for a registration that selects none.
       block?: eventBlock,
+      // The chain produced no block here (an SVM skipped slot), so there is
+      // none to materialise and the handler runs without one.
+      skipped?: bool,
     })
 
 external castUnsafeEventItem: item => eventItem = "%identity"
