@@ -64,7 +64,7 @@ let makeItem = () => Internal.Event({
     "eventConfig": {"contractName": "Gravatar", "name": "NewGravatar"},
   }->(Utils.magic: {..} => Internal.onEventRegistration),
   payload: {
-    "srcAddress": "0xabc0000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
+    "srcAddress": "0xabc0000000000000000000000000000000000000"->Address.unsafeFromString,
   }->(Utils.magic: {..} => Internal.eventPayload),
 })
 

@@ -175,6 +175,8 @@ describe("EVM config YAML", () => {
     ("checksum", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
     ("lowercase", "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"),
     ("lowercase", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
+    ("checksum", "0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"),
+    ("lowercase", "0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"),
   ]->Array.forEach(((addressFormat, address)) => {
     it(
       `normalizes ${address} with address_format: ${addressFormat}`,
@@ -192,12 +194,20 @@ describe("EVM config YAML", () => {
   })
 
   ["checksum", "lowercase"]->Array.forEach(addressFormat => {
-    it(
-      `rejects invalid addresses with address_format: ${addressFormat}`,
-      t => {
-        t->toThrowErrorEqual(
-          () => parseAddressConfig(~addressFormat, "0xfoo")->ignore,
-          `Contract "ERC20" on chain 1 has invalid address "0xfoo". Expected a 20-byte hex string starting with 0x.`,
+    [
+      "0xfoo",
+      "0Xa2f6e6029638ccb484a2ccb6414499ad3e825cac",
+      "a2f6e6029638ccb484a2ccb6414499ad3e825cac",
+    ]->Array.forEach(
+      address => {
+        it(
+          `rejects ${address} with address_format: ${addressFormat}`,
+          t => {
+            t->toThrowErrorEqual(
+              () => parseAddressConfig(~addressFormat, address)->ignore,
+              `Contract "ERC20" on chain 1 has invalid address "${address}". Expected a 20-byte hex string starting with 0x.`,
+            )
+          },
         )
       },
     )
