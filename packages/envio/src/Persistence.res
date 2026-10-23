@@ -279,6 +279,7 @@ let init = {
     // keep it to their own log files.
     ~announceResume=true,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
+    ~sourceTiming=?,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -312,6 +313,7 @@ let init = {
             ~logger,
             ~lowercaseAddresses,
             ~retry=startBlockRetry,
+            ~timing=?sourceTiming,
           )
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
@@ -369,6 +371,7 @@ let init = {
                   ~logger,
                   ~lowercaseAddresses,
                   ~retry=startBlockRetry,
+                  ~timing=?sourceTiming,
                 )
               )->Array.getUnsafe(0)
             await persistence.storage.addChain(
@@ -414,10 +417,14 @@ let initForRun = (
   ~reset,
   ~isDevelopmentMode,
   ~announceResume=!Worker.isEnabled,
+  ~startBlockRetry=?,
+  ~sourceTiming=?,
 ) =>
   persistence->init(
     ~logger,
     ~announceResume,
+    ~startBlockRetry?,
+    ~sourceTiming?,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,

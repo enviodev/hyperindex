@@ -138,7 +138,10 @@ let installMockSourceRegistrations = (
       sources->Array.filterMap(source => source->getMockSourceState)
     | _ => []
     }
-    if !(sourceStates->Utils.Array.isEmpty) {
+    // A chain without contracts has no address index for the synthetic
+    // registration to live in, and nothing for a mock item to be delivered to.
+    switch chainConfig.contracts->Array.get(0) {
+    | Some(contract) if !(sourceStates->Utils.Array.isEmpty) =>
       let key = chainConfig.id->ChainId.toString
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
@@ -155,13 +158,11 @@ let installMockSourceRegistrations = (
         ~index=registrations.onEventRegistrations->Array.length,
         // Any contract from the chain keeps the synthetic registration in the
         // address-dependent partition of a real contract.
-        ~contractName=switch chainConfig.contracts->Array.get(0) {
-        | Some(contract) => contract.name
-        | None => "MockContract"
-        },
+        ~contractName=contract.name,
       )
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
       sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
+    | _ => ()
     }
   })
 
@@ -187,6 +188,8 @@ type itemMock = {
 
 // Unboxed so a failed `toEqual` prints `100` or `"unbounded"`, not a tagged object.
 @unboxed type toBlock = Bounded(int) | @as("unbounded") Unbounded
+
+type startupHeight = Height(int) | HeightFailure(string)
 
 // What a test can tell one pending item query from another by.
 type pendingItemsQuery = {
@@ -293,8 +296,9 @@ type t = {
   // Answers every block-hash lookup in flight, and throws when there is none.
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
   // Answers every block-hash lookup in flight with a failure the source
-  // reported, and throws when there is none.
-  failGetBlockHashes: exn => unit,
+  // reported, and throws when there is none. `requestStats` are the requests
+  // the failed lookup made, reported on the response as a native source does.
+  failGetBlockHashes: (exn, ~requestStats: array<Source.requestStat>=?) => unit,
   // Waits for the rollback's block-hash lookup of exactly `blockNumbers`, then
   // replies with `reply`. A lookup of other blocks, or more than one pending,
   // fails at once naming what was asked. A rollback only looks up hashes when
@@ -540,7 +544,12 @@ let make = (
   // startup itself (e.g. resolving a `latest` start block), which completes
   // before a test body would ever get a chance to call `setAutoHeight`.
   ~autoHeight=?,
+  // Answers for the first height calls, one per call and in order, ahead of
+  // `autoHeight`. For calls startup makes before a test body can answer them,
+  // where a source has to fail first.
+  ~startupHeights: array<startupHeight>=[],
 ) => {
+  let startupHeights = startupHeights->Array.copy
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
       fn
@@ -1003,15 +1012,13 @@ let make = (
       pendingBlockHashLookups->Utils.Array.clearInPlace
       lookups->Array.forEach(lookup => lookup["resolve"](response))
     },
-    failGetBlockHashes: exn => {
+    failGetBlockHashes: (exn, ~requestStats=[]) => {
       if pendingBlockHashLookups->Utils.Array.isEmpty {
         JsError.throwWithMessage("failGetBlockHashes has no pending lookup to answer")
       }
       let lookups = pendingBlockHashLookups->Array.copy
       pendingBlockHashLookups->Utils.Array.clearInPlace
-      lookups->Array.forEach(lookup =>
-        lookup["resolve"]({Source.result: Error(exn), requestStats: []})
-      )
+      lookups->Array.forEach(lookup => lookup["resolve"]({Source.result: Error(exn), requestStats}))
     },
     expectBlockHashLookup: async ({blockNumbers, reply}) => {
       let deadline = realNow() +. 2000.
@@ -1123,9 +1130,13 @@ let make = (
             getHeightOrThrowPending->Array.push(None)->ignore
             Promise.resolve({Source.height, requestStats: []})
           }
-          switch autoHeight.contents {
-          | Some(height) => answered(height)
-          | None =>
+          switch (startupHeights->Array.shift, autoHeight.contents) {
+          | (Some(Height(height)), _) => answered(height)
+          | (Some(HeightFailure(message)), _) =>
+            getHeightOrThrowPending->Array.push(None)->ignore
+            Promise.reject(JsError.make(message)->(Utils.magic: JsError.t => exn))
+          | (None, Some(height)) => answered(height)
+          | (None, None) =>
             switch deferredHeightAnswers->Array.shift {
             | Some(answer) => answered(answer["height"])
             | None =>

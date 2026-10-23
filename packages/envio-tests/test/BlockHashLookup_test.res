@@ -153,4 +153,29 @@ describe("Block-hash lookups", () => {
       ).toEqual([Number(100.)])
     },
   )
+
+  scenario->Scenario.it(
+    "Counts a lookup that failed behind the head once",
+    ~sources,
+    ~sourceTiming={retryBackoffScale: 0.01},
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      await reorgAtHead(~indexer, ~mock)
+      await mock->awaitLookup(~count=1)
+      // A native source reports the request both on the response and on the
+      // failure it carries, so a retry can still count it.
+      let requestStats = [{Source.method: "getBlockHashes", seconds: 0.1}]
+      mock.failGetBlockHashes(
+        Source.SourceBehindHead({blockNumber: 200, requestStats}),
+        ~requestStats,
+      )
+      await mock->finishRollback
+      t.expect(
+        (await indexer.metric("envio_source_request_total"))->Array.filterMap(
+          ({value, labels}: IndexerRunner.metric) =>
+            labels->Dict.get("method") == Some("getBlockHashes") ? Some(value) : None,
+        ),
+      ).toEqual(["1"])
+    },
+  )
 })

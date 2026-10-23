@@ -105,19 +105,13 @@ let resolveHeadOrThrow = async (
   ~logger,
   ~lowercaseAddresses,
   ~retry,
-  ~getHeightRetryInterval=?,
-  ~newBlockStallTimeout=?,
+  ~timing=?,
 ): int => {
   let sources = chainConfig->makeProbeSources(~logger, ~lowercaseAddresses)
   switch retry {
   | Once => await chainConfig->readHeadOnceOrThrow(~sources)
   | UntilItAnswers =>
-    let sourceManager = SourceManager.make(
-      ~sources,
-      ~logger,
-      ~isRealtime=false,
-      ~timing={?getHeightRetryInterval, ?newBlockStallTimeout},
-    )
+    let sourceManager = SourceManager.make(~sources, ~logger, ~isRealtime=false, ~timing?)
     await sourceManager->SourceManager.waitForNewBlock(
       ~knownHeight=0,
       ~isRealtime=false,
@@ -133,8 +127,7 @@ let resolveAllOrThrow = async (
   ~logger,
   ~lowercaseAddresses,
   ~retry=UntilItAnswers,
-  ~getHeightRetryInterval=?,
-  ~newBlockStallTimeout=?,
+  ~timing=?,
 ): array<Config.chain> => {
   let resolved = []
   for i in 0 to chainConfigs->Array.length - 1 {
@@ -147,8 +140,7 @@ let resolveAllOrThrow = async (
         ~logger,
         ~lowercaseAddresses,
         ~retry,
-        ~getHeightRetryInterval?,
-        ~newBlockStallTimeout?,
+        ~timing?,
       )
       let chainId = chainConfig.id->ChainId.toString
       switch chainConfig.endBlock {

@@ -181,6 +181,7 @@ let run = async (
   ~logger=Logger.makeInMemory(),
   ~backend: backend=selectedBackend,
   ~sourceTiming=?,
+  ~startBlockRetry=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
@@ -275,6 +276,8 @@ let run = async (
       ~reset,
       ~isDevelopmentMode=true,
       ~announceResume=!asWorker,
+      ~startBlockRetry?,
+      ~sourceTiming?,
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a
