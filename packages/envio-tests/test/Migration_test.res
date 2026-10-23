@@ -75,6 +75,20 @@ describe("Resuming a chain against the stored config", () => {
     ~expected=Resumed([1]),
   )
 
+  // config.yaml's spelling of an address is normalized before it's compared
+  // with the stored one, so a recased or wrongly checksummed address is the
+  // same address.
+  Migration.it(
+    "Resumes when only an address's casing changed",
+    ~deployed=deployment(
+      ~chains=[chain(1, ~addresses=["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"])],
+    ),
+    ~edited=deployment(
+      ~chains=[chain(1, ~addresses=["0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"])],
+    ),
+    ~expected=Resumed([1]),
+  )
+
   Migration.it(
     "Resumes when only how the chain is reached or paced changed",
     ~deployed,

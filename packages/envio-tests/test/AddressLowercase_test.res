@@ -15,6 +15,12 @@ chains:
       - name: SimpleNft
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+      - name: Token
+        address:
+          - "0x1E645469f354BB4F5c8a05B3b30A929361cf77eC"
+          - "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"
+        events:
+          - event: Approval(address indexed owner)
 `,
   ~schema=`
 type Probe {
@@ -29,6 +35,9 @@ indexer.contractRegister({ contract: "Factory", event: "Register" }, async ({ ev
 });
 
 indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
+indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ event, context }) => {
+  context.Probe.set({ id: event.srcAddress });
+});
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -46,6 +55,38 @@ const register = (addressInput: string) =>
   });
 
 describe("contractRegister with address_format: lowercase", () => {
+  it("lowercases config addresses and routes a checksummed srcAddress to them", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Token",
+              event: "Approval",
+              srcAddress: "0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec",
+              params: { owner: "0x1234567890123456789012345678901234567890" },
+              block: { number: 2 },
+            },
+          ],
+        },
+      },
+    });
+
+    t.expect({
+      addresses: indexer.chains[1].Token.addresses,
+      probes: await indexer.Probe.getAll(),
+    }).toEqual({
+      addresses: [
+        "0x1e645469f354bb4f5c8a05b3b30a929361cf77ec",
+        "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac",
+      ],
+      probes: [{ id: "0x1e645469f354bb4f5c8a05b3b30a929361cf77ec" }],
+    });
+  });
+
   it("lowercases any casing of a valid address", async (t) => {
     const inputs = [
       "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",

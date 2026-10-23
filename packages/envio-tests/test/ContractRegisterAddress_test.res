@@ -18,6 +18,12 @@ chains:
       - name: OtherNft
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+      - name: Token
+        address:
+          - "0x1E645469f354BB4F5c8a05B3b30A929361cf77eC"
+          - "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"
+        events:
+          - event: Approval(address indexed owner)
 `,
   ~schema=`
 type Probe {
@@ -66,6 +72,9 @@ indexer.contractRegister({ contract: "Gravatar", event: "Register" }, async ({ e
 
 indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
 indexer.onEvent({ contract: "OtherNft", event: "Transfer" }, async () => {});
+indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ event, context }) => {
+  context.Probe.set({ id: event.srcAddress });
+});
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -124,6 +133,40 @@ describe("contractRegister address handling", () => {
     const result = await run(indexer, { contract: dcAddress, testCase: "throwOnHangingRegistration" });
 
     t.expect(result.changes[0]?.addresses).toBe(undefined);
+  });
+
+  // The first config address carries a wrong checksum, the second is all
+  // uppercase: both are listed, and routed to, in their checksummed spelling.
+  it("checksums config addresses and routes a lowercase srcAddress to them", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 1,
+          endBlock: 100,
+          simulate: [
+            {
+              contract: "Token",
+              event: "Approval",
+              srcAddress: "0x1e645469f354bb4f5c8a05b3b30a929361cf77ec",
+              params: { owner: dcAddress },
+              block: { number: 2 },
+            },
+          ],
+        },
+      },
+    });
+
+    t.expect({
+      addresses: indexer.chains[1].Token.addresses,
+      probes: await indexer.Probe.getAll(),
+    }).toEqual({
+      addresses: [
+        "0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec",
+        "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC",
+      ],
+      probes: [{ id: "0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec" }],
+    });
   });
 
   it("checksums any casing of a valid address", async (t) => {
