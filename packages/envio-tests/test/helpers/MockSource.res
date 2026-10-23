@@ -88,16 +88,15 @@ let makeMockSourceRegistration = (
         ~blockMaskFn=Evm.eventBlockFieldMask,
         ~transactionMaskFn=Evm.eventTransactionFieldMask,
       ),
-      sighash: "",
+      sighash: Some(""),
       topicCount: 1,
       paramsMetadata: [],
     }: Internal.evmEventConfig :> Internal.eventConfig),
     isWildcard,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
-    addressFilterParamGroups: [],
     startBlock: None,
-    handler: Some(handler),
+    handler,
     contractRegister: Some(contractRegister),
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.make(),
@@ -105,7 +104,7 @@ let makeMockSourceRegistration = (
       ~blockMaskFn=Evm.eventBlockFieldMask,
       ~transactionMaskFn=Evm.eventTransactionFieldMask,
     ),
-    resolvedWhere: {topicSelections: [], startBlock: None},
+    resolvedWhere: {topicFilters: [], startBlock: None},
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
 

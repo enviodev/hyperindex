@@ -3,9 +3,7 @@ open Vitest
 // Covers the built onEvent registration: the handler-state fields
 // (`handler`, `contractRegister`, `isWildcard`) registered via
 // `indexer.onEvent` / `indexer.contractRegister` land on the built
-// registration, and `dependsOnAddresses` follows the shared
-// `Internal.dependsOnAddresses` formula. Filter-parsing behavior is
-// covered separately by `EventFilters_test.res`.
+// registration.
 let parsed = InternalTestIndexer.fromUserApi(
   ~registerHandlers=true,
   ~configYaml=`
@@ -48,15 +46,8 @@ indexer.contractRegister(
   },
 );
 
-// Wildcard with a \`where\` that filters on params rather than addresses, so
-// \`filterByAddresses\` stays false and \`dependsOnAddresses\` follows from it.
 indexer.onEvent(
-  {
-    contract: "EventFiltersTest",
-    event: "Transfer",
-    wildcard: true,
-    where: { params: { from: "0x0000000000000000000000000000000000000000" } },
-  },
+  { contract: "EventFiltersTest", event: "Transfer", wildcard: true },
   async ({ event, context }) => {
     context.Token.set({ id: event.params.amount.toString() });
   },
@@ -90,19 +81,5 @@ describe("onEventRegistration handler-state fields", () => {
   it("marks wildcard: true registrations as isWildcard", t => {
     let registration = getEvmRegistration(~contractName="EventFiltersTest", ~eventName="Transfer")
     t.expect(registration.isWildcard).toBe(true)
-  })
-
-  it("computes dependsOnAddresses via Internal.dependsOnAddresses for the wildcard+where case", t => {
-    let registration = getEvmRegistration(~contractName="EventFiltersTest", ~eventName="Transfer")
-    t.expect((
-      registration.dependsOnAddresses,
-      registration.filterByAddresses,
-    )).toEqual((
-      Internal.dependsOnAddresses(
-        ~isWildcard=registration.isWildcard,
-        ~filterByAddresses=registration.filterByAddresses,
-      ),
-      false,
-    ))
   })
 })

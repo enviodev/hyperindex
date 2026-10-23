@@ -144,6 +144,9 @@ let buildOnEventRegistrationWith = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
+      ~where,
+      ~chainId,
+      ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   | Svm =>
@@ -178,12 +181,18 @@ let getResolvedWhere = (reg: Internal.onEventRegistration) =>
     reg->(Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration)
   ).resolvedWhere
 
+let isFuelSkippedByWhere = (reg: Internal.onEventRegistration) =>
+  (
+    reg->(Utils.magic: Internal.onEventRegistration => Internal.fuelOnEventRegistration)
+  ).skippedByWhere
+
 // Two chain registrations target the same fetched log when they share the
-// event, the wildcard flag, and (on EVM) the resolved `where` — a handler and
+// event, the wildcard flag, and (on EVM and Fuel) the resolved `where` — a handler and
 // a contractRegister that agree on all three can be merged into one
 // registration (so one item per log runs both). `where` is compared on the
-// resolved structure (`Values` by hex arrays, `ContractAddresses` by contract
-// name, plus `startBlock`); differing filters stay separate registrations.
+// resolved structure (each topic constraint, `Values` by hex arrays and
+// `ContractAddresses` by contract name, plus `startBlock`); differing filters
+// stay separate registrations.
 let sameEventAndFilter = (
   a: Internal.onEventRegistration,
   b: Internal.onEventRegistration,
@@ -194,7 +203,8 @@ let sameEventAndFilter = (
   a.isWildcard === b.isWildcard &&
   switch config.ecosystem.name {
   | Evm => getResolvedWhere(a) == getResolvedWhere(b)
-  | Fuel | Svm => true
+  | Fuel => a.startBlock == b.startBlock && isFuelSkippedByWhere(a) == isFuelSkippedByWhere(b)
+  | Svm => true
   }
 
 // The merged registration keeps `base`'s handler and slot, picks up the
@@ -257,10 +267,14 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
   merged.contents
 }
 
-// A `where` that resolved to no topic selections (`false` for this chain)
-// should never be fetched or dispatched here — drop it. Only meaningful on EVM.
+// A `where` that is `false` for this chain (on EVM, resolved to no topic
+// filters) should never be fetched or dispatched here — drop it.
 let isDroppedByWhere = (~config: Config.t, reg: Internal.onEventRegistration) =>
-  config.ecosystem.name === Evm && (reg->getResolvedWhere).topicSelections->Utils.Array.isEmpty
+  switch config.ecosystem.name {
+  | Evm => (reg->getResolvedWhere).topicFilters->Utils.Array.isEmpty
+  | Fuel => reg->isFuelSkippedByWhere
+  | Svm => false
+  }
 
 // Names configured across every chain, used to explain a registration that
 // matched nothing. Only built on the failure path.
@@ -458,9 +472,7 @@ let isWildcard = (~contractName, ~eventName) =>
   }
 
 // Every registration for one event on a chain, so simulate fans a simulated
-// event out to each the way real routing does. Falls back to a bare
-// registration when the event has no handler/contractRegister, so a simulated
-// item still produces an item to run.
+// event out to each the way real routing does.
 let getSimulateOnEventRegistrations = (
   ~config: Config.t,
   ~chainId: ChainId.t,
@@ -470,28 +482,19 @@ let getSimulateOnEventRegistrations = (
   | Some(r) => r->storedOnEventRegistrations(~chainId)
   | None => []
   }
-  let matching =
-    mergeRegistrations(stored, ~config)->Array.filter(reg =>
-      reg.eventConfig.contractName === eventConfig.contractName &&
-        reg.eventConfig.name === eventConfig.name
-    )
-  if matching->Utils.Array.notEmpty {
-    matching
-  } else {
-    [
-      buildOnEventRegistrationWith(
-        ~config,
-        ~chainId,
-        ~eventConfig,
-        ~isWildcard=false,
-        ~handler=None,
-        ~contractRegister=None,
-        ~where=None,
-        ~fieldSelection=None,
-      ),
-    ]
-  }
+  mergeRegistrations(stored, ~config)->Array.filter(reg =>
+    reg.eventConfig.contractName === eventConfig.contractName &&
+      reg.eventConfig.name === eventConfig.name
+  )
 }
+
+// Without a `where` naming its topic0 values, an anonymous event has no logs
+// to select, so it can't get a bare raw-events registration.
+let isAnonymousEvent = (~config: Config.t, eventConfig: Internal.eventConfig) =>
+  config.ecosystem.name === Evm &&
+    (
+      eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+    ).sighash->Option.isNone
 
 let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch getActiveRegistration() {
@@ -532,7 +535,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                   )
                 )
               ) {
-                if config.enableRawEvents {
+                if config.enableRawEvents && !isAnonymousEvent(~config, eventConfig) {
                   rawEventRegs
                   ->Array.push(
                     buildOnEventRegistrationWith(
@@ -763,7 +766,9 @@ let registerOnBlock = (
         // Off the same object the predicate above was handed, not off
         // `chainConfig`: that one still says whatever config.yaml said, and for
         // `start_block: latest` the resolved head only lives in persisted state.
-        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        let chainStartBlock = (
+          chainObj->(Utils.magic: unknown => {"startBlock": int})
+        )["startBlock"]
         if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
             `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,
