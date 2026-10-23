@@ -186,9 +186,9 @@ expectType<
 >(true);
 const _fFilter: FuelOnEventWhereFilter = { block: { height: { _gte: 1 } } };
 expectType<FuelOnEventWhereFilter>(_fFilter);
-expectType<
-  TypeEqual<FuelOnBlockHandlerArgs["block"], { readonly height: number }>
->(true);
+expectType<TypeEqual<FuelOnBlockHandlerArgs["block"]["height"], number>>(true);
+// @ts-expect-error - a field the registration didn't select
+const _unselected: string = ({} as FuelOnBlockHandlerArgs["block"]).id;
 expectType<TypeEqual<FuelOnBlockHandlerArgs["context"], FuelOnBlockContext>>(true);
 expectType<
   TypeEqual<FuelOnBlockHandler, (args: FuelOnBlockHandlerArgs) => Promise<void>>

@@ -63,12 +63,13 @@ let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
 let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => {
-  let (res, _txStore, _blockStore) = await client.getEventItems(
+  let (res, _txStore, _blockStore) = await client.getItems(
     ~query={
       fromBlock,
       toBlock: Some(toBlock),
       maxNumLogs: 10_000,
-      registrationIndexes,
+      onEventRegistrationIndexes: registrationIndexes,
+      onBlockRegistrationIndexes: [],
       clientFilteredContracts: None,
     },
     ~addressSet=usdcSet,
@@ -76,26 +77,26 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
   res
 }
 
-describe("HyperSync client getEventItems (live)", () => {
+describe("HyperSync client getItems (live)", () => {
   Async.itWithOptions("returns decoded event items for a real block range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let res = await runQuery(~client)
 
     let summary = {
-      "hasItems": res.items->Array.length > 0,
-      "everyItemRouted": res.items->Array.every(item => item.onEventRegistrationIndex == 42),
-      "everySrcAddressIsUsdc": res.items->Array.every(
+      "hasItems": res.eventItems->Array.length > 0,
+      "everyItemRouted": res.eventItems->Array.every(item => item.onEventRegistrationIndex == 42),
+      "everySrcAddressIsUsdc": res.eventItems->Array.every(
         item =>
           item.srcAddress->Address.toString->String.toLowerCase ==
             usdcAddress->Address.toString->String.toLowerCase,
       ),
-      "everyBlockInRange": res.items->Array.every(
+      "everyBlockInRange": res.eventItems->Array.every(
         item => {
           let n = item.blockNumber
           n >= fromBlock && n <= toBlock
         },
       ),
-      "everyParamsDecoded": res.items->Array.every(
+      "everyParamsDecoded": res.eventItems->Array.every(
         item => {
           let obj = item.params->(Utils.magic: Internal.eventParams => {..})
           obj["from"]->typeof == #string &&
@@ -156,7 +157,7 @@ describe("HyperSync client getEventItems (live)", () => {
       let client = makeClient(~eventRegistrations=[unrelatedEventRegistration])
       let res = await runQuery(~client, ~registrationIndexes=[0])
 
-      t.expect(res.items->Array.length).toEqual(0)
+      t.expect(res.eventItems->Array.length).toEqual(0)
     },
   )
 })
@@ -198,12 +199,12 @@ describe("HyperSync client with corrupted token", () => {
   })
 })
 
-describe("HyperSync GetLogs.extractMissingParams", () => {
+describe("HyperSync GetItems.extractMissingParams", () => {
   it("parses the JSON payload Rust emits for MissingFields", t => {
     let jsErr = %raw(`(msg) => { const e = new Error(msg); return e; }`)(`{"kind":"MissingFields","fields":["block.timestamp","transaction.hash"]}`)
     let exn = jsErr->JsExn.anyToExnInternal
 
-    t.expect(HyperSync.GetLogs.extractMissingParams(exn)).toEqual(
+    t.expect(HyperSync.GetItems.extractMissingParams(exn)).toEqual(
       Some(["block.timestamp", "transaction.hash"]),
     )
   })
@@ -211,13 +212,13 @@ describe("HyperSync GetLogs.extractMissingParams", () => {
   it("returns None for unrelated errors", t => {
     let exn = %raw(`new Error("some unrelated message")`)->JsExn.anyToExnInternal
 
-    t.expect(HyperSync.GetLogs.extractMissingParams(exn)).toEqual(None)
+    t.expect(HyperSync.GetItems.extractMissingParams(exn)).toEqual(None)
   })
 
   it("returns None when JSON parses but kind doesn't match", t => {
     let exn =
       %raw(`(msg) => new Error(msg)`)(`{"kind":"SomethingElse","fields":["x"]}`)->JsExn.anyToExnInternal
 
-    t.expect(HyperSync.GetLogs.extractMissingParams(exn)).toEqual(None)
+    t.expect(HyperSync.GetItems.extractMissingParams(exn)).toEqual(None)
   })
 })

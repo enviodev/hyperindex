@@ -8,7 +8,7 @@ let transactionFields =
 
 // One instruction's selected transaction fields → store selection bitmask.
 // Computed per event at config build and cached on the event config.
-let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 // Ordered block field names. The index of each is the field code shared with the
 // Rust store (`SvmBlockField`) — keep this order in sync.
@@ -16,10 +16,7 @@ let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
 
 // `slot` is always included (the item's key); every other block field is
 // opt-in via handler `fields.block`. All are materialised from the store.
-//
-// One instruction's selected block fields → store selection bitmask. Computed per
-// event at config build and cached on the event config.
-let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+let blockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.eventTransaction) => {
   let instruction = payload->(Utils.magic: Internal.eventPayload => dict<unknown>)
@@ -64,9 +61,10 @@ let instructionJson = Utils.WeakMap.memoize((eventConfig: Internal.eventConfig) 
 
 let make = (): Ecosystem.t => {
   name: Svm,
-  blockNumberName: "height",
   blockTimestampName: "time",
-  blockHashName: "hash",
+  blockFields,
+  blockKeyField: "slot",
+  blockFieldMask,
   onBlockMethodName: "onSlot",
   contractNoun: "program",
   eventNoun: "instruction",

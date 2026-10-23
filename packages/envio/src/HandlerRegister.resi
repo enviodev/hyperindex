@@ -44,6 +44,7 @@ let defaultBlockRange: blockRange
 let registerOnBlock: (
   ~name: string,
   ~where: unknown,
+  ~fields: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => unit

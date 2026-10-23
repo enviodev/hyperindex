@@ -21,7 +21,10 @@ let makeItem = (
   }
   switch inlineTransaction {
   | Some(tx) =>
-    payload->Dict.set("transaction", tx->(Utils.magic: Internal.eventTransaction => Internal.eventBlock))
+    payload->Dict.set(
+      "transaction",
+      tx->(Utils.magic: Internal.eventTransaction => Internal.eventBlock),
+    )
   | None => ()
   }
   {
@@ -29,13 +32,12 @@ let makeItem = (
     "blockNumber": blockNumber,
     "transactionIndex": transactionIndex,
     "chain": materializeChainId,
-    "onEventRegistration":
-      {
-        "fieldSelection": {
-          "transactionMask": transactionMask,
-          "blockMask": blockMask,
-        },
-      }->(Utils.magic: {..} => Internal.onEventRegistration),
+    "onEventRegistration": {
+      "fieldSelection": {
+        "transactionMask": transactionMask,
+        "blockMask": blockMask,
+      },
+    }->(Utils.magic: {..} => Internal.onEventRegistration),
     "payload": payload,
   }->(Utils.magic: {..} => Internal.item)
 }
@@ -132,7 +134,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
       let blockStore = BlockStore.make(~ecosystem=Ecosystem.Evm)
       let inlineBlock = {"number": 1}->(Utils.magic: {..} => Internal.eventBlock)
       let inline = makeItem(~blockNumber=1, ~inlineBlock)
-      let mask = Evm.eventBlockFieldMask(Utils.Set.fromArray(["number", "timestamp", "hash"]))
+      let mask = Evm.blockFieldMask(Utils.Set.fromArray(["number", "timestamp", "hash"]))
       let a = makeItem(~blockNumber=2, ~blockMask=mask)
       let b = makeItem(~blockNumber=2, ~blockMask=mask)
       let c = makeItem(~blockNumber=3, ~blockMask=mask)
@@ -168,7 +170,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
       let blockStore = BlockStore.make(~ecosystem=Ecosystem.Svm)
       let inlineBlock = {"slot": 1}->(Utils.magic: {..} => Internal.eventBlock)
       let inline = makeItem(~blockNumber=1, ~inlineBlock)
-      let mask = Svm.eventBlockFieldMask(Utils.Set.fromArray(["slot", "time", "hash"]))
+      let mask = Svm.blockFieldMask(Utils.Set.fromArray(["slot", "time", "hash"]))
       let a = makeItem(~blockNumber=5, ~blockMask=mask)
       let b = makeItem(~blockNumber=5, ~blockMask=mask)
       let c = makeItem(~blockNumber=6, ~blockMask=mask)

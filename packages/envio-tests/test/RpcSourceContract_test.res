@@ -106,6 +106,7 @@ let invoke = (
     ~partitionId="pin-partition",
     ~selection={
       dependsOnAddresses: true,
+      onBlockRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=Some(5_000),
@@ -592,6 +593,7 @@ describe("RPC source public contract", () => {
                 ~partitionId="pin-partition",
                 ~selection={
                   dependsOnAddresses: true,
+                  onBlockRegistrations: [],
                   onEventRegistrations: [(registration :> Internal.onEventRegistration)],
                 },
                 ~itemsTarget=Some(5_000),
@@ -725,6 +727,7 @@ describe("RPC source public contract", () => {
               ~partitionId="skip-all",
               ~selection={
                 dependsOnAddresses: false,
+                onBlockRegistrations: [],
                 onEventRegistrations: [(registration :> Internal.onEventRegistration)],
               },
               ~itemsTarget=Some(5_000),
@@ -852,6 +855,7 @@ describe("RPC source public contract", () => {
               ~partitionId="contract-scope",
               ~selection={
                 dependsOnAddresses: true,
+                onBlockRegistrations: [],
                 onEventRegistrations: [
                   (eventA :> Internal.onEventRegistration),
                   (eventB :> Internal.onEventRegistration),

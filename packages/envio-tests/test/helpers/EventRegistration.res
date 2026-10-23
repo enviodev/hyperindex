@@ -34,8 +34,8 @@ let evmOnEventRegistration = (
       ~transactionFields=Utils.Set.fromArray(transactionFieldNames)->(
         Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
       ),
-      ~blockMaskFn=Evm.eventBlockFieldMask,
-      ~transactionMaskFn=Evm.eventTransactionFieldMask,
+      ~blockMaskFn=Evm.blockFieldMask,
+      ~transactionMaskFn=Evm.transactionFieldMask,
     ),
     sighash: Some(id),
     topicCount,

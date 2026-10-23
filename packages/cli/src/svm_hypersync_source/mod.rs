@@ -26,6 +26,7 @@ use hypersync_solana_net_types::query::SolanaQuery;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
+use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
@@ -111,28 +112,17 @@ pub struct SvmHyperSyncClient {
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-instruction owner gate.
     address_store: Arc<std::sync::RwLock<StoreInner>>,
+    block_registrations: BlockRegistrations,
 }
 
 #[napi]
 impl SvmHyperSyncClient {
-    #[napi(constructor)]
-    pub fn new(
-        cfg: SvmClientConfig,
-        user_agent: String,
-        programs: Vec<SvmProgramInput>,
-        address_store: &AddressStore,
-    ) -> napi::Result<SvmHyperSyncClient> {
-        Self::from_config(cfg, user_agent, programs, address_store)
-    }
-
-    /// Factory taking a custom user agent, mirroring EVM's `new_with_agent`.
-    /// Exposed so callers that grab the class dynamically (e.g. ReScript
-    /// reaching through the addon dict) can use `@send` rather than `%raw`.
     #[napi(factory)]
     pub fn from_config(
         cfg: SvmClientConfig,
         user_agent: String,
         programs: Vec<SvmProgramInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<SvmHyperSyncClient> {
         let handle = address_store.handle();
@@ -149,6 +139,7 @@ impl SvmHyperSyncClient {
             inner: Arc::new(inner),
             selection_builder,
             address_store: handle,
+            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
         })
     }
 
@@ -213,18 +204,40 @@ impl SvmHyperSyncClient {
         Ok((aggregate, request_stats))
     }
     #[napi]
-    pub async fn get_event_items(
+    pub async fn get_items(
         &self,
-        params: EventItemsQuery,
+        params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
         let built = self
             .selection_builder
-            .build(&params.registration_indexes)
+            .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
+        let from_slot = u64::try_from(params.from_slot)
+            .context("from_slot must be non-negative")
+            .map_err(map_err)?;
+        let to_slot = params
+            .to_slot
+            .map(|to| u64::try_from(to).context("to_slot must be non-negative"))
+            .transpose()
+            .map_err(map_err)?;
+        let block_selection = self
+            .block_registrations
+            .select(&params.on_block_registration_indexes, from_slot, to_slot)
+            .map_err(map_err)?;
+        let blocks_read = to_slot
+            .filter(|_| params.on_event_registration_indexes.is_empty())
+            .and_then(|to| block_selection.blocks_read(from_slot, to));
+        let (from_slot, to_slot) = blocks_read.as_ref().map_or((from_slot, to_slot), |read| {
+            (read.from_block, Some(read.to_block))
+        });
+        let mut block_columns = built.block_columns.clone();
+        for column in fields::block_mask_columns(block_selection.mask()).map_err(map_err)? {
+            fields::push_unique(&mut block_columns, column);
+        }
 
         let mut field_selection = SolanaFieldSelection {
-            block: parse_columns(&built.block_columns).map_err(map_err)?,
+            block: parse_columns(&block_columns).map_err(map_err)?,
             // Instructions are exempt from merge-mode "empty = no rows", so an
             // empty list would fetch every column. Spell the routing set.
             instruction_call: parse_columns(&built.instruction_columns).map_err(map_err)?,
@@ -247,18 +260,10 @@ impl SvmHyperSyncClient {
         }
 
         let query = SolanaQuery {
-            from_slot: u64::try_from(params.from_slot)
-                .context("from_slot must be non-negative")
-                .map_err(map_err)?,
+            from_slot,
             // Inclusive on the boundary, exclusive on the wire.
-            to_slot: params
-                .to_slot
-                .map(|b| {
-                    u64::try_from(b)
-                        .context("to_slot must be non-negative")?
-                        .checked_add(1)
-                        .context("to_slot overflow")
-                })
+            to_slot: to_slot
+                .map(|b| b.checked_add(1).context("to_slot overflow"))
                 .transpose()
                 .map_err(map_err)?,
             instruction_calls: built.instruction_selections.clone(),
@@ -266,7 +271,9 @@ impl SvmHyperSyncClient {
             max_num_instructions: params
                 .max_num_instructions
                 .and_then(|v| usize::try_from(v).ok()),
-            include_all_blocks: params.include_all_blocks.unwrap_or(false),
+            // A slot handler runs on slots no instruction landed on.
+            include_all_blocks: params.include_all_blocks.unwrap_or(false)
+                || !block_selection.is_empty(),
             ..Default::default()
         };
 
@@ -310,10 +317,28 @@ impl SvmHyperSyncClient {
                 ))
             })
             .collect();
-        let referenced_slots: HashSet<u64> = referenced_transactions
+        let mut referenced_slots: HashSet<u64> = referenced_transactions
             .iter()
             .map(|(slot, _)| *slot)
             .collect();
+        // `include_all_blocks` returns every block of the covered range, so a
+        // slot missing from it was skipped and produced none.
+        let returned_slots: HashSet<u64> =
+            resp.blocks.iter().filter_map(|block| block.slot).collect();
+        let block_items: Vec<BlockItem> = block_selection
+            .route(from_slot..resp.next_slot)
+            .into_iter()
+            .map(|item| BlockItem {
+                skipped: !returned_slots.contains(&(item.block_number as u64)),
+                ..item
+            })
+            .collect();
+        referenced_slots.extend(
+            block_items
+                .iter()
+                .filter(|item| !item.skipped)
+                .map(|item| item.block_number as u64),
+        );
 
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
@@ -323,12 +348,15 @@ impl SvmHyperSyncClient {
         let (block_headers, block_store) =
             take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
 
-        let response = EventItemsResponse {
-            next_slot: i64::try_from(resp.next_slot)
-                .context("next_slot overflow")
-                .map_err(map_err)?,
+        let response = ItemsResponse {
+            next_slot: i64::try_from(
+                blocks_read.map_or(resp.next_slot, |read| read.fetched_until(resp.next_slot)),
+            )
+            .context("next_slot overflow")
+            .map_err(map_err)?,
             blocks: block_headers,
-            items,
+            event_items: items,
+            block_items,
         };
         Ok((response, store, block_store))
     }
@@ -351,19 +379,22 @@ fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, Option<
     Ok((next_slot, last_slot, block_store))
 }
 
-/// The whole per-query input for `get_event_items`: the slot range and the
-/// partition's registration selection (by index). The partition's addresses
-/// arrive separately, as the `AddressSet` handle. Instruction selections, field
-/// selection, and routing are all derived internally from the registrations
-/// passed at construction.
+/// The whole per-query input for `get_items`: the slot range and what it
+/// selects from each table. The partition's addresses arrive separately, as the
+/// `AddressSet` handle. Instruction selections, field selection, and routing
+/// are all derived internally from the registrations passed at construction.
 #[napi(object)]
-pub struct EventItemsQuery {
+pub struct ItemsQuery {
     pub from_slot: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_slot: Option<i64>,
     /// `None` sends no server-side cap on the number of instructions returned.
     pub max_num_instructions: Option<i64>,
-    pub registration_indexes: Vec<i64>,
+    /// The instruction registrations selecting instructions, by index. Empty
+    /// selects no instructions.
+    pub on_event_registration_indexes: Vec<i64>,
+    /// The slot handlers selecting blocks, by index.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Program names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent program is filtered server-side.
@@ -408,13 +439,14 @@ pub struct EventItem {
 }
 
 #[napi(object, object_from_js = false)]
-pub struct EventItemsResponse {
+pub struct ItemsResponse {
     pub next_slot: i64,
     /// The page's lean block headers, one per slot; used for reorg detection
     /// and the batch's latest timestamp. The full blocks live in the
     /// `BlockStore` returned alongside this response.
     pub blocks: Vec<types::Block>,
-    pub items: Vec<EventItem>,
+    pub event_items: Vec<EventItem>,
+    pub block_items: Vec<BlockItem>,
 }
 
 fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {
@@ -661,12 +693,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
-        let client = SvmHyperSyncClient::new(
+        let client = SvmHyperSyncClient::from_config(
             SvmClientConfig {
                 url: "https://solana.hypersync.xyz".into(),
                 ..Default::default()
             },
             "hyperindex-test".into(),
+            vec![],
             vec![],
             &svm_store(&[]),
         )

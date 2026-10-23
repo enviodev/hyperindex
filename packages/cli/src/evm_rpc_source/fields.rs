@@ -18,7 +18,7 @@ use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::Value as Json;
 
 use crate::block_store::EvmBlockField;
-use crate::evm_hypersync_source::query::{BlockField, TransactionField};
+use crate::evm_hypersync_source::query::TransactionField;
 use crate::transaction_store::EvmTxField;
 
 /// Which JSON-RPC response carries a transaction field.
@@ -50,46 +50,8 @@ pub(crate) fn tx_carrier(field: EvmTxField) -> Carrier {
     }
 }
 
-/// The store column a requested block field lands in. `None` for a field the
-/// store holds no column for, which no user selection can reach — `Evm.res`
-/// offers exactly the store's fields — so it can only mean a query built with a
-/// field the store cannot serve.
-pub(crate) fn block_field_column(field: BlockField) -> Option<EvmBlockField> {
-    use BlockField as Q;
-    Some(match field {
-        Q::Number => EvmBlockField::Number,
-        Q::Hash => EvmBlockField::Hash,
-        Q::ParentHash => EvmBlockField::ParentHash,
-        Q::Nonce => EvmBlockField::Nonce,
-        Q::Sha3Uncles => EvmBlockField::Sha3Uncles,
-        Q::LogsBloom => EvmBlockField::LogsBloom,
-        Q::TransactionsRoot => EvmBlockField::TransactionsRoot,
-        Q::StateRoot => EvmBlockField::StateRoot,
-        Q::ReceiptsRoot => EvmBlockField::ReceiptsRoot,
-        Q::Miner => EvmBlockField::Miner,
-        Q::Difficulty => EvmBlockField::Difficulty,
-        Q::TotalDifficulty => EvmBlockField::TotalDifficulty,
-        Q::ExtraData => EvmBlockField::ExtraData,
-        Q::Size => EvmBlockField::Size,
-        Q::GasLimit => EvmBlockField::GasLimit,
-        Q::GasUsed => EvmBlockField::GasUsed,
-        Q::Timestamp => EvmBlockField::Timestamp,
-        Q::Uncles => EvmBlockField::Uncles,
-        Q::BaseFeePerGas => EvmBlockField::BaseFeePerGas,
-        Q::BlobGasUsed => EvmBlockField::BlobGasUsed,
-        Q::ExcessBlobGas => EvmBlockField::ExcessBlobGas,
-        Q::ParentBeaconBlockRoot => EvmBlockField::ParentBeaconBlockRoot,
-        Q::WithdrawalsRoot => EvmBlockField::WithdrawalsRoot,
-        Q::L1BlockNumber => EvmBlockField::L1BlockNumber,
-        Q::SendCount => EvmBlockField::SendCount,
-        Q::SendRoot => EvmBlockField::SendRoot,
-        Q::MixHash => EvmBlockField::MixHash,
-        Q::Withdrawals => return None,
-    })
-}
-
 /// The store column a requested transaction field lands in; see
-/// `block_field_column` for what `None` means.
+/// `BlockField::store_column` for what `None` means.
 pub(crate) fn tx_field_column(field: TransactionField) -> Option<EvmTxField> {
     use TransactionField as Q;
     Some(match field {
@@ -143,13 +105,6 @@ pub(crate) fn tx_field_column(field: TransactionField) -> Option<EvmTxField> {
 }
 
 /// Selection mask over store field ordinals.
-pub(crate) fn block_mask(fields: &[BlockField]) -> u64 {
-    fields
-        .iter()
-        .filter_map(|&f| block_field_column(f))
-        .fold(0, |acc, f| acc | 1u64 << (f as u32))
-}
-
 pub(crate) fn tx_mask(fields: &[TransactionField]) -> u64 {
     fields
         .iter()
@@ -195,16 +150,7 @@ pub(crate) fn tx_mask_of(carrier: Carrier) -> u64 {
 }
 
 /// The requested fields a selection mask stands for — the inverse of
-/// `block_mask`, for turning an accumulated need back into a fetch.
-pub(crate) fn block_fields_in(mask: u64) -> Vec<BlockField> {
-    use strum::VariantArray;
-    BlockField::VARIANTS
-        .iter()
-        .copied()
-        .filter(|&f| block_field_column(f).is_some_and(|c| mask & (1u64 << (c as u32)) != 0))
-        .collect()
-}
-
+/// `tx_mask`, for turning an accumulated need back into a fetch.
 pub(crate) fn tx_fields_in(mask: u64) -> Vec<TransactionField> {
     use strum::VariantArray;
     TransactionField::VARIANTS
@@ -338,6 +284,7 @@ pub(crate) fn set_tx_field(tx: &mut Transaction, field: EvmTxField, raw: &Json) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evm_hypersync_source::query::BlockField;
     use serde_json::json;
     use strum::VariantArray;
 
@@ -413,7 +360,7 @@ mod tests {
         // a store field no requested field maps onto would be unselectable.
         let blocks: Vec<EvmBlockField> = BlockField::VARIANTS
             .iter()
-            .filter_map(|&f| block_field_column(f))
+            .filter_map(|f| f.store_column())
             .collect();
         let txs: Vec<EvmTxField> = TransactionField::VARIANTS
             .iter()

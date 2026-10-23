@@ -127,6 +127,7 @@ let fetch = (
       onEventRegistrations: onEventRegistrations()->(
         Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
       ),
+      onBlockRegistrations: [],
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,

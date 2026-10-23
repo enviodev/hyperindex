@@ -7,6 +7,9 @@ use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
+use crate::block_selection::{
+    BlockItem, BlockRegistrations, BlockSelection, OnBlockRegistrationInput,
+};
 use crate::block_store::BlockStore;
 use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -53,6 +56,7 @@ pub struct EvmHyperSyncClient {
     enable_checksum_addresses: bool,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
+    block_registrations: BlockRegistrations,
 }
 
 impl EvmHyperSyncClient {
@@ -80,9 +84,11 @@ impl EvmHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
+        let block_registrations = BlockRegistrations::new(&block_registrations).map_err(map_err)?;
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
@@ -107,6 +113,7 @@ impl EvmHyperSyncClient {
             enable_checksum_addresses,
             decoder,
             selection_builder,
+            block_registrations,
         })
     }
 
@@ -171,30 +178,56 @@ impl EvmHyperSyncClient {
     }
 
     #[napi]
-    pub async fn get_event_items(
+    pub async fn get_items(
         &self,
-        params: EventItemsQuery,
+        params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
+        let selects_logs = !params.on_event_registration_indexes.is_empty();
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, address_set, &client_filtered)
+            .build(
+                &params.on_event_registration_indexes,
+                address_set,
+                &client_filtered,
+            )
             .map_err(map_err)?;
         let set_cache = address_set.cache().clone();
         let selection_decoder = self
             .decoder
             .selection(
-                &params.registration_indexes,
+                &params.on_event_registration_indexes,
                 &client_filtered,
                 set_cache.clone(),
             )
             .map_err(map_err)?;
+        let from_block = u64::try_from(params.from_block).map_err(|e| map_err(e.into()))?;
+        let to_block = params
+            .to_block
+            .map(|to| u64::try_from(to).context("to_block must be >= 0"))
+            .transpose()
+            .map_err(map_err)?;
+        let block_selection = self
+            .block_registrations
+            .select(&params.on_block_registration_indexes, from_block, to_block)
+            .map_err(map_err)?;
+        let blocks_read = to_block
+            .filter(|_| !selects_logs)
+            .and_then(|to| block_selection.blocks_read(from_block, to));
+        let (read_from, read_to) = blocks_read.as_ref().map_or((from_block, to_block), |read| {
+            (read.from_block, Some(read.to_block))
+        });
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
+        for field in BlockField::in_store_mask(block_selection.mask()) {
+            if !block_fields.contains(&field) {
+                block_fields.push(field);
+            }
+        }
         // Force-add the always-required block fields, then validate the full
         // set. Validating the forced fields (not just the selection's) is what
         // guarantees the consumer's unconditional number/timestamp/hash reads
@@ -222,34 +255,42 @@ impl EvmHyperSyncClient {
         }
 
         let query = Query {
-            from_block: params.from_block,
-            to_block: params.to_block.map(|b| b + 1),
-            logs: Some(
+            from_block: read_from as i64,
+            to_block: read_to.map(|b| b as i64 + 1),
+            logs: selects_logs.then(|| {
                 built
                     .log_selections
                     .into_iter()
                     .map(log_selection_from_built)
-                    .collect(),
-            ),
-            max_num_logs: params.max_num_logs,
+                    .collect()
+            }),
+            max_num_logs: params.max_num_logs.filter(|_| selects_logs),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
-                transaction: Some(transaction_fields),
-                // Everything get_event_items reads off the log: decode inputs,
-                // the flattened item fields, and the transaction-store keys.
-                log: Some(vec![
-                    LogField::Address,
-                    LogField::Data,
-                    LogField::LogIndex,
-                    LogField::Topic0,
-                    LogField::Topic1,
-                    LogField::Topic2,
-                    LogField::Topic3,
-                    LogField::BlockNumber,
-                    LogField::TransactionIndex,
-                ]),
+                transaction: selects_logs.then_some(transaction_fields),
+                // Everything get_items reads off the log: decode inputs, the
+                // flattened item fields, and the transaction-store keys.
+                log: selects_logs.then(|| {
+                    vec![
+                        LogField::Address,
+                        LogField::Data,
+                        LogField::LogIndex,
+                        LogField::Topic0,
+                        LogField::Topic1,
+                        LogField::Topic2,
+                        LogField::Topic3,
+                        LogField::BlockNumber,
+                        LogField::TransactionIndex,
+                    ]
+                }),
             },
-            include_all_blocks: params.include_all_blocks,
+            // A block handler runs on blocks no log landed on, so selecting the
+            // block table means asking for every block of the range.
+            include_all_blocks: if block_selection.is_empty() {
+                params.include_all_blocks
+            } else {
+                Some(true)
+            },
             ..Default::default()
         };
 
@@ -268,9 +309,14 @@ impl EvmHyperSyncClient {
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
+        let next_block: i64 = response
+            .next_block
+            .try_into()
+            .context("convert next_block")
+            .map_err(map_err)?;
         let transaction_store = TransactionStore::new_evm();
         let block_store = BlockStore::new_evm();
-        let items = tokio::task::block_in_place(|| {
+        let (event_items, block_items) = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
                 response.data.transactions,
@@ -282,6 +328,10 @@ impl EvmHyperSyncClient {
                 &transaction_store,
                 &block_store,
                 &set_cache,
+                &block_selection,
+                // The range the page covered: `include_all_blocks` leaves no
+                // gaps in it.
+                read_from..(next_block as u64),
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -304,37 +354,41 @@ impl EvmHyperSyncClient {
                 .map_err(map_err)?;
         }
 
-        let event_items = EventItemsResponse {
+        let items = ItemsResponse {
             archive_height: response
                 .archive_height
                 .map(|h| h.try_into())
                 .transpose()
                 .context("convert archive_height")
                 .map_err(map_err)?,
-            next_block: response
-                .next_block
-                .try_into()
-                .context("convert next_block")
-                .map_err(map_err)?,
-            items,
+            next_block: blocks_read.map_or(next_block, |read| {
+                read.fetched_until(next_block as u64) as i64
+            }),
+            event_items,
+            block_items,
             response_blocks,
         };
-        Ok((event_items, transaction_store, block_store))
+        Ok((items, transaction_store, block_store))
     }
 }
 
-/// The whole per-query input for `get_event_items` beside the partition's
-/// address set: the block range and its registration selection (by id). Log
-/// selections, field selection, and the routing index are all derived
-/// internally from the registrations passed at construction and the set.
+/// The whole per-query input for `get_items` beside the partition's address
+/// set: the block range and what it selects from each table. Log selections,
+/// field selection, and the routing index are all derived internally from the
+/// registrations passed at construction and the set.
 #[napi(object)]
-pub struct EventItemsQuery {
+pub struct ItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
     /// `None` sends no server-side cap on the number of logs returned.
     pub max_num_logs: Option<i64>,
-    pub registration_indexes: Vec<i64>,
+    /// The event registrations selecting logs, by the index the client was
+    /// constructed with. Empty selects no logs.
+    pub on_event_registration_indexes: Vec<i64>,
+    /// The block handlers selecting blocks, by the index the client was
+    /// constructed with. Empty selects no more blocks than the logs come from.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -385,13 +439,14 @@ pub struct EventItem {
     pub params: JsTape,
 }
 
-/// The always-needed block fields, surfaced per block number so the consumer can
-/// set each item's `timestamp`/`blockHash`, feed reorg detection, and stamp
+/// One page of items routed from the query's tables. The rows they join to are
+/// in the stores returned beside it.
 #[napi(object, object_from_js = false)]
-pub struct EventItemsResponse {
+pub struct ItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub items: Vec<EventItem>,
+    pub event_items: Vec<EventItem>,
+    pub block_items: Vec<BlockItem>,
     /// Blocks the server returned for this query, before routing drops the ones
     /// no item joins to. The server returns one block per number, so this is a
     /// distinct count.
@@ -472,7 +527,9 @@ fn process_response(
     transaction_store: &TransactionStore,
     block_store: &BlockStore,
     set_cache: &SetCache,
-) -> std::result::Result<Vec<EventItem>, ConvertError> {
+    block_selection: &BlockSelection,
+    covered_blocks: std::ops::Range<u64>,
+) -> std::result::Result<(Vec<EventItem>, Vec<BlockItem>), ConvertError> {
     let mut missing: Vec<String> = Vec::new();
 
     // Route before touching the joined tables: routing is what decides which
@@ -559,6 +616,12 @@ fn process_response(
     let present_block_numbers: HashSet<u64> =
         returned_blocks.iter().filter_map(|b| b.number).collect();
 
+    // A block a block handler runs on is referenced like one a log routed
+    // from. The page asked for every block of the range it covered, so the
+    // coverage check below rejects one missing rather than skipping it.
+    let block_items = block_selection.route(covered_blocks);
+    referenced_blocks.extend(block_items.iter().map(|item| item.block_number as u64));
+
     // Validate the requested block fields once per distinct block. The
     // always-required number/timestamp/hash back every header, so they are
     // checked on every returned block; the rest of the user's selection is only
@@ -625,7 +688,7 @@ fn process_response(
         .collect();
     block_store.insert_evm_blocks(store_blocks);
 
-    Ok(items)
+    Ok((items, block_items))
 }
 
 /// Key into the `TransactionStore`. The log side (which decides what a routed
@@ -915,6 +978,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .err()
         .expect("expected MissingFields error");
@@ -944,6 +1009,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .err()
         .expect("expected MissingFields error");
@@ -958,7 +1025,7 @@ mod tests {
 
     #[test]
     fn forced_block_fields_validated_even_when_user_requested_none() {
-        // get_event_items force-adds REQUIRED_BLOCK_FIELDS and validates that
+        // get_items force-adds REQUIRED_BLOCK_FIELDS and validates that
         // forced set, so number/timestamp/hash are guaranteed present even when
         // the user's config selected no block fields. Here the user requested
         // nothing yet a missing timestamp is still reported.
@@ -978,6 +1045,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .err()
         .expect("expected MissingFields error");
@@ -1001,7 +1070,7 @@ mod tests {
             timestamp: Some(Default::default()),
             ..Default::default()
         };
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
@@ -1017,6 +1086,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -1048,6 +1119,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .err()
         .expect("expected MissingFields error");
@@ -1081,6 +1154,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .err()
         .expect("expected MissingFields error");
@@ -1112,7 +1187,7 @@ mod tests {
         };
 
         let store = TransactionStore::new_evm();
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block]],
             vec![vec![tx]],
             vec![vec![full_log(7)]],
@@ -1123,6 +1198,8 @@ mod tests {
             &store,
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .expect("expected success when block and transaction join");
 
@@ -1154,7 +1231,7 @@ mod tests {
 
         let transaction_store = TransactionStore::new_evm();
         let block_store = BlockStore::new_evm();
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block(1), block(2)]],
             vec![vec![tx(1), tx(2)]],
             vec![vec![full_log(1), unrouted_log(2)]],
@@ -1165,6 +1242,8 @@ mod tests {
             &transaction_store,
             &block_store,
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .expect("expected success");
 
@@ -1210,7 +1289,7 @@ mod tests {
         // routes nowhere, so nothing will ever read them and the page stands.
         // Without this, filtering the stores would silently diverge from what
         // the coverage check still insists the source deliver.
-        let items = process_response(
+        let (items, _) = process_response(
             vec![],
             vec![],
             vec![vec![unrouted_log(1)]],
@@ -1221,6 +1300,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .expect("an unrouted log's absent block and transaction are not missing fields");
 
@@ -1239,7 +1320,7 @@ mod tests {
             gas_used: (number == 1).then(Default::default),
             ..Default::default()
         };
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block(1), block(2)]],
             vec![],
             vec![vec![full_log(1), unrouted_log(2)]],
@@ -1255,6 +1336,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .expect("an unreferenced block's absent selected field is not a missing field");
 
@@ -1278,7 +1361,7 @@ mod tests {
             ..Default::default()
         };
 
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block]],
             vec![vec![
                 simple_types::Transaction {
@@ -1297,6 +1380,8 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &BlockSelection::default(),
+            0..0,
         )
         .expect("a keyless transaction's absent field is not a missing field");
 

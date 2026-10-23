@@ -43,6 +43,9 @@ type sourceConfig =
   // like every other source, so it can apply the same gates.
   | SimulateSourceConfig({
       items: array<Internal.item>,
+      // The block a block handler selecting fields reads at a number, if the
+      // simulated chain has one there.
+      getBlock: int => option<Internal.eventBlock>,
       endBlock: int,
       transactionStore?: TransactionStore.t,
       blockStore?: BlockStore.t,

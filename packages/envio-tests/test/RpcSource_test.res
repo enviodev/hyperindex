@@ -179,6 +179,7 @@ describe("RpcSource - field selection end to end", () => {
       ~partitionId="0",
       ~selection={
         dependsOnAddresses: true,
+        onBlockRegistrations: [],
         onEventRegistrations: [(registration :> Internal.onEventRegistration)],
       },
       ~itemsTarget=Some(5000),
@@ -630,7 +631,7 @@ describe("RpcSource - empty selection", () => {
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
         ~knownHeight=1,
         ~partitionId="0",
-        ~selection={dependsOnAddresses: true, onEventRegistrations: []},
+        ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: []},
         ~itemsTarget=Some(5000),
         ~retry=0,
         ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource empty selection"}),
@@ -720,6 +721,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~partitionId="0",
             ~selection={
               dependsOnAddresses: true,
+              onBlockRegistrations: [],
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
             ~itemsTarget=Some(5000),
@@ -846,6 +848,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
+            onBlockRegistrations: [],
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
           ~itemsTarget=Some(5000),
@@ -967,6 +970,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~partitionId="selection-e2e",
         ~selection={
           dependsOnAddresses: true,
+          onBlockRegistrations: [],
           onEventRegistrations: selectedRegistrations->Array.map(
             reg => (reg :> Internal.onEventRegistration),
           ),

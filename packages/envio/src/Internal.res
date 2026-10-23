@@ -328,6 +328,12 @@ type eventPayload
 @get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
 @set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
 
+// Whatever a materialised block is written onto: an event's payload, or a block
+// item. Both keep it under `block`.
+type blockHolder
+external payloadBlockHolder: eventPayload => blockHolder = "%identity"
+@set external setHolderBlock: (blockHolder, eventBlock) => unit = "block"
+
 // The log's emitting address (EVM/Fuel; the program id carries it for SVM).
 @get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
 
@@ -732,6 +738,10 @@ type onBlockRegistration = {
   endBlock: option<int>,
   interval: int,
   handler: onBlockArgs => promise<unit>,
+  // The selected block fields as the block store's bitmask, key included.
+  // `None` when the handler reads only the block's key, which needs nothing
+  // from a source: its items are generated locally, block by block.
+  blockFieldMask: option<float>,
 }
 
 @tag("kind")
@@ -751,9 +761,21 @@ type item =
       transactionIndex: int,
       payload: eventPayload,
     })
-  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int})
+  | @as(1)
+  Block({
+      onBlockRegistration: onBlockRegistration,
+      blockNumber: int,
+      // The registration's selected fields: inline from a simulate source,
+      // otherwise written at batch prep from the chain's block store. Absent
+      // for a registration that selects none.
+      block?: eventBlock,
+      // The chain produced no block here (an SVM skipped slot), so there is
+      // none to materialise and the handler runs without one.
+      skipped?: bool,
+    })
 
 external castUnsafeEventItem: item => eventItem = "%identity"
+external itemBlockHolder: item => blockHolder = "%identity"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"

@@ -535,7 +535,9 @@ type _badEnumLookup = Enum<"NotAnEnum">;
   it("shapes the onBlock surface", _ =>
     check(`
 import type {
+  Address,
   EvmChainId,
+  EvmOnBlockBlock,
   EvmOnBlockContext,
   EvmOnBlockFilter,
   EvmOnBlockHandler,
@@ -553,9 +555,12 @@ const _blockOpts: EvmOnBlockOptions = {
   where: ({ chain }) => (chain.id === 1 ? true : false),
 };
 expectType<EvmOnBlockOptions>(_blockOpts);
-expectType<
-  TypeEqual<EvmOnBlockHandlerArgs["block"], { readonly number: number }>
->(true);
+expectType<TypeEqual<EvmOnBlockHandlerArgs["block"]["number"], number>>(true);
+// @ts-expect-error - a field the registration didn't select
+const _unselected: string = ({} as EvmOnBlockHandlerArgs["block"]).hash;
+expectType<TypeEqual<EvmOnBlockBlock<{ readonly block: readonly ["miner"] }>["miner"], Address>>(
+  true,
+);
 expectType<TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>>(true);
 expectType<
   TypeEqual<EvmOnBlockHandler, (args: EvmOnBlockHandlerArgs) => Promise<void>>

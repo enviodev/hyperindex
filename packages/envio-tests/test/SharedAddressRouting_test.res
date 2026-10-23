@@ -103,6 +103,7 @@ let fetch = (source: Source.t, ~addressSet) =>
     ~selection={
       dependsOnAddresses: true,
       onEventRegistrations: onEventRegistrations(),
+      onBlockRegistrations: [],
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,

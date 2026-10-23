@@ -1,7 +1,7 @@
-type logsQueryPage = {
-  items: array<FuelHyperSyncClient.EventItems.item>,
-  rejectedLogData: array<FuelHyperSyncClient.EventItems.rejectedLogData>,
-  // Blocks referenced by `items`, one per height.
+type itemsPage = {
+  eventItems: array<FuelHyperSyncClient.Items.item>,
+  blockItems: array<BlockItem.t>,
+  rejectedLogData: array<FuelHyperSyncClient.Items.rejectedLogData>,
   nextBlock: int,
   archiveHeight: int,
   // Page store owning this page's raw blocks (built on the Rust side); its ids
@@ -9,70 +9,33 @@ type logsQueryPage = {
   blockStore: BlockStore.t,
 }
 
-module GetLogs = {
+module GetItems = {
   type error =
     | UnexpectedMissingParams({missingParams: array<string>})
     | WrongInstance
 
   exception Error(error)
 
-  // Rust encodes structured failures as a JSON payload in the napi error's
-  // message: `{"kind":"MissingFields","fields":["receipt.txId", ...]}`.
-  // JSON.parse + shape check is the recovery protocol — no string-grepping
-  // on anyhow's Debug format.
-  let extractMissingParams = (exn: exn): option<array<string>> => {
-    let message = switch exn {
-    | JsExn(jsExn) => jsExn->JsExn.message
-    | _ => None
-    }
-    switch message {
-    | None => None
-    | Some(msg) =>
-      switch msg->JSON.parseOrThrow->JSON.Decode.object {
-      | exception _ => None
-      | None => None
-      | Some(obj) =>
-        switch (obj->Dict.get("kind"), obj->Dict.get("fields")) {
-        | (Some(String("MissingFields")), Some(Array(fields))) =>
-          Some(fields->Array.filterMap(JSON.Decode.string))
-        | _ => None
-        }
-      }
-    }
-  }
-
   let query = async (
     ~client: FuelHyperSyncClient.t,
-    ~fromBlock,
-    ~toBlock,
-    ~registrationIndexes,
+    ~query: FuelHyperSyncClient.Items.query,
     ~addressSet,
-    ~clientFilteredContracts,
-  ): logsQueryPage => {
-    let query: FuelHyperSyncClient.EventItems.query = {
-      fromBlock,
-      toBlock,
-      registrationIndexes,
-      clientFilteredContracts,
-    }
-
-    let (res, blockStore) = switch await client->FuelHyperSyncClient.getEventItems(
-      query,
-      addressSet,
-    ) {
+  ): itemsPage => {
+    let (res, blockStore) = switch await client->FuelHyperSyncClient.getItems(query, addressSet) {
     | res => res
     | exception exn =>
-      switch exn->extractMissingParams {
+      switch exn->HyperSync.GetItems.extractMissingParams {
       | Some(missingParams) => throw(Error(UnexpectedMissingParams({missingParams: missingParams})))
       | None => throw(exn)
       }
     }
-    if res.nextBlock <= fromBlock {
+    if res.nextBlock <= query.fromBlock {
       // Might happen when /height response was from another instance of HyperFuel
       throw(Error(WrongInstance))
     }
     {
-      items: res.items,
+      eventItems: res.eventItems,
+      blockItems: res.blockItems,
       rejectedLogData: res.rejectedLogData,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here

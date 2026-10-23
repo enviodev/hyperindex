@@ -89,8 +89,8 @@ let makeMockSourceRegistration = (
       fieldSelection: Internal.makeFieldSelection(
         ~blockFields=Utils.Set.make(),
         ~transactionFields=Utils.Set.make(),
-        ~blockMaskFn=Evm.eventBlockFieldMask,
-        ~transactionMaskFn=Evm.eventTransactionFieldMask,
+        ~blockMaskFn=Evm.blockFieldMask,
+        ~transactionMaskFn=Evm.transactionFieldMask,
       ),
       sighash: Some(""),
       topicCount: 1,
@@ -105,8 +105,8 @@ let makeMockSourceRegistration = (
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.make(),
       ~transactionFields=Utils.Set.make(),
-      ~blockMaskFn=Evm.eventBlockFieldMask,
-      ~transactionMaskFn=Evm.eventTransactionFieldMask,
+      ~blockMaskFn=Evm.blockFieldMask,
+      ~transactionMaskFn=Evm.transactionFieldMask,
     ),
     resolvedWhere: {topicFilters: [], startBlock: None},
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
