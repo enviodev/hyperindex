@@ -508,6 +508,7 @@ const NEVER_ERROR_CODES: &[u32] = &[
     62,  // SYNTAX_ERROR
     81,  // UNKNOWN_DATABASE
     117, // INCORRECT_DATA
+    164, // READONLY
     192, // UNKNOWN_USER
     193, // WRONG_PASSWORD
     194, // REQUIRED_PASSWORD
@@ -1122,6 +1123,26 @@ mod tests {
                 client.warnings()
             ),
             (true, 1, Vec::<String>::new()),
+            "expected one attempt and the server's message, got: {err}"
+        );
+    }
+
+    // A profile that forbids the settings the inserts send refuses every retry
+    // the same way, so retrying only spends the budget.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_profile_refusing_the_settings_sent_is_not_retried() {
+        let server = MockClickHouse::rejecting_with(
+            usize::MAX,
+            "Code: 164. DB::Exception: Cannot modify 'max_query_size' setting in readonly mode",
+        )
+        .await;
+        let client = client_for(&server, 8);
+
+        let err = reason(insert(&client, &["a", "b"]).await.unwrap_err());
+
+        assert_eq!(
+            (err.contains("readonly"), server.inserts_seen()),
+            (true, 1),
             "expected one attempt and the server's message, got: {err}"
         );
     }
