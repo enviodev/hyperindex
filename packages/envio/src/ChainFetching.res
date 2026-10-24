@@ -8,9 +8,22 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
+let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
+  let contractRegister = switch (item->Internal.castUnsafeEventItem).onEventRegistration {
+  | {contractRegister: Some(contractRegister)} => contractRegister
+  | {contractRegister: None, eventConfig: {name: eventName}} =>
+    // Unexpected case, since we should pass only events with contract register to this function
+    JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
+  }
+  contractRegister({
+    event: item->Ecosystem.getItemEvent(~ecosystem=runtime->HandlerRuntime.ecosystem),
+    context: runtime.contractRegisterContext,
+  })
+}
+
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
-  ~config: Config.t,
+  ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
   // contractRegister handlers can read event.transaction and event.block, so
@@ -24,76 +37,28 @@ let runContractRegistersOrThrow = async (
     ~shouldChecksum=chainState->ChainState.shouldChecksum,
   )
 
+  // Every run of the response adds into the same registrations, in call order.
   let registrations: array<AddressStore.registration> = []
+  let chainLogger = chainState->ChainState.logger
+  let ecosystem = runtime->HandlerRuntime.ecosystem
 
-  let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
-    let eventItem = item->Internal.castUnsafeEventItem
-    registrations->Array.push({
-      address: contractAddress,
-      contractName,
-      registrationBlock: eventItem.blockNumber,
-    })
-  }
-
-  let promises = []
-  for idx in 0 to itemsWithContractRegister->Array.length - 1 {
-    let item = itemsWithContractRegister->Array.getUnsafe(idx)
-    let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem.onEventRegistration {
-    | {contractRegister: Some(contractRegister)} => contractRegister
-    | {contractRegister: None, eventConfig: {name: eventName}} =>
-      // Unexpected case, since we should pass only events with contract register to this function
-      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
-    }
-
-    let errorMessage = "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
-
-    let params: ContractRegisterContext.contractRegisterParams = {
+  let _ = await itemsWithContractRegister
+  ->Array.map(item => {
+    let run: RunScope.contractRegisterRun = {
       item,
-      onRegister,
-      config,
-      logger: chainState->ChainState.logger,
       isResolved: false,
+      chainLogger,
+      ecosystem,
+      registrations,
     }
-    // Catch sync and async errors
-    try {
-      let result = ConsoleScope.run(
-        Logger(() => params->ContractRegisterContext.loggerForItem),
-        () => contractRegister(ContractRegisterContext.getContractRegisterArgs(params)),
-      )
-
-      // Even though `contractRegister` always returns a promise,
-      // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Utils.Promise.isCatchable {
-        promises->Array.push(
-          result
-          ->Promise.thenResolve(r => {
-            params.isResolved = true
-            r
-          })
-          ->Promise.catch(exn => {
-            params.isResolved = true
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg=errorMessage,
-              ~logger=params->ContractRegisterContext.loggerForItem,
-            )
-          }),
-        )
-      } else {
-        params.isResolved = true
-      }
-    } catch {
-    | exn =>
+    RunScope.run(ContractRegister(run), invokeContractRegister, runtime, item)->Promise.catch(exn =>
       exn->ErrorHandling.mkLogAndRaise(
-        ~msg=errorMessage,
-        ~logger=params->ContractRegisterContext.loggerForItem,
+        ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
+        ~logger=run->RunScope.contractRegisterLogger,
       )
-    }
-  }
-
-  if promises->Utils.Array.notEmpty {
-    let _ = await Promise.all(promises)
-  }
+    )
+  })
+  ->Promise.all
 
   registrations
 }
@@ -101,6 +66,7 @@ let runContractRegistersOrThrow = async (
 let rec onQueryResponse = async (
   state: IndexerState.t,
   {chainId, response, query}: partitionQueryResponse,
+  ~runtime,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -262,7 +228,7 @@ let rec onQueryResponse = async (
       | _ =>
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
-          ~config=state->IndexerState.config,
+          ~runtime,
           ~chainState,
         ) {
         | exception exn =>
@@ -326,6 +292,7 @@ let finishWaitingForNewBlock = (
 let fetchChain = async (
   state: IndexerState.t,
   chainId,
+  ~runtime,
   ~action,
   ~stateId,
   ~scheduleFetch,
@@ -373,6 +340,7 @@ let fetchChain = async (
             await onQueryResponse(
               state,
               {chainId, response, query},
+              ~runtime,
               ~stateId,
               ~scheduleFetch,
               ~scheduleProcessing,

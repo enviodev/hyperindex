@@ -1,13 +1,14 @@
-type contextParams = {
-  item: Internal.item,
-  checkpointId: Internal.checkpointId,
+// What every handler run of an indexer shares. The run itself — its item,
+// checkpoint and whether it's a preload — is read from the RunScope it was
+// entered with, so one context object serves every run, concurrent ones and
+// both passes included.
+type params = {
   indexerState: IndexerState.t,
   loadManager: LoadManager.t,
   persistence: Persistence.t,
-  isPreload: bool,
-  chains: Internal.chains,
   config: Config.t,
-  mutable isResolved: bool,
+  // Refreshed by HandlerRuntime when a batch changes it.
+  mutable chains: Internal.chains,
 }
 
 let effectContextPrototype = %raw(`Object.create(null)`)
@@ -16,7 +17,9 @@ Utils.Object.defineProperty(
   "log",
   {
     // Wrap with toMethod so `this` binds to the EffectContext instance.
-    get: Utils.toMethod(() => ConsoleScope.effectLogger(%raw(`this`))()->Logger.asContextLog),
+    get: Utils.toMethod(() =>
+      %raw(`this`)->RunScope.effectRunOf->RunScope.effectLogger->Logger.asContextLog
+    ),
   },
 )
 %%raw(`
@@ -48,8 +51,8 @@ external makeEffectContext: (
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
 ) => Internal.effectContext = "EffectContext"
 
-let initEffect = (params: contextParams) => {
-  let handlerChainId = params.item->Internal.getItemChainId
+let initEffect = (params: params, ~run: RunScope.handlerRun) => {
+  let handlerChainId = run.item->Internal.getItemChainId
   // An effect that didn't state a scope follows the config: cross-chain by
   // default, per-chain under `disable_default_cross_chain`.
   let isCrossChain = (effect: Internal.effect) =>
@@ -80,55 +83,26 @@ let initEffect = (params: contextParams) => {
         ~defaultShouldCache=effect.defaultShouldCache,
         ~callEffect=makeCaller(~caller=Some(effect)),
       )
-      let effectArgs: Internal.effectArgs = {
-        input,
-        context: effectContext,
-        cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
-        chainId: handlerChainId,
-        checkpointId: params.checkpointId,
-      }
-      effectContext->ConsoleScope.setEffectLogger(() =>
-        params.indexerState
-        ->IndexerState.loggerForItem(params.item)
-        ->Logger.withFields({"effect": effect.name})
-      )
+      effectContext->RunScope.attachEffectRun({caller: run, effectName: effect.name})
       LoadLayer.loadEffect(
         ~loadManager=params.loadManager,
         ~persistence=params.persistence,
         ~effect,
-        ~effectArgs,
+        ~effectArgs={
+          input,
+          context: effectContext,
+          cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+          chainId: handlerChainId,
+          checkpointId: run.checkpointId,
+        },
         ~scope,
         ~indexerState=params.indexerState,
-        ~shouldGroup=params.isPreload,
+        ~shouldGroup=run.isPreload,
       )
     }
   }
   makeCaller(~caller=None)
 }
-
-type entityContextParams = {
-  ...contextParams,
-  entityConfig: Internal.entityConfig,
-}
-
-// The handler context is always chain-scoped, so a per-chain entity resolves to
-// the chain the handler runs on and a cross-chain one to the shared partition.
-let entityScope = (params: entityContextParams) =>
-  params.entityConfig->InMemoryStore.entityScope(~chainId=params.item->Internal.getItemChainId)
-
-let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) =>
-  LoadLayer.loadByFilter(
-    ~loadManager=params.loadManager,
-    ~persistence=params.persistence,
-    ~entityConfig=params.entityConfig,
-    ~scope=params->entityScope,
-    ~indexerState=params.indexerState,
-    ~shouldGroup=params.isPreload,
-    ~filter,
-  )
-
-let noopSet = (_entity: Internal.entity) => ()
-let noopDeleteUnsafe = (_entityId: EntityId.t) => ()
 
 // Reads against ClickHouse-only entities have no Postgres table to hit;
 // surface a friendly error instead of letting the SQL layer fail with
@@ -138,197 +112,163 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
-let entityTraps: Utils.Proxy.traps<entityContextParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
+type entityContext = {
+  get: string => promise<option<Internal.entity>>,
+  getWhere: dict<dict<unknown>> => promise<array<Internal.entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<Internal.entity>,
+  getOrCreate: Internal.entity => promise<Internal.entity>,
+  set: Internal.entity => unit,
+  deleteUnsafe: EntityId.t => unit,
+}
 
-    let isClickHouseOnly = !params.entityConfig.storage.postgres
-    let scope = params->entityScope
-    let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
+let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) => {
+  let prop = entityConfig.name
+  // The handler context is always chain-scoped, so a per-chain entity resolves
+  // to the chain the handler runs on and a cross-chain one to the shared
+  // partition.
+  let scopeOf = (run: RunScope.handlerRun) =>
+    entityConfig->InMemoryStore.entityScope(~chainId=run.item->Internal.getItemChainId)
 
-    let set = params.isPreload
-      ? noopSet
-      : (entity: Internal.entity) => {
-          params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
-          ->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
-            Set({
-              entityId: entity.id->EntityId.unsafeOfString,
-              checkpointId: params.checkpointId,
-              entity,
-            }),
-          )
-        }
+  let loadById = entityId => {
+    let run = RunScope.currentHandlerRunOrThrow(~prop)
+    LoadLayer.loadById(
+      ~loadManager=params.loadManager,
+      ~persistence=params.persistence,
+      ~entityConfig,
+      ~scope=run->scopeOf,
+      ~indexerState=params.indexerState,
+      ~shouldGroup=run.isPreload,
+      ~entityId,
+    )
+  }
 
-    switch prop {
-    | "get" =>
-      if isClickHouseOnly {
-        ((_entityId: string) => throwClickHouseReadOnly(params.entityConfig, "get"))->(
-          Utils.magic: (string => promise<option<Internal.entity>>) => unknown
+  let write = (run, change: Change.t<Internal.entity>) => {
+    let scope = run->scopeOf
+    params.indexerState
+    ->InMemoryStore.getInMemTable(~entityConfig, ~scope)
+    ->InMemoryTable.Entity.set(
+      ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointIdFor(~scope),
+      change,
+    )
+  }
+
+  // A preload run's writes are no-ops: its run proper makes them.
+  let set = (entity: Internal.entity) => {
+    let run = RunScope.currentHandlerRunOrThrow(~prop)
+    if !run.isPreload {
+      run->write(
+        Set({
+          entityId: entity.id->EntityId.unsafeOfString,
+          checkpointId: run.checkpointId,
+          entity,
+        }),
+      )
+    }
+  }
+
+  let deleteUnsafe = entityId => {
+    let run = RunScope.currentHandlerRunOrThrow(~prop)
+    if !run.isPreload {
+      run->write(Delete({entityId, checkpointId: run.checkpointId}))
+    }
+  }
+
+  let entityContext: entityContext = if !entityConfig.storage.postgres {
+    {
+      get: _ => throwClickHouseReadOnly(entityConfig, "get"),
+      getWhere: _ => throwClickHouseReadOnly(entityConfig, "getWhere"),
+      getOrThrow: (_, ~message as _=?) => throwClickHouseReadOnly(entityConfig, "getOrThrow"),
+      getOrCreate: _ => throwClickHouseReadOnly(entityConfig, "getOrCreate"),
+      set,
+      deleteUnsafe,
+    }
+  } else {
+    {
+      get: loadById,
+      getWhere: filter => {
+        let run = RunScope.currentHandlerRunOrThrow(~prop)
+        LoadLayer.loadByFilter(
+          ~loadManager=params.loadManager,
+          ~persistence=params.persistence,
+          ~entityConfig,
+          ~scope=run->scopeOf,
+          ~indexerState=params.indexerState,
+          ~shouldGroup=run.isPreload,
+          ~filter,
         )
-      } else {
-        (
-          entityId =>
-            LoadLayer.loadById(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              ~indexerState=params.indexerState,
-              ~shouldGroup=params.isPreload,
-              ~entityId,
+      },
+      getOrThrow: (entityId, ~message=?) =>
+        loadById(entityId)->Promise.thenResolve(entity =>
+          switch entity {
+          | Some(entity) => entity
+          | None =>
+            JsError.throwWithMessage(
+              message->Option.getOr(
+                `Entity '${entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+              ),
             )
-        )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
-      }
-    | "getWhere" =>
-      if isClickHouseOnly {
-        ((_filter: unknown) => throwClickHouseReadOnly(params.entityConfig, "getWhere"))->(
-          Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
-        )
-      } else {
-        (
-          filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>))
-        )->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
-      }
-
-    | "getOrThrow" =>
-      if isClickHouseOnly {
-        (
-          (_entityId: string, ~message as _=?) =>
-            throwClickHouseReadOnly(params.entityConfig, "getOrThrow")
-        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
-      } else {
-        (
-          (entityId, ~message=?) =>
-            LoadLayer.loadById(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              ~indexerState=params.indexerState,
-              ~shouldGroup=params.isPreload,
-              ~entityId,
-            )->Promise.thenResolve(entity => {
-              switch entity {
-              | Some(entity) => entity
-              | None =>
-                JsError.throwWithMessage(
-                  message->Option.getOr(
-                    `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
-                  ),
-                )
-              }
-            })
-        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
-      }
-    | "getOrCreate" =>
-      if isClickHouseOnly {
-        (
-          (_entity: Internal.entity) => throwClickHouseReadOnly(params.entityConfig, "getOrCreate")
-        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
-      } else {
-        (
-          (entity: Internal.entity) =>
-            LoadLayer.loadById(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              ~indexerState=params.indexerState,
-              ~shouldGroup=params.isPreload,
-              ~entityId=entity.id,
-            )->Promise.thenResolve(storageEntity => {
-              switch storageEntity {
-              | Some(entity) => entity
-              | None => {
-                  set(entity)
-                  entity
-                }
-              }
-            })
-        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
-      }
-    | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
-    | "deleteUnsafe" =>
-      if params.isPreload {
-        noopDeleteUnsafe
-      } else {
-        entityId => {
-          params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
-          ->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
-            Delete({
-              entityId,
-              checkpointId: params.checkpointId,
-            }),
-          )
-        }
-      }->(Utils.magic: (EntityId.t => unit) => unknown)
-    | _ =>
-      JsError.throwWithMessage(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
+          }
+        ),
+      getOrCreate: entity =>
+        loadById(entity.id)->Promise.thenResolve(storageEntity =>
+          switch storageEntity {
+          | Some(entity) => entity
+          | None =>
+            set(entity)
+            entity
+          }
+        ),
+      set,
+      deleteUnsafe,
     }
-  },
+  }
+
+  Utils.StrictObject.make(
+    Utils.StrictObject.makePrototype(op =>
+      JsError.throwWithMessage(`Invalid context.${entityConfig.name}.${op} operation.`)
+    ),
+  )->Utils.StrictObject.assign(entityContext)
 }
 
-let handlerTraps: Utils.Proxy.traps<contextParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    if params.isResolved {
-      Utils.Error.make(
-        `Impossible to access context.${prop} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(
-        ~logger=params.indexerState->IndexerState.loggerForItem(params.item),
+// One context for every handler run of an indexer.
+let makeHandlerContext = (params: params): Internal.handlerContext => {
+  let context = Utils.StrictObject.make(
+    Utils.StrictObject.makePrototype(prop =>
+      JsError.throwWithMessage(
+        `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
       )
-    }
-    switch prop {
-    | "log" =>
-      (
-        params.isPreload
-          ? Logger.silentContextLog
-          : params.indexerState->IndexerState.loggerForItem(params.item)->Logger.asContextLog
-      )->(Utils.magic: Envio.logger => unknown)
+    ),
+  )
+  let define = (name, get) =>
+    context
+    ->Utils.Object.defineProperty(
+      name,
+      {enumerable: true, get: () => get(RunScope.currentHandlerRunOrThrow(~prop=name))},
+    )
+    ->ignore
 
-    | "effect" =>
-      initEffect((params :> contextParams))->(
-        Utils.magic: (
-          (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
-        ) => unknown
-      )
-
-    | "isPreload" => params.isPreload->(Utils.magic: bool => unknown)
-    | "chain" =>
-      let chainId = params.item->Internal.getItemChainId
-      params.chains
-      ->ChainId.Dict.dangerouslyGetNonOption(chainId)
-      ->(Utils.magic: option<Internal.chainInfo> => unknown)
-    | _ =>
-      switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityConfig) =>
-        {
-          item: params.item,
-          isPreload: params.isPreload,
-          indexerState: params.indexerState,
-          loadManager: params.loadManager,
-          persistence: params.persistence,
-          checkpointId: params.checkpointId,
-          chains: params.chains,
-          isResolved: params.isResolved,
-          config: params.config,
-          entityConfig,
-        }
-        ->Utils.Proxy.make(entityTraps)
-        ->(Utils.magic: entityContextParams => unknown)
-      | None =>
-        JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
-        )
-      }
-    }
-  },
-}
-
-let getHandlerContext = (params: contextParams): Internal.handlerContext => {
-  params->Utils.Proxy.make(handlerTraps)->(Utils.magic: contextParams => Internal.handlerContext)
+  define("log", (run: RunScope.handlerRun) =>
+    (run.isPreload ? Logger.silentContextLog : run->RunScope.handlerLogger->Logger.asContextLog)->(
+      Utils.magic: Envio.logger => unknown
+    )
+  )
+  define("effect", run =>
+    initEffect(params, ~run)->(
+      Utils.magic: (
+        (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
+      ) => unknown
+    )
+  )
+  define("isPreload", run => run.isPreload->(Utils.magic: bool => unknown))
+  define("chain", run =>
+    params.chains
+    ->ChainId.Dict.dangerouslyGetNonOption(run.item->Internal.getItemChainId)
+    ->(Utils.magic: option<Internal.chainInfo> => unknown)
+  )
+  params.config.userEntitiesByName->Utils.Dict.forEachWithKey((entityConfig, name) => {
+    let entityContext =
+      params->makeEntityContext(~entityConfig)->(Utils.magic: entityContext => unknown)
+    define(name, _ => entityContext)
+  })
+  context
 }
