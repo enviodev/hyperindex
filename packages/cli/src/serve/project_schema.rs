@@ -80,6 +80,10 @@ impl ProjectSchema {
         let doc: gql::Document<String> =
             graphql_parser::parse_schema(schema_text).context("Failed parsing schema.graphql")?;
 
+        // Every object type, including `@internal` ones: needed so that a
+        // field typed as an entity is still classified as a relationship
+        // (and not mistaken for a plain scalar column) even when its target
+        // is internal.
         let entity_names: Vec<String> = doc
             .definitions
             .iter()
@@ -91,11 +95,31 @@ impl ProjectSchema {
             })
             .collect();
 
+        // `@internal` entities keep their Postgres table (and handler API)
+        // but are excluded from the GraphQL API, matching Hasura, where they
+        // are never tracked. Their table exists in the database, so the
+        // model builder's catalog lookup alone would NOT hide them.
+        let internal_names: Vec<String> = doc
+            .definitions
+            .iter()
+            .filter_map(|d| match d {
+                gql::Definition::TypeDefinition(gql::TypeDefinition::Object(o))
+                    if is_internal(&o.directives) =>
+                {
+                    Some(o.name.clone())
+                }
+                _ => None,
+            })
+            .collect();
+
         let mut entities = Vec::new();
         for def in &doc.definitions {
             let gql::Definition::TypeDefinition(gql::TypeDefinition::Object(obj)) = def else {
                 continue;
             };
+            if internal_names.contains(&obj.name) {
+                continue;
+            }
             let mut object_relationships = Vec::new();
             let mut array_relationships = Vec::new();
             let mut scalar_fields = Vec::new();
@@ -125,6 +149,13 @@ impl ProjectSchema {
                 // fields must not feed scalar_fields here.
                 if let Some(remote_field) = derived_from_field {
                     if entity_names.contains(&base) {
+                        // Defensive: codegen rejects exposed -> @internal
+                        // references, but serve tolerates any schema
+                        // version, so never expose a relationship to a
+                        // skipped entity.
+                        if internal_names.contains(&base) {
+                            continue;
+                        }
                         array_relationships.push(ArrayRel {
                             field_name: field.name.clone(),
                             remote_entity: base,
@@ -133,6 +164,9 @@ impl ProjectSchema {
                         continue;
                     }
                 } else if entity_names.contains(&base) && !is_list_type(&field.field_type) {
+                    if internal_names.contains(&base) {
+                        continue;
+                    }
                     object_relationships.push(ObjectRel {
                         field_name: field.name.clone(),
                         remote_entity: base,
@@ -156,6 +190,10 @@ impl ProjectSchema {
 
         Ok(ProjectSchema { entities })
     }
+}
+
+fn is_internal(directives: &[gql::Directive<String>]) -> bool {
+    directives.iter().any(|d| d.name == "internal")
 }
 
 fn base_type_name(t: &gql::Type<String>) -> String {
@@ -309,6 +347,62 @@ type Token {
                 vec![("tokens", "owner")],
                 vec![("id", None), ("tokenBalance", Some("user balance"))]
             )
+        );
+    }
+
+    #[test]
+    fn skips_internal_entities() {
+        let schema = r#"
+type User {
+  id: ID!
+  name: String!
+}
+type Secret @internal {
+  id: ID!
+  value: String!
+}
+"#;
+        let parsed = ProjectSchema::parse(schema).unwrap();
+        let names: Vec<_> = parsed.entities.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["User"]);
+    }
+
+    #[test]
+    fn drops_relationships_to_internal_entities() {
+        // Codegen rejects this shape, but serve tolerates any schema
+        // version, so the relationships must be filtered defensively.
+        let schema = r#"
+type User {
+  id: ID!
+  secret: Secret
+  secrets: [Secret!]! @derivedFrom(field: "owner")
+  gravatar: Gravatar
+}
+type Gravatar {
+  id: ID!
+}
+type Secret @internal {
+  id: ID!
+  owner: User!
+}
+"#;
+        let parsed = ProjectSchema::parse(schema).unwrap();
+        let user = parsed.entities.iter().find(|e| e.name == "User").unwrap();
+        assert_eq!(
+            user.object_relationships
+                .iter()
+                .map(|r| r.field_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gravatar"]
+        );
+        assert!(user.array_relationships.is_empty());
+        // The dangling relationship field must not leak back in as a scalar.
+        assert_eq!(
+            user.scalar_fields
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["id"]
         );
     }
 }
