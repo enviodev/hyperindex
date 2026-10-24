@@ -1,78 +1,112 @@
 // Which user code is running. Entered around every handler and contract
-// register run, so the run's context finds its item and checkpoint, and so
-// work a run starts without awaiting still finds its own run, however late it
-// finishes. `console` lines inside user code are routed by the same scope.
+// register run, and every effect call, so a context finds the run it belongs
+// to, work a run starts without awaiting still finds its own run however late
+// it finishes, and `console` lines inside user code name what they're about.
 
-type kind =
-  | @as("handler") Handler
-  // A handler's preload run: silent until it resolves, and its writes are
-  // no-ops, so its context stays usable after it resolves.
-  | @as("preload") Preload
-  | @as("contractRegister") ContractRegister
-
-type run = {
-  kind: kind,
+type handlerRun = {
   item: Internal.item,
-  // A contract register runs at fetch time, before its item has a checkpoint,
-  // and has nothing to write under one.
-  checkpointId: option<Internal.checkpointId>,
+  checkpointId: Internal.checkpointId,
+  // A preload run is silent until it resolves, and its writes are no-ops, so
+  // its context stays usable after it resolves.
+  isPreload: bool,
   mutable isResolved: bool,
-  loggerFor: Internal.item => Logger.t,
+  chainLogger: Logger.t,
+  ecosystem: Ecosystem.t,
 }
 
-@unboxed
+// Runs at fetch time, before its item has a checkpoint. The addresses it adds
+// go into the fetch response's registrations.
+type contractRegisterRun = {
+  item: Internal.item,
+  mutable isResolved: bool,
+  chainLogger: Logger.t,
+  ecosystem: Ecosystem.t,
+  registrations: array<AddressStore.registration>,
+}
+
+// An effect call is shared by the runs that asked for it, so it is told by the
+// run that triggered it.
+type effectRun = {
+  caller: handlerRun,
+  effectName: string,
+}
+
 type t =
-  | Run(run)
-  // An effect call, which a group of runs share, so it has a logger rather
-  // than a run of its own.
-  | Effect(unit => Logger.t)
+  | Handler(handlerRun)
+  | ContractRegister(contractRegisterRun)
+  | Effect(effectRun)
 
 type storage
 @module("node:async_hooks") @new external makeStorage: unit => storage = "AsyncLocalStorage"
-@send external runInStorage: (storage, t, unit => 'a) => 'a = "run"
-@send external runInStorage1: (storage, t, 'a => 'r, 'a) => 'r = "run"
+@send external runInStorage: (storage, t, unit => 'r) => 'r = "run"
+@send external runInStorage2: (storage, t, ('a, 'b) => 'r, 'a, 'b) => 'r = "run"
 @send external getStore: storage => Nullable.t<t> = "getStore"
 
 // Cheap where Node keeps async context in frames, the default from Node 24.
 // Before that, using it at all makes every `await` in the process slower.
 let storage = makeStorage()
 
-// Runs user code as a run of its own and marks the run resolved once it
-// settles either way. Code that throws before its first await rejects like
-// code that throws after. `f` takes its argument rather than closing over it,
-// so a hot caller passes a function made once instead of one per run.
-let run = async (~kind, ~item, ~checkpointId=?, ~loggerFor, f: 'a => promise<'r>, arg: 'a) => {
-  let entered = {kind, item, checkpointId, isResolved: false, loggerFor}
-  switch await storage->runInStorage1(Run(entered), f, arg) {
+let handlerLogger = (run: handlerRun) =>
+  run.item->Ecosystem.loggerForItem(~ecosystem=run.ecosystem, ~logger=run.chainLogger)
+
+let contractRegisterLogger = (run: contractRegisterRun) =>
+  run.item->Ecosystem.loggerForItem(~ecosystem=run.ecosystem, ~logger=run.chainLogger)
+
+let effectLogger = (run: effectRun) =>
+  run.caller->handlerLogger->Logger.withFields({"effect": run.effectName})
+
+let resolve = scope =>
+  switch scope {
+  | Handler(run) => run.isResolved = true
+  | ContractRegister(run) => run.isResolved = true
+  | Effect(_) => ()
+  }
+
+// Runs user code inside `scope` and marks it resolved once it settles either
+// way. Code that throws before its first await rejects like code that throws
+// after. `f` takes its arguments rather than closing over them, so a caller
+// passes a function made once instead of one per run.
+let run = async (scope, f: ('a, 'b) => promise<'r>, a: 'a, b: 'b) =>
+  switch await storage->runInStorage2(scope, f, a, b) {
   | exception exn =>
-    entered.isResolved = true
+    scope->resolve
     throw(exn)
   | result =>
-    entered.isResolved = true
+    scope->resolve
     result
   }
-}
 
-// The run a `context.${prop}` call belongs to. Work a run started without
-// awaiting it is caught here once the run has resolved; a preload run's
-// context stays usable, since its writes are no-ops anyway.
-let currentRunOrThrow = (~prop) =>
+let throwResolved = (~prop, ~runName, ~logger) =>
+  Utils.Error.make(
+    `Impossible to access context.${prop} after the ${runName} is resolved. Make sure you didn't miss an await in the handler.`,
+  )->ErrorHandling.mkLogAndRaise(~logger)
+
+let throwOutside = (~prop) =>
+  JsError.throwWithMessage(
+    `Impossible to access context.${prop} outside of the handler it was passed to.`,
+  )
+
+// The handler run a `context.${prop}` call belongs to. Work a run started
+// without awaiting it is caught here once the run has resolved; a preload
+// run's context stays usable, since its writes are no-ops anyway.
+let currentHandlerRunOrThrow = (~prop) =>
   switch storage->getStore->Nullable.toOption {
-  | Some(Run(run)) =>
-    if run.isResolved && run.kind !== Preload {
-      let runName = switch run.kind {
-      | ContractRegister => "contract register"
-      | Handler | Preload => "handler"
-      }
-      Utils.Error.make(
-        `Impossible to access context.${prop} after the ${runName} is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=run.loggerFor(run.item))
+  | Some(Handler(run)) =>
+    if run.isResolved && !run.isPreload {
+      throwResolved(~prop, ~runName="handler", ~logger=run->handlerLogger)
     }
     run
-  | Some(Effect(_)) | None =>
-    JsError.throwWithMessage(
-      `Impossible to access context.${prop} outside of the handler it was passed to.`,
-    )
+  | Some(ContractRegister(_) | Effect(_)) | None => throwOutside(~prop)
+  }
+
+let currentContractRegisterRunOrThrow = (~prop) =>
+  switch storage->getStore->Nullable.toOption {
+  | Some(ContractRegister(run)) =>
+    if run.isResolved {
+      throwResolved(~prop, ~runName="contract register", ~logger=run->contractRegisterLogger)
+    }
+    run
+  | Some(Handler(_) | Effect(_)) | None => throwOutside(~prop)
   }
 
 // The logger a `console` line goes through: the scope's, or `root` outside any.
@@ -80,24 +114,22 @@ let currentRunOrThrow = (~prop) =>
 // it started that finishes later prints like any other code.
 let loggerFor = (root: Logger.t) =>
   switch storage->getStore->Nullable.toOption {
-  | Some(Run({kind: Preload, isResolved: false})) => None
-  | Some(Run({kind: Preload, isResolved: true})) => Some(root)
-  | Some(Run({kind: Handler | ContractRegister, item, loggerFor})) => Some(loggerFor(item))
-  | Some(Effect(logger)) => Some(logger())
+  | Some(Handler({isPreload: true, isResolved: false})) => None
+  | Some(Handler({isPreload: true, isResolved: true})) => Some(root)
+  | Some(Handler(run)) => Some(run->handlerLogger)
+  | Some(ContractRegister(run)) => Some(run->contractRegisterLogger)
+  | Some(Effect(run)) => Some(run->effectLogger)
   | None => Some(root)
   }
 
-// The logger of an effect call, kept by its context: the effect runs with its
-// arguments only, after the calls that asked for it are grouped, and its
-// `context.log` is read off that same context.
-let effectLoggers: Utils.WeakMap.t<Internal.effectContext, unit => Logger.t> = Utils.WeakMap.make()
+// An effect context carries its effect run under a symbol, so it stays out of
+// what user code sees when it inspects the context.
+let effectRunKey: Symbol.t = %raw(`Symbol("envio.effectRun")`)
+@set_index external setEffectRun: (Internal.effectContext, Symbol.t, effectRun) => unit = ""
+@get_index external getEffectRun: (Internal.effectContext, Symbol.t) => effectRun = ""
 
-let setEffectLogger = (context, logger) => effectLoggers->Utils.WeakMap.set(context, logger)->ignore
-
-let effectLogger = context => effectLoggers->Utils.WeakMap.unsafeGet(context)
+let attachEffectRun = (context, run) => context->setEffectRun(effectRunKey, run)
+let effectRunOf = context => context->getEffectRun(effectRunKey)
 
 let enterEffect = (args: Internal.effectArgs, f) =>
-  switch effectLoggers->Utils.WeakMap.get(args.context) {
-  | Some(logger) => storage->runInStorage(Effect(logger), f)
-  | None => f()
-  }
+  storage->runInStorage(Effect(args.context->effectRunOf), f)

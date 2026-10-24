@@ -8,9 +8,22 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
+let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
+  let contractRegister = switch (item->Internal.castUnsafeEventItem).onEventRegistration {
+  | {contractRegister: Some(contractRegister)} => contractRegister
+  | {contractRegister: None, eventConfig: {name: eventName}} =>
+    // Unexpected case, since we should pass only events with contract register to this function
+    JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
+  }
+  contractRegister({
+    event: item->Ecosystem.getItemEvent(~ecosystem=runtime->HandlerRuntime.ecosystem),
+    context: runtime.contractRegisterContext,
+  })
+}
+
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
-  ~config: Config.t,
+  ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
   // contractRegister handlers can read event.transaction and event.block, so
@@ -24,43 +37,24 @@ let runContractRegistersOrThrow = async (
     ~shouldChecksum=chainState->ChainState.shouldChecksum,
   )
 
+  // Every run of the response adds into the same registrations, in call order.
   let registrations: array<AddressStore.registration> = []
-
-  let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
-    let eventItem = item->Internal.castUnsafeEventItem
-    registrations->Array.push({
-      address: contractAddress,
-      contractName,
-      registrationBlock: eventItem.blockNumber,
-    })
-  }
-
-  let context = ContractRegisterContext.make(~config, ~onRegister)
-  let loggerFor = item =>
-    item->Ecosystem.loggerForItem(
-      ~ecosystem=config.ecosystem,
-      ~logger=chainState->ChainState.logger,
-    )
+  let chainLogger = chainState->ChainState.logger
+  let ecosystem = runtime->HandlerRuntime.ecosystem
 
   let _ = await itemsWithContractRegister
   ->Array.map(item => {
-    let eventItem = item->Internal.castUnsafeEventItem
-    let contractRegister = switch eventItem.onEventRegistration {
-    | {contractRegister: Some(contractRegister)} => contractRegister
-    | {contractRegister: None, eventConfig: {name: eventName}} =>
-      // Unexpected case, since we should pass only events with contract register to this function
-      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
+    let run: RunScope.contractRegisterRun = {
+      item,
+      isResolved: false,
+      chainLogger,
+      ecosystem,
+      registrations,
     }
-    RunScope.run(
-      ~kind=ContractRegister,
-      ~item,
-      ~loggerFor,
-      contractRegister,
-      {event: item->Ecosystem.getItemEvent(~ecosystem=config.ecosystem), context},
-    )->Promise.catch(exn =>
+    RunScope.run(ContractRegister(run), invokeContractRegister, runtime, item)->Promise.catch(exn =>
       exn->ErrorHandling.mkLogAndRaise(
         ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
-        ~logger=loggerFor(item),
+        ~logger=run->RunScope.contractRegisterLogger,
       )
     )
   })
@@ -72,6 +66,7 @@ let runContractRegistersOrThrow = async (
 let rec onQueryResponse = async (
   state: IndexerState.t,
   {chainId, response, query}: partitionQueryResponse,
+  ~runtime,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -233,7 +228,7 @@ let rec onQueryResponse = async (
       | _ =>
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
-          ~config=state->IndexerState.config,
+          ~runtime,
           ~chainState,
         ) {
         | exception exn =>
@@ -297,6 +292,7 @@ let finishWaitingForNewBlock = (
 let fetchChain = async (
   state: IndexerState.t,
   chainId,
+  ~runtime,
   ~action,
   ~stateId,
   ~scheduleFetch,
@@ -344,6 +340,7 @@ let fetchChain = async (
             await onQueryResponse(
               state,
               {chainId, response, query},
+              ~runtime,
               ~stateId,
               ~scheduleFetch,
               ~scheduleProcessing,
