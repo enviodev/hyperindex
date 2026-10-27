@@ -50,6 +50,7 @@ type historyPruneStat = {
 
 type t = {
   config: Config.t,
+  logger: Logger.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
@@ -133,7 +134,10 @@ type t = {
   // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
   mutable processingStalledOnFetchSince: option<Performance.timeRef>,
   mutable processingStalledOnStorageWriteSeconds: float,
-  handlerStats: dict<handlerStat>,
+  // One stat per contract/event metric series. Per-chain event configs share a
+  // series, so the by-config map only spares a run from building the key.
+  handlerStatBySeries: dict<handlerStat>,
+  handlerStatByEventConfig: Utils.Map.t<Internal.eventConfig, handlerStat>,
   storageLoadStats: dict<storageLoadStat>,
   storageWriteStats: dict<storageWriteStat>,
   historyPruneStats: dict<historyPruneStat>,
@@ -144,6 +148,7 @@ type t = {
 
 let make = (
   ~config: Config.t,
+  ~logger: Logger.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
@@ -160,17 +165,16 @@ let make = (
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
       ~intervalMillis,
-      ~logger=Logging.createChild(
-        ~params={
-          "context": "Throttler for chain metadata writes",
-          "intervalMillis": intervalMillis,
-        },
-      ),
+      ~logger=logger->Logger.withFields({
+        "context": "Throttler for chain metadata writes",
+        "intervalMillis": intervalMillis,
+      }),
     )
   }
 
   {
     config,
+    logger,
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
@@ -216,7 +220,8 @@ let make = (
     processingStalledOnFetchSeconds: 0.,
     processingStalledOnFetchSince: None,
     processingStalledOnStorageWriteSeconds: 0.,
-    handlerStats: Dict.make(),
+    handlerStatBySeries: Dict.make(),
+    handlerStatByEventConfig: Utils.Map.make(),
     storageLoadStats: Dict.make(),
     storageWriteStats: Dict.make(),
     historyPruneStats: Dict.make(),
@@ -237,14 +242,14 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
 
 let makeFromDbState = (
   ~config: Config.t,
+  ~logger: Logger.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId,
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  ~sourceTiming=?,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   // A process driving part of a split run waits for its supervisor before
   // entering the reorg threshold or switching to realtime.
@@ -285,14 +290,15 @@ let makeFromDbState = (
         ~config,
         ~contractMapping=initialState.contractMapping,
         ~registrationsByChainId,
-        ~reducedPollingInterval?,
-        ~newBlockStallTimeoutRealtime?,
+        ~logger,
+        ~sourceTiming?,
       ),
     )
   })
 
   let state = make(
     ~config,
+    ~logger,
     ~persistence,
     ~chainStates,
     ~isRealtime,
@@ -370,6 +376,21 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
     JsError.throwWithMessage(
       "No chain with id " ++ chainId->ChainId.toString ++ " found in chain states",
     )
+  }
+
+// Built on the item's chain logger, so the chain id leads every item's line.
+let loggerForItem = (state: t, item: Internal.item) =>
+  item->Ecosystem.loggerForItem(
+    ~ecosystem=state.config.ecosystem,
+    ~logger=state->getChainState(~chainId=item->Internal.getItemChainId)->ChainState.logger,
+  )
+
+// A load groups calls from many items, so its lines name the chain it reads,
+// not an item.
+let loggerForScope = (state: t, scope: Internal.chainScope) =>
+  switch scope {
+  | Chain(chainId) => state->getChainState(~chainId)->ChainState.logger
+  | CrossChain => state.logger
   }
 
 let getSafeCheckpointIdByChain = (state: t) =>
@@ -461,6 +482,7 @@ let recordProcessedBatch = (state: t) =>
 // the container in place (eg insert an entity table). ---
 
 let config = (state: t) => state.config
+let logger = (state: t) => state.logger
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities
@@ -641,7 +663,7 @@ let toMetrics = (state: t): Metrics.t => {
     rollbackCount: state.rollbackCount,
     rollbackEventsCount: state.rollbackEventsCount,
     chains: chainStates->Dict.valuesToArray->Array.map(ChainState.toMetrics),
-    handlers: state.handlerStats
+    handlers: state.handlerStatBySeries
     ->Dict.valuesToArray
     ->Array.map(s => {
       Metrics.contract: s.contract,
@@ -688,7 +710,7 @@ let recordBatchDurations = (state: t, ~loadDuration, ~handlerDuration) => {
 let getHandlerStat = (state: t, ~contract, ~event) => {
   // Length-prefixed so names containing the separator can't collide.
   let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
-  switch state.handlerStats->Utils.Dict.dangerouslyGetNonOption(key) {
+  switch state.handlerStatBySeries->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(stat) => stat
   | None =>
     let stat: handlerStat = {
@@ -702,28 +724,35 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
       preloadPendingCount: 0,
       preloadPendingTimerRef: %raw(`null`),
     }
-    state.handlerStats->Dict.set(key, stat)
+    state.handlerStatBySeries->Dict.set(key, stat)
     stat
   }
 }
 
-let recordHandlerDuration = (state: t, ~contract, ~event, ~duration) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let handlerStatFor = (state: t, eventConfig: Internal.eventConfig) =>
+  switch state.handlerStatByEventConfig->Utils.Map.get(eventConfig) {
+  | Some(stat) => stat
+  | None =>
+    let stat = state->getHandlerStat(~contract=eventConfig.contractName, ~event=eventConfig.name)
+    state.handlerStatByEventConfig->Utils.Map.set(eventConfig, stat)->ignore
+    stat
+  }
+
+let recordHandlerDuration = (stat: handlerStat, ~duration) => {
   stat.processingSeconds = stat.processingSeconds +. duration
   stat.processingCount = stat.processingCount +. 1.
 }
 
-let startPreloadHandler = (state: t, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let startPreloadHandler = (stat: handlerStat) => {
+  let timerRef = Performance.now()
   if stat.preloadPendingCount === 0 {
-    stat.preloadPendingTimerRef = Performance.now()
+    stat.preloadPendingTimerRef = timerRef
   }
   stat.preloadPendingCount = stat.preloadPendingCount + 1
-  Performance.now()
+  timerRef
 }
 
-let endPreloadHandler = (state: t, timerRef, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let endPreloadHandler = (stat: handlerStat, timerRef) => {
   stat.preloadPendingCount = stat.preloadPendingCount - 1
   if stat.preloadPendingCount === 0 {
     stat.preloadSeconds =
@@ -959,7 +988,9 @@ let beginRollbackDiff = (
 // Stop the write loop and surface the failure; the error itself goes to onError.
 let recordWriteFailure = (state: t, exn) => {
   state.hasFailedWrite = true
-  state.onError(exn->ErrorHandling.make(~msg="Failed writing batch to the database"))
+  state.onError(
+    exn->ErrorHandling.make(~logger=state.logger, ~msg="Failed writing batch to the database"),
+  )
 }
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)

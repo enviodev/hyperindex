@@ -45,19 +45,26 @@ describe("ClickHouse table options with a field named like a keyword", () => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.visit.set({id: "v1", day: 3, createdAt: Date.fromTime(Date.now())})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.visit.set({id: "v1", day: 3, createdAt: Date.fromTime(Date.now())})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let database = TestClickHouse.currentDatabase()

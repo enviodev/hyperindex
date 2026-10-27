@@ -6,11 +6,16 @@ type metric = {
 // The schema this indexer's tables live in, and the run's own client — closed
 // with it. A test needing raw SQL should reach for these rather than opening a
 // client the run won't clean up.
-type pg = {sql: Postgres.sql, pgSchema: string}
+type pg = {sql: Sql.t, pgSchema: string}
+
+let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
 // Which persistence a run is exercised against. Both are Postgres-backed; the
 // ClickHouse one adds the sink on top. CI runs the suite once per backend.
 type backend = [#postgres | #clickhouse]
+
+@module("node:os") external tmpdir: unit => string = "tmpdir"
+@module("node:fs") external rmSync: (string, {"recursive": bool, "force": bool}) => unit = "rmSync"
 
 let backendName = (backend: backend) =>
   switch backend {
@@ -35,8 +40,7 @@ type addressRow = {
   registrationBlock: int,
 }
 
-// A logged line as a test reads it: what was said, and the fields said with it
-// — without the ones pino adds to every line, which no test is about.
+// A logged line as a test reads it: what was said, and the fields said with it.
 type logEntry = {msg: string, params: dict<JSON.t>}
 
 type rec t = {
@@ -63,10 +67,29 @@ type rec t = {
   // `~chains` resumes the same schema driving only those chains, the way
   // `envio start --chain` does. The chains left out keep their stored state.
   // `~config` resumes under an edited config.yaml, and later restarts keep it.
-  restart: (~config: Config.t=?, ~chains: array<ChainId.t>=?, unit) => promise<t>,
-  // Every line this run has logged so far, in order — the run's own and its
-  // chains'. Only for a run started with `~captureLogs`.
-  logs: unit => array<logEntry>,
+  // `~reset` starts over on an emptied schema, the way `envio dev -r` does.
+  // `~asWorker` leaves the resume unannounced, as a process a supervisor forked
+  // does.
+  restart: (
+    ~config: Config.t=?,
+    ~chains: array<ChainId.t>=?,
+    ~reset: bool=?,
+    ~asWorker: bool=?,
+    unit,
+  ) => promise<t>,
+  // Another process on the same schema, started while this one keeps running,
+  // the way the workers of a split run share one. The global persistence is the
+  // last one started's, so a handler can't tell siblings apart.
+  sibling: (~chains: array<ChainId.t>) => promise<t>,
+  // Writes the effect cache out to this run's own cache directory, where the
+  // next initialize uploads it from.
+  dumpEffectCache: unit => promise<unit>,
+  // What an operator sees by default: every line at info and above this run has
+  // logged so far, in order — the run's own and its chains'.
+  infoAndAboveLogs: unit => array<logEntry>,
+  // Every line this run has logged so far, trace included, as the JSON objects
+  // the logger wrote: `level` and `msg`, then the fields.
+  allLogsAsJson: unit => array<dict<JSON.t>>,
   // Stands in for the supervisor's go-ahead in a run started with
   // `~holdRealtime`.
   releaseRealtime: unit => unit,
@@ -80,39 +103,67 @@ type rec t = {
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
-let parseLogLine = line =>
-  switch line->JSON.parseOrThrow->JSON.Decode.object {
-  | Some(fields) =>
-    fields
-    ->Dict.get("msg")
-    ->Option.flatMap(JSON.Decode.string)
-    ->Option.map(msg => {
+let toInfoLogEntry = (line: dict<JSON.t>) =>
+  switch (line->Dict.get("level"), line->Dict.get("msg")) {
+  | (Some(String(level)), Some(String(msg)))
+    if level->(Utils.magic: string => Logger.level)->Logger.levelNumber >=
+      Logger.levelNumber(#info) =>
+    Some({
       msg,
-      params: fields
+      params: line
       ->Dict.toArray
-      ->Array.filter(((key, _)) => key !== "msg" && key !== "level" && key !== "time")
+      ->Array.filter(((key, _)) => key !== "msg" && key !== "level")
       ->Dict.fromArray,
     })
-  | None => None
+  | _ => None
   }
 
-// A logger writing into an array in this process, rather than through pino's
-// file transport: that one writes on a thread of its own, so a test would have
-// to wait for the line it has already logged to land.
-let makeLogCapture = () => {
-  let lines = []
-  let logger = Pino.MultiStreamLogger.makeWithMultiStream(
-    {
-      customLevels: Logging.logLevels,
-      level: #info,
-      // Empty base disables pid and hostname, as `Logging.makeLogger` does.
-      base: JSON.Encode.object(Dict.make()),
-    },
-    Pino.MultiStreamLogger.multistream([
-      {stream: {write: line => lines->Array.push(line)->ignore}, level: #info},
-    ]),
-  )
-  (logger, () => lines->Array.filterMap(parseLogLine))
+@set external setErrorMessage: (JsExn.t, string) => unit = "message"
+type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
+
+// Adds to what a failure says without replacing it: vitest still gets the
+// AssertionError itself to diff, and a ReScript exception still matches as the
+// same exception. A thrown string or a frozen error can't carry the text, and
+// stays the failure as thrown.
+let appendToFailureMessage = (exn, text) =>
+  try {
+    switch exn {
+    | JsExn(error) => error->setErrorMessage(error->JsExn.message->Option.getOr("") ++ text)
+    | exn =>
+      let raw = exn->(Utils.magic: exn => rescriptExn)
+      raw.message = Some(raw.message->Option.getOr(raw.id) ++ text)
+    }
+  } catch {
+  | _ => ()
+  }
+
+let logsLinkPrefix = "\n\nLogs: "
+
+// What a failure said before the link to its run's logs, which differs per run.
+let stripLogsLink = message =>
+  switch message->String.lastIndexOf(logsLinkPrefix) {
+  | -1 => message
+  | index => message->String.slice(~start=0, ~end=index)
+  }
+
+@module("vitest") @scope("expect")
+external vitestState: unit => {"currentTestName": Nullable.t<string>} = "getState"
+
+// A failed run's logs go to a file its failure names, rather than into the test
+// output: most failures don't need them, and the ones that do need all of them.
+let writeLogsForFailure = (logger, ~pgSchema) => {
+  let testName =
+    vitestState()["currentTestName"]
+    ->Nullable.toOption
+    ->Option.mapOr("", name => name->String.replaceRegExp(/[^A-Za-z0-9]+/g, "-") ++ "-")
+  let path =
+    NodeJs.Path.resolve([
+      NodeJs.Process.cwd(),
+      ".test-logs",
+      `${testName->String.slice(~start=0, ~end=120)}${pgSchema}.jsonl`,
+    ])->NodeJs.Path.toString
+  logger->Logger.writeInMemoryLinesToFile(~path)
+  path
 }
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
@@ -125,9 +176,12 @@ let makeLogCapture = () => {
 let run = async (
   ~config: Config.t,
   ~resolveRegistrations: (~config: Config.t) => promise<HandlerRegister.registrationsByChainId>,
+  // One capture for the whole run, `restart` and siblings included, so a test
+  // reads the resumed indexer's lines after the ones that led to them.
+  ~logger=Logger.makeInMemory(),
   ~backend: backend=selectedBackend,
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  ~sourceTiming=?,
+  ~startBlockRetry=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
@@ -144,23 +198,18 @@ let run = async (
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
-  // Logs what the run says instead of silencing it, for a test about the
-  // reporting itself. A chain's logger is a child of whichever logger was
-  // installed when its chain state was built, so this has to be in place
-  // before the indexer starts rather than set from the body.
-  ~captureLogs=false,
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
   // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
+  // Handler files log through `console` as they load and run, so the run's
+  // capture holds those lines too.
+  let restoreConsole = logger->Logger.routeConsole(~loggerFor=RunScope.loggerFor)
+  let cacheDir = NodeJs.Path.resolve([tmpdir(), `envio-cache-${pgSchema}`])
   let clients = []
+  let storages: array<Persistence.storage> = []
   let stops = []
-
-  // One capture for the whole run, `restart` included, so a test reads the
-  // resumed indexer's lines after the ones that led to them.
-  let capture = captureLogs ? Some(makeLogCapture()) : None
-  let installedLogger = Logging.getLogger()
 
   // Unless the test handles indexer errors itself, the first one fails the run
   // with its own message. Exiting the process instead kills the vitest worker
@@ -192,33 +241,24 @@ let run = async (
 
   // The builder is only reachable here and from `restart`, so it takes just
   // what differs between them and reads the rest off this call.
-  let rec make = async (~reset, ~config as baseConfig, ~chains=?) => {
+  let rec make = async (~reset, ~config as baseConfig, ~chains=?, ~asWorker=false) => {
     throwIfClosing()
     let config = switch chains {
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
     }
-    switch capture {
-    | Some((logger, _)) => Logging.setLogger(logger)
-    | None =>
-      // Silence logs by default in test mode unless LOG_LEVEL is explicitly set
-      switch Env.userLogLevel {
-      | None => Logging.setLogLevel(#silent)
-      | Some(_) => ()
-      }
-    }
-
     switch clickHouseDatabase {
     | Some(database) => TestClickHouse.use(~database)
     | None => ()
     }
-    let sql = PgStorage.makeClient()
+    let sql = PgStorage.makeClient(~logger)
     clients->Array.push(sql)->ignore
     let storage = mapStorage(
       // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
+      PgStorage.makeStorageFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false, ~cacheDir),
     )
-    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    storages->Array.push(storage)
+    let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger, ~storage)
     // `Main.start` does this before handler modules load, so the exported
     // indexer can expose persisted state. Without it every `indexer.chains[N]`
     // getter silently falls back to static config.
@@ -230,7 +270,15 @@ let run = async (
     | None => failWith
     }
 
-    await persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=true)
+    await persistence->Persistence.initForRun(
+      ~logger,
+      ~config,
+      ~reset,
+      ~isDevelopmentMode=true,
+      ~announceResume=!asWorker,
+      ~startBlockRetry?,
+      ~sourceTiming?,
+    )
 
     // Same order as `Main.start`: storage is initialized - which is where a
     // `start_block: latest` chain reads its head - before handler modules load,
@@ -244,10 +292,10 @@ let run = async (
     let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
+      ~logger,
       ~persistence,
       ~registrationsByChainId,
-      ~reducedPollingInterval?,
-      ~newBlockStallTimeoutRealtime?,
+      ~sourceTiming?,
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,
@@ -311,27 +359,50 @@ let run = async (
     // Rows come back decoded: postgres parses them with the table's field schemas.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
       sql
-      ->Postgres.unsafe(
-        PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-      )
+      ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
       ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
-    let queryEntityHistory = (entityConfig: Internal.entityConfig) =>
+    // Which chain a stored row belongs to, for a table that has chains at all.
+    // Read off the row rather than the change decoded from it: a delete keeps
+    // only its id and checkpoint, and two chains can share both.
+    let chainIdOfRow = (entityConfig: Internal.entityConfig) =>
+      switch entityConfig.table->Table.getChainIdField {
+      | None => _ => 0.
+      | Some(field) =>
+        row =>
+          switch row
+          ->(Utils.magic: unknown => dict<unknown>)
+          ->Utils.Dict.dangerouslyGetNonOption(field->Table.getPgDbFieldName) {
+          // Text when the chain-id column is a bigint.
+          | Some(value) if typeof(value) === #string =>
+            value->(Utils.magic: unknown => string)->Float.fromString->Option.getOr(0.)
+          | Some(value) => value->(Utils.magic: unknown => float)
+          | None => 0.
+          }
+      }
+
+    let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
+      let chainIdOfRow = chainIdOfRow(entityConfig)
       sql
-      ->Postgres.unsafe(
-        PgStorage.makeLoadAllQuery(
+      ->Sql.queryForTests(
+        loadAllQuery(
           ~pgSchema,
-          ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
+          ~tableName=EntityHistory.historyTableName(
+            ~entityName=entityConfig.name,
+            ~entityIndex=entityConfig.index,
+          ),
         ),
       )
       ->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
-        items
-        ->S.parseOrThrow(
+        let changes = items->S.parseOrThrow(
           S.array(
             S.union([
-              PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
+              EntityHistory.makeSetUpdateSchema(
+                ~idSchema=entityConfig.table->Table.getIdSchema,
+                entityConfig->PgStorage.getRowSchema,
+              ),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
                 Delete({
@@ -345,7 +416,12 @@ let run = async (
             ]),
           ),
         )
-        ->Array.toSorted((a, b) => {
+        changes
+        ->Array.mapWithIndex((change, index) => (
+          change,
+          chainIdOfRow(items->Array.getUnsafe(index)),
+        ))
+        ->Array.toSorted(((a, aChain), (b, bChain)) => {
           switch String.compare(
             a->Change.getEntityId->EntityId.toKey,
             b->Change.getEntityId->EntityId.toKey,
@@ -353,18 +429,24 @@ let run = async (
           | 0. =>
             // Compared as bigints: checkpoint ids are unbounded, and past 2^53
             // a float comparison would call distinct ids equal.
-            let (a, b) = (a->Change.getCheckpointId, b->Change.getCheckpointId)
-            if a == b {
-              0.
-            } else if a < b {
+            let (aCheckpoint, bCheckpoint) = (a->Change.getCheckpointId, b->Change.getCheckpointId)
+            if aCheckpoint < bCheckpoint {
               -1.
-            } else {
+            } else if aCheckpoint > bCheckpoint {
               1.
+            } else {
+              // A per-chain entity gives every chain its own row under the same
+              // id and checkpoint, and nothing above tells those apart. The
+              // statements that wrote them run together in one transaction, so
+              // which landed first says nothing.
+              Float.compare(aChain, bChain)
             }
           | order => order
           }
         })
+        ->Array.map(((change, _)) => change)
       })
+    }
 
     {
       getBatchWritePromise: () => {
@@ -405,13 +487,6 @@ let run = async (
             }
           }
           await wait()
-          // Skip extra microtasks for indexer to fire follow-up actions
-          // (e.g. the NextQuery dispatch that schedules the next
-          // getItemsOrThrow call). Without this, callers that immediately
-          // call resolveGetItemsOrThrow can race the dispatch and observe
-          // an empty calls array.
-          await Utils.delay(0)
-          await Utils.delay(0)
           resolve()
         })
       },
@@ -480,9 +555,11 @@ let run = async (
         queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
       queryAddresses: async () => {
         let rows =
-          (await sql->Postgres.unsafe(InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema)))->(
-            Utils.magic: unknown => array<AddressRows.row>
-          )
+          (
+            await sql->Sql.queryForTests(
+              `SELECT "chain_id" AS "chainId", "address", "contract_id" AS "contractId", "registration_block" AS "registrationBlock" FROM "${pgSchema}"."envio_addresses";`,
+            )
+          )->(Utils.magic: array<unknown> => array<AddressRows.row>)
         let addresses =
           rows->AddressRows.render(
             ~ecosystem=(config.ecosystem.name :> string),
@@ -501,23 +578,18 @@ let run = async (
         ),
       queryCheckpoints: () =>
         sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=InternalTable.Checkpoints.table.tableName,
-          ),
+        ->Sql.queryForTests(
+          loadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
         )
         ->Promise.thenResolve(rows =>
-          rows
-          ->(Utils.magic: unknown => array<unknown>)
-          ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+          rows->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
         ),
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
         sql
-        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
-        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
+        ->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName))
+        ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.
@@ -564,21 +636,17 @@ let run = async (
       },
       pg,
       stop,
-      logs: () =>
-        switch capture {
-        | Some((_, entries)) => entries()
-        | None =>
-          JsError.throwWithMessage(
-            "This run didn't capture its logs. Pass `~captureLogs=true` to read them.",
-          )
-        },
-      restart: async (~config=baseConfig, ~chains=?, ()) => {
+      infoAndAboveLogs: () => logger->Logger.inMemoryLines->Array.filterMap(toInfoLogEntry),
+      allLogsAsJson: () => logger->Logger.inMemoryLines,
+      sibling: (~chains) => make(~reset=false, ~config=baseConfig, ~chains),
+      restart: async (~config=baseConfig, ~chains=?, ~reset=false, ~asWorker=?, ()) => {
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
         onIndexerStopped()
-        await make(~reset=false, ~config, ~chains?)
+        await make(~reset, ~config, ~chains?, ~asWorker?)
       },
+      dumpEffectCache: () => storage.dumpEffectCache(),
     }
   }
 
@@ -610,9 +678,23 @@ let run = async (
 
   // Stop before dropping: a still-running loop would fail its next query
   // against the vanished schema and report that instead of the real failure.
+  // After a failed body, a stop can wait on a write the body stalled and was
+  // never going to release, which would bury the failure under a suite timeout.
+  let boundedStop = stop =>
+    switch outcome {
+    | Some(_) =>
+      () =>
+        Promise.race([
+          stop(),
+          Promise.make((resolve, _reject) =>
+            MockSource.realSetTimeout(() => resolve(), 5000)->ignore
+          ),
+        ])
+    | None => stop
+    }
   for i in 0 to stops->Array.length - 1 {
     switch stops->Array.get(i) {
-    | Some(stop) => await attempt(stop)
+    | Some(stop) => await attempt(stop->boundedStop)
     | None => ()
     }
   }
@@ -627,24 +709,44 @@ let run = async (
   | Some(database) => await attempt(() => TestClickHouse.drop(~database))
   | None => ()
   }
+  await attempt(async () =>
+    rmSync(cacheDir->NodeJs.Path.toString, {"recursive": true, "force": true})
+  )
   for i in 0 to clients->Array.length - 1 {
     switch clients->Array.get(i) {
-    | Some(sql) => await attempt(() => sql->Postgres.endSql)
+    | Some(sql) => await attempt(() => sql->Sql.close)
+    | None => ()
+    }
+  }
+  for i in 0 to storages->Array.length - 1 {
+    switch storages->Array.get(i) {
+    | Some(storage) => await attempt(() => storage.close())
     | None => ()
     }
   }
 
-  // The logger is process-global, so a capturing run gives it back — after its
-  // teardown, which is still this run's to log.
-  if captureLogs {
-    Logging.setLogger(installedLogger)
-  }
+  restoreConsole()
 
   switch (outcome, indexerFailure.contents, teardownFailure.contents) {
   | (Some(exn), _, _)
   | (None, Some(exn), _)
   | (None, None, Some(exn)) =>
-    throw(exn)
+    // Written after the teardown, which is still this run's to log. A failed
+    // write must not replace the failure it was meant to explain.
+    let link = try logger->writeLogsForFailure(~pgSchema) catch {
+    | writeExn =>
+      `not written (${writeExn
+        ->Utils.prettifyExn
+        ->Utils.exnMessage
+        ->Option.getOr("unknown error")})`
+    }
+    exn->appendToFailureMessage(logsLinkPrefix ++ link)
+    switch exn {
+    // Rethrown as caught, so vitest gets the AssertionError itself and can diff
+    // it, not a ReScript wrapper it prints as a plain object.
+    | JsExn(error) => JsExn.throw(error)
+    | exn => throw(exn)
+    }
   | (None, None, None) => ()
   }
 }

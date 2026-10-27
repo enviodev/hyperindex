@@ -80,25 +80,30 @@ describe("A supervised worker released at the head", () => {
     "Says where each chain finished before saying it is building the indexes",
     ~sources=[{chain: 1}, {chain: 137}],
     ~holdRealtime=true,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      let catchUpToSafeBlock = (~source: MockSource.t) => {
+      let catchUpToSafeBlock = async (~source: MockSource.t) => {
         source.resolveGetHeightOrThrow(300)
-        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+        await source.expectItemsQueries([
+          {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+        ])
       }
-      catchUpToSafeBlock(~source=source(1))
-      catchUpToSafeBlock(~source=source(137))
+      await catchUpToSafeBlock(~source=source(1))
+      await catchUpToSafeBlock(~source=source(137))
       await indexer.waitUntilIdle()
 
       indexer.releaseRealtime()
       await indexer.waitUntilIdle()
 
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await source(1).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.waitUntilReady()
 
       t.expect(
-        indexer.logs()->reportedFinishAndPause,
+        indexer.infoAndAboveLogs()->reportedFinishAndPause,
         ~message="Released, nothing holds the process back, and its chains finish together",
       ).toStrictEqual(["Finished backfill.", "Finished backfill.", indexesMessage])
     },
@@ -112,10 +117,13 @@ describe("A supervised worker resumed at the head", () => {
     "Says where each chain finished before saying it is building the indexes",
     ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
     ~holdRealtime=true,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilIdle()
 
       let resumed = await indexer.restart()
@@ -124,7 +132,7 @@ describe("A supervised worker resumed at the head", () => {
       await resumed.waitUntilReady()
 
       t.expect(
-        resumed.logs()->reportedFinishAndPause,
+        resumed.infoAndAboveLogs()->reportedFinishAndPause,
         ~message="Both runs' chains speak while the hold is on, so both runs say they are waiting",
       ).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
@@ -144,10 +152,13 @@ describe("A chain resumed already ready", () => {
   headScenario->Scenario.it(
     "Says nothing about a backfill it didn't do",
     ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       // New blocks on both chains, so the resumed run indexes at the head
@@ -155,12 +166,16 @@ describe("A chain resumed already ready", () => {
       source(1).setAutoHeight(110)
       source(137).setAutoHeight(110)
       let resumed = await indexer.restart()
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+      await source(1).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 110})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 110})},
+      ])
       await resumed.getBatchWritePromise()
 
       t.expect(
-        resumed.logs()->reportedFinishAndPause,
+        resumed.infoAndAboveLogs()->reportedFinishAndPause,
         ~message="Both chains caught up and were stamped ready in the first run, and the resumed one repeats neither",
       ).toStrictEqual(["Finished backfill.", "Finished backfill.", indexesMessage])
     },
@@ -194,17 +209,18 @@ describe("A chain resumed already at its end block", () => {
   endBlockScenario->Scenario.it(
     "Says it is done again, before the resumed run exits",
     ~sources=[{chain: 1, autoHeight: 100}],
-    ~captureLogs=true,
     ~onExit=() => (),
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
       let resumed = await indexer.restart()
       await resumed.waitUntilIdle()
 
       t.expect(
-        resumed.logs()->Array.filter(({msg}) =>
+        resumed.infoAndAboveLogs()->Array.filter(({msg}) =>
           msg === "Indexed to the end block. This chain is done."
         ),
         ~message="Said once by each run",
@@ -231,15 +247,20 @@ describe("A process whose chains finish at different times", () => {
   headScenario->Scenario.it(
     "Says it is waiting only while another chain is still behind",
     ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=50)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 50})},
+      ])
       await indexer.getBatchWritePromise()
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(137).expectItemsQueries([
+        {fromBlock: 51, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->finishLines).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->finishLines).toStrictEqual([
         {
           msg: "Finished backfill. Waiting for the other chains.",
           params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
@@ -255,13 +276,16 @@ describe("A process whose chains finish at different times", () => {
   headScenario->Scenario.it(
     "Says neither is waiting when they finish together",
     ~sources=[{chain: 1, autoHeight: 100}, {chain: 137, autoHeight: 100}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      source(137).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
+      await source(137).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->finishLines).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->finishLines).toStrictEqual([
         {
           msg: "Finished backfill.",
           params: dict{"chainId": JSON.Number(1.), "block": JSON.Number(100.)},
@@ -296,14 +320,15 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
     "Says it is waiting when it reaches the head while the run holds it back",
     ~sources=[{chain: 1, autoHeight: 100}],
     ~holdRealtime=true,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilIdle()
       indexer.releaseRealtime()
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->reportedFinishAndPause).toStrictEqual([
         "Finished backfill. Waiting for the other chains.",
         indexesMessage,
       ])
@@ -316,17 +341,20 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
     "Says nothing about waiting when it finishes after the release",
     ~sources=[{chain: 1}],
     ~holdRealtime=true,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       source(1).resolveGetHeightOrThrow(300)
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilIdle()
       indexer.releaseRealtime()
       await indexer.waitUntilIdle()
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await source(1).expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->reportedFinishAndPause).toStrictEqual([
+      t.expect(indexer.infoAndAboveLogs()->reportedFinishAndPause).toStrictEqual([
         "Finished backfill.",
         indexesMessage,
       ])
@@ -338,15 +366,16 @@ describe("A process driving one chain", () => {
   singleChainScenario->Scenario.it(
     "Names the chain it pauses in the singular",
     ~sources=[{chain: 1}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       source(1).resolveGetHeightOrThrow(100)
-      source(1).resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source(1).expectItemsQueries([
+        {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+      ])
       await indexer.waitUntilReady()
 
-      t.expect(indexer.logs()->Array.filter(({msg}) => msg === indexesMessage)).toStrictEqual([
-        {msg: indexesMessage, params: dict{"chainId": JSON.Number(1.)}},
-      ])
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filter(({msg}) => msg === indexesMessage),
+      ).toStrictEqual([{msg: indexesMessage, params: dict{"chainId": JSON.Number(1.)}}])
     },
   )
 })

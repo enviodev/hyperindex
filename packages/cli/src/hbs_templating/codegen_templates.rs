@@ -16,7 +16,10 @@ use crate::{
             SystemConfig,
         },
     },
-    constants::project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
+    constants::{
+        project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
+        reserved_keywords::ENVIO_TYPE_EXPORTS,
+    },
     project_paths::ParsedProjectPaths,
     type_schema::{RecordField, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
@@ -684,7 +687,7 @@ impl ContractTemplate {
             .collect::<Result<_>>()?;
 
         let module_code = match &contract.abi {
-            // EVM: abi and eventSignatures are already in internal.config.json
+            // EVM: abi and event sighashes are already in internal.config.json
             Abi::Evm(_) => String::new(),
             Abi::Fuel(abi) => abi
                 .to_type_decl_multi()
@@ -850,7 +853,7 @@ impl FieldSelection {
             },
             SelectedField {
                 name: "hash".to_string(),
-                data_type: TypeIdent::String,
+                data_type: TypeIdent::Hex,
             },
         ]
     }
@@ -1210,20 +1213,29 @@ impl ProjectTemplate {
     /// an empty record. Mirrors `generate_event_filter_type` on the ReScript
     /// side, which intentionally renders indexed-struct filters as positional
     /// tuples — at runtime they're delivered as keccak256 topic hashes anyway.
+    /// An anonymous event is marked `anonymous: true`, which makes `where`
+    /// required, and its first indexed param — its topic0 — is required in
+    /// every filter.
     fn generate_event_where_ts(event: &system_config::Event) -> String {
+        let anonymous = event.sighash.is_none();
         let params_ts = match &event.kind {
             system_config::EventKind::Params(params) => {
                 let indexed_fields: Vec<String> = params
                     .iter()
                     .filter(|p| p.indexed)
-                    .map(|p| {
+                    .enumerate()
+                    .map(|(position, p)| {
                         let ts_type = Self::to_envio_dts_type(
                             &crate::config_parsing::event_parsing::abi_to_rescript_type_positional(
                                 &p.into(),
                             )
                             .to_ts_type_string(),
                         );
-                        format!("readonly {}?: SingleOrMultiple<{}>", p.name, ts_type)
+                        let optional = if anonymous && position == 0 { "" } else { "?" };
+                        format!(
+                            "readonly {}{}: SingleOrMultiple<{}>",
+                            p.name, optional, ts_type
+                        )
                     })
                     .collect();
                 if indexed_fields.is_empty() {
@@ -1234,7 +1246,14 @@ impl ProjectTemplate {
             }
             _ => "{}".to_string(),
         };
-        format!("{{ readonly params: {} }}", params_ts)
+        if anonymous {
+            format!(
+                "{{ readonly anonymous: true; readonly params: {} }}",
+                params_ts
+            )
+        } else {
+            format!("{{ readonly params: {} }}", params_ts)
+        }
     }
 
     /// Build `src/Indexer.res` — the ReScript surface for the project's
@@ -1690,8 +1709,6 @@ module SingleOrMultiple: {{
   external castMultiple: t<'a> => array<'a> = "%identity"
   external castSingle: t<'a> => 'a = "%identity"
 
-  exception AmbiguousEmptyNestedArray
-
   let rec isMultiple = (t: t<'a>, ~nestedArrayDepth): bool =>
     if !Array.isArray(t) {{
       false
@@ -1700,9 +1717,8 @@ module SingleOrMultiple: {{
       if nestedArrayDepth == 0 {{
         true
       }} else if arr->Array.length == 0 {{
-        AmbiguousEmptyNestedArray->ErrorHandling.mkLogAndRaise(
-          ~msg="The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous,
-          please pass in a nested empty array if the intention is to provide an empty array as a value",
+        JsError.throwWithMessage(
+          "The given empty array could be interpreted as a flat array (value) or nested array. Since it's ambiguous, please pass in a nested empty array if the intention is to provide an empty array as a value",
         )
       }} else {{
         arr->Utils.Array.firstUnsafe->isMultiple(~nestedArrayDepth=nestedArrayDepth - 1)
@@ -1982,7 +1998,6 @@ type testIndexer = {{
         let evm_event_filters_body: String;
         let fuel_chains_body: String;
         let fuel_contracts_body: String;
-        let fuel_event_filters_body: String;
         let svm_chains_body: String;
         let svm_programs_body: String;
         let entities_body: String;
@@ -2159,8 +2174,7 @@ type testIndexer = {{
                 ));
             }
 
-            // Fuel contracts table (inlined). Fuel events have no indexed-param
-            // filters, so the eventFilters body is always `{}`.
+            // Fuel contracts table (inlined).
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
                 let fuel_fs = system_config::FieldSelection::fuel();
                 let aggregated = FieldSelection::new_without_defaults(FieldSelectionOptions {
@@ -2195,7 +2209,6 @@ type testIndexer = {{
             } else {
                 format!("{{\n{}\n      }}", fuel_contracts_entries.join("\n"))
             };
-            fuel_event_filters_body = "{}".to_string();
 
             // FuelTypes namespace at file scope (referenced by Fuel event
             // payloads). No prefix — doesn't collide with envio.
@@ -2407,12 +2420,14 @@ type testIndexer = {{
         }
 
         // Per-entity aliases shadow the lookup table for ergonomic imports
-        // (`import type { User } from "envio"`). Enums skip aliasing —
-        // their schema names often clash with TS reserved words or
-        // existing envio exports, so users go through `Enum<"Name">`.
+        // (`import type { User } from "envio"`). An entity named like an
+        // envio export (`Hex`, `Address`, …) gets none and is reached through
+        // `Entity<"Hex">` only. Enums skip aliasing altogether and go through
+        // `Enum<"Name">`.
         let entity_aliases: Vec<String> = entities
             .iter()
             .map(|e| e.name.capitalized.clone())
+            .filter(|name| !ENVIO_TYPE_EXPORTS.contains(&name.as_str()))
             .collect();
 
         Ok(ProjectTemplate {
@@ -2423,13 +2438,13 @@ type testIndexer = {{
                 &envio_dts_code,
                 &entity_aliases,
                 cfg.get_ecosystem(),
+                cfg.human_config.strict_hex_type(),
                 ConfigBodies {
                     evm_chains: &evm_chains_body,
                     evm_contracts: &evm_contracts_body,
                     evm_event_filters: &evm_event_filters_body,
                     fuel_chains: &fuel_chains_body,
                     fuel_contracts: &fuel_contracts_body,
-                    fuel_event_filters: &fuel_event_filters_body,
                     svm_chains: &svm_chains_body,
                     svm_programs: &svm_programs_body,
                     entities: &entities_body,
@@ -2473,6 +2488,7 @@ type testIndexer = {{
         file_level_types: &str,
         entity_aliases: &[String],
         ecosystem: Ecosystem,
+        strict_hex_type: bool,
         bodies: ConfigBodies<'_>,
     ) -> String {
         const I2: &str = "  ";
@@ -2490,10 +2506,9 @@ type testIndexer = {{
                 filters = bodies.evm_event_filters,
             ),
             Ecosystem::Fuel => format!(
-                "fuel: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                "fuel: {{ chains: {chains}; contracts: {contracts} }};",
                 chains = bodies.fuel_chains,
                 contracts = bodies.fuel_contracts,
-                filters = bodies.fuel_event_filters,
             ),
             Ecosystem::Svm => format!(
                 "svm: {{ chains: {chains}; programs: {programs} }};",
@@ -2502,12 +2517,14 @@ type testIndexer = {{
             ),
         };
         let config_block = [
-            ecosystem_field.as_str(),
-            &format!("entities: {};", bodies.entities),
-            &format!("perChainEntities: {};", bodies.per_chain_entities),
-            &format!("enums: {};", bodies.enums),
+            Some(ecosystem_field),
+            Some(format!("entities: {};", bodies.entities)),
+            Some(format!("perChainEntities: {};", bodies.per_chain_entities)),
+            Some(format!("enums: {};", bodies.enums)),
+            strict_hex_type.then(|| "strictHexType: true;".to_string()),
         ]
         .iter()
+        .flatten()
         .map(|line| format!("{I6}{line}"))
         .collect::<Vec<_>>()
         .join("\n");
@@ -2535,7 +2552,7 @@ type testIndexer = {{
             "/**\n * This file is generated by HyperIndex codegen from config.yaml and \
              schema.graphql.\n * Do not edit manually.\n * If your project's types look out of \
              date, run `envio codegen`\n * (or your package manager's `codegen` script, e.g. \
-             `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, JSON, SingleOrMultiple }} \
+             `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex }} \
              from \"envio\";\n\n{field_not_selected}{file_level_types}\n\n\
              declare module \"envio\" {{\n{I2}interface Global {{\n{I4}config: \
              {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
@@ -2552,7 +2569,6 @@ struct ConfigBodies<'a> {
     evm_event_filters: &'a str,
     fuel_chains: &'a str,
     fuel_contracts: &'a str,
-    fuel_event_filters: &'a str,
     svm_chains: &'a str,
     svm_programs: &'a str,
     entities: &'a str,
@@ -2856,7 +2872,8 @@ mod test {
     #[tokio::test]
     async fn chain_configs_parsed_case_2() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-        let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
+        // config2.yaml spells it with a wrong checksum, which parsing corrects.
+        let address2 = String::from("0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec");
 
         let network1 = NetworkTemplate {
             id: 1,
@@ -2984,8 +3001,10 @@ mod test {
             &system_config::Event {
                 name: "NewGravatar".to_string(),
                 kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
+                sighash: Some(
+                    "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                        .to_string(),
+                ),
                 event_signature: String::new(),
                 field_selection: None,
             },
@@ -3088,8 +3107,9 @@ mod test {
                     indexed: false,
                 },
             ]),
-            sighash: "0x0000000000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
+            sighash: Some(
+                "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            ),
             event_signature: String::new(),
             field_selection: None,
         }
@@ -3141,8 +3161,10 @@ mod test {
             &system_config::Event {
                 name: "NewGravatar".to_string(),
                 kind: system_config::EventKind::Params(vec![]),
-                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
-                    .to_string(),
+                sighash: Some(
+                    "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                        .to_string(),
+                ),
                 event_signature: String::new(),
                 field_selection: Some(FieldSelection {
                     block_fields: vec![],
@@ -3849,6 +3871,54 @@ type Swap {
         );
     }
 
+    /// Reads the top-level exports of `packages/envio/index.d.ts` in the two
+    /// forms the file uses: `export [declare] [abstract] <kind> Name` and
+    /// `export { default as Name } from "…"`. Indented `export`s belong to
+    /// namespaces.
+    #[test]
+    fn envio_type_exports_match_index_d_ts() {
+        const DECLARATION_KEYWORDS: &[&str] = &[
+            "declare",
+            "abstract",
+            "type",
+            "interface",
+            "const",
+            "function",
+            "class",
+            "namespace",
+            "enum",
+        ];
+        let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+
+        let exports: BTreeSet<&str> = include_str!("../../../envio/index.d.ts")
+            .lines()
+            .filter_map(|line| line.strip_prefix("export "))
+            .flat_map(|rest| -> Vec<&str> {
+                match rest.strip_prefix('{') {
+                    Some(braced) => braced
+                        .split('}')
+                        .next()
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter_map(|item| item.split_whitespace().last())
+                        .collect(),
+                    None => rest
+                        .split_whitespace()
+                        .find(|token| !DECLARATION_KEYWORDS.contains(token))
+                        .and_then(|token| token.split(|c| !is_ident_char(c)).next())
+                        .into_iter()
+                        .collect(),
+                }
+            })
+            .filter(|name| name.starts_with(|c: char| c.is_ascii_uppercase()))
+            .collect();
+
+        assert_eq!(
+            exports,
+            ENVIO_TYPE_EXPORTS.iter().copied().collect::<BTreeSet<_>>()
+        );
+    }
+
     /// Regression: only entities get per-name aliases; enum schema names
     /// often clash with TS reserved words or envio exports, so they're
     /// only available via `Enum<"Name">`.
@@ -3863,13 +3933,13 @@ type Swap {
             file_level_types,
             &entity_aliases,
             super::Ecosystem::Evm,
+            false,
             super::ConfigBodies {
                 evm_chains: "{}",
                 evm_contracts: "{}",
                 evm_event_filters: "{}",
                 fuel_chains: "{}",
                 fuel_contracts: "{}",
-                fuel_event_filters: "{}",
                 svm_chains: "{}",
                 svm_programs: "{}",
                 entities: "Entities",
@@ -3885,6 +3955,42 @@ type Swap {
             ),
             (true, false),
             "Got:\n{out}",
+        );
+    }
+
+    #[test]
+    fn global_config_declares_strict_hex_type_only_when_opted_in() {
+        let strict_hex_type_lines = |yaml: &str| -> Vec<String> {
+            let config =
+                SystemConfig::parse_yaml(yaml, None, &HashMap::new(), &HashMap::new(), false)
+                    .unwrap();
+            super::ProjectTemplate::from_config(&config)
+                .unwrap()
+                .envio_types_dts
+                .lines()
+                .filter(|line| line.contains("strictHexType"))
+                .map(|line| line.trim().to_string())
+                .collect()
+        };
+        let evm = |extra: &str| format!("name: t\n{extra}chains:\n  - id: 1\n    start_block: 0\n");
+        let fuel = |extra: &str| {
+            format!("name: t\necosystem: fuel\n{extra}chains:\n  - id: 0\n    start_block: 0\n")
+        };
+        assert_eq!(
+            [
+                strict_hex_type_lines(&evm("")),
+                strict_hex_type_lines(&evm("strict_hex_type: false\n")),
+                strict_hex_type_lines(&evm("strict_hex_type: true\n")),
+                strict_hex_type_lines(&fuel("")),
+                strict_hex_type_lines(&fuel("strict_hex_type: true\n")),
+            ],
+            [
+                vec![],
+                vec![],
+                vec!["strictHexType: true;".to_string()],
+                vec![],
+                vec!["strictHexType: true;".to_string()],
+            ],
         );
     }
 

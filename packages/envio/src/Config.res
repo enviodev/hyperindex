@@ -257,7 +257,8 @@ let svmAbiSchema = S.schema(s =>
 let contractEventItemSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
-    "sighash": s.matches(S.string),
+    // Absent for an anonymous EVM event.
+    "sighash": s.matches(S.option(S.string)),
     "params": s.matches(S.option(S.array(EventConfigBuilder.paramMetaSchema))),
     "kind": s.matches(S.option(S.string)),
     "blockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
@@ -733,11 +734,10 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     )
   }
 
-  let logger = Logging.getLogger()
   let ecosystem = switch ecosystemName {
-  | Ecosystem.Evm => Evm.make(~logger)
-  | Ecosystem.Fuel => Fuel.make(~logger)
-  | Ecosystem.Svm => Svm.make(~logger)
+  | Ecosystem.Evm => Evm.make()
+  | Ecosystem.Fuel => Fuel.make()
+  | Ecosystem.Svm => Svm.make()
   }
 
   // SVM has no raw-events representation (`Svm.toRawEvent` throws), so reject
@@ -786,7 +786,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 
   let contractDataByName: dict<{
     "abi": EvmTypes.Abi.t,
-    "eventSignatures": array<string>,
     "events": option<array<_>>,
     "svmAbi": option<{
       "definedTypes": JSON.t,
@@ -800,10 +799,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ->Array.forEach(((contractName, contractConfig)) => {
       let capitalizedName = contractName->Utils.String.capitalize
       let abi = contractConfig["abi"]->(Utils.magic: JSON.t => EvmTypes.Abi.t)
-      let eventSignatures = switch contractConfig["events"] {
-      | Some(events) => events->Array.map(eventItem => eventItem["sighash"])
-      | None => []
-      }
       let widened =
         contractConfig->(
           Utils.magic: _ => {"svmAbi": option<{"definedTypes": JSON.t, "source": string}>}
@@ -812,7 +807,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         capitalizedName,
         {
           "abi": abi,
-          "eventSignatures": eventSignatures,
           "events": contractConfig["events"],
           "svmAbi": widened["svmAbi"],
         },
@@ -853,7 +847,13 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               ~contractName,
               ~eventName,
               ~kind=fuelKind,
-              ~sighash,
+              ~sighash=switch sighash {
+              | Some(sighash) => sighash
+              | None =>
+                JsError.throwWithMessage(
+                  `Fuel event ${contractName}.${eventName} is missing "sighash" in internal config`,
+                )
+              },
               ~rawAbi=abi->(Utils.magic: EvmTypes.Abi.t => JSON.t),
             ) :> Internal.eventConfig)
           | None =>
@@ -915,19 +915,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     }
   }
 
-  // Parse address based on ecosystem and address format
-  let parseAddress = addressString => {
-    switch ecosystemName {
-    | Ecosystem.Evm =>
-      if lowercaseAddresses {
-        addressString->Address.Evm.fromStringLowercaseOrThrow
-      } else {
-        addressString->Address.Evm.fromStringOrThrow
-      }
-    | Ecosystem.Fuel | Ecosystem.Svm => addressString->Address.unsafeFromString
-    }
-  }
-
   // Helper to convert parsed RPC config to evmRpcConfig
   let parseRpcSourceFor = (sourceFor: rpcSourceFor): Source.sourceFor => {
     switch sourceFor {
@@ -964,7 +951,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             chainContract
             ->Option.flatMap(cc => cc["addresses"])
             ->Option.getOr([])
-          let addresses = rawAddresses->Array.map(parseAddress)
+          let addresses = rawAddresses->Array.map(Address.unsafeFromString)
           let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
           // Build event definitions from JSON (field selections resolved
@@ -1191,6 +1178,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 }
 
+let normalizeEvmAddress = (config: t, address: Address.t) =>
+  Core.getAddon().normalizeEvmAddress(
+    ~address=address->Address.toString,
+    ~shouldChecksum=!config.lowercaseAddresses,
+  )->Null.toOption
+
 // Canonicalize a user-provided address to the configured casing so it matches
 // addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
 // already canonical; only user-land input (simulate srcAddress, contractRegister
@@ -1198,10 +1191,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
   switch config.ecosystem.name {
   | Ecosystem.Evm =>
-    if config.lowercaseAddresses {
-      address->Address.Evm.fromAddressLowercaseOrThrow
-    } else {
-      address->Address.Evm.fromAddressOrThrow
+    switch config->normalizeEvmAddress(address) {
+    | Some(normalized) => normalized
+    | None =>
+      JsError.throwWithMessage(
+        `Address "${address->Address.toString}" is invalid. Expected a 20-byte hex string starting with 0x.`,
+      )
     }
   // TODO: Ideally we should do the same for other ecosystems
   | Ecosystem.Fuel | Ecosystem.Svm => address
@@ -1210,10 +1205,9 @@ let normalizeUserAddress = (config: t, address: Address.t): Address.t =>
 // Relaxed counterpart to normalizeUserAddress, used only for simulate srcAddress.
 // Tests commonly use short placeholder strings like "0xfoo" as a stand-in
 // identity (e.g. for a wildcard event whose srcAddress doesn't need to resolve
-// to any real contract), so only the "0x" prefix is enforced here. Under
-// address_format: checksum, a real address is checksummed even if the input
-// casing doesn't match (getAddress doesn't require the input to already be
-// checksummed) — a placeholder that isn't valid hex falls back unchanged.
+// to any real contract), so only the "0x" prefix is enforced here. A real
+// address is normalized whatever its input casing; a placeholder that isn't
+// valid hex only follows the configured casing.
 let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
   switch config.ecosystem.name {
   | Ecosystem.Evm =>
@@ -1223,44 +1217,13 @@ let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
         `simulate: srcAddress "${str}" is invalid. Expected a string starting with "0x".`,
       )
     }
-    if config.lowercaseAddresses {
-      address->Address.Evm.fromAddressLowercaseOrThrow
-    } else {
-      try {
-        address->Address.Evm.fromAddressOrThrow
-      } catch {
-      | _ => address
-      }
+    switch config->normalizeEvmAddress(address) {
+    | Some(normalized) => normalized
+    | None if config.lowercaseAddresses => str->String.toLowerCase->Address.unsafeFromString
+    | None => address
     }
   | Ecosystem.Fuel | Ecosystem.Svm => address
   }
-
-// Look up an event config by (contract, event) name. When `chainId` is given,
-// returns that chain's per-chain event config (matters for where-callback
-// probe detection, which runs with the chain's real id). Without `chainId`,
-// falls back to the first chain that declares this event.
-let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<ChainId.t>=?) => {
-  let chains = switch chainId {
-  | Some(chainId) =>
-    switch config.chainMap->ChainMap.get(chainId) {
-    | chainConfig => [chainConfig]
-    | exception _ =>
-      JsError.throwWithMessage(
-        `Chain ${chainId->ChainId.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
-      )
-    }
-  | None => config.chainMap->ChainMap.values
-  }
-  chains->Array.reduce(None, (acc, chain) => {
-    switch acc {
-    | Some(_) => acc
-    | None =>
-      chain.contracts
-      ->Array.find(c => c.name == contractName)
-      ->Option.flatMap(contract => contract.events->Array.find(e => e.name == eventName))
-    }
-  })
-}
 
 // A CLI command payload already contains the resolved JSON; priming lets
 // downstream callers skip the NAPI `getConfigJson` round-trip. Calling

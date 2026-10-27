@@ -132,6 +132,24 @@ jobs:
     timeout-minutes: 15
     needs: authorize
 
+    # For the Postgres client's live tests: what it does when a connection
+    # dies, a statement fails mid-transaction or the server cancels one, which
+    # no indexer run can bring about.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres -d envio-dev"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
     steps:
       - uses: actions/checkout@v6
         with:
@@ -153,6 +171,11 @@ jobs:
 
       - name: Cargo Test
         run: cargo test
+
+      # Serially: some of these terminate a backend by pid, and a pid the
+      # server has just freed is one it can hand to another test's connection.
+      - name: Live Postgres client tests
+        run: cargo test --lib postgres::live -- --ignored --test-threads=1
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
@@ -252,6 +275,17 @@ jobs:
         env:
           ENVIO_TEST_STORAGE: ${{ matrix.storage }}
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+
+      # A failing test names its logs file in its failure message.
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: envio-tests-logs-${{ matrix.storage }}
+          path: packages/envio-tests/.test-logs
+          # The folder's own name starts with a dot.
+          include-hidden-files: true
+          if-no-files-found: ignore
 
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1

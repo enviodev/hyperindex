@@ -35,23 +35,27 @@ describe("Polling-stall loophole", () => {
         pollingInterval: 1,
       },
     ],
-    ~reducedPollingInterval=10,
+    ~sourceTiming={reducedPollingInterval: 10},
     async (~t, ~indexer as _, ~source) => {
       let source = source(1337)
 
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Handler that never resolves keeps the batch in-progress,
       // so isReady stays false while the buffer sits at the head.
       let blockingHandler = async _ => {
         let _ = await Promise.make((_, _) => ())
       }
-      source.resolveGetItemsOrThrow(
-        [{blockNumber: 150, logIndex: 0, handler: blockingHandler}],
-        ~latestFetchedBlockNumber=300,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [{blockNumber: 150, logIndex: 0, handler: blockingHandler}],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
 
       await Utils.delay(5)
 

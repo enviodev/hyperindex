@@ -2,16 +2,6 @@ open Vitest
 
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
-let defaultQuery: FetchState.query = {
-  partitionId: "0",
-  fromBlock: 0,
-  toBlock: None,
-  isChunk: false,
-  itemsTarget: Some(0),
-  itemsEst: 0,
-  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addresses: TestAddresses.setOf([]),
-}
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
   let config = TestConfig.default
@@ -42,6 +32,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let addresses = []
     let addressStore = TestAddresses.makeStore(~onEventRegistrations)
     let fetcherStateInit: FetchState.t = FetchState.make(
+      ~onNotice=ignore,
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
@@ -125,23 +116,28 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ~chainConfig,
       ~fetchState=fetchState.contents,
       ~addressStore,
-      ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(
+        ~logger=Logger.makeInMemory(),
+        ~sources=[mockSource.source],
+        ~isRealtime=false,
+      ),
       // This is quite a hack - but it works!
       ~maxReorgDepth=200,
       ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.getLogger(),
+      ~logger=Logger.makeInMemory(),
     )
 
     chainStates->ChainId.Dict.set(id, mockChainState)
   })
 
   let state = IndexerState.make(
+    ~logger=Logger.makeInMemory(),
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
     ~isRealtime=false,
-    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+    ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
   )
 
   (state, numberOfMockEventsCreated.contents, allEvents)
@@ -291,6 +287,7 @@ chains:
           let addressStore = TestAddresses.makeStore(~onEventRegistrations)
           let fetchState = ref(
             FetchState.make(
+              ~onNotice=ignore,
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
               ~onEventRegistrations,
@@ -350,21 +347,26 @@ chains:
                 ~chainConfig,
                 ~fetchState,
                 ~addressStore,
-                ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+                ~sourceManager=SourceManager.make(
+                  ~logger=Logger.makeInMemory(),
+                  ~sources=[mockSource.source],
+                  ~isRealtime=false,
+                ),
                 ~maxReorgDepth=200,
                 ~shouldRollbackOnReorg=false,
                 ~committedProgressBlockNumber=-1,
-                ~logger=Logging.getLogger(),
+                ~logger=Logger.makeInMemory(),
               )
               chainStates->ChainId.Dict.set(chainConfig.id, chainState)
             },
           )
           IndexerState.make(
+            ~logger=Logger.makeInMemory(),
             ~config,
             ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,
             ~isRealtime=false,
-            ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+            ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
           )
         }
 

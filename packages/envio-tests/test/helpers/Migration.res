@@ -26,7 +26,7 @@ let storedChainIds = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
   let rows: array<{
     "id": ChainId.t,
-  }> = await sql->Postgres.unsafe(`SELECT "id" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
+  }> = await sql->Sql.queryForTests(`SELECT "id" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
   rows->Array.map(row => row["id"]->ChainId.normalizeOrThrow->ChainId.toInt)
 }
 
@@ -45,11 +45,15 @@ let it = (
     ~sources=deployedChains->Array.map((chain): Scenario.sourceMock => {chain: chain}),
     ~supervised=false,
     async (~t, ~indexer, ~source) => {
-      deployedChains->Array.forEach(chain => {
+      let _ = await deployedChains
+      ->Array.map(async chain => {
         let source = source(chain)
         source.resolveGetHeightOrThrow(100)
-        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+        await source.expectItemsQueries([
+          {reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+        ])
       })
+      ->Promise.all
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
 

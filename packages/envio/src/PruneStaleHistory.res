@@ -126,12 +126,7 @@ let pruneEntity = async (
   // Recorded for failures too, so a failing prune retries on the same
   // interval instead of on every write.
   state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
-  switch await persistence.storage.pruneStaleEntityHistory(
-    ~entityName=entityConfig.name,
-    ~entityIndex=entityConfig.index,
-    ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
-    ~safeCheckpoints,
-  ) {
+  switch await persistence.storage.pruneStaleEntityHistory(~entityConfig, ~safeCheckpoints) {
   | () =>
     state->IndexerState.recordHistoryPrune(
       ~timeSeconds=Performance.secondsSince(timeRef),
@@ -139,9 +134,16 @@ let pruneEntity = async (
     )
   | exception exn =>
     // Pruning is cleanup; a failure must not fail the write loop.
-    Logging.createChild(
-      ~params={"entityName": entityConfig.name, "safeCheckpoints": safeCheckpoints},
-    )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale entity history`)
+    state
+    ->IndexerState.logger
+    ->Logger.error(
+      `Failed to prune stale entity history`,
+      ~params={
+        "entityName": entityConfig.name,
+        "safeCheckpoints": safeCheckpoints,
+        "err": exn->Utils.prettifyExn,
+      },
+    )
   }
 }
 
@@ -154,9 +156,11 @@ let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
   switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpoints) {
   | () => ()
   | exception exn =>
-    Logging.createChild(~params={"safeCheckpoints": safeCheckpoints})->Logging.childErrorWithExn(
-      exn->Utils.prettifyExn,
+    state
+    ->IndexerState.logger
+    ->Logger.error(
       `Failed to prune stale checkpoints`,
+      ~params={"safeCheckpoints": safeCheckpoints, "err": exn->Utils.prettifyExn},
     )
   }
 }

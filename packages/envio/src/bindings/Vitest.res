@@ -187,6 +187,9 @@ module Vi = {
   external advanceTimersByTimeAsync: int => promise<unit> = "advanceTimersByTimeAsync"
 
   @module("vitest") @scope("vi")
+  external advanceTimersToNextTimerAsync: unit => promise<unit> = "advanceTimersToNextTimerAsync"
+
+  @module("vitest") @scope("vi")
   external getTimerCount: unit => int = "getTimerCount"
 
   @module("vitest") @scope("vi")

@@ -39,7 +39,8 @@ chains:
         address: "0x0000000000000000000000000000000000000004"
 `
 
-let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
+let check = handlers =>
+  InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
 
 // For the cases that must NOT type-check: returns the type errors instead of
 // throwing them.
@@ -483,10 +484,13 @@ if (0) {
   it("offers the fields knobs and field names to an editor", t => {
     let completions = handlers =>
       InternalTestIndexer.completionsAt(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)
-    let at = source => completions(`
+    let at = source =>
+      completions(
+        `
 import { indexer } from "envio";
 indexer.onEvent(${source}, async () => {});
-`)
+`,
+      )
     t.expect((
       at(`{ contract: "Token", event: "Transfer", fields: { /*HERE*/ } }`),
       at(`{ contract: "Token", event: "Transfer", fields: { block: ["/*HERE*/"] } }`),
@@ -933,6 +937,280 @@ indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async 
   expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
   expectType<TypeEqual<typeof event.block.number, number>>(true);
 });
+`)
+  )
+})
+
+describe("Hex type", () => {
+  let checkHex = (~strictHexType, handlers) =>
+    InternalTestIndexer.fromUserApi(
+      ~schema=`
+type Blob {
+  id: ID!
+  data: Bytes!
+}
+`,
+      ~configYaml=`
+name: hex-types
+${strictHexType ? "strict_hex_type: true" : ""}
+contracts:
+  - name: Registry
+    events:
+      - event: Stored(bytes32 indexed key, bytes data)
+        field_selection:
+          block_fields:
+            - parentHash
+            - uncles
+          transaction_fields:
+            - hash
+            - input
+            - r
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Registry
+        address: "0x0000000000000000000000000000000000000001"
+`,
+      ~handlers=`
+import { createTestIndexer, indexer } from "envio";
+import type {
+  Blob,
+  EvmAllBlockFields,
+  EvmAllTransactionFields,
+  EvmEvent,
+  Hex,
+  StrictHex,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type Stored = EvmEvent<"Registry", "Stored">;
+type Expected = ${strictHexType ? "StrictHex" : "string"};
+expectType<
+  TypeEqual<
+    {
+      strictHex: StrictHex;
+      hex: Hex;
+      key: Stored["params"]["key"];
+      data: Stored["params"]["data"];
+      blockHash: Stored["block"]["hash"];
+      parentHash: Stored["block"]["parentHash"];
+      uncles: Stored["block"]["uncles"];
+      transactionHash: Stored["transaction"]["hash"];
+      input: Stored["transaction"]["input"];
+      r: Stored["transaction"]["r"];
+      allBlockHash: EvmAllBlockFields["hash"];
+      allTransactionHash: EvmAllTransactionFields["hash"];
+      blobData: Blob["data"];
+    },
+    {
+      strictHex: \`0x\${string}\`;
+      hex: Expected;
+      key: Expected;
+      data: Expected;
+      blockHash: Expected;
+      parentHash: Expected;
+      uncles: readonly Expected[] | undefined;
+      transactionHash: Expected;
+      input: Expected;
+      r: Expected | undefined;
+      allBlockHash: Expected;
+      allTransactionHash: Expected;
+      blobData: Expected;
+    }
+  >
+>(true);
+
+const KEY: StrictHex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+const plain: string = KEY;
+${handlers}
+`,
+    )->ignore
+
+  it("keeps hex values as plain string by default", _ =>
+    checkHex(
+      ~strictHexType=false,
+      `
+if (0) {
+  indexer.onEvent(
+    { contract: "Registry", event: "Stored", where: { params: { key: plain } } },
+    async ({ context }) => {
+      context.Blob.set({ id: "1", data: plain });
+    },
+  );
+
+  void createTestIndexer().process({
+    chains: {
+      1: {
+        simulate: [
+          { contract: "Registry", event: "Stored", params: { key: plain, data: plain } },
+        ],
+      },
+    },
+  });
+}
+`,
+    )
+  )
+
+  it("types hex values as Hex and rejects a plain string with strict_hex_type", _ =>
+    checkHex(
+      ~strictHexType=true,
+      `
+if (0) {
+  indexer.onEvent(
+    { contract: "Registry", event: "Stored", where: { params: { key: [KEY] } } },
+    async ({ event, context }) => {
+      context.Blob.set({ id: "1", data: event.params.data });
+      // @ts-expect-error - a plain string isn't Hex
+      context.Blob.set({ id: "2", data: plain });
+    },
+  );
+  indexer.onEvent(
+    {
+      contract: "Registry",
+      event: "Stored",
+      // @ts-expect-error - a plain string isn't a bytes32 filter value
+      where: { params: { key: plain } },
+    },
+    async () => {},
+  );
+
+  const testIndexer = createTestIndexer();
+  void testIndexer.process({
+    chains: {
+      1: {
+        simulate: [
+          { contract: "Registry", event: "Stored", params: { key: KEY, data: "0x01" } },
+          // @ts-expect-error - a plain string isn't a bytes param
+          { contract: "Registry", event: "Stored", params: { data: plain } },
+        ],
+      },
+    },
+  });
+}
+`,
+    )
+  )
+})
+
+// An anonymous event's logs are selected by its first indexed param, so every
+// registration has to name values for it.
+describe("Anonymous event types", () => {
+  let checkAnonymous = handlers =>
+    InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: anonymous-types
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed sig, address indexed guy, bytes32 indexed foo, bytes32 indexed bar, uint256 wad, bytes fax) anonymous
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Vat
+        address: "0x0000000000000000000000000000000000000001"
+`,
+      ~handlers=`
+import { indexer } from "envio";
+import type { Address, EvmEvent, EvmOnEventOptions, Hex, SingleOrMultiple } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+const SIG = "0x29ae8114";
+const GUY: Address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+type LogNote = EvmEvent<"Vat", "LogNote">;
+type LogNoteParams = {
+  readonly sig: SingleOrMultiple<Hex>;
+  readonly guy?: SingleOrMultiple<Address>;
+  readonly foo?: SingleOrMultiple<Hex>;
+  readonly bar?: SingleOrMultiple<Hex>;
+};
+${handlers}
+`,
+    )->ignore
+
+  it("accepts filters that name the first indexed param", _ =>
+    checkAnonymous(`
+if (0) {
+  indexer.onEvent(
+    { contract: "Vat", event: "LogNote", where: { params: { sig: SIG } } },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.params.sig, Hex>>(true);
+    },
+  );
+  indexer.onEvent(
+    { contract: "Vat", event: "LogNote", where: { params: [{ sig: SIG }, { sig: [SIG], guy: GUY }] } },
+    async () => {},
+  );
+  indexer.onEvent(
+    {
+      contract: "Vat",
+      event: "LogNote",
+      where: ({ chain }) => (chain.id === 1 ? { params: { sig: SIG } } : false),
+    },
+    async () => {},
+  );
+  indexer.onEvent(
+    { contract: "Vat", event: "LogNote", where: () => ({ params: [{ sig: SIG }, { sig: SIG }] }) },
+    async () => {},
+  );
+  indexer.contractRegister(
+    { contract: "Vat", event: "LogNote", where: { params: { sig: SIG }, block: { number: { _gte: 1 } } } },
+    async () => {},
+  );
+}
+
+const _options: EvmOnEventOptions<LogNote, LogNoteParams> = {
+  contract: "Vat",
+  event: "LogNote",
+  where: { params: { sig: SIG } },
+};
+indexer.onEvent(_options, async () => {});
+`)
+  )
+
+  it("rejects filters that don't name the first indexed param", _ =>
+    checkAnonymous(`
+if (0) {
+  // @ts-expect-error - an anonymous event needs a where
+  indexer.onEvent({ contract: "Vat", event: "LogNote" }, async () => {});
+  // @ts-expect-error - an anonymous event needs a where
+  indexer.contractRegister({ contract: "Vat", event: "LogNote" }, async () => {});
+  indexer.onEvent(
+    // @ts-expect-error - the filter must name params
+    { contract: "Vat", event: "LogNote", where: {} },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - params must name sig
+    { contract: "Vat", event: "LogNote", where: { params: {} } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - params must name sig
+    { contract: "Vat", event: "LogNote", where: { params: { guy: GUY } } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - the filter must name params
+    { contract: "Vat", event: "LogNote", where: { block: { number: { _gte: 1 } } } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - every filter in the list must name sig
+    { contract: "Vat", event: "LogNote", where: { params: [{ sig: SIG }, { guy: GUY }] } },
+    async () => {},
+  );
+  indexer.onEvent(
+    // @ts-expect-error - keeping every log would fetch every anonymous log
+    { contract: "Vat", event: "LogNote", where: () => true },
+    async () => {},
+  );
+}
+
+// @ts-expect-error - an anonymous event needs a where
+const _options: EvmOnEventOptions<LogNote, LogNoteParams> = { contract: "Vat", event: "LogNote" };
 `)
   )
 })

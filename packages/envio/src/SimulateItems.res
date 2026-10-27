@@ -287,10 +287,7 @@ let liveRegistrationsFor = (
     ~config,
     ~chainId,
     ~eventConfig,
-  )->Array.filter(reg =>
-    (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
-      !HandlerRegister.isDroppedByWhere(~config, reg)
-  )
+  )->Array.filter(reg => !HandlerRegister.isDroppedByWhere(~config, reg))
 
 let parse = (
   ~simulateItems: array<JSON.t>,
@@ -595,18 +592,9 @@ let parse = (
       // does at startup (not stubs), so the address filter and `where` behave
       // identically to real indexing — the dead-input tracker relies on the
       // source's address gate actually dropping unrouted items. Drop registrations
-      // whose `where` excludes this chain (they wouldn't be fetched live), and
-      // ignore the bare handler-less fallback so a missing handler surfaces below
-      // instead of silently running nothing.
-      let liveRegistrations =
-        HandlerRegister.getSimulateOnEventRegistrations(
-          ~config,
-          ~chainId,
-          ~eventConfig,
-        )->Array.filter(reg =>
-          (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
-            !HandlerRegister.isDroppedByWhere(~config, reg)
-        )
+      // whose `where` excludes this chain (they wouldn't be fetched live), so a
+      // missing handler surfaces below instead of silently running nothing.
+      let liveRegistrations = liveRegistrationsFor(~config, ~chainId, ~eventConfig)
       if liveRegistrations->Utils.Array.isEmpty {
         JsError.throwWithMessage(
           `simulate: no handler runs for event "${eventName}" on contract "${contractName}"${switch config.chainMap

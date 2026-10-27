@@ -22,7 +22,7 @@ let kindOfOrdinal = ordinal =>
 
 // The replacer closes over nothing but the column's name, so it is built once
 // with the column rather than once per column per batch.
-type column = {name: string, kind: kind, isNullable: bool, replacer: JSON.replacer}
+type column = {name: string, kind: kind, isNullable: bool, replacer?: JSON.replacer}
 
 type begun = {handle: int, buffers: array<ArrayBuffer.t>}
 
@@ -66,7 +66,7 @@ type storage =
 type builder = {
   name: string,
   isNullable: bool,
-  replacer: JSON.replacer,
+  replacer: option<JSON.replacer>,
   index: int,
   storage: storage,
   nulls: Uint8Array.t,
@@ -95,7 +95,7 @@ let begin = (arena, ~table, ~rows, ~columns: array<column>) => {
     let ends = Uint32Array.fromBuffer(take())
     {data, ends, slot, cursor: 0}
   }
-  let builders = columns->Array.mapWithIndex(({name, kind, isNullable, replacer}, index) => {
+  let builders = columns->Array.mapWithIndex(({name, kind, isNullable, ?replacer}, index) => {
     let storage = switch kind {
     | F64 => Floats(Float64Array.fromBuffer(take()))
     | U64 => Unsigned(BigUint64Array.fromBuffer(take()))
@@ -142,18 +142,21 @@ let finiteOrThrow = (number: float, ~column) =>
     )
   }
 
-let toText = (value: unknown, ~replacer) =>
+let toText = (value: unknown, ~replacer=?) =>
   switch value->typeof {
   | #string => value->asString
   | #bigint => value->stringOf
-  | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer)
+  | _ =>
+    value
+    ->(Utils.magic: unknown => JSON.t)
+    ->JSON.stringify(~replacer?)
+    ->Utils.replaceLoneSurrogateEscapes
   }
 
 // Copies `text` in as one byte per character, or returns -1 at the first
-// character that needs more than one. An id, a hash, a decimal and an enum
-// variant are all ASCII, which is most of what a text column ever holds, and
-// this spares them the `subarray` that `encodeInto` needs to be given an
-// offset — one short-lived object per cell is what the batch pays otherwise.
+// character that needs more than one. Spares a short value the `subarray` that
+// `encodeInto` needs to be given an offset — one short-lived object per cell is
+// what the batch pays otherwise.
 %%private(
   let writeAscii: (Uint8Array.t, string, int) => int = %raw(`(data, text, offset) => {
     const length = text.length;
@@ -168,6 +171,30 @@ let toText = (value: unknown, ~replacer) =>
   }`)
 )
 
+// Where `encodeInto` overtakes the loop above. The loop costs a few nanoseconds
+// a character while `encodeInto` copies in bulk, so the `subarray` it saves is
+// a fixed price a long value earns back several times over. Where the two meet
+// depends on how V8 holds the string — around 38 characters for a flat one, low
+// thirties for one built by concatenation — and this sits under both, so no
+// length is made slower. An enum variant stays on the loop; a hex address, a
+// transaction hash and most ids take the bulk copy.
+%%private(let asciiCopyLimit = 32)
+
+%%private(
+  let writeEncoded = (stage, builder, variable, ~units, text) => {
+    let {read, written} =
+      encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
+    if read < units {
+      stage->ensure(builder, variable, ~needed=variable.cursor + units * 3)
+      let {written} =
+        encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
+      written
+    } else {
+      written
+    }
+  }
+)
+
 %%private(
   let writeText = (stage, builder, variable, ~row, text) => {
     // One byte per UTF-16 unit is what ASCII needs, so the room for the fast
@@ -176,19 +203,13 @@ let toText = (value: unknown, ~replacer) =>
     // costs across its two.
     let units = text->String.length
     stage->ensure(builder, variable, ~needed=variable.cursor + units)
-    let written = switch variable.data->writeAscii(text, variable.cursor) {
-    | -1 =>
-      let {read, written} =
-        encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
-      if read < units {
-        stage->ensure(builder, variable, ~needed=variable.cursor + units * 3)
-        let {written} =
-          encoder->encodeInto(text, variable.data->TypedArray.subarray(~start=variable.cursor))
-        written
-      } else {
-        written
+    let written = if units > asciiCopyLimit {
+      writeEncoded(stage, builder, variable, ~units, text)
+    } else {
+      switch variable.data->writeAscii(text, variable.cursor) {
+      | -1 => writeEncoded(stage, builder, variable, ~units, text)
+      | ascii => ascii
       }
-    | ascii => ascii
     }
     variable.cursor = variable.cursor + written
     variable.ends->TypedArray.set(row, variable.cursor)
@@ -248,7 +269,7 @@ let toText = (value: unknown, ~replacer) =>
         value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
       )
     | Text(variable) =>
-      stage->writeText(builder, variable, ~row, value->toText(~replacer=builder.replacer))
+      stage->writeText(builder, variable, ~row, value->toText(~replacer=?builder.replacer))
     | Bytes(variable) =>
       stage->writeBytes(builder, variable, ~row, value->(Utils.magic: unknown => Uint8Array.t))
     }

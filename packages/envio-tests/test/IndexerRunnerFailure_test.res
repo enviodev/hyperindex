@@ -32,22 +32,28 @@ describe("An indexer failing under a test that passes no onError", () => {
       async (~indexer as _, ~source) => {
         let source = source(1337)
         source.resolveGetHeightOrThrow(100)
-        source.resolveGetItemsOrThrow(
-          [
-            {
-              blockNumber: 50,
-              logIndex: 0,
-              handler: async _ => JsError.throwWithMessage("handler blew up"),
-            },
-          ],
-          ~latestFetchedBlockNumber=100,
-          ~knownHeight=100,
-        )
+        await source.expectItemsQueries([
+          {
+            fromBlock: 1,
+            toBlock: Unbounded,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 50,
+                  logIndex: 0,
+                  handler: async _ => JsError.throwWithMessage("handler blew up"),
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+              knownHeight: 100,
+            }),
+          },
+        ])
         await Promise.make((_, _) => ())
       },
     ) {
     | () => None
-    | exception JsExn(e) => e->JsExn.message
+    | exception JsExn(e) => e->JsExn.message->Option.map(IndexerRunner.stripLogsLink)
     }
 
     t.expect(failure).toEqual(Some("handler blew up"))
@@ -67,17 +73,23 @@ describe("An indexer failing under a test that passes no onError", () => {
       async (~indexer, ~source) => {
         let source = source(1337)
         source.resolveGetHeightOrThrow(100)
-        source.resolveGetItemsOrThrow(
-          [
-            {
-              blockNumber: 50,
-              logIndex: 0,
-              handler: async _ => JsError.throwWithMessage("handler blew up"),
-            },
-          ],
-          ~latestFetchedBlockNumber=100,
-          ~knownHeight=100,
-        )
+        await source.expectItemsQueries([
+          {
+            fromBlock: 1,
+            toBlock: Unbounded,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 50,
+                  logIndex: 0,
+                  handler: async _ => JsError.throwWithMessage("handler blew up"),
+                },
+              ],
+              latestFetchedBlockNumber: 100,
+              knownHeight: 100,
+            }),
+          },
+        ])
         await bodyResumed
         let outcome = switch await indexer.restart() {
         | _ => None
@@ -87,13 +99,33 @@ describe("An indexer failing under a test that passes no onError", () => {
       },
     ) {
     | () => None
-    | exception JsExn(e) => e->JsExn.message
+    | exception JsExn(e) => e->JsExn.message->Option.map(IndexerRunner.stripLogsLink)
     }
     resumeBody.contents->Option.forEach(resume => resume())
 
     t.expect((failure, await restartOutcome)).toEqual((
       Some("handler blew up"),
       Some("Can't start an indexer once the run is tearing down."),
+    ))
+  })
+
+  // Nothing can carry the logs link on a thrown string or a frozen error; the
+  // failure must still be the one thrown, not a TypeError from appending it.
+  Async.it("Rethrows a failure it can't add the logs link to", async t => {
+    let frozen: JsError.t = %raw(`Object.freeze(new Error("frozen"))`)
+    let outcome = async thrown =>
+      switch await scenario->Scenario.run(
+        ~sources=[{chain: 1337}],
+        async (~indexer as _, ~source as _) => throw(thrown),
+      ) {
+      | () => None
+      | exception JsExn(error) => Some(error->(Utils.magic: JsExn.t => unknown))
+      }
+    let thrownString = await outcome(%raw(`"plain string"`))
+    let thrownFrozen = await outcome(frozen->(Utils.magic: JsError.t => exn))
+    t.expect((thrownString, thrownFrozen)).toEqual((
+      Some("plain string"->(Utils.magic: string => unknown)),
+      Some(frozen->(Utils.magic: JsError.t => unknown)),
     ))
   })
 })

@@ -31,9 +31,7 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~unsupported=[
-    {backend: #postgres, reason: "asserts against a ClickHouse server"},
-  ],
+  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
 type counter = {id: string, count: bigint}
@@ -57,10 +55,16 @@ describe("ClickHouse sink resuming past its own rows", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(10)
-      source.resolveGetItemsOrThrow(
-        [{blockNumber: 5, logIndex: 0, handler: setCounter(~count=42n)}],
-        ~latestFetchedBlockNumber=10,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [{blockNumber: 5, logIndex: 0, handler: setCounter(~count=42n)}],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let database = TestClickHouse.currentDatabase()

@@ -11,7 +11,12 @@ let yieldTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => res
 // re-kick it. `state.isProcessing` guarantees one instance. The loop
 // decides whether to keep going by inspecting state after each batch, rather than
 // from a return value of processNextBatch.
-let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~scheduleRollback) => {
+let rec startProcessing = async (
+  state: IndexerState.t,
+  ~runtime,
+  ~scheduleFetch,
+  ~scheduleRollback,
+) => {
   if !(state->IndexerState.isProcessing) && !(state->IndexerState.isStopped) {
     state->IndexerState.beginProcessing
     // FIXME: Needed only for test determinism. The mocks resolve several fetch
@@ -33,9 +38,15 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
       !(state->IndexerState.isResolvingReorg)
     ) {
       let processedBatchesBefore = state->IndexerState.processedBatchesCount
-      switch await processNextBatch(state, ~scheduleFetch) {
+      switch await processNextBatch(state, ~runtime, ~scheduleFetch) {
       | exception exn =>
-        IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
+        IndexerState.errorExit(
+          state,
+          exn->ErrorHandling.make(
+            ~logger=state->IndexerState.logger,
+            ~msg=IndexerState.unexpectedErrorMsg,
+          ),
+        )
       | () => hasMoreWork := state->IndexerState.processedBatchesCount > processedBatchesBefore
       }
     }
@@ -62,7 +73,7 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
   }
 }
 
-and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
+and processNextBatch = async (state: IndexerState.t, ~runtime, ~scheduleFetch): unit => {
   // The reorg-threshold and queue updates below advance the chain states for the
   // next round, but the current batch is created and processed against the chain
   // states as they are now.
@@ -132,14 +143,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
     // An exception here propagates to startProcessing's catch, the single error
     // boundary for the loop. The Error case is not an exception, so it's handled
     // here to preserve the handler's user-facing message.
-    switch await EventProcessing.processEventBatch(
-      ~batch,
-      ~indexerState=state,
-      ~loadManager=state->IndexerState.loadManager,
-      ~persistence=state->IndexerState.persistence,
-      ~config=state->IndexerState.config,
-      ~chainStates=state->IndexerState.chainStates,
-    ) {
+    switch await EventProcessing.processEventBatch(~batch, ~runtime) {
     | Error(errHandler) => IndexerState.errorExit(state, errHandler)
     | Ok() =>
       state->IndexerState.recordProcessedBatch
@@ -202,6 +206,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
               Utils.Error.make(
                 "No events found between startBlock and chain head. Cannot auto-detect endBlock.",
               ),
+              ~logger=state->IndexerState.logger,
             ),
           )
         } else {

@@ -1,10 +1,6 @@
 open Vitest
 
-// Covers the per-chain immediate resolution in `HandlerRegister`: every
-// `onEvent` becomes its own registration (no composing, no duplicate error),
-// invalid `where`/onBlock options still throw at the user's registration call
-// site, and `preRegistered` callbacks replayed by `startRegistration` run
-// through the same code path.
+// Invalid `indexer.onBlock` options throw at the user's registration call site.
 //
 // This file must not import the handler fixtures — it drives the global
 // registry lifecycle itself, relying on vitest's per-file isolation.
@@ -15,7 +11,6 @@ contracts:
   - name: EventFiltersTest
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 amount)
-      - event: EmptyFiltersArray(address indexed from)
 chains:
   - id: 1337
     rpc:
@@ -35,69 +30,7 @@ chains:
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 `)
 
-let noopHandler = async _ => ()
-
-let eventOptions = (~where: JSON.t): option<Internal.eventOptions<JSON.t>> => Some({
-  wildcard: true,
-  where,
-})
-
-// Registered before `startRegistration` → lands in `preRegistered` and
-// replays inside `startRegistration`, resolving the `where` per chain there.
-HandlerRegister.setHandler(
-  ~contractName="EventFiltersTest",
-  ~eventName="Transfer",
-  noopHandler,
-  ~eventOptions=eventOptions(
-    ~where=%raw(`({chain: _chain}) => ({params: {from: "0x0000000000000000000000000000000000000000"}})`),
-  ),
-)
-HandlerRegister.startRegistration(~config)
-
-describe("HandlerRegister — every onEvent registers separately", () => {
-  it("a second handler with an equal resolution registers without composing or throwing", t => {
-    t.expect(
-      () =>
-        HandlerRegister.setHandler(
-          ~contractName="EventFiltersTest",
-          ~eventName="Transfer",
-          noopHandler,
-          ~eventOptions=eventOptions(
-            ~where=%raw(`({chain: _chain}) => ({params: {from: "0x0000000000000000000000000000000000000000"}})`),
-          ),
-        ),
-    ).not.toThrow()
-  })
-
-  it("a handler with a different resolution registers separately without throwing", t => {
-    t.expect(
-      () =>
-        HandlerRegister.setHandler(
-          ~contractName="EventFiltersTest",
-          ~eventName="Transfer",
-          noopHandler,
-          ~eventOptions=eventOptions(
-            ~where=%raw(`({chain: _chain}) => ({params: {to: "0x0000000000000000000000000000000000000000"}})`),
-          ),
-        ),
-    ).not.toThrow()
-  })
-
-  it("an invalid where throws at the registration call site", t => {
-    t->toThrowErrorEqual(
-      () =>
-        HandlerRegister.setHandler(
-          ~contractName="EventFiltersTest",
-          ~eventName="EmptyFiltersArray",
-          noopHandler,
-          ~eventOptions=eventOptions(
-            ~where=%raw(`{params: {nonExistingParam: "0x0000000000000000000000000000000000000000"}}`),
-          ),
-        ),
-      `Invalid where configuration. The event doesn't have an indexed parameter "nonExistingParam" and can't use it for filtering`,
-    )
-  })
-})
+HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
 
 describe("HandlerRegister — onBlock validation at registration", () => {
   let noopBlockHandler = async (_: Internal.onBlockArgs) => ()

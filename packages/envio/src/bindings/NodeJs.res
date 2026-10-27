@@ -204,6 +204,10 @@ module ChildProcess = {
     type t
     @send external send: (t, 'msg) => bool = "send"
     @send external onMessage: (t, @as("message") _, 'msg => unit) => unit = "on"
+    // Once the child has exited and its piped output has all been read, which
+    // `exit` doesn't wait for.
+    @send
+    external onClose: (t, @as("close") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
     @send
     external onExit: (t, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
     @send external onError: (t, @as("error") _, exn => unit) => unit = "on"
@@ -334,6 +338,10 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readdir: Path.t => promise<array<string>> = "readdir"
+
+    type rmOptions = {recursive?: bool, force?: bool}
+    @module("fs") @scope("promises")
+    external rm: (Path.t, ~options: rmOptions=?) => promise<unit> = "rm"
 
     type stats
     @module("fs") @scope("promises")

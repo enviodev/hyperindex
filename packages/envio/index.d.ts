@@ -12,6 +12,14 @@ declare const bigintSchema: Sury.Schema<bigint>;
 /** Ethereum address — a 20-byte hex string prefixed with `0x`. */
 export type Address = `0x${string}`;
 
+/** A `0x`-prefixed hex string: a hash, a `bytes`/`bytesN` value, raw calldata. */
+export type StrictHex = `0x${string}`;
+
+/** The type of `bytes`/`bytesN` event params, block and transaction hashes and
+ * other hex fields, and `Bytes` entity fields: plain `string` by default,
+ * {@link StrictHex} with `strict_hex_type: true` in config.yaml. */
+export type Hex = GlobalConfig extends { readonly strictHexType: true } ? StrictHex : string;
+
 /** A value a `Json` entity field can hold. A `bigint` isn't JSON — store its
  * decimal string with `.toString()`. Shadows the global `JSON` interface only
  * where imported; the `JSON` object itself is unaffected. */
@@ -511,13 +519,13 @@ type IndexerConfigTypes = {
   fuel?: {
     chains: Record<string, { id: number }>;
     contracts?: Record<string, Record<string, { eventName: string }>>;
-    eventFilters?: Record<string, Record<string, { readonly params: object }>>;
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
   // Union of the entity names whose rows belong to a single chain, or `never`.
   perChainEntities?: string;
   enums?: Record<string, string>;
+  strictHexType?: true;
 };
 
 // ============== onEvent / contractRegister Types ==============
@@ -537,10 +545,6 @@ type FuelContracts<Config extends IndexerConfigTypes = GlobalConfig> =
 // payload and keep the two lookup tables independently composable.
 type EvmEventFilters<Config extends IndexerConfigTypes = GlobalConfig> =
   Config["evm"] extends { eventFilters: infer F extends Record<string, Record<string, any>> }
-    ? F : {};
-
-type FuelEventFilters<Config extends IndexerConfigTypes = GlobalConfig> =
-  Config["fuel"] extends { eventFilters: infer F extends Record<string, Record<string, any>> }
     ? F : {};
 
 // Extract contract names for contract registration
@@ -711,14 +715,47 @@ export type EvmOnEventWhere<Params, ContractName extends string> =
   | EvmOnEventWhereFilter<Params>
   | ((args: EvmOnEventWhereArgs<ContractName>) => EvmOnEventWhereFilter<Params> | boolean);
 
+/** A single `where` filter condition of an anonymous EVM event. An anonymous
+ * event's logs carry no signature topic — topic0 holds its first indexed
+ * param — so every filter names values for that param (it's required in
+ * `Params`). An empty list is rejected when the handler registers. */
+export type EvmAnonymousOnEventWhereFilter<Params> = {
+  readonly params: Params | readonly Params[];
+  readonly block?: {
+    readonly number?: {
+      readonly _gte?: number;
+    };
+  };
+};
+
+/** The `where` option value of `indexer.onEvent` / `indexer.contractRegister`
+ * for an anonymous EVM event. Required: without it the indexer would fetch
+ * every log. The dynamic callback may return `false` to skip a chain, but
+ * not `true`. */
+export type EvmAnonymousOnEventWhere<Params, ContractName extends string> =
+  | EvmAnonymousOnEventWhereFilter<Params>
+  | ((args: EvmOnEventWhereArgs<ContractName>) => EvmAnonymousOnEventWhereFilter<Params> | false);
+
+// The `where` option for an event's `eventFilters` entry: required for an
+// anonymous event, optional otherwise.
+type EvmOnEventWhereOption<Filter, ContractName extends string> =
+  Filter extends { readonly anonymous: true; readonly params: infer P }
+    ? { readonly where: EvmAnonymousOnEventWhere<P, ContractName> }
+    : {
+        readonly where?: EvmOnEventWhere<
+          Filter extends { readonly params: infer P } ? P : {},
+          ContractName
+        >;
+      };
+
 /** The chain object passed into the Fuel dynamic `where` callback form. */
 export type FuelOnEventWhereChain<ContractName extends string> = EvmOnEventWhereChain<ContractName>;
 /** Arguments passed to the Fuel dynamic `where` callback form. */
 export type FuelOnEventWhereArgs<ContractName extends string> = EvmOnEventWhereArgs<ContractName>;
 /** A single Fuel `where` filter condition. Keyed on `block.height` instead
- * of `block.number`. */
-export type FuelOnEventWhereFilter<Params> = {
-  readonly params?: Params | readonly Params[];
+ * of `block.number`. Fuel events have no indexed params, so there's no
+ * `params` filter. */
+export type FuelOnEventWhereFilter = {
   readonly block?: {
     readonly height?: {
       readonly _gte?: number;
@@ -726,9 +763,9 @@ export type FuelOnEventWhereFilter<Params> = {
   };
 };
 /** The `where` option value of `indexer.onEvent` / `indexer.contractRegister` in the Fuel ecosystem. */
-export type FuelOnEventWhere<Params, ContractName extends string> =
-  | FuelOnEventWhereFilter<Params>
-  | ((args: FuelOnEventWhereArgs<ContractName>) => FuelOnEventWhereFilter<Params> | boolean);
+export type FuelOnEventWhere<ContractName extends string> =
+  | FuelOnEventWhereFilter
+  | ((args: FuelOnEventWhereArgs<ContractName>) => FuelOnEventWhereFilter | boolean);
 
 // When the matching ecosystem isn't configured, `EvmEvent` / `FuelEvent` resolve
 // to the error-message string. Filter back to a structural `EventLike` so the
@@ -748,36 +785,36 @@ export type FieldNotSelected<Message extends string> = { readonly __fieldNotSele
 export type EvmAllBlockFields = {
   readonly number: number;
   readonly timestamp: number;
-  readonly hash: string;
-  readonly parentHash: string;
+  readonly hash: Hex;
+  readonly parentHash: Hex;
   readonly nonce: bigint | undefined;
-  readonly sha3Uncles: string;
-  readonly logsBloom: string;
-  readonly transactionsRoot: string;
-  readonly stateRoot: string;
-  readonly receiptsRoot: string;
+  readonly sha3Uncles: Hex;
+  readonly logsBloom: Hex;
+  readonly transactionsRoot: Hex;
+  readonly stateRoot: Hex;
+  readonly receiptsRoot: Hex;
   readonly miner: Address;
   readonly difficulty: bigint | undefined;
   readonly totalDifficulty: bigint | undefined;
-  readonly extraData: string;
+  readonly extraData: Hex;
   readonly size: bigint;
   readonly gasLimit: bigint;
   readonly gasUsed: bigint;
-  readonly uncles: readonly string[] | undefined;
+  readonly uncles: readonly Hex[] | undefined;
   readonly baseFeePerGas: bigint | undefined;
   readonly blobGasUsed: bigint | undefined;
   readonly excessBlobGas: bigint | undefined;
-  readonly parentBeaconBlockRoot: string | undefined;
-  readonly withdrawalsRoot: string | undefined;
+  readonly parentBeaconBlockRoot: Hex | undefined;
+  readonly withdrawalsRoot: Hex | undefined;
   readonly l1BlockNumber: number | undefined;
-  readonly sendCount: string | undefined;
-  readonly sendRoot: string | undefined;
-  readonly mixHash: string | undefined;
+  readonly sendCount: Hex | undefined;
+  readonly sendRoot: Hex | undefined;
+  readonly mixHash: Hex | undefined;
 };
 
 export type EvmAllTransactionFields = {
   readonly transactionIndex: number;
-  readonly hash: string;
+  readonly hash: Hex;
   readonly from: Address | undefined;
   readonly to: Address | undefined;
   readonly gas: bigint;
@@ -787,20 +824,20 @@ export type EvmAllTransactionFields = {
   readonly cumulativeGasUsed: bigint;
   readonly effectiveGasPrice: bigint;
   readonly gasUsed: bigint;
-  readonly input: string;
+  readonly input: Hex;
   readonly nonce: bigint;
   readonly value: bigint;
-  readonly v: string | undefined;
-  readonly r: string | undefined;
-  readonly s: string | undefined;
+  readonly v: Hex | undefined;
+  readonly r: Hex | undefined;
+  readonly s: Hex | undefined;
   readonly contractAddress: Address | undefined;
-  readonly logsBloom: string;
-  readonly root: string | undefined;
+  readonly logsBloom: Hex;
+  readonly root: Hex | undefined;
   readonly status: number | undefined;
-  readonly yParity: string | undefined;
+  readonly yParity: Hex | undefined;
   readonly accessList: readonly unknown[] | undefined;
   readonly maxFeePerBlobGas: bigint | undefined;
-  readonly blobVersionedHashes: readonly string[] | undefined;
+  readonly blobVersionedHashes: readonly Hex[] | undefined;
   readonly type: number | undefined;
   readonly l1Fee: bigint | undefined;
   readonly l1GasPrice: bigint | undefined;
@@ -907,19 +944,40 @@ export type EvmOnEventOptions<
   Params = {},
   Fields extends EvmFieldsSelection | undefined = undefined,
 > = Event extends EventLike
-  ? {
-      readonly contract: Event["contractName"];
-      readonly event: Event["eventName"];
-      readonly wildcard?: boolean;
-      readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
-      /** Pass the selection's literal type as the `Fields` generic to get the
-       * same narrowing `indexer.onEvent` infers from the call site. Defaults to
-       * no selection: `EvmFieldsSelection` names no fields in particular, so an
-       * options value declared without the generic would carry a selection
-       * `onEvent` can only reject. */
-      readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
-    }
+  ? _EvmEventFilterOf<Event> extends { readonly anonymous: true }
+    ? {
+        readonly contract: Event["contractName"];
+        readonly event: Event["eventName"];
+        readonly wildcard?: boolean;
+        readonly where: EvmAnonymousOnEventWhere<Params, Event["contractName"] & string>;
+        /** Pass the selection's literal type as the `Fields` generic to get the
+         * same narrowing `indexer.onEvent` infers from the call site. Defaults to
+         * no selection: `EvmFieldsSelection` names no fields in particular, so an
+         * options value declared without the generic would carry a selection
+         * `onEvent` can only reject. */
+        readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
+      }
+    : {
+        readonly contract: Event["contractName"];
+        readonly event: Event["eventName"];
+        readonly wildcard?: boolean;
+        readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
+        /** Pass the selection's literal type as the `Fields` generic to get the
+         * same narrowing `indexer.onEvent` infers from the call site. Defaults to
+         * no selection: `EvmFieldsSelection` names no fields in particular, so an
+         * options value declared without the generic would carry a selection
+         * `onEvent` can only reject. */
+        readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
+      }
   : never;
+
+// The project's `eventFilters` entry for an event, or `{}` when it has none.
+type _EvmEventFilterOf<Event extends EventLike> =
+  Event["contractName"] extends keyof EvmEventFilters
+    ? Event["eventName"] extends keyof EvmEventFilters[Event["contractName"]]
+      ? EvmEventFilters[Event["contractName"]][Event["eventName"]]
+      : {}
+    : {};
 
 /** Handler function for an EVM onEvent registration. Context is provided as a separate generic so the project alias can bind it. */
 export type EvmOnEventHandler<
@@ -954,13 +1012,12 @@ export type FuelOnEvent<
  * `block.height` (Fuel) instead of `block.number` (EVM). */
 export type FuelOnEventOptions<
   Event extends EventLike = _ProjectFuelEvent,
-  Params = {},
 > = Event extends EventLike
   ? {
       readonly contract: Event["contractName"];
       readonly event: Event["eventName"];
       readonly wildcard?: boolean;
-      readonly where?: FuelOnEventWhere<Params, Event["contractName"] & string>;
+      readonly where?: FuelOnEventWhere<Event["contractName"] & string>;
     }
   : never;
 
@@ -974,8 +1031,7 @@ export type FuelOnEventHandler<
  * `FuelOnEventOptions` so the `where` filter uses `block.height`. */
 export type FuelContractRegisterOptions<
   Event extends EventLike = _ProjectFuelEvent,
-  Params = {},
-> = FuelOnEventOptions<Event, Params>;
+> = FuelOnEventOptions<Event>;
 
 /** Handler function for a Fuel contractRegister registration. */
 export type FuelContractRegisterHandler<
@@ -1622,18 +1678,15 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: EvmOnEventWhere<
-                      EvmEventFilters<Config>[C] extends Record<string, any>
-                        ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
                     readonly fields?: F & EvmFieldsLiteralCheck<F>;
-                  },
+                  } & EvmOnEventWhereOption<
+                    EvmEventFilters<Config>[C] extends Record<string, any>
+                      ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]]
+                      : {},
+                    C
+                  >,
                   handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
                 /** Register a contract register handler for dynamic contract indexing. */
@@ -1646,18 +1699,15 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: EvmOnEventWhere<
-                      EvmEventFilters<Config>[C] extends Record<string, any>
-                        ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
                     readonly fields?: F & EvmFieldsLiteralCheck<F>;
-                  },
+                  } & EvmOnEventWhereOption<
+                    EvmEventFilters<Config>[C] extends Record<string, any>
+                      ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]]
+                      : {},
+                    C
+                  >,
                   handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;
               }
@@ -1709,14 +1759,7 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: FuelOnEventWhere<
-                      FuelEventFilters<Config>[C] extends Record<string, any>
-                        ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
+                    readonly where?: FuelOnEventWhere<C>;
                   },
                   handler: FuelOnEventHandler<Contracts[C][E], FuelOnEventContext<Config>>
                 ) => void;
@@ -1729,14 +1772,7 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly contract: C;
                     readonly event: E;
                     readonly wildcard?: boolean;
-                    readonly where?: FuelOnEventWhere<
-                      FuelEventFilters<Config>[C] extends Record<string, any>
-                        ? FuelEventFilters<Config>[C][E & keyof FuelEventFilters<Config>[C]] extends { readonly params: infer P }
-                          ? P
-                          : {}
-                        : {},
-                      C
-                    >;
+                    readonly where?: FuelOnEventWhere<C>;
                   },
                   handler: FuelContractRegisterHandler<Contracts[C][E], FuelContractRegisterContext<Config>>
                 ) => void;
