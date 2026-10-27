@@ -584,7 +584,7 @@ let start = async (
   // Handler files log through `console` as they load and run; routed, their
   // lines reach the run's log, its levels and the display like the indexer's,
   // and nothing in the process writes the terminal behind the display's back.
-  let _: unit => unit = logger->Logger.routeConsole(~loggerFor=ConsoleScope.loggerFor)
+  let _: unit => unit = logger->Logger.routeConsole(~loggerFor=RunScope.loggerFor)
   // An unsupported Node fails here, before the database is touched.
   HandlerLoader.registerTsHooks()
   let config = Config.load()

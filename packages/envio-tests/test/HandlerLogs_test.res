@@ -522,4 +522,32 @@ describe("console in a handler", () => {
       },
     )
   })
+
+  Async.it("names the event that started work it didn't await", async t => {
+    let logLater: string => unit = %raw(`message => { setTimeout(() => console.log(message), 0) }`)
+    await scenario->Scenario.run(
+      ~sources=[{chain: 1}],
+      async (~indexer, ~source) => {
+        let mock = source(1)
+        mock.resolveGetHeightOrThrow(300)
+        await mock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {blockNumber: 5, logIndex: 1, handler: async _ => logLater("from the first")},
+                {blockNumber: 6, logIndex: 2, handler: async _ => await Utils.delay(5)},
+              ],
+              latestFetchedBlockNumber: 100,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        t.expect(
+          indexer.allLogsAsJson()
+          ->Array.filter(isHandlerLine)
+          ->Array.map(line => (line->Dict.get("msg"), line->Dict.get("block"))),
+        ).toEqual([(Some(JSON.String("from the first")), Some(JSON.Number(5.)))])
+      },
+    )
+  })
 })

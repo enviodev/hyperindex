@@ -51,7 +51,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
       // before the multichain indexer can become ready.
       {chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
     ],
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     ~targetBufferSize=100,
     async (~t, ~indexer, ~source) => {
       let chainAtLaggedHead = source(100)

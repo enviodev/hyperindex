@@ -96,7 +96,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       {chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
     ],
     ~reorgThresholdReadyTolerance=100,
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     ~targetBufferSize=100,
     async (~t, ~indexer, ~source) => {
       let chainA = source(100)
@@ -165,7 +165,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
     "enters while still within the configured tolerance of the lagged head",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     ~reorgThresholdReadyTolerance=100,
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     ~targetBufferSize=100,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)

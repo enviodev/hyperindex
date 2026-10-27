@@ -787,6 +787,25 @@ module Map = {
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
 }
 
+// An object that names the property it doesn't have, for user-facing APIs
+// where `undefined` would only surface later as a confusing error. The check
+// lives on the prototype, so reading a property the object has costs nothing.
+module StrictObject = {
+  type prototype
+
+  let makePrototype: (string => unit) => prototype = %raw(`function (onUnknown) {
+    return new Proxy(Object.create(null), {
+      get(_target, prop) {
+        if (typeof prop === "string") onUnknown(prop);
+        return undefined;
+      },
+    });
+  }`)
+
+  @val @scope("Object") external make: prototype => 'a = "create"
+  @val @scope("Object") external assign: ('a, 'a) => 'a = "assign"
+}
+
 module Proxy = {
   type propertyDescriptor = {
     value: unknown,
@@ -919,13 +938,6 @@ module Promise = {
   external makeAsync: ((@uncurry ('a => unit), 'e => unit) => promise<unit>) => promise<'a> =
     "Promise"
 
-  // `catch` that swallows rejections silently. Handy for fire-and-forget
-  // promises that must not take the process down on failure.
-  %%private(let noop = (() => ())->Obj.magic)
-  let silentCatch = (promise: promise<'a>): promise<'a> => {
-    promise->Promise.catch(_ => noop())
-  }
-
   // Like `catch`, but the callback returns a plain value instead of a new
   // promise. Used when the fallback is a ready-made default.
   @send
@@ -940,9 +952,6 @@ module Promise = {
   // interoperate with raw JS values.
   external unsafe_async: 'a => promise<'a> = "%identity"
   external unsafe_await: promise<'a> => 'a = "?await"
-
-  // Detects Thenable-like values at runtime (anything with a `.catch` method).
-  let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }
 
 // `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no

@@ -42,6 +42,9 @@ type sourceMock = {
   // resolving a `latest` start block), which a test body can't reach in time
   // via `setAutoHeight` since it only runs once startup has already awaited.
   autoHeight?: int,
+  // Answers for the first height calls, ahead of `autoHeight`, for a startup
+  // height call that has to fail first.
+  startupHeights?: array<MockSource.startupHeight>,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -191,8 +194,10 @@ let run = async (
   // Leaves every chain on the source its YAML names, for a scenario whose YAML
   // points each chain at a local server the test runs.
   ~yamlSources=false,
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  ~sourceTiming=?,
+  // How long startup keeps asking for a `latest` start block. `Once` is what
+  // `envio local db-migrate` runs with.
+  ~startBlockRetry=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -214,6 +219,7 @@ let run = async (
       ?pollingInterval,
       ?isWildcard,
       ?autoHeight,
+      ?startupHeights,
     }) => (
       chain,
       MockSource.make(
@@ -223,6 +229,7 @@ let run = async (
         ~pollingInterval?,
         ~isWildcard?,
         ~autoHeight?,
+        ~startupHeights?,
       ),
     ))
 
@@ -270,8 +277,8 @@ let run = async (
         }
         HandlerRegister.finishRegistration(~config)
       }),
-    ~reducedPollingInterval?,
-    ~newBlockStallTimeoutRealtime?,
+    ~sourceTiming?,
+    ~startBlockRetry?,
     ~targetBufferSize?,
     ~holdRealtime?,
     ~superviseRun?,
@@ -318,8 +325,9 @@ let it = (
   name,
   ~unsupported=[],
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Shortens the stall, recovery and polling windows a test would otherwise
+  // have to wait out in real time.
+  ~sourceTiming=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -351,8 +359,7 @@ let it = (
       async (t: Vitest.testContext) =>
         await scenario->run(
           ~sources,
-          ~reducedPollingInterval?,
-          ~newBlockStallTimeoutRealtime?,
+          ~sourceTiming?,
           ~targetBufferSize?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,

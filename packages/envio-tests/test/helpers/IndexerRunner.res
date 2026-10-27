@@ -193,8 +193,8 @@ let run = async (
   // One capture for the whole run, `restart` and siblings included, so a test
   // reads the resumed indexer's lines after the ones that led to them.
   ~logger=Logger.makeInMemory(),
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  ~sourceTiming=?,
+  ~startBlockRetry=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
   // before entering the reorg threshold or switching to realtime.
@@ -225,7 +225,7 @@ let run = async (
   let pgSchema = TestPgSchema.make()
   // Handler files log through `console` as they load and run, so the run's
   // capture holds those lines too.
-  let restoreConsole = logger->Logger.routeConsole(~loggerFor=ConsoleScope.loggerFor)
+  let restoreConsole = logger->Logger.routeConsole(~loggerFor=RunScope.loggerFor)
   let cacheDir = NodeJs.Path.resolve([tmpdir(), `envio-cache-${pgSchema}`])
   let clients = []
   let storages: array<Persistence.storage> = []
@@ -305,6 +305,8 @@ let run = async (
       ~reset,
       ~isDevelopmentMode=true,
       ~announceResume=!asWorker,
+      ~startBlockRetry?,
+      ~sourceTiming?,
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a
@@ -322,8 +324,7 @@ let run = async (
       ~logger,
       ~persistence,
       ~registrationsByChainId,
-      ~reducedPollingInterval?,
-      ~newBlockStallTimeoutRealtime?,
+      ~sourceTiming?,
       ~targetBufferSize?,
       ~isDevelopmentMode=false,
       ~shouldUseTui=false,

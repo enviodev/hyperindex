@@ -77,6 +77,7 @@ describe("Indexer loop", () => {
 
     await BatchProcessing.startProcessing(
       state,
+      ~runtime=HandlerRuntime.make(state),
       ~scheduleFetch=() => (),
       ~scheduleRollback=() => (),
     )
@@ -94,6 +95,7 @@ describe("Indexer loop", () => {
 
     await BatchProcessing.startProcessing(
       state,
+      ~runtime=HandlerRuntime.make(state),
       ~scheduleFetch=() => (),
       ~scheduleRollback=() => (),
     )

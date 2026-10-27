@@ -282,6 +282,7 @@ let init = {
     // keep it to their own log files.
     ~announceResume=true,
     ~startBlockRetry=StartBlockResolver.UntilItAnswers,
+    ~sourceTiming=?,
     // Off for a migration, which checks an existing storage and leaves it:
     // resuming takes ClickHouse back to what Postgres committed, fencing off and
     // trimming whatever a run still indexing goes on writing.
@@ -329,6 +330,7 @@ let init = {
             ~logger,
             ~lowercaseAddresses,
             ~retry=startBlockRetry,
+            ~timing=?sourceTiming,
           )
 
           // The RPC answers when it does, and another indexer can set the
@@ -390,6 +392,7 @@ let init = {
                   ~logger,
                   ~lowercaseAddresses,
                   ~retry=startBlockRetry,
+                  ~timing=?sourceTiming,
                 )
               )->Array.getUnsafe(0)
             await persistence.storage.addChain(
@@ -439,10 +442,14 @@ let initForRun = (
   ~reset,
   ~isDevelopmentMode,
   ~announceResume=!Worker.isEnabled,
+  ~startBlockRetry=?,
+  ~sourceTiming=?,
 ) =>
   persistence->init(
     ~logger,
     ~announceResume,
+    ~startBlockRetry?,
+    ~sourceTiming?,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,

@@ -16,6 +16,8 @@ type tuiCtor
 type loggerCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
+// Test-only: the ledger behind envio-tests' MockSource.
+type mockSourceCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -103,6 +105,8 @@ type addon = {
   writeStderrLine: string => unit,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
+  @as("MockSource")
+  mockSource: mockSourceCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
   normalizeEvmAddress: (~address: string, ~shouldChecksum: bool) => Null.t<Address.t>,
   renderAddresses: (
