@@ -174,12 +174,19 @@ describe("Height subscription", () => {
 
       let pokedAt = pokedAt.contents->Option.getOr(infinity)
       let recruitedAt = recruitedAt.contents->Option.getOr(0.)
-      // Timer slack only ever makes a timer late, never early.
-      t.expect((pokedAt >= 200., pokedAt <= recruitedAt, recruitedAt >= 400.)).toEqual((
-        true,
-        true,
-        true,
-      ))
+      // Timer slack only ever makes a timer late, never early, so the lower
+      // bounds are exact. The upper ones allow for a loaded runner: the poke
+      // lands short of the window, and the recruit soon after it opens.
+      t.expect(
+        (
+          pokedAt >= 200.,
+          pokedAt < 400.,
+          pokedAt <= recruitedAt,
+          recruitedAt >= 400.,
+          recruitedAt < 600.,
+        ),
+        ~message=`poked at ${pokedAt->Float.toString}ms, recruited at ${recruitedAt->Float.toString}ms`,
+      ).toEqual((true, true, true, true, true))
     },
   )
 
@@ -271,7 +278,9 @@ describe("Height subscription", () => {
   scenario->Scenario.it(
     "Polls at the source's interval while the stream has never connected",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
+    // Far past the 2s the poll is waited for, so the stall poke can't be what
+    // brings it.
+    ~sourceTiming={newBlockStallTimeoutRealtime: 20_000},
     async (~t, ~indexer as _, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)

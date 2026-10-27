@@ -8,8 +8,8 @@ let getSourceRole: (
   ~hasRealtime: bool,
 ) => option<sourceRole>
 
-// Every field defaults to the production value. Only tests shorten them, to
-// reach a stall or a recovery without waiting out the real window.
+// Every field defaults to the production value. Only tests set them, to reach
+// a stall, a recovery or a retry schedule without waiting out the real window.
 type timing = {
   newBlockStallTimeout?: int,
   newBlockStallTimeoutRealtime?: int,
@@ -17,7 +17,9 @@ type timing = {
   reducedPollingInterval?: int,
   recoveryTimeout?: float,
   getHeightRetryInterval?: (~retry: int) => int,
-  // Multiplies every query retry's sleep, not the backoff it logs.
+  // Multiplies the sleep before retrying an items query or a block-hash
+  // lookup, but not the backoff it logs. A rate limit's wait is the server's
+  // to set and isn't scaled.
   retryBackoffScale?: float,
   heightPollTimeout?: int,
 }

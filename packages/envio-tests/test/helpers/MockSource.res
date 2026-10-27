@@ -331,13 +331,6 @@ module Ledger = {
 
   type startupHeight = {height?: int, failure?: string}
   type heightCall = {index: int, height: Nullable.t<int>, failure: Nullable.t<string>}
-  type query = {
-    id: int,
-    partitionId: string,
-    fromBlock: int,
-    toBlock: Nullable.t<int>,
-    retryCount: int,
-  }
   type expected = {
     partitionId?: string,
     fromBlock?: int,
@@ -377,8 +370,8 @@ module Ledger = {
   @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
   @send
   external takeItemsQuery: (t, string, int, Null.t<int>, int) => int = "takeItemsQuery"
-  @send external pendingItemsQueries: t => array<query> = "pendingItemsQueries"
   @send external settleItemsQuery: (t, int) => unit = "settleItemsQuery"
+  @send external entryCandidates: (t, array<expected>) => array<array<int>> = "entryCandidates"
   @send external matchItemsQueries: (t, array<expected>) => itemsMatch = "matchItemsQueries"
   @send external keepPending: (t, array<int>) => unit = "keepPending"
   @send external checkReplies: (t, array<reply>) => Nullable.t<string> = "checkReplies"
@@ -508,18 +501,10 @@ let make = (
   }
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
-  // The ledger's pending queries as the objects a test holds, so the same query
-  // stays the same object for as long as it is pending.
+  // The ledger's pending queries as the objects a test holds, in the same
+  // arrival order, so the same query stays the same object while it's pending.
   let pendingItemsQueries: array<pendingItemsQuery> = []
   let queriesById: Map.t<int, pendingItemsQuery> = Map.make()
-  let syncPendingQueries = () => {
-    pendingItemsQueries->Utils.Array.clearInPlace
-    ledger
-    ->Ledger.pendingItemsQueries
-    ->Array.forEach(({id}) =>
-      queriesById->Map.get(id)->Option.forEach(query => pendingItemsQueries->Array.push(query))
-    )
-  }
 
   let arrivalListeners: array<unit => unit> = []
   // A chain fans out one query per partition, and each await on the way to the
@@ -583,11 +568,27 @@ let make = (
     },
     retryCount: ?entry.retryCount,
     coversBlock: ?entry.coversBlock,
-    // A predicate only JS can run, so the ledger is told what it accepted.
-    whereIds: ?(
-      entry.where->Option.map(where => pendingItemsQueries->Array.filter(where)->Array.map(queryId))
-    ),
     reply: entry.reply->replyName,
+  }
+
+  // A `where` predicate only JS can run, so the ledger is told the queries it
+  // accepted, out of those the entry's other fields already match.
+  let toLedgerEntries = (expected: array<expectedItemsQuery>) => {
+    let entries = expected->Array.map(toLedgerExpected)
+    let candidates = ledger->Ledger.entryCandidates(entries)
+    entries->Array.mapWithIndex((entry, index): Ledger.expected =>
+      switch (expected->Array.getUnsafe(index)).where {
+      | Some(where) => {
+          ...entry,
+          whereIds: candidates
+          ->Array.getUnsafe(index)
+          ->Array.filter(id =>
+            queriesById->Map.get(id)->Option.mapOr(false, query => where(query))
+          ),
+        }
+      | None => entry
+      }
+    )
   }
 
   let makeItemsResponse = (
@@ -716,7 +717,7 @@ let make = (
     let deadline = realNow() +. 2000.
     let rec awaitMatch = async () => {
       await awaitSettled(~deadline)
-      let outcome = ledger->Ledger.matchItemsQueries(expected->Array.map(toLedgerExpected))
+      let outcome = ledger->Ledger.matchItemsQueries(expected->toLedgerEntries)
       let message = () => outcome.message->Nullable.toOption->Option.getOr("")
       switch outcome.status {
       | "matched" => outcome
@@ -895,7 +896,7 @@ let make = (
       ->Array.forEach(index => heightCallers->Map.delete(index)->ignore)
       queriesById->Map.clear
       blockHashCallers->Map.clear
-      syncPendingQueries()
+      pendingItemsQueries->Utils.Array.clearInPlace
     },
     heightSubscriptionCalls,
     heightSubscriptionCloseCalls,
@@ -965,7 +966,11 @@ let make = (
             let settle = () => {
               ledger->Ledger.settleItemsQuery(id)
               queriesById->Map.delete(id)->ignore
-              syncPendingQueries()
+              switch pendingItemsQueries->Array.indexOf(query) {
+              | -1 => ()
+              | index =>
+                pendingItemsQueries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+              }
             }
             let queryControl = {
               respond: response => {
@@ -994,7 +999,7 @@ let make = (
             )
             ->ignore
             queriesById->Map.set(id, query)
-            syncPendingQueries()
+            pendingItemsQueries->Array.push(query)
           })
           notifyArrival()
           promise

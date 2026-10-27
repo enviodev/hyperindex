@@ -155,6 +155,31 @@ Give each query its own entry, told apart by partitionId:
     },
   )
 
+  // A predicate is free to assume what the entry's other fields guarantee.
+  scenario->Scenario.it(
+    "runs `where` only on the queries an entry's other fields match",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      let askedAbout = []
+      await mock.expectItemsQueries([
+        {
+          partitionId: "0",
+          where: query => {
+            askedAbout->Array.push(query.partitionId)
+            true
+          },
+          reply: Respond({items: []}),
+        },
+        {partitionId: "1", reply: Respond({items: []})},
+      ])
+      await indexer.getBatchWritePromise()
+      t.expect(askedAbout->Array.every(partitionId => partitionId === "0")).toBe(true)
+    },
+  )
+
   scenario->Scenario.it(
     "refuses to reply while a pending query is in no entry, then answers one left pending",
     ~sources,

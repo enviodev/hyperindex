@@ -5,13 +5,14 @@
 //! it decides what a test's expectations match and what is wrong with them. It
 //! answers nothing itself. Every call is recorded under an id, and every answer
 //! a test gives comes back as the ids to settle, so whoever holds the pending
-//! callers settles them: today the JS shim that implements `Source.t`, holding
-//! promise resolvers, which keeps an answer reaching the indexer in the same
-//! microtask it always did.
+//! callers settles them. The JS shim implementing `Source.t` holds them as
+//! promise resolvers and settles them synchronously, so an answer reaches the
+//! indexer within the microtask the test gave it in; tests rely on that order.
 //!
 //! What only JS can hold stays there: the reply items, which carry handler
-//! functions; a test's `where` predicates, which the shim evaluates and passes
-//! in as the ids they matched; and the failures a test rejects with.
+//! functions; a test's `where` predicates, which the shim runs on the
+//! candidates `entry_candidates` names and passes back as the ids they
+//! accepted; and the failures a test rejects with.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -226,7 +227,8 @@ fn covers_block(query: &MockItemsQuery, block_number: i64) -> bool {
     query.from_block <= block_number && query.to_block.is_none_or(|to| block_number <= to)
 }
 
-fn entry_matches(entry: &MockExpectedQuery, query: &MockItemsQuery) -> bool {
+// Everything but `where`, which only the shim can run.
+fn fields_match(entry: &MockExpectedQuery, query: &MockItemsQuery) -> bool {
     entry
         .partition_id
         .as_ref()
@@ -239,6 +241,10 @@ fn entry_matches(entry: &MockExpectedQuery, query: &MockItemsQuery) -> bool {
         && entry
             .covers_block
             .is_none_or(|block| covers_block(query, block))
+}
+
+fn entry_matches(entry: &MockExpectedQuery, query: &MockItemsQuery) -> bool {
+    fields_match(entry, query)
         && entry
             .where_ids
             .as_ref()
@@ -314,8 +320,12 @@ impl Ledger {
                 }),
         };
         // Recorded answered or not, so an index means the same call to the
-        // ledger as it does to the test counting calls.
-        self.height_calls.push(answer.is_none());
+        // ledger as it does to the test counting calls. A scripted entry with
+        // nothing in it parks the call like no entry at all.
+        let pending = answer
+            .as_ref()
+            .is_none_or(|answer| answer.height.is_none() && answer.failure.is_none());
+        self.height_calls.push(pending);
         match answer {
             Some(MockStartupHeight { height, failure }) => MockHeightCall {
                 index,
@@ -342,16 +352,15 @@ impl Ledger {
         indices
     }
 
-    fn resolve_height_at(&mut self, index: u32) -> Result<bool, String> {
-        match self.height_calls.get(index as usize) {
+    fn resolve_height_at(&mut self, index: i64) -> Result<bool, String> {
+        match usize::try_from(index)
+            .ok()
+            .and_then(|position| self.height_calls.get_mut(position))
+        {
             None => Err(format!(
                 "The source has taken no getHeightOrThrow call at index {index}"
             )),
-            Some(pending) => {
-                let was_pending = *pending;
-                self.height_calls[index as usize] = false;
-                Ok(was_pending)
-            }
+            Some(pending) => Ok(std::mem::replace(pending, false)),
         }
     }
 
@@ -811,7 +820,7 @@ impl MockSource {
     /// Whether the call was still waiting. Answering one already settled does
     /// nothing; an index the source never took is an error.
     #[napi]
-    pub fn resolve_height_at(&mut self, index: u32) -> napi::Result<bool> {
+    pub fn resolve_height_at(&mut self, index: i64) -> napi::Result<bool> {
         self.ledger.resolve_height_at(index).map_err(reason)
     }
 
@@ -823,11 +832,6 @@ impl MockSource {
     #[napi]
     pub fn reject_heights(&mut self) -> Vec<u32> {
         self.ledger.reject_heights()
-    }
-
-    #[napi]
-    pub fn height_call_count(&self) -> u32 {
-        self.ledger.height_calls.len() as u32
     }
 
     #[napi]
@@ -857,15 +861,27 @@ impl MockSource {
             .take_items_query(partition_id, from_block, to_block, retry_count)
     }
 
-    /// The item queries taken and not yet replied to, in arrival order.
-    #[napi]
-    pub fn pending_items_queries(&self) -> Vec<MockItemsQuery> {
-        self.ledger.pending_queries.clone()
-    }
-
     #[napi]
     pub fn settle_items_query(&mut self, id: u32) {
         self.ledger.settle_query(id)
+    }
+
+    /// Per entry, the pending queries its fields match, `where` aside: the only
+    /// ones the shim runs that entry's `where` on, since a predicate may assume
+    /// the shape the other fields guarantee.
+    #[napi]
+    pub fn entry_candidates(&self, entries: Vec<MockExpectedQuery>) -> Vec<Vec<u32>> {
+        entries
+            .iter()
+            .map(|entry| {
+                self.ledger
+                    .pending_queries
+                    .iter()
+                    .filter(|query| fields_match(entry, query))
+                    .map(|query| query.id)
+                    .collect()
+            })
+            .collect()
     }
 
     #[napi]
@@ -956,24 +972,42 @@ mod tests {
             height: None,
             failure: Some("down".to_string()),
         }]);
-        let first = ledger.take_height_call();
-        assert_eq!(
-            (first.index, first.height, first.failure.as_deref()),
-            (0, None, Some("down"))
-        );
-
+        let scripted = ledger.take_height_call();
         // No answer yet: the call is parked, and the next resolve settles it.
         let parked = ledger.take_height_call();
-        assert_eq!((parked.height, parked.failure), (None, None));
-        assert_eq!(ledger.resolve_height(7, "site".to_string()), vec![1]);
-
+        let settled = ledger.resolve_height(7, "site".to_string());
         // Nothing in flight: the answer waits for the next call.
+        let deferred = ledger.resolve_height(8, "site".to_string());
+        let claimed = ledger.take_height_call();
         assert_eq!(
-            ledger.resolve_height(8, "site".to_string()),
-            Vec::<u32>::new()
+            (
+                (scripted.index, scripted.height, scripted.failure),
+                (parked.index, parked.height, parked.failure),
+                settled,
+                deferred,
+                (claimed.index, claimed.height),
+                ledger.unclaimed_answers_message(),
+            ),
+            (
+                (0, None, Some("down".to_string())),
+                (1, None, None),
+                vec![1],
+                vec![],
+                (2, Some(8)),
+                None,
+            )
         );
-        assert_eq!(ledger.take_height_call().height, Some(8));
-        assert_eq!(ledger.unclaimed_answers_message(), None);
+    }
+
+    #[test]
+    fn parks_a_call_whose_scripted_answer_is_empty() {
+        let mut ledger = ledger();
+        ledger.startup_heights = VecDeque::from([MockStartupHeight {
+            height: None,
+            failure: None,
+        }]);
+        ledger.take_height_call();
+        assert_eq!(ledger.resolve_height(3, "site".to_string()), vec![0]);
     }
 
     #[test]
@@ -996,13 +1030,15 @@ mod tests {
                 ledger.resolve_height_at(1),
                 ledger.resolve_height_at(1),
                 ledger.pending_height_indices(),
-                ledger.resolve_height_at(2)
+                ledger.resolve_height_at(2),
+                ledger.resolve_height_at(-1),
             ),
             (
                 Ok(true),
                 Ok(false),
                 vec![0],
-                Err("The source has taken no getHeightOrThrow call at index 2".to_string())
+                Err("The source has taken no getHeightOrThrow call at index 2".to_string()),
+                Err("The source has taken no getHeightOrThrow call at index -1".to_string()),
             )
         );
     }
@@ -1127,10 +1163,12 @@ mod tests {
         ledger.take_height_call();
         ledger.take_items_query("0".to_string(), 1, None, 0);
         ledger.take_lookup(vec![1]);
-        assert_eq!(ledger.drop_pending(), vec![0]);
         assert_eq!(
-            ledger.describe_state(),
-            "Mock source for chain 1 at the failure:\n  pending item queries: none\n  pending block-hash lookups: none\n  height calls taken: 1"
+            (ledger.drop_pending(), ledger.describe_state()),
+            (
+                vec![0],
+                "Mock source for chain 1 at the failure:\n  pending item queries: none\n  pending block-hash lookups: none\n  height calls taken: 1".to_string()
+            )
         );
     }
 }

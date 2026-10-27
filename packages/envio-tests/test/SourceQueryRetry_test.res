@@ -119,7 +119,17 @@ describe("Items query retries on a single source", () => {
       }
       await sync.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
 
-      let keys = ["level", "msg", "source", "fromBlock", "retry", "backOffMilliseconds"]
+      let keys = [
+        "level",
+        "msg",
+        "logType",
+        "partitionId",
+        "source",
+        "fromBlock",
+        "addresses",
+        "retry",
+        "backOffMilliseconds",
+      ]
       let lines = indexer->retryLines
       t.expect((
         lines->Array.get(0)->Option.map(pick(_, keys)),
@@ -129,8 +139,11 @@ describe("Items query retries on a single source", () => {
           JSON.parseOrThrow(`{
             "level": "trace",
             "msg": "MockSource hasn't reached block 1 on all of its servers yet. This is normal near the latest block and resolves by itself - retrying shortly.",
+            "logType": "Block Range Query",
+            "partitionId": "0",
             "source": "MockSource",
             "fromBlock": 1,
+            "addresses": 1,
             "retry": 0,
             "backOffMilliseconds": 100
           }`)->(Utils.magic: JSON.t => dict<JSON.t>),
@@ -139,8 +152,11 @@ describe("Items query retries on a single source", () => {
           JSON.parseOrThrow(`{
             "level": "warn",
             "msg": "MockSource is still catching up to block 1. This is a delay on the provider's side; indexing will continue automatically, using another data source if one is configured.",
+            "logType": "Block Range Query",
+            "partitionId": "0",
             "source": "MockSource",
             "fromBlock": 1,
+            "addresses": 1,
             "retry": 12,
             "backOffMilliseconds": 1000
           }`)->(Utils.magic: JSON.t => dict<JSON.t>),
@@ -152,35 +168,55 @@ describe("Items query retries on a single source", () => {
   scenario->Scenario.it(
     "Backs off further once a source stays behind the head past the window and has no alternative",
     ~sources=[{chain: 1337}],
-    ~sourceTiming={retryBackoffScale: 0.01},
+    ~sourceTiming={retryBackoffScale: 0.05},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
+      let arrivedAt = []
       for retryCount in 0 to 15 {
         await sync.expectItemsQueries([{retryCount, reply: behindHead}])
+        arrivedAt->Array.push(Date.now())
       }
       await sync.expectItemsQueries([{retryCount: 16, reply: LeavePending}])
+      arrivedAt->Array.push(Date.now())
 
-      // The window keeps attempts a second apart at most; past it, a source
-      // that is still behind is polled less and less often.
-      t.expect(indexer->backoffs).toEqual([
-        100.,
-        200.,
-        400.,
-        800.,
-        1000.,
-        1000.,
-        1000.,
-        1000.,
-        1000.,
-        1000.,
-        1000.,
-        1000.,
-        1000.,
-        2000.,
-        4000.,
-        8000.,
-      ])
+      // What the retries past the window actually slept, against the logged
+      // 1s, 2s, 4s and 8s at this scale: never short of it, and short of the
+      // next doubling.
+      let slept = [50., 100., 200., 400.]->Array.mapWithIndex(
+        (expected, i) => {
+          let gap = arrivedAt->Array.getUnsafe(13 + i) -. arrivedAt->Array.getUnsafe(12 + i)
+          (expected, gap >= expected *. 0.9 && gap < expected *. 2.)
+        },
+      )
+      // The logged schedule: the window keeps attempts a second apart at most;
+      // past it, a source that is still behind is polled less and less often.
+      t.expect(
+        (slept, indexer->backoffs),
+        ~message=`arrival times ${arrivedAt
+          ->Array.map(at => at->Float.toString)
+          ->Array.join(", ")}`,
+      ).toEqual((
+        [(50., true), (100., true), (200., true), (400., true)],
+        [
+          100.,
+          200.,
+          400.,
+          800.,
+          1000.,
+          1000.,
+          1000.,
+          1000.,
+          1000.,
+          1000.,
+          1000.,
+          1000.,
+          1000.,
+          2000.,
+          4000.,
+          8000.,
+        ],
+      ))
     },
   )
 
@@ -249,39 +285,37 @@ describe("Items query retries on a single source", () => {
     },
   )
 
+  let stopped = []
   scenario->Scenario.it(
     "Stops the indexer with an error the source doesn't classify",
     ~sources=[{chain: 1337}],
-    ~onError=_ => (),
-    async (~t, ~indexer, ~source) => {
+    ~onError=errHandler => stopped->Array.push(errHandler.exn->Utils.prettifyExn)->ignore,
+    async (~t, ~indexer as _, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([
-        {
-          reply: Fail(
-            {"message": "Something went wrong"}->(Utils.magic: {"message": string} => exn),
-          ),
-        },
+        {reply: Fail(JsError.make("Something went wrong")->(Utils.magic: JsError.t => exn))},
       ])
-      await Scenario.waitUntil(
-        () =>
-          indexer.infoAndAboveLogs()->Array.some(({msg}) => msg === "Failed to fetch block Range"),
-        ~message="the fetch failure to be logged",
-      )
+      await Scenario.waitUntil(() => stopped->Array.length > 0, ~message="the indexer to stop")
       // Nothing retries it: the query is never asked again.
       await Utils.delay(10)
-      t.expect(sync.pendingItemsQueries).toEqual([])
+      t.expect((
+        stopped->Array.map(exn => (exn->(Utils.magic: exn => {"message": string}))["message"]),
+        sync.pendingItemsQueries,
+      )).toEqual((["Something went wrong"], []))
     },
   )
 
   scenario->Scenario.it(
-    "Immediately retries with the suggested toBlock",
-    ~sources=[{chain: 1337}],
+    "Immediately retries with the suggested toBlock, on the same source",
+    // A second source the retry could have moved to, and must not.
+    ~sources=[{chain: 1337}, {chain: 1337}],
     // Any backoff at this scale outlives the test, so the retry arriving at all
     // proves it didn't wait.
     ~sourceTiming={retryBackoffScale: 1000.},
     async (~t, ~indexer as _, ~source) => {
       let sync = source(1337)
+      let other = source(1337, ~index=1)
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([
         {
@@ -309,7 +343,7 @@ describe("Items query retries on a single source", () => {
           reply: LeavePending,
         },
       ])
-      t.expect(sync.pendingItemsQueries->Array.length).toEqual(1)
+      t.expect((sync.pendingItemsQueries->Array.length, other.pendingItemsQueries)).toEqual((1, []))
     },
   )
 

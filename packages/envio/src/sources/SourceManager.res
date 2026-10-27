@@ -581,16 +581,16 @@ let retryBackoffMillis = retry =>
 // 0, these must never busy-loop when there is no other source to move to.
 let minRecoverableBackoffMillis = 50
 
-// Back off before retrying the same request, failing the source over first when
-// another one can actually take over. Marking `lastFailedAt` only demotes this
-// source in the selection order - with no working alternative the next attempt
-// lands right back here, so `minBackoffMillis` is what keeps a retry loop that
-// never changes source from spinning at full speed.
 // The logged backoff stays the unscaled one, so a scaled-down test still reads
 // the schedule an operator would see.
 let sleepBackoff = (sourceManager: t, millis) =>
   Utils.delay((millis->Int.toFloat *. sourceManager.retryBackoffScale)->Float.toInt)
 
+// Back off before retrying the same request, failing the source over first when
+// another one can actually take over. Marking `lastFailedAt` only demotes this
+// source in the selection order - with no working alternative the next attempt
+// lands right back here, so `minBackoffMillis` is what keeps a retry loop that
+// never changes source from spinning at full speed.
 let backoffBeforeRetry = async (
   sourceManager: t,
   sourceState: sourceState,

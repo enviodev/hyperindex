@@ -90,7 +90,11 @@ describe("Block-hash lookups", () => {
     mock.failGetBlockHashes(Source.RateLimited({resetMs: 50, requestStats: []}))
     await mock->finishRollback
 
-    t.expect(
+    let rateLimitedSeconds =
+      (await indexer.metric("envio_indexing_source_rate_limited_seconds"))->Array.map(
+        ({value}) => value->Float.fromString->Option.getOr(0.),
+      )
+    t.expect((
       indexer.allLogsAsJson()->Array.filterMap(
         line =>
           switch (line->Dict.get("msg"), line->Dict.get("waitMs")) {
@@ -99,7 +103,9 @@ describe("Block-hash lookups", () => {
           | _ => None
           },
       ),
-    ).toEqual([Number(50.)])
+      // The lookup's wait counts towards the chain's rate-limited time too.
+      rateLimitedSeconds->Array.map(seconds => seconds >= 0.05),
+    )).toEqual(([Number(50.)], [true]))
   })
 
   scenario->Scenario.it(
