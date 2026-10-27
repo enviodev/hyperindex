@@ -351,7 +351,7 @@ describe("Source failover", () => {
     "Doesn't poll a benched source as a stall fallback",
     ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Realtime}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 5},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       let live = source(1337, ~index=1)
       sync.resolveGetHeightOrThrow(100)
@@ -364,7 +364,19 @@ describe("Source failover", () => {
 
       // Several stall windows of the realtime wait that follows.
       await Utils.delay(50)
-      t.expect(live->polls).toEqual(livePolls)
+      t.expect((
+        live->polls,
+        // The stall did run, and found nothing left to recruit.
+        indexer.allLogsAsJson()->Array.some(
+          line =>
+            line->Dict.get("msg") ==
+              Some(
+                String(
+                  "No new blocks detected within 0s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync",
+                ),
+              ),
+        ),
+      )).toEqual((livePolls, true))
     },
   )
 })
