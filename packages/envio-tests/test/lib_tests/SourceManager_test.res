@@ -1,5 +1,16 @@
 open Vitest
 
+// Recovery is measured with Date.now(), while timers run on the event loop's
+// cached clock, so a plain delay of `recoveryTimeout` can fire with Date.now()
+// a millisecond short and leave the source still in recovery. Every caller
+// starts waiting after the failure was recorded, so this waits it out exactly.
+let waitOutRecovery = async (~recoveryTimeout) => {
+  let since = Date.now()
+  while Date.now() -. since < recoveryTimeout {
+    await Utils.delay(Math.Int.max(1, (recoveryTimeout -. (Date.now() -. since))->Float.toInt))
+  }
+}
+
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
 
@@ -2134,7 +2145,7 @@ Give each query its own entry, told apart by partitionId:
       ).toBe(fallbackMock.source)
 
       // Wait for recovery timeout to elapse
-      await Utils.delay(recoveryTimeout->Float.toInt)
+      await waitOutRecovery(~recoveryTimeout)
 
       {
         // Query after timeout — recovery switches to sync before querying
@@ -2312,7 +2323,7 @@ Give each query its own entry, told apart by partitionId:
       }
 
       // Wait for recovery timeout, then recover to sync
-      await Utils.delay(recoveryTimeout->Float.toInt)
+      await waitOutRecovery(~recoveryTimeout)
 
       {
         let p =
@@ -2365,7 +2376,7 @@ Give each query its own entry, told apart by partitionId:
       }
 
       // Wait for recovery timeout again and recover
-      await Utils.delay(recoveryTimeout->Float.toInt)
+      await waitOutRecovery(~recoveryTimeout)
 
       {
         let p =
@@ -2677,7 +2688,7 @@ Give each query its own entry, told apart by partitionId:
       }
 
       // After recovery timeout: sync recovers, becomes primary again
-      await Utils.delay(recoveryTimeout->Float.toInt)
+      await waitOutRecovery(~recoveryTimeout)
 
       let p3 =
         sourceManager->SourceManager.executeQuery(

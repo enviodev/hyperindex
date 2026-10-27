@@ -131,7 +131,10 @@ type t = {
   // getter folds the in-progress interval in so a scrape mid-stall isn't stale.
   mutable processingStalledOnFetchSince: option<Performance.timeRef>,
   mutable processingStalledOnStorageWriteSeconds: float,
-  handlerStats: dict<handlerStat>,
+  // One stat per contract/event metric series. Per-chain event configs share a
+  // series, so the by-config map only spares a run from building the key.
+  handlerStatBySeries: dict<handlerStat>,
+  handlerStatByEventConfig: Utils.Map.t<Internal.eventConfig, handlerStat>,
   storageLoadStats: dict<storageLoadStat>,
   storageWriteStats: dict<storageWriteStat>,
   historyPruneStats: dict<historyPruneStat>,
@@ -210,7 +213,8 @@ let make = (
     processingStalledOnFetchSeconds: 0.,
     processingStalledOnFetchSince: None,
     processingStalledOnStorageWriteSeconds: 0.,
-    handlerStats: Dict.make(),
+    handlerStatBySeries: Dict.make(),
+    handlerStatByEventConfig: Utils.Map.make(),
     storageLoadStats: Dict.make(),
     storageWriteStats: Dict.make(),
     historyPruneStats: Dict.make(),
@@ -650,7 +654,7 @@ let toMetrics = (state: t): Metrics.t => {
     rollbackCount: state.rollbackCount,
     rollbackEventsCount: state.rollbackEventsCount,
     chains: chainStates->Dict.valuesToArray->Array.map(ChainState.toMetrics),
-    handlers: state.handlerStats
+    handlers: state.handlerStatBySeries
     ->Dict.valuesToArray
     ->Array.map(s => {
       Metrics.contract: s.contract,
@@ -697,7 +701,7 @@ let recordBatchDurations = (state: t, ~loadDuration, ~handlerDuration) => {
 let getHandlerStat = (state: t, ~contract, ~event) => {
   // Length-prefixed so names containing the separator can't collide.
   let key = contract->String.length->Int.toString ++ ":" ++ contract ++ event
-  switch state.handlerStats->Utils.Dict.dangerouslyGetNonOption(key) {
+  switch state.handlerStatBySeries->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(stat) => stat
   | None =>
     let stat: handlerStat = {
@@ -711,28 +715,35 @@ let getHandlerStat = (state: t, ~contract, ~event) => {
       preloadPendingCount: 0,
       preloadPendingTimerRef: %raw(`null`),
     }
-    state.handlerStats->Dict.set(key, stat)
+    state.handlerStatBySeries->Dict.set(key, stat)
     stat
   }
 }
 
-let recordHandlerDuration = (state: t, ~contract, ~event, ~duration) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let handlerStatFor = (state: t, eventConfig: Internal.eventConfig) =>
+  switch state.handlerStatByEventConfig->Utils.Map.get(eventConfig) {
+  | Some(stat) => stat
+  | None =>
+    let stat = state->getHandlerStat(~contract=eventConfig.contractName, ~event=eventConfig.name)
+    state.handlerStatByEventConfig->Utils.Map.set(eventConfig, stat)->ignore
+    stat
+  }
+
+let recordHandlerDuration = (stat: handlerStat, ~duration) => {
   stat.processingSeconds = stat.processingSeconds +. duration
   stat.processingCount = stat.processingCount +. 1.
 }
 
-let startPreloadHandler = (state: t, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let startPreloadHandler = (stat: handlerStat) => {
+  let timerRef = Performance.now()
   if stat.preloadPendingCount === 0 {
-    stat.preloadPendingTimerRef = Performance.now()
+    stat.preloadPendingTimerRef = timerRef
   }
   stat.preloadPendingCount = stat.preloadPendingCount + 1
-  Performance.now()
+  timerRef
 }
 
-let endPreloadHandler = (state: t, timerRef, ~contract, ~event) => {
-  let stat = state->getHandlerStat(~contract, ~event)
+let endPreloadHandler = (stat: handlerStat, timerRef) => {
   stat.preloadPendingCount = stat.preloadPendingCount - 1
   if stat.preloadPendingCount === 0 {
     stat.preloadSeconds =
