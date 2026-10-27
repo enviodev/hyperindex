@@ -450,8 +450,15 @@ let captureRefusal = () => {
 // Answers whatever the reorg resolution asks for: block hashes for the depth
 // search (blocks past `validUpTo` come back re-orged), and empty responses for
 // the re-fetch queries the rollback schedules.
-let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetched=[]) => {
+let driveRollback = async (
+  ~source: MockSource.t,
+  ~validUpTo,
+  ~head=301,
+  ~refetched=[],
+  ~refetchedBlocks=[],
+) => {
   let refetched = ref(refetched)
+  let refetchedBlocks = ref(refetchedBlocks)
   for _ in 0 to 300 {
     if source.getBlockHashesCalls->Array.length > 0 {
       let requested = source.getBlockHashesCalls->Array.copy
@@ -472,9 +479,16 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
     }
     if source.pendingItemsQueries->Array.length > 0 {
       await source.expectItemsQueries([
-        {reply: Respond({items: refetched.contents, latestFetchedBlockNumber: head})},
+        {
+          reply: Respond({
+            items: refetched.contents,
+            blocks: refetchedBlocks.contents,
+            latestFetchedBlockNumber: head,
+          }),
+        },
       ])
       refetched := []
+      refetchedBlocks := []
     }
     await Utils.delay(0)
   }
@@ -489,6 +503,7 @@ let reorgAbove = async (
   ~head,
   ~validUpTo,
   ~refetched=?,
+  ~refetchedBlocks=?,
 ) => {
   source.resolveGetHeightOrThrow(head + 1)
   await source.expectItemsQueries([
@@ -500,6 +515,6 @@ let reorgAbove = async (
       }),
     },
   ])
-  await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?)
+  await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?, ~refetchedBlocks?)
   await indexer.waitUntilIdle()
 }
