@@ -116,34 +116,52 @@ describe("Rollback diff checkpoint ids", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await Utils.delay(0)
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source100),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=source100),
+        Scenario.enterReorgThreshold(~indexer, ~source=source1337),
       ))
 
       // Chain 100 leads (the progress tie breaks by ascending chain id), so the
       // two chains take turns and commit different ids from the shared counter.
-      source100.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=101, ~count=100n)],
-        ~latestFetchedBlockNumber=101,
-      )
-      await MockSource.waitItemsQuery(source1337)
-      source1337.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=101, ~count=1337n)],
-        ~latestFetchedBlockNumber=101,
-      )
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setCounterAndTotal(~block=101, ~count=100n)],
+            latestFetchedBlockNumber: 101,
+          }),
+        },
+      ])
+      await source1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [setCounterAndTotal(~block=101, ~count=1337n)],
+            latestFetchedBlockNumber: 101,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      source1337.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=102, ~count=13372n)],
-        ~latestFetchedBlockNumber=102,
-      )
+      await source1337.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [setCounterAndTotal(~block=102, ~count=13372n)],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      source100.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=102, ~count=1002n)],
-        ~latestFetchedBlockNumber=102,
-      )
+      await source100.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [setCounterAndTotal(~block=102, ~count=1002n)],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let highestCommitted =
@@ -155,38 +173,39 @@ describe("Rollback diff checkpoint ids", () => {
       // the rollback stages a diff row for each of them.
       source100.dropPendingCalls()
       let reorgsBefore = source1337.reorgCallCount()
-      source1337.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(103),
-        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
-      )
+      await source1337.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({items: [], prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"}}),
+        },
+        // The chunks fetched ahead of it go unanswered: the rollback refetches from 102.
+        {partitionId: "0", reply: LeavePending},
+      ])
       await Scenario.waitUntil(
         () => source1337.reorgCallCount() > reorgsBefore,
         ~message="the reorg to be detected and the rollback's depth search to start",
       )
-      await Scenario.waitUntil(
-        () => source1337.getBlockHashesCalls->Array.length > 0,
-        ~message="the rollback's depth search to re-fetch the scanned block hashes",
-      )
-      source1337.resolveGetBlockHashes(
-        [(100, "0x100"), (101, "0x101")]->Array.map(((
-          blockNumber,
-          blockHash,
-        )): BlockStore.inputBlock => {
-          blockNumber,
-          blockHash,
-          blockTimestamp: blockNumber,
-        }),
-      )
+      // The rollback's depth search re-fetches the scanned block hashes.
+      await source1337.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
 
       // The diff only reaches storage with the next batch, so chain 1337
       // re-delivers block 102 to flush it.
-      source1337.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=102, ~count=999n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
+      await source1337.expectItemsQueries([
+        {
+          coversBlock: 102,
+          reply: Respond({
+            items: [setCounterAndTotal(~block=102, ~count=999n)],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let sorted =

@@ -8,16 +8,23 @@ let getSourceRole: (
   ~hasRealtime: bool,
 ) => option<sourceRole>
 
-let make: (
-  ~sources: array<Source.t>,
-  ~isRealtime: bool,
-  ~newBlockStallTimeout: int=?,
-  ~newBlockStallTimeoutRealtime: int=?,
-  ~stalledPollingInterval: int=?,
-  ~reducedPollingInterval: int=?,
-  ~recoveryTimeout: float=?,
-  ~getHeightRetryInterval: (~retry: int) => int=?,
-) => t
+// Every field defaults to the production value. Only tests set them, to reach
+// a stall, a recovery or a retry schedule without waiting out the real window.
+type timing = {
+  newBlockStallTimeout?: int,
+  newBlockStallTimeoutRealtime?: int,
+  stalledPollingInterval?: int,
+  reducedPollingInterval?: int,
+  recoveryTimeout?: float,
+  getHeightRetryInterval?: (~retry: int) => int,
+  // Multiplies the sleep before retrying an items query or a block-hash
+  // lookup, but not the backoff it logs. A rate limit's wait is the server's
+  // to set and isn't scaled.
+  retryBackoffScale?: float,
+  heightPollTimeout?: int,
+}
+
+let make: (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime: bool, ~timing: timing=?) => t
 
 let getActiveSource: t => Source.t
 
@@ -96,9 +103,6 @@ let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.
 let getRateLimitTimeMs: t => float
-
-// True if at least one request is currently waiting on a rate-limit reset.
-let isRateLimited: t => bool
 
 // Milliseconds remaining until the longest active rate-limit window resets,
 // or None if not currently waiting (or the window has already elapsed).

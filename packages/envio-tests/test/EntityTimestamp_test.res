@@ -36,22 +36,28 @@ describe("Load and save an entity with a Timestamp from DB", () => {
       let source = source(1337)
 
       source.resolveGetHeightOrThrow(300)
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 100,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.entityWithTimestamp.set({
-                id: "testEntity",
-                timestamp: Date.fromString("1970-01-01T00:02:03.456Z"),
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=100,
-      )
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  context.entityWithTimestamp.set({
+                    id: "testEntity",
+                    timestamp: Date.fromString("1970-01-01T00:02:03.456Z"),
+                  })
+                },
+              },
+            ],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       let entities: array<entityWithTimestamp> = await indexer.query("EntityWithTimestamp")

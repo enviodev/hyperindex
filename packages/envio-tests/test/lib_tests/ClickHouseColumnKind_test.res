@@ -70,6 +70,7 @@ let everyColumn =
   )
 
 let sink = ClickHouse.makeSink(
+  ~logger=Logger.makeInMemory(),
   ~host="http://127.0.0.1:1",
   ~username="default",
   ~password="",
@@ -120,12 +121,7 @@ describe("ClickHouse column type contract", () => {
         fieldType => ClickHouse.makeColumnSpec(~name="c", ~fieldType),
       ),
     )
-    t.expect(kinds->Array.map(Staging.kindOfOrdinal)).toEqual([
-      Staging.F64,
-      U64,
-      I64,
-      Text,
-    ])
+    t.expect(kinds->Array.map(Staging.kindOfOrdinal)).toEqual([Staging.F64, U64, I64, Text])
   })
 
   // A kind added on the Rust side reaches a build of this one that has never

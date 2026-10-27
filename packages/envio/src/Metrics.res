@@ -603,6 +603,13 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~value=m => m.queryingSeconds,
   )
   b->series(
+    ~name="envio_indexing_source_rate_limited_seconds",
+    ~help="The time the chain spent waiting for a data-source rate limit to reset. Rate limits that overlap in time are counted once. A steadily climbing value means the source plan's limits are holding the indexer back.",
+    ~kind="counter",
+    ~entries=chains,
+    ~value=m => m.rateLimitTimeMs /. 1000.,
+  )
+  b->series(
     ~name="envio_indexing_buffer_size",
     ~help="The current number of items in the indexing buffer.",
     ~kind="gauge",

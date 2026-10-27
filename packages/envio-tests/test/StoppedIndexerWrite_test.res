@@ -65,7 +65,13 @@ describe("Stopping an indexer while it finalizes the backfill", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100, ~knownHeight=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100, knownHeight: 100}),
+        },
+      ])
       await finalizeStarted
 
       let stopped = indexer.stop()

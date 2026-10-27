@@ -141,12 +141,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
-      pruneStaleEntityHistory: async (
-        ~entityName as _,
-        ~entityIndex as _,
-        ~chainIdColumn as _,
-        ~safeCheckpoints as _,
-      ) => (),
+      pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
       getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
         JsError.throwWithMessage("Not implemented"),
       getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
@@ -170,7 +165,11 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
 
 let toPersistence = (storageMock: t, ~config: Config.t) => {
   {
-    ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
+    ...PgStorage.makePersistenceFromConfig(
+      ~logger=Logger.makeInMemory(),
+      ~config,
+      ~storage=storageMock.storage,
+    ),
     storageStatus: Ready({
       cleanRun: false,
       contractMapping: config.contractMapping,

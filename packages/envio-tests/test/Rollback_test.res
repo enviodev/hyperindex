@@ -126,92 +126,91 @@ describe("E2E rollback tests", () => {
     ~afterRollback=3n,
     ~chainId=1337->ChainId.fromInt,
   ) => {
-    t.expect(
-      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-      ~message="Should enter reorg threshold and request now to the latest block",
-    ).toEqual(
-      Some({
-        "fromBlock": 101,
-        "toBlock": None,
-        "retry": 0,
-        "p": "0",
-      }),
-    )
+    // Entered the reorg threshold, so the query runs to the latest block.
+    await sourceMock.expectItemsQueries([
+      {
+        partitionId: "0",
+        fromBlock: 101,
+        toBlock: Unbounded,
+        retryCount: 0,
+        // Carries an event past its latestFetchedBlockNumber, which the indexer
+        // has to ignore.
+        reply: RespondUnchecked({
+          items: [
+            {
+              blockNumber: 101,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->asContext
+                // This shouldn't be written to the db at all
+                // and deduped on the in-memory store level
+                context.simpleEntity.set({
+                  id: "1",
+                  value: "value-1",
+                })
+                context.simpleEntity.set({
+                  id: "1",
+                  value: "value-2",
+                })
 
-    sourceMock.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 101,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            // This shouldn't be written to the db at all
-            // and deduped on the in-memory store level
-            context.simpleEntity.set({
-              id: "1",
-              value: "value-1",
-            })
-            context.simpleEntity.set({
-              id: "1",
-              value: "value-2",
-            })
+                context.simpleEntity.set({
+                  id: "2",
+                  value: "value-1",
+                })
+              },
+            },
+            {
+              blockNumber: 101,
+              logIndex: 1,
+              handler: async args => {
+                let context = args.context->asContext
+                // This should overwrite the previous value
+                // set on log index 0. No history rows should be created
+                // since they are per batch now.
+                context.simpleEntity.set({
+                  id: "2",
+                  value: "value-2",
+                })
 
-            context.simpleEntity.set({
-              id: "2",
-              value: "value-1",
-            })
-          },
-        },
-        {
-          blockNumber: 101,
-          logIndex: 1,
-          handler: async args => {
-            let context = args.context->asContext
-            // This should overwrite the previous value
-            // set on log index 0. No history rows should be created
-            // since they are per batch now.
-            context.simpleEntity.set({
-              id: "2",
-              value: "value-2",
-            })
+                context.simpleEntity.set({
+                  id: "4",
+                  value: "value-1",
+                })
+              },
+            },
+            {
+              blockNumber: 102,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->asContext
+                // This should create a new history row
+                context.simpleEntity.set({
+                  id: "3",
+                  value: "value-1",
+                })
 
-            context.simpleEntity.set({
-              id: "4",
-              value: "value-1",
-            })
-          },
-        },
-        {
-          blockNumber: 102,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            // This should create a new history row
-            context.simpleEntity.set({
-              id: "3",
-              value: "value-1",
-            })
-
-            // Test rollback of creating + deleting an entity
-            context.simpleEntity.deleteUnsafe("4")
-          },
-        },
-        {
-          blockNumber: 103,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            // This should be ignored, since it's after the latest fetch block
-            // The case is invalid, but this is good
-            context.simpleEntity.set({
-              id: "3",
-              value: "value-2",
-            })
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=102,
-    )
+                // Test rollback of creating + deleting an entity
+                context.simpleEntity.deleteUnsafe("4")
+              },
+            },
+            {
+              blockNumber: 103,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->asContext
+                // This should be ignored, since it's after the latest fetch block
+                // The case is invalid, but this is good
+                context.simpleEntity.set({
+                  id: "3",
+                  value: "value-2",
+                })
+              },
+            },
+          ],
+          latestFetchedBlockNumber: 102,
+        }),
+      },
+    ])
 
     await indexer.getBatchWritePromise()
 
@@ -293,82 +292,78 @@ describe("E2E rollback tests", () => {
       ],
     ))
 
-    t.expect(sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last).toEqual(
-      Some({
-        "fromBlock": 103,
-        "toBlock": None,
-        "retry": 0,
-        "p": "0",
-      }),
-    )
-
     // Should trigger rollback
-    sourceMock.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 103,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            // The value is not used, since we reset fetch state
-            // for rollback
-            context.simpleEntity.set({
-              id: "3",
-              value: "value-1",
-            })
+    await sourceMock.expectItemsQueries([
+      {
+        partitionId: "0",
+        fromBlock: 103,
+        toBlock: Unbounded,
+        retryCount: 0,
+        reply: Respond({
+          items: [
+            {
+              blockNumber: 103,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->asContext
+                // The value is not used, since we reset fetch state
+                // for rollback
+                context.simpleEntity.set({
+                  id: "3",
+                  value: "value-1",
+                })
+              },
+            },
+          ],
+          prevRangeLastBlock: {
+            blockNumber: 102,
+            blockHash: "0x102a",
           },
-        },
-      ],
-      ~prevRangeLastBlock={
-        blockNumber: 102,
-        blockHash: "0x102a",
+        }),
       },
-    )
-    await Utils.delay(0)
-    await Utils.delay(0)
-
-    t.expect(
-      sourceMock.getBlockHashesCalls,
-      ~message="Should have called getBlockHashes to find rollback depth",
-    ).toEqual([[100, 101]])
-    sourceMock.resolveGetBlockHashes([
-      // The block 100 is untouched so we can rollback to it; 101 came back on a
-      // different hash, so it belongs to the reorg.
-      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
     ])
+
+    await sourceMock.expectBlockHashLookup({
+      blockNumbers: [100, 101],
+      reply: [
+        // The block 100 is untouched so we can rollback to it; 101 came back on a
+        // different hash, so it belongs to the reorg.
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
+      ],
+    })
 
     await indexer.getRollbackReadyPromise()
 
-    t.expect(
-      sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-      ~message="Should rollback fetch state",
-    ).toEqual(
-      Some({
-        "fromBlock": 101,
-        "toBlock": None,
-        "retry": 0,
-        // IDs reset on rollback, recreated partition starts at 0
-        "p": "0",
-      }),
-    )
-    sourceMock.resolveGetItemsOrThrow([
+    // The fetch state is rolled back.
+    await sourceMock.expectItemsQueries([
       {
-        blockNumber: 101,
-        logIndex: 1,
-        handler: async args => {
-          let context = args.context->asContext
-          // From value-2 to value-1
-          context.simpleEntity.set({
-            id: "1",
-            value: "value-1",
-          })
-          // The same value as before rollback
-          context.simpleEntity.set({
-            id: "2",
-            value: "value-2",
-          })
-        },
+        // IDs reset on rollback, recreated partition starts at 0
+        partitionId: "0",
+        fromBlock: 101,
+        toBlock: Unbounded,
+        retryCount: 0,
+        reply: Respond({
+          items: [
+            {
+              blockNumber: 101,
+              logIndex: 1,
+              handler: async args => {
+                let context = args.context->asContext
+                // From value-2 to value-1
+                context.simpleEntity.set({
+                  id: "1",
+                  value: "value-1",
+                })
+                // The same value as before rollback
+                context.simpleEntity.set({
+                  id: "2",
+                  value: "value-2",
+                })
+              },
+            },
+          ],
+        }),
       },
     ])
 
@@ -429,42 +424,35 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Only the most-behind chain (100 — the progress tie breaks by ascending
       // chain id) holds the post-threshold query; drive it to head first so the
       // budget releases and chain 1337 gets its own follow-up.
-      t.expect(
-        sourceMock100.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-        ~message="Should enter reorg threshold and request now to the latest block",
-      ).toEqual(
-        Some({
-          "fromBlock": 101,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        }),
-      )
-      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      await sourceMock100.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 101,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      t.expect(
-        sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-        ~message="Chain 1337 follows once the leader's budget releases",
-      ).toEqual(
-        Some({
-          "fromBlock": 101,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        }),
-      )
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
+      // Chain 1337 follows once the leader's budget releases.
+      await sourceMock1337.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 101,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({items: [], latestFetchedBlockNumber: 110}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(await indexer.metric("envio_reorg_threshold")).toEqual([
@@ -494,34 +482,30 @@ describe("E2E rollback tests", () => {
         ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
       ).toEqual(0)
 
-      // Both chains are ready immediately, so chain 1337 should continue fetching
-      t.expect(
-        sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-        ~message="Should continue indexing from where we left off",
-      ).toEqual(
-        Some({
-          "fromBlock": 111,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        }),
-      )
-
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
+      // Both chains are ready immediately, so chain 1337 continues indexing from
+      // where it left off.
+      await sourceMock1337.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 111,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({items: [], latestFetchedBlockNumber: 200, knownHeight: 320}),
+        },
+      ])
 
       await restarted.getBatchWritePromise()
 
-      t.expect(
-        sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-        ~message="Continue normally inside of the reorg threshold",
-      ).toEqual(
-        Some({
-          "fromBlock": 201,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        }),
-      )
+      // Continues normally inside of the reorg threshold.
+      await sourceMock1337.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 201,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: LeavePending,
+        },
+      ])
 
       t.expect(await restarted.metric("envio_reorg_threshold")).toEqual([
         {value: "1", labels: Dict.make()},
@@ -535,9 +519,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
       await testSingleChainRollback(~t, ~sourceMock, ~indexer)
     },
   )
@@ -560,45 +542,54 @@ describe("E2E rollback tests", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "before-delete"})
-            },
-          },
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.deleteUnsafe("1")
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=102,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "before-delete"})
+                },
+              },
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.deleteUnsafe("1")
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "after-recreate"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 103,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "after-recreate"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // getBatchWritePromise can observe the loop between the response resolving
@@ -629,7 +620,7 @@ describe("E2E rollback tests", () => {
       historyWaitTimeoutId.contents->Option.forEach(clearTimeout)
       switch historyWaitResult {
       | Ok() => ()
-      | Error(Some(errHandler)) => errHandler->ErrorHandling.raiseExn
+      | Error(Some(errHandler)) => errHandler->ErrorHandling.toExn->throw
       | Error(None) =>
         JsError.throwWithMessage("Timed out waiting for SET -> DELETE -> SET history")
       }
@@ -659,40 +650,48 @@ describe("E2E rollback tests", () => {
 
       // Detect a reorg at block 103, then establish block 102 (the DELETE
       // checkpoint) as the latest valid block.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(104),
-        ~latestFetchedBlockNumber=104,
-        ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x0103ee"},
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should query the scanned blocks below the reorg",
-      ).toEqual([[100, 101, 102]])
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 104,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 104,
+            prevRangeLastBlock: {blockNumber: 103, blockHash: "0x0103ee"},
+          }),
+        },
+        // The chunks above, voided by the rollback.
+        {partitionId: "0", reply: LeavePending},
       ])
+
+      // The rollback queries the scanned blocks below the reorg.
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 102],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+          {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
+        ],
+      })
 
       switch await Promise.race([
         indexer.getRollbackReadyPromise()->Promise.thenResolve(_ => Ok()),
         indexerErrorPromise->Promise.thenResolve(errHandler => Error(errHandler)),
       ]) {
       | Ok() => ()
-      | Error(errHandler) => errHandler->ErrorHandling.raiseExn
+      | Error(errHandler) => errHandler->ErrorHandling.toExn->throw
       }
 
       // Commit the rollback diff without recreating the entity on the canonical chain.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=103,
-        ~latestFetchedBlockHash="0x0103ee",
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 103,
+            latestFetchedBlockHash: "0x0103ee",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -706,65 +705,72 @@ describe("E2E rollback tests", () => {
     "Parks a reorg detected while a batch is still processing",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       // Hold the block-101 batch open inside its handler so a reorg can be detected
       // while the batch is still in flight.
       let releaseHandler = ref(() => ())
       let handlerGate = Promise.make((resolve, _) => releaseHandler := (() => resolve()))
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "from-reorged-block"})
-              await handlerGate
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=101,
-        ~latestFetchedBlockHash="0x0101",
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "from-reorged-block"})
+                  await handlerGate
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 101,
+            latestFetchedBlockHash: "0x0101",
+          }),
+        },
+      ])
 
-      // Wait until the processing loop has launched the next fetch — the batch is now
-      // in flight, blocked in the handler above.
-      while sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
-        await Utils.delay(0)
-      }
-
-      // A reorg lands mid-batch: block 101 came back with a different hash.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=102,
-        ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      // The processing loop launches the next fetch while the batch is in
+      // flight, blocked in the handler above. A reorg lands mid-batch: block 101
+      // came back with a different hash.
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            prevRangeLastBlock: {blockNumber: 101, blockHash: "0x101a"},
+          }),
+        },
+      ])
 
       // The rollback starts finding its depth even though the batch hasn't finished.
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="a reorg detected mid-batch should start finding the rollback depth",
-      ).toEqual([[100]])
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
 
       // Releasing the handler lets the batch finish; its progress is applied and the
       // parked rollback then executes and re-requests from the rolled-back block.
       releaseHandler.contents()
       await indexer.getRollbackReadyPromise()
 
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
-        ~message="after the parked rollback executes, the indexer re-requests from the valid block",
-      ).toEqual(Some({"fromBlock": 101, "toBlock": None, "retry": 0, "p": "0"}))
+      // After the parked rollback executes, the indexer re-requests from the
+      // valid block.
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 101,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: LeavePending,
+        },
+      ])
     },
   )
 
@@ -784,9 +790,7 @@ describe("E2E rollback tests", () => {
       )
 
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
       await testSingleChainRollback(~t, ~sourceMock, ~indexer)
       unregister()
 
@@ -803,11 +807,11 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
-
-      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 102})},
+      ])
 
       await indexer.getBatchWritePromise()
 
@@ -832,52 +836,51 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
-
-      sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 102})},
+      ])
       await indexer.getBatchWritePromise()
 
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=103,
-        ~prevRangeLastBlock={
-          blockNumber: 102,
-          blockHash: "0x102a",
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 103,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 103,
+            prevRangeLastBlock: {
+              blockNumber: 102,
+              blockHash: "0x102a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100]])
-      sourceMock.resolveGetBlockHashes([
-        // The block 100 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
+
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [
+          // The block 100 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        ],
+      })
 
       await indexer.getRollbackReadyPromise()
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ~message="Should rollback fetch state and re-request items",
-      ).toEqual([
+      // The fetch state is rolled back and items re-requested.
+      await sourceMock.expectItemsQueries([
         {
-          "fromBlock": 101,
-          "toBlock": None,
-          "retry": 0,
           // IDs reset on rollback, recreated partition starts at 0
-          "p": "0",
+          partitionId: "0",
+          fromBlock: 101,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            latestFetchedBlockHash: "0x102a",
+          }),
         },
       ])
-
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=102,
-        ~latestFetchedBlockHash="0x102a",
-      )
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -902,11 +905,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1 = source(1337)
       let sourceMock2 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock2),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock2),
       ))
 
       // The most-behind chain (100 — the progress tie breaks by ascending
@@ -929,9 +930,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       let calls = []
       let handler = async (args: Internal.handlerArgs) => {
@@ -939,117 +938,105 @@ describe("E2E rollback tests", () => {
         calls->Array.push(event.block.number->Int.toString ++ "-" ++ event.logIndex->Int.toString)
       }
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler,
-          },
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler,
-          },
-          {
-            blockNumber: 102,
-            logIndex: 2,
-            contractRegister: async args => {
-              let context = args.context->asRegisterContext
-              context.chain.simpleNft.add(
-                Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
-              )
-            },
-            handler,
-          },
-          {
-            blockNumber: 103,
-            logIndex: 2,
-            contractRegister: async args => {
-              let context = args.context->asRegisterContext
-              context.chain.simpleNft.add(
-                Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1),
-              )
-            },
-            handler,
-          },
-          {
-            blockNumber: 104,
-            logIndex: 2,
-            contractRegister: async args => {
-              let context = args.context->asRegisterContext
-              context.chain.simpleNft.add(
-                Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2),
-              )
-            },
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=104,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler,
+              },
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler,
+              },
+              {
+                blockNumber: 102,
+                logIndex: 2,
+                contractRegister: async args => {
+                  let context = args.context->asRegisterContext
+                  context.chain.simpleNft.add(
+                    Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+                  )
+                },
+                handler,
+              },
+              {
+                blockNumber: 103,
+                logIndex: 2,
+                contractRegister: async args => {
+                  let context = args.context->asRegisterContext
+                  context.chain.simpleNft.add(
+                    Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(1),
+                  )
+                },
+                handler,
+              },
+              {
+                blockNumber: 104,
+                logIndex: 2,
+                contractRegister: async args => {
+                  let context = args.context->asRegisterContext
+                  context.chain.simpleNft.add(
+                    Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(2),
+                  )
+                },
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 104,
+          }),
+        },
+      ])
 
       await indexer.getBatchWritePromise()
 
-      t.expect(
-        (calls, sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)),
-        ~message=`Creates a new partition for DCs and queries it in parallel with the original partition without blocking`,
-      ).toEqual((
-        ["101-0"],
-        [
-          {
-            // New partition for DCs
-            "fromBlock": 102,
-            "toBlock": None,
-            "retry": 0,
-            "p": "1",
-          },
-          {
-            // Continue fetching original partition
-            // without blocking
-            "fromBlock": 105,
-            "toBlock": None,
-            "retry": 0,
-            "p": "0",
-          },
-        ],
-      ))
+      t.expect(calls, ~message="Block 102 waits for the DC partition to fetch it").toEqual([
+        "101-0",
+      ])
       t.expect(
         await queryDynamicAddresses(indexer),
         ~message="Shouldn't store dynamic contracts at this point",
       ).toEqual([])
 
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 1,
-            handler,
-          },
-        ],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
+      // Creates a new partition for DCs and queries it in parallel with the
+      // original partition without blocking.
+      await sourceMock.expectItemsQueries([
+        {
+          // New partition for DCs
+          partitionId: "1",
+          fromBlock: 102,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 1,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+        {
+          // Continue fetching original partition
+          // without blocking
+          partitionId: "0",
+          fromBlock: 105,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: LeavePending,
+        },
+      ])
       await indexer.getBatchWritePromise()
       t.expect(
-        (calls, sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)),
+        calls,
         ~message=`Should process the block 102 after DC partition finished fetching it`,
-      ).toEqual((
-        ["101-0", "102-0", "102-1", "102-2"],
-        [
-          {
-            "fromBlock": 105,
-            "toBlock": None,
-            "retry": 0,
-            "p": "0",
-          },
-          {
-            "fromBlock": 103,
-            "toBlock": None,
-            "retry": 0,
-            "p": "1",
-          },
-        ],
-      ))
+      ).toEqual(["101-0", "102-0", "102-1", "102-2"])
       t.expect(
         await queryDynamicAddresses(indexer),
         ~message="Added the processed dynamic contract to the db",
@@ -1062,11 +1049,22 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(103),
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 103,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({items: [], latestFetchedBlockNumber: 103}),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 105,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: LeavePending,
+        },
+      ])
       await indexer.getBatchWritePromise()
       t.expect(
         (await queryDynamicAddresses(indexer))->Array.length,
@@ -1074,51 +1072,43 @@ describe("E2E rollback tests", () => {
       ).toEqual(2)
 
       // Should trigger rollback
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(104),
-        ~prevRangeLastBlock={
-          blockNumber: 103,
-          blockHash: "0x103a",
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          coversBlock: 104,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 103,
+              blockHash: "0x103a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 101, 102]])
-      sourceMock.resolveGetBlockHashes([
-        // The block 102 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
+        // The DC partition's chunks above, voided by the rollback.
+        {partitionId: "1", reply: LeavePending},
       ])
 
-      sourceMock.drainItemsQueries()
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 102],
+        reply: [
+          // The block 102 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+          {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
+        ],
+      })
+
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 105,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({items: []}),
+        },
+      ])
 
       await indexer.getRollbackReadyPromise()
-
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ~message="Should rollback fetch state and re-request items",
-      ).toEqual([
-        // Normal partition (recreated fresh, no chunking)
-        {
-          "fromBlock": 103,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        },
-        // DC partition (recreated fresh, no chunking since chunk history lost)
-        {
-          "fromBlock": 103,
-          "toBlock": None,
-          "retry": 0,
-          "p": "1",
-        },
-      ])
 
       // Asserted here rather than after the re-fetch below: the rollback is
       // resolved but nothing has been written yet, and how many ticks a write
@@ -1129,19 +1119,35 @@ describe("E2E rollback tests", () => {
   This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual(2)
 
-      // Both the base and the dynamic-contract partition are waiting at 103.
-      sourceMock.drainItemsQueries(~latestFetchedBlockNumber=104)
-
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 104,
-            logIndex: 0,
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=104,
-      )
+      // The fetch state is rolled back and both the base and the
+      // dynamic-contract partition re-request from 103.
+      await sourceMock.expectItemsQueries([
+        {
+          // Normal partition (recreated fresh, no chunking)
+          partitionId: "0",
+          fromBlock: 103,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 104,
+                logIndex: 0,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 104,
+          }),
+        },
+        {
+          // DC partition (recreated fresh, no chunking since chunk history lost)
+          partitionId: "1",
+          fromBlock: 103,
+          toBlock: Unbounded,
+          retryCount: 0,
+          reply: Respond({items: [], latestFetchedBlockNumber: 104}),
+        },
+      ])
 
       await indexer.getBatchWritePromise()
 
@@ -1157,11 +1163,10 @@ describe("E2E rollback tests", () => {
         },
       ])
       // After the db rollback, both partitions continue from block 105 (no chunk history yet)
-      let payloads = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
-      t.expect(
-        payloads->Array.map(p => (p["p"], p["fromBlock"], p["toBlock"])),
-        ~message="Should correctly continue fetching from block 105 after rolling back the db",
-      ).toEqual([("1", 105, None), ("0", 105, None)])
+      await sourceMock.expectItemsQueries([
+        {partitionId: "0", fromBlock: 105, toBlock: Unbounded, reply: LeavePending},
+        {partitionId: "1", fromBlock: 105, toBlock: Unbounded, reply: LeavePending},
+      ])
     },
   )
 
@@ -1172,11 +1177,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1199,66 +1202,91 @@ describe("E2E rollback tests", () => {
       // The most-behind chain (100 — the progress tie breaks by ascending chain
       // id) holds the only post-threshold query; chain 1337's appears once the
       // leader's response releases the budget.
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 2,
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
-      await MockSource.waitItemsQuery(sourceMock1337)
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 1,
-            handler,
-          },
-          {
-            blockNumber: 103,
-            logIndex: 2,
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 2,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 1,
+                handler,
+              },
+              {
+                blockNumber: 103,
+                logIndex: 2,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 2,
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=106,
-      )
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 2,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 106,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 2,
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=106,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 2,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 106,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 107,
-            logIndex: 4,
-            handler,
-          },
-        ],
-        ~filter=MockSource.coveringBlock(107),
-        ~latestFetchedBlockNumber=109,
-      )
+      await sourceMock1337.expectItemsQueries([
+        {
+          coversBlock: 107,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 107,
+                logIndex: 4,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 109,
+          }),
+        },
+        // The chunks above, drained once the rollback starts.
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -1409,30 +1437,31 @@ describe("E2E rollback tests", () => {
       ).toEqual([{value: "0", labels: Dict.make()}])
 
       // Should trigger rollback
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(110),
-        ~prevRangeLastBlock={
-          blockNumber: 106,
-          blockHash: "0x106a",
+      await sourceMock1337.expectItemsQueries([
+        {
+          coversBlock: 110,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 106,
+              blockHash: "0x106a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock1337.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 103]])
-      sourceMock1337.resolveGetBlockHashes([
-        // The block 103 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
       ])
 
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 103],
+        reply: [
+          // The block 103 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
+        ],
+      })
+
       // Clean up pending calls from before rollback
-      sourceMock100.drainItemsQueries()
-      sourceMock1337.drainItemsQueries()
+      sourceMock100.drainPendingItemsQueries()
+      sourceMock1337.drainPendingItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -1464,69 +1493,115 @@ describe("E2E rollback tests", () => {
         ~message="Rollbacks count after rollback",
       ).toEqual([{value: "1", labels: Dict.make()}])
 
-      t.expect(
-        (
-          sourceMock100.getItemsOrThrowCalls->Array.map(c => c.payload),
-          sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ),
-        ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
-      ).toEqual((
-        // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
-        // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 and
-        // stopping at the alignment cap (chain 1337's fork block plus
-        // CrossChainState.alignmentMargin of chain 100's range).
-        [
-          {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
-          {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
-          {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
-          {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
-          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
-          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
-          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
-          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
-          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
-        ],
-        // Chain 1337: partition DELETED (lfb > target), recreated fresh from
-        // just above the fork block.
-        [
-          {
-            "fromBlock": 104,
-            "toBlock": None,
-            "retry": 0,
-            "p": "0",
-          },
-        ],
-      ))
-
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "1",
-                value: `should-be-ignored-by-filter`,
-              })
-            },
-          },
-          {
-            blockNumber: 106,
-            logIndex: 2,
-            handler: async args => {
-              let context = args.context->asContext
-              // Set the same value as before rollback
-              context.simpleEntity.set({
-                id: "1",
-                value: `call-4`,
-              })
-            },
-          },
-        ],
-        ~filter=MockSource.coveringBlock(106),
-      )
+      // Both chains roll back their fetch state and re-request items, since
+      // chain 100 was touching the same entity as chain 1337.
+      // Chain 1337: partition DELETED (lfb > target), recreated fresh from
+      // just above the fork block.
+      await sourceMock1337.expectItemsQueries([
+        {partitionId: "0", fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+      ])
+      // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
+      // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 and
+      // stopping at the alignment cap (chain 1337's fork block plus
+      // CrossChainState.alignmentMargin of chain 100's range).
+      await sourceMock100.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 106,
+          toBlock: Bounded(111),
+          retryCount: 0,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "1",
+                    value: `should-be-ignored-by-filter`,
+                  })
+                },
+              },
+              {
+                blockNumber: 106,
+                logIndex: 2,
+                handler: async args => {
+                  let context = args.context->asContext
+                  // Set the same value as before rollback
+                  context.simpleEntity.set({
+                    id: "1",
+                    value: `call-4`,
+                  })
+                },
+              },
+            ],
+          }),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 112,
+          toBlock: Bounded(117),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 118,
+          toBlock: Bounded(123),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 124,
+          toBlock: Bounded(129),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 130,
+          toBlock: Bounded(135),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 136,
+          toBlock: Bounded(141),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 142,
+          toBlock: Bounded(147),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 148,
+          toBlock: Bounded(153),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 154,
+          toBlock: Bounded(159),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 160,
+          toBlock: Bounded(163),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+      ])
 
       await indexer.getBatchWritePromise()
 
@@ -1614,11 +1689,9 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       let callCount = ref(0)
@@ -1641,79 +1714,102 @@ describe("E2E rollback tests", () => {
       // The most-behind chain (100 — the progress tie breaks by ascending
       // chain id) holds the only post-threshold query; chain 1337's appears
       // once the leader's response releases the budget.
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 2,
-            handler,
-          },
-        ],
-        ~filter=MockSource.coveringBlock(106),
-        ~latestFetchedBlockNumber=103,
-      )
-      await MockSource.waitItemsQuery(sourceMock1337)
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 1,
-            handler,
-          },
-          {
-            blockNumber: 103,
-            logIndex: 2,
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 2,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 1,
+                handler,
+              },
+              {
+                blockNumber: 103,
+                logIndex: 2,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 2,
-            handler,
-          },
-        ],
-        ~latestFetchedBlockNumber=106,
-      )
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 2,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 106,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 2,
-            handler,
-          },
-          {
-            blockNumber: 106,
-            logIndex: 3,
-            handler: async args => {
-              let context = args.context->asContext
-              context.entityWithBigDecimal.set({
-                id: "foo",
-                bigDecimal: BigDecimal.fromFloat(0.),
-              })
-            },
-          },
-        ],
-        ~filter=MockSource.coveringBlock(106),
-        ~latestFetchedBlockNumber=106,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          coversBlock: 106,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 2,
+                handler,
+              },
+              {
+                blockNumber: 106,
+                logIndex: 3,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.entityWithBigDecimal.set({
+                    id: "foo",
+                    bigDecimal: BigDecimal.fromFloat(0.),
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 106,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 107,
-            logIndex: 4,
-            handler,
-          },
-        ],
-        ~filter=MockSource.coveringBlock(107),
-        ~latestFetchedBlockNumber=109,
-      )
+      await sourceMock1337.expectItemsQueries([
+        {
+          coversBlock: 107,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 107,
+                logIndex: 4,
+                handler,
+              },
+            ],
+            latestFetchedBlockNumber: 109,
+          }),
+        },
+        // The chunks above, drained once the rollback starts.
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -1849,86 +1945,79 @@ describe("E2E rollback tests", () => {
       ))
 
       // Should trigger rollback
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(110),
-        ~prevRangeLastBlock={
-          blockNumber: 106,
-          blockHash: "0x106a",
+      await sourceMock1337.expectItemsQueries([
+        {
+          coversBlock: 110,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 106,
+              blockHash: "0x106a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock1337.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 103]])
-      sourceMock1337.resolveGetBlockHashes([
-        // The block 103 is untouched so we can rollback to it
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
       ])
 
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 103],
+        reply: [
+          // The block 103 is untouched so we can rollback to it
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
+        ],
+      })
+
       // Clean up pending calls from before rollback
-      sourceMock100.drainItemsQueries()
-      sourceMock1337.drainItemsQueries()
+      sourceMock100.drainPendingItemsQueries()
+      sourceMock1337.drainPendingItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
-      t.expect(
-        (
-          sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.first,
-          sourceMock100.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.first,
-        ),
-        ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
-      ).toEqual((
-        // Chain 1337: partition DELETED, recreated fresh (no chunking) from
-        // just above the fork block at 103.
-        Some({
-          "fromBlock": 104,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        }),
-        // Chain 100: partition KEPT, chunk history preserved.
-        // chunkRange=3 -> chunkSize=6, first uniform chunk is 106-111.
-        Some({
-          "fromBlock": 106,
-          "toBlock": Some(111),
-          "retry": 0,
-          "p": "0",
-        }),
-      ))
-
-      // Set the same value as before rollback
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 2,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "1",
-                value: `call-4`,
-              })
-            },
-          },
-          {
-            blockNumber: 106,
-            logIndex: 3,
-            handler: async args => {
-              let context = args.context->asContext
-              context.entityWithBigDecimal.set({
-                id: "foo",
-                bigDecimal: BigDecimal.fromFloat(0.),
-              })
-            },
-          },
-        ],
-        ~filter=MockSource.coveringBlock(106),
-      )
+      // Both chains roll back their fetch state and re-request items, since
+      // chain 100 was touching the same entity as chain 1337.
+      // Chain 1337: partition DELETED, recreated fresh (no chunking) from
+      // just above the fork block at 103.
+      await sourceMock1337.expectItemsQueries([
+        {partitionId: "0", fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+      ])
+      // Chain 100: partition KEPT, chunk history preserved.
+      // chunkRange=3 -> chunkSize=6, first uniform chunk is 106-111.
+      await sourceMock100.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 106,
+          toBlock: Bounded(111),
+          retryCount: 0,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 2,
+                handler: async args => {
+                  let context = args.context->asContext
+                  // Set the same value as before rollback
+                  context.simpleEntity.set({
+                    id: "1",
+                    value: `call-4`,
+                  })
+                },
+              },
+              {
+                blockNumber: 106,
+                logIndex: 3,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.entityWithBigDecimal.set({
+                    id: "foo",
+                    bigDecimal: BigDecimal.fromFloat(0.),
+                  })
+                },
+              },
+            ],
+          }),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
 
       await indexer.getBatchWritePromise()
 
@@ -2042,34 +2131,46 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
-
-      sourceMock.resolveGetItemsOrThrow([])
+      await sourceMock.expectItemsQueries([{fromBlock: 101, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
 
-      sourceMock.resolveGetItemsOrThrow([
+      await sourceMock.expectItemsQueries([
         {
-          blockNumber: 102,
-          logIndex: 0,
-          contractRegister: async args => {
-            let context = args.context->asRegisterContext
-            context.chain.simpleNft.add(
-              Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
-            )
-          },
-          handler: async _ => (),
+          fromBlock: 102,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                contractRegister: async args => {
+                  let context = args.context->asRegisterContext
+                  context.chain.simpleNft.add(
+                    Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+                  )
+                },
+                handler: async _ => (),
+              },
+            ],
+          }),
         },
       ])
       await indexer.getBatchWritePromise()
       // The registration only reaches storage once the partition created for it
       // has fetched the block that registered it.
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 102, logIndex: 1, handler: async _ => ()}],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          coversBlock: 102,
+          reply: Respond({
+            items: [{blockNumber: 102, logIndex: 1, handler: async _ => ()}],
+            latestFetchedBlockNumber: 102,
+          }),
+        },
+        // The base partition's chunks above, voided by the rollback.
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
       t.expect(
         (await queryDynamicAddresses(indexer))->Array.length,
@@ -2078,34 +2179,42 @@ describe("E2E rollback tests", () => {
 
       // First reorg: rolls back past block 102, so the address store drops the
       // registration and hands its row over for deletion.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=query => query["p"] === "1",
-        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "1",
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {blockNumber: 102, blockHash: "0x102a"},
+          }),
+        },
       ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
       await indexer.getRollbackReadyPromise()
 
       // Second reorg before any batch is written: the store has already
       // tombstoned the registration, so it reports nothing this time round.
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(102),
-        ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 102,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {blockNumber: 101, blockHash: "0x101a"},
+          }),
+        },
       ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
       await indexer.getRollbackReadyPromise()
 
-      sourceMock.resolveGetItemsOrThrow([], ~filter=MockSource.coveringBlock(101))
+      await sourceMock.expectItemsQueries([{coversBlock: 101, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -2121,25 +2230,30 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
-
-      sourceMock.resolveGetItemsOrThrow([])
+      await sourceMock.expectItemsQueries([{fromBlock: 101, reply: Respond({items: []})}])
       await indexer.getBatchWritePromise()
 
       // Process initial events - 1 event across block 102
-      sourceMock.resolveGetItemsOrThrow([
+      await sourceMock.expectItemsQueries([
         {
-          blockNumber: 102,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->asContext
-            context.simpleEntity.set({
-              id: "1",
-              value: "value-1",
-            })
-          },
+          fromBlock: 102,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "1",
+                    value: "value-1",
+                  })
+                },
+              },
+            ],
+          }),
         },
       ])
       await indexer.getBatchWritePromise()
@@ -2151,27 +2265,29 @@ describe("E2E rollback tests", () => {
       ).toEqual([{value: "1", labels: dict{"chainId": "1337"}}])
 
       // Trigger first reorg
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(103),
-        ~prevRangeLastBlock={
-          blockNumber: 102,
-          blockHash: "0x102a",
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 103,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 102,
+              blockHash: "0x102a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes for first reorg",
-      ).toEqual([[100, 101]])
+        // The chunks above, voided by the rollback.
+        {partitionId: "0", reply: LeavePending},
+      ])
 
       // Rollback to block 100 - blocks 101-103 are reorged
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-      ])
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ],
+      })
 
       await indexer.getRollbackReadyPromise()
 
@@ -2182,26 +2298,24 @@ describe("E2E rollback tests", () => {
       ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
 
       // Detects second reorg
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(102),
-        ~prevRangeLastBlock={
-          blockNumber: 101,
-          blockHash: "0x101a",
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 102,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 101,
+              blockHash: "0x101a",
+            },
+          }),
         },
-      )
-
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes for second reorg",
-      ).toEqual([[100, 101], [100]])
-      // Rollback to block 100 - blocks 101-103 are reorged
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
+
+      // Rollback to block 100 - blocks 101-103 are reorged
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
       await indexer.getRollbackReadyPromise()
 
       // Check metrics after processing - should have 2 events
@@ -2211,7 +2325,7 @@ describe("E2E rollback tests", () => {
       ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
 
       // Process batch after rollback
-      sourceMock.drainItemsQueries()
+      sourceMock.drainPendingItemsQueries()
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -2258,52 +2372,59 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       // Both chains enter reorg threshold (blocks 1-100 fetched, knownHeight=300)
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Both chains process events at blocks 102-103
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "value-1"})
-            },
-          },
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "2", value: "value-2"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "value-1"})
+                },
+              },
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "2", value: "value-2"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       // Chain 1337's query appears once the leader's (chain 100) response
       // releases the budget.
-      await MockSource.waitItemsQuery(sourceMock1337)
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "3", value: "value-3"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "3", value: "value-3"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -2324,26 +2445,32 @@ describe("E2E rollback tests", () => {
       ])
 
       // === FIRST REORG on chain 1337 at block 103 ===
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~prevRangeLastBlock={
-          blockNumber: 103,
-          blockHash: "0x103a",
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 103,
+              blockHash: "0x103a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      ])
 
       // getBlockHashes called with [100, 102]: both are stored in the
       // threshold below 103. Block 100 still matches and 102 came back on
       // the new fork → rollback target = 100.
-      sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
-      ])
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 102],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
+        ],
+      })
 
       // Clean up pending calls from before rollback
-      sourceMock100.drainItemsQueries()
+      sourceMock100.drainPendingItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -2370,15 +2497,18 @@ describe("E2E rollback tests", () => {
       // We override to trigger reorg: block 100 hash changed
       // No getBlockHashes call needed: getThresholdBlockNumbersBelowBlock(~blockNumber=100) = []
       // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
-      // Wait for the SetRollbackState tasks (NextQuery, ProcessEventBatch) to be scheduled
-
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~prevRangeLastBlock={
-          blockNumber: 100,
-          blockHash: "0x100a",
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 100,
+              blockHash: "0x100a",
+            },
+          }),
         },
-      )
+      ])
 
       // Allow microtask queue to process the fetch response callbacks,
       // which dispatch ValidatePartitionQueryResponse and transition
@@ -2438,80 +2568,93 @@ describe("E2E rollback tests", () => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
       let sourceMock137 = source(137)
-      await Utils.delay(0)
-
       // All three chains enter reorg threshold
       let _ = await Promise.all3((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock137),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock137),
       ))
 
       // Queries are serialized by the budget waterfall in ascending-chain-id
       // order on the progress tie (100, then 137, then 1337): a chain keeps the
       // budget until it reaches head, so drive each to head before the next
       // one's turn. Each chain processes events at blocks 102-103.
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "1", value: "value-1"})
-            },
-          },
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "2", value: "value-2"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
-      await MockSource.waitItemsQuery(sourceMock100)
-      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await MockSource.waitItemsQuery(sourceMock137)
-      sourceMock137.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "4", value: "value-4"})
-            },
-          },
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "5", value: "value-5"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
-      await MockSource.waitItemsQuery(sourceMock137)
-      sourceMock137.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await MockSource.waitItemsQuery(sourceMock1337)
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 102,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({id: "3", value: "value-3"})
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "1", value: "value-1"})
+                },
+              },
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "2", value: "value-2"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
+      await sourceMock100.expectItemsQueries([
+        {fromBlock: 104, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await sourceMock137.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "4", value: "value-4"})
+                },
+              },
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "5", value: "value-5"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
+      await sourceMock137.expectItemsQueries([
+        {fromBlock: 104, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 102,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({id: "3", value: "value-3"})
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -2536,20 +2679,26 @@ describe("E2E rollback tests", () => {
       ])
 
       // === FIRST REORG on chain 1337 at block 103 ===
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~prevRangeLastBlock={
-          blockNumber: 103,
-          blockHash: "0x103a",
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 103,
+              blockHash: "0x103a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
       ])
+
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 102],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
+        ],
+      })
 
       await indexer.getRollbackReadyPromise()
 
@@ -2576,15 +2725,18 @@ describe("E2E rollback tests", () => {
 
       // === SECOND REORG on chain 1337 at block 100 ===
       // After the rollback the reorg chain's refetch query goes out directly.
-      await MockSource.waitItemsQuery(sourceMock1337)
-
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~prevRangeLastBlock={
-          blockNumber: 100,
-          blockHash: "0x100a",
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 100,
+              blockHash: "0x100a",
+            },
+          }),
         },
-      )
+      ])
 
       await Utils.delay(0)
       await Utils.delay(0)
@@ -2624,101 +2776,109 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       // 3. Process 2 queries to build chunk history (3+ block ranges each)
       // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
-      switch sourceMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
-      | _ => JsError.throwWithMessage("Step 3 should have a single pending call")
-      }
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({items: [{blockNumber: 101, logIndex: 0}], latestFetchedBlockNumber: 103}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
       // After this, chunking will be enabled with chunkRange=min(3,3)=3
       // A new query batch should be created with chunks
-      switch sourceMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([{blockNumber: 104, logIndex: 0}], ~latestFetchedBlockNumber=106)
-      | _ => JsError.throwWithMessage("Step 3 should have a single pending call")
-      }
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({items: [{blockNumber: 104, logIndex: 0}], latestFetchedBlockNumber: 106}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // 4. Chunking is active (chunkRange=3 -> chunkSize=ceil(3*1.8)=6). Uniform
       // chunks tiled from 107: 107-112, 113-118, 119-124, ...
-      let findChunk = fromBlock =>
-        switch sourceMock.getItemsOrThrowCalls->Array.find(
-          c => c.payload["fromBlock"] == fromBlock,
-        ) {
-        | Some(c) => c
-        | None =>
-          JsError.throwWithMessage(
-            `Expected a pending chunk starting at block ${fromBlock->Int.toString}`,
-          )
-        }
-
-      // 5. Resolve the 113-118 chunk with a PARTIAL range (to 115), leaving a gap
-      // at 116-118 in the same partition (no new partition created).
-      findChunk(113).resolve([], ~latestFetchedBlockNumber=115)
-      // 6. Resolve the earlier chunk normally so the main partition consumes up
-      // to 115, detects the gap, and creates a gap-fill query.
-      findChunk(107).resolve([], ~latestFetchedBlockNumber=112)
+      await sourceMock.expectItemsQueries([
+        // 5. Resolve the 113-118 chunk with a PARTIAL range (to 115), leaving a gap
+        // at 116-118 in the same partition (no new partition created).
+        {
+          fromBlock: 113,
+          toBlock: Bounded(118),
+          reply: Respond({items: [], latestFetchedBlockNumber: 115}),
+        },
+        // 6. Resolve the earlier chunk normally so the main partition consumes up
+        // to 115, detects the gap, and creates a gap-fill query.
+        {
+          fromBlock: 107,
+          toBlock: Bounded(112),
+          reply: Respond({items: [], latestFetchedBlockNumber: 112}),
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
 
       await indexer.getBatchWritePromise()
 
-      let payloads = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
-      let gapFills = payloads->Array.filter(p => p["fromBlock"] == 116 && p["toBlock"] == Some(118))
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 116,
+          toBlock: Bounded(118),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        // The tail chunk tiled on once 107-115 is consumed.
+        {partitionId: "0", reply: LeavePending},
+      ])
+      let pending = sourceMock.pendingItemsQueries
       t.expect(
-        (gapFills, payloads->Array.every(p => p["p"] == "0")),
+        (
+          pending->Array.filter(query => query.fromBlock == 116 && query.toBlock == Bounded(118)),
+          pending->Array.every(query => query.partitionId == "0"),
+        ),
         ~message="Should create exactly one gap-fill query for the partial chunk range in the same partition, with no duplicate partition",
-      ).toEqual(([{"fromBlock": 116, "toBlock": Some(118), "retry": 0, "p": "0"}], true))
+      ).toEqual(([{partitionId: "0", fromBlock: 116, toBlock: Bounded(118), retryCount: 0}], true))
 
       // 8. Trigger rollback via reorg detection to block 116
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(116),
-        ~prevRangeLastBlock={
-          blockNumber: 115,
-          blockHash: "0x115a",
+      await sourceMock.expectItemsQueries([
+        {
+          coversBlock: 116,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 115,
+              blockHash: "0x115a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 101, 103, 104, 106, 112]])
-
-      // Rollback to block 112
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
-        {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
-        {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
-        {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
       ])
 
+      // Rollback to block 112
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 103, 104, 106, 112],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+          {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
+          {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+          {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
+        ],
+      })
+
       // Clean up pending calls from before rollback
-      sourceMock.drainItemsQueries()
+      sourceMock.drainPendingItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
-      ).toEqual([
+      // No duplicate queries - only partition 0, no partition 1.
+      await sourceMock.expectItemsQueries([
         // Partition recreated fresh (no chunk history), single unchunked query.
         // Block 112 is the deepest hash the search confirmed, so 113-115 are
         // re-fetched with it even though only 115 had a checkpoint.
-        {
-          "fromBlock": 113,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        },
+        {partitionId: "0", fromBlock: 113, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
       ])
     },
   )
@@ -2729,121 +2889,110 @@ describe("E2E rollback tests", () => {
     "Should efficiently refetch only blocks after rollback target with chunked partitions",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
-
-      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       // Query 1: 101-103 (range=3) -> enables sourceRangeCapacity=3
-      switch sourceMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
-      | _ => JsError.throwWithMessage("Should have a single pending call for query 1")
-      }
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({items: [{blockNumber: 101, logIndex: 0}], latestFetchedBlockNumber: 103}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
       // After this, chunking will be enabled with chunkRange=min(3,3)=3
-      switch sourceMock.getItemsOrThrowCalls {
-      | [call] => call.resolve([{blockNumber: 104, logIndex: 0}], ~latestFetchedBlockNumber=106)
-      | _ => JsError.throwWithMessage("Should have a single pending call for query 2")
-      }
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({items: [{blockNumber: 104, logIndex: 0}], latestFetchedBlockNumber: 106}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Chunked queries: chunkRange=3 -> chunkSize=ceil(3*1.8)=6. Uniform chunks
       // tiled from 107: 107-112, 113-118, 119-124, ...
-      let calls = sourceMock.getItemsOrThrowCalls
-      t.expect(
-        calls->Array.length >= 3,
-        ~message="Should have at least 3 chunked queries",
-      ).toBeTruthy()
-      let chunk1 = calls->Array.getUnsafe(0)
-      let chunk2 = calls->Array.getUnsafe(1)
-      let chunk3 = calls->Array.getUnsafe(2)
-      t.expect(
-        (chunk1.payload, chunk2.payload, chunk3.payload),
-        ~message="Should create chunked queries",
-      ).toEqual((
-        {"fromBlock": 107, "toBlock": Some(112), "retry": 0, "p": "0"},
-        {"fromBlock": 113, "toBlock": Some(118), "retry": 0, "p": "0"},
-        {"fromBlock": 119, "toBlock": Some(124), "retry": 0, "p": "0"},
-      ))
-
       // Resolve the first two chunks, with chunk2 only fetching half its range
       // (to 115). The partition consumes up to 115 and detects the 116-118 gap.
-      chunk1.resolve([], ~latestFetchedBlockNumber=112)
-      chunk2.resolve([], ~latestFetchedBlockNumber=115) // first half of 113-118
+      await sourceMock.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 107,
+          toBlock: Bounded(112),
+          retryCount: 0,
+          reply: Respond({items: [], latestFetchedBlockNumber: 112}),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 113,
+          toBlock: Bounded(118),
+          retryCount: 0,
+          // first half of 113-118
+          reply: Respond({items: [], latestFetchedBlockNumber: 115}),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 119,
+          toBlock: Bounded(124),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {partitionId: "0", reply: LeavePending},
+      ])
       await indexer.getBatchWritePromise()
       // lfb=115
 
       // Resolve the 116-118 continuation, storing a reorg checkpoint at block 118.
-      let continuationCall = switch sourceMock.getItemsOrThrowCalls->Array.find(
-        call => {
-          call.payload["fromBlock"] == 116
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 116, reply: Respond({items: [], latestFetchedBlockNumber: 118})},
+        {partitionId: "0", reply: LeavePending},
+      ])
+      await indexer.getBatchWritePromise()
+
+      // Trigger rollback on the tail query that starts after 118, so the reorged
+      // prevRangeLastBlock=118 is that query's real parent block.
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 119,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 118,
+              blockHash: "0x118a",
+            },
+          }),
         },
-      ) {
-      | Some(call) => call
-      | None =>
-        JsError.throwWithMessage("Should have a pending continuation call with fromBlock == 116")
-      }
-      continuationCall.resolve([], ~latestFetchedBlockNumber=118)
-      await Utils.delay(0)
-
-      // Trigger rollback on a tail query that starts after 118, so the reorged
-      // prevRangeLastBlock=118 is that query's real parent block rather than
-      // being paired with an unrelated earlier pending call via queue order.
-      let postReorgCall =
-        sourceMock.getItemsOrThrowCalls
-        ->Array.find(call => call.payload["fromBlock"] > 118)
-        ->Option.getOrThrow
-      postReorgCall.resolve(
-        [],
-        ~prevRangeLastBlock={
-          blockNumber: 118,
-          blockHash: "0x118a",
-        },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 112, 115]
-      t.expect(
-        sourceMock.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 101, 103, 104, 106, 112, 115]])
-
-      // All searched blocks are valid, so the reorg is shallow (only block 118).
-      sourceMock.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
-        {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
-        {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
-        {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
-        {blockNumber: 115, blockHash: "0x0115", blockTimestamp: 100},
+        {partitionId: "0", reply: LeavePending},
       ])
 
+      // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 112, 115]
+      // All searched blocks are valid, so the reorg is shallow (only block 118).
+      await sourceMock.expectBlockHashLookup({
+        blockNumbers: [100, 101, 103, 104, 106, 112, 115],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
+          {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
+          {blockNumber: 106, blockHash: "0x0106", blockTimestamp: 100},
+          {blockNumber: 112, blockHash: "0x0112", blockTimestamp: 100},
+          {blockNumber: 115, blockHash: "0x0115", blockTimestamp: 100},
+        ],
+      })
+
       // Clean up pending calls from before rollback
-      sourceMock.drainItemsQueries()
+      sourceMock.drainPendingItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
       // Block 115 is the deepest hash the search confirmed — 116 and 117 were
       // fetched inside the reorged range but never hashed, so the rollback can't
-      // vouch for them either. The partition refetches from 116 onward and never
-      // re-fetches the confirmed 107-115.
-      let queries = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
-
-      t.expect(
-        queries,
-        ~message="Should efficiently refetch only the blocks the depth search couldn't confirm (from 116), not the whole range",
-      ).toEqual([
-        {
-          "fromBlock": 116,
-          "p": "0",
-          "retry": 0,
-          "toBlock": None,
-        },
+      // vouch for them either. The partition refetches only from 116 onward and
+      // never re-fetches the confirmed 107-115.
+      await sourceMock.expectItemsQueries([
+        {partitionId: "0", fromBlock: 116, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
       ])
     },
   )
@@ -2859,46 +3008,44 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1 = source(1337)
       let sourceMock2 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock2),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock2),
       ))
 
       // The most-behind chain (100 — the progress tie breaks by ascending
       // chain id) holds the only post-threshold query; chain 1337's appears
       // once the leader's response releases the budget.
       // Chain 100 fetches block 101 with 1 event.
-      sourceMock2.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 101,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "1",
-                value: "from-chain-100",
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=101,
-      )
-      await MockSource.waitItemsQuery(sourceMock1)
+      await sourceMock2.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "1",
+                    value: "from-chain-100",
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 101,
+          }),
+        },
+      ])
 
       // Chain 1337 fetches block 101 with 0 events.
       // registerReorgGuard stores block hash "0x101" for block 101.
-      sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
+      await sourceMock1.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 101})},
+      ])
 
-      // Fetch response processing uses multiple layers of setTimeout(0):
-      // 1. ValidatePartitionQueryResponse → dispatches ProcessPartitionQueryResponse task
-      // 2. ProcessPartitionQueryResponse → dispatches SubmitPartitionQueryResponse action
-      //    which dispatches NextQuery + ProcessEventBatch tasks
-      // 3. NextQuery starts fetches, ProcessEventBatch creates batch
-      // We need 3 delays to let all layers fire.
-      // After this delay:
+      // Once both responses are processed:
       // - NextQuery started a fetch for block 102 — but both chains are
       //   equally behind now, so only the leader (chain 100, tie broken by
       //   ascending chain id) holds it; chain 1337's follow-up appears once
@@ -2907,8 +3054,9 @@ describe("E2E rollback tests", () => {
       //   1 event fills the batch. Chain 1337 is SKIPPED — no checkpoint.
       //   The batch write is async and still in-flight.
 
-      sourceMock2.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
-      await MockSource.waitItemsQuery(sourceMock1)
+      await sourceMock2.expectItemsQueries([
+        {fromBlock: 102, reply: Respond({items: [], latestFetchedBlockNumber: 102})},
+      ])
 
       // Chain 1337 now has a pending fetch from block 102 (started by NextQuery
       // once chain 100's budget released). Resolve it with prevRangeLastBlock
@@ -2917,24 +3065,24 @@ describe("E2E rollback tests", () => {
       // Reorg is detected while the batch write is still in-flight,
       // so chain 1337 never gets a checkpoint at block 101.
       // getRollbackProgressDiff won't return an entry for chain 1337 (None branch).
-      sourceMock1.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=102,
-        ~prevRangeLastBlock={
-          blockNumber: 101,
-          blockHash: "0x101a",
+      await sourceMock1.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 102,
+            prevRangeLastBlock: {
+              blockNumber: 101,
+              blockHash: "0x101a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock1.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100]])
-      sourceMock1.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
+
+      await sourceMock1.expectBlockHashLookup({
+        blockNumbers: [100],
+        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
+      })
 
       await indexer.getRollbackReadyPromise()
 
@@ -2945,21 +3093,17 @@ describe("E2E rollback tests", () => {
       // Clean up chain 100's dangling pre-rollback query; its known density
       // caps the refetch reservation, so the budget reaches chain 1337 right
       // after.
-      sourceMock2.drainItemsQueries()
-      await MockSource.waitItemsQuery(sourceMock1)
+      sourceMock2.drainPendingItemsQueries()
 
-      let actualPayloads = sourceMock1.getItemsOrThrowCalls->Array.map(c => c.payload)
-      t.expect(
-        actualPayloads->Utils.Array.last,
-        ~message="Should rollback fetch state for reorg chain even with no events processed",
-      ).toEqual(
-        Some({
-          "fromBlock": 101,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        }),
-      )
+      // The reorg chain's fetch state rolls back even with no events processed.
+      let refetch: MockSource.expectedItemsQuery = {
+        partitionId: "0",
+        fromBlock: 101,
+        toBlock: Unbounded,
+        retryCount: 0,
+        reply: LeavePending,
+      }
+      await sourceMock1.expectItemsQueries([refetch])
 
       // Clear getBlockHashesCalls from the initial rollback
       sourceMock1.getBlockHashesCalls->Utils.Array.clearInPlace
@@ -2968,11 +3112,16 @@ describe("E2E rollback tests", () => {
       // With the fix: stale "0x101" was removed by rollbackToValidBlockNumber(100),
       // so "0x101a" is stored fresh — no mismatch.
       // Without the fix: stored "0x101" vs received "0x101a" → another reorg!
-      sourceMock1.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=101,
-        ~latestFetchedBlockHash="0x101a",
-      )
+      await sourceMock1.expectItemsQueries([
+        {
+          ...refetch,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 101,
+            latestFetchedBlockHash: "0x101a",
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Verify no second reorg is detected (no infinite loop)
@@ -3043,69 +3192,82 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
-
       let _ = await Promise.all2((
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
-        Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock100),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock1337),
+        Scenario.enterReorgThreshold(~indexer, ~source=sourceMock100),
       ))
 
       // Chain 100 progresses first so its checkpoint lands below the future
       // rollback target checkpoint (chain 1337 at block 103). Otherwise the
       // global checkpoint ordering would roll chain 100 back anyway and mask
       // the in-flight write race.
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "victim",
-                value: "before",
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "victim",
+                    value: "before",
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 103,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "reorg",
-                value: "valid",
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=103,
-      )
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 103,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "reorg",
+                    value: "valid",
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 103,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      sourceMock1337.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "reorg",
-                value: "reorged",
-              })
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=106,
-      )
+      await sourceMock1337.expectItemsQueries([
+        {
+          fromBlock: 104,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "reorg",
+                    value: "reorged",
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 106,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // Stall the next batch write so it stays in-flight during the rollback
@@ -3113,48 +3275,55 @@ describe("E2E rollback tests", () => {
       stallWriteBatch := Some(Promise.make((resolve, _reject) => resolveStall := (() => resolve())))
       let writeBatchCallsBeforeStall = writeBatchCalls.contents
 
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "victim",
-                value: "in-flight",
-              })
-            },
-          },
-        ],
-        ~filter=MockSource.coveringBlock(106),
-        ~latestFetchedBlockNumber=106,
-      )
+      await sourceMock100.expectItemsQueries([
+        {
+          coversBlock: 106,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "victim",
+                    value: "in-flight",
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 106,
+          }),
+        },
+      ])
       // Wait until the batch is processed and its (stalled) write has started
       while writeBatchCalls.contents == writeBatchCallsBeforeStall {
         await Utils.delay(1)
       }
 
       // Reorg on chain 1337 while chain 100's batch write is still in-flight
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~filter=MockSource.coveringBlock(107),
-        ~prevRangeLastBlock={
-          blockNumber: 106,
-          blockHash: "0x106a",
+      await sourceMock1337.expectItemsQueries([
+        {
+          coversBlock: 107,
+          reply: Respond({
+            items: [],
+            prevRangeLastBlock: {
+              blockNumber: 106,
+              blockHash: "0x106a",
+            },
+          }),
         },
-      )
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      t.expect(
-        sourceMock1337.getBlockHashesCalls,
-        ~message="Should have called getBlockHashes to find rollback depth",
-      ).toEqual([[100, 103]])
-      sourceMock1337.resolveGetBlockHashes([
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
+        // The chunks above, drained once the rollback starts.
+        {partitionId: "0", reply: LeavePending},
       ])
+
+      await sourceMock1337.expectBlockHashLookup({
+        blockNumbers: [100, 103],
+        reply: [
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
+        ],
+      })
 
       // Let the rollback proceed to the flush of the stalled write, then
       // release it. If the rollback read the progress diff before flushing,
@@ -3166,8 +3335,8 @@ describe("E2E rollback tests", () => {
       stallWriteBatch := None
 
       // Clean up pending calls from before rollback
-      sourceMock100.drainItemsQueries()
-      sourceMock1337.drainItemsQueries()
+      sourceMock100.drainPendingItemsQueries()
+      sourceMock1337.drainPendingItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -3176,51 +3345,104 @@ describe("E2E rollback tests", () => {
         ~message="Rollback must flush the in-flight batch write before reading rollback checkpoints from the db",
       ).toEqual(false)
 
-      t.expect(
-        (
-          sourceMock100.getItemsOrThrowCalls->Array.map(c => c.payload),
-          sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload),
-        ),
-        ~message="Chain 100 should refetch from block 106 after rollback (its in-flight checkpoint was flushed and included in the progress diff)",
-      ).toEqual((
-        // Chain 100: partition kept (lfb <= target), chunk history preserved.
-        // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 and stopping at
-        // the alignment cap (chain 1337's fork block plus
-        // CrossChainState.alignmentMargin of chain 100's range).
-        [
-          {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
-          {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
-          {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
-          {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
-          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
-          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
-          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
-          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
-          {"fromBlock": 160, "toBlock": Some(163), "retry": 0, "p": "0"},
-        ],
-        // Chain 1337: partition deleted (lfb > target), recreated fresh from
-        // just above the fork block at 103.
-        [{"fromBlock": 104, "toBlock": None, "retry": 0, "p": "0"}],
-      ))
-
-      sourceMock100.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 106,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->asContext
-              context.simpleEntity.set({
-                id: "victim",
-                value: "reapplied",
-              })
-            },
-          },
-        ],
-        ~filter=MockSource.coveringBlock(106),
-        ~latestFetchedBlockNumber=106,
-      )
+      // Chain 1337: partition deleted (lfb > target), recreated fresh from
+      // just above the fork block at 103.
+      await sourceMock1337.expectItemsQueries([
+        {partitionId: "0", fromBlock: 104, toBlock: Unbounded, retryCount: 0, reply: LeavePending},
+      ])
+      // Chain 100 refetches from block 106 after rollback: its in-flight
+      // checkpoint was flushed and included in the progress diff.
+      // Partition kept (lfb <= target), chunk history preserved.
+      // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 and stopping at
+      // the alignment cap (chain 1337's fork block plus
+      // CrossChainState.alignmentMargin of chain 100's range).
+      await sourceMock100.expectItemsQueries([
+        {
+          partitionId: "0",
+          fromBlock: 106,
+          toBlock: Bounded(111),
+          retryCount: 0,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 106,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  context.simpleEntity.set({
+                    id: "victim",
+                    value: "reapplied",
+                  })
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 106,
+          }),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 112,
+          toBlock: Bounded(117),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 118,
+          toBlock: Bounded(123),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 124,
+          toBlock: Bounded(129),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 130,
+          toBlock: Bounded(135),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 136,
+          toBlock: Bounded(141),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 142,
+          toBlock: Bounded(147),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 148,
+          toBlock: Bounded(153),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 154,
+          toBlock: Bounded(159),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+        {
+          partitionId: "0",
+          fromBlock: 160,
+          toBlock: Bounded(163),
+          retryCount: 0,
+          reply: LeavePending,
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(

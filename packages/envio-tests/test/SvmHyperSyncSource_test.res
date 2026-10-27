@@ -22,7 +22,6 @@ let makeEventConfig = (
   ~selectedTransactionFields: array<Internal.svmTransactionField>=[],
 ): Internal.svmInstructionEventConfig => {
   {
-    id: "0x21",
     name: "CreateMetadataAccountV3",
     contractName: "TokenMetadata",
     paramsRawEventSchema: %raw(`null`),
@@ -182,7 +181,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         dependsOnAddresses: true,
       },
       ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SvmHyperSyncSource"}),
     )
 
     let item = switch response.parsedQueueItems {
@@ -358,56 +357,57 @@ describe("SvmHyperSyncSource include_all_blocks", () => {
         dependsOnAddresses: true,
       },
       ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SvmHyperSyncSource"}),
     )
 
-    t.expect(
-      capturedQueries->Array.map(query => query.includeAllBlocks),
-    ).toEqual([Some(true)])
+    t.expect(capturedQueries->Array.map(query => query.includeAllBlocks)).toEqual([Some(true)])
   })
 })
 
 describe("SvmHyperSyncSource height subscription", () => {
   Async.it("Streams heights over HyperSync SSE the same way the EVM source does", async t => {
-    let (server, url) = await Promise.make((resolve, _reject) => {
-      let server = MockRpcServer.createServer((_req, res) => {
-        res->MockRpcServer.writeHead(
-          200,
-          dict{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+    let (server, url) = await Promise.make(
+      (resolve, _reject) => {
+        let server = MockRpcServer.createServer(
+          (_req, res) => {
+            res->MockRpcServer.writeHead(
+              200,
+              dict{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+            )
+            res->MockRpcServer.write("event: height\ndata: 445073332\n\n")
+            res->MockRpcServer.write("event: ping\ndata: \n\n")
+            res->MockRpcServer.write("event: height\ndata: 445073335\n\n")
+          },
         )
-        res->MockRpcServer.write("event: height\ndata: 445073332\n\n")
-        res->MockRpcServer.write("event: ping\ndata: \n\n")
-        res->MockRpcServer.write("event: height\ndata: 445073335\n\n")
-      })
-      server->MockRpcServer.listenOnHost(0, "127.0.0.1", () =>
-        resolve((
-          server,
-          `http://127.0.0.1:${(server->MockRpcServer.address).port->Int.toString}`,
-        ))
-      )
-    })
+        server->MockRpcServer.listenOnHost(
+          0,
+          "127.0.0.1",
+          () =>
+            resolve((
+              server,
+              `http://127.0.0.1:${(server->MockRpcServer.address).port->Int.toString}`,
+            )),
+        )
+      },
+    )
 
     let source = makeSource(~endpointUrl=url)
     let statuses = []
     let heights = []
-    let unsubscribe =
-      (source.createHeightSubscription->Option.getOrThrow)(
-        ~onHeight=height => heights->Array.push(height)->ignore,
-        ~onStatus=status =>
-          statuses
-          ->Array.push(
-            switch status {
-            | Live => "live"
-            | Down({reason}) => `down:${reason->Source.downReasonLabel}`
-            },
-          )
-          ->ignore,
-      )
-
-    await Scenario.waitUntil(
-      () => heights->Array.length === 2,
-      ~message="the SVM height stream",
+    let unsubscribe = (source.createHeightSubscription->Option.getOrThrow)(
+      ~onHeight=height => heights->Array.push(height)->ignore,
+      ~onStatus=status =>
+        statuses
+        ->Array.push(
+          switch status {
+          | Live => "live"
+          | Down({reason}) => `down:${reason->Source.downReasonLabel}`
+          },
+        )
+        ->ignore,
     )
+
+    await Scenario.waitUntil(() => heights->Array.length === 2, ~message="the SVM height stream")
     unsubscribe()
     server->MockRpcServer.closeAllConnections
     await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))

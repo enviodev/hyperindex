@@ -48,6 +48,7 @@ let makeSources = (
   ~addressStore,
   ~blockStore,
   ~transactionStore,
+  ~logger,
 ) => {
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
@@ -62,6 +63,7 @@ let makeSources = (
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
         logLevel: Env.hypersyncLogLevel,
         addressStore,
+        logger,
       }),
     ]
   | _ => []

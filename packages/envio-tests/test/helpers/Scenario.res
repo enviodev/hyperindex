@@ -35,6 +35,9 @@ type sourceMock = {
   // resolving a `latest` start block), which a test body can't reach in time
   // via `setAutoHeight` since it only runs once startup has already awaited.
   autoHeight?: int,
+  // Answers for the first height calls, ahead of `autoHeight`, for a startup
+  // height call that has to fail first.
+  startupHeights?: array<MockSource.startupHeight>,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -177,8 +180,13 @@ let withInternalOverrides = (
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Leaves every chain on the source its YAML names, for a scenario whose YAML
+  // points each chain at a local server the test runs.
+  ~yamlSources=false,
+  ~sourceTiming=?,
+  // How long startup keeps asking for a `latest` start block. `Once` is what
+  // `envio local db-migrate` runs with.
+  ~startBlockRetry=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -188,7 +196,6 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
@@ -199,6 +206,7 @@ let run = async (
       ?pollingInterval,
       ?isWildcard,
       ?autoHeight,
+      ?startupHeights,
     }) => (
       chain,
       MockSource.make(
@@ -208,13 +216,14 @@ let run = async (
         ~pollingInterval?,
         ~isWildcard?,
         ~autoHeight?,
+        ~startupHeights?,
       ),
     ))
 
   let config =
-    scenario.config
-    ->withMockSources(~sources=mocks)
-    ->withInternalOverrides(
+    (
+      yamlSources ? scenario.config : scenario.config->withMockSources(~sources=mocks)
+    )->withInternalOverrides(
       ~maxAddrInPartition,
       ~clientFilterAddressThreshold,
       ~reorgThresholdReadyTolerance,
@@ -236,11 +245,13 @@ let run = async (
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
   // already cached.
-  let registration = HandlerRegister.makeRegistration(~config)
+  let logger = Logger.makeInMemory()
+  let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
 
   await IndexerRunner.run(
     ~config,
+    ~logger,
     ~resolveRegistrations=(~config) =>
       registration->HandlerRegister.useRegistration(async () => {
         switch (scenario.handlers, imported.contents) {
@@ -253,18 +264,31 @@ let run = async (
         }
         HandlerRegister.finishRegistration(~config)
       }),
-    ~reducedPollingInterval?,
-    ~newBlockStallTimeoutRealtime?,
+    ~sourceTiming?,
+    ~startBlockRetry?,
     ~targetBufferSize?,
     ~holdRealtime?,
     ~superviseRun?,
     ~onError?,
     ~onExit?,
     ~mapStorage?,
-    ~captureLogs?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
-      await body(~indexer, ~source)
+      switch await body(~indexer, ~source) {
+      | () => ()
+      // A failure says what the mocks were left holding, so finding out what
+      // the indexer asked for doesn't take a probe of its own.
+      | exception exn if mocks->Array.length > 0 =>
+        exn->IndexerRunner.appendToFailureMessage(
+          mocks
+          ->Array.map(((_, mock)) => "\n\n" ++ mock.describeState())
+          ->Array.join(""),
+        )
+        switch exn {
+        | JsExn(error) => JsExn.throw(error)
+        | exn => throw(exn)
+        }
+      }
       // Only after the body passed: a failing body has its own error to report,
       // and answers it never got to were never going to be claimed anyway.
       mocks->Array.forEach(((_, mock)) => mock.validateAnswersClaimed())
@@ -284,8 +308,9 @@ let it = (
   scenario: t,
   name,
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Shortens the stall, recovery and polling windows a test would otherwise
+  // have to wait out in real time.
+  ~sourceTiming=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -298,7 +323,6 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   ~timeout=?,
   ~retry=?,
   body: (
@@ -318,8 +342,7 @@ let it = (
       async (t: Vitest.testContext) =>
         await scenario->run(
           ~sources,
-          ~reducedPollingInterval?,
-          ~newBlockStallTimeoutRealtime?,
+          ~sourceTiming?,
           ~targetBufferSize?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,
@@ -329,7 +352,6 @@ let it = (
           ~onError?,
           ~onExit?,
           ~mapStorage?,
-          ~captureLogs?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>
@@ -350,15 +372,9 @@ let it = (
   }
 }
 
-let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
+let resolveInitialHeight = async (~source: MockSource.t, ~head) => {
+  await source.expectHeightCalls(1)
   source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
 }
 
 // Drives a chain through the reorg-threshold transition: the first query stops
@@ -366,20 +382,22 @@ let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t,
 // post-threshold range opens up. Several scenarios need to be past this point
 // before the behaviour they test is reachable.
 let enterReorgThreshold = async (
-  ~t: Vitest.testContext,
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
   ~head=300,
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
-  await resolveInitialHeight(~t, ~source, ~head)
-
-  t.expect(
-    source.getItemsOrThrowCalls->Array.map(call => call.payload),
-    ~message="Should request items until reorg threshold",
-  ).toEqual([{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}])
-  source.resolveGetItemsOrThrow([])
+  await resolveInitialHeight(~source, ~head)
+  await source.expectItemsQueries([
+    {
+      partitionId: "0",
+      fromBlock,
+      toBlock: Bounded(preThresholdTo),
+      retryCount: 0,
+      reply: Respond({items: []}),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -434,4 +452,61 @@ let captureRefusal = () => {
     awaitRefusalReason: async () =>
       (await awaitStorageError())->Option.map(((_, reason)) => reason),
   }
+}
+
+// Answers whatever the reorg resolution asks for: block hashes for the depth
+// search (blocks past `validUpTo` come back re-orged), and empty responses for
+// the re-fetch queries the rollback schedules.
+let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetched=[]) => {
+  let refetched = ref(refetched)
+  for _ in 0 to 300 {
+    if source.getBlockHashesCalls->Array.length > 0 {
+      let requested = source.getBlockHashesCalls->Array.copy
+      source.resolveGetBlockHashes(
+        requested
+        ->Array.flat
+        ->Array.map((blockNumber): BlockStore.inputBlock => {
+          blockNumber,
+          // Past `validUpTo` the chain is orphaned, so the hash the source
+          // reports differs from the one the store recorded.
+          blockHash: blockNumber <= validUpTo
+            ? `0x${blockNumber->Int.toString}`
+            : `0x${blockNumber->Int.toString}a`,
+          blockTimestamp: blockNumber,
+        }),
+      )
+      source.getBlockHashesCalls->Utils.Array.clearInPlace
+    }
+    if source.pendingItemsQueries->Array.length > 0 {
+      await source.expectItemsQueries([
+        {reply: Respond({items: refetched.contents, latestFetchedBlockNumber: head})},
+      ])
+      refetched := []
+    }
+    await Utils.delay(0)
+  }
+}
+
+// Reorgs the chain above `validUpTo`: the next response arrives with block
+// `head` re-orged, and the rollback that follows is driven to completion. The
+// first refetch after it answers with `refetched`.
+let reorgAbove = async (
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~head,
+  ~validUpTo,
+  ~refetched=?,
+) => {
+  source.resolveGetHeightOrThrow(head + 1)
+  await source.expectItemsQueries([
+    {
+      reply: Respond({
+        items: [],
+        latestFetchedBlockNumber: head + 1,
+        prevRangeLastBlock: {blockNumber: head, blockHash: `0x${head->Int.toString}a`},
+      }),
+    },
+  ])
+  await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?)
+  await indexer.waitUntilIdle()
 }

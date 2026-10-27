@@ -55,59 +55,63 @@ describe("Wildcard contract with a far-ahead start block on one chain of many", 
     "does not hold the other chains behind the alignment clamp",
     ~sources=[{chain: 1337}, {chain: 100}],
     ~targetBufferSize=100,
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let wildcardChain = source(1337)
       let plainChain = source(100)
-      let queries = (sourceMock: MockSource.t) =>
-        sourceMock.getItemsOrThrowCalls
-        ->Array.map(c => (c.payload["p"], c.payload["fromBlock"], c.payload["toBlock"]))
-        ->Array.toSorted(((pA, a, _), (pB, b, _)) =>
-          a === b ? String.compare(pA, pB) : Int.compare(a, b)
-        )
-        ->Array.map(((p, from, to)) =>
-          `${p}:${from->Int.toString}-${to->Option.mapOr("head", to => to->Int.toString)}`
-        )
-        ->Array.join(" ")
-
       wildcardChain.resolveGetHeightOrThrow(100_000)
       plainChain.resolveGetHeightOrThrow(100_000)
-      await MockSource.waitItemsQuery(wildcardChain)
-      await MockSource.waitItemsQuery(plainChain)
-      // The wildcard registration is chain-wide: on the plain chain it has no
-      // start block, so that chain fetches it from the chain start too.
-      t.expect(
-        (queries(wildcardChain), queries(plainChain)),
-        ~message="both chains start from their chain start",
-      ).toEqual(("1:1-99800", "0:1-99800 1:1-99800"))
-
+      // Both chains start from their chain start. The wildcard registration is
+      // chain-wide: on the plain chain it has no start block, so that chain
+      // fetches it from the chain start too.
+      //
       // The wildcard chain's response ends far past the cold target range; the
       // plain chain's ends at 20% of its range, right at the clamp a frontier
       // pinned at 0% would put on it.
-      wildcardChain.resolveGetItemsOrThrow(
-        [{blockNumber: 5, logIndex: 0}, {blockNumber: 10, logIndex: 0}],
-        ~latestFetchedBlockNumber=30_000,
-      )
-      plainChain.resolveGetItemsOrThrow(
-        Array.fromInitializer(~length=20, i => {MockSource.blockNumber: 1 + i * 1000, logIndex: 0}),
-        ~filter=query => query["p"] === "1",
-        ~latestFetchedBlockNumber=20_000,
-      )
-      plainChain.resolveGetItemsOrThrow(
-        [],
-        ~filter=query => query["p"] === "0",
-        ~latestFetchedBlockNumber=20_000,
-      )
+      await wildcardChain.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          toBlock: Bounded(99_800),
+          reply: Respond({
+            items: [{blockNumber: 5, logIndex: 0}, {blockNumber: 10, logIndex: 0}],
+            latestFetchedBlockNumber: 30_000,
+          }),
+        },
+      ])
+      await plainChain.expectItemsQueries([
+        {
+          partitionId: "1",
+          fromBlock: 1,
+          toBlock: Bounded(99_800),
+          reply: Respond({
+            items: Array.fromInitializer(
+              ~length=20,
+              i => {
+                MockSource.blockNumber: 1 + i * 1000,
+                logIndex: 0,
+              },
+            ),
+            latestFetchedBlockNumber: 20_000,
+          }),
+        },
+        {
+          partitionId: "0",
+          fromBlock: 1,
+          toBlock: Bounded(99_800),
+          reply: Respond({items: [], latestFetchedBlockNumber: 20_000}),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      await Scenario.waitUntil(
-        () => plainChain.getItemsOrThrowCalls->Array.some(c => c.payload["fromBlock"] === 20_001),
-        ~message="the plain chain to keep fetching past the first alignment margin",
-        ~timeoutMs=2000.,
-      )
-      t.expect(
-        queries(wildcardChain),
-        ~message="the wildcard chain keeps fetching from its frontier too",
-      ).toEqual("1:30001-99800")
+      // The plain chain keeps fetching past the first alignment margin, and the
+      // wildcard chain from its frontier too.
+      await plainChain.expectItemsQueries([
+        {partitionId: "0", fromBlock: 20_001, reply: LeavePending},
+        {partitionId: "1", fromBlock: 20_001, reply: LeavePending},
+      ])
+      await wildcardChain.expectItemsQueries([
+        {partitionId: "1", fromBlock: 30_001, toBlock: Bounded(99_800), reply: LeavePending},
+      ])
     },
   )
 })

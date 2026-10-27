@@ -436,7 +436,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Xdc = 50,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     XdcTestnet = 51,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]

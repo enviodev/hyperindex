@@ -36,19 +36,22 @@ describe("Source response block metrics", () => {
       let sourceMock = source(1337)
 
       let samples = async name =>
-        (await indexer.metric(name))->Array.map(({value, labels}: IndexerRunner.metric) => (
-          labels->Dict.get("method"),
-          value,
-        ))
+        (await indexer.metric(name))->Array.map(
+          ({value, labels}: IndexerRunner.metric) => (labels->Dict.get("method"), value),
+        )
 
       sourceMock.resolveGetHeightOrThrow(100)
-      await MockSource.waitItemsQuery(sourceMock)
-      sourceMock.resolveGetItemsOrThrow(
-        [{blockNumber: 50, logIndex: 0}],
-        ~latestFetchedBlockNumber=50,
-        ~knownHeight=100,
-        ~requestStats=[{Source.method: "getLogs", seconds: 0.5, responseBlocks: 3}],
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 50, logIndex: 0}],
+            latestFetchedBlockNumber: 50,
+            knownHeight: 100,
+            requestStats: [{Source.method: "getLogs", seconds: 0.5, responseBlocks: 3}],
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(await samples("envio_source_response_blocks_total")).toEqual([
@@ -62,21 +65,23 @@ describe("Source response block metrics", () => {
       // A range the source scanned and matched nothing in. It costs a request
       // like any other, and under a per-block price it is the one billed at
       // nothing.
-      await MockSource.waitItemsQuery(sourceMock)
-      sourceMock.resolveGetItemsOrThrow(
-        [],
-        ~latestFetchedBlockNumber=100,
-        ~knownHeight=100,
-        ~requestStats=[{Source.method: "getLogs", seconds: 0.25, responseBlocks: 0}],
-      )
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 51,
+          reply: Respond({
+            items: [],
+            latestFetchedBlockNumber: 100,
+            knownHeight: 100,
+            requestStats: [{Source.method: "getLogs", seconds: 0.25, responseBlocks: 0}],
+          }),
+        },
+      ])
       await Utils.delay(0)
 
       t.expect(await samples("envio_source_response_blocks_total")).toEqual([
         (Some("getLogs"), "3"),
       ])
-      t.expect(await samples("envio_source_response_empty_total")).toEqual([
-        (Some("getLogs"), "1"),
-      ])
+      t.expect(await samples("envio_source_response_empty_total")).toEqual([(Some("getLogs"), "1")])
     },
   )
 })

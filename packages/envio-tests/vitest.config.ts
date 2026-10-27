@@ -18,7 +18,6 @@ export default defineConfig({
     pool: "forks",
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    setupFiles: ["test/setup.ts"],
     globalSetup: ["test/helpers/globalSetup.ts", "test/helpers/GlobalSetup.res.mjs"],
     env: {
       ENVIO_DEV_ADDON: devAddon,
