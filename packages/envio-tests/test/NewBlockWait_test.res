@@ -144,6 +144,47 @@ describe("Waiting for the first height", () => {
   )
 
   scenario->Scenario.it(
+    "Keeps polling a healthy source at its own interval while another one's polls fail",
+    ~sources=[{chain: 1337, pollingInterval: 1}, {chain: 1337, pollingInterval: 1}],
+    ~sourceTiming={
+      getHeightRetryInterval: SourceManager.makeGetHeightRetryInterval(
+        ~initialRetryInterval=4,
+        ~backoffMultiplicative=2,
+        ~maxRetryInterval=10,
+      ),
+    },
+    async (~t, ~indexer, ~source) => {
+      let failing = source(1337)
+      let healthy = source(1337, ~index=1)
+      healthy.setAutoHeight(0)
+      for call in 1 to 4 {
+        await failing.expectHeightCalls(call)
+        failing.rejectGetHeightOrThrow("ERROR")
+      }
+      let healthyPollsWhileFailing = healthy->polls
+
+      healthy.setAutoHeight(101)
+      await healthy.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+      let pollsAtAnswer = (failing->polls, healthy->polls)
+      await Utils.delay(50)
+      t.expect((
+        indexer.allLogsAsJson()->Array.filterMap(
+          line =>
+            switch line->Dict.get("msg") {
+            | Some(String(msg)) =>
+              msg
+              ->String.match(/^Height retrieval from MockSource source .*Retrying in (\d+)ms\.$/)
+              ->Option.flatMap(match => match->Array.get(1)->Option.flatMap(x => x))
+            | _ => None
+            },
+        ),
+        healthyPollsWhileFailing >= 4,
+        (failing->polls, healthy->polls),
+      )).toEqual((["4", "8", "10", "10"], true, pollsAtAnswer))
+    },
+  )
+
+  scenario->Scenario.it(
     "Recruits the fallback once the first height stalls, and slows every poll down",
     ~sources=[
       {chain: 1337, pollingInterval: 1},
@@ -169,11 +210,14 @@ describe("Waiting for the first height", () => {
       // The fallback's height is taken, but the query goes to sync, which
       // never failed one.
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+      let pollsAtAnswer = (sync->polls, fallback->polls)
+      await Utils.delay(50)
       t.expect((
         fallbackPollsBeforeStall,
         syncPollsAfterStall - syncPollsAtStall <= 1,
         fallback.pendingItemsQueries,
-      )).toEqual((0, true, []))
+        (sync->polls, fallback->polls),
+      )).toEqual((0, true, [], pollsAtAnswer))
     },
   )
 
@@ -191,6 +235,22 @@ describe("Waiting for the first height", () => {
       sync.setAutoHeight(101)
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
       t.expect(sync.pendingItemsQueries->Array.length).toEqual(1)
+    },
+  )
+
+  scenario->Scenario.it(
+    "Slows the only source down to the stalled interval past the stall",
+    ~sources=[{chain: 1337, pollingInterval: 1}],
+    ~sourceTiming={newBlockStallTimeout: 20, stalledPollingInterval: 10_000},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      sync.setAutoHeight(0)
+      await indexer->waitForLog(
+        "No new blocks detected within 0s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync",
+      )
+      let pollsAtStall = sync->polls
+      await Utils.delay(50)
+      t.expect(sync->polls - pollsAtStall <= 1).toBe(true)
     },
   )
 })
@@ -345,6 +405,39 @@ chains:
 
 describe("Waiting across a sibling's rollback", () => {
   siblingScenario->Scenario.it(
+    "Keeps one wait however often the sibling's progress dispatches the chain again",
+    ~sources=[
+      {chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
+      {chain: 137, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
+    ],
+    ~sourceTiming={reducedPollingInterval: 20},
+    async (~t, ~indexer, ~source) => {
+      let waiting = source(1)
+      let sibling = source(137)
+      // Its fetchable head sits a reorg depth below the 300 it knows.
+      waiting.resolveGetHeightOrThrow(300)
+      sibling.resolveGetHeightOrThrow(10_000)
+      await waiting.expectItemsQueries([{fromBlock: 1, toBlock: Bounded(100), reply: upTo(100)}])
+      waiting.setAutoHeight(300)
+      // Spans two of the waiting chain's 40ms stall windows.
+      for step in 1 to 6 {
+        await sibling.expectItemsQueries([{reply: upTo(step * 100)}])
+        await Utils.delay(20)
+      }
+      t.expect(
+        indexer.allLogsAsJson()->Array.filter(
+          line =>
+            line->Dict.get("chainId") == Some(Number(1.)) &&
+              switch line->Dict.get("msg") {
+              | Some(String(msg)) => msg->String.startsWith("No new blocks detected")
+              | _ => false
+              },
+        ),
+      ).toHaveLength(1)
+    },
+  )
+
+  siblingScenario->Scenario.it(
     "Subscribes once and fetches the next block once",
     ~sources=[
       {chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow, #createHeightSubscription]},
@@ -395,6 +488,81 @@ describe("Waiting across a sibling's rollback", () => {
         waiting.heightSubscriptionCalls->Array.length,
         waiting.pendingItemsQueries->Array.length,
       )).toEqual((1, 1))
+    },
+  )
+})
+
+// A contract registered at the head spawns a partition whose query reports a
+// head newer than the source's last height poll.
+let registeringScenario = Scenario.make(
+  ~configYaml=`
+name: new-block-wait-registration
+rollback_on_reorg: false
+chains:
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    max_reorg_depth: 0
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "TestEvent()"
+      - name: NftFactory
+        events:
+          - event: "SimpleNftCreated(string name, string symbol, uint256 maxSupply, address contractAddress)"
+`,
+  ~schema,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
+indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async () => {});
+`,
+)
+
+type contractOps = {add: Address.t => unit}
+type registerContext = {chain: {"NftFactory": contractOps}}
+
+let registeringAt = (~blockNumber): MockSource.itemMock => {
+  blockNumber,
+  logIndex: 0,
+  handler: async _ => (),
+  contractRegister: async args =>
+    (
+      args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)
+    ).chain["NftFactory"].add(
+      "0x1111111111111111111111111111111111111111"->Address.unsafeFromString,
+    ),
+}
+
+describe("Catching up a contract registered at the head", () => {
+  registeringScenario->Scenario.it(
+    "Takes the head the new partition's query reports as the source's own",
+    ~sources=[{chain: 1337, pollingInterval: 10_000}],
+    ~sourceTiming={newBlockStallTimeout: 20_000},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({items: [registeringAt(~blockNumber=100)], latestFetchedBlockNumber: 100}),
+        },
+      ])
+      await sync.expectItemsQueries([
+        {
+          partitionId: "1",
+          reply: Respond({items: [], latestFetchedBlockNumber: 100, knownHeight: 105}),
+        },
+      ])
+      await sync.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
+      t.expect((
+        sync->polls,
+        (await indexer.metric("envio_source_known_height"))->Array.map(({value}) => value),
+      )).toEqual((1, ["105"]))
     },
   )
 })

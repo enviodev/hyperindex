@@ -436,6 +436,35 @@ describe("Height subscription", () => {
   )
 
   scenario->Scenario.it(
+    "Polls afresh for the next wait while a reconnect catch-up hangs",
+    ~sources=[{chain: 1337, methods: streaming}],
+    ~sourceTiming={newBlockStallTimeoutRealtime: 20_000},
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1337)
+      await reachRealtime(~sync=mock)
+      mock.resolveGetHeightOrThrow(100)
+      let pollsBeforeLive = mock->polls
+      mock.setHeightSubscriptionStatus(Live)
+      await mock.expectHeightCalls(pollsBeforeLive + 1)
+      mock.resolveGetHeightOrThrow(100)
+      mock.triggerHeightSubscription(101)
+      await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
+      await indexer.waitUntilIdle()
+      let pollsBeforeReconnect = mock->polls
+      mock.setHeightSubscriptionStatus(Down({reason: Closed}))
+      mock.setHeightSubscriptionStatus(Live)
+      // The catch-up goes out and is answered by nothing, ever.
+      await mock.expectHeightCalls(pollsBeforeReconnect + 1)
+
+      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=101)
+      await mock.expectHeightCalls(pollsBeforeReconnect + 2)
+      mock.resolveGetHeightOrThrowAt(~index=pollsBeforeReconnect + 1, 102)
+      await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+      t.expect(mock.pendingItemsQueries->Array.length).toEqual(1)
+    },
+  )
+
+  scenario->Scenario.it(
     "Keeps waiting when the reconnect catch-up brings no new height",
     ~sources=[{chain: 1337, methods: streaming}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
