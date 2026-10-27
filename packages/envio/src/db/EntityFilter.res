@@ -76,12 +76,13 @@ let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~h
 
 let isDate: unknown => bool = %raw(`v => v instanceof Date`)
 
-// Columns whose comparison needs a specific object shape. The rest compare
-// natively, so whatever they're handed is already safe.
+// Columns whose comparison needs a specific shape: a Date, bytes, or a list.
+// The rest compare natively, so whatever they're handed is already safe.
 let expectedValueType = (field: Table.field) =>
   switch field.fieldType {
   | Date => Some(field.isArray ? "an array of Date" : "a Date")
   | Bytea => Some(field.isArray ? "an array of Uint8Array" : "a Uint8Array")
+  | _ if field.isArray => Some("an array")
   | _ => None
   }
 

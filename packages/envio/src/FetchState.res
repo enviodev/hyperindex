@@ -1220,30 +1220,43 @@ let updateInternal = (
   updatedFetchState
 }
 
+// What fetch state has to tell an operator. It decides nothing from these; the
+// chain that owns it turns them into log lines.
+type notice =
+  | SwitchedToClientSideFiltering({contractName: string, addressCount: int, threshold: int})
+  // The address is already registered for the contract from a later block, and
+  // a registration never moves an address's start block earlier.
+  | SkippedReRegistration({
+      contractName: string,
+      contractAddress: Address.t,
+      registeredFromBlock: int,
+      requestedFromBlock: int,
+    })
+  | SkippedInvalidAddress({contractName: string, contractAddress: Address.t})
+  // A stored address (from the config or a resume) the address store refused
+  // because the contract already has it.
+  | SkippedStoredDuplicate({
+      contractName: string,
+      contractAddress: Address.t,
+      registeredFromBlock: int,
+      requestedFromBlock: int,
+    })
+
 // Move a contract to client-side address filtering, recording why.
 let addClientFilteredContract = (
   clientFilteredContracts: Utils.Set.t<string>,
   ~contractName,
-  ~chainId,
+  ~onNotice,
   ~addressCount,
   ~threshold,
   // A resumed fetch state re-derives the switch from the persisted addresses,
-  // but it already happened - and was logged - in the run that crossed the
+  // but it already happened - and was reported - in the run that crossed the
   // threshold.
-  ~shouldLog=true,
+  ~isAlreadyReported=false,
 ) => {
   clientFilteredContracts->Utils.Set.add(contractName)->ignore
-  if shouldLog {
-    Logging.createChild(
-      ~params={
-        "chainId": chainId,
-        "contractName": contractName,
-        "addressCount": addressCount,
-        "threshold": threshold,
-      },
-    )->Logging.childTrace(
-      "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
-    )
+  if !isAlreadyReported {
+    onNotice(SwitchedToClientSideFiltering({contractName, addressCount, threshold}))
   }
 }
 
@@ -1508,49 +1521,27 @@ let collapseClientFilteredContracts = (
   }
 }
 
-let warnAddressRegistration = (
-  ~chainId: ChainId.t,
-  ~contractAddress: Address.t,
-  ~params,
-  message,
-) =>
-  Logging.createChild(
-    ~params={
-      "chainId": chainId,
-      "contractAddress": contractAddress->Address.toString,
-      "details": params,
-    },
-  )->Logging.childWarn(message)
-
 // A rejected registration is simply absent from every partition, so without a
-// warning the user sees a contract that never indexes and nothing saying why.
-let warnRejectedRegistration = (
+// notice the user sees a contract that never indexes and nothing saying why.
+let reportRejectedRegistration = (
   verdict: AddressStore.verdict,
-  ~chainId: ChainId.t,
+  ~onNotice,
   ~contractAddress: Address.t,
   ~contractName: string,
 ) =>
   switch verdict {
-  | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
-    if existingEffectiveStartBlock > effectiveStartBlock {
-      warnAddressRegistration(
-        ~chainId,
-        ~contractAddress,
-        ~params={
-          "existingBlockNumber": existingEffectiveStartBlock,
-          "newBlockNumber": effectiveStartBlock,
-        },
-        `Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.`,
-      )
-    }
-  | Invalid =>
-    warnAddressRegistration(
-      ~chainId,
-      ~contractAddress,
-      ~params={"contractName": contractName},
-      `Skipping contract registration: Not a valid address for this chain's ecosystem.`,
+  | Duplicate({effectiveStartBlock, existingEffectiveStartBlock})
+    if existingEffectiveStartBlock > effectiveStartBlock =>
+    onNotice(
+      SkippedReRegistration({
+        contractName,
+        contractAddress,
+        registeredFromBlock: existingEffectiveStartBlock,
+        requestedFromBlock: effectiveStartBlock,
+      }),
     )
-  | Added(_) => ()
+  | Invalid => onNotice(SkippedInvalidAddress({contractName, contractAddress}))
+  | Duplicate(_) | Added(_) => ()
   }
 
 /**
@@ -1742,6 +1733,7 @@ OptimizedPartitions.t => {
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
+  ~onNotice: notice => unit,
   // How far an in-flight open-ended query may end up claiming. These
   // registrations usually come out of a response that is applied right after
   // this call, and an unbounded query can reach past the height known when it
@@ -1784,8 +1776,8 @@ let registerDynamicContracts = (
     // config that later adds address-dependent events picks it up on restart.
     | Added({fetchable: false}) => ()
     | Duplicate(_) | Invalid =>
-      verdict->warnRejectedRegistration(
-        ~chainId=fetchState.chainId,
+      verdict->reportRejectedRegistration(
+        ~onNotice,
         ~contractAddress=registration.address,
         ~contractName=registration.contractName,
       )
@@ -1896,7 +1888,7 @@ let registerDynamicContracts = (
           if !(clientFilteredContracts->Utils.Set.has(contractName)) && addressCount > threshold {
             clientFilteredContracts->addClientFilteredContract(
               ~contractName,
-              ~chainId=fetchState.chainId,
+              ~onNotice,
               ~addressCount,
               ~threshold,
             )
@@ -2656,6 +2648,7 @@ let make = (
   ~addressRows: AddressRows.seedRows,
   ~maxAddrInPartition,
   ~chainId: ChainId.t,
+  ~onNotice: notice => unit,
   ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
@@ -2716,15 +2709,13 @@ let make = (
   addressStore
   ->AddressStore.seedRows(addressRows)
   ->Array.forEach(rejected => {
-    warnAddressRegistration(
-      ~chainId,
-      ~contractAddress=rejected.address,
-      ~params={
-        "contractName": rejected.contractName,
-        "existingBlockNumber": rejected.existingEffectiveStartBlock,
-        "newBlockNumber": rejected.effectiveStartBlock,
-      },
-      `Skipping a stored address: it is already registered for this contract.`,
+    onNotice(
+      SkippedStoredDuplicate({
+        contractName: rejected.contractName,
+        contractAddress: rejected.address,
+        registeredFromBlock: rejected.existingEffectiveStartBlock,
+        requestedFromBlock: rejected.effectiveStartBlock,
+      }),
     )
   })
 
@@ -2763,10 +2754,10 @@ let make = (
       if addressCount > threshold {
         clientFilteredContracts->addClientFilteredContract(
           ~contractName,
-          ~chainId,
+          ~onNotice,
           ~addressCount,
           ~threshold,
-          ~shouldLog=!isResumed,
+          ~isAlreadyReported=isResumed,
         )
       }
     })

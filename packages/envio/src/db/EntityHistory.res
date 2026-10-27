@@ -3,20 +3,12 @@ open Table
 module RowAction = {
   type t = SET | DELETE
   let variants = [SET, DELETE]
-  let name = "ENVIO_HISTORY_CHANGE"
   let schema = S.enum(variants)
-  let config: Table.enumConfig<t> = {
-    name,
-    variants,
-    schema,
-  }
 }
 
 // Prefix with envio_ to avoid colleasions
 let changeFieldName = "envio_change"
 let checkpointIdFieldName = "envio_checkpoint_id"
-let checkpointIdFieldType = UInt64
-let changeFieldType = Enum({config: RowAction.config->Table.fromGenericEnumConfig})
 
 let unsafeCheckpointIdSchema =
   S.string
@@ -52,13 +44,6 @@ let makeSetUpdateSchema = (
   })
 }
 
-type pgEntityHistory<'entity> = {
-  table: Table.table,
-  setChangeSchema: S.t<Change.t<'entity>>,
-  // Used for parsing
-  setChangeSchemaRows: S.t<array<Change.t<'entity>>>,
-}
-
 let historyTablePrefix = "envio_history_"
 // `$` can't occur in a GraphQL entity name, so it marks where a truncated name
 // stops and the index that keeps it unique begins. Without that boundary two
@@ -67,169 +52,3 @@ let historyTablePrefix = "envio_history_"
 // history table.
 let historyTableName = (~entityName, ~entityIndex) =>
   fitPgTableName(historyTablePrefix ++ entityName, ~uniqueSuffix=`$${entityIndex->Int.toString}`)
-
-type safeReorgBlocks = {
-  chainIds: array<ChainId.t>,
-  blockNumbers: array<int>,
-}
-
-// We want to keep only the minimum history needed to survive chain reorgs and delete everything older.
-// Each chain gives us a "safe block": we assume reorgs will never happen at that block.
-// The latest checkpoint belonging to safe blocks of all chains is the safe checkpoint id.
-//
-// What we keep per entity id:
-// - If there are history rows in reorg threshold (after the safe block), we keep the anchor and delete all older rows.
-// - If there are no history rows in reorg threshold (after the safe block), even the anchor is redundant, so we delete it too.
-// Anchor is the latest history row at or before the safe checkpoint id.
-// This is the last state that could ever be relevant during a rollback.
-//
-// Why this is safe:
-// - Rollbacks will not cross the safe checkpoint id, so rows older than the anchor can never be referenced again.
-// - If nothing changed in reorg threshold (after the safe checkpoint), the current state for that id can be reconstructed from the
-//   origin table; we do not need a pre-safe anchor for it.
-// A per-chain entity's rows are only comparable within a chain, so every id
-// correlation in the history SQL widens to (id, chain id).
-let makeKeyColumns = (~chainIdColumn: option<string>) =>
-  switch chainIdColumn {
-  | Some(column) => ["id", `"${column}"`]
-  | None => ["id"]
-  }
-
-let makeKeyMatch = (~chainIdColumn, ~left, ~right) =>
-  makeKeyColumns(~chainIdColumn)
-  ->Array.map(column => `${left}.${column} = ${right}.${column}`)
-  ->Array.joinUnsafe(" AND ")
-
-let makePruneStaleEntityHistoryQuery = (
-  ~entityName,
-  ~entityIndex,
-  ~pgSchema,
-  ~chainIdColumn,
-  ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
-) => {
-  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
-  let keyColumns = makeKeyColumns(~chainIdColumn)
-  let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
-  let bounds = safeCheckpoints->CheckpointSequence.sql(~chainIdColumn, ~tableRef="t")
-
-  // Whether a key still has a row above the safe checkpoint is an aggregate
-  // over the same groups as the anchor, so it's computed in the one pass
-  // rather than as a per-row correlated lookup. The DELETE's `<=` on the row
-  // is there to keep the rows above the safe checkpoint out of the join.
-  //
-  // Per-chain bounds are joined in rather than run as a statement each: the
-  // anchors aggregate the whole table however narrow the bound is, and history
-  // carries no index to narrow the scan with.
-  `WITH anchors AS (
-  SELECT ${anchorKeys},
-    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= ${bounds.checkpointId}) AS keep_checkpoint_id,
-    bool_or(t.${checkpointIdFieldName} > ${bounds.checkpointId}) AS has_above,
-    MIN(${bounds.checkpointId}) AS safe_checkpoint_id
-  FROM ${historyTableRef} t${bounds.join}
-  GROUP BY ${anchorKeys}
-)
-DELETE FROM ${historyTableRef} d
-USING anchors a
-WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}
-  AND d.${checkpointIdFieldName} <= a.safe_checkpoint_id
-  AND (d.${checkpointIdFieldName} < a.keep_checkpoint_id OR NOT a.has_above);`
-}
-
-let pruneStaleEntityHistory = (
-  sql,
-  ~entityName,
-  ~entityIndex,
-  ~pgSchema,
-  ~chainIdColumn,
-  ~safeCheckpoints,
-): promise<unit> =>
-  sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(
-      ~entityName,
-      ~entityIndex,
-      ~pgSchema,
-      ~chainIdColumn,
-      ~safeCheckpoints,
-    ),
-    safeCheckpoints->CheckpointSequence.params,
-  )
-
-// If an entity doesn't have a history before the update
-// we create it automatically with envio_checkpoint_id 0
-// The ids belong to a single chain (the flush group's scope), so the chain is
-// named once in the query rather than unnested alongside them.
-let makeBackfillHistoryQuery = (
-  ~pgSchema,
-  ~entityName,
-  ~entityIndex,
-  ~idPgType,
-  ~chainIdColumn,
-  ~chainId: option<ChainId.t>,
-) => {
-  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
-  // Written into the SQL rather than bound: this scans the entity table, which
-  // is partitioned by the chain-id column, and Postgres can only prune a plan
-  // it caches when that column is a constant.
-  let chainFilter = switch (chainIdColumn, chainId) {
-  | (Some(column), Some(chainId)) => ` AND e."${column}" = ${chainId->ChainId.toString}`
-  | _ => ""
-  }
-  `WITH target_ids AS (
-  SELECT UNNEST($1::${idPgType}[]) AS id
-),
-missing_history AS (
-  SELECT e.*
-  FROM "${pgSchema}"."${entityName}" e
-  JOIN target_ids t ON e.id = t.id${chainFilter}
-  LEFT JOIN ${historyTableRef} h ON ${makeKeyMatch(~chainIdColumn, ~left="h", ~right="e")}
-  WHERE h.id IS NULL
-)
-INSERT INTO ${historyTableRef}
-SELECT *, 0 AS ${checkpointIdFieldName}, '${(RowAction.SET :> string)}' as ${changeFieldName}
-FROM missing_history;`
-}
-
-let backfillHistory = (
-  sql,
-  ~pgSchema,
-  ~table: Table.table,
-  ~entityIndex,
-  ~chainId: option<ChainId.t>,
-  ~ids: array<EntityId.t>,
-) => {
-  let idPgType = table->Table.getIdPgFieldType(~pgSchema)
-  let chainIdColumn = table->Table.getPgChainIdColumn
-  let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
-  sql
-  ->Postgres.preparedUnsafe(
-    makeBackfillHistoryQuery(
-      ~entityName=table.tableName,
-      ~entityIndex,
-      ~pgSchema,
-      ~idPgType,
-      ~chainIdColumn,
-      ~chainId,
-    ),
-    params->Obj.magic,
-  )
-  ->Utils.Promise.ignoreValue
-}
-
-let rollback = (
-  sql,
-  ~pgSchema,
-  ~entityName,
-  ~entityIndex,
-  ~chainIdColumn,
-  ~floors: RollbackFloors.t,
-) => {
-  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
-  let bounds =
-    floors.checkpointBounds->CheckpointSequence.sql(~chainIdColumn, ~tableRef=historyTableRef)
-  sql
-  ->Postgres.preparedUnsafe(
-    `DELETE FROM ${historyTableRef}${bounds.using} WHERE "${checkpointIdFieldName}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-    floors.checkpointBounds->CheckpointSequence.params,
-  )
-  ->Utils.Promise.ignoreValue
-}

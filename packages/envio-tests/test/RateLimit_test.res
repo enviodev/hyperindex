@@ -1,152 +1,92 @@
 open Vitest
 
-// The store takes 32-byte block hashes; widen the short markers these
-// fixtures use rather than making every one of them 64 digits long.
-let evmHash = hex =>
-  "0x" ++ hex->String.slice(~start=2, ~end=hex->String.length)->String.padStart(64, "0")
-
-
-let chainId = 1->ChainId.fromInt
-
-// Mock source that throws Source.RateLimited on the first N calls, then
-// returns Ok with the requested block data. Lets us exercise
-// SourceManager.getBlockHashes' rate-limit retry path deterministically
-// without depending on a live HyperSync endpoint.
-let makeMockSource = (~rateLimitedCalls: int, ~resetMs: int): Source.t => {
-  let callCount = ref(0)
-  {
-    name: "MockHyperSync",
-    sourceFor: Sync,
-    chainId,
-    poweredByHyperSync: true,
-    pollingInterval: 100,
-    getBlockHashes: (~blockNumbers, ~logger as _) => {
-      let current = callCount.contents
-      callCount := current + 1
-      if current < rateLimitedCalls {
-        throw(Source.RateLimited({resetMs: resetMs, requestStats: []}))
-      }
-      let data = BlockStore.fromJs(
-        blockNumbers->Array.map(n => {
-          let hashDigits = n->Int.toString
-          {
-            BlockStore.blockNumber: n,
-            blockHash: evmHash(`0x${hashDigits}`),
-            blockTimestamp: n,
-          }
-        }),
-        ~ecosystem=Evm,
-      )
-      Promise.resolve({Source.result: Ok(data), requestStats: []})
-    },
-    getHeightOrThrow: () => Promise.resolve({Source.height: 100, requestStats: []}),
-    getItemsOrThrow: (
-      ~fromBlock as _,
-      ~toBlock as _,
-      ~addressSet as _,
-      ~includeAllBlocks as _,
-      ~knownHeight as _,
-      ~partitionId as _,
-      ~selection as _,
-      ~itemsTarget as _,
-      ~retry as _,
-      ~logger as _,
-    ) => JsError.throwWithMessage("Not used by rate limit test"),
-  }
+// Time a chain spent waiting out rate limits, as the metric reports it.
+let scenario = Scenario.make(
+  ~configYaml=`
+name: rate-limit
+rollback_on_reorg: false
+contracts:
+  - name: Token
+    events:
+      - event: Transfer()
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    max_reorg_depth: 0
+    contracts:
+      - name: Token
+        address:
+          - "0x0000000000000000000000000000000000000001"
+          - "0x0000000000000000000000000000000000000002"
+`,
+  ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
 }
+`,
+)
 
-describe("SourceManager.getBlockHashes rate limit handling", () => {
-  Async.it("calls source.onReorg after an inconsistent hash response", async t => {
-    let reorgCalls = ref(0)
-    let attempt = ref(0)
-    let source: Source.t = {
-      ...makeMockSource(~rateLimitedCalls=0, ~resetMs=0),
-      getBlockHashes: (~blockNumbers, ~logger as _) => {
-        let blockNumber = blockNumbers->Utils.Array.firstUnsafe
-        let response = BlockStore.fromJs(
-          [{BlockStore.blockNumber, blockHash: evmHash("0x01")}],
-          ~ecosystem=Evm,
-        )
-        if attempt.contents === 0 {
-          attempt := 1
-          let conflictingPage = BlockStore.fromJs(
-            [{BlockStore.blockNumber, blockHash: evmHash("0x02")}],
-            ~ecosystem=Evm,
-          )
-          response->BlockStore.appendPage(conflictingPage)
-        }
-        Promise.resolve({Source.result: Ok(response), requestStats: []})
-      },
-      onReorg: () => reorgCalls := reorgCalls.contents + 1,
-    }
-    let sourceManager = SourceManager.make(~sources=[source], ~isRealtime=false)
+let rateLimited = resetMs => MockSource.Fail(Source.RateLimited({resetMs, requestStats: []}))
 
-    let _ = await sourceManager->SourceManager.getBlockHashes(
-      ~blockNumbers=[1],
-      ~isRealtime=false,
-    )
+let rateLimitedSeconds = async (indexer: IndexerRunner.t) =>
+  (await indexer.metric("envio_indexing_source_rate_limited_seconds"))->Array.map((
+    {value, labels}: IndexerRunner.metric,
+  ) => (labels->Dict.get("chainId"), value->Float.fromString))
 
-    t.expect(reorgCalls.contents).toEqual(1)
-  })
+describe("Rate-limit time", () => {
+  scenario->Scenario.it(
+    "Reports no rate-limited time for a chain that was never throttled",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(100)
+      await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+      t.expect(await indexer->rateLimitedSeconds).toEqual([(Some("1"), Some(0.))])
+    },
+  )
 
-  Async.it("recovers after a rate limit and tracks wait time", async t => {
-    // 500ms resetMs * 2 rate-limited calls = ~1s minimum total wait
-    let source = makeMockSource(~rateLimitedCalls=2, ~resetMs=500)
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~isRealtime=false,
-    )
+  scenario->Scenario.it(
+    "Counts the time a query waited out a rate limit",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(100)
+      await mock.expectItemsQueries([{fromBlock: 1, retryCount: 0, reply: rateLimited(200)}])
+      await mock.expectItemsQueries([{fromBlock: 1, retryCount: 1, reply: LeavePending}])
+      let seconds = switch await indexer->rateLimitedSeconds {
+      | [(_, Some(seconds))] => seconds
+      | _ => 0.
+      }
+      t.expect(seconds >= 0.2 && seconds < 0.4).toBe(true)
+    },
+  )
 
-    let blockNumbers = [100, 101, 102]
-    let result = await sourceManager->SourceManager.getBlockHashes(
-      ~blockNumbers,
-      ~isRealtime=false,
-    )
-
-    t.expect(result->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=103)).toEqual(
-      blockNumbers,
-    )
-    t.expect(sourceManager->SourceManager.getRateLimitTimeMs > 900.0).toEqual(true)
-  })
-
-  Async.it("succeeds immediately when no rate limit", async t => {
-    let source = makeMockSource(~rateLimitedCalls=0, ~resetMs=100)
-    let sourceManager = SourceManager.make(
-      ~sources=[source],
-      ~isRealtime=false,
-    )
-
-    let result = await sourceManager->SourceManager.getBlockHashes(
-      ~blockNumbers=[1, 2],
-      ~isRealtime=false,
-    )
-
-    t.expect(result->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=3)).toEqual([1, 2])
-    t.expect(sourceManager->SourceManager.getRateLimitTimeMs).toEqual(0.0)
-  })
-
-  Async.it(
-    "concurrent rate-limited calls only count the overlapping wall-clock window once",
-    async t => {
-      let source = makeMockSource(~rateLimitedCalls=4, ~resetMs=500)
-      let sourceManager = SourceManager.make(
-        ~sources=[source],
-        ~isRealtime=false,
-      )
-
-      // Two parallel calls — each hits 2 rate limits at ~500ms each.
-      // Sequential accounting would yield ~4 * 500ms = 2000ms; the dedup'd
-      // wall-clock total should be roughly half that (~1000ms).
-      let start = Date.now()
-      let _ =
-        await [
-          sourceManager->SourceManager.getBlockHashes(~blockNumbers=[1], ~isRealtime=false),
-          sourceManager->SourceManager.getBlockHashes(~blockNumbers=[2], ~isRealtime=false),
-        ]->Promise.all
-      let elapsed = Date.now() -. start
-
-      let rateLimitTime = sourceManager->SourceManager.getRateLimitTimeMs
-      t.expect(rateLimitTime > 400.0 && rateLimitTime < elapsed +. 100.0).toEqual(true)
+  scenario->Scenario.it(
+    "Counts rate limits that overlap in time only once",
+    ~sources=[{chain: 1}],
+    // One partition per address, so two queries are throttled at once.
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(100)
+      await mock.expectItemsQueries([
+        {partitionId: "0", retryCount: 0, reply: rateLimited(300)},
+        {partitionId: "1", retryCount: 0, reply: rateLimited(300)},
+      ])
+      await mock.expectItemsQueries([
+        {partitionId: "0", retryCount: 1, reply: LeavePending},
+        {partitionId: "1", retryCount: 1, reply: LeavePending},
+      ])
+      let seconds = switch await indexer->rateLimitedSeconds {
+      | [(_, Some(seconds))] => seconds
+      | _ => 0.
+      }
+      // Two 300ms waits side by side are 300ms of the chain being throttled.
+      t.expect(seconds >= 0.3 && seconds < 0.5).toBe(true)
     },
   )
 })

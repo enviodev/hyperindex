@@ -57,6 +57,8 @@ Full ref: https://raw.githubusercontent.com/DZakh/sury/refs/tags/v9.3.0/docs/js-
 
 ## RPC pattern (viem)
 
+`envio` doesn't ship viem: add `viem` to the project's own `package.json` dependencies before importing it.
+
 Always pass `{ batch: true }` to the transport. The preload pass fires effects for the whole batch concurrently, and batching collapses them into a few JSON-RPC requests instead of one request per read.
 
 ```ts

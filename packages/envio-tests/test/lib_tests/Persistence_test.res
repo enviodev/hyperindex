@@ -13,10 +13,6 @@ describe("Test Persistence layer init", () => {
       persistence.allEntities,
       ~message=`The indexer's own tables aren't entities, so the user's list is untouched`,
     ).toEqual([])
-    t.expect(
-      persistence.allEnums,
-      ~message=`All enums should automatically include the indexer core ones`,
-    ).toEqual([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
     t.expect(persistence.storageStatus, ~message=`Intial storage status should be unknown`).toEqual(
       Persistence.Unknown,
     )
@@ -30,6 +26,7 @@ describe("Test Persistence layer init", () => {
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -103,6 +100,7 @@ describe("Test Persistence layer init", () => {
     await p
 
     await persistence->Persistence.init(
+      ~logger=Logger.makeInMemory(),
       ~chainConfigs=[],
       ~contractMapping=ContractMapping.empty,
       ~envioInfo,
@@ -120,6 +118,7 @@ describe("Test Persistence layer init", () => {
 
     let _p2 =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~reset=true,
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
@@ -160,6 +159,7 @@ describe("Test Persistence layer init", () => {
 
     let p =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -169,6 +169,7 @@ describe("Test Persistence layer init", () => {
     // Additional calls to init should not do anything
     let _ =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -177,6 +178,7 @@ describe("Test Persistence layer init", () => {
       )
     let _ =
       persistence->Persistence.init(
+        ~logger=Logger.makeInMemory(),
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
@@ -231,6 +233,7 @@ Although it should load effect caches metadata.`,
     let settled = (
       async () =>
         switch await persistence->Persistence.init(
+          ~logger=Logger.makeInMemory(),
           ~chainConfigs=[],
           ~contractMapping=ContractMapping.empty,
           ~envioInfo=current,

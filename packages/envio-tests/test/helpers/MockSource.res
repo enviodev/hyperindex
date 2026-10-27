@@ -43,6 +43,7 @@ type mockSourceHandler = Internal.handlerArgs => promise<unit>
 type mockSourceContractRegister = Internal.contractRegisterArgs => promise<unit>
 type mockSourceEvent = {
   __mockHandler?: mockSourceHandler,
+  __mockPreloadHandler?: mockSourceHandler,
   __mockContractRegister?: mockSourceContractRegister,
 }
 
@@ -57,7 +58,10 @@ let makeMockSourceRegistration = (
   let handler: Internal.handler = args => {
     let event = args.event->(Utils.magic: Internal.event => mockSourceEvent)
     if args.context.isPreload {
-      Promise.resolve()
+      switch event.__mockPreloadHandler {
+      | Some(handler) => handler(args)
+      | None => Promise.resolve()
+      }
     } else {
       switch event.__mockHandler {
       | Some(handler) => handler(args)
@@ -75,7 +79,6 @@ let makeMockSourceRegistration = (
   ({
     index,
     eventConfig: ({
-      id: "MockEvent",
       // Keep the synthetic registration in the same address-dependent fetch
       // partition as the config's registrations. MockSource ignores the
       // query selection, while ChainState still owns and resolves this slot.
@@ -89,16 +92,15 @@ let makeMockSourceRegistration = (
         ~blockMaskFn=Evm.eventBlockFieldMask,
         ~transactionMaskFn=Evm.eventTransactionFieldMask,
       ),
-      sighash: "",
+      sighash: Some(""),
       topicCount: 1,
       paramsMetadata: [],
     }: Internal.evmEventConfig :> Internal.eventConfig),
     isWildcard,
     filterByAddresses: false,
     dependsOnAddresses: !isWildcard,
-    addressFilterParamGroups: [],
     startBlock: None,
-    handler: Some(handler),
+    handler,
     contractRegister: Some(contractRegister),
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.make(),
@@ -106,20 +108,15 @@ let makeMockSourceRegistration = (
       ~blockMaskFn=Evm.eventBlockFieldMask,
       ~transactionMaskFn=Evm.eventTransactionFieldMask,
     ),
-    resolvedWhere: {topicSelections: [], startBlock: None},
+    resolvedWhere: {topicFilters: [], startBlock: None},
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 }
-
-let defineAddresses: ({..}, array<Address.t>) => unit = %raw(`(payload, addresses) => {
-  Object.defineProperty(payload, "addresses", {value: addresses});
-}`)
 
 type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 // `isWildcard` decides whether the chain's mock registration depends on
 // addresses, and so whether its partition is an address partition or a wildcard
 // one — the two take different paths through a rollback.
 type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef, isWildcard: bool}
-
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
 
 let setMockSourceState = (source: Source.t, state: mockSourceState) => {
@@ -140,7 +137,10 @@ let installMockSourceRegistrations = (
       sources->Array.filterMap(source => source->getMockSourceState)
     | _ => []
     }
-    if !(sourceStates->Utils.Array.isEmpty) {
+    // A chain without contracts has no address index for the synthetic
+    // registration to live in, and nothing for a mock item to be delivered to.
+    switch chainConfig.contracts->Array.get(0) {
+    | Some(contract) if !(sourceStates->Utils.Array.isEmpty) =>
       let key = chainConfig.id->ChainId.toString
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
@@ -157,20 +157,13 @@ let installMockSourceRegistrations = (
         ~index=registrations.onEventRegistrations->Array.length,
         // Any contract from the chain keeps the synthetic registration in the
         // address-dependent partition of a real contract.
-        ~contractName=switch chainConfig.contracts->Array.get(0) {
-        | Some(contract) => contract.name
-        | None => "MockContract"
-        },
+        ~contractName=contract.name,
       )
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
       sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
+    | _ => ()
     }
   })
-
-module CallPayload = {
-  // The partition's addresses as the query carried them, in set order.
-  @get external addresses: {..} => array<Address.t> = "addresses"
-}
 
 type method = [
   | #getBlockHashes
@@ -183,27 +176,76 @@ type itemMock = {
   blockNumber: int,
   logIndex: int,
   handler?: mockSourceHandler,
+  // Run in the handler's place while its batch preloads; the handler itself
+  // only runs once preloading is done.
+  preloadHandler?: mockSourceHandler,
   contractRegister?: mockSourceContractRegister,
+  // Laid over the number, timestamp and hash every item's block carries.
+  blockFields?: dict<unknown>,
+  transactionFields?: dict<unknown>,
 }
+
+// Unboxed so a failed `toEqual` prints `100` or `"unbounded"`, not a tagged object.
+@unboxed type toBlock = Bounded(int) | @as("unbounded") Unbounded
+
+type startupHeight = Height(int) | HeightFailure(string)
 
 // What a test can tell one pending item query from another by.
-type itemsQuery = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string}
-
-type getItemsOrThrowCall = {
-  payload: itemsQuery,
-  // Whether the query asked for every block in its range, which the chain only
-  // does once it is at the head.
-  includeAllBlocks: bool,
-  resolve: (
-    array<itemMock>,
-    ~latestFetchedBlockNumber: int=?,
-    ~latestFetchedBlockHash: string=?,
-    ~knownHeight: int=?,
-    ~prevRangeLastBlock: ReorgDetection.blockData=?,
-    ~requestStats: array<Source.requestStat>=?,
-  ) => unit,
-  reject: 'exn. 'exn => unit,
+type pendingItemsQuery = {
+  partitionId: string,
+  fromBlock: int,
+  toBlock: toBlock,
+  retryCount: int,
 }
+
+// Non-enumerable on the query, so a whole-value `toEqual` snapshot of the
+// pending queries doesn't have to spell them out.
+@get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
+@get external includeAllBlocks: pendingItemsQuery => bool = "includeAllBlocks"
+
+type itemsResponse = {
+  items: array<itemMock>,
+  // Defaults to the query's toBlock, or its fromBlock when unbounded.
+  latestFetchedBlockNumber?: int,
+  latestFetchedBlockHash?: string,
+  knownHeight?: int,
+  prevRangeLastBlock?: ReorgDetection.blockData,
+  requestStats?: array<Source.requestStat>,
+}
+
+type reply =
+  | Respond(itemsResponse)
+  // For a response that depends on the query it matched, e.g. items at its fromBlock.
+  | RespondWith(pendingItemsQuery => itemsResponse)
+  // A reply no real source gives: past the query's toBlock, or with items
+  // outside the range it reports. Only for testing the indexer's defence
+  // against one; `Respond` refuses it.
+  | RespondUnchecked(itemsResponse)
+  | Fail(exn)
+  | LeavePending
+
+type expectedItemsQuery = {
+  partitionId?: string,
+  fromBlock?: int,
+  toBlock?: toBlock,
+  retryCount?: int,
+  coversBlock?: int,
+  where?: pendingItemsQuery => bool,
+  reply: reply,
+}
+
+type expectedBlockHashLookup = {
+  blockNumbers: array<int>,
+  // Short hashes (`"0x200"`) are widened like a mocked items response's, so the
+  // block's stored hash is `0x<blockNumber>` and anything else reads as re-orged.
+  reply: array<BlockStore.inputBlock>,
+}
+
+type pendingItemsQueryControl = {
+  respond: itemsResponse => unit,
+  fail: exn => unit,
+}
+@get external control: pendingItemsQuery => pendingItemsQueryControl = "__control"
 
 type t = {
   source: Source.t,
@@ -221,39 +263,50 @@ type t = {
   // settled does nothing. An index for a call the source never took throws.
   resolveGetHeightOrThrowAt: (~index: int, int) => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
+  // Waits until the source has taken `count` height calls in all, then fails
+  // if it has taken more. Answering them is still up to the resolvers above.
+  expectHeightCalls: int => promise<unit>,
   // Answer every height call with `height` from now on, one answer covering any
   // number of polls. A restarted indexer learns the head on its own this way,
   // before the test body gets a chance to resolve anything.
   setAutoHeight: int => unit,
-  getItemsOrThrowCalls: array<getItemsOrThrowCall>,
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
-  // Answers exactly one query. With no query pending yet the answer waits for
-  // the next matching one, so a test never has to wait for the indexer to get
-  // around to asking. `~filter` is mandatory as soon as more than one pending
-  // query matches: item queries fan out one per fetch partition, and answering
-  // all of them because the test was written before the partition split is the
-  // bug this arity check exists to surface.
-  resolveGetItemsOrThrow: (
-    array<itemMock>,
-    ~filter: itemsQuery => bool=?,
-    ~latestFetchedBlockNumber: int=?,
-    ~latestFetchedBlockHash: string=?,
-    ~knownHeight: int=?,
-    ~prevRangeLastBlock: ReorgDetection.blockData=?,
-    ~requestStats: array<Source.requestStat>=?,
-  ) => unit,
-  // Empty-response every matching pending query. A statement about queries that
-  // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
-  drainItemsQueries: (~filter: itemsQuery => bool=?, ~latestFetchedBlockNumber: int=?) => unit,
+  // The item queries the source has taken and not yet replied to, in arrival
+  // order. A query leaves as soon as it is replied to. A rollback doesn't cancel
+  // the ones already in flight: they stay next to the re-queries it issues, so
+  // pin `fromBlock` to tell a re-query from the query it superseded.
+  pendingItemsQueries: array<pendingItemsQuery>,
+  // Waits until every entry matches a pending query, then replies to all of
+  // them in list order. An entry that replies needs exactly one matching query;
+  // `LeavePending` accounts for every remaining query it matches. A pending
+  // query no entry accounts for, and no earlier list left pending, fails it.
+  expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
+  // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
+  // queries and answers every one up to its own toBlock, never past
+  // `blockNumber`, until every partition it answers gets there. A query starting
+  // past `blockNumber` fails it as unlisted, like any query no entry names. For
+  // a test that just needs the chain somewhere.
+  respondEmptyUpTo: int => promise<unit>,
+  // Empty-responds every pending query, up to its own toBlock unless
+  // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
+  drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
-  // Alone among the resolvers it never waits for its call: the rollback depth
-  // search issues several lookups over different block numbers, so an answer
-  // registered in advance would land on whichever asked first.
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
-  // Throws if a `resolve*` that ran before its call arrived is still waiting for
-  // one, naming the call sites. Run at the end of a passing scenario.
+  // Answers every block-hash lookup in flight with a failure the source
+  // reported, and throws when there is none. `requestStats` are the requests
+  // the failed lookup made, reported on the response as a native source does.
+  failGetBlockHashes: (exn, ~requestStats: array<Source.requestStat>=?) => unit,
+  // Waits for the rollback's block-hash lookup of exactly `blockNumbers`, then
+  // replies with `reply`. A lookup of other blocks, or more than one pending,
+  // fails at once naming what was asked. A rollback only looks up hashes when
+  // the chain has a stored block between its threshold and the reorged block.
+  expectBlockHashLookup: expectedBlockHashLookup => promise<unit>,
+  // What the source has been asked and not answered, for a failure report.
+  describeState: unit => string,
+  // Throws if a height answer given before its call arrived is still waiting
+  // for one, naming the call sites. Run at the end of a passing scenario.
   validateAnswersClaimed: unit => unit,
   // Voids the queries the indexer has in flight. A restarted indexer re-issues
   // its own, and answering a stopped indexer's leftovers instead is a bug the
@@ -269,31 +322,107 @@ type t = {
   unsubscribeHeightSubscription: unit => unit,
 }
 
-// The chain chunks a range into one query per partition slice, so a test that
-// answers with items at a given block names the slice that covers it.
-let coveringBlock = blockNumber =>
-  (query: itemsQuery) =>
-    query["fromBlock"] <= blockNumber &&
-      switch query["toBlock"] {
-      | Some(toBlock) => blockNumber <= toBlock
-      | None => true
-      }
+// The Rust ledger (`mock_source.rs`) that records every call the source takes
+// and decides what a test's expectations match. It answers nothing: each call
+// comes back with an id, each answer with the ids to settle, and the promises
+// they settle stay here.
+module Ledger = {
+  type t
 
-let describeItemsQuery = (query: itemsQuery) =>
-  `{p: ${query["p"]}, fromBlock: ${query["fromBlock"]->Int.toString}, toBlock: ${switch query["toBlock"] {
-    | Some(toBlock) => toBlock->Int.toString
-    | None => "-"
-    }}}`
+  type startupHeight = {height?: int, failure?: string}
+  type heightCall = {index: int, height: Nullable.t<int>, failure: Nullable.t<string>}
+  type expected = {
+    partitionId?: string,
+    fromBlock?: int,
+    toBlock?: int,
+    toBlockUnbounded?: bool,
+    retryCount?: int,
+    coversBlock?: int,
+    whereIds?: array<int>,
+    reply: string,
+  }
+  type itemsMatch = {
+    status: string,
+    assignment: array<int>,
+    leftPending: array<int>,
+    message: Nullable.t<string>,
+  }
+  type reply = {
+    id: int,
+    checked: bool,
+    isFailure: bool,
+    latestFetchedBlockNumber?: int,
+    itemBlockNumbers: array<int>,
+  }
+  type drainReply = {id: int, latestFetchedBlockNumber: Nullable.t<int>}
+  type heightCallsCheck = {done: bool, error: Nullable.t<string>}
+  type lookupMatch = {status: string, id: Nullable.t<int>, message: Nullable.t<string>}
 
-let ambiguousItemsQueries = calls =>
-  `resolveGetItemsOrThrow matches ${calls
-    ->Array.length
-    ->Int.toString} pending queries, so which one it answers is a guess:\n` ++
-  calls
-  ->Array.map((call: getItemsOrThrowCall) => `  ${call.payload->describeItemsQuery}`)
-  ->Array.join(
-    "\n",
-  ) ++ "\nNarrow it with ~filter, or use drainItemsQueries to empty-response them all."
+  @send
+  external make: (Core.mockSourceCtor, int, Null.t<int>, array<startupHeight>) => t = "new"
+  @send external takeHeightCall: t => heightCall = "takeHeightCall"
+  @send external resolveHeight: (t, int, string) => array<int> = "resolveHeight"
+  @send external resolveHeightAt: (t, int) => bool = "resolveHeightAt"
+  @send external setAutoHeight: (t, int) => array<int> = "setAutoHeight"
+  @send external rejectHeights: t => array<int> = "rejectHeights"
+  @send external checkHeightCalls: (t, int) => heightCallsCheck = "checkHeightCalls"
+  @send external heightCallsTimeoutMessage: (t, int) => string = "heightCallsTimeoutMessage"
+  @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
+  @send
+  external takeItemsQuery: (t, string, int, Null.t<int>, int) => int = "takeItemsQuery"
+  @send external settleItemsQuery: (t, int) => unit = "settleItemsQuery"
+  @send external entryCandidates: (t, array<expected>) => array<array<int>> = "entryCandidates"
+  @send external matchItemsQueries: (t, array<expected>) => itemsMatch = "matchItemsQueries"
+  @send external keepPending: (t, array<int>) => unit = "keepPending"
+  @send external checkReplies: (t, array<reply>) => Nullable.t<string> = "checkReplies"
+  @send
+  external drainItemsQueries: (t, Null.t<int>) => array<drainReply> = "drainItemsQueries"
+  @send external takeBlockHashLookup: (t, array<int>) => int = "takeBlockHashLookup"
+  @send
+  external settleAllBlockHashLookups: (t, string) => array<int> = "settleAllBlockHashLookups"
+  @send external matchBlockHashLookup: (t, array<int>) => lookupMatch = "matchBlockHashLookup"
+  @send external recordReorg: t => unit = "recordReorg"
+  @send external reorgCallCount: t => int = "reorgCallCount"
+  @send external describeState: t => string = "describeState"
+  @send external dropPendingCalls: t => array<int> = "dropPendingCalls"
+}
+
+let blockHashesResponse = (blocks: array<BlockStore.inputBlock>) => {
+  Source.result: Ok(
+    BlockStore.fromJs(
+      blocks->Array.map((block): BlockStore.inputBlock => {
+        ...block,
+        blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
+      }),
+      ~ecosystem=Evm,
+    ),
+  ),
+  requestStats: [],
+}
+
+// Taken at module load, before a test can fake the clock: a deadline on faked
+// timers never fires, and a mismatched expectation would hang the suite instead
+// of failing with what it was waiting for.
+let realSetTimeout: (
+  unit => unit,
+  int,
+) => timeoutId = %raw(`globalThis.setTimeout.bind(globalThis)`)
+let realClearTimeout: timeoutId => unit = %raw(`globalThis.clearTimeout.bind(globalThis)`)
+@val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
+
+let realNow: unit => float = %raw(`Date.now.bind(Date)`)
+
+// The ledger's id for a query, kept off the enumerable fields a test compares.
+@get external queryId: pendingItemsQuery => int = "__id"
+
+let replyName = (reply: reply) =>
+  switch reply {
+  | Respond(_) => "Respond"
+  | RespondWith(_) => "RespondWith"
+  | RespondUnchecked(_) => "RespondUnchecked"
+  | Fail(_) => "Fail"
+  | LeavePending => "LeavePending"
+  }
 
 let make = (
   methods: array<method>,
@@ -306,6 +435,10 @@ let make = (
   // startup itself (e.g. resolving a `latest` start block), which completes
   // before a test body would ever get a chance to call `setAutoHeight`.
   ~autoHeight=?,
+  // Answers for the first height calls, one per call and in order, ahead of
+  // `autoHeight`. For calls startup makes before a test body can answer them,
+  // where a source has to fail first.
+  ~startupHeights: array<startupHeight>=[],
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -315,38 +448,43 @@ let make = (
     }
   }
 
+  let ledger = Core.getAddon().mockSource->Ledger.make(
+    chainId,
+    autoHeight->Null.fromOption,
+    startupHeights->Array.map((answer): Ledger.startupHeight =>
+      switch answer {
+      | Height(height) => {height: height}
+      | HeightFailure(failure) => {failure: failure}
+      }
+    ),
+  )
   let chainId = chainId->ChainId.fromInt
   let getHeightOrThrowCalls = []
-  // One entry per call the source has taken, in the order it took them, so an
-  // index here is the call number a test counted. `None` is a call that has
-  // already been answered — including one a standing height answered on the
-  // spot, which never parks anything — which is what makes answering the same
-  // call twice do nothing.
-  let getHeightOrThrowPending: array<
-    option<{
-      "resolve": Source.getHeightResponse => unit,
-      "reject": exn => unit,
-    }>,
-  > = []
-  let settleHeightCall = (index, answer) =>
-    switch getHeightOrThrowPending->Array.get(index) {
-    | Some(Some(pending)) =>
-      getHeightOrThrowPending->Array.set(index, None)
-      answer(pending)
-    | Some(None) | None => ()
-    }
-  let pendingHeightCallIndices = () =>
-    getHeightOrThrowPending->Array.reduceWithIndex([], (indices, pending, index) => {
-      switch pending {
-      | Some(_) => indices->Array.push(index)->ignore
+  let heightCallers: Map.t<
+    int,
+    {"resolve": Source.getHeightResponse => unit, "reject": exn => unit},
+  > = Map.make()
+  let settleHeightCalls = (indices, answer) =>
+    indices->Array.forEach(index =>
+      switch heightCallers->Map.get(index) {
+      | Some(caller) =>
+        heightCallers->Map.delete(index)->ignore
+        answer(caller)
       | None => ()
       }
-      indices
-    })
-  let getItemsOrThrowCalls = []
-  let reorgCalls = ref(0)
+    )
+  let answerHeight = height => caller => caller["resolve"]({Source.height, requestStats: []})
   let getBlockHashesCalls = []
-  let getBlockHashesResolveFns = []
+  let blockHashCallers: Map.t<int, Source.getBlockHashesResponse => unit> = Map.make()
+  let settleBlockHashLookups = (ids, response) =>
+    ids->Array.forEach(id =>
+      switch blockHashCallers->Map.get(id) {
+      | Some(resolve) =>
+        blockHashCallers->Map.delete(id)->ignore
+        resolve(response)
+      | None => ()
+      }
+    )
   // Height subscription state
   let heightSubscriptionCalls = []
   let heightSubscriptionCloseCalls = []
@@ -361,156 +499,404 @@ let make = (
     heightSubscriptionCallbacks->Utils.Array.clearInPlace
     heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
   }
-  let autoHeight = ref(autoHeight)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
-  // Answers registered before their call arrived, consumed in order by the
-  // source methods below. `site` is only carried for the end-of-run report.
-  let deferredItemsAnswers: array<{
-    "site": string,
-    "match": getItemsOrThrowCall => bool,
-    "respond": getItemsOrThrowCall => unit,
-  }> = []
-  let deferredHeightAnswers: array<{"site": string, "height": int}> = []
+  // The ledger's pending queries as the objects a test holds, in the same
+  // arrival order, so the same query stays the same object while it's pending.
+  let pendingItemsQueries: array<pendingItemsQuery> = []
+  let queriesById: Map.t<int, pendingItemsQuery> = Map.make()
 
-  // With the function we keep only the pending calls,
-  // and remove the resolved ones automatically.
-  let keepOnlyPendingCalls = (~array, ~fn) => {
-    Promise.make((resolve, reject) => {
-      let callRef = ref(%raw(`null`))
-      callRef :=
-        fn(
-          ~resolve=arg => {
-            resolve(arg)
-            let indexOf = array->Array.indexOf(callRef.contents)
-            if indexOf !== -1 {
-              array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
-            }
-          },
-          ~reject=arg => {
-            reject(arg)
-            let indexOf = array->Array.indexOf(callRef.contents)
-            if indexOf !== -1 {
-              array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
-            }
-          },
+  let arrivalListeners: array<unit => unit> = []
+  // A chain fans out one query per partition, and each await on the way to the
+  // source spreads the fan-out over one more microtask. Listeners are told once
+  // `quietMicrotasks` turns pass with nothing new arriving, so they see the
+  // fan-out as one wave. Waiting on microtasks rather than a timer keeps I/O
+  // from completing in between, which would make what the indexer does next
+  // depend on how fast the database answered.
+  let quietMicrotasks = 20
+  let arrivalGeneration = ref(0)
+  let settling = ref(false)
+  let notifyArrival = () => {
+    arrivalGeneration := arrivalGeneration.contents + 1
+    if !settling.contents {
+      settling := true
+      let rec settle = (~generation, ~quiet) =>
+        queueMicrotask(() =>
+          if arrivalGeneration.contents !== generation {
+            settle(~generation=arrivalGeneration.contents, ~quiet=0)
+          } else if quiet < quietMicrotasks {
+            settle(~generation, ~quiet=quiet + 1)
+          } else {
+            settling := false
+            let listeners = arrivalListeners->Array.copy
+            arrivalListeners->Utils.Array.clearInPlace
+            listeners->Array.forEach(listener => listener())
+          }
         )
-      array->Array.push(callRef.contents)->ignore
+      settle(~generation=arrivalGeneration.contents, ~quiet=0)
+    }
+  }
+  let nextArrival = (~deadline) =>
+    Promise.make((resolve, _reject) => {
+      let timer = realSetTimeout(
+        () => resolve(false),
+        Math.max(0., deadline -. realNow())->Float.toInt,
+      )
+      arrivalListeners
+      ->Array.push(() => {
+        realClearTimeout(timer)
+        resolve(true)
+      })
+      ->ignore
     })
+  // A burst still landing would have its first call taken for all of it.
+  let awaitSettled = async (~deadline) =>
+    if settling.contents {
+      let _ = await nextArrival(~deadline)
+    }
+
+  let toLedgerExpected = (entry: expectedItemsQuery): Ledger.expected => {
+    partitionId: ?entry.partitionId,
+    fromBlock: ?entry.fromBlock,
+    toBlock: ?switch entry.toBlock {
+    | Some(Bounded(toBlock)) => Some(toBlock)
+    | Some(Unbounded) | None => None
+    },
+    toBlockUnbounded: ?switch entry.toBlock {
+    | Some(Unbounded) => Some(true)
+    | Some(Bounded(_)) | None => None
+    },
+    retryCount: ?entry.retryCount,
+    coversBlock: ?entry.coversBlock,
+    reply: entry.reply->replyName,
+  }
+
+  // A `where` predicate only JS can run, so the ledger is told the queries it
+  // accepted, out of those the entry's other fields already match.
+  let toLedgerEntries = (expected: array<expectedItemsQuery>) => {
+    let entries = expected->Array.map(toLedgerExpected)
+    let candidates = ledger->Ledger.entryCandidates(entries)
+    entries->Array.mapWithIndex((entry, index): Ledger.expected =>
+      switch (expected->Array.getUnsafe(index)).where {
+      | Some(where) => {
+          ...entry,
+          whereIds: candidates
+          ->Array.getUnsafe(index)
+          ->Array.filter(id =>
+            queriesById->Map.get(id)->Option.mapOr(false, query => where(query))
+          ),
+        }
+      | None => entry
+      }
+    )
+  }
+
+  let makeItemsResponse = (
+    response: itemsResponse,
+    ~fromBlock,
+    ~toBlock,
+    ~knownHeight,
+  ): Source.blockRangeFetchResponse => {
+    let items = response.items
+    let latestFetchedBlockNumber =
+      response.latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
+
+    // The store takes 32-byte hashes, so widen the decimal marker.
+    let mockBlockHash = blockNumber => evmBlockHash(`0x${blockNumber->Int.toString}`)
+    let latestFetchedBlockHash = switch response.latestFetchedBlockHash {
+    | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+    | None => mockBlockHash(latestFetchedBlockNumber)
+    }
+    let observedBlocks = [
+      (
+        {
+          blockNumber: latestFetchedBlockNumber,
+          blockHash: evmBlockHash(latestFetchedBlockHash),
+          blockTimestamp: latestFetchedBlockNumber,
+        }: BlockStore.inputBlock
+      ),
+    ]
+    let prevEntry = switch response.prevRangeLastBlock {
+    | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
+      Some(
+        (
+          {
+            blockNumber: prevRangeLastBlock.blockNumber,
+            blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
+          }: BlockStore.inputBlock
+        ),
+      )
+    | None =>
+      if fromBlock > 0 {
+        Some(
+          (
+            {
+              blockNumber: fromBlock - 1,
+              blockHash: mockBlockHash(fromBlock - 1),
+            }: BlockStore.inputBlock
+          ),
+        )
+      } else {
+        None
+      }
+    }
+    switch prevEntry {
+    | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
+    | None => ()
+    }
+    // A real source returns the header of every block a matched item came
+    // from, so those blocks carry a hash and a timestamp too. Without them the
+    // store only ever learns the range's seam and end, and reorg detection
+    // never sees the blocks events landed on.
+    items->Array.forEach(item => {
+      if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
+        observedBlocks->Array.push({
+          blockNumber: item.blockNumber,
+          blockHash: mockBlockHash(item.blockNumber),
+          blockTimestamp: item.blockNumber,
+        })
+      }
+    })
+    let responseBlockStore = BlockStore.make(~ecosystem=Evm)
+    observedBlocks->Array.forEach(block => {
+      let page = BlockStore.fromJs([block], ~ecosystem=Evm)
+      responseBlockStore->BlockStore.appendPage(page)
+    })
+    {
+      knownHeight: response.knownHeight->Option.getOr(knownHeight),
+      parsedQueueItems: items->Array.map(item => {
+        let onEventRegistration =
+          state.onEventRegistrationRef.contents->Option.getOrThrow(
+            ~message="MockSource on-event registration was not installed before resolving items",
+          )
+        let payload: Evm.payload = {
+          contractName: onEventRegistration.eventConfig.contractName,
+          eventName: onEventRegistration.eventConfig.name,
+          params: %raw(`{}`),
+          chainId,
+          srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
+          logIndex: item.logIndex,
+          block: Dict.fromArray([
+            ("number", item.blockNumber->(Utils.magic: int => unknown)),
+            ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
+            ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
+          ])
+          ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
+          ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+          transaction: ?(
+            item.transactionFields->Option.map(fields =>
+              fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+            )
+          ),
+        }
+        let _ = %raw(`Object.defineProperties(payload, {
+          __mockHandler: {value: item.handler},
+          __mockPreloadHandler: {value: item.preloadHandler},
+          __mockContractRegister: {value: item.contractRegister},
+        })`)
+        Internal.Event({
+          onEventRegistration,
+          chainId,
+          blockNumber: item.blockNumber,
+          logIndex: item.logIndex,
+          transactionIndex: 0,
+          payload: payload->Evm.fromPayload,
+        })
+      }),
+      transactionStore: None,
+      blockStore: responseBlockStore,
+      latestFetchedBlockNumber,
+      stats: {
+        totalTimeElapsed: 0.,
+      },
+      requestStats: response.requestStats->Option.getOr([]),
+    }
+  }
+
+  let expectItemsQueries = async expected => {
+    let deadline = realNow() +. 2000.
+    let rec awaitMatch = async () => {
+      await awaitSettled(~deadline)
+      let outcome = ledger->Ledger.matchItemsQueries(expected->toLedgerEntries)
+      let message = () => outcome.message->Nullable.toOption->Option.getOr("")
+      switch outcome.status {
+      | "matched" => outcome
+      | "wait" =>
+        if await nextArrival(~deadline) {
+          await awaitMatch()
+        } else {
+          JsError.throwWithMessage(message())
+        }
+      | _ => JsError.throwWithMessage(message())
+      }
+    }
+    let {assignment, leftPending} = await awaitMatch()
+    ledger->Ledger.keepPending(leftPending)
+    let replying = expected->Array.filter(entry => entry.reply !== LeavePending)
+    let replies = assignment->Array.mapWithIndex((id, position) => {
+      let query = queriesById->Map.get(id)->Option.getOrThrow
+      switch (replying->Array.getUnsafe(position)).reply {
+      | Respond(response) => (query, Ok(response), true)
+      | RespondWith(respond) => (query, Ok(respond(query)), true)
+      | RespondUnchecked(response) => (query, Ok(response), false)
+      | Fail(exn) => (query, Error(exn), true)
+      | LeavePending => JsError.throwWithMessage("A LeavePending entry never takes a reply")
+      }
+    })
+    switch ledger
+    ->Ledger.checkReplies(
+      replies->Array.map(((query, reply, checked)): Ledger.reply =>
+        switch reply {
+        | Ok(response) => {
+            id: query->queryId,
+            checked,
+            isFailure: false,
+            latestFetchedBlockNumber: ?response.latestFetchedBlockNumber,
+            itemBlockNumbers: response.items->Array.map(item => item.blockNumber),
+          }
+        | Error(_) => {id: query->queryId, checked, isFailure: true, itemBlockNumbers: []}
+        }
+      ),
+    )
+    ->Nullable.toOption {
+    | Some(message) => JsError.throwWithMessage(message)
+    | None => ()
+    }
+    replies->Array.forEach(((query, reply, _)) =>
+      switch reply {
+      | Ok(response) => (query->control).respond(response)
+      | Error(exn) => (query->control).fail(exn)
+      }
+    )
   }
 
   {
     getHeightOrThrowCalls,
-    resolveGetHeightOrThrow: height => {
-      switch pendingHeightCallIndices() {
-      | [] =>
-        deferredHeightAnswers->Array.push({"site": UserModule.callSite(), "height": height})->ignore
-      | indices =>
-        indices->Array.forEach(index =>
-          index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
-        )
-      }
-    },
+    resolveGetHeightOrThrow: height =>
+      ledger
+      ->Ledger.resolveHeight(height, UserModule.callSite())
+      ->settleHeightCalls(answerHeight(height)),
     resolveGetHeightOrThrowAt: (~index, height) =>
-      if index >= getHeightOrThrowCalls->Array.length || index < 0 {
-        JsError.throwWithMessage(
-          `The source has taken no getHeightOrThrow call at index ${index->Int.toString}`,
-        )
-      } else {
-        index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
+      if ledger->Ledger.resolveHeightAt(index) {
+        [index]->settleHeightCalls(answerHeight(height))
       },
-    setAutoHeight: height => {
-      autoHeight := Some(height)
-      // A standing answer supersedes one parked for a single call.
-      deferredHeightAnswers->Utils.Array.clearInPlace
-      pendingHeightCallIndices()->Array.forEach(index =>
-        index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
-      )
-    },
+    setAutoHeight: height =>
+      ledger->Ledger.setAutoHeight(height)->settleHeightCalls(answerHeight(height)),
     rejectGetHeightOrThrow: exn =>
-      pendingHeightCallIndices()->Array.forEach(index =>
-        index->settleHeightCall(pending => pending["reject"](exn->Obj.magic))
-      ),
-    getItemsOrThrowCalls,
-    reorgCallCount: () => reorgCalls.contents,
-    resolveGetItemsOrThrow: (
-      items,
-      ~filter=?,
-      ~latestFetchedBlockNumber=?,
-      ~latestFetchedBlockHash=?,
-      ~knownHeight=?,
-      ~prevRangeLastBlock=?,
-      ~requestStats=?,
-    ) => {
-      let respond = (call: getItemsOrThrowCall) =>
-        call.resolve(
-          items,
-          ~latestFetchedBlockNumber?,
-          ~latestFetchedBlockHash?,
-          ~knownHeight?,
-          ~prevRangeLastBlock?,
-          ~requestStats?,
+      ledger->Ledger.rejectHeights->settleHeightCalls(caller => caller["reject"](exn->Obj.magic)),
+    expectHeightCalls: async count => {
+      let deadline = realNow() +. 2000.
+      let rec awaitCount = async () => {
+        await awaitSettled(~deadline)
+        let {done, error} = ledger->Ledger.checkHeightCalls(count)
+        switch error->Nullable.toOption {
+        | Some(message) => JsError.throwWithMessage(message)
+        | None =>
+          if !done {
+            if await nextArrival(~deadline) {
+              await awaitCount()
+            } else {
+              JsError.throwWithMessage(ledger->Ledger.heightCallsTimeoutMessage(count))
+            }
+          }
+        }
+      }
+      await awaitCount()
+    },
+    reorgCallCount: () => ledger->Ledger.reorgCallCount,
+    pendingItemsQueries,
+    expectItemsQueries,
+    respondEmptyUpTo: async blockNumber => {
+      let rec wave = async (~count) => {
+        if count > 1000 {
+          JsError.throwWithMessage(
+            `respondEmptyUpTo(${blockNumber->Int.toString}) didn't get there in 1000 waves`,
+          )
+        }
+        await expectItemsQueries([
+          {where: query => query.fromBlock <= blockNumber, reply: LeavePending},
+        ])
+        // Every partition answered in this wave has to get there, not just one:
+        // a partition behind the others asks again from where it was left. A
+        // chunked partition gets there through its last chunk, so it is judged
+        // by the furthest of its queries, not by each one.
+        let furthestByPartition = Dict.make()
+        pendingItemsQueries
+        ->Array.copy
+        ->Array.forEach(query =>
+          if query.fromBlock <= blockNumber {
+            let latest = switch query.toBlock {
+            | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
+            | Unbounded => blockNumber
+            }
+            (query->control).respond({items: [], latestFetchedBlockNumber: latest})
+            let furthest = furthestByPartition->Dict.get(query.partitionId)->Option.getOr(0)
+            furthestByPartition->Dict.set(query.partitionId, Math.Int.max(furthest, latest))
+          }
         )
-      let matches = (call: getItemsOrThrowCall) =>
-        switch filter {
-        | Some(filter) => filter(call.payload)
-        | None => true
+        let allReached =
+          furthestByPartition->Dict.valuesToArray->Array.every(latest => latest === blockNumber)
+        if !allReached {
+          await wave(~count=count + 1)
         }
-      switch getItemsOrThrowCalls->Array.filter(matches) {
-      | [] =>
-        deferredItemsAnswers
-        ->Array.push({"site": UserModule.callSite(), "match": matches, "respond": respond})
-        ->ignore
-      | [call] => respond(call)
-      | ambiguous => JsError.throwWithMessage(ambiguousItemsQueries(ambiguous))
       }
+      await wave(~count=0)
     },
-    drainItemsQueries: (~filter=?, ~latestFetchedBlockNumber=?) => {
-      let matches = (call: getItemsOrThrowCall) =>
-        switch filter {
-        | Some(filter) => filter(call.payload)
-        | None => true
-        }
-      switch getItemsOrThrowCalls->Array.filter(matches) {
-      | [] => JsError.throwWithMessage("drainItemsQueries has no pending query to drain")
-      | calls => calls->Array.forEach(call => call.resolve([], ~latestFetchedBlockNumber?))
-      }
-    },
+    drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
+      ledger
+      ->Ledger.drainItemsQueries(latestFetchedBlockNumber->Null.fromOption)
+      ->Array.forEach(({id, latestFetchedBlockNumber}) =>
+        queriesById
+        ->Map.get(id)
+        ->Option.forEach(query =>
+          (query->control).respond({
+            items: [],
+            latestFetchedBlockNumber: ?(latestFetchedBlockNumber->Nullable.toOption),
+          })
+        )
+      ),
     getBlockHashesCalls,
-    resolveGetBlockHashes: blockHashes => {
-      let blockStore = BlockStore.fromJs(
-        blockHashes->Array.map((block): BlockStore.inputBlock => {
-          ...block,
-          blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
-        }),
-        ~ecosystem=Evm,
-      )
-      if getBlockHashesResolveFns->Utils.Array.isEmpty {
-        JsError.throwWithMessage("getBlockHashesResolveFns is empty")
+    resolveGetBlockHashes: blockHashes =>
+      ledger
+      ->Ledger.settleAllBlockHashLookups("resolveGetBlockHashes")
+      ->settleBlockHashLookups(blockHashes->blockHashesResponse),
+    failGetBlockHashes: (exn, ~requestStats=[]) =>
+      ledger
+      ->Ledger.settleAllBlockHashLookups("failGetBlockHashes")
+      ->settleBlockHashLookups({Source.result: Error(exn), requestStats}),
+    expectBlockHashLookup: async ({blockNumbers, reply}) => {
+      let deadline = realNow() +. 2000.
+      let rec awaitLookup = async () => {
+        await awaitSettled(~deadline)
+        let {status, id, message} = ledger->Ledger.matchBlockHashLookup(blockNumbers)
+        let message = () => message->Nullable.toOption->Option.getOr("")
+        switch (status, id->Nullable.toOption) {
+        | ("matched", Some(id)) => id
+        | ("wait", _) =>
+          if await nextArrival(~deadline) {
+            await awaitLookup()
+          } else {
+            JsError.throwWithMessage(message())
+          }
+        | _ => JsError.throwWithMessage(message())
+        }
       }
-      let response = {Source.result: Ok(blockStore), requestStats: []}
-      getBlockHashesResolveFns->Array.forEach(resolve => resolve(response))
-      getBlockHashesResolveFns->Utils.Array.clearInPlace
+      let id = await awaitLookup()
+      [id]->settleBlockHashLookups(reply->blockHashesResponse)
     },
     validateAnswersClaimed: () =>
-      switch Array.flat([
-        deferredItemsAnswers->Array.map(answer => `resolveGetItemsOrThrow at ${answer["site"]}`),
-        deferredHeightAnswers->Array.map(answer => `resolveGetHeightOrThrow at ${answer["site"]}`),
-      ]) {
-      | [] => ()
-      | unclaimed =>
-        JsError.throwWithMessage(
-          `Chain ${chainId->ChainId.toString} registered these mock answers before their call ` ++
-          "arrived, and no call ever claimed them:\n" ++
-          unclaimed->Array.map(entry => `  ${entry}`)->Array.join("\n"),
-        )
+      switch ledger->Ledger.unclaimedAnswersMessage->Nullable.toOption {
+      | Some(message) => JsError.throwWithMessage(message)
+      | None => ()
       },
+    describeState: () => ledger->Ledger.describeState,
     dropPendingCalls: () => {
-      getItemsOrThrowCalls->Utils.Array.clearInPlace
-      pendingHeightCallIndices()->Array.forEach(index =>
-        getHeightOrThrowPending->Array.set(index, None)
-      )
-      getBlockHashesResolveFns->Utils.Array.clearInPlace
+      ledger
+      ->Ledger.dropPendingCalls
+      ->Array.forEach(index => heightCallers->Map.delete(index)->ignore)
+      queriesById->Map.clear
+      blockHashCallers->Map.clear
+      pendingItemsQueries->Utils.Array.clearInPlace
     },
     heightSubscriptionCalls,
     heightSubscriptionCloseCalls,
@@ -534,30 +920,23 @@ let make = (
         pollingInterval,
         getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
           getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          Promise.make((resolve, _reject) => {
-            getBlockHashesResolveFns->Array.push(resolve)->ignore
-          })
+          let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
+          let promise = Promise.make((resolve, _reject) => blockHashCallers->Map.set(id, resolve))
+          notifyArrival()
+          promise
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
-          // Pushed for every call, answered or not, so the two arrays stay the
-          // same length and an index means the same thing in both.
-          let answered = height => {
-            getHeightOrThrowPending->Array.push(None)->ignore
-            Promise.resolve({Source.height, requestStats: []})
-          }
-          switch autoHeight.contents {
-          | Some(height) => answered(height)
-          | None =>
-            switch deferredHeightAnswers->Array.shift {
-            | Some(answer) => answered(answer["height"])
-            | None =>
-              Promise.make((resolve, reject) => {
-                getHeightOrThrowPending
-                ->Array.push(Some({"resolve": resolve, "reject": reject}))
-                ->ignore
-              })
-            }
+          notifyArrival()
+          let {index, height, failure} = ledger->Ledger.takeHeightCall
+          switch (height->Nullable.toOption, failure->Nullable.toOption) {
+          | (Some(height), _) => Promise.resolve({Source.height, requestStats: []})
+          | (None, Some(message)) =>
+            Promise.reject(JsError.make(message)->(Utils.magic: JsError.t => exn))
+          | (None, None) =>
+            Promise.make((resolve, reject) =>
+              heightCallers->Map.set(index, {"resolve": resolve, "reject": reject})
+            )
           }
         }),
         getItemsOrThrow: implement(#getItemsOrThrow, (
@@ -572,160 +951,60 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          let promise = keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(
-            ~resolve,
-            ~reject,
-          ) => {
-            let payload = {
-              "fromBlock": fromBlock,
-              "toBlock": toBlock,
-              "retry": retry,
-              "p": partitionId,
-            }
-            // Non-enumerable so it stays out of `toEqual` comparisons of the
-            // payload while remaining inspectable from a test.
-            payload->defineAddresses(addressSet->AddressSet.addressesForTest)
-            {
-              payload,
-              includeAllBlocks,
-              resolve: (
-                items,
-                ~latestFetchedBlockNumber=?,
-                ~latestFetchedBlockHash=?,
-                ~knownHeight=knownHeight,
-                ~prevRangeLastBlock=?,
-                ~requestStats=[],
-              ) => {
-                let latestFetchedBlockNumber =
-                  latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
-
-                // The store takes 32-byte hashes, so widen the decimal marker.
-                let mockBlockHash = blockNumber => evmBlockHash(`0x${blockNumber->Int.toString}`)
-                let latestFetchedBlockHash = switch latestFetchedBlockHash {
-                | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                | None => mockBlockHash(latestFetchedBlockNumber)
-                }
-                let observedBlocks = [
-                  (
-                    {
-                      blockNumber: latestFetchedBlockNumber,
-                      blockHash: evmBlockHash(latestFetchedBlockHash),
-                      blockTimestamp: latestFetchedBlockNumber,
-                    }: BlockStore.inputBlock
-                  ),
-                ]
-                let prevEntry = switch prevRangeLastBlock {
-                | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
-                  Some(
-                    (
-                      {
-                        blockNumber: prevRangeLastBlock.blockNumber,
-                        blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
-                      }: BlockStore.inputBlock
-                    ),
-                  )
-                | None =>
-                  if fromBlock > 0 {
-                    Some(
-                      (
-                        {
-                          blockNumber: fromBlock - 1,
-                          blockHash: mockBlockHash(fromBlock - 1),
-                        }: BlockStore.inputBlock
-                      ),
-                    )
-                  } else {
-                    None
-                  }
-                }
-                switch prevEntry {
-                | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
-                | None => ()
-                }
-                // A real source returns the header of every block a matched
-                // item came from, so those blocks carry a hash and a timestamp
-                // too. Without them the store only ever learns the range's seam
-                // and end, and reorg detection never sees the blocks events
-                // landed on.
-                items->Array.forEach(
-                  item => {
-                    if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
-                      observedBlocks->Array.push({
-                        blockNumber: item.blockNumber,
-                        blockHash: mockBlockHash(item.blockNumber),
-                        blockTimestamp: item.blockNumber,
-                      })
-                    }
-                  },
-                )
-                let responseBlockStore = BlockStore.make(~ecosystem=Evm)
-                observedBlocks->Array.forEach(
-                  block => {
-                    let page = BlockStore.fromJs([block], ~ecosystem=Evm)
-                    responseBlockStore->BlockStore.appendPage(page)
-                  },
-                )
-                resolve({
-                  Source.knownHeight,
-                  parsedQueueItems: items->Array.map(
-                    item => {
-                      let onEventRegistration =
-                        state.onEventRegistrationRef.contents->Option.getOrThrow(
-                          ~message="MockSource on-event registration was not installed before resolving items",
-                        )
-                      let payload: Evm.payload = {
-                        contractName: onEventRegistration.eventConfig.contractName,
-                        eventName: onEventRegistration.eventConfig.name,
-                        params: %raw(`{}`),
-                        chainId,
-                        srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-                        logIndex: item.logIndex,
-                        block: {
-                          "number": item.blockNumber,
-                          "timestamp": item.blockNumber,
-                          "hash": `0x${item.blockNumber->Int.toString}`,
-                        }->Utils.magic,
-                      }
-                      let _ = %raw(`Object.defineProperties(payload, {
-                        __mockHandler: {value: item.handler},
-                        __mockContractRegister: {value: item.contractRegister},
-                      })`)
-                      Internal.Event({
-                        onEventRegistration,
-                        chainId,
-                        blockNumber: item.blockNumber,
-                        logIndex: item.logIndex,
-                        transactionIndex: 0,
-                        payload: payload->Evm.fromPayload,
-                      })
-                    },
-                  ),
-                  transactionStore: None,
-                  blockStore: responseBlockStore,
-                  latestFetchedBlockNumber,
-                  stats: {
-                    totalTimeElapsed: 0.,
-                  },
-                  requestStats,
-                })
+          let id =
+            ledger->Ledger.takeItemsQuery(partitionId, fromBlock, toBlock->Null.fromOption, retry)
+          let promise = Promise.make((resolve, reject) => {
+            let query: pendingItemsQuery = {
+              partitionId,
+              fromBlock,
+              toBlock: switch toBlock {
+              | Some(toBlock) => Bounded(toBlock)
+              | None => Unbounded
               },
-              reject: reject->Utils.magic,
+              retryCount: retry,
             }
+            let settle = () => {
+              ledger->Ledger.settleItemsQuery(id)
+              queriesById->Map.delete(id)->ignore
+              switch pendingItemsQueries->Array.indexOf(query) {
+              | -1 => ()
+              | index =>
+                pendingItemsQueries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+              }
+            }
+            let queryControl = {
+              respond: response => {
+                settle()
+                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight))
+              },
+              fail: exn => {
+                settle()
+                reject(exn)
+              },
+            }
+            let addresses = addressSet->AddressSet.addressesForTest
+            query
+            ->Utils.Object.definePropertyWithValue("__id", {enumerable: false, value: id})
+            ->Utils.Object.definePropertyWithValue(
+              "addresses",
+              {enumerable: false, value: addresses},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "includeAllBlocks",
+              {enumerable: false, value: includeAllBlocks},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "__control",
+              {enumerable: false, value: queryControl},
+            )
+            ->ignore
+            queriesById->Map.set(id, query)
+            pendingItemsQueries->Array.push(query)
           })
-          switch getItemsOrThrowCalls->Array.at(-1) {
-          | Some(call) =>
-            switch deferredItemsAnswers->Array.findIndex(answer => answer["match"](call)) {
-            | -1 => ()
-            | index =>
-              let answer = deferredItemsAnswers->Array.getUnsafe(index)
-              deferredItemsAnswers->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
-              answer["respond"](call)
-            }
-          | None => ()
-          }
+          notifyArrival()
           promise
         }),
-        onReorg: () => reorgCalls := reorgCalls.contents + 1,
+        onReorg: () => ledger->Ledger.recordReorg,
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
         | true =>
           Some(
@@ -762,21 +1041,11 @@ let waitForCall = async (~arrived, ~message) => {
   }
 }
 
-// Wait until the source takes a height call beyond the `since`th. A feed polls
-// and then sleeps out its interval, so a test that wants to answer the *next*
-// poll has to wait for it to be made: resolving while none is outstanding
-// settles nothing, silently, and leaves the height where it was.
+// Wait until the source takes a height call beyond the `since`th, for a test
+// that can't know how many polls a feed makes while it sleeps out its interval.
+// Where the count is known, `expectHeightCalls` checks it exactly.
 let waitHeightQuery = (sourceMock: t, ~since) =>
   waitForCall(
     ~arrived=() => sourceMock.getHeightOrThrowCalls->Array.length > since,
     ~message=`a getHeightOrThrow call beyond ${since->Int.toString}`,
-  )
-
-// Wait until the source has a pending getItemsOrThrow call. Queries are
-// serialized by the cross-chain budget waterfall, so a chain's query only
-// appears after the more-behind chains' responses release the budget.
-let waitItemsQuery = (sourceMock: t) =>
-  waitForCall(
-    ~arrived=() => sourceMock.getItemsOrThrowCalls->Array.length > 0,
-    ~message="a getItemsOrThrow call",
   )

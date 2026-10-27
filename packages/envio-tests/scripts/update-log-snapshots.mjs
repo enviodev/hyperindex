@@ -32,6 +32,7 @@ for (const strategy of strategies) {
       ...process.env,
       LOG_STRATEGY: strategy,
       ENVIO_TEST_LOGGING_FORMAT: "1",
+      FORCE_COLOR: "1",
     },
   });
   const snapshotPath = `${SNAPSHOTS_DIR}/Logging.${strategy}.snap`;

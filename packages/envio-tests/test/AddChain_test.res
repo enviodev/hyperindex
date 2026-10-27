@@ -60,7 +60,7 @@ let bump = (count: bigint): MockSource.itemMock => {
 
 let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~items) => {
   source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow(items, ~latestFetchedBlockNumber=100)
+  await source.expectItemsQueries([{reply: Respond({items, latestFetchedBlockNumber: 100})}])
   await indexer.waitUntilReady()
   await indexer.waitUntilIdle()
 }
@@ -95,7 +95,7 @@ let chainRows = async (indexer: IndexerRunner.t) => {
   let rows: array<{
     "id": ChainId.t,
     "progress_block": int,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "progress_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"]->ChainId.toString, row["progress_block"]))
@@ -106,7 +106,7 @@ let startBlocks = async (indexer: IndexerRunner.t) => {
   let rows: array<{
     "id": ChainId.t,
     "start_block": int,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
   )
   rows->Array.map(row => (row["id"]->ChainId.toString, row["start_block"]))
@@ -116,7 +116,7 @@ let counterPartitions = async (indexer: IndexerRunner.t) => {
   let {sql, pgSchema} = indexer.pg
   let rows: array<{
     "name": string,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT c.relname AS "name"
      FROM pg_inherits inh
      JOIN pg_class c ON c.oid = inh.inhrelid
@@ -132,7 +132,6 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
   deployed->Scenario.it(
     "Adds the chain and indexes it, leaving the deployed chain as it was",
     ~sources=[{chain: 1}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
 
@@ -152,7 +151,9 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
           (await resumed.queryAddresses())->Array.map(
             row => (row.chainId->ChainId.toString, row.contractName),
           ),
-          resumed.logs()->Array.filter(entry => entry.msg->String.startsWith("Adding the chain")),
+          resumed.infoAndAboveLogs()->Array.filter(
+            entry => entry.msg->String.startsWith("Adding the chain"),
+          ),
         ),
         ~message="Chain 137 gets a row, a partition and its config addresses, and indexes into them. Chain 1 keeps what it had, and the operator is told once",
       ).toEqual((
@@ -241,7 +242,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       await catchUp(~indexer, ~source=source(1), ~items=[])
       await indexer.stop()
       let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Postgres.unsafe(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+      let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${pgSchema}" CASCADE;`)
 
       let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
       | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))

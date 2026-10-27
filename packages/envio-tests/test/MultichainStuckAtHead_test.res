@@ -61,8 +61,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         pollingInterval: 1,
       },
     ],
-    ~reducedPollingInterval=1,
-    ~newBlockStallTimeoutRealtime=2_000,
+    ~sourceTiming={reducedPollingInterval: 1, newBlockStallTimeoutRealtime: 2_000},
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)
@@ -71,21 +70,27 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       // the height subscription is only created in realtime mode.
       stuckChain.resolveGetHeightOrThrow(100)
       healthyChain.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      await MockSource.waitItemsQuery(stuckChain)
-      stuckChain.resolveGetItemsOrThrow(
-        [{blockNumber: 50, logIndex: 0}],
-        ~latestFetchedBlockNumber=100,
-        ~knownHeight=100,
-      )
-      await MockSource.waitItemsQuery(healthyChain)
-      healthyChain.resolveGetItemsOrThrow(
-        [{blockNumber: 60, logIndex: 0}],
-        ~latestFetchedBlockNumber=100,
-        ~knownHeight=100,
-      )
+      await stuckChain.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 50, logIndex: 0}],
+            latestFetchedBlockNumber: 100,
+            knownHeight: 100,
+          }),
+        },
+      ])
+      await healthyChain.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 60, logIndex: 0}],
+            latestFetchedBlockNumber: 100,
+            knownHeight: 100,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // The realtime wait polls height once more; a same-height response is
@@ -115,30 +120,31 @@ describe("Multichain: chain with height subscription stuck at head", () => {
 
       // The stream finds block 101.
       stuckChain.triggerHeightSubscription(101)
-      await MockSource.waitItemsQuery(stuckChain)
-      t.expect(
-        stuckChain.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="the new block from the subscription should be queried",
-      ).toEqual([101])
-      // The getLogs response's archive height is already 102 — ahead of the
-      // stream's last height (101).
-      stuckChain.resolveGetItemsOrThrow(
-        [{blockNumber: 101, logIndex: 0}],
-        ~latestFetchedBlockNumber=101,
-        ~knownHeight=102,
-      )
+      // The new block from the subscription is queried. The getLogs response's
+      // archive height is already 102 — ahead of the stream's last height (101).
+      await stuckChain.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [{blockNumber: 101, logIndex: 0}],
+            latestFetchedBlockNumber: 101,
+            knownHeight: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
-      await MockSource.waitItemsQuery(stuckChain)
-      t.expect(
-        stuckChain.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="the newly known block 102 should be queried",
-      ).toEqual([102])
-      stuckChain.resolveGetItemsOrThrow(
-        [{blockNumber: 102, logIndex: 0}],
-        ~latestFetchedBlockNumber=102,
-        ~knownHeight=102,
-      )
+      // The newly known block 102 is queried.
+      await stuckChain.expectItemsQueries([
+        {
+          fromBlock: 102,
+          reply: Respond({
+            items: [{blockNumber: 102, logIndex: 0}],
+            latestFetchedBlockNumber: 102,
+            knownHeight: 102,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // The chain is at head again, waiting for a block above 102. The stream
@@ -153,12 +159,16 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       try healthyChain.resolveGetHeightOrThrow(101) catch {
       | _ => ()
       }
-      await MockSource.waitItemsQuery(healthyChain)
-      healthyChain.resolveGetItemsOrThrow(
-        [{blockNumber: 101, logIndex: 0}],
-        ~latestFetchedBlockNumber=101,
-        ~knownHeight=101,
-      )
+      await healthyChain.expectItemsQueries([
+        {
+          fromBlock: 101,
+          reply: Respond({
+            items: [{blockNumber: 101, logIndex: 0}],
+            latestFetchedBlockNumber: 101,
+            knownHeight: 101,
+          }),
+        },
+      ])
       await indexer.getBatchWritePromise()
 
       // The subscription is quiet, so the wait must fall back to REST height
@@ -181,13 +191,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         ~message="the subscription should not be recreated",
       ).toEqual(1)
 
-      // The fallback poll finds block 103 and the chain resumes indexing.
+      // The fallback poll finds block 103 and the chain resumes indexing from it.
       stuckChain.resolveGetHeightOrThrow(103)
-      await MockSource.waitItemsQuery(stuckChain)
-      t.expect(
-        stuckChain.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="the chain should resume fetching from the fallback-discovered height",
-      ).toEqual([103])
+      await stuckChain.expectItemsQueries([{fromBlock: 103, reply: LeavePending}])
     },
   )
 })

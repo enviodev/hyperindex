@@ -336,8 +336,13 @@ pub enum TypeIdent {
     BigDecimal,
     Address,
     String,
-    /// A `0x`-prefixed hex string that isn't an address (a hash, an asset id,
-    /// a signature): `string` in ReScript, `` `0x${string}` `` in TypeScript.
+    /// A `0x`-prefixed hex string that is always typed `StrictHex` in
+    /// TypeScript (Fuel `b256`/`B512`, which were never plain `string`);
+    /// `string` in ReScript.
+    StrictHex,
+    /// A `0x`-prefixed hex string typed `Hex` in TypeScript: `StrictHex` only
+    /// when config.yaml sets `strict_hex_type: true`, plain `string` otherwise,
+    /// so existing projects keep their types; `string` in ReScript.
     Hex,
     Bytes,
     Json,
@@ -385,7 +390,7 @@ impl TypeIdent {
             Self::Unknown => "unknown".to_string(),
             Self::BigDecimal => "BigDecimal.t".to_string(),
             Self::Address => "Address.t".to_string(),
-            Self::String | Self::Hex => "string".to_string(),
+            Self::String | Self::StrictHex | Self::Hex => "string".to_string(),
             Self::Bytes => "Uint8Array.t".to_string(),
             Self::Json => "JSON.t".to_string(),
             Self::ID => "id".to_string(),
@@ -521,7 +526,8 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal".to_string(),
             Self::Address => "Address".to_string(),
             Self::String => "string".to_string(),
-            Self::Hex => "`0x${string}`".to_string(),
+            Self::StrictHex => "StrictHex".to_string(),
+            Self::Hex => "Hex".to_string(),
             Self::Bytes => "Uint8Array".to_string(),
             Self::Json => "JSON".to_string(),
             Self::ID => "string".to_string(),
@@ -601,7 +607,7 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal.zero".to_string(),
             Self::Address => "Envio.TestHelpers.Addresses.defaultAddress".to_string(),
             Self::String => "\"default string value\"".to_string(),
-            Self::Hex => "\"0x\"".to_string(),
+            Self::StrictHex | Self::Hex => "\"0x\"".to_string(),
             Self::Bytes => "Uint8Array.fromLength(0)".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
@@ -688,7 +694,7 @@ impl TypeIdent {
                 .to_string(),
             Self::Address => "TestHelpers.Addresses.defaultAddress".to_string(),
             Self::String => "\"default string value\"".to_string(),
-            Self::Hex => "\"0x\"".to_string(),
+            Self::StrictHex | Self::Hex => "\"0x\"".to_string(),
             Self::Bytes => "new Uint8Array(0)".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
@@ -1028,6 +1034,8 @@ mod tests {
         assert_eq!(TypeIdent::BigDecimal.to_ts_type_string(), "BigDecimal");
         assert_eq!(TypeIdent::Address.to_ts_type_string(), "Address");
         assert_eq!(TypeIdent::String.to_ts_type_string(), "string");
+        assert_eq!(TypeIdent::StrictHex.to_ts_type_string(), "StrictHex");
+        assert_eq!(TypeIdent::Hex.to_ts_type_string(), "Hex");
         assert_eq!(TypeIdent::Json.to_ts_type_string(), "JSON");
         assert_eq!(TypeIdent::ID.to_ts_type_string(), "string");
         assert_eq!(TypeIdent::Bool.to_ts_type_string(), "boolean");

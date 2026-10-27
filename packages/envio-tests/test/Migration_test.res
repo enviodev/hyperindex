@@ -48,12 +48,19 @@ let chain = (
 `
 }
 
-let deployment = (~name="migration", ~chains, ~contracts=["Token"], ~schema=schema) =>
+let deployment = (
+  ~name="migration",
+  ~chains,
+  ~contracts=["Token"],
+  ~schema=schema,
+  ~addressFormat="checksum",
+) =>
   Scenario.make(
     ~schema,
     ~configYaml=`
 name: ${name}
 disable_default_cross_chain: true
+address_format: ${addressFormat}
 contracts:${contracts
       ->Array.map(contract =>
         `
@@ -72,6 +79,33 @@ describe("Resuming a chain against the stored config", () => {
     "Resumes an unchanged config",
     ~deployed,
     ~edited=deployment(~chains=[chain(1)]),
+    ~expected=Resumed([1]),
+  )
+
+  // config.yaml's spelling of an address is normalized before it's compared
+  // with the stored one, so a recased or wrongly checksummed address is the
+  // same address.
+  Migration.it(
+    "Resumes when only an address's casing changed",
+    ~deployed=deployment(
+      ~chains=[chain(1, ~addresses=["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"])],
+    ),
+    ~edited=deployment(
+      ~chains=[chain(1, ~addresses=["0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"])],
+    ),
+    ~expected=Resumed([1]),
+  )
+
+  Migration.it(
+    "Resumes when address_format: lowercase config switches an address to its checksum",
+    ~deployed=deployment(
+      ~addressFormat="lowercase",
+      ~chains=[chain(1, ~addresses=["0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"])],
+    ),
+    ~edited=deployment(
+      ~addressFormat="lowercase",
+      ~chains=[chain(1, ~addresses=["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"])],
+    ),
     ~expected=Resumed([1]),
   )
 
@@ -245,18 +279,23 @@ describe("What a refused restart tells the operator", () => {
     "Names every change and the ways forward, and logs nothing else about it",
     ~sources=[{chain: 1}],
     ~supervised=false,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
       let config =
         deployment(
           ~chains=[chain(1, ~endBlock=1000, ~maxReorgDepth=10)],
         ).config->Scenario.withMockSources(~sources=[(1, source)])
-      let logged = indexer.logs()->Array.length
+      let logged = indexer.infoAndAboveLogs()->Array.length
 
       let refusal = switch await indexer.restart(~config, ()) {
       | _ => None
@@ -268,7 +307,7 @@ describe("What a refused restart tells the operator", () => {
       | #postgres => ""
       }
       t.expect(
-        (refusal, indexer.logs()->Array.slice(~start=logged)),
+        (refusal, indexer.infoAndAboveLogs()->Array.slice(~start=logged)),
         ~message="The refusal is the whole of what the operator reads: it isn't also logged as a storage failure",
       ).toEqual((
         Some(
@@ -306,7 +345,13 @@ Pick one:
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
       let config = {

@@ -139,7 +139,7 @@ let historySchema = (): historySchema => {
   checkpointsTable: InternalTable.Checkpoints.table.tableName,
   checkpointChainIdColumn: (#chain_id: InternalTable.Checkpoints.field :> string),
   checkpointBlockNumberColumn: (#block_number: InternalTable.Checkpoints.field :> string),
-  chainsTable: InternalTable.Chains.table.tableName,
+  chainsTable: InternalTable.Chains.tableName,
   chainsCheckpointIdColumn: (#checkpoint_id: InternalTable.Chains.field :> string),
 }
 

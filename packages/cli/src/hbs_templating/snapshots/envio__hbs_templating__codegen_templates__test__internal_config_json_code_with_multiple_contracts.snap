@@ -39,7 +39,7 @@ expression: json
         "contracts": {
           "Contract2": {
             "addresses": [
-              "0x1E645469f354BB4F5c8a05B3b30A929361cf77eC"
+              "0x1E645469f354Bb4F5c8A05b3B30a929361cF77ec"
             ]
           }
         }
