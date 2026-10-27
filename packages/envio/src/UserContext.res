@@ -51,57 +51,58 @@ external makeEffectContext: (
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
 ) => Internal.effectContext = "EffectContext"
 
-let initEffect = (params: params, ~run: RunScope.handlerRun) => {
+// An effect that didn't state a scope follows the config: cross-chain by
+// default, per-chain under `disable_default_cross_chain`.
+let isCrossChain = (params: params, effect: Internal.effect) =>
+  effect.crossChain->Option.getOr(params.config.defaultCrossChain)
+
+// A chain-scoped effect always resolves against the chain of the handler run
+// that triggered the call, even several effects deep.
+let rec callEffect = (
+  params: params,
+  ~run: RunScope.handlerRun,
+  ~caller: option<Internal.effect>,
+  effect: Internal.effect,
+  input: Internal.effectInput,
+) => {
   let handlerChainId = run.item->Internal.getItemChainId
-  // An effect that didn't state a scope follows the config: cross-chain by
-  // default, per-chain under `disable_default_cross_chain`.
-  let isCrossChain = (effect: Internal.effect) =>
-    effect.crossChain->Option.getOr(params.config.defaultCrossChain)
-  // A chain-scoped effect always resolves against the chain of the handler that
-  // triggered the call, even several effects deep, so the chain id is captured
-  // once from the item and reused for the whole nested-call tree.
-  let rec makeCaller = (~caller: option<Internal.effect>) => {
-    (effect: Internal.effect, input: Internal.effectInput) => {
-      let scope = effect->isCrossChain ? Internal.CrossChain : Internal.Chain(handlerChainId)
+  let scope = params->isCrossChain(effect) ? Internal.CrossChain : Internal.Chain(handlerChainId)
 
-      switch caller {
-      | Some(callerEffect) if callerEffect->isCrossChain && !(effect->isCrossChain) =>
-        // A cross-chain effect isn't tied to a single chain, so it has no chain
-        // to resolve a chain-scoped child against. Reject before any cache work.
-        JsError.throwWithMessage(
-          `The cross-chain effect "${callerEffect.name}" cannot call the chain-scoped effect "${effect.name}", because a cross-chain effect isn't tied to a single chain. Make "${effect.name}" cross-chain (\`crossChain: true\`), or make "${callerEffect.name}" chain-scoped (\`crossChain: false\`).`,
-        )
-      | _ => ()
-      }
-
-      let effectContext = makeEffectContext(
-        ~chainId=switch scope {
-        | Internal.Chain(chainId) => Some(chainId)
-        | Internal.CrossChain => None
-        },
-        ~effectName=effect.name,
-        ~defaultShouldCache=effect.defaultShouldCache,
-        ~callEffect=makeCaller(~caller=Some(effect)),
-      )
-      effectContext->RunScope.attachEffectRun({caller: run, effectName: effect.name})
-      LoadLayer.loadEffect(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~effect,
-        ~effectArgs={
-          input,
-          context: effectContext,
-          cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
-          chainId: handlerChainId,
-          checkpointId: run.checkpointId,
-        },
-        ~scope,
-        ~indexerState=params.indexerState,
-        ~shouldGroup=run.isPreload,
-      )
-    }
+  switch (caller, scope) {
+  | (Some(callerEffect), Chain(_)) if params->isCrossChain(callerEffect) =>
+    // A cross-chain effect isn't tied to a single chain, so it has no chain
+    // to resolve a chain-scoped child against. Reject before any cache work.
+    JsError.throwWithMessage(
+      `The cross-chain effect "${callerEffect.name}" cannot call the chain-scoped effect "${effect.name}", because a cross-chain effect isn't tied to a single chain. Make "${effect.name}" cross-chain (\`crossChain: true\`), or make "${callerEffect.name}" chain-scoped (\`crossChain: false\`).`,
+    )
+  | _ => ()
   }
-  makeCaller(~caller=None)
+
+  let effectContext = makeEffectContext(
+    ~chainId=switch scope {
+    | Internal.Chain(chainId) => Some(chainId)
+    | Internal.CrossChain => None
+    },
+    ~effectName=effect.name,
+    ~defaultShouldCache=effect.defaultShouldCache,
+    ~callEffect=(child, input) => params->callEffect(~run, ~caller=Some(effect), child, input),
+  )
+  effectContext->RunScope.attachEffectRun({caller: run, effectName: effect.name})
+  LoadLayer.loadEffect(
+    ~loadManager=params.loadManager,
+    ~persistence=params.persistence,
+    ~effect,
+    ~effectArgs={
+      input,
+      context: effectContext,
+      cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+      chainId: handlerChainId,
+      checkpointId: run.checkpointId,
+    },
+    ~scope,
+    ~indexerState=params.indexerState,
+    ~shouldGroup=run.isPreload,
+  )
 }
 
 // Reads against ClickHouse-only entities have no Postgres table to hit;
@@ -252,13 +253,28 @@ let makeHandlerContext = (params: params): Internal.handlerContext => {
       Utils.magic: Envio.logger => unknown
     )
   )
-  define("effect", run =>
-    initEffect(params, ~run)->(
-      Utils.magic: (
-        (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
-      ) => unknown
+  // Reads the run when called, so a kept `context.effect` is refused once its
+  // handler resolved, like a kept entity accessor.
+  let effect = (effect, input) =>
+    params->callEffect(
+      ~run=RunScope.currentHandlerRunOrThrow(~prop="effect"),
+      ~caller=None,
+      effect,
+      input,
     )
+  context
+  ->Utils.Object.definePropertyWithValue(
+    "effect",
+    {
+      enumerable: true,
+      value: effect->(
+        Utils.magic: (
+          (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
+        ) => unknown
+      ),
+    },
   )
+  ->ignore
   define("isPreload", run => run.isPreload->(Utils.magic: bool => unknown))
   define("chain", run =>
     params.chains

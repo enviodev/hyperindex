@@ -1,6 +1,6 @@
-// An entity accessor a handler keeps and calls from work it didn't await must
-// fail like `context.X` does once the handler has resolved, rather than write
-// under whichever event happens to be running when the work fires.
+// An entity accessor or `context.effect` a handler keeps and calls from work it
+// didn't await must fail like `context.X` does once the handler has resolved,
+// rather than act for whichever event happens to be running when the work fires.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: handler-context-after-resolve
@@ -20,7 +20,12 @@ type Account {
 }
 `,
   ~handlers=`
-import { indexer } from "envio";
+import { indexer, createEffect, S } from "envio";
+
+const echo = createEffect(
+  { name: "echo", input: S.string, output: S.string, rateLimit: false },
+  async ({ input }) => input
+);
 
 const state = globalThis as unknown as { lateErrors: string[] };
 state.lateErrors = [];
@@ -28,10 +33,16 @@ state.lateErrors = [];
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
   if (event.params.value === 1n) {
     const Account = context.Account;
+    const effect = context.effect;
     const isPreload = context.isPreload;
     setTimeout(() => {
       try {
         Account.set({ id: "late", balance: 1n });
+      } catch (error) {
+        if (!isPreload) state.lateErrors.push((error as Error).message);
+      }
+      try {
+        effect(echo, "late");
       } catch (error) {
         if (!isPreload) state.lateErrors.push((error as Error).message);
       }
@@ -49,7 +60,7 @@ import { createTestIndexer, TestHelpers } from "envio";
 const { Addresses } = TestHelpers;
 const state = globalThis as unknown as { lateErrors: string[] };
 
-it("rejects a kept entity accessor once its handler resolved", async (t) => {
+it("rejects a kept entity accessor and effect once its handler resolved", async (t) => {
   const indexer = createTestIndexer();
   const [from, first, second] = Addresses.mockAddresses;
 
@@ -71,6 +82,7 @@ it("rejects a kept entity accessor once its handler resolved", async (t) => {
   }).toEqual({
     lateErrors: [
       "Impossible to access context.Account after the handler is resolved. Make sure you didn't miss an await in the handler.",
+      "Impossible to access context.effect after the handler is resolved. Make sure you didn't miss an await in the handler.",
     ],
     late: undefined,
     second: { id: second, balance: 2n },
