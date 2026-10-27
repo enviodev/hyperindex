@@ -8,6 +8,8 @@ external toEventSelector: string => string = "toEventSelector"
 
 @module("viem") external pad: string => string = "pad"
 
+@module("viem") external numberToHex: (bigint, {"size": int}) => string = "numberToHex"
+
 let sighash = toEventSelector("event Transfer(address, address, uint256)")
 
 let fromAddr = "0x000000000000000000000000000000000000aaaa"
@@ -52,15 +54,7 @@ let decodeSingle = async (
   (decoded[0]->Option.getUnsafe).params
 }
 
-let allIndexedLog = (
-  [
-    sighash,
-    fromAddr->pad,
-    toAddr->pad,
-    Viem.bigintToHex(value, ~options={size: 32})->(Utils.magic: Viem.hex => string),
-  ],
-  "0x",
-)
+let allIndexedLog = ([sighash, fromAddr->pad, toAddr->pad, value->numberToHex({"size": 32})], "0x")
 
 let noneIndexedLog = (
   [sighash],

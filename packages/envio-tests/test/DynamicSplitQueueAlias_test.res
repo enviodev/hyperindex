@@ -80,10 +80,8 @@ describe("Dynamic-registration partition split queue aliasing", () => {
 
       // A query carries the store's canonical spelling of an emitter, which is
       // what the world's events are matched against below.
-      let gravatarAddress =
-        "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringLowercaseOrThrow
-      let nftFactoryAddress =
-        "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringLowercaseOrThrow
+      let gravatarAddress = "0x2b2f78c5bf6d9c12ee1225d5f374aa91204580c3"->Address.unsafeFromString
+      let nftFactoryAddress = "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"->Address.unsafeFromString
 
       // The chain's ground truth: one event per static contract at block 50,000.
       // A query delivers an event when it covers the block and carries the
@@ -145,7 +143,7 @@ describe("Dynamic-registration partition split queue aliasing", () => {
                 contractRegister: async args => {
                   let context = args->registerContext
                   context.chain["SimpleNft"].add(
-                    "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow,
+                    "0x1111111111111111111111111111111111111111"->Address.unsafeFromString,
                   )
                 },
               },
@@ -186,7 +184,7 @@ describe("Dynamic-registration partition split queue aliasing", () => {
                 contractRegister: async args => {
                   let context = args->registerContext
                   context.chain["NftFactory"].add(
-                    "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow,
+                    "0x2222222222222222222222222222222222222222"->Address.unsafeFromString,
                   )
                 },
               },

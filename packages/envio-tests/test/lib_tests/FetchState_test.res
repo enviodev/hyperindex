@@ -45,7 +45,9 @@ let getEarliestEvent = (fetchState: FetchState.t) => {
 let mockAddress = i =>
   Envio.TestHelpers.Addresses.mockAddresses[i]
   ->Option.getOrThrow
-  ->Address.Evm.fromAddressLowercaseOrThrow
+  ->Address.toString
+  ->String.toLowerCase
+  ->Address.unsafeFromString
 
 let mockAddress0 = mockAddress(0)
 let mockAddress1 = mockAddress(1)
