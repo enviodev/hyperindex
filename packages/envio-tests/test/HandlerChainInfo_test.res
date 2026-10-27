@@ -65,7 +65,7 @@ describe("context.chain inside a handler", () => {
   scenario->Scenario.it(
     "resolves the item's own chain, and reports realtime only once every chain is at head",
     ~sources=[{chain: 1}, {chain: 137}],
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let chain1 = source(1)
       let chain137 = source(137)

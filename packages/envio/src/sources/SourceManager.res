@@ -85,6 +85,7 @@ type t = {
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
+  retryBackoffScale: float,
   // Why a source was last disabled for good. A disabled source is never
   // retried, so by the time the manager runs out of sources this is the reason
   // it did — and the only thing that tells a caller what to change.
@@ -338,21 +339,32 @@ let makeGetHeightRetryInterval = (
   }
 }
 
-let make = (
-  ~sources: array<Source.t>,
-  ~logger: Logger.t,
-  ~isRealtime,
-  ~newBlockStallTimeout=60_000,
-  ~newBlockStallTimeoutRealtime=20_000,
-  ~stalledPollingInterval=5_000,
-  ~reducedPollingInterval=60_000,
-  ~recoveryTimeout=60_000.0,
-  ~getHeightRetryInterval=makeGetHeightRetryInterval(
-    ~initialRetryInterval=1000,
-    ~backoffMultiplicative=2,
-    ~maxRetryInterval=60_000,
-  ),
-) => {
+type timing = {
+  newBlockStallTimeout?: int,
+  newBlockStallTimeoutRealtime?: int,
+  stalledPollingInterval?: int,
+  reducedPollingInterval?: int,
+  recoveryTimeout?: float,
+  getHeightRetryInterval?: (~retry: int) => int,
+  retryBackoffScale?: float,
+  heightPollTimeout?: int,
+}
+
+let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: timing={}) => {
+  let newBlockStallTimeout = timing.newBlockStallTimeout->Option.getOr(60_000)
+  let newBlockStallTimeoutRealtime = timing.newBlockStallTimeoutRealtime->Option.getOr(20_000)
+  let stalledPollingInterval = timing.stalledPollingInterval->Option.getOr(5_000)
+  let reducedPollingInterval = timing.reducedPollingInterval->Option.getOr(60_000)
+  let recoveryTimeout = timing.recoveryTimeout->Option.getOr(60_000.0)
+  let getHeightRetryInterval = switch timing.getHeightRetryInterval {
+  | Some(getHeightRetryInterval) => getHeightRetryInterval
+  | None =>
+    makeGetHeightRetryInterval(
+      ~initialRetryInterval=1000,
+      ~backoffMultiplicative=2,
+      ~maxRetryInterval=60_000,
+    )
+  }
   let hasRealtime = sources->Array.some(s => s.sourceFor === Realtime)
   let initialActiveSource = switch sources->Array.find(source =>
     getSourceRole(~sourceFor=source.sourceFor, ~isRealtime, ~hasRealtime) === Some(Primary)
@@ -371,6 +383,7 @@ let make = (
           ~logger,
           ~recordRequestStats=stats => requestStats->recordStatsInto(stats),
           ~getHeightRetryInterval,
+          ~pollTimeoutMillis=timing.heightPollTimeout->Option.getOr(60_000),
         ),
         disabled: false,
         lastFailedAt: None,
@@ -387,6 +400,7 @@ let make = (
     stalledPollingInterval,
     reducedPollingInterval,
     recoveryTimeout,
+    retryBackoffScale: timing.retryBackoffScale->Option.getOr(1.),
     statusStart: Performance.now(),
     status: Idle,
     idleSeconds: 0.,
@@ -567,6 +581,11 @@ let retryBackoffMillis = retry =>
 // 0, these must never busy-loop when there is no other source to move to.
 let minRecoverableBackoffMillis = 50
 
+// The logged backoff stays the unscaled one, so a scaled-down test still reads
+// the schedule an operator would see.
+let sleepBackoff = (sourceManager: t, millis) =>
+  Utils.delay((millis->Int.toFloat *. sourceManager.retryBackoffScale)->Float.toInt)
+
 // Back off before retrying the same request, failing the source over first when
 // another one can actually take over. Marking `lastFailedAt` only demotes this
 // source in the selection order - with no working alternative the next attempt
@@ -604,10 +623,10 @@ let backoffBeforeRetry = async (
     // The next attempt goes to a different source, which is progress on its
     // own - only pace it when the caller asked for a floor.
     if minBackoffMillis > 0 {
-      await Utils.delay(minBackoffMillis)
+      await sourceManager->sleepBackoff(minBackoffMillis)
     }
   } else {
-    await Utils.delay(
+    await sourceManager->sleepBackoff(
       backoffMillis->Pervasives.max(minBackoffMillis)->Pervasives.min(maxRetryBackoffMillis),
     )
   }

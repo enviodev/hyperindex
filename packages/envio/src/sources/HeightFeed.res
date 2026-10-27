@@ -75,6 +75,10 @@ type t = {
   logger: Logger.t,
   recordRequestStats: array<Source.requestStat> => unit,
   getHeightRetryInterval: (~retry: int) => int,
+  // A source that has not answered in this long is not going to. Far longer
+  // than any healthy getHeight, so a merely slow endpoint answers first and
+  // nothing here fires in normal running.
+  pollTimeoutMillis: int,
   mutable knownHeight: int,
   mutable waiters: array<waiter>,
   mutable stream: streamState,
@@ -100,11 +104,18 @@ type t = {
   mutable subscribeRejectedWarned: bool,
 }
 
-let make = (~source: Source.t, ~logger, ~recordRequestStats, ~getHeightRetryInterval): t => {
+let make = (
+  ~source: Source.t,
+  ~logger,
+  ~recordRequestStats,
+  ~getHeightRetryInterval,
+  ~pollTimeoutMillis,
+): t => {
   source,
   logger: logger->Logger.withFields({"source": source.name}),
   recordRequestStats,
   getHeightRetryInterval,
+  pollTimeoutMillis,
   knownHeight: 0,
   waiters: [],
   stream: NeverEnabled,
@@ -240,11 +251,6 @@ let recordLateAnswer = (feed: t, res: Source.getHeightResponse) => {
   feed->recordHeight(res.height)
 }
 
-// A source that has not answered in this long is not going to. Far longer than
-// any healthy getHeight, so a merely slow endpoint answers first and nothing
-// here fires in normal running.
-let pollTimeoutMillis = 60_000
-
 // One height request, with a bound on how long the caller waits for it. The
 // request itself is not cancelled and a late answer is not thrown away: it is
 // still the head the endpoint had. Only the waiting is bounded, so an endpoint
@@ -272,7 +278,7 @@ let heightWithin = (feed: t): promise<pollOutcome> => {
     Promise.make((resolve, _reject) => timeoutId := Some(setTimeout(() => {
             timedOut := true
             resolve(TimedOut)
-          }, pollTimeoutMillis))),
+          }, feed.pollTimeoutMillis))),
   ])->Promise.thenResolve(outcome => {
     timeoutId->Utils.clearTimeoutRef
     outcome
@@ -334,7 +340,7 @@ let pollOnce = async (feed: t) => {
     feed->recordAnswer(~generation, res)
     (feed->currentInterval, Cadence)
   | TimedOut =>
-    feed->backOff(~what=`did not answer within ${(pollTimeoutMillis / 1000)->Int.toString}s`)
+    feed->backOff(~what=`did not answer within ${(feed.pollTimeoutMillis / 1000)->Int.toString}s`)
   | Failed(exn) =>
     // The request reached the endpoint and is billed whether or not it
     // answered, so it counts; unwrapping also keeps the log the provider's own
