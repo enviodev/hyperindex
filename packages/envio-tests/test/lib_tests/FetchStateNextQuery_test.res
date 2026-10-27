@@ -80,7 +80,7 @@ let partitionIds = (nextQuery: FetchState.nextQuery) =>
   }
 
 describe("FetchState.getNextQuery partition scheduling", () => {
-  it("caps a partition at 10 pending chunks", t => {
+  it("caps a partition at 12 in-flight chunks", t => {
     let pendingChunk = (idx): FetchState.pendingQuery => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
@@ -89,13 +89,14 @@ describe("FetchState.getNextQuery partition scheduling", () => {
       itemsEst: 5000,
       fetchedBlock: None,
     }
-    // Chunking on (sourceRangeCapacity set) so the tail wants two chunks per round.
+    // A known density and range capacity make the tail want more chunks than
+    // the cap leaves room for, so every count below is the cap trimming it.
     let withPending = count => {
       let p = {
         ...mockFullPartition(~partitionIndex=0, ~latestFetchedBlockNumber=0),
         mutPendingQueries: Array.fromInitializer(~length=count, pendingChunk),
         sourceRangeCapacity: 10,
-        eventDensity: None,
+        eventDensity: Some(1.),
         prevSourceRangeCapacity: 10,
       }
       mockFetchState([p], ~knownHeight=1000)
@@ -106,19 +107,11 @@ describe("FetchState.getNextQuery partition scheduling", () => {
       | _ => 0
       }
 
-    t.expect({
-      // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery(
-        ~chainTargetBlock=1000,
-        ~chainTargetItems=0.,
-      ),
-      // 9 pending (45_000 already reserved): plenty of fresh chainTargetItems
-      // headroom above that, so the two-chunk tail is trimmed down to the one
-      // remaining slot by the chunk cap, not by budget.
-      "oneSlotLeft": withPending(9)
-      ->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=100_000.)
-      ->newQueryCount,
-    }).toEqual({"atCap": FetchState.NothingToQuery, "oneSlotLeft": 1})
+    let count = pending =>
+      withPending(pending)
+      ->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=1_000_000.)
+      ->newQueryCount
+    t.expect([count(8), count(9), count(10), count(11), count(12)]).toEqual([4, 3, 2, 1, 0])
   })
 
   it("queries every partition behind the head, furthest behind first", t => {

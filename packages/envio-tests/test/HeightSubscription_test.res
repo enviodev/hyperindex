@@ -351,8 +351,9 @@ describe("Height subscription", () => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
+      let pollsAtDown = mock->polls
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-      await mock.expectHeightCalls(mock->polls)
+      await mock.expectHeightCalls(pollsAtDown + 1)
       let pollsBefore = mock->polls
       // The endpoint whose stream just dropped fails these too. Asking again
       // every polling interval would issue one per round; the retry interval

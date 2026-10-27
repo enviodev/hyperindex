@@ -287,7 +287,10 @@ describe("Polling behind a stream", () => {
       mock.resolveGetHeightOrThrowAt(~index=firstCatchUp, 100)
       mock->fail
       let pollsBefore = mock->polls
-      await Utils.delay(20)
+      await Scenario.waitUntil(
+        () => mock->polls > pollsBefore,
+        ~message="a poll after the failures",
+      )
       t.expect(mock->polls > pollsBefore).toBe(true)
     },
   )

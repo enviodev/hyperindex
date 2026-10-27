@@ -176,7 +176,10 @@ Give each query its own entry, told apart by partitionId:
         {partitionId: "1", reply: Respond({items: []})},
       ])
       await indexer.getBatchWritePromise()
-      t.expect(askedAbout->Array.every(partitionId => partitionId === "0")).toBe(true)
+      t.expect((
+        askedAbout->Array.length > 0,
+        askedAbout->Array.every(partitionId => partitionId === "0"),
+      )).toEqual((true, true))
     },
   )
 
