@@ -26,6 +26,9 @@ module Entity = {
     // Recorded changes (new latest ids + prevEntityChanges pushes), tracked
     // manually so InMemoryStore can gauge size without scanning every dict.
     mutable changesCount: float,
+    // Ids set since the last snapshot, so a write reads its changes without
+    // scanning every entity the table keeps warm.
+    mutable dirtyIds: Utils.Set.t<string>,
     // Swapped out when a write starts so processing keeps appending while the
     // previous changes persist in the background.
     mutable prevEntityChanges: array<Change.t<Internal.entity>>,
@@ -37,6 +40,9 @@ module Entity = {
     mutable eqBucketsByField: dict<eqBucket>,
     // Ranges and composites, which no single field value can resolve.
     mutable scanIndexes: array<index>,
+    // Lets a write skip index upkeep when no getWhere has built one, the common
+    // case, without probing the index maps.
+    mutable hasIndexes: bool,
   }
 
   // Helper to extract an entity's id as a dict key. The raw id may be a
@@ -59,11 +65,13 @@ module Entity = {
   let make = (): t => {
     latestEntityChangeById: Dict.make(),
     changesCount: 0.,
+    dirtyIds: Utils.Set.make(),
     prevEntityChanges: [],
     indexesByEntityId: Dict.make(),
     indexesByKey: Dict.make(),
     eqBucketsByField: Dict.make(),
     scanIndexes: [],
+    hasIndexes: false,
   }
 
   // Changes to persist for checkpoints in (committedCheckpointId, upToCheckpointId].
@@ -90,12 +98,22 @@ module Entity = {
     let removedCount = self.prevEntityChanges->Array.length - keptPrev->Array.length
     self.prevEntityChanges = keptPrev
     self.changesCount = self.changesCount -. removedCount->Int.toFloat
-    self.latestEntityChangeById->Utils.Dict.forEach(change => {
-      let checkpointId = change->Change.getCheckpointId
-      if checkpointId > committedCheckpointId && !(checkpointId > upToCheckpointId) {
-        changes->Array.push(change)
+    // An id whose latest change is above upToCheckpointId stays dirty for a
+    // later write; the rest leave the set whether or not they're emitted.
+    let keptDirty = Utils.Set.make()
+    self.dirtyIds->Utils.Set.forEach(id =>
+      switch self.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(id) {
+      | Some(change) =>
+        let checkpointId = change->Change.getCheckpointId
+        if checkpointId > upToCheckpointId {
+          keptDirty->Utils.Set.add(id)->ignore
+        } else if checkpointId > committedCheckpointId {
+          changes->Array.push(change)
+        }
+      | None => ()
       }
-    })
+    )
+    self.dirtyIds = keptDirty
     changes
   }
 
@@ -120,41 +138,43 @@ module Entity = {
     self.indexesByKey = Dict.make()
     self.eqBucketsByField = Dict.make()
     self.scanIndexes = []
+    self.hasIndexes = false
   }
 
-  let updateIndexes = (self: t, ~entity: Internal.entity) => {
-    let entityId = entity->getEntityIdUnsafe
+  let updateIndexes = (self: t, ~entity: Internal.entity) =>
+    if self.hasIndexes {
+      let entityId = entity->getEntityIdUnsafe
 
-    switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
-    | None => ()
-    | Some(indexes) =>
-      indexes->Utils.Set.forEach(index =>
-        if !index.matcher(entity) {
-          index.ids->Utils.Set.delete(entityId)->ignore
-          indexes->Utils.Set.delete(index)->ignore
+      switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
+      | None => ()
+      | Some(indexes) =>
+        indexes->Utils.Set.forEach(index =>
+          if !index.matcher(entity) {
+            index.ids->Utils.Set.delete(entityId)->ignore
+            indexes->Utils.Set.delete(index)->ignore
+          }
+        )
+      }
+
+      self.eqBucketsByField->Utils.Dict.forEachWithKey((bucket, fieldName) => {
+        let fieldValue = entity->EntityFilter.getField(fieldName)
+
+        // A nullish column matches no equality index, and the key projections
+        // would throw on it.
+        if !(fieldValue->EntityFilter.nullish) {
+          switch bucket.byValue->Utils.Map.get(bucket.keyOf(fieldValue)) {
+          | Some(indexes) => indexes->Array.forEach(index => self->addToIndex(~index, ~entityId))
+          | None => ()
+          }
+        }
+      })
+
+      self.scanIndexes->Array.forEach(index =>
+        if index.matcher(entity) {
+          self->addToIndex(~index, ~entityId)
         }
       )
     }
-
-    self.eqBucketsByField->Utils.Dict.forEachWithKey((bucket, fieldName) => {
-      let fieldValue = entity->EntityFilter.getField(fieldName)
-
-      // A nullish column matches no equality index, and the key projections
-      // would throw on it.
-      if !(fieldValue->EntityFilter.nullish) {
-        switch bucket.byValue->Utils.Map.get(bucket.keyOf(fieldValue)) {
-        | Some(indexes) => indexes->Array.forEach(index => self->addToIndex(~index, ~entityId))
-        | None => ()
-        }
-      }
-    })
-
-    self.scanIndexes->Array.forEach(index =>
-      if index.matcher(entity) {
-        self->addToIndex(~index, ~entityId)
-      }
-    )
-  }
 
   let deleteEntityFromIndexes = (self: t, ~entityId: string) =>
     switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
@@ -184,6 +204,9 @@ module Entity = {
     | Delete({entityId}) => inMemTable->deleteEntityFromIndexes(~entityId=entityId->EntityId.toKey)
     }
     inMemTable.latestEntityChangeById->Dict.set(entityKey, change)
+    if change->Change.getCheckpointId > committedCheckpointId {
+      inMemTable.dirtyIds->Utils.Set.add(entityKey)->ignore
+    }
   }
 
   // Only writes when the id isn't already present, so set always takes its
@@ -270,6 +293,7 @@ module Entity = {
     | None =>
       let index = {matcher: filter->EntityFilter.makeMatcher(~table), ids: Utils.Set.make()}
       inMemTable.indexesByKey->Dict.set(filterKey, index)
+      inMemTable.hasIndexes = true
 
       switch filter->singleFieldValues {
       | Some((fieldName, fieldValues)) =>

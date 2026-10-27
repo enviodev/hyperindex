@@ -2,95 +2,93 @@
 // Independent of the in-memory store, so it stays off IndexerState and the
 // fetch-time contract registration in ChainState doesn't pull the state in.
 
-type contractRegisterParams = {
-  item: Internal.item,
-  onRegister: (~item: Internal.item, ~contractAddress: Address.t, ~contractName: string) => unit,
-  config: Config.t,
-  // The chain's logger: an item's is built on it.
-  logger: Logger.t,
-  mutable isResolved: bool,
-}
-
-let loggerForItem = (params: contractRegisterParams) =>
-  params.item->Ecosystem.loggerForItem(~ecosystem=params.config.ecosystem, ~logger=params.logger)
-
-// Helper to create a validated add function for contract registration.
-// The isResolved check has to live inside the returned closure (not just in the
-// outer proxy trap) because users can capture `const add = context.chain.X.add`
-// before awaiting — a later call would otherwise bypass the resolved guard.
-let makeAddFunction = (~params: contractRegisterParams, ~contractName: string): (
-  Address.t => unit
-) => {
-  (contractAddress: Address.t) => {
-    if params.isResolved {
-      Utils.Error.make(`Impossible to access context.chain after the contract register is resolved. Make sure you didn't miss an await in the handler.`)->ErrorHandling.mkLogAndRaise(
-        ~logger=params->loggerForItem,
+// One context for every contract register run of an indexer. Each run is told
+// apart by the RunScope it's entered with, so `add` reaches the run's own item
+// and registrations even when kept and called later, and is refused once the
+// run resolved.
+let make = (~config: Config.t): Internal.contractRegisterContext => {
+  let chain = Utils.StrictObject.make(
+    Utils.StrictObject.makePrototype(prop =>
+      JsError.throwWithMessage(
+        `Invalid contract name '${prop}' on context.chain. ${EntityFilter.codegenHelpMessage}`,
       )
-    }
-    // The value is passed from user-land, so validate and checksum/lowercase it.
-    let validatedAddress = params.config->Config.normalizeUserAddress(contractAddress)
+    ),
+  )
+  chain
+  ->Utils.Object.defineProperty(
+    "id",
+    {
+      enumerable: true,
+      get: () =>
+        (
+          RunScope.currentContractRegisterRunOrThrow(
+            ~prop="chain",
+          ).item->Internal.castUnsafeEventItem
+        ).chainId,
+    },
+  )
+  ->ignore
+  // A contract configured on several chains is one property.
+  let contractNames = Utils.Set.make()
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig =>
+    chainConfig.contracts->Array.forEach(({name}) => contractNames->Utils.Set.add(name)->ignore)
+  )
+  contractNames->Utils.Set.forEach(contractName =>
+    chain
+    ->Utils.Object.definePropertyWithValue(
+      contractName,
+      {
+        enumerable: true,
+        value: {
+          "add": (contractAddress: Address.t) => {
+            let run = RunScope.currentContractRegisterRunOrThrow(~prop="chain")
+            run.registrations
+            ->Array.push({
+              // The value is passed from user-land, so validate and checksum/lowercase it.
+              address: config->Config.normalizeUserAddress(contractAddress),
+              contractName,
+              registrationBlock: (run.item->Internal.castUnsafeEventItem).blockNumber,
+            })
+            ->ignore
+          },
+        },
+      },
+    )
+    ->ignore
+  )
 
-    params.onRegister(~item=params.item, ~contractAddress=validatedAddress, ~contractName)
-  }
-}
-
-// Chain proxy for contractRegister context: context.chain.ContractName.add(address)
-let contractRegisterChainTraps: Utils.Proxy.traps<contractRegisterParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    switch prop {
-    | "id" =>
-      let eventItem = params.item->Internal.castUnsafeEventItem
-      eventItem.chainId->(Utils.magic: ChainId.t => unknown)
-    | _ =>
-      // Look up the contract name directly in config contracts across all chains.
-      let contractName = prop
-      let isValidContract =
-        params.config.chainMap
-        ->ChainMap.values
-        ->Array.some(chain => chain.contracts->Array.some(c => c.name === contractName))
-      if isValidContract {
-        let addFn = makeAddFunction(~params, ~contractName)
-        {"add": addFn}->(Utils.magic: {"add": Address.t => unit} => unknown)
-      } else {
-        JsError.throwWithMessage(
-          `Invalid contract name '${prop}' on context.chain. ${EntityFilter.codegenHelpMessage}`,
-        )
-      }
-    }
-  },
-}
-
-let contractRegisterTraps: Utils.Proxy.traps<contractRegisterParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    if params.isResolved {
-      Utils.Error.make(
-        `Impossible to access context.${prop} after the contract register is resolved. Make sure you didn't miss an await in the handler.`,
-      )->ErrorHandling.mkLogAndRaise(~logger=params->loggerForItem)
-    }
-    switch prop {
-    | "log" => params->loggerForItem->Logger.asContextLog->(Utils.magic: Envio.logger => unknown)
-
-    | "chain" =>
-      params
-      ->Utils.Proxy.make(contractRegisterChainTraps)
-      ->(Utils.magic: contractRegisterParams => unknown)
-    | _ =>
+  let context = Utils.StrictObject.make(
+    Utils.StrictObject.makePrototype(prop =>
       JsError.throwWithMessage(
         `Invalid context access by '${prop}' property. Use context.chain.ContractName.add(address) to register contracts. ${EntityFilter.codegenHelpMessage}`,
       )
-    }
-  },
-}
-
-let getContractRegisterContext = (params: contractRegisterParams) => {
-  params
-  ->Utils.Proxy.make(contractRegisterTraps)
-  ->(Utils.magic: contractRegisterParams => Internal.contractRegisterContext)
-}
-
-let getContractRegisterArgs = (params: contractRegisterParams): Internal.contractRegisterArgs => {
-  event: params.item->Ecosystem.getItemEvent(~ecosystem=params.config.ecosystem),
-  context: getContractRegisterContext(params),
+    ),
+  )
+  context
+  ->Utils.Object.defineProperty(
+    "log",
+    {
+      enumerable: true,
+      get: () =>
+        RunScope.currentContractRegisterRunOrThrow(~prop="log")
+        ->RunScope.contractRegisterLogger
+        ->Logger.asContextLog,
+    },
+  )
+  ->ignore
+  context
+  ->Utils.Object.defineProperty(
+    "chain",
+    {
+      enumerable: true,
+      get: () => {
+        let _ = RunScope.currentContractRegisterRunOrThrow(~prop="chain")
+        chain
+      },
+    },
+  )
+  ->ignore
+  context
 }

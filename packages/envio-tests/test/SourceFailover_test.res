@@ -64,6 +64,17 @@ let failOver = async (~failing: MockSource.t, ~next: MockSource.t, ~fromBlock, ~
 
 let polls = (mock: MockSource.t) => mock.getHeightOrThrowCalls->Array.length
 
+// Recovery is measured with Date.now(), while timers run on the event loop's
+// cached clock, so a plain delay of `recoveryTimeout` can fire with Date.now()
+// a millisecond short and leave the source still in recovery. Every caller
+// starts waiting after the failure was recorded, so this waits it out exactly.
+let waitOutRecovery = async (~recoveryTimeout) => {
+  let since = Date.now()
+  while Date.now() -. since < recoveryTimeout {
+    await Utils.delay(Math.Int.max(1, (recoveryTimeout -. (Date.now() -. since))->Float.toInt))
+  }
+}
+
 describe("Source failover", () => {
   scenario->Scenario.it(
     "Retries on same source twice before switching, then alternates every second retry",
@@ -210,7 +221,7 @@ describe("Source failover", () => {
       setHead(101)
       await fallback.expectItemsQueries([{fromBlock: 101, reply: upTo(101)}])
 
-      await Utils.delay(200)
+      await waitOutRecovery(~recoveryTimeout=200.)
       setHead(102)
       // A success clears the failure, so failing again starts a fresh recovery
       // timeout rather than counting from the first one.
@@ -219,7 +230,7 @@ describe("Source failover", () => {
       setHead(103)
       await fallback.expectItemsQueries([{fromBlock: 103, reply: upTo(103)}])
 
-      await Utils.delay(200)
+      await waitOutRecovery(~recoveryTimeout=200.)
       setHead(104)
       await sync.expectItemsQueries([{fromBlock: 104, reply: LeavePending}])
       t.expect(fallback.pendingItemsQueries).toEqual([])

@@ -15,6 +15,7 @@ let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
 // (fetch kicks process/rollback, which kick fetch again), so they're defined as
 // one `let rec` block and threaded into the operations as the only way back in.
 let start = (state: IndexerState.t) => {
+  let runtime = HandlerRuntime.make(state)
   let rec scheduleFetch = () =>
     launch(state, () =>
       state
@@ -23,6 +24,7 @@ let start = (state: IndexerState.t) => {
         ChainFetching.fetchChain(
           state,
           chainId,
+          ~runtime,
           ~action,
           ~stateId=state->IndexerState.epoch,
           ~scheduleFetch,
@@ -32,7 +34,9 @@ let start = (state: IndexerState.t) => {
       )
     )
   and scheduleProcessing = () =>
-    launch(state, () => BatchProcessing.startProcessing(state, ~scheduleFetch, ~scheduleRollback))
+    launch(state, () =>
+      BatchProcessing.startProcessing(state, ~runtime, ~scheduleFetch, ~scheduleRollback)
+    )
   and scheduleRollback = () =>
     launch(state, () =>
       Rollback.rollback(state, ~scheduleFetch, ~scheduleProcessing, ~scheduleRollback)
