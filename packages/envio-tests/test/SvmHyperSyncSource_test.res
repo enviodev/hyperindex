@@ -37,8 +37,8 @@ let makeEventConfig = (
           Utils.magic: array<Internal.svmTransactionField> => array<string>
         ),
       ),
-      ~blockMaskFn=Svm.blockFieldMask,
-      ~transactionMaskFn=Svm.transactionFieldMask,
+      ~blockMaskFn=Svm.eventBlockFieldMask,
+      ~transactionMaskFn=Svm.eventTransactionFieldMask,
     ),
     accounts: [],
     args: JSON.Null,
@@ -302,8 +302,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~blockFields=eventConfig.fieldSelection.blockFields,
         ~transactionFields=eventConfig.fieldSelection.transactionFields,
         ~instructionFields=Utils.Set.fromArray(["args", "accounts"]),
-        ~blockMaskFn=Svm.blockFieldMask,
-        ~transactionMaskFn=Svm.transactionFieldMask,
+        ~blockMaskFn=Svm.eventBlockFieldMask,
+        ~transactionMaskFn=Svm.eventTransactionFieldMask,
       ),
     }
     let where = Some(

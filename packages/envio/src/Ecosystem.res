@@ -1,15 +1,21 @@
 type name = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
 
+/** What a block handler's `fields` option selects from. */
+type onBlockFields = {
+  /** In store order: a field's index is its bit in the block store's mask. */
+  fields: array<string>,
+  /** The field keying a block in the store, which a handler always has. */
+  keyField: string,
+  mask: Utils.Set.t<string> => float,
+}
+
 type t = {
   name: name,
+  blockNumberName: string,
   blockTimestampName: string,
-  /** Every block field a registration can select, in store order: a field's
-      index is its bit in the block store's selection mask. */
-  blockFields: array<string>,
-  /** The field keying a block in the store — the one field a block handler
-      always has without selecting it. */
-  blockKeyField: string,
-  blockFieldMask: Utils.Set.t<string> => float,
+  blockHashName: string,
+  /** `None` where block handlers get the block's key alone (Fuel). */
+  onBlockFields: option<onBlockFields>,
   /** Method name that the block handler is exposed under on the public
       `indexer` object — `"onBlock"` for chain-based ecosystems, `"onSlot"`
       for SVM. Centralised here so adding a new ecosystem only requires a
@@ -95,7 +101,7 @@ let makeOnBlockArgs = (
     | Some(block) => block
     | None =>
       let blockEvent = Dict.make()
-      blockEvent->Dict.set(ecosystem.blockKeyField, blockNumber->(Utils.magic: int => unknown))
+      blockEvent->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
       blockEvent->(Utils.magic: dict<unknown> => Internal.blockEvent)
     }
     {block, context}

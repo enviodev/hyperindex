@@ -290,8 +290,8 @@ let resolveFieldSelection = (
     ~transactionFields=selectedTransactionFields->(
       Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
     ),
-    ~blockMaskFn=Evm.blockFieldMask,
-    ~transactionMaskFn=Evm.transactionFieldMask,
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
   )
 }
 
@@ -425,8 +425,8 @@ let resolveInlineFieldSelection = (
   Internal.makeFieldSelection(
     ~blockFields,
     ~transactionFields,
-    ~blockMaskFn=Evm.blockFieldMask,
-    ~transactionMaskFn=Evm.transactionFieldMask,
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
   )
 }
 
@@ -438,19 +438,26 @@ let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t):
     None
   } else {
     let registration = `\`indexer.${ecosystem.onBlockMethodName}("${name}")\``
-    validateFieldsShapeOrThrow(fields, ~registration, ~validKeys=["block"], ~shapeNoun="block")
-    let blockFields = parseFieldsOrThrow(
-      selectionList(fields, "block"),
-      ~valid=Utils.Set.fromArray(ecosystem.blockFields),
-      ~kind="block",
-      ~registration,
-    )
-    blockFields->Utils.Set.delete(ecosystem.blockKeyField)->ignore
-    if blockFields->Utils.Set.size === 0 {
-      None
-    } else {
-      blockFields->Utils.Set.add(ecosystem.blockKeyField)->ignore
-      Some(ecosystem.blockFieldMask(blockFields))
+    switch ecosystem.onBlockFields {
+    | None =>
+      JsError.throwWithMessage(
+        `Fuel block handlers can't select block fields. Remove the fields option of ${registration}.`,
+      )
+    | Some({fields: validFields, keyField, mask}) =>
+      validateFieldsShapeOrThrow(fields, ~registration, ~validKeys=["block"], ~shapeNoun="block")
+      let blockFields = parseFieldsOrThrow(
+        selectionList(fields, "block"),
+        ~valid=Utils.Set.fromArray(validFields),
+        ~kind="block",
+        ~registration,
+      )
+      blockFields->Utils.Set.delete(keyField)->ignore
+      if blockFields->Utils.Set.size === 0 {
+        None
+      } else {
+        blockFields->Utils.Set.add(keyField)->ignore
+        Some(mask(blockFields))
+      }
     }
   }
 
@@ -646,8 +653,8 @@ let resolveSvmInlineFieldSelection = (
     ~instructionFields,
     ~accountActivityFields,
     ~logFields,
-    ~blockMaskFn=Svm.blockFieldMask,
-    ~transactionMaskFn=Svm.transactionFieldMask,
+    ~blockMaskFn=Svm.eventBlockFieldMask,
+    ~transactionMaskFn=Svm.eventTransactionFieldMask,
   )
 }
 
@@ -668,8 +675,8 @@ let buildSvmInstructionEventConfig = (
   let fieldSelection = Internal.makeFieldSelection(
     ~blockFields=Utils.Set.fromArray(alwaysIncludedSvmBlockFields),
     ~transactionFields=Utils.Set.make(),
-    ~blockMaskFn=Svm.blockFieldMask,
-    ~transactionMaskFn=Svm.transactionFieldMask,
+    ~blockMaskFn=Svm.eventBlockFieldMask,
+    ~transactionMaskFn=Svm.eventTransactionFieldMask,
   )
   {
     name: instructionName,
@@ -910,8 +917,8 @@ let buildFuelEventConfig = (
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.fromArray(Fuel.blockFields),
       ~transactionFields=Utils.Set.fromArray(Fuel.transactionFields),
-      ~blockMaskFn=Fuel.blockFieldMask,
-      ~transactionMaskFn=Fuel.transactionFieldMask,
+      ~blockMaskFn=Fuel.eventBlockFieldMask,
+      ~transactionMaskFn=Fuel.eventTransactionFieldMask,
     ),
     kind: fuelKind,
   }

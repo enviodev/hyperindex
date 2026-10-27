@@ -348,7 +348,7 @@ let parse = (
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
-    | (_, None, None) if raw->getContract->Option.isNone && raw->getEvent->Option.isNone =>
+    | (Evm | Svm, None, None) if raw->getContract->Option.isNone && raw->getEvent->Option.isNone =>
       switch raw->getBlock {
       | Some(_) as blockJson =>
         let (block, blockNumber) = parseBlock(

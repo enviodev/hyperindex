@@ -27,7 +27,7 @@ let transactionFields =
 
 // One event's selected transaction fields → store selection bitmask. Computed
 // per event at config build and cached on the event config.
-let transactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
+let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 // Ordered block field names. The index of each is the field code shared with the
 // Rust store (`EvmBlockField`) — keep this order in sync.
@@ -61,9 +61,9 @@ let blockFields = [
   "mixHash",
 ]
 
-// One registration's selected block fields → store selection bitmask. Computed
-// once per registration and cached on it.
-let blockFieldMask = BlockStore.makeMaskFn(blockFields)
+// One event's selected block fields → store selection bitmask. Computed per
+// event at config build and cached on the event config.
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.hash
@@ -73,10 +73,10 @@ let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
 
 let make = (): Ecosystem.t => {
   name: Evm,
+  blockNumberName: "number",
   blockTimestampName: "timestamp",
-  blockFields,
-  blockKeyField: "number",
-  blockFieldMask,
+  blockHashName: "hash",
+  onBlockFields: Some({fields: blockFields, keyField: "number", mask: eventBlockFieldMask}),
   onBlockMethodName: "onBlock",
   contractNoun: "contract",
   eventNoun: "event",

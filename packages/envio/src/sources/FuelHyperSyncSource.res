@@ -6,25 +6,15 @@ type options = {
   apiToken: option<string>,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.onEventRegistration>,
-  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
   logger: Logger.t,
 }
 
 let make = (
-  {
-    chainId,
-    endpointUrl,
-    apiToken,
-    onEventRegistrations,
-    ?onBlockRegistrations,
-    addressStore,
-    logger,
-  }: options,
+  {chainId, endpointUrl, apiToken, onEventRegistrations, addressStore, logger}: options,
 ): t => {
   let name = "HyperFuel"
-  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   // Per source, so one rejected token is reported once rather than on every
   // height retry for the life of the process.
@@ -40,7 +30,6 @@ let make = (
     ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(
       onEventRegistrations,
     ),
-    ~onBlockRegistrations,
     ~addressStore,
   ) {
   | client => client
@@ -67,20 +56,17 @@ let make = (
     let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
 
     //fetch batch
-    let pageUnsafe = try await FuelHyperSync.GetItems.query(
+    let pageUnsafe = try await FuelHyperSync.GetLogs.query(
       ~client,
-      ~query={
-        fromBlock,
-        toBlock: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
-        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-        onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
-        clientFilteredContracts: selection.clientFilteredContracts,
-      },
+      ~fromBlock,
+      ~toBlock,
+      ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressSet,
+      ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
-    | FuelHyperSync.GetItems.Error(WrongInstance) =>
+    | FuelHyperSync.GetLogs.Error(WrongInstance) =>
       throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
-    | FuelHyperSync.GetItems.Error(UnexpectedMissingParams({missingParams})) =>
+    | FuelHyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -145,7 +131,7 @@ let make = (
       }
     })
 
-    let eventItems = pageUnsafe.eventItems->Array.map(item => {
+    let parsedQueueItems = pageUnsafe.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
@@ -209,12 +195,10 @@ let make = (
     }
 
     {
-      parsedQueueItems: eventItems->Array.concat(
-        pageUnsafe.blockItems->BlockItem.toInternalItems(~onBlockRegistrations),
-      ),
-      // Fuel keeps the transaction inline on the payload. The block store holds
-      // the page's blocks, materialised at batch prep; their ids also drive
-      // reorg detection (Fuel never rolls back, so it's detect-only logging).
+      parsedQueueItems,
+      // Fuel keeps transaction and block inline on the payload; the block store
+      // carries only the (height, id) rows that drive reorg detection (Fuel
+      // never rolls back, so it's detect-only logging).
       transactionStore: None,
       blockStore: pageUnsafe.blockStore,
       latestFetchedBlockNumber: heighestBlockQueried,

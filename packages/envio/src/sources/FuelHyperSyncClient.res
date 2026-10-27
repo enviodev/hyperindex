@@ -58,16 +58,15 @@ module Registration = {
     })
 }
 
-module Items = {
+module EventItems = {
   // The whole per-query input beside the partition's address set: block range
-  // and what it selects from each table. Receipt selections, field selection,
-  // and routing are derived on the Rust side.
+  // and the registration selection (by index). Receipt selections, field
+  // selection, and routing are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
-    onEventRegistrationIndexes: array<int>,
-    onBlockRegistrationIndexes: array<int>,
+    registrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent contract is filtered server-side.
@@ -107,8 +106,7 @@ module Items = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    eventItems: array<item>,
-    blockItems: array<BlockItem.t>,
+    items: array<item>,
     rejectedLogData: array<rejectedLogData>,
   }
 }
@@ -119,17 +117,15 @@ external classNew: (
   cfg,
   ~userAgent: string,
   array<Registration.input>,
-  array<BlockItem.registrationInput>,
   AddressStore.t,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations, ~onBlockRegistrations=[], ~addressStore) => {
+let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
     eventRegistrations,
-    onBlockRegistrations->BlockItem.toRegistrationInputs,
     addressStore,
   )
 }
@@ -137,8 +133,11 @@ let make = (cfg: cfg, ~eventRegistrations, ~onBlockRegistrations=[], ~addressSto
 // Returns the routed items/blocks plus the page's block store (Fuel blocks
 // keyed by height); the store's ids drive reorg detection on merge.
 @send
-external getItems: (t, Items.query, AddressSet.t) => promise<(Items.response, BlockStore.t)> =
-  "getItems"
+external getEventItems: (
+  t,
+  EventItems.query,
+  AddressSet.t,
+) => promise<(EventItems.response, BlockStore.t)> = "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

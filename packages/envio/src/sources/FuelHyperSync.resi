@@ -1,7 +1,6 @@
-type itemsPage = {
-  eventItems: array<FuelHyperSyncClient.Items.item>,
-  blockItems: array<BlockItem.t>,
-  rejectedLogData: array<FuelHyperSyncClient.Items.rejectedLogData>,
+type logsQueryPage = {
+  items: array<FuelHyperSyncClient.EventItems.item>,
+  rejectedLogData: array<FuelHyperSyncClient.EventItems.rejectedLogData>,
   nextBlock: int,
   archiveHeight: int,
   // Page store owning this page's raw blocks (built on the Rust side); its ids
@@ -9,7 +8,7 @@ type itemsPage = {
   blockStore: BlockStore.t,
 }
 
-module GetItems: {
+module GetLogs: {
   type error =
     | UnexpectedMissingParams({missingParams: array<string>})
     | WrongInstance
@@ -18,7 +17,10 @@ module GetItems: {
 
   let query: (
     ~client: FuelHyperSyncClient.t,
-    ~query: FuelHyperSyncClient.Items.query,
+    ~fromBlock: int,
+    ~toBlock: option<int>,
+    ~registrationIndexes: array<int>,
     ~addressSet: AddressSet.t,
-  ) => promise<itemsPage>
+    ~clientFilteredContracts: option<array<string>>,
+  ) => promise<logsQueryPage>
 }

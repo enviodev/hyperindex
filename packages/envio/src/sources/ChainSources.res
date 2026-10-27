@@ -46,7 +46,6 @@ let make = (
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations,
-        onBlockRegistrations,
         addressStore,
         logger,
       }),

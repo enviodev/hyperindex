@@ -49,8 +49,8 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
       Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
     ),
     ~transactionFields=Utils.Set.make(),
-    ~blockMaskFn=Evm.blockFieldMask,
-    ~transactionMaskFn=Evm.transactionFieldMask,
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
   ),
   sighash: Some(pairCreatedTopic0),
   topicCount: 3,

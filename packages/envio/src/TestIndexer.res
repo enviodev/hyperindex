@@ -306,6 +306,10 @@ let getSimulateEndBlock = (
   ~startBlock: int,
 ): int => {
   let maxBlock = ref(startBlock)
+  let blockNumberKey = switch config.ecosystem.name {
+  | Svm => "slot"
+  | _ => config.ecosystem.blockNumberName
+  }
   let bump = (n: option<int>) =>
     switch n {
     | Some(v) if v > maxBlock.contents => maxBlock := v
@@ -327,8 +331,7 @@ let getSimulateEndBlock = (
       ->(Utils.magic: 'a => Nullable.t<JSON.t>)
       ->Nullable.toOption
     switch blockJson {
-    | Some(bj) =>
-      bj->(Utils.magic: JSON.t => dict<JSON.t>)->getInt(config.ecosystem.blockKeyField)->bump
+    | Some(bj) => bj->(Utils.magic: JSON.t => dict<JSON.t>)->getInt(blockNumberKey)->bump
     | None => ()
     }
   })

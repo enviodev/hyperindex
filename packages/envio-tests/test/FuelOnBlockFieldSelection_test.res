@@ -1,4 +1,5 @@
-// Fuel block handlers select block fields the way EVM ones do.
+// Fuel block handlers get the block height alone: they can't select block
+// fields, so a `fields` option fails type-checking and registration.
 let _ = InternalTestIndexer.fromUserApi(
   ~files=dict{"abis/greeter-abi.json": FuelAbiFixtures.greeter},
   ~configYaml=`
@@ -17,42 +18,30 @@ chains:
   ~schema=`
 type FuelBlock {
   id: ID!
-  time: Int!
-  blockId: String!
 }
 `,
   ~handlers=`
 import { indexer } from "envio";
 
-indexer.onBlock(
-  { name: "blocks", where: () => ({ block: { height: { _every: 2 } } }), fields: { block: ["time", "id"] } },
-  async ({ block, context }) => {
-    context.FuelBlock.set({ id: \`\${block.height}\`, time: block.time, blockId: block.id });
-  },
-);
+indexer.onBlock({ name: "blocks" }, async ({ block, context }) => {
+  // @ts-expect-error - a Fuel block handler gets the height alone
+  const _time: number = block.time;
+  context.FuelBlock.set({ id: \`\${block.height}\` });
+});
 `,
   ~test=`
 import { describe, it } from "vitest";
-import { createTestIndexer } from "envio";
+import { indexer } from "envio";
 
 describe("Fuel onBlock field selection", () => {
-  it("hands the handler the selected fields of each block", async (t) => {
-    const indexer = createTestIndexer();
-    await indexer.process({
-      chains: {
-        0: {
-          startBlock: 0,
-          endBlock: 2,
-          simulate: [{ block: { height: 2, time: 1_700_000_002, id: "0x02" } }],
-        },
-      },
-    });
-    t.expect(
-      (await indexer.FuelBlock.getAll()).sort((a, b) => a.time - b.time),
-    ).toEqual([
-      { id: "0", time: 0, blockId: "" },
-      { id: "2", time: 1_700_000_002, blockId: "0x02" },
-    ]);
+  it("rejects a fields option", (t) => {
+    t.expect(() =>
+      indexer.onBlock(
+        // @ts-expect-error - Fuel block handlers take no fields option
+        { name: "bad", fields: { block: ["time"] } },
+        async () => {},
+      ),
+    ).toThrowError('Fuel block handlers can\\'t select block fields. Remove the fields option of \`indexer.onBlock("bad")\`.');
   });
 });
 `,

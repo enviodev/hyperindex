@@ -11,7 +11,7 @@ pub struct Block {
     pub time: i64,
 }
 
-/// The page's receipt rows, decoded from Arrow but not yet routed — `get_items`
+/// The page's receipt rows, decoded from Arrow but not yet routed — `get_event_items`
 /// turns each one into zero or more `EventItem`s. Numeric u64 columns stay raw
 /// here; they become JS BigInts only on the routed items.
 pub(crate) struct RawReceipt {

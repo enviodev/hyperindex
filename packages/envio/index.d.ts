@@ -1162,48 +1162,22 @@ export type FuelOnBlockWhereArgs<Config extends IndexerConfigTypes = GlobalConfi
 /** Context for Fuel `indexer.onBlock` handlers. Alias of {@link FuelOnEventContext}. */
 export type FuelOnBlockContext<Config extends IndexerConfigTypes = GlobalConfig> = FuelOnEventContext<Config>;
 
-/** Every Fuel block field, with the type it has once selected. */
-export type FuelAllBlockFields = {
-  readonly height: number;
-  readonly id: string;
-  readonly time: number;
-};
-
-export type FuelBlockFieldName = keyof FuelAllBlockFields & string;
-
-/** The `fields` option of a Fuel `indexer.onBlock`: the block fields the
- * handler reads. The height comes without being listed. */
-export type FuelOnBlockFieldsSelection = {
-  readonly block?: readonly FuelBlockFieldName[];
-};
-
 /** Arguments passed to a Fuel block handler. */
-export type FuelOnBlockHandlerArgs<
-  Fields extends FuelOnBlockFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = {
-  /** Block being processed: its height, plus the fields listed in the
-      registration's `fields.block`. */
-  readonly block: SelectedFields<
-    FuelAllBlockFields,
-    "height" | ListedFields<Fields, "block">,
-    "block"
-  >;
+export type FuelOnBlockHandlerArgs<Config extends IndexerConfigTypes = GlobalConfig> = {
+  /** Block being processed. Contains the block height; extended fields are
+      opt-in via `field_selection` in config.yaml. */
+  readonly block: { readonly height: number };
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: FuelOnBlockContext<Config>;
 };
 
 /** Handler function for a Fuel `indexer.onBlock` registration. */
-export type FuelOnBlockHandler<
-  Fields extends FuelOnBlockFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = (args: FuelOnBlockHandlerArgs<Fields, Config>) => Promise<void>;
+export type FuelOnBlockHandler<Config extends IndexerConfigTypes = GlobalConfig> = (
+  args: FuelOnBlockHandlerArgs<Config>,
+) => Promise<void>;
 
 /** Options for a Fuel `indexer.onBlock` registration. */
-export type FuelOnBlockOptions<
-  Fields extends FuelOnBlockFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = {
+export type FuelOnBlockOptions<Config extends IndexerConfigTypes = GlobalConfig> = {
   /** Unique name for this block handler. Used as the key in error messages
       and in persisted progress tracking. */
   readonly name: string;
@@ -1211,9 +1185,6 @@ export type FuelOnBlockOptions<
       time. Return `false` to skip a chain, `true` to match every block, or
       a filter object to restrict by block height range and stride. */
   readonly where?: (args: FuelOnBlockWhereArgs<Config>) => FuelOnBlockWhereResult;
-  /** Block fields this handler reads besides the height. Selecting any makes
-      the indexer fetch every block the handler runs on. */
-  readonly fields?: Fields & FieldsLiteralCheck<Fields>;
 };
 
 // ============== SVM onSlot types ==============
@@ -1810,9 +1781,9 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
             /** Register a Fuel block handler. See `EvmEcosystem.onBlock` for
              * `where` semantics; Fuel filters on `block.height`. Always
              * available regardless of whether `contracts` are configured. */
-            readonly onBlock: <const F extends FuelOnBlockFieldsSelection | undefined = undefined>(
-              options: FuelOnBlockOptions<F, Config>,
-              handler: FuelOnBlockHandler<F, Config>,
+            readonly onBlock: (
+              options: FuelOnBlockOptions<Config>,
+              handler: FuelOnBlockHandler<Config>,
             ) => void;
           } & (Config["fuel"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
@@ -2038,12 +2009,6 @@ type EvmSimulateBlock = {
   block: { readonly number: number } & Partial<EvmAllBlockFields>;
 };
 
-/** See {@link EvmSimulateBlock}. */
-type FuelSimulateBlock = {
-  /** Block fields, keyed by the names `fields.block` selects. */
-  block: { readonly height: number } & Partial<FuelAllBlockFields>;
-};
-
 /** Configuration for a single Fuel chain in the test indexer. */
 type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig> = {
   /** The block number to start processing from. Defaults to config startBlock or progressBlock+1. */
@@ -2051,7 +2016,7 @@ type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig
   /** The block number to stop processing at. Defaults to max simulate block height when simulate is provided. */
   endBlock?: number;
   /** Simulate items to process instead of fetching from real sources. */
-  simulate?: (FuelSimulateItem<Config> | FuelSimulateBlock)[];
+  simulate?: FuelSimulateItem<Config>[];
 };
 
 /** Simulate item type for SVM ecosystem. */

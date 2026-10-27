@@ -9,7 +9,6 @@ mod selection;
 mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
-use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::{BlockStore, FuelBlockRow};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
@@ -26,7 +25,6 @@ pub struct FuelHyperSyncClient {
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-receipt owner gate.
     address_store: std::sync::Arc<std::sync::RwLock<StoreInner>>,
-    block_registrations: BlockRegistrations,
 }
 
 #[napi]
@@ -36,7 +34,6 @@ impl FuelHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<FuelOnEventRegistrationInput>,
-        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<FuelHyperSyncClient> {
         let handle = address_store.handle();
@@ -55,7 +52,6 @@ impl FuelHyperSyncClient {
             inner,
             selection_builder,
             address_store: handle,
-            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
         })
     }
 
@@ -70,67 +66,28 @@ impl FuelHyperSyncClient {
     }
 
     #[napi]
-    pub async fn get_items(
+    pub async fn get_event_items(
         &self,
-        params: ItemsQuery,
+        params: EventItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(ItemsResponse, BlockStore)> {
+    ) -> napi::Result<(EventItemsResponse, BlockStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
         let built = self
             .selection_builder
-            .build(
-                &params.on_event_registration_indexes,
-                address_set,
-                &client_filtered,
-            )
+            .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
-        // Fuel never rolls back and caps no page, so neither realtime nor an
-        // item target shapes its block reads.
-        let block_query = self
-            .block_registrations
-            .plan(
-                &params.on_block_registration_indexes,
-                params.from_block,
-                params.to_block,
-                params.on_event_registration_indexes.is_empty(),
-                false,
-                None,
-            )
-            .map_err(map_err)?;
-        let block_selection = &block_query.selection;
-        if let Some(next_block) = block_query.unread_until() {
-            let next_block = next_block as i64;
-            return Ok((
-                ItemsResponse {
-                    archive_height: Some(next_block - 1),
-                    next_block,
-                    event_items: Vec::new(),
-                    block_items: Vec::new(),
-                    rejected_log_data: Vec::new(),
-                },
-                BlockStore::new_fuel(),
-            ));
-        }
 
-        let query = build_query(
-            block_query.from_block,
-            block_query.to_block,
-            &built,
-            !block_selection.is_empty(),
-        )
-        .context("build query")
-        .map_err(map_err)?;
+        let query = build_query(&params, &built)
+            .context("build query")
+            .map_err(map_err)?;
         let res = self
             .inner
             .get_arrow(&query)
             .await
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
-        let next_block = u64::try_from(raw.next_block)
-            .context("next_block must be >= 0")
-            .map_err(map_err)?;
 
         // The page's raw blocks, keyed by height — merged into the per-chain
         // store where their ids drive reorg detection and materialisation.
@@ -148,19 +105,6 @@ impl FuelHyperSyncClient {
             .collect::<anyhow::Result<Vec<_>>>()
             .map_err(map_err)?;
         block_store.insert_fuel_block_rows(rows);
-        // Every block field is fetched for every block, so routing is all a
-        // block handler needs. The page asked for every block of the range it
-        // covered, so one missing is a bad answer, not a block to skip.
-        let present: HashSet<i64> = raw.blocks.iter().map(|b| b.height).collect();
-        let block_items = block_selection.route(block_query.from_block..next_block);
-        if block_items
-            .iter()
-            .any(|item| !present.contains(&item.block_number))
-        {
-            return Err(convert_error_to_napi(ConvertError::MissingFields(vec![
-                "block".to_string(),
-            ])));
-        }
 
         // Materialise the set's cache before taking the store guard: `cache()`
         // lazily initialises by reading the same lock, and a writer queued
@@ -179,31 +123,27 @@ impl FuelHyperSyncClient {
             .map_err(convert_error_to_napi)?
         };
 
-        let response = ItemsResponse {
+        let response = EventItemsResponse {
             archive_height: raw.archive_height,
-            next_block: block_query.fetched_until(next_block) as i64,
-            event_items: items,
-            block_items,
+            next_block: raw.next_block,
+            items,
             rejected_log_data,
         };
         Ok((response, block_store))
     }
 }
 
-/// The whole per-query input for `get_items`: the block range and what it
-/// selects from each table. The partition's addresses arrive separately, as
-/// the `AddressSet` handle. Receipt selections, field selection, and routing
-/// are all derived internally from the registrations passed at construction.
+/// The whole per-query input for `get_event_items`: the block range and the
+/// partition's registration selection (by index). The partition's addresses
+/// arrive separately, as the `AddressSet` handle. Receipt selections, field
+/// selection, and routing are all derived internally from the registrations
+/// passed at construction.
 #[napi(object)]
-pub struct ItemsQuery {
+pub struct EventItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
-    /// The event registrations selecting receipts, by index. Empty selects no
-    /// receipts.
-    pub on_event_registration_indexes: Vec<i64>,
-    /// The block handlers selecting blocks, by index.
-    pub on_block_registration_indexes: Vec<i64>,
+    pub registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent contract is filtered server-side.
@@ -237,11 +177,10 @@ pub struct EventItem {
 }
 
 #[napi(object, object_from_js = false)]
-pub struct ItemsResponse {
+pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub event_items: Vec<EventItem>,
-    pub block_items: Vec<BlockItem>,
+    pub items: Vec<EventItem>,
     pub rejected_log_data: Vec<RejectedLogData>,
 }
 
@@ -260,14 +199,19 @@ pub struct RejectedLogData {
 }
 
 fn build_query(
-    from_block: u64,
-    to_block: Option<u64>,
+    params: &EventItemsQuery,
     built: &BuiltSelection,
-    selects_blocks: bool,
 ) -> anyhow::Result<net_types::Query> {
-    let to_block = to_block
+    let from_block = u64::try_from(params.from_block).context("from_block must be >= 0")?;
+    let to_block = params
+        .to_block
         // Inclusive on the boundary, exclusive on the wire.
-        .map(|b| b.checked_add(1).context("to_block overflow"))
+        .map(|b| {
+            u64::try_from(b)
+                .context("to_block must be >= 0")?
+                .checked_add(1)
+                .context("to_block overflow")
+        })
         .transpose()?;
 
     let mut receipt_fields = vec![
@@ -299,8 +243,6 @@ fn build_query(
             receipt: receipt_fields.into_iter().map(str::to_string).collect(),
             ..Default::default()
         },
-        // A block handler runs on blocks no receipt landed on.
-        include_all_blocks: selects_blocks,
         ..Default::default()
     })
 }
