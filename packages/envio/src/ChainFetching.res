@@ -43,7 +43,7 @@ let runContractRegistersOrThrow = async (
   let ecosystem = runtime->HandlerRuntime.ecosystem
 
   let _ = await itemsWithContractRegister
-  ->Array.map(item => {
+  ->Array.map(async item => {
     let run: RunScope.contractRegisterRun = {
       item,
       isResolved: false,
@@ -51,12 +51,16 @@ let runContractRegistersOrThrow = async (
       ecosystem,
       registrations,
     }
-    RunScope.run(ContractRegister(run), invokeContractRegister, runtime, item)->Promise.catch(exn =>
+    let scope = RunScope.ContractRegister(run)
+    switch await RunScope.enter(scope, invokeContractRegister, runtime, item) {
+    | exception exn =>
+      scope->RunScope.resolve
       exn->ErrorHandling.mkLogAndRaise(
         ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
         ~logger=run->RunScope.contractRegisterLogger,
       )
-    )
+    | () => scope->RunScope.resolve
+    }
   })
   ->Promise.all
 

@@ -62,19 +62,13 @@ let resolve = scope =>
   | Effect(_) => ()
   }
 
-// Runs user code inside `scope` and marks it resolved once it settles either
-// way. Code that throws before its first await rejects like code that throws
-// after. `f` takes its arguments rather than closing over them, so a caller
-// passes a function made once instead of one per run.
-let run = async (scope, f: ('a, 'b) => promise<'r>, a: 'a, b: 'b) =>
-  switch await storage->runInStorage2(scope, f, a, b) {
-  | exception exn =>
-    scope->resolve
-    throw(exn)
-  | result =>
-    scope->resolve
-    result
-  }
+// Runs user code inside `scope`. The caller awaits it and calls `resolve` once
+// it settles either way, rather than this wrapping it in another promise per
+// run; code that throws before its first await throws here, so the await must
+// enclose the call. `f` takes its arguments rather than closing over them, so a
+// caller passes a function made once instead of one per run.
+let enter = (scope, f: ('a, 'b) => promise<'r>, a: 'a, b: 'b) =>
+  storage->runInStorage2(scope, f, a, b)
 
 let throwResolved = (~prop, ~runName, ~logger) =>
   Utils.Error.make(

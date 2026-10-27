@@ -25,20 +25,19 @@ let invokeHandler = (runtime: HandlerRuntime.t, item: Internal.item) => {
   }
 }
 
-let runHandler = (runtime: HandlerRuntime.t, ~item, ~checkpointId, ~isPreload) =>
-  RunScope.run(
-    Handler({
-      item,
-      checkpointId,
-      isPreload,
-      isResolved: false,
-      chainLogger: runtime->HandlerRuntime.chainLoggerFor(item),
-      ecosystem: runtime->HandlerRuntime.ecosystem,
-    }),
-    invokeHandler,
-    runtime,
-    item,
-  )
+let handlerScope = (
+  runtime: HandlerRuntime.t,
+  ~item,
+  ~checkpointId,
+  ~isPreload,
+) => RunScope.Handler({
+  item,
+  checkpointId,
+  isPreload,
+  isResolved: false,
+  chainLogger: runtime->HandlerRuntime.chainLoggerFor(item),
+  ecosystem: runtime->HandlerRuntime.ecosystem,
+})
 
 let eventStat = (runtime: HandlerRuntime.t, item: Internal.item) =>
   switch item {
@@ -61,9 +60,13 @@ let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime) =>
   if item->hasHandler {
     //Include the load in time before handler
     let timeBeforeHandler = Performance.now()
-    switch await runtime->runHandler(~item, ~checkpointId, ~isPreload=false) {
-    | exception exn => throw(ProcessingError({message: item->handlerErrorMessage, item, exn}))
+    let scope = runtime->handlerScope(~item, ~checkpointId, ~isPreload=false)
+    switch await RunScope.enter(scope, invokeHandler, runtime, item) {
+    | exception exn =>
+      scope->RunScope.resolve
+      throw(ProcessingError({message: item->handlerErrorMessage, item, exn}))
     | () =>
+      scope->RunScope.resolve
       switch runtime->eventStat(item) {
       | Some(stat) =>
         stat->IndexerState.recordHandlerDuration(
@@ -76,19 +79,23 @@ let runHandlerOrThrow = async (item: Internal.item, ~checkpointId, ~runtime) =>
 
 // A preload run's errors are dropped: the run proper reports them. It is still
 // timed either way, so one that throws doesn't leave its handler's timing open.
-let preload = async (runtime, ~item, ~checkpointId) =>
+let preload = async (runtime, ~item, ~checkpointId) => {
+  let scope = runtime->handlerScope(~item, ~checkpointId, ~isPreload=true)
   switch runtime->eventStat(item) {
   | Some(stat) =>
     let timerRef = stat->IndexerState.startPreloadHandler
-    try await runtime->runHandler(~item, ~checkpointId, ~isPreload=true) catch {
+    try await RunScope.enter(scope, invokeHandler, runtime, item) catch {
     | _ => ()
     }
+    scope->RunScope.resolve
     stat->IndexerState.endPreloadHandler(timerRef)
   | None =>
-    try await runtime->runHandler(~item, ~checkpointId, ~isPreload=true) catch {
+    try await RunScope.enter(scope, invokeHandler, runtime, item) catch {
     | _ => ()
     }
+    scope->RunScope.resolve
   }
+}
 
 let preloadBatchOrThrow = async (batch: Batch.t, ~runtime) => {
   // On the first run of loaders, we don't care about the result,
