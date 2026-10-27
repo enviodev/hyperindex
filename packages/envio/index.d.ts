@@ -916,16 +916,20 @@ type FieldsLiteralCheck<Fields> = [Fields] extends [undefined]
       ? EvmFieldsMustBeLiteral<"transaction">
       : unknown;
 
+/** A block narrowed to a registration's fields selection, for `indexer.onEvent`
+ * and `indexer.onBlock` alike. `number` is always selected. */
+export type EvmBlock<Fields extends EvmFieldsSelection> = SelectedFields<
+  EvmAllBlockFields,
+  EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
+  "block"
+>;
+
 /** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
  * With no `fields` option the event type passes through, so the `config.yaml`
  * `field_selection` path is unaffected. */
 export type EvmEventWithFields<Event, Fields> = [Fields] extends [EvmFieldsSelection]
   ? Omit<Event, "block" | "transaction"> & {
-      readonly block: SelectedFields<
-        EvmAllBlockFields,
-        EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
-        "block"
-      >;
+      readonly block: EvmBlock<Fields>;
       readonly transaction: SelectedFields<
         EvmAllTransactionFields,
         ListedFields<Fields, "transaction">,
@@ -1080,37 +1084,21 @@ export type EvmOnBlockContext<Config extends IndexerConfigTypes = GlobalConfig> 
 
 /** The `fields` option of `indexer.onBlock`: the block fields the handler
  * reads. The block number comes without being listed. */
-export type EvmOnBlockFieldsSelection = {
-  readonly block?: readonly EvmBlockFieldName[];
-};
+export type EvmOnBlockFieldsSelection = Pick<EvmFieldsSelection, "block">;
 
-/** Arguments passed to an EVM block handler. */
-export type EvmOnBlockHandlerArgs<
-  Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = {
+type EvmOnBlockArgsFor<Fields extends EvmOnBlockFieldsSelection, Config extends IndexerConfigTypes> = {
   /** Block being processed: its number, plus the fields listed in the
       registration's `fields.block`. */
-  readonly block: SelectedFields<
-    EvmAllBlockFields,
-    EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
-    "block"
-  >;
+  readonly block: EvmBlock<Fields>;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: EvmOnBlockContext<Config>;
 };
 
-/** Handler function for an EVM `indexer.onBlock` registration. */
-export type EvmOnBlockHandler<
-  Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = (args: EvmOnBlockHandlerArgs<Fields, Config>) => Promise<void>;
+type EvmOnBlockHandlerFor<Fields extends EvmOnBlockFieldsSelection, Config extends IndexerConfigTypes> = (
+  args: EvmOnBlockArgsFor<Fields, Config>,
+) => Promise<void>;
 
-/** Options for an EVM `indexer.onBlock` registration. */
-export type EvmOnBlockOptions<
-  Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = {
+type EvmOnBlockOptionsFor<Fields extends EvmOnBlockFieldsSelection, Config extends IndexerConfigTypes> = {
   /** Unique name for this block handler. Used as the key in error messages
       and in persisted progress tracking. */
   readonly name: string;
@@ -1122,6 +1110,25 @@ export type EvmOnBlockOptions<
       the indexer fetch every block the handler runs on. */
   readonly fields?: Fields & FieldsLiteralCheck<Fields>;
 };
+
+/** Arguments passed to an EVM block handler. Takes the registration's fields
+ * selection, like {@link EvmBlock}. */
+export type EvmOnBlockHandlerArgs<Fields extends EvmOnBlockFieldsSelection = {}> =
+  EvmOnBlockArgsFor<Fields, GlobalConfig>;
+
+/** Handler function for an EVM `indexer.onBlock` registration. Takes the
+ * registration's fields selection, so a standalone handler needs a single
+ * annotation:
+ *
+ *     const handleBlock: EvmOnBlockHandler<typeof fields> =
+ *       async ({ block, context }) => { ... };
+ */
+export type EvmOnBlockHandler<Fields extends EvmOnBlockFieldsSelection = {}> =
+  EvmOnBlockHandlerFor<Fields, GlobalConfig>;
+
+/** Options for an EVM `indexer.onBlock` registration. */
+export type EvmOnBlockOptions<Fields extends EvmOnBlockFieldsSelection = {}> =
+  EvmOnBlockOptionsFor<Fields, GlobalConfig>;
 
 // ============== Fuel onBlock types ==============
 
@@ -1223,41 +1230,25 @@ export type SvmOnSlotWhereArgs<Config extends IndexerConfigTypes = GlobalConfig>
 
 /** The `fields` option of `indexer.onSlot`: the fields of the slot's block the
  * handler reads. */
-export type SvmOnSlotFieldsSelection = {
-  readonly block?: readonly SvmBlockFieldName[];
-};
+export type SvmOnSlotFieldsSelection = Pick<SvmFieldsSelection, "block">;
 
-/** Arguments passed to an SVM slot handler. */
-export type SvmOnSlotHandlerArgs<
-  Fields extends SvmOnSlotFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = {
+type SvmOnSlotArgsFor<Fields extends SvmOnSlotFieldsSelection, Config extends IndexerConfigTypes> = {
   /** Slot number being processed. */
   readonly slot: number;
+  /** The slot's block: the fields listed in the registration's `fields.block`.
+      Undefined on a slot the chain skipped, which produced no block. */
+  readonly block: [Exclude<ListedFields<Fields, "block">, "slot">] extends [never]
+    ? FieldNotSelected<`Field 'block' is not selected for this handler. Add fields.block in the registration options.`>
+    : SvmBlock<Fields> | undefined;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: SvmOnSlotContext<Config>;
-} & ([Exclude<ListedFields<Fields, "block">, "slot">] extends [never]
-  ? {}
-  : {
-      /** The slot's block: the fields listed in the registration's
-          `fields.block`. Undefined on a slot the chain skipped, which
-          produced no block. */
-      readonly block:
-        | SelectedFields<SvmAllBlockFields, "slot" | ListedFields<Fields, "block">, "block">
-        | undefined;
-    });
+};
 
-/** Handler function for an SVM `indexer.onSlot` registration. */
-export type SvmOnSlotHandler<
-  Fields extends SvmOnSlotFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = (args: SvmOnSlotHandlerArgs<Fields, Config>) => Promise<void>;
+type SvmOnSlotHandlerFor<Fields extends SvmOnSlotFieldsSelection, Config extends IndexerConfigTypes> = (
+  args: SvmOnSlotArgsFor<Fields, Config>,
+) => Promise<void>;
 
-/** Options for an SVM `indexer.onSlot` registration. */
-export type SvmOnSlotOptions<
-  Fields extends SvmOnSlotFieldsSelection | undefined = undefined,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = {
+type SvmOnSlotOptionsFor<Fields extends SvmOnSlotFieldsSelection, Config extends IndexerConfigTypes> = {
   /** Unique name for this slot handler. Used as the key in error messages
       and in persisted progress tracking. */
   readonly name: string;
@@ -1269,6 +1260,25 @@ export type SvmOnSlotOptions<
       on a skipped slot, with no block. */
   readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
 };
+
+/** Arguments passed to an SVM slot handler. Takes the registration's fields
+ * selection, like {@link SvmBlock}. */
+export type SvmOnSlotHandlerArgs<Fields extends SvmOnSlotFieldsSelection = {}> =
+  SvmOnSlotArgsFor<Fields, GlobalConfig>;
+
+/** Handler function for an SVM `indexer.onSlot` registration. Takes the
+ * registration's fields selection, so a standalone handler needs a single
+ * annotation:
+ *
+ *     const handleSlot: SvmOnSlotHandler<typeof fields> =
+ *       async ({ slot, block, context }) => { ... };
+ */
+export type SvmOnSlotHandler<Fields extends SvmOnSlotFieldsSelection = {}> =
+  SvmOnSlotHandlerFor<Fields, GlobalConfig>;
+
+/** Options for an SVM `indexer.onSlot` registration. */
+export type SvmOnSlotOptions<Fields extends SvmOnSlotFieldsSelection = {}> =
+  SvmOnSlotOptionsFor<Fields, GlobalConfig>;
 
 // ============== SVM onInstruction types ==============
 
@@ -1699,9 +1709,9 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              * whether `contracts` are configured — block handlers don't need
              * any contract context.
              */
-            readonly onBlock: <const F extends EvmOnBlockFieldsSelection | undefined = undefined>(
-              options: EvmOnBlockOptions<F, Config>,
-              handler: EvmOnBlockHandler<F, Config>,
+            readonly onBlock: <const F extends EvmOnBlockFieldsSelection = {}>(
+              options: EvmOnBlockOptionsFor<F, Config>,
+              handler: EvmOnBlockHandlerFor<F, Config>,
             ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
@@ -1848,9 +1858,9 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              * to match every slot, or an {@link SvmOnSlotFilter} describing a
              * slot range and stride.
              */
-            readonly onSlot: <const F extends SvmOnSlotFieldsSelection | undefined = undefined>(
-              options: SvmOnSlotOptions<F, Config>,
-              handler: SvmOnSlotHandler<F, Config>,
+            readonly onSlot: <const F extends SvmOnSlotFieldsSelection = {}>(
+              options: SvmOnSlotOptionsFor<F, Config>,
+              handler: SvmOnSlotHandlerFor<F, Config>,
             ) => void;
           } & (Config["svm"] extends {
             programs: infer Programs extends Record<string, Record<string, any>>;

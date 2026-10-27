@@ -208,10 +208,14 @@ expectType<TypeEqual<SvmChainName, "7565164">>(true);
 
   it("shapes the onSlot surface", _ =>
     check(`
+import { indexer } from "envio";
 import type {
   Account,
+  FieldNotSelected,
+  SvmBlock,
   SvmChainId,
   SvmOnSlotContext,
+  SvmOnSlotFieldsSelection,
   SvmOnSlotFilter,
   SvmOnSlotHandler,
   SvmOnSlotHandlerArgs,
@@ -250,6 +254,30 @@ expectType<TypeEqual<SvmOnSlotHandlerArgs["context"], SvmOnSlotContext>>(true);
 expectType<
   TypeEqual<SvmOnSlotHandler, (args: SvmOnSlotHandlerArgs) => Promise<void>>
 >(true);
+
+// Typed the way onInstruction handlers are: the block is the same SvmBlock,
+// unselected it is branded like an instruction's logs, and the handler types
+// take the selection alone.
+const fields = { block: ["time"] } as const satisfies SvmOnSlotFieldsSelection;
+if (0) {
+  indexer.onSlot({ name: "s", fields }, async ({ block }) => {
+    expectType<TypeEqual<typeof block, SvmBlock<typeof fields> | undefined>>(true);
+  });
+}
+expectType<
+  TypeEqual<SvmOnSlotHandlerArgs<typeof fields>["block"], SvmBlock<typeof fields> | undefined>
+>(true);
+expectType<
+  TypeEqual<
+    SvmOnSlotHandlerArgs["block"],
+    FieldNotSelected<"Field 'block' is not selected for this handler. Add fields.block in the registration options.">
+  >
+>(true);
+expectType<
+  TypeEqual<SvmOnSlotHandler<typeof fields>, (args: SvmOnSlotHandlerArgs<typeof fields>) => Promise<void>>
+>(true);
+// @ts-expect-error - the selection is the only type argument
+type _WithConfig = SvmOnSlotHandler<typeof fields, never>;
 
 expectType<TypeEqual<SvmOnSlotWhereArgs["chain"]["id"], SvmChainId>>(true);
 expectType<TypeEqual<SvmOnSlotWhereResult, boolean | SvmOnSlotFilter>>(true);
