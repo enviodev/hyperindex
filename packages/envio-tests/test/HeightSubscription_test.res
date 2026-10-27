@@ -616,29 +616,31 @@ describe("Height subscription", () => {
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
+      // Each stall poll is counted from before the step that precedes it: the
+      // poke can land before that step returns, and a snapshot taken after it
+      // would already hold the poll it is waiting for.
+      let pollsBeforeLive = mock->polls
       await mock->goLive(~indexer)
       // Every poll is answered on the spot, so none is left in flight to
       // swallow the next poke.
       mock.setAutoHeight(101)
-      let pollsWhileProven = mock->polls
-      await Utils.delay(150)
-      let pollsAfterFirstStall = mock->polls
+      // The connect's catch-up, then the first stall's poll.
+      await mock.expectHeightCalls(pollsBeforeLive + 2)
+      // Lets the stall poll's answer land first. An answer still on its way when
+      // the stream reconnects speaks for the old connection, so it would leave
+      // the catch-up to the next poke and merge the two polls counted below.
+      await Utils.delay(0)
 
       // A reconnect whose catch-up succeeds takes the stream at its word again,
       // and it goes quiet in exactly the same way.
+      let pollsBeforeReconnect = mock->polls
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
       mock.setHeightSubscriptionStatus(Live)
-      await Utils.delay(0)
-      let pollsAfterReconnect = mock->polls
-      await Utils.delay(150)
-      let pollsAfterSecondStall = mock->polls
+      await mock.expectHeightCalls(pollsBeforeReconnect + 2)
 
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect((
-        pollsAfterFirstStall > pollsWhileProven,
-        pollsAfterSecondStall > pollsAfterReconnect,
-      )).toEqual((true, true))
+      t.expect(mock->polls - pollsBeforeLive).toEqual(4)
     },
   )
 
