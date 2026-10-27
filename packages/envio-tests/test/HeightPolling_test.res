@@ -107,10 +107,10 @@ describe("Polling behind a stream", () => {
     "Stops polling behind a distrusted stream once a push proves it",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 5}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 200},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
-      await mock->goLive
+      await mock->goLive(~indexer)
       mock.setAutoHeight(101)
       // The stall poke distrusts the quiet stream, and polling starts.
       await mock.expectHeightCalls(mock->polls + 2)
@@ -127,10 +127,10 @@ describe("Polling behind a stream", () => {
     "Keeps polling a distrusted stream until it delivers, not until one poll is quiet",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 5}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 200},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
-      await mock->goLive
+      await mock->goLive(~indexer)
       let pollsWhileProven = mock->polls
       await mock.expectHeightCalls(pollsWhileProven + 1)
       // A poll that agrees the chain is quiet says nothing about whether the
@@ -147,10 +147,10 @@ describe("Polling behind a stream", () => {
     "Takes a distrust back on any push, even of a height it already knew",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 5}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 200},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
-      await mock->goLive
+      await mock->goLive(~indexer)
       await mock.expectHeightCalls(mock->polls + 1)
       // The poll beat the stream to the head, so the stream pushes a height
       // already known. That is still it delivering.
@@ -195,11 +195,11 @@ describe("Polling behind a stream", () => {
       {chain: 1337, pollingInterval: 1},
     ],
     ~sourceTiming={newBlockStallTimeoutRealtime: 200},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let streamed = source(1337)
       let polled = source(1337, ~index=1)
       await reach(~sync=streamed)
-      await streamed->goLive
+      await streamed->goLive(~indexer)
       polled.setAutoHeight(101)
       streamed.setAutoHeight(101)
       await streamed.expectHeightCalls(streamed->polls + 1)
@@ -217,10 +217,10 @@ describe("Polling behind a stream", () => {
     "Polls straight away when a live connection drops while polling sleeps",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 200},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
-      await mock->goLive
+      await mock->goLive(~indexer)
       // The stall poke's poll answers below the head and the polling settles in
       // for an interval chosen while the connection still covered the source.
       mock.setAutoHeight(101)

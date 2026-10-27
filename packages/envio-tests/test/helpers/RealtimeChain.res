@@ -30,8 +30,10 @@ let reach = async (~sync: MockSource.t, ~mock=sync, ~head=100) => {
 // Takes a freshly subscribed source to a live stream that has delivered: the
 // catch-up poll its connect fires is answered, the stream pushes `head + 1`,
 // and the query for it is answered. The chain is left waiting above `head + 1`
-// with no poll in flight, the stream carrying the wait on its own.
-let goLive = async (mock: MockSource.t, ~head=100) => {
+// with no poll in flight, the stream carrying the wait on its own. It returns
+// once that wait has started: one the chain hasn't started yet can't see what a
+// test does to the stream next, which would leave the test to a race.
+let goLive = async (mock: MockSource.t, ~indexer: IndexerRunner.t, ~head=100) => {
   mock.resolveGetHeightOrThrow(head)
   let pollsBeforeLive = mock->polls
   mock.setHeightSubscriptionStatus(Live)
@@ -39,6 +41,7 @@ let goLive = async (mock: MockSource.t, ~head=100) => {
   mock.resolveGetHeightOrThrow(head)
   mock.triggerHeightSubscription(head + 1)
   await mock->answerQuery(~fromBlock=head + 1, ~toBlock=head + 1)
+  await indexer.waitUntilIdle()
 }
 
 // The intervals the height polling logged it would back off for, in order.
