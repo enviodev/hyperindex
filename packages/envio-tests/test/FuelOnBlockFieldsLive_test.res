@@ -9,6 +9,12 @@ let _apiToken =
     ~message="ENVIO_API_TOKEN env var must be set to run the live Fuel onBlock fields test",
   )
 
+let proxyPort = 18561
+let proxy = RecordingProxy.serveDuringSuite(
+  ~port=proxyPort,
+  ~upstream="https://fuel-testnet.hypersync.xyz",
+)
+
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: fuel-onblock-fields-live
@@ -17,6 +23,8 @@ chains:
   - id: 0
     start_block: 22158283
     end_block: 22168500
+    hyperfuel_config:
+      url: http://127.0.0.1:${proxyPort->Int.toString}
 `,
   ~schema=`
 type SeenBlock {
@@ -77,3 +85,74 @@ describe("onBlock fields over live HyperFuel", () => {
 });
 `,
 )
+
+// The source's own queries, as the server received them: the first sparse
+// block read alone, then the range from the dense window to the end.
+Vitest.it("sends the queries the read plan names", t => {
+  t.expect(JSON.Array(proxy().queries)).toEqual(
+    JSON.parseOrThrow(`[
+  {
+    "from_block": 22158283,
+    "to_block": 22158284,
+    "receipts": [],
+    "inputs": [],
+    "outputs": [],
+    "include_all_blocks": true,
+    "field_selection": {
+      "block": [
+        "height",
+        "id",
+        "time"
+      ],
+      "transaction": [],
+      "receipt": [
+        "block_height",
+        "receipt_index",
+        "receipt_type",
+        "root_contract_id",
+        "tx_id"
+      ],
+      "input": [],
+      "output": []
+    },
+    "max_num_blocks": null,
+    "max_num_transactions": null,
+    "max_num_receipts": null,
+    "max_num_inputs": null,
+    "max_num_outputs": null,
+    "join_mode": "Default"
+  },
+  {
+    "from_block": 22163000,
+    "to_block": 22168501,
+    "receipts": [],
+    "inputs": [],
+    "outputs": [],
+    "include_all_blocks": true,
+    "field_selection": {
+      "block": [
+        "height",
+        "id",
+        "time"
+      ],
+      "transaction": [],
+      "receipt": [
+        "block_height",
+        "receipt_index",
+        "receipt_type",
+        "root_contract_id",
+        "tx_id"
+      ],
+      "input": [],
+      "output": []
+    },
+    "max_num_blocks": null,
+    "max_num_transactions": null,
+    "max_num_receipts": null,
+    "max_num_inputs": null,
+    "max_num_outputs": null,
+    "join_mode": "Default"
+  }
+]`),
+  )
+})
