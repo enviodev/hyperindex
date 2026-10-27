@@ -475,7 +475,19 @@ impl PackageManager {
             let replacement = match word {
                 _ if !starts_word => None,
                 "build" | "codegen" | "dev" | "start" | "test" => {
-                    Some(self.run_script_command(word))
+                    let mut command = self.run_script_command(word);
+                    // `npm run` keeps flags for itself unless they follow `--`,
+                    // so `npm run test -u` never reaches the test runner.
+                    let tail = &after[word_end..];
+                    let separated = tail.strip_prefix(" --").is_some_and(|rest| {
+                        rest.chars()
+                            .next()
+                            .is_none_or(|c| !c.is_ascii_alphanumeric())
+                    });
+                    if *self == PackageManager::Npm && tail.starts_with(" -") && !separated {
+                        command.push_str(" --");
+                    }
+                    Some(command)
                 }
                 "install" => Some(self.install_command()),
                 "tsc" => Some(self.exec_command("tsc")),

@@ -144,7 +144,7 @@ t.expect(indexer.chains[1].MyContract.addresses).toContain("0x1234...");
 
 ```bash
 pnpm test              # Run all tests
-pnpm test -u           # Update snapshots (npm: npm run test -- -u)
+pnpm test -u           # Update snapshots
 ```
 
 ## Advanced: Finding Block Ranges with HyperSync

@@ -542,6 +542,28 @@ mod tests {
     }
 
     #[test]
+    fn script_flags_reach_the_script_under_npm() {
+        let text = "`pnpm test -u`, `pnpm test -- -u`, `pnpm dev --help`, `pnpm test`";
+        let rendered = [
+            PackageManager::Pnpm,
+            PackageManager::Npm,
+            PackageManager::Yarn,
+            PackageManager::Bun,
+        ]
+        .map(|pm| pm.rewrite_commands(text));
+        assert_eq!(
+            rendered,
+            [
+                "`pnpm test -u`, `pnpm test -- -u`, `pnpm dev --help`, `pnpm test`",
+                "`npm run test -- -u`, `npm run test -- -u`, `npm run dev -- --help`, `npm run test`",
+                "`yarn test -u`, `yarn test -- -u`, `yarn dev --help`, `yarn test`",
+                "`bun run test -u`, `bun run test -- -u`, `bun run dev --help`, `bun run test`",
+            ]
+            .map(String::from)
+        );
+    }
+
+    #[test]
     fn next_steps_in_current_dir_alias() {
         insta::assert_snapshot!(next_steps_message(Path::new("./"), PackageManager::Npm));
     }
