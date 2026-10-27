@@ -115,7 +115,6 @@ pub mod reserved_keywords {
         "EvmEventWithFields",
         "EvmFieldsMustBeLiteral",
         "EvmFieldsSelection",
-        "EvmOnBlockBlock",
         "EvmOnBlockContext",
         "EvmOnBlockFieldsSelection",
         "EvmOnBlockFilter",

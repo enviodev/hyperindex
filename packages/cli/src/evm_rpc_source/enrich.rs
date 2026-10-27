@@ -457,13 +457,10 @@ fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
     blocks
 }
 
-/// The blocks to read and the fields to read them for. One response carries
-/// every block field, so the whole page reads the same ones and merges into the
-/// store in a single batch.
-/// What every block this chain reads is decoded for. One response carries the
-/// whole header, so this depends on the chain's registrations and not on the
-/// page — which is why it is resolved once, when the client is built, rather
-/// than per page.
+/// What a page's blocks are decoded for: the chain's registrations, widened by
+/// the block handlers the page runs. One response carries the whole header, so
+/// every block of the page reads the same fields and merges into the store in a
+/// single batch.
 pub(crate) struct BlockRead {
     pub covering: u64,
     fields: Vec<BlockField>,

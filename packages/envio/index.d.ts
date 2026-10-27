@@ -1084,13 +1084,6 @@ export type EvmOnBlockFieldsSelection = {
   readonly block?: readonly EvmBlockFieldName[];
 };
 
-/** A block as an EVM block handler with the `Fields` selection reads it. */
-export type EvmOnBlockBlock<Fields = undefined> = SelectedFields<
-  EvmAllBlockFields,
-  EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
-  "block"
->;
-
 /** Arguments passed to an EVM block handler. */
 export type EvmOnBlockHandlerArgs<
   Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
@@ -1098,7 +1091,11 @@ export type EvmOnBlockHandlerArgs<
 > = {
   /** Block being processed: its number, plus the fields listed in the
       registration's `fields.block`. */
-  readonly block: EvmOnBlockBlock<Fields>;
+  readonly block: SelectedFields<
+    EvmAllBlockFields,
+    EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
+    "block"
+  >;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: EvmOnBlockContext<Config>;
 };
@@ -1431,28 +1428,22 @@ export type SvmAllFieldsSelection = {
   readonly log: readonly SvmLogFieldName[];
 };
 
-type SvmListedArray<Fields, Knob extends keyof SvmFieldsSelection> = Fields[Knob &
-  keyof Fields];
-type SvmListedFields<Fields, Knob extends keyof SvmFieldsSelection> = NonNullable<
-  SvmListedArray<Fields, Knob>
->[number] &
-  string;
 
 type SvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
   ? unknown
-  : IsWidenedArray<SvmListedArray<Fields, "instruction">> extends true
+  : IsWidenedArray<ListedArray<Fields, "instruction">> extends true
     ? EvmFieldsMustBeLiteral<"instruction">
-    : IsWidenedArray<SvmListedArray<Fields, "transaction">> extends true
+    : IsWidenedArray<ListedArray<Fields, "transaction">> extends true
       ? EvmFieldsMustBeLiteral<"transaction">
-      : IsWidenedArray<SvmListedArray<Fields, "accountActivity">> extends true
+      : IsWidenedArray<ListedArray<Fields, "accountActivity">> extends true
         ? EvmFieldsMustBeLiteral<"accountActivity">
-        : IsWidenedArray<SvmListedArray<Fields, "block">> extends true
+        : IsWidenedArray<ListedArray<Fields, "block">> extends true
           ? EvmFieldsMustBeLiteral<"block">
-          : IsWidenedArray<SvmListedArray<Fields, "log">> extends true
+          : IsWidenedArray<ListedArray<Fields, "log">> extends true
             ? EvmFieldsMustBeLiteral<"log">
             : unknown;
 
-type SvmActivityListed<Fields> = SvmListedFields<Fields, "accountActivity">;
+type SvmActivityListed<Fields> = ListedFields<Fields, "accountActivity">;
 type SvmActivityHas<Fields, Name extends string> = [SvmActivityListed<Fields>] extends [never]
   ? false
   : Name extends SvmActivityListed<Fields>
@@ -1499,7 +1490,7 @@ export type SvmAccountActivity<Fields extends SvmFieldsSelection> = {
   readonly token: SvmAccountTokenActivity<Fields>;
 };
 
-type SvmInstrListed<Fields> = SvmListedFields<Fields, "instruction">;
+type SvmInstrListed<Fields> = ListedFields<Fields, "instruction">;
 type SvmInstrField<Fields, Name extends SvmInstructionFieldName, T> = Name extends SvmInstrListed<Fields>
   ? T
   : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.instruction in the registration options.`>;
@@ -1530,7 +1521,7 @@ type SvmNamedAccounts<
 /** The parent transaction of a {@link SvmInstruction}, narrowed to the
  * registration's fields selection. */
 export type SvmTransaction<Fields extends SvmFieldsSelection> = {
-  readonly [K in keyof SvmAllTransactionFields]: K extends SvmListedFields<Fields, "transaction">
+  readonly [K in keyof SvmAllTransactionFields]: K extends ListedFields<Fields, "transaction">
     ? SvmAllTransactionFields[K]
     : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.transaction in the registration options.`>;
 } & {
@@ -1544,7 +1535,7 @@ export type SvmTransaction<Fields extends SvmFieldsSelection> = {
 export type SvmBlock<Fields extends SvmFieldsSelection> = {
   readonly [K in keyof SvmAllBlockFields]: K extends "slot"
     ? SvmAllBlockFields[K]
-    : K extends SvmListedFields<Fields, "block">
+    : K extends ListedFields<Fields, "block">
       ? SvmAllBlockFields[K]
       : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.block in the registration options.`>;
 };
@@ -1552,10 +1543,10 @@ export type SvmBlock<Fields extends SvmFieldsSelection> = {
 /** A log of a {@link SvmInstruction}, narrowed to the registration's fields
  * selection. */
 export type SvmLog<Fields extends SvmFieldsSelection> = {
-  readonly kind: "kind" extends SvmListedFields<Fields, "log">
+  readonly kind: "kind" extends ListedFields<Fields, "log">
     ? SvmLogKind
     : FieldNotSelected<`Field 'kind' is not selected for this handler. Add it to fields.log in the registration options.`>;
-  readonly message: "message" extends SvmListedFields<Fields, "log">
+  readonly message: "message" extends ListedFields<Fields, "log">
     ? string
     : FieldNotSelected<`Field 'message' is not selected for this handler. Add it to fields.log in the registration options.`>;
 };
@@ -1586,7 +1577,7 @@ type SvmSelectedInstruction<Fields extends SvmFieldsSelection, ProgInstr> = {
       : SvmNamedAccounts<Readonly<Record<string, string>>, Fields>
   >;
   readonly accountArguments: SvmInstrField<Fields, "accountArguments", readonly string[]>;
-  readonly logs: [SvmListedFields<Fields, "log">] extends [never]
+  readonly logs: [ListedFields<Fields, "log">] extends [never]
     ? FieldNotSelected<`Field 'logs' is not selected for this handler. Add fields.log in the registration options.`>
     : readonly SvmLog<Fields>[];
   readonly transaction: SvmTransaction<Fields>;

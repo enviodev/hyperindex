@@ -1,6 +1,5 @@
-// A block handler run on one block of a response, as every native client
-// routes it (`block_selection.rs`). The block itself is in the response's
-// block store, to be materialised at batch prep.
+// The block itself is in the response's block store, materialised at batch
+// prep.
 type t = {
   blockNumber: int,
   onBlockRegistrationIndex: int,
@@ -21,7 +20,6 @@ let runsOn = (
   Pervasives.mod(blockNumber - startBlock, interval) === 0
 }
 
-// A block handler selecting fields, as a native client is built with it.
 type registrationInput = {
   index: int,
   startBlock: int,

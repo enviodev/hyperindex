@@ -288,7 +288,6 @@ pub struct EvmRpcClient {
     /// response, so a later page with a different selection is served from the
     /// stores rather than refetched.
     block_read: BlockRead,
-    chain_block_mask: u64,
     chain_tx_mask: u64,
     block_registrations: BlockRegistrations,
 }
@@ -408,7 +407,6 @@ impl EvmRpcClient {
             fetches: Fetches::default(),
             registration_fields,
             block_read: BlockRead::for_chain(chain_fields.block_mask),
-            chain_block_mask: chain_fields.block_mask,
             chain_tx_mask: chain_fields.tx_mask,
             block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
         })
@@ -532,7 +530,7 @@ impl EvmRpcClient {
         // A block handler can select fields no event registration does, so a
         // page reading blocks for one reads them for its fields too.
         let block_read = (!block_selection.is_empty())
-            .then(|| BlockRead::for_chain(self.chain_block_mask | block_selection.mask()));
+            .then(|| BlockRead::for_chain(self.block_read.covering | block_selection.mask()));
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),

@@ -537,7 +537,6 @@ type _badEnumLookup = Enum<"NotAnEnum">;
 import type {
   Address,
   EvmChainId,
-  EvmOnBlockBlock,
   EvmOnBlockContext,
   EvmOnBlockFilter,
   EvmOnBlockHandler,
@@ -558,9 +557,6 @@ expectType<EvmOnBlockOptions>(_blockOpts);
 expectType<TypeEqual<EvmOnBlockHandlerArgs["block"]["number"], number>>(true);
 // @ts-expect-error - a field the registration didn't select
 const _unselected: string = ({} as EvmOnBlockHandlerArgs["block"]).hash;
-expectType<TypeEqual<EvmOnBlockBlock<{ readonly block: readonly ["miner"] }>["miner"], Address>>(
-  true,
-);
 expectType<TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>>(true);
 // A handler written apart from its registration names the selection first.
 expectType<

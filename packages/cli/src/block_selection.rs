@@ -1,16 +1,9 @@
-//! The block table as a query selects it: the block handlers that read fields
-//! beyond the block's key, each running on every `interval`-th block of its
-//! range. Every source routes the blocks it fetched to them the way it routes
-//! logs to event registrations, so which handler runs on which block is decided
-//! here once.
-
 use std::collections::HashMap;
 use std::ops::Range;
 
 use anyhow::{ensure, Context, Result};
 use napi_derive::napi;
 
-/// A block handler selecting fields, as a client is built with it.
 #[napi(object)]
 #[derive(Clone, Debug)]
 pub struct OnBlockRegistrationInput {
@@ -24,7 +17,6 @@ pub struct OnBlockRegistrationInput {
     pub block_field_mask: f64,
 }
 
-/// A block handler run on one block of the response.
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockItem {
@@ -69,7 +61,6 @@ impl Registration {
     }
 }
 
-/// The chain's block handlers that select fields, by index.
 #[derive(Default)]
 pub(crate) struct BlockRegistrations(HashMap<i64, Registration>);
 
