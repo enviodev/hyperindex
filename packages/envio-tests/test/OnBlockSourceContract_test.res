@@ -263,6 +263,33 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     t.expect((queries, latestFetchedBlockNumber)).toEqual(([], 13))
   })
 
+  // At the head the page's hashes feed reorg detection, so it is sent even
+  // with no handler block to read.
+  Async.it("still sends a realtime query when no handler runs in the range", async t => {
+    let queries = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
+        let _ = await source->fetch(
+          ~addressSet,
+          ~onBlockRegistrations=named("early"),
+          ~includeAllBlocks=true,
+        )
+        server->MockHyperSyncServer.takeQueries
+      },
+    )
+
+    t.expect(queries).toEqual([
+      JSON.parseOrThrow(`{
+        "from_block": 10,
+        "to_block": 14,
+        "include_all_blocks": true,
+        "field_selection": {"block": ["hash", "number", "timestamp"]}
+      }`),
+    ])
+  })
+
   // Every block between two a handler runs on would cost more to read than a
   // request per handler block, so the page reads the one block and answers for
   // the gap up to the next.

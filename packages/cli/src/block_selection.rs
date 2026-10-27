@@ -148,6 +148,7 @@ impl BlockRegistrations {
         Ok(BlockQuery {
             selection,
             blocks_only,
+            realtime,
             from_block,
             to_block,
             max_blocks,
@@ -163,6 +164,7 @@ const SPARSE_GAP: u64 = 1000;
 pub(crate) struct BlockQuery {
     pub(crate) selection: BlockSelection,
     blocks_only: bool,
+    realtime: bool,
     pub(crate) from_block: u64,
     /// Inclusive.
     pub(crate) to_block: Option<u64>,
@@ -177,9 +179,10 @@ pub(crate) struct BlockQuery {
 impl BlockQuery {
     /// The end (exclusive) of a range a query for blocks alone has nothing to
     /// read in, which it answers for without a request: on SVM a query
-    /// selecting nothing would return every instruction of the range.
+    /// selecting nothing would return every instruction of the range. Not in
+    /// realtime, where the page's hashes feed reorg detection.
     pub(crate) fn unread_until(&self) -> Option<u64> {
-        if self.blocks_only && self.selection.is_empty() {
+        if self.blocks_only && !self.realtime && self.selection.is_empty() {
             self.to_block?.checked_add(1)
         } else {
             None
@@ -465,8 +468,9 @@ mod tests {
                 planned(&ended, (11, Some(5009)), true, false, Some(3)).unread_until(),
                 planned(&ended, (11, None), true, false, Some(3)).unread_until(),
                 planned(&ended, (11, Some(5009)), false, false, Some(3)).unread_until(),
+                planned(&ended, (11, Some(5009)), true, true, Some(3)).unread_until(),
             ),
-            (Some(5010), None, None)
+            (Some(5010), None, None, None)
         );
     }
 

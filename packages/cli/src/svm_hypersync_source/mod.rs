@@ -22,7 +22,8 @@ pub(crate) mod mod_helpers {
 use hypersync_client_solana::simple_types as simple;
 use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
-use hypersync_solana_net_types::query::SolanaQuery;
+use hypersync_solana_net_types::query::{AccountActivitySelection, SolanaQuery};
+use hypersync_solana_net_types::types::Signature;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
@@ -266,6 +267,20 @@ impl SvmHyperSyncClient {
                 parse_columns(&built.account_activity_columns).map_err(map_err)?;
         }
 
+        // A slot handler runs on slots no instruction landed on.
+        let include_all_blocks =
+            params.include_all_blocks.unwrap_or(false) || !block_selection.is_empty();
+        // `include_all_blocks` returns every account activity row of the blocks
+        // unless the query selects some, so when nothing reads them a selection
+        // matching no transaction keeps them out.
+        let account_activity = if include_all_blocks && built.account_activity_columns.is_empty() {
+            vec![AccountActivitySelection {
+                transaction_id: vec![Signature([0; 64])],
+                ..Default::default()
+            }]
+        } else {
+            Vec::new()
+        };
         let query = SolanaQuery {
             from_slot,
             // Inclusive on the boundary, exclusive on the wire.
@@ -280,9 +295,8 @@ impl SvmHyperSyncClient {
                 .max_num_instructions
                 .and_then(|v| usize::try_from(v).ok()),
             max_num_blocks: block_query.max_blocks.and_then(|b| usize::try_from(b).ok()),
-            // A slot handler runs on slots no instruction landed on.
-            include_all_blocks: params.include_all_blocks.unwrap_or(false)
-                || !block_selection.is_empty(),
+            include_all_blocks,
+            account_activity,
             ..Default::default()
         };
 
