@@ -263,7 +263,7 @@ describe("Per-chain entity columns", () => {
     entityConfig.table
     ->Table.getFields
     ->Array.map(Storage.pgColumnInput)
-    ->Array.filter(column => column.isPrimaryKey === Some(true))
+    ->Array.filter(column => column.isPrimaryKey)
     ->Array.map(column => column.name)
 
   it("Puts the chain id in a per-chain entity's primary key, and only there", t => {

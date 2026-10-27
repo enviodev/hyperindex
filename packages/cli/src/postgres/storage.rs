@@ -354,25 +354,7 @@ impl Storage {
         ))
     }
 
-    pub async fn is_initialized(&self) -> Result<bool> {
-        // `event_sync_state` is what an envio before 2.28 created.
-        let (rows, _) = self
-            .client
-            .query(
-                "SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND \
-                 (table_name = 'event_sync_state' OR table_name = $2);",
-                &[
-                    Param::Text(self.schema().to_string()),
-                    Param::Text(CHAINS_TABLE.to_string()),
-                ],
-            )
-            .await?;
-        Ok(!rows.is_empty())
-    }
-
-    /// Whether the schema is empty, refusing one that holds anything but an
-    /// indexer's tables: initializing drops it.
-    pub async fn check_schema_for_initialize(&self) -> Result<bool> {
+    async fn table_names(&self) -> Result<Vec<String>> {
         let (rows, _) = self
             .client
             .query(
@@ -380,15 +362,26 @@ impl Storage {
                 &[Param::Text(self.schema().to_string())],
             )
             .await?;
-        let names = rows
+        rows.iter().map(|row| cell::<String>(row, 0)).collect()
+    }
+
+    /// Whether the schema holds an indexer's tables. `event_sync_state` is what
+    /// an envio before 2.28 created.
+    fn has_indexer_tables(names: &[String]) -> bool {
+        names
             .iter()
-            .map(|row| cell::<String>(row, 0))
-            .collect::<Result<Vec<_>>>()?;
-        if !names.is_empty()
-            && !names
-                .iter()
-                .any(|name| name == CHAINS_TABLE || name == "event_sync_state")
-        {
+            .any(|name| name == CHAINS_TABLE || name == "event_sync_state")
+    }
+
+    pub async fn is_initialized(&self) -> Result<bool> {
+        Ok(Self::has_indexer_tables(&self.table_names().await?))
+    }
+
+    /// Whether the schema is empty, refusing one that holds anything but an
+    /// indexer's tables: initializing drops it.
+    pub async fn check_schema_for_initialize(&self) -> Result<bool> {
+        let names = self.table_names().await?;
+        if !names.is_empty() && !Self::has_indexer_tables(&names) {
             bail!(
                 "Cannot run Envio migrations on PostgreSQL schema \"{schema}\" because it contains \
                  non-Envio tables. Running migrations would delete all data in this schema.\n\nTo \
@@ -410,7 +403,12 @@ impl Storage {
     /// Only tables, keys, views and chain rows. The schema's read indexes make
     /// backfill writes far dearer, so they come later, from
     /// `finalizeBackfill`.
-    pub async fn initialize(&self, input: &Initialize, is_empty_schema: bool) -> Result<()> {
+    pub async fn initialize(
+        &self,
+        input: &Initialize,
+        instance: &str,
+        is_empty_schema: bool,
+    ) -> Result<()> {
         let schema = self.schema();
         let tables = input
             .tables
@@ -479,7 +477,7 @@ impl Storage {
                     &internal::write_info(schema),
                     &[
                         Param::Text(input.envio_info.clone()),
-                        Param::Text(input.instance.clone()),
+                        Param::Text(instance.to_string()),
                     ],
                 )
                 .await?;

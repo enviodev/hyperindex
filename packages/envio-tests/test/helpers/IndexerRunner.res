@@ -278,13 +278,13 @@ let run = async (
     // Tracking tables in Hasura costs ~1.9 seconds per indexer.
     let client = Storage.clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
     let storage = mapStorage(
-      Storage.makeStorageFromEnv(
-        ~config,
-        ~logger,
-        ~pgSchema,
-        ~isHasuraEnabled=false,
-        ~cacheDir,
+      Storage.make(
         ~client,
+        ~logger,
+        ~entities=config.userEntities,
+        ~cacheDir,
+        ~ecosystem=config.ecosystem.name,
+        ~isolated=config.isolated,
       ),
     )
     storages->Array.push(storage)

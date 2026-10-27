@@ -596,11 +596,7 @@ fn integer_cell(value: i128, kind: ReadKind) -> Cell<'static> {
     }
 }
 
-fn decode_value(
-    reader: &mut Reader<'_>,
-    ch_type: &ChType,
-    kind: ReadKind,
-) -> Result<Cell<'static>> {
+fn decode_value<'a>(reader: &mut Reader<'a>, ch_type: &ChType, kind: ReadKind) -> Result<Cell<'a>> {
     Ok(match ch_type {
         ChType::Nullable(inner) => {
             if reader.byte()? != 0 {
@@ -642,11 +638,10 @@ fn decode_value(
             let length = reader.varint()? as usize;
             let bytes = reader.take(length)?;
             match kind {
-                ReadKind::Bytes => Cell::Bytes(Cow::Owned(bytes.to_vec())),
-                _ => Cell::Str(Cow::Owned(
+                ReadKind::Bytes => Cell::Bytes(Cow::Borrowed(bytes)),
+                _ => Cell::Str(Cow::Borrowed(
                     std::str::from_utf8(bytes)
-                        .context("a text column holds bytes that are not UTF-8")?
-                        .to_string(),
+                        .context("a text column holds bytes that are not UTF-8")?,
                 )),
             }
         }
@@ -656,7 +651,7 @@ fn decode_value(
 /// Reads a RowBinary answer whose columns are `columns`: each a type and what
 /// its values read as — a list's elements, for an `Array`. Returns every row's
 /// cells in turn.
-pub fn decode(body: &[u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<Cell<'static>>> {
+pub fn decode<'a>(body: &'a [u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<Cell<'a>>> {
     let mut reader = Reader { bytes: body, at: 0 };
     let mut cells = Vec::new();
     let mut row = 0usize;
@@ -704,6 +699,30 @@ mod tests {
     use super::*;
     use crate::clickhouse::ch_type::test_support::parse_type;
     use pretty_assertions::assert_eq;
+
+    /// Text and bytes are read in place rather than copied out of the answer.
+    #[test]
+    fn text_and_bytes_borrow_from_the_answer() {
+        let body = b"\x02hi\x01\xff";
+        let cells = decode(
+            body,
+            &[
+                (ChType::String, ReadKind::Text),
+                (ChType::Bytes, ReadKind::Bytes),
+            ],
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                cells.as_slice(),
+                [
+                    Cell::Str(Cow::Borrowed("hi")),
+                    Cell::Bytes(Cow::Borrowed([0xff]))
+                ]
+            ),
+            "{cells:?}"
+        );
+    }
 
     /// A column and the arena backing it, so a test can keep owning the values
     /// a borrowed [`Column`] points at.

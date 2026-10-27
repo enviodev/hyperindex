@@ -528,6 +528,7 @@ const NEVER_ERROR_CODES: &[u32] = &[
     53,  // TYPE_MISMATCH
     60,  // UNKNOWN_TABLE
     62,  // SYNTAX_ERROR
+    69,  // ARGUMENT_OUT_OF_BOUND
     81,  // UNKNOWN_DATABASE
     117, // INCORRECT_DATA
     164, // READONLY
@@ -1166,6 +1167,26 @@ mod tests {
 
         assert_eq!(
             (err.contains("readonly"), server.inserts_seen()),
+            (true, 1),
+            "expected one attempt and the server's message, got: {err}"
+        );
+    }
+
+    // A value out of what its type holds is refused the same way every time.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_value_out_of_bounds_is_not_retried() {
+        let server = MockClickHouse::rejecting_with(
+            usize::MAX,
+            "Code: 69. DB::Exception: Too many digits (77 > 76) in decimal value. \
+             (ARGUMENT_OUT_OF_BOUND)",
+        )
+        .await;
+        let client = client_for(&server, 8);
+
+        let err = reason(insert(&client, &["a", "b"]).await.unwrap_err());
+
+        assert_eq!(
+            (err.contains("Too many digits"), server.inserts_seen()),
             (true, 1),
             "expected one attempt and the server's message, got: {err}"
         );

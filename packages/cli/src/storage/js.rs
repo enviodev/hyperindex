@@ -39,9 +39,9 @@ pub struct PgColumnInput {
     /// The database column name, renames already resolved.
     pub name: String,
     pub field_type: String,
-    pub is_array: Option<bool>,
-    pub is_nullable: Option<bool>,
-    pub is_primary_key: Option<bool>,
+    pub is_array: bool,
+    pub is_nullable: bool,
+    pub is_primary_key: bool,
     pub default_value: Option<String>,
     /// `BigInt` and `BigDecimal` only.
     pub precision: Option<u32>,
@@ -63,9 +63,9 @@ impl TryFrom<PgColumnInput> for ColumnSpec {
                 input.enum_name.as_deref(),
             )?,
             name: input.name,
-            is_array: input.is_array.unwrap_or(false),
-            is_nullable: input.is_nullable.unwrap_or(false),
-            is_primary_key: input.is_primary_key.unwrap_or(false),
+            is_array: input.is_array,
+            is_nullable: input.is_nullable,
+            is_primary_key: input.is_primary_key,
             default_value: input.default_value,
         })
     }
@@ -78,7 +78,7 @@ pub struct PgTableInput {
     /// The columns a batch's rows carry, in the order they are laid out.
     pub write_columns: Vec<String>,
     pub partition_by_column: Option<String>,
-    pub append_only: Option<bool>,
+    pub append_only: bool,
     /// An entity's history table.
     pub history_table: Option<String>,
     /// A per-chain entity's chain column.
@@ -428,9 +428,8 @@ pub struct JsStorage {
     /// Result sets handed out but not yet read and released. An entry lives
     /// only between the call that returned it and `releaseResult`.
     results: Mutex<HashMap<u32, Arena>>,
-    /// Batches lent to JavaScript to fill, and then waiting to be written,
-    /// each with the names its columns are sealed under.
-    staged: columnar::js::Stages<Vec<String>>,
+    /// Batches lent to JavaScript to fill, and then waiting to be written.
+    staged: columnar::js::Stages,
     next_handle: AtomicU32,
 }
 
@@ -556,18 +555,13 @@ impl JsStorage {
                     .as_ref()
                     .map(|kinds| kinds.iter().map(|&kind| kind as u8).collect()),
             }),
-            clickhouse: table.clickhouse.as_ref().map(|table| ClickHouseRegistered {
-                names: staged_names(table),
-                kinds: table
-                    .staged_kinds()
-                    .into_iter()
-                    .map(|kind| kind as u8)
-                    .collect(),
-                nullable: table
-                    .staged
-                    .iter()
-                    .map(|(_, ch_type)| matches!(ch_type, clickhouse::ch_type::ChType::Nullable(_)))
-                    .collect(),
+            clickhouse: table.clickhouse.as_ref().map(|table| {
+                let (names, kinds, nullable) = table.staged_layout();
+                ClickHouseRegistered {
+                    names,
+                    kinds: kinds.into_iter().map(|kind| kind as u8).collect(),
+                    nullable,
+                }
             }),
         };
         tables.push(Arc::new(table));
@@ -598,8 +592,8 @@ impl JsStorage {
                 (table.write_column_names(), kinds)
             }
             Store::ClickHouse => {
-                let table = table.clickhouse().map_err(to_napi)?;
-                (staged_names(table), table.staged_kinds())
+                let (names, kinds, _) = table.clickhouse().map_err(to_napi)?.staged_layout();
+                (names, kinds)
             }
         };
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
@@ -620,7 +614,7 @@ impl JsStorage {
 
     #[napi]
     pub fn commit_stage(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        self.staged.commit(handle, buffers, Vec::clone)
+        self.staged.commit(handle, buffers)
     }
 
     /// Gives up on a batch. Whatever sent the caller here is the error worth
@@ -743,7 +737,6 @@ impl JsStorage {
             enums: input.enums,
             chains: input.chains,
             envio_info: input.envio_info,
-            instance: super::new_instance(),
             contract_names: input.contract_names,
             addresses: addresses(input.addresses)?,
         };
@@ -1039,10 +1032,6 @@ impl JsStorage {
     }
 }
 
-fn staged_names(table: &clickhouse::table::Table) -> Vec<String> {
-    table.staged.iter().map(|(name, _)| name.clone()).collect()
-}
-
 fn definitions_of(definitions: Vec<PgIndexInput>) -> napi::Result<Vec<IndexDefinition>> {
     definitions
         .into_iter()
@@ -1063,7 +1052,7 @@ fn pg_registration(name: String, table: PgTableInput) -> anyhow::Result<TableReg
             partition_by_column: table.partition_by_column,
         },
         write_columns: table.write_columns,
-        append_only: table.append_only.unwrap_or(false),
+        append_only: table.append_only,
         history: table.history_table.map(|table_name| HistoryRegistration {
             table_name,
             chain_id_column: table.chain_id_column,

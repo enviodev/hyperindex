@@ -40,7 +40,7 @@ fn store(database: &str) -> Storage {
     store_on(connection(database), false)
 }
 
-fn store_on(connection: Connection, replicated: bool) -> Storage {
+pub(crate) fn store_on(connection: Connection, replicated: bool) -> Storage {
     Storage::new(
         connection,
         Tuning::default(),
@@ -124,7 +124,7 @@ impl Live {
 }
 
 /// An `Account` of an id, an owner, and a balance kept as text.
-fn account_input() -> ClickHouseTableInput {
+pub(crate) fn account_input() -> ClickHouseTableInput {
     entity_input(
         "Account",
         vec![
@@ -135,7 +135,7 @@ fn account_input() -> ClickHouseTableInput {
     )
 }
 
-fn table_on(storage: &Storage, input: ClickHouseTableInput) -> Arc<Table> {
+pub(crate) fn table_on(storage: &Storage, input: ClickHouseTableInput) -> Arc<Table> {
     Arc::new(Table {
         name: input.name.clone(),
         postgres: None,
@@ -158,7 +158,6 @@ pub(crate) fn initialize_input(tables: Vec<Arc<Table>>) -> Initialize {
             max_reorg_depth: 200,
         }],
         envio_info: "{\"config\":1}".to_string(),
-        instance: "instance".to_string(),
         contract_names: Vec::new(),
         addresses: Addresses::default(),
     }
@@ -209,7 +208,7 @@ fn committed(checkpoint_id: i64, progress_block: i32) -> ResumedChain {
 /// An account history row: set to `(owner, balance)`, or a delete.
 type Change<'a> = (&'a str, Option<(&'a str, &'a str)>, u64);
 
-fn history(changes: &[Change<'_>]) -> Arena {
+pub(crate) fn history(changes: &[Change<'_>]) -> Arena {
     let mut arena = Arena::new(
         changes.len(),
         &[
@@ -304,7 +303,7 @@ fn post(url: &str) -> reqwest::RequestBuilder {
         .basic_auth(username, Some(password))
 }
 
-async fn execute_on(url: &str, statement: String) -> String {
+pub(crate) async fn execute_on(url: &str, statement: String) -> String {
     let response = post(url).body(statement).send().await.unwrap();
     assert!(
         response.status().is_success(),
@@ -415,6 +414,42 @@ async fn a_ttl_never_expires_a_delete_before_the_set_it_cancels() {
 /// A query that fails once its first rows are on the wire has already answered
 /// with a success status. Taking what arrived would hand a reader a partial
 /// result — or none — as if it were the whole of it.
+/// The server keys a decimal kept as text as the store keys the value a filter
+/// names, however many zeros either carries.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn the_server_keys_a_decimal_as_a_filter_value_is_keyed() {
+    let max = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+    let minus_max = format!("-{max}");
+    let texts = [
+        max,
+        &minus_max,
+        "0",
+        "-0",
+        "0.000",
+        "007.50",
+        "-1.05",
+        "-0.5",
+        "0.0000000000000000000000000000001",
+        "100",
+    ];
+    let keyed = execute_on(
+        &connection("").url,
+        format!(
+            "SELECT {} FROM (SELECT arrayJoin([{}]) AS v) FORMAT TSV",
+            super::select::decimal_order("v"),
+            texts.map(|text| format!("'{text}'")).join(", ")
+        ),
+    )
+    .await;
+    assert_eq!(
+        keyed.lines().map(str::to_string).collect::<Vec<_>>(),
+        texts
+            .map(|text| super::select::decimal_key(text).unwrap())
+            .to_vec()
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_read_that_fails_partway_is_an_error() {

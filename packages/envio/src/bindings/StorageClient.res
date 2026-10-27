@@ -54,8 +54,8 @@ type clickHouseColumn = {
   // column by even when a rename is configured.
   fieldName?: string,
   fieldType: string,
-  isNullable?: bool,
-  isArray?: bool,
+  isNullable: bool,
+  isArray: bool,
   precision?: int,
   scale?: int,
   enumVariants?: array<string>,

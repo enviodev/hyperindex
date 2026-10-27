@@ -38,9 +38,9 @@ type pgColumnInput = {
   // The database column name, renames already resolved.
   name: string,
   fieldType: string,
-  isArray?: bool,
-  isNullable?: bool,
-  isPrimaryKey?: bool,
+  isArray: bool,
+  isNullable: bool,
+  isPrimaryKey: bool,
   defaultValue?: string,
   precision?: int,
   scale?: int,
@@ -53,7 +53,7 @@ type pgTableInput = {
   // The columns a batch's rows carry, in the order they are laid out.
   writeColumns: array<string>,
   partitionByColumn?: string,
-  appendOnly?: bool,
+  appendOnly: bool,
   // An entity's history table, and the column its chain is in when it is
   // per-chain.
   historyTable?: string,

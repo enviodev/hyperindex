@@ -5,12 +5,6 @@
 // so pointing a run at its own database is a matter of setting them before the
 // storage is built.
 
-@val external pid: int = "process.pid"
-
-let prefix = "envio_test_"
-
-let counter = ref(0)
-
 let host = () =>
   switch %raw(`process.env.ENVIO_CLICKHOUSE_HOST`)->Nullable.toOption {
   | Some("") | None => "http://localhost:8123"
@@ -53,10 +47,7 @@ async (host, username, password, query) => {
 
 let query = statement => exec(~host=host(), ~username=username(), ~password=password(), statement)
 
-let make = () => {
-  counter := counter.contents + 1
-  `${prefix}${Date.now()->Float.toString}_${pid->Int.toString}_${counter.contents->Int.toString}`
-}
+let make = TestPgSchema.make
 
 // Points the runtime at `database`. The env is process-global, so this must run
 // with no await between it and the storage that reads it — otherwise a second

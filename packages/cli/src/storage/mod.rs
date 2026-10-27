@@ -245,16 +245,15 @@ pub struct Initialize {
     pub enums: Vec<Enum>,
     pub chains: Vec<ChainConfig>,
     pub envio_info: String,
-    /// Written to both stores, so a ClickHouse database is told apart from one
-    /// built beside another initialize of the same config.
-    pub instance: String,
     pub contract_names: Vec<String>,
     pub addresses: Addresses,
 }
 
-/// One initialize's instance: unique to it with overwhelming odds, which is
-/// all telling deployments apart needs.
-pub fn new_instance() -> String {
+/// One initialize's instance, written to both stores so a ClickHouse database
+/// is told apart from one built beside another initialize of the same config.
+/// Unique to it with overwhelming odds, which is all telling deployments apart
+/// needs.
+fn new_instance() -> String {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
     hasher.write_u128(
@@ -410,9 +409,12 @@ impl Storage {
             clickhouse.check_for_initialize().await?;
             clickhouse.build(&input).await?;
         }
-        self.postgres.initialize(&input, is_empty_schema).await?;
+        let instance = new_instance();
+        self.postgres
+            .initialize(&input, &instance, is_empty_schema)
+            .await?;
         match &self.clickhouse {
-            Some(clickhouse) => clickhouse.seal(&input).await,
+            Some(clickhouse) => clickhouse.seal(&instance).await,
             None => Ok(()),
         }
     }

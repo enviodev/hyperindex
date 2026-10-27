@@ -118,10 +118,6 @@ fn number(text: &str) -> Result<&str> {
     }
 }
 
-/// A Decimal wide enough to compare any value a numeric field holds, for a
-/// column that keeps its numbers as text.
-const TEXT_NUMBER_SCALE: u32 = 30;
-
 /// The widest scale a Decimal256 holds.
 const MAX_DECIMAL_SCALE: u32 = 76;
 
@@ -169,6 +165,51 @@ fn integer_key(canonical: &str) -> String {
     }
 }
 
+/// A decimal kept as text, as text that sorts the way the number does, the
+/// way [`integer_order`] keys an integer: its sign, how many digits its whole
+/// part has, then its digits with the fraction's trailing zeros dropped, so
+/// `1.50` keys as `1.5` does. Below zero the digits are complemented and end in
+/// `:`, which sorts past every digit, so a longer fraction sorts lower. A
+/// Decimal256 would hold neither uint256's top nor a fraction past its scale.
+pub(super) fn decimal_order(text: &str) -> String {
+    let unsigned = format!("trim(LEADING '-0' FROM {text})");
+    let whole = format!("splitByChar('.', {unsigned})[1]");
+    let digits =
+        format!("concat({whole}, trim(TRAILING '0' FROM splitByChar('.', {unsigned})[2]))");
+    format!(
+        "if(startsWith({text}, '-') AND {digits} != '', concat('0', leftPad(toString(99999 - \
+         length({whole})), 5, '0'), translate({digits}, '0123456789', '9876543210'), ':'), \
+         concat('1', leftPad(toString(length({whole})), 5, '0'), {digits}))"
+    )
+}
+
+/// [`decimal_order`] of a decimal in plain digits, worked out here.
+pub(super) fn decimal_key(text: &str) -> Result<String> {
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, text),
+    };
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, "0"));
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    if !digits(whole) || !digits(fraction) {
+        bail!("`{text}` is not a decimal to filter by");
+    }
+    let whole = whole.trim_start_matches('0');
+    let digits = format!("{whole}{}", fraction.trim_end_matches('0'));
+    Ok(if negative && !digits.is_empty() {
+        format!(
+            "0{:05}{}:",
+            99_999 - whole.len(),
+            digits
+                .bytes()
+                .map(|digit| char::from(b'9' - digit + b'0'))
+                .collect::<String>()
+        )
+    } else {
+        format!("1{:05}{digits}", whole.len())
+    })
+}
+
 /// The scale a value is compared at against a Decimal column of `column_scale`:
 /// wide enough to keep every fractional digit the value spells, so it isn't
 /// compared as a rounded neighbour, as far as a Decimal256 has room beside its
@@ -209,10 +250,7 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
             // it is compared as the number it spells rather than as text,
             // which orders "9" after "10".
             ChType::String if field_type == "BigInt" => literal(&integer_key(&integer(text)?)),
-            ChType::String => format!(
-                "toDecimal256({}, {TEXT_NUMBER_SCALE})",
-                literal(number(text)?)
-            ),
+            ChType::String => literal(&decimal_key(text)?),
             // Decimals of two scales compare exactly, so the value keeps
             // every digit it has past the column's.
             ChType::Decimal { scale, .. } => {
@@ -234,7 +272,7 @@ fn compared(column: &Column, kind: ValueKind) -> String {
     let name = quoted(&column.name);
     let as_number = |text: &str| match column.field.field_type.as_str() {
         "BigInt" => integer_order(text),
-        _ => format!("toDecimal256OrNull({text}, {TEXT_NUMBER_SCALE})"),
+        _ => decimal_order(text),
     };
     match (kind, column.ch_type.base()) {
         (ValueKind::Number, ChType::String) => as_number(&name),
@@ -437,11 +475,13 @@ fn load_sql(
             on_values.push(rendered);
         }
     }
-    let committed = format!(
-        "{} <= {}",
-        quoted(CHECKPOINT_ID_COLUMN),
-        frontier_of(entity.chain_id_column.as_deref(), frontier)
-    );
+    // A load scoped to one chain reads only that chain's rows, so they are all
+    // held to its frontier, which spares a lookup per row.
+    let bound = match (&entity.chain_id_column, scoped_chain(conditions)) {
+        (Some(_), Some(chain_id)) => frontier.get(&chain_id).copied().unwrap_or(0).to_string(),
+        _ => frontier_of(entity.chain_id_column.as_deref(), frontier),
+    };
+    let committed = format!("{} <= {bound}", quoted(CHECKPOINT_ID_COLUMN));
     let source = table_ref(database, &entity.history_table);
     let mut narrowing = on_key.clone();
     narrowing.push(committed.clone());
@@ -479,6 +519,23 @@ fn load_sql(
         conjunction(&current),
         key = quoted_list(&key),
     ))
+}
+
+/// The one chain a load is scoped to, if a condition names it.
+fn scoped_chain(conditions: &[Condition]) -> Option<i64> {
+    conditions.iter().find_map(|condition| {
+        match (
+            condition.is_chain_id,
+            condition.operator,
+            condition.values.as_slice(),
+        ) {
+            (true, Operator::Eq, [value]) => match value.as_slice() {
+                [Some(text)] => text.parse().ok(),
+                _ => None,
+            },
+            _ => None,
+        }
+    })
 }
 
 /// What a load names each entity's latest row by. Not a column's name: an
@@ -534,12 +591,12 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
     ))
 }
 
-/// Every committed row of the table's history, each with its checkpoint and
-/// change.
+/// Every committed row of the table's history, each with its change and
+/// checkpoint.
 pub fn history(database: &str, table: &Table, frontier: &Frontier) -> String {
     let checkpoint = quoted(CHECKPOINT_ID_COLUMN);
     format!(
-        "SELECT {}, {checkpoint}, {} FROM {} WHERE {checkpoint} <= {} ORDER BY {}, {checkpoint} \
+        "SELECT {}, {}, {checkpoint} FROM {} WHERE {checkpoint} <= {} ORDER BY {}, {checkpoint} \
          FORMAT RowBinary",
         as_row_names(&table.columns),
         quoted(CHANGE_COLUMN),
@@ -552,7 +609,10 @@ pub fn history(database: &str, table: &Table, frontier: &Frontier) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clickhouse::table::test_support::{account, per_chain_account};
+    use crate::clickhouse::table::test_support::{
+        account, column, entity_input, per_chain_account,
+    };
+    use crate::config_parsing::system_config::ChainIdMode;
     use pretty_assertions::assert_eq;
 
     fn eq(column: &str, kind: ValueKind, value: &str) -> Condition {
@@ -648,26 +708,45 @@ mod tests {
     }
 
     /// A per-chain entity's row compares against its own chain's frontier, and
-    /// the chain is part of what names it.
+    /// the chain is part of what names it. A load scoped to one chain holds
+    /// every row to that chain's frontier, and one that isn't looks each row's
+    /// up; a chain the frontier doesn't name has committed nothing.
     #[test]
     fn a_per_chain_load_holds_each_row_to_its_chains_frontier() {
-        let mut on_chain = eq("chainId", ValueKind::Number, "137");
-        on_chain.is_chain_id = true;
-        assert_eq!(
-            load(
-                "db",
-                &per_chain_account(),
-                &[eq("id", ValueKind::Text, "a"), on_chain],
-                &frontier(&[(1, 7), (137, 9)])
+        let on_chain = |chain_id: &str| Condition {
+            is_chain_id: true,
+            ..eq("chainId", ValueKind::Number, chain_id)
+        };
+        let frontier = frontier(&[(1, 7), (137, 9)]);
+        let load_sql = |conditions: &[Condition]| {
+            load("db", &per_chain_account(), conditions, &frontier)
+                .unwrap()
+                .sql
+        };
+        let by_id = eq("id", ValueKind::Text, "a");
+        let sql = |filter: &str, committed: &str| {
+            format!(
+                "SELECT `id` AS `id`, `chain_id` AS `chainId` FROM (SELECT `id`, `chain_id`, \
+                 envio_latest.1 AS `envio_change` FROM (SELECT `id`, `chain_id`, \
+                 argMax(tuple(`envio_change`), `envio_checkpoint_id`) AS envio_latest FROM \
+                 `db`.`envio_history_Account` WHERE {filter}`envio_checkpoint_id` <= {committed} \
+                 GROUP BY `id`, `chain_id`)) WHERE `envio_change` = 'SET' FORMAT RowBinary"
             )
-            .unwrap()
-            .sql,
-            "SELECT `id` AS `id`, `chain_id` AS `chainId` FROM (SELECT `id`, `chain_id`, \
-             envio_latest.1 AS `envio_change` FROM (SELECT `id`, `chain_id`, \
-             argMax(tuple(`envio_change`), `envio_checkpoint_id`) AS envio_latest FROM \
-             `db`.`envio_history_Account` WHERE `id` = 'a' AND `chain_id` = 137 AND \
-             `envio_checkpoint_id` <= multiIf(`chain_id` = 1, 7, `chain_id` = 137, 9, 0) GROUP \
-             BY `id`, `chain_id`)) WHERE `envio_change` = 'SET' FORMAT RowBinary"
+        };
+        assert_eq!(
+            [
+                load_sql(&[by_id.clone(), on_chain("137")]),
+                load_sql(&[by_id.clone(), on_chain("10")]),
+                load_sql(&[by_id]),
+            ],
+            [
+                sql("`id` = 'a' AND `chain_id` = 137 AND ", "9"),
+                sql("`id` = 'a' AND `chain_id` = 10 AND ", "0"),
+                sql(
+                    "`id` = 'a' AND ",
+                    "multiIf(`chain_id` = 1, 7, `chain_id` = 137, 9, 0)"
+                ),
+            ]
         );
     }
 
@@ -681,11 +760,11 @@ mod tests {
             ),
             (
                 "SELECT `id` AS `id`, `owner_name` AS `ownerName`, `balance` AS `balance`, \
-                 `envio_checkpoint_id`, `envio_change` FROM `db`.`envio_history_Account` WHERE \
+                 `envio_change`, `envio_checkpoint_id` FROM `db`.`envio_history_Account` WHERE \
                  `envio_checkpoint_id` <= 9 ORDER BY `id`, `envio_checkpoint_id` FORMAT RowBinary"
                     .to_string(),
-                "SELECT `id` AS `id`, `chain_id` AS `chainId`, `envio_checkpoint_id`, \
-                 `envio_change` FROM `db`.`envio_history_Account` WHERE `envio_checkpoint_id` <= \
+                "SELECT `id` AS `id`, `chain_id` AS `chainId`, `envio_change`, \
+                 `envio_checkpoint_id` FROM `db`.`envio_history_Account` WHERE `envio_checkpoint_id` <= \
                  multiIf(`chain_id` = 1, 7, `chain_id` = 137, 9, 0) ORDER BY `id`, `chain_id`, \
                  `envio_checkpoint_id` FORMAT RowBinary"
                     .to_string(),
@@ -773,6 +852,89 @@ mod tests {
                     Ok("0".to_string()),
                     Ok("0".to_string()),
                     Err("`+1` is not an integer to filter by".to_string()),
+                ]
+            )
+        );
+    }
+
+    /// A BigDecimal with no bound is kept as text, and compared by a key on
+    /// both sides rather than as a Decimal256, which holds neither uint256's
+    /// top nor a fraction past its scale.
+    #[test]
+    fn an_unbounded_decimal_is_compared_by_its_key() {
+        let ratio = Table::new(
+            entity_input(
+                "Ratio",
+                vec![column("id", "String"), column("value", "BigDecimal")],
+            ),
+            "db",
+            ChainIdMode::Int32,
+        )
+        .unwrap();
+        let mut gt = eq("value", ValueKind::Number, "-1.50");
+        gt.operator = Operator::Gt;
+        assert_eq!(
+            condition(&ratio, &gt, None).unwrap(),
+            "if(startsWith(`value`, '-') AND concat(splitByChar('.', trim(LEADING '-0' FROM \
+             `value`))[1], trim(TRAILING '0' FROM splitByChar('.', trim(LEADING '-0' FROM \
+             `value`))[2])) != '', concat('0', leftPad(toString(99999 - length(splitByChar('.', \
+             trim(LEADING '-0' FROM `value`))[1])), 5, '0'), translate(concat(splitByChar('.', \
+             trim(LEADING '-0' FROM `value`))[1], trim(TRAILING '0' FROM splitByChar('.', \
+             trim(LEADING '-0' FROM `value`))[2])), '0123456789', '9876543210'), ':'), \
+             concat('1', leftPad(toString(length(splitByChar('.', trim(LEADING '-0' FROM \
+             `value`))[1])), 5, '0'), concat(splitByChar('.', trim(LEADING '-0' FROM \
+             `value`))[1], trim(TRAILING '0' FROM splitByChar('.', trim(LEADING '-0' FROM \
+             `value`))[2])))) > '09999884:'"
+        );
+    }
+
+    /// The key orders decimals as numbers across signs, sizes and fraction
+    /// lengths, and spells one value the one way whatever zeros it carries.
+    #[test]
+    fn a_decimal_key_orders_as_the_number() {
+        let max = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        let minus_max = format!("-{max}");
+        let ordered = [
+            minus_max.as_str(),
+            "-10",
+            "-1.5",
+            "-1.05",
+            "-1",
+            "-0.51",
+            "-0.5",
+            "-0.0000000000000000000000000000001",
+            "0",
+            "0.0000000000000000000000000000001",
+            "0.5",
+            "0.51",
+            "1",
+            "1.05",
+            "1.5",
+            "10",
+            max,
+        ];
+        let mut keys = ordered
+            .iter()
+            .map(|text| (decimal_key(text).unwrap(), *text))
+            .collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(
+            (
+                keys.iter().map(|(_, text)| *text).collect::<Vec<_>>(),
+                ["1.50", "001.5", "-0", "-0.000", "0.0", "1.", ".5", "1e3"]
+                    .map(|text| decimal_key(text).map_err(|e| e.to_string())),
+            ),
+            (
+                ordered.to_vec(),
+                [
+                    Ok(decimal_key("1.5").unwrap()),
+                    Ok(decimal_key("1.5").unwrap()),
+                    Ok(decimal_key("0").unwrap()),
+                    Ok(decimal_key("0").unwrap()),
+                    Ok(decimal_key("0").unwrap()),
+                    Err("`1.` is not a decimal to filter by".to_string()),
+                    Err("`.5` is not a decimal to filter by".to_string()),
+                    Err("`1e3` is not a decimal to filter by".to_string()),
                 ]
             )
         );

@@ -287,56 +287,58 @@ type registered = {
   clickhouse: option<ClickHouse.table>,
 }
 
-let register = (
-  client: StorageClient.t,
-  ~table: Table.table,
-  ~itemSchema: S.t<unknown>,
-  ~postgres=true,
-  ~clickhouse: option<StorageClient.clickHouseTable>=?,
-  ~appendOnly=false,
-  ~history=?,
-): registered => {
-  let fields = table->Table.schemaOrderedFields(~schema=itemSchema)
-  let chainIdField = table->Table.getChainIdField
-  let registered = client->StorageClient.registerTable({
-    name: table.tableName,
-    postgres: ?(
-      postgres
-        ? Some({
-            Core.columns: table->Table.getFields->Array.map(pgColumnInput),
-            writeColumns: fields->Array.map(Table.getPgDbFieldName),
-            partitionByColumn: ?(chainIdField->Option.map(Table.getPgDbFieldName)),
-            appendOnly,
-            historyTable: ?history,
-            chainIdColumn: ?switch history {
-            | Some(_) => chainIdField->Option.map(Table.getPgDbFieldName)
-            | None => None
-            },
-          })
-        : None
-    ),
-    ?clickhouse,
-  })
-  {
-    handle: registered.handle,
-    home: registered.home,
-    table,
-    fields,
-    postgres: registered.postgres->Option.map(({?kinds}): postgresTable => {
-      staged: kinds->Option.map(kinds =>
-        PgWriting.columns(fields, ~kinds=kinds->Array.map(Staging.kindOfOrdinal))
+%%private(
+  let register = (
+    client: StorageClient.t,
+    ~table: Table.table,
+    ~itemSchema: S.t<unknown>,
+    ~postgres=true,
+    ~clickhouse: option<StorageClient.clickHouseTable>=?,
+    ~appendOnly=false,
+    ~history=?,
+  ): registered => {
+    let fields = table->Table.schemaOrderedFields(~schema=itemSchema)
+    let chainIdField = table->Table.getChainIdField
+    let registered = client->StorageClient.registerTable({
+      name: table.tableName,
+      postgres: ?(
+        postgres
+          ? Some({
+              Core.columns: table->Table.getFields->Array.map(pgColumnInput),
+              writeColumns: fields->Array.map(Table.getPgDbFieldName),
+              partitionByColumn: ?(chainIdField->Option.map(Table.getPgDbFieldName)),
+              appendOnly,
+              historyTable: ?history,
+              chainIdColumn: ?switch history {
+              | Some(_) => chainIdField->Option.map(Table.getPgDbFieldName)
+              | None => None
+              },
+            })
+          : None
       ),
-    }),
-    // Named for where its rows go, which for an entity is its history table.
-    clickhouse: registered.clickhouse->Option.map(
-      ClickHouse.makeTable(
-        ~handle=registered.handle,
-        ~name=history->Option.getOr(table.tableName),
-        _,
+      ?clickhouse,
+    })
+    {
+      handle: registered.handle,
+      home: registered.home,
+      table,
+      fields,
+      postgres: registered.postgres->Option.map(({?kinds}): postgresTable => {
+        staged: kinds->Option.map(kinds =>
+          PgWriting.columns(fields, ~kinds=kinds->Array.map(Staging.kindOfOrdinal))
+        ),
+      }),
+      // Named for where its rows go, which for an entity is its history table.
+      clickhouse: registered.clickhouse->Option.map(
+        ClickHouse.makeTable(
+          ~handle=registered.handle,
+          ~name=history->Option.getOr(table.tableName),
+          _,
+        ),
       ),
-    ),
+    }
   }
-}
+)
 
 let registerEntity = (client, entityConfig: Internal.entityConfig) =>
   client->register(
@@ -478,51 +480,53 @@ let stagedFor = (staged, ~store, stage) => {
 }
 
 // A Postgres table's rows for a write. A staged batch is handed back by handle.
-let rowsOrThrow = (
-  client: StorageClient.t,
-  registered,
-  ~itemSchema,
-  items: array<unknown>,
-  ~staged: staged,
-): StorageClient.rows =>
-  staged->stagedFor(~store=Postgres, () => {
-    let rows = items->Array.length
-    try {
-      switch registered.postgres {
-      | Some({staged: Some(columns)}) =>
-        let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
-        let handle =
-          client
-          ->StorageClient.arena(~store=Postgres)
-          ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
-        staged.handles->Array.push(handle)
-        ({staged: handle, rows}: StorageClient.rows)
-      | Some({staged: None}) =>
-        let values = (registered->converterOf(~forArena=false, ~itemSchema))(items)
-        values->refuseNonFinite(~fields=registered.fields)
-        {
-          cells: values->Utils.Array.flatten->Sql.params,
-          rows,
+%%private(
+  let rowsOrThrow = (
+    client: StorageClient.t,
+    registered,
+    ~itemSchema,
+    items: array<unknown>,
+    ~staged: staged,
+  ): StorageClient.rows =>
+    staged->stagedFor(~store=Postgres, () => {
+      let rows = items->Array.length
+      try {
+        switch registered.postgres {
+        | Some({staged: Some(columns)}) =>
+          let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
+          let handle =
+            client
+            ->StorageClient.arena(~store=Postgres)
+            ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
+          staged.handles->Array.push(handle)
+          ({staged: handle, rows}: StorageClient.rows)
+        | Some({staged: None}) =>
+          let values = (registered->converterOf(~forArena=false, ~itemSchema))(items)
+          values->refuseNonFinite(~fields=registered.fields)
+          {
+            cells: values->Utils.Array.flatten->Sql.params,
+            rows,
+          }
+        | None => JsError.throwWithMessage(`Postgres doesn't keep "${registered.table.tableName}"`)
         }
-      | None => JsError.throwWithMessage(`Postgres doesn't keep "${registered.table.tableName}"`)
+      } catch {
+      | S.Raised(_) as exn =>
+        throw(
+          Persistence.StorageError({
+            message: `Failed to convert items for table "${registered.table.tableName}"`,
+            reason: exn,
+          }),
+        )
+      | exn =>
+        throw(
+          Persistence.StorageError({
+            message: `Failed to insert items into table "${registered.table.tableName}"`,
+            reason: exn->Utils.prettifyExn,
+          }),
+        )
       }
-    } catch {
-    | S.Raised(_) as exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed to convert items for table "${registered.table.tableName}"`,
-          reason: exn,
-        }),
-      )
-    | exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed to insert items into table "${registered.table.tableName}"`,
-          reason: exn->Utils.prettifyExn,
-        }),
-      )
-    }
-  })
+    })
+)
 
 // Ids as the text their column reads them from.
 let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
@@ -1478,13 +1482,9 @@ let makeStorageFromEnv = (
   ~isHasuraEnabled=Env.Hasura.enabled,
   ~maxConnections=?,
   ~cacheDir=?,
-  ~client=?,
 ) => {
   make(
-    ~client=switch client {
-    | Some(client) => client
-    | None => clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled, ~maxConnections?)
-    },
+    ~client=clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled, ~maxConnections?),
     ~logger,
     ~entities=config.userEntities,
     ~cacheDir?,

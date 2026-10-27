@@ -31,6 +31,11 @@ type Price {
   id: ID!
   value: BigDecimal! @config(precision: 10, scale: 2)
 }
+
+type Ratio {
+  id: ID!
+  value: BigDecimal!
+}
 `,
 )
 
@@ -40,7 +45,11 @@ type amountFilter = {value?: Envio.whereOperator<bigint>}
 type priceFilter = {value?: Envio.whereOperator<BigDecimal.t>}
 type amountOps = {set: amount => unit, getWhere: amountFilter => promise<array<amount>>}
 type priceOps = {set: price => unit, getWhere: priceFilter => promise<array<price>>}
-type handlerContext = {@as("Amount") amount: amountOps, @as("Price") price: priceOps}
+type handlerContext = {
+  @as("Amount") amount: amountOps,
+  @as("Price") price: priceOps,
+  @as("Ratio") ratio: priceOps,
+}
 
 let asContext = (context: Internal.handlerContext) =>
   context->(Utils.magic: Internal.handlerContext => handlerContext)
@@ -193,6 +202,83 @@ describe("getWhere on a scaled BigDecimal", () => {
       await restarted.getBatchWritePromise()
 
       t.expect(found.contents).toEqual(Some(([], ["price"], ["price"])))
+    },
+  )
+})
+
+describe("getWhere on an unbounded BigDecimal", () => {
+  scenario->Scenario.it(
+    "compares values past any Decimal's digits, whole and fractional",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  [
+                    ("max", maxUint256->BigInt.toString),
+                    ("minus", "-" ++ maxUint256->BigInt.toString),
+                    ("five", "5"),
+                    ("tiny", "0.0000000000000000000000000000001"),
+                  ]->Array.forEach(
+                    ((id, value)) =>
+                      context.ratio.set({id, value: BigDecimal.fromStringUnsafe(value)}),
+                  )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 5,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      let restarted = await indexer.restart()
+      let found = ref(None)
+      source.resolveGetHeightOrThrow(10)
+      let readFilters: MockSource.itemMock = {
+        blockNumber: 6,
+        logIndex: 0,
+        handler: async args => {
+          let context = args.context->asContext
+          let ratios = async filter =>
+            (await context.ratio.getWhere({value: filter}))
+            ->Array.map(row => row.id)
+            ->Array.toSorted(String.compare)
+          let decimal = BigDecimal.fromStringUnsafe
+          // A row one read loads answers every later read from memory, so each
+          // read goes before any read that would load what it should find.
+          let gt = await ratios({_gt: decimal("0")})
+          let lt = await ratios({_lt: decimal("0")})
+          let eq = await ratios({_eq: decimal("0")})
+          let in_ = await ratios({_in: [maxUint256->BigInt.toString->decimal, decimal("5.0")]})
+          let huge = await ratios({
+            _gt: decimal("100000000000000000000000000000000000000000000000000"),
+          })
+          found := Some((gt, lt, eq, in_, huge))
+        },
+      }
+      await source.expectItemsQueries([
+        {
+          fromBlock: 6,
+          toBlock: Unbounded,
+          reply: Respond({items: [readFilters], latestFetchedBlockNumber: 10}),
+        },
+      ])
+      await restarted.getBatchWritePromise()
+
+      t.expect(found.contents).toEqual(
+        Some((["five", "max", "tiny"], ["minus"], [], ["five", "max"], ["max"])),
+      )
     },
   )
 })

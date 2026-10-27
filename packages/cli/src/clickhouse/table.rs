@@ -6,6 +6,7 @@ use super::ddl::{self, ColumnSpec, EntitySpec, SkippingIndexSpec};
 use crate::columnar::ColumnKind;
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::rows::{ColumnRead, ReadKind};
+use crate::storage::types::CHANGE_COLUMN;
 
 #[napi(object)]
 #[derive(Clone)]
@@ -18,8 +19,8 @@ pub struct ClickHouseColumnInput {
     /// Omitted when it matches `name`.
     pub field_name: Option<String>,
     pub field_type: String,
-    pub is_nullable: Option<bool>,
-    pub is_array: Option<bool>,
+    pub is_nullable: bool,
+    pub is_array: bool,
     pub precision: Option<u32>,
     pub scale: Option<u32>,
     pub enum_variants: Option<Vec<String>>,
@@ -92,8 +93,8 @@ impl Table {
         for column in input.columns {
             let field = FieldSpec {
                 field_type: column.field_type,
-                is_nullable: column.is_nullable.unwrap_or(false),
-                is_array: column.is_array.unwrap_or(false),
+                is_nullable: column.is_nullable,
+                is_array: column.is_array,
                 precision: column.precision,
                 scale: column.scale,
                 enum_variants: column.enum_variants,
@@ -159,11 +160,17 @@ impl Table {
             .collect()
     }
 
-    pub fn staged_kinds(&self) -> Vec<ColumnKind> {
-        self.staged
-            .iter()
-            .map(|(_, ch_type)| ch_type.column_kind())
-            .collect()
+    /// The staged columns' names, kinds and whether each is nullable, in order.
+    pub fn staged_layout(&self) -> (Vec<String>, Vec<ColumnKind>, Vec<bool>) {
+        let mut names = Vec::with_capacity(self.staged.len());
+        let mut kinds = Vec::with_capacity(self.staged.len());
+        let mut nullable = Vec::with_capacity(self.staged.len());
+        for (name, ch_type) in &self.staged {
+            names.push(name.clone());
+            kinds.push(ch_type.column_kind());
+            nullable.push(matches!(ch_type, ChType::Nullable(_)));
+        }
+        (names, kinds, nullable)
     }
 
     /// How a row of the table's columns decodes, and what it reads as.
@@ -180,6 +187,14 @@ impl Table {
             })
             .unzip()
     }
+
+    /// [`Self::reads`] of a history row, which carries its change too.
+    pub fn history_reads(&self) -> (Vec<(ChType, ReadKind)>, Vec<ColumnRead>) {
+        let (mut types, mut reads) = self.reads();
+        types.push((ddl::change_type(), ReadKind::Text));
+        reads.push(ColumnRead::scalar(CHANGE_COLUMN, ReadKind::Text));
+        (types, reads)
+    }
 }
 
 #[cfg(test)]
@@ -192,8 +207,8 @@ pub(crate) mod test_support {
             row_name: None,
             field_name: None,
             field_type: field_type.to_string(),
-            is_nullable: None,
-            is_array: None,
+            is_nullable: false,
+            is_array: false,
             precision: None,
             scale: None,
             enum_variants: None,

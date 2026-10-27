@@ -23,8 +23,8 @@ use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::storage::rows::{self, Cell, ColumnRead, ReadKind, ResultSet};
 use crate::storage::types::{
-    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE,
-    CHECKPOINT_ID_COLUMN, INFO_TABLE,
+    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
+    INFO_TABLE,
 };
 use crate::storage::{Batch, Failure, Handoff, Initialize, Resume, WriteError};
 
@@ -426,11 +426,11 @@ impl Storage {
     /// Pairs a built database with the initialize that built it. The record
     /// is what says the storage exists, so it only does once both stores are
     /// in place: one built for a Postgres that then failed is set up again.
-    pub async fn seal(&self, input: &Initialize) -> Result<()> {
+    pub async fn seal(&self, instance: &str) -> Result<()> {
         self.insert_values(
             INFO_TABLE,
             &ddl::info_columns(),
-            &[vec![Value::Int(1), Value::Text(input.instance.clone())]],
+            &[vec![Value::Int(1), Value::Text(instance.to_string())]],
         )
         .await
         .context("Failed to initialize ClickHouse storage")
@@ -439,7 +439,7 @@ impl Storage {
     #[cfg(test)]
     pub async fn initialize(&self, input: &Initialize) -> Result<()> {
         self.build(input).await?;
-        self.seal(input).await
+        self.seal("instance").await
     }
 
     async fn has_table(&self, name: &str) -> Result<bool> {
@@ -856,11 +856,9 @@ impl Storage {
             .client
             .read(select::history(self.database(), table, &self.frontier()))
             .await?;
-        let (mut types, mut reads) = table.reads();
+        let (mut types, mut reads) = table.history_reads();
         types.push((ChType::UInt64, ReadKind::Text));
         reads.push(ColumnRead::scalar(CHECKPOINT_ID_COLUMN, ReadKind::Text));
-        types.push((ddl::change_type(), ReadKind::Text));
-        reads.push(ColumnRead::scalar(CHANGE_COLUMN, ReadKind::Text));
         rows::lay_out(&row_binary::decode(&body, &types)?, reads)
     }
 
@@ -889,9 +887,7 @@ impl Storage {
                 .map(|column| ColumnRead::scalar(&column.row_name, column.read))
                 .collect(),
         )?;
-        let (mut types, mut reads) = table.reads();
-        types.push((ddl::change_type(), ReadKind::Text));
-        reads.push(ColumnRead::scalar(CHANGE_COLUMN, ReadKind::Text));
+        let (types, reads) = table.history_reads();
         let restored = rows::lay_out(&row_binary::decode(&restored, &types)?, reads)?;
         Ok((removed, restored))
     }
@@ -921,6 +917,14 @@ impl Storage {
                 }
             }
         }
+        // With no rows between the old frontier and the new one, every read
+        // bounded by either answers the same, and a resume rewrites the
+        // frontier from Postgres anyway.
+        let moved = if staged.is_empty() {
+            Frontier::new()
+        } else {
+            frontier.entries().collect()
+        };
         let checkpoint_columns = ddl::checkpoint_columns(&self.chain_id_type());
         let checkpoint_rows = Self::checkpoint_values(&checkpoints);
         futures_util::try_join!(
@@ -937,9 +941,7 @@ impl Storage {
         if !handoff.ready_to_commit().await {
             return Ok(false);
         }
-        self.write_chains(frontier.entries().collect())
-            .await
-            .map(|()| true)
+        self.write_chains(moved).await.map(|()| true)
     }
 
     pub async fn write_batch(
@@ -1030,7 +1032,6 @@ mod tests {
                     max_reorg_depth: 0,
                 }],
                 envio_info: "{}".to_string(),
-                instance: "instance".to_string(),
                 contract_names: Vec::new(),
                 addresses: Addresses::default(),
             })
@@ -1215,6 +1216,35 @@ mod tests {
                 ],
                 Some("envio_chains".to_string()),
                 0
+            )
+        );
+    }
+
+    /// A batch with no rows for ClickHouse leaves every read as it was, so its
+    /// frontier is left for the next batch with rows to raise.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn only_a_write_with_rows_raises_the_chains_frontier() {
+        let server = accepting().await;
+        let storage = storage_at(&server);
+        let account = account(&storage);
+        initialize(&storage, vec![account.clone()]).await;
+        let initialized = inserted_tables(&server).len();
+
+        write_staged(&storage, Vec::new()).await;
+        let without_rows = inserted_tables(&server).split_off(initialized);
+        write_staged(&storage, vec![(account, staged(&["a"]))]).await;
+        let mut with_rows = inserted_tables(&server).split_off(initialized + without_rows.len());
+        with_rows.sort();
+
+        assert_eq!(
+            (without_rows, with_rows),
+            (
+                vec!["envio_checkpoints".to_string()],
+                vec![
+                    "envio_chains".to_string(),
+                    "envio_checkpoints".to_string(),
+                    "envio_history_Account".to_string()
+                ]
             )
         );
     }
