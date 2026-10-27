@@ -27,6 +27,7 @@ mod js_value;
 mod logger;
 mod mock_http;
 mod mock_hypersync_server;
+mod mock_source;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod postgres;

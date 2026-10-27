@@ -117,7 +117,6 @@ type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 // addresses, and so whether its partition is an address partition or a wildcard
 // one — the two take different paths through a rollback.
 type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef, isWildcard: bool}
-
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
 
 let setMockSourceState = (source: Source.t, state: mockSourceState) => {
@@ -138,7 +137,10 @@ let installMockSourceRegistrations = (
       sources->Array.filterMap(source => source->getMockSourceState)
     | _ => []
     }
-    if !(sourceStates->Utils.Array.isEmpty) {
+    // A chain without contracts has no address index for the synthetic
+    // registration to live in, and nothing for a mock item to be delivered to.
+    switch chainConfig.contracts->Array.get(0) {
+    | Some(contract) if !(sourceStates->Utils.Array.isEmpty) =>
       let key = chainConfig.id->ChainId.toString
       let registrations = switch registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
       | Some(registrations) => registrations
@@ -155,13 +157,11 @@ let installMockSourceRegistrations = (
         ~index=registrations.onEventRegistrations->Array.length,
         // Any contract from the chain keeps the synthetic registration in the
         // address-dependent partition of a real contract.
-        ~contractName=switch chainConfig.contracts->Array.get(0) {
-        | Some(contract) => contract.name
-        | None => "MockContract"
-        },
+        ~contractName=contract.name,
       )
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
       sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
+    | _ => ()
     }
   })
 
@@ -187,6 +187,8 @@ type itemMock = {
 
 // Unboxed so a failed `toEqual` prints `100` or `"unbounded"`, not a tagged object.
 @unboxed type toBlock = Bounded(int) | @as("unbounded") Unbounded
+
+type startupHeight = Height(int) | HeightFailure(string)
 
 // What a test can tell one pending item query from another by.
 type pendingItemsQuery = {
@@ -300,6 +302,10 @@ type t = {
   getBlockHashesCalls: array<array<int>>,
   // Answers every block-hash lookup in flight, and throws when there is none.
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
+  // Answers every block-hash lookup in flight with a failure the source
+  // reported, and throws when there is none. `requestStats` are the requests
+  // the failed lookup made, reported on the response as a native source does.
+  failGetBlockHashes: (exn, ~requestStats: array<Source.requestStat>=?) => unit,
   // Waits for the rollback's block-hash lookup of exactly `blockNumbers`, then
   // replies with `reply`. A lookup of other blocks, or more than one pending,
   // fails at once naming what was asked. A rollback only looks up hashes when
@@ -324,8 +330,70 @@ type t = {
   unsubscribeHeightSubscription: unit => unit,
 }
 
-let describeBlockNumbers = blockNumbers =>
-  `[${blockNumbers->Array.map(blockNumber => blockNumber->Int.toString)->Array.join(", ")}]`
+// The Rust ledger (`mock_source.rs`) that records every call the source takes
+// and decides what a test's expectations match. It answers nothing: each call
+// comes back with an id, each answer with the ids to settle, and the promises
+// they settle stay here.
+module Ledger = {
+  type t
+
+  type startupHeight = {height?: int, failure?: string}
+  type heightCall = {index: int, height: Nullable.t<int>, failure: Nullable.t<string>}
+  type expected = {
+    partitionId?: string,
+    fromBlock?: int,
+    toBlock?: int,
+    toBlockUnbounded?: bool,
+    retryCount?: int,
+    coversBlock?: int,
+    whereIds?: array<int>,
+    reply: string,
+  }
+  type itemsMatch = {
+    status: string,
+    assignment: array<int>,
+    leftPending: array<int>,
+    message: Nullable.t<string>,
+  }
+  type reply = {
+    id: int,
+    checked: bool,
+    isFailure: bool,
+    latestFetchedBlockNumber?: int,
+    itemBlockNumbers: array<int>,
+  }
+  type drainReply = {id: int, latestFetchedBlockNumber: Nullable.t<int>}
+  type heightCallsCheck = {done: bool, error: Nullable.t<string>}
+  type lookupMatch = {status: string, id: Nullable.t<int>, message: Nullable.t<string>}
+
+  @send
+  external make: (Core.mockSourceCtor, int, Null.t<int>, array<startupHeight>) => t = "new"
+  @send external takeHeightCall: t => heightCall = "takeHeightCall"
+  @send external resolveHeight: (t, int, string) => array<int> = "resolveHeight"
+  @send external resolveHeightAt: (t, int) => bool = "resolveHeightAt"
+  @send external setAutoHeight: (t, int) => array<int> = "setAutoHeight"
+  @send external rejectHeights: t => array<int> = "rejectHeights"
+  @send external checkHeightCalls: (t, int) => heightCallsCheck = "checkHeightCalls"
+  @send external heightCallsTimeoutMessage: (t, int) => string = "heightCallsTimeoutMessage"
+  @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
+  @send
+  external takeItemsQuery: (t, string, int, Null.t<int>, int) => int = "takeItemsQuery"
+  @send external settleItemsQuery: (t, int) => unit = "settleItemsQuery"
+  @send external entryCandidates: (t, array<expected>) => array<array<int>> = "entryCandidates"
+  @send external matchItemsQueries: (t, array<expected>) => itemsMatch = "matchItemsQueries"
+  @send external keepPending: (t, array<int>) => unit = "keepPending"
+  @send external checkReplies: (t, array<reply>) => Nullable.t<string> = "checkReplies"
+  @send
+  external drainItemsQueries: (t, Null.t<int>) => array<drainReply> = "drainItemsQueries"
+  @send external takeBlockHashLookup: (t, array<int>) => int = "takeBlockHashLookup"
+  @send
+  external settleAllBlockHashLookups: (t, string) => array<int> = "settleAllBlockHashLookups"
+  @send external matchBlockHashLookup: (t, array<int>) => lookupMatch = "matchBlockHashLookup"
+  @send external recordReorg: t => unit = "recordReorg"
+  @send external reorgCallCount: t => int = "reorgCallCount"
+  @send external describeState: t => string = "describeState"
+  @send external dropPendingCalls: t => array<int> = "dropPendingCalls"
+}
 
 let blockHashesResponse = (blocks: array<BlockStore.inputBlock>) => {
   Source.result: Ok(
@@ -352,187 +420,17 @@ let realClearTimeout: timeoutId => unit = %raw(`globalThis.clearTimeout.bind(glo
 
 let realNow: unit => float = %raw(`Date.now.bind(Date)`)
 
-let queryCoversBlock = (query: pendingItemsQuery, blockNumber) =>
-  query.fromBlock <= blockNumber &&
-    switch query.toBlock {
-    | Bounded(toBlock) => blockNumber <= toBlock
-    | Unbounded => true
-    }
+// The ledger's id for a query, kept off the enumerable fields a test compares.
+@get external queryId: pendingItemsQuery => int = "__id"
 
-let expectedMatches = (expected: expectedItemsQuery, query: pendingItemsQuery) =>
-  expected.partitionId->Option.mapOr(true, partitionId => partitionId === query.partitionId) &&
-  expected.fromBlock->Option.mapOr(true, fromBlock => fromBlock === query.fromBlock) &&
-  expected.toBlock->Option.mapOr(true, toBlock => toBlock == query.toBlock) &&
-  expected.retryCount->Option.mapOr(true, retryCount => retryCount === query.retryCount) &&
-  expected.coversBlock->Option.mapOr(true, blockNumber => query->queryCoversBlock(blockNumber)) &&
-  expected.where->Option.mapOr(true, where => where(query))
-
-let isReplying = (expected: expectedItemsQuery) =>
-  switch expected.reply {
-  | Respond(_) | RespondWith(_) | RespondUnchecked(_) | Fail(_) => true
-  | LeavePending => false
+let replyName = (reply: reply) =>
+  switch reply {
+  | Respond(_) => "Respond"
+  | RespondWith(_) => "RespondWith"
+  | RespondUnchecked(_) => "RespondUnchecked"
+  | Fail(_) => "Fail"
+  | LeavePending => "LeavePending"
   }
-
-// Every way to give each replying entry its own pending query, stopping at two:
-// one is the answer, two means the list leaves the choice to arrival order.
-let replyAssignments = (expected: array<expectedItemsQuery>, queries: array<pendingItemsQuery>) => {
-  let found = []
-  let current = []
-  let rec assign = index =>
-    if found->Array.length < 2 {
-      switch expected->Array.get(index) {
-      | None => found->Array.push(current->Array.copy)->ignore
-      | Some(entry) =>
-        queries->Array.forEach(query =>
-          if !(current->Array.includes(query)) && entry->expectedMatches(query) {
-            current->Array.push(query)->ignore
-            assign(index + 1)
-            current->Array.pop->ignore
-          }
-        )
-      }
-    }
-  assign(0)
-  found
-}
-
-let describeToBlock = toBlock =>
-  switch toBlock {
-  | Bounded(toBlock) => `Bounded(${toBlock->Int.toString})`
-  | Unbounded => "Unbounded"
-  }
-
-let queryFields = ["partitionId", "fromBlock", "toBlock", "retryCount"]
-
-let queryField = (query: pendingItemsQuery, name) =>
-  switch name {
-  | "partitionId" => `"${query.partitionId}"`
-  | "fromBlock" => query.fromBlock->Int.toString
-  | "toBlock" => query.toBlock->describeToBlock
-  | _ => query.retryCount->Int.toString
-  }
-
-// Pasteable as an entry, so a failure's suggestion can go straight into the test.
-let describeQuery = (query: pendingItemsQuery, ~fields=queryFields, ~reply=?) =>
-  `{${fields
-    ->Array.map(name => `${name}: ${query->queryField(name)}`)
-    ->Array.concat(
-      switch reply {
-      | Some(reply) => [`reply: ${reply}`]
-      | None => []
-      },
-    )
-    ->Array.join(", ")}}`
-
-let describeExpected = (expected: expectedItemsQuery) =>
-  `{${Array.filterMap(
-      [
-        expected.partitionId->Option.map(partitionId => `partitionId: "${partitionId}"`),
-        expected.fromBlock->Option.map(fromBlock => `fromBlock: ${fromBlock->Int.toString}`),
-        expected.toBlock->Option.map(toBlock => `toBlock: ${toBlock->describeToBlock}`),
-        expected.retryCount->Option.map(retryCount => `retryCount: ${retryCount->Int.toString}`),
-        expected.coversBlock->Option.map(blockNumber =>
-          `coversBlock: ${blockNumber->Int.toString}`
-        ),
-        expected.where->Option.map(_ => "where: <fn>"),
-        Some(
-          `reply: ${switch expected.reply {
-            | Respond(_) => "Respond(…)"
-            | RespondWith(_) => "RespondWith(…)"
-            | RespondUnchecked(_) => "RespondUnchecked(…)"
-            | Fail(_) => "Fail(…)"
-            | LeavePending => "LeavePending"
-            }}`,
-        ),
-      ],
-      field => field,
-    )->Array.join(", ")}}`
-
-let describeQueries = queries =>
-  switch queries {
-  | [] => "  none"
-  | queries => queries->Array.map(query => `  ${query->describeQuery}`)->Array.join("\n")
-  }
-
-let ambiguousRepliesMessage = (
-  expected: array<expectedItemsQuery>,
-  ~replyingIndices,
-  first,
-  second,
-) => {
-  let positions = replyingIndices->Array.reduceWithIndex([], (positions, _, position) => {
-    if first->Array.getUnsafe(position) !== second->Array.getUnsafe(position) {
-      positions->Array.push(position)->ignore
-    }
-    positions
-  })
-  let queries = []
-  positions->Array.forEach(position =>
-    [first->Array.getUnsafe(position), second->Array.getUnsafe(position)]->Array.forEach(query =>
-      if !(queries->Array.includes(query)) {
-        queries->Array.push(query)->ignore
-      }
-    )
-  )
-  let distinguishing = queryFields->Array.find(name => {
-    let values = queries->Array.map(query => query->queryField(name))
-    values->Array.every(value => values->Array.indexOf(value) === values->Array.lastIndexOf(value))
-  })
-  `expectItemsQueries can reply to more than one pending query with ${positions
-    ->Array.map(position => {
-      let index = replyingIndices->Array.getUnsafe(position)
-      `entry #${index->Int.toString} ${expected->Array.getUnsafe(index)->describeExpected}`
-    })
-    ->Array.join(", ")}:\n` ++
-  queries->describeQueries ++
-  switch distinguishing {
-  | Some(name) =>
-    `\nGive each query its own entry, told apart by ${name}:\n` ++
-    queries
-    ->Array.map(query => `  ${query->describeQuery(~fields=[name], ~reply="…")}`)
-    ->Array.join("\n")
-  | None => "\nNo query field tells them apart; tell them apart with `where`, e.g. by addresses."
-  }
-}
-
-let unlistedQueriesMessage = (unlisted: array<pendingItemsQuery>) =>
-  "expectItemsQueries matched every entry, but these pending queries are in none:\n" ++
-  unlisted->describeQueries ++
-  "\nReply to them in this list, or keep them pending:\n" ++
-  unlisted
-  ->Array.reduce([], (partitionIds, query) => {
-    if !(partitionIds->Array.includes(query.partitionId)) {
-      partitionIds->Array.push(query.partitionId)->ignore
-    }
-    partitionIds
-  })
-  ->Array.map(partitionId => `  {partitionId: "${partitionId}", reply: LeavePending}`)
-  ->Array.join("\n")
-
-let timeoutMessage = (
-  expected: array<expectedItemsQuery>,
-  pending: array<pendingItemsQuery>,
-  ~replied: option<array<pendingItemsQuery>>,
-) =>
-  "expectItemsQueries timed out. Expected:\n" ++
-  expected
-  ->Array.mapWithIndex((entry, index) => {
-    let matching = pending->Array.filter(query => entry->expectedMatches(query))
-    let reason = switch (matching, replied) {
-    | ([], _) => " (matches no pending query)"
-    | (_, None) if entry->isReplying => " (no query left for it once the other replies pick)"
-    | (_, Some(replied))
-      if !isReplying(entry) &&
-      matching->Array.every(query =>
-        replied->Array.includes(query)
-      ) => " (every query it matches is taken by a reply)"
-    | _ => ""
-    }
-    `  #${index->Int.toString} ${entry->describeExpected}${reason}`
-  })
-  ->Array.join("\n") ++
-  "\nPending:\n" ++
-  pending->describeQueries
 
 let make = (
   methods: array<method>,
@@ -545,6 +443,10 @@ let make = (
   // startup itself (e.g. resolving a `latest` start block), which completes
   // before a test body would ever get a chance to call `setAutoHeight`.
   ~autoHeight=?,
+  // Answers for the first height calls, one per call and in order, ahead of
+  // `autoHeight`. For calls startup makes before a test body can answer them,
+  // where a source has to fail first.
+  ~startupHeights: array<startupHeight>=[],
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -554,37 +456,43 @@ let make = (
     }
   }
 
+  let ledger = Core.getAddon().mockSource->Ledger.make(
+    chainId,
+    autoHeight->Null.fromOption,
+    startupHeights->Array.map((answer): Ledger.startupHeight =>
+      switch answer {
+      | Height(height) => {height: height}
+      | HeightFailure(failure) => {failure: failure}
+      }
+    ),
+  )
   let chainId = chainId->ChainId.fromInt
   let getHeightOrThrowCalls = []
-  // One entry per call the source has taken, in the order it took them, so an
-  // index here is the call number a test counted. `None` is a call that has
-  // already been answered — including one a standing height answered on the
-  // spot, which never parks anything — which is what makes answering the same
-  // call twice do nothing.
-  let getHeightOrThrowPending: array<
-    option<{
-      "resolve": Source.getHeightResponse => unit,
-      "reject": exn => unit,
-    }>,
-  > = []
-  let settleHeightCall = (index, answer) =>
-    switch getHeightOrThrowPending->Array.get(index) {
-    | Some(Some(pending)) =>
-      getHeightOrThrowPending->Array.set(index, None)
-      answer(pending)
-    | Some(None) | None => ()
-    }
-  let pendingHeightCallIndices = () =>
-    getHeightOrThrowPending->Array.reduceWithIndex([], (indices, pending, index) => {
-      switch pending {
-      | Some(_) => indices->Array.push(index)->ignore
+  let heightCallers: Map.t<
+    int,
+    {"resolve": Source.getHeightResponse => unit, "reject": exn => unit},
+  > = Map.make()
+  let settleHeightCalls = (indices, answer) =>
+    indices->Array.forEach(index =>
+      switch heightCallers->Map.get(index) {
+      | Some(caller) =>
+        heightCallers->Map.delete(index)->ignore
+        answer(caller)
       | None => ()
       }
-      indices
-    })
-  let reorgCalls = ref(0)
+    )
+  let answerHeight = height => caller => caller["resolve"]({Source.height, requestStats: []})
   let getBlockHashesCalls = []
-  let pendingBlockHashLookups = []
+  let blockHashCallers: Map.t<int, Source.getBlockHashesResponse => unit> = Map.make()
+  let settleBlockHashLookups = (ids, response) =>
+    ids->Array.forEach(id =>
+      switch blockHashCallers->Map.get(id) {
+      | Some(resolve) =>
+        blockHashCallers->Map.delete(id)->ignore
+        resolve(response)
+      | None => ()
+      }
+    )
   // Height subscription state
   let heightSubscriptionCalls = []
   let heightSubscriptionCloseCalls = []
@@ -599,17 +507,13 @@ let make = (
     heightSubscriptionCallbacks->Utils.Array.clearInPlace
     heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
   }
-  let autoHeight = ref(autoHeight)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
-  // Height answers registered before their call arrived, consumed in order by
-  // `getHeightOrThrow`. `site` is only carried for the end-of-run report.
-  let deferredHeightAnswers: array<{"site": string, "height": int}> = []
-
+  // The ledger's pending queries as the objects a test holds, in the same
+  // arrival order, so the same query stays the same object while it's pending.
   let pendingItemsQueries: array<pendingItemsQuery> = []
-  // Queries an earlier `expectItemsQueries` left pending. A later list doesn't
-  // have to name them again to account for them.
-  let keptPendingQueries: array<pendingItemsQuery> = []
+  let queriesById: Map.t<int, pendingItemsQuery> = Map.make()
+
   let arrivalListeners: array<unit => unit> = []
   // A chain fans out one query per partition, and each await on the way to the
   // source spreads the fan-out over one more microtask. Listeners are told once
@@ -653,46 +557,46 @@ let make = (
       })
       ->ignore
     })
-  // Only a reply needs a query of its own: which query takes a reply is the one
-  // thing arrival order must not decide. `LeavePending` hands nothing out, so
-  // it accounts for every remaining query it matches.
-  let rec awaitMatch = async (expected, ~replyingIndices, ~deadline) => {
-    // A wave still landing would have its first query taken for all of it.
+  // A burst still landing would have its first call taken for all of it.
+  let awaitSettled = async (~deadline) =>
     if settling.contents {
       let _ = await nextArrival(~deadline)
     }
-    let replying = replyingIndices->Array.map(index => expected->Array.getUnsafe(index))
-    let leavingPending = expected->Array.filter(entry => !isReplying(entry))
-    let wait = async (~replied) =>
-      if await nextArrival(~deadline) {
-        await awaitMatch(expected, ~replyingIndices, ~deadline)
-      } else {
-        JsError.throwWithMessage(timeoutMessage(expected, pendingItemsQueries, ~replied))
+
+  let toLedgerExpected = (entry: expectedItemsQuery): Ledger.expected => {
+    partitionId: ?entry.partitionId,
+    fromBlock: ?entry.fromBlock,
+    toBlock: ?switch entry.toBlock {
+    | Some(Bounded(toBlock)) => Some(toBlock)
+    | Some(Unbounded) | None => None
+    },
+    toBlockUnbounded: ?switch entry.toBlock {
+    | Some(Unbounded) => Some(true)
+    | Some(Bounded(_)) | None => None
+    },
+    retryCount: ?entry.retryCount,
+    coversBlock: ?entry.coversBlock,
+    reply: entry.reply->replyName,
+  }
+
+  // A `where` predicate only JS can run, so the ledger is told the queries it
+  // accepted, out of those the entry's other fields already match.
+  let toLedgerEntries = (expected: array<expectedItemsQuery>) => {
+    let entries = expected->Array.map(toLedgerExpected)
+    let candidates = ledger->Ledger.entryCandidates(entries)
+    entries->Array.mapWithIndex((entry, index): Ledger.expected =>
+      switch (expected->Array.getUnsafe(index)).where {
+      | Some(where) => {
+          ...entry,
+          whereIds: candidates
+          ->Array.getUnsafe(index)
+          ->Array.filter(id =>
+            queriesById->Map.get(id)->Option.mapOr(false, query => where(query))
+          ),
+        }
+      | None => entry
       }
-    switch replyAssignments(replying, pendingItemsQueries) {
-    | [] => await wait(~replied=None)
-    | [assignment] =>
-      let remaining =
-        pendingItemsQueries->Array.filter(query => !(assignment->Array.includes(query)))
-      let leftPending =
-        leavingPending->Array.map(entry =>
-          remaining->Array.filter(query => entry->expectedMatches(query))
-        )
-      if leftPending->Array.some(Utils.Array.isEmpty) {
-        await wait(~replied=Some(assignment))
-      } else {
-        (assignment, leftPending->Array.flat)
-      }
-    | ambiguous =>
-      JsError.throwWithMessage(
-        ambiguousRepliesMessage(
-          expected,
-          ~replyingIndices,
-          ambiguous->Array.getUnsafe(0),
-          ambiguous->Array.getUnsafe(1),
-        ),
-      )
-    }
+    )
   }
 
   let makeItemsResponse = (
@@ -841,66 +745,54 @@ let make = (
   }
 
   let expectItemsQueries = async expected => {
-    let replyingIndices = expected->Array.reduceWithIndex([], (indices, entry, index) => {
-      if entry->isReplying {
-        indices->Array.push(index)->ignore
+    let deadline = realNow() +. 2000.
+    let rec awaitMatch = async () => {
+      await awaitSettled(~deadline)
+      let outcome = ledger->Ledger.matchItemsQueries(expected->toLedgerEntries)
+      let message = () => outcome.message->Nullable.toOption->Option.getOr("")
+      switch outcome.status {
+      | "matched" => outcome
+      | "wait" =>
+        if await nextArrival(~deadline) {
+          await awaitMatch()
+        } else {
+          JsError.throwWithMessage(message())
+        }
+      | _ => JsError.throwWithMessage(message())
       }
-      indices
-    })
-    let (assignment, leftPending) = await awaitMatch(
-      expected,
-      ~replyingIndices,
-      ~deadline=realNow() +. 2000.,
-    )
-    let unlisted =
-      pendingItemsQueries->Array.filter(query =>
-        !(assignment->Array.includes(query)) &&
-        !(leftPending->Array.includes(query)) &&
-        !(keptPendingQueries->Array.includes(query))
-      )
-    if !(unlisted->Utils.Array.isEmpty) {
-      JsError.throwWithMessage(unlistedQueriesMessage(unlisted))
     }
-    leftPending->Array.forEach(query =>
-      if !(keptPendingQueries->Array.includes(query)) {
-        keptPendingQueries->Array.push(query)->ignore
-      }
-    )
-    let replies = assignment->Array.mapWithIndex((query, position) =>
-      switch (expected->Array.getUnsafe(replyingIndices->Array.getUnsafe(position))).reply {
+    let {assignment, leftPending} = await awaitMatch()
+    ledger->Ledger.keepPending(leftPending)
+    let replying = expected->Array.filter(entry => entry.reply !== LeavePending)
+    let replies = assignment->Array.mapWithIndex((id, position) => {
+      let query = queriesById->Map.get(id)->Option.getOrThrow
+      switch (replying->Array.getUnsafe(position)).reply {
       | Respond(response) => (query, Ok(response), true)
       | RespondWith(respond) => (query, Ok(respond(query)), true)
       | RespondUnchecked(response) => (query, Ok(response), false)
       | Fail(exn) => (query, Error(exn), true)
       | LeavePending => JsError.throwWithMessage("A LeavePending entry never takes a reply")
       }
-    )
-    replies->Array.forEach(((query, reply, checked)) =>
-      switch (reply, query.toBlock) {
-      | _ if !checked => ()
-      | (Ok({latestFetchedBlockNumber}), Bounded(toBlock)) if latestFetchedBlockNumber > toBlock =>
-        JsError.throwWithMessage(
-          `expectItemsQueries can't reply latestFetchedBlockNumber ${latestFetchedBlockNumber->Int.toString} to ${query->describeQuery}: a source never fetches past the toBlock it was asked for`,
-        )
-      | (Ok(response), _) =>
-        let latest = response.latestFetchedBlockNumber->Option.getOr(
-          switch query.toBlock {
-          | Bounded(toBlock) => toBlock
-          | Unbounded => query.fromBlock
-          },
-        )
-        switch response.items->Array.find(item =>
-          item.blockNumber < query.fromBlock || item.blockNumber > latest
-        ) {
-        | Some(item) =>
-          JsError.throwWithMessage(
-            `expectItemsQueries can't reply an item at block ${item.blockNumber->Int.toString} to ${query->describeQuery}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (${latest->Int.toString})`,
-          )
-        | None => ()
+    })
+    switch ledger
+    ->Ledger.checkReplies(
+      replies->Array.map(((query, reply, checked)): Ledger.reply =>
+        switch reply {
+        | Ok(response) => {
+            id: query->queryId,
+            checked,
+            isFailure: false,
+            latestFetchedBlockNumber: ?response.latestFetchedBlockNumber,
+            itemBlockNumbers: response.items->Array.map(item => item.blockNumber),
+          }
+        | Error(_) => {id: query->queryId, checked, isFailure: true, itemBlockNumbers: []}
         }
-      | _ => ()
-      }
+      ),
     )
+    ->Nullable.toOption {
+    | Some(message) => JsError.throwWithMessage(message)
+    | None => ()
+    }
     replies->Array.forEach(((query, reply, _)) =>
       switch reply {
       | Ok(response) => (query->control).respond(response)
@@ -911,61 +803,38 @@ let make = (
 
   {
     getHeightOrThrowCalls,
-    resolveGetHeightOrThrow: height => {
-      switch pendingHeightCallIndices() {
-      | [] =>
-        deferredHeightAnswers->Array.push({"site": UserModule.callSite(), "height": height})->ignore
-      | indices =>
-        indices->Array.forEach(index =>
-          index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
-        )
-      }
-    },
+    resolveGetHeightOrThrow: height =>
+      ledger
+      ->Ledger.resolveHeight(height, UserModule.callSite())
+      ->settleHeightCalls(answerHeight(height)),
     resolveGetHeightOrThrowAt: (~index, height) =>
-      if index >= getHeightOrThrowCalls->Array.length || index < 0 {
-        JsError.throwWithMessage(
-          `The source has taken no getHeightOrThrow call at index ${index->Int.toString}`,
-        )
-      } else {
-        index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
+      if ledger->Ledger.resolveHeightAt(index) {
+        [index]->settleHeightCalls(answerHeight(height))
       },
-    setAutoHeight: height => {
-      autoHeight := Some(height)
-      // A standing answer supersedes one parked for a single call.
-      deferredHeightAnswers->Utils.Array.clearInPlace
-      pendingHeightCallIndices()->Array.forEach(index =>
-        index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
-      )
-    },
+    setAutoHeight: height =>
+      ledger->Ledger.setAutoHeight(height)->settleHeightCalls(answerHeight(height)),
     rejectGetHeightOrThrow: exn =>
-      pendingHeightCallIndices()->Array.forEach(index =>
-        index->settleHeightCall(pending => pending["reject"](exn->Obj.magic))
-      ),
+      ledger->Ledger.rejectHeights->settleHeightCalls(caller => caller["reject"](exn->Obj.magic)),
     expectHeightCalls: async count => {
       let deadline = realNow() +. 2000.
       let rec awaitCount = async () => {
-        // A burst still landing would be counted short of its excess call.
-        if settling.contents {
-          let _ = await nextArrival(~deadline)
-        }
-        let taken = getHeightOrThrowCalls->Array.length
-        if taken > count {
-          JsError.throwWithMessage(
-            `expectHeightCalls expected ${count->Int.toString} height calls, but the source has taken ${taken->Int.toString}`,
-          )
-        } else if taken < count {
-          if await nextArrival(~deadline) {
-            await awaitCount()
-          } else {
-            JsError.throwWithMessage(
-              `expectHeightCalls timed out waiting for ${count->Int.toString} height calls; the source has taken ${taken->Int.toString}`,
-            )
+        await awaitSettled(~deadline)
+        let {done, error} = ledger->Ledger.checkHeightCalls(count)
+        switch error->Nullable.toOption {
+        | Some(message) => JsError.throwWithMessage(message)
+        | None =>
+          if !done {
+            if await nextArrival(~deadline) {
+              await awaitCount()
+            } else {
+              JsError.throwWithMessage(ledger->Ledger.heightCallsTimeoutMessage(count))
+            }
           }
         }
       }
       await awaitCount()
     },
-    reorgCallCount: () => reorgCalls.contents,
+    reorgCallCount: () => ledger->Ledger.reorgCallCount,
     pendingItemsQueries,
     expectItemsQueries,
     respondEmptyUpTo: async blockNumber => {
@@ -1005,102 +874,60 @@ let make = (
       await wave(~count=0)
     },
     drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
-      switch pendingItemsQueries->Array.copy {
-      | [] => JsError.throwWithMessage("drainPendingItemsQueries has no pending query to drain")
-      | queries =>
-        queries->Array.forEach(query =>
-          switch (latestFetchedBlockNumber, query.toBlock) {
-          | (Some(latest), Bounded(toBlock)) if latest > toBlock =>
-            JsError.throwWithMessage(
-              `drainPendingItemsQueries can't reply latestFetchedBlockNumber ${latest->Int.toString} to ${query->describeQuery}: a source never fetches past the toBlock it was asked for. Drain without ~latestFetchedBlockNumber to answer each query up to its own toBlock.`,
-            )
-          | _ => ()
-          }
+      ledger
+      ->Ledger.drainItemsQueries(latestFetchedBlockNumber->Null.fromOption)
+      ->Array.forEach(({id, latestFetchedBlockNumber}) =>
+        queriesById
+        ->Map.get(id)
+        ->Option.forEach(query =>
+          (query->control).respond({
+            items: [],
+            latestFetchedBlockNumber: ?(latestFetchedBlockNumber->Nullable.toOption),
+          })
         )
-        queries->Array.forEach(query =>
-          (query->control).respond({items: [], ?latestFetchedBlockNumber})
-        )
-      },
+      ),
     getBlockHashesCalls,
-    resolveGetBlockHashes: blockHashes => {
-      if pendingBlockHashLookups->Utils.Array.isEmpty {
-        JsError.throwWithMessage("resolveGetBlockHashes has no pending lookup to answer")
-      }
-      let response = blockHashes->blockHashesResponse
-      let lookups = pendingBlockHashLookups->Array.copy
-      pendingBlockHashLookups->Utils.Array.clearInPlace
-      lookups->Array.forEach(lookup => lookup["resolve"](response))
-    },
+    resolveGetBlockHashes: blockHashes =>
+      ledger
+      ->Ledger.settleAllBlockHashLookups("resolveGetBlockHashes")
+      ->settleBlockHashLookups(blockHashes->blockHashesResponse),
+    failGetBlockHashes: (exn, ~requestStats=[]) =>
+      ledger
+      ->Ledger.settleAllBlockHashLookups("failGetBlockHashes")
+      ->settleBlockHashLookups({Source.result: Error(exn), requestStats}),
     expectBlockHashLookup: async ({blockNumbers, reply}) => {
       let deadline = realNow() +. 2000.
       let rec awaitLookup = async () => {
-        // A burst still landing would have its first lookup answered alone.
-        if settling.contents {
-          let _ = await nextArrival(~deadline)
-        }
-        switch pendingBlockHashLookups {
-        | [] =>
+        await awaitSettled(~deadline)
+        let {status, id, message} = ledger->Ledger.matchBlockHashLookup(blockNumbers)
+        let message = () => message->Nullable.toOption->Option.getOr("")
+        switch (status, id->Nullable.toOption) {
+        | ("matched", Some(id)) => id
+        | ("wait", _) =>
           if await nextArrival(~deadline) {
             await awaitLookup()
           } else {
-            JsError.throwWithMessage(
-              `expectBlockHashLookup timed out waiting for a lookup of ${blockNumbers->describeBlockNumbers}. No lookup is pending.`,
-            )
+            JsError.throwWithMessage(message())
           }
-        | [lookup] if lookup["blockNumbers"] == blockNumbers => lookup
-        | [lookup] =>
-          JsError.throwWithMessage(
-            `expectBlockHashLookup expected a lookup of ${blockNumbers->describeBlockNumbers}, but the pending lookup asks for ${lookup["blockNumbers"]->describeBlockNumbers}`,
-          )
-        | lookups =>
-          JsError.throwWithMessage(
-            `expectBlockHashLookup can't tell which of ${lookups
-              ->Array.length
-              ->Int.toString} pending lookups to answer: ${lookups
-              ->Array.map(lookup => lookup["blockNumbers"]->describeBlockNumbers)
-              ->Array.join(", ")}`,
-          )
+        | _ => JsError.throwWithMessage(message())
         }
       }
-      let lookup = await awaitLookup()
-      pendingBlockHashLookups
-      ->Array.splice(~start=pendingBlockHashLookups->Array.indexOf(lookup), ~remove=1, ~insert=[])
-      ->ignore
-      lookup["resolve"](reply->blockHashesResponse)
+      let id = await awaitLookup()
+      [id]->settleBlockHashLookups(reply->blockHashesResponse)
     },
     validateAnswersClaimed: () =>
-      switch deferredHeightAnswers->Array.map(answer =>
-        `resolveGetHeightOrThrow at ${answer["site"]}`
-      ) {
-      | [] => ()
-      | unclaimed =>
-        JsError.throwWithMessage(
-          `Chain ${chainId->ChainId.toString} registered these mock answers before their call ` ++
-          "arrived, and no call ever claimed them:\n" ++
-          unclaimed->Array.map(entry => `  ${entry}`)->Array.join("\n"),
-        )
+      switch ledger->Ledger.unclaimedAnswersMessage->Nullable.toOption {
+      | Some(message) => JsError.throwWithMessage(message)
+      | None => ()
       },
-    describeState: () =>
-      `Mock source for chain ${chainId->ChainId.toString} at the failure:\n` ++
-      "  pending item queries:" ++
-      switch pendingItemsQueries {
-      | [] => " none"
-      | queries => queries->Array.map(query => `\n    ${query->describeQuery}`)->Array.join("")
-      } ++
-      "\n  pending block-hash lookups: " ++
-      switch pendingBlockHashLookups {
-      | [] => "none"
-      | lookups =>
-        lookups->Array.map(lookup => lookup["blockNumbers"]->describeBlockNumbers)->Array.join(", ")
-      } ++
-      `\n  height calls taken: ${getHeightOrThrowCalls->Array.length->Int.toString}`,
+    describeState: () => ledger->Ledger.describeState,
     dropPendingCalls: () => {
+      ledger
+      ->Ledger.dropPendingCalls
+      ->Array.forEach(index => heightCallers->Map.delete(index)->ignore)
+      queriesById->Map.clear
+      blockHashCallers->Map.clear
       pendingItemsQueries->Utils.Array.clearInPlace
-      keptPendingQueries->Utils.Array.clearInPlace
-      pendingHeightCallIndices()->Array.forEach(index =>
-        getHeightOrThrowPending->Array.set(index, None)
-      )
-      pendingBlockHashLookups->Utils.Array.clearInPlace
     },
     heightSubscriptionCalls,
     heightSubscriptionCloseCalls,
@@ -1124,35 +951,23 @@ let make = (
         pollingInterval,
         getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
           getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          let promise = Promise.make((resolve, _reject) => {
-            pendingBlockHashLookups
-            ->Array.push({"blockNumbers": blockNumbers, "resolve": resolve})
-            ->ignore
-          })
+          let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
+          let promise = Promise.make((resolve, _reject) => blockHashCallers->Map.set(id, resolve))
           notifyArrival()
           promise
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
           notifyArrival()
-          // Pushed for every call, answered or not, so the two arrays stay the
-          // same length and an index means the same thing in both.
-          let answered = height => {
-            getHeightOrThrowPending->Array.push(None)->ignore
-            Promise.resolve({Source.height, requestStats: []})
-          }
-          switch autoHeight.contents {
-          | Some(height) => answered(height)
-          | None =>
-            switch deferredHeightAnswers->Array.shift {
-            | Some(answer) => answered(answer["height"])
-            | None =>
-              Promise.make((resolve, reject) => {
-                getHeightOrThrowPending
-                ->Array.push(Some({"resolve": resolve, "reject": reject}))
-                ->ignore
-              })
-            }
+          let {index, height, failure} = ledger->Ledger.takeHeightCall
+          switch (height->Nullable.toOption, failure->Nullable.toOption) {
+          | (Some(height), _) => Promise.resolve({Source.height, requestStats: []})
+          | (None, Some(message)) =>
+            Promise.reject(JsError.make(message)->(Utils.magic: JsError.t => exn))
+          | (None, None) =>
+            Promise.make((resolve, reject) =>
+              heightCallers->Map.set(index, {"resolve": resolve, "reject": reject})
+            )
           }
         }),
         getItemsOrThrow: implement(#getItemsOrThrow, (
@@ -1167,6 +982,8 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
+          let id =
+            ledger->Ledger.takeItemsQuery(partitionId, fromBlock, toBlock->Null.fromOption, retry)
           let promise = Promise.make((resolve, reject) => {
             let query: pendingItemsQuery = {
               partitionId,
@@ -1178,13 +995,13 @@ let make = (
               retryCount: retry,
             }
             let settle = () => {
-              [pendingItemsQueries, keptPendingQueries]->Array.forEach(
-                queries =>
-                  switch queries->Array.indexOf(query) {
-                  | -1 => ()
-                  | index => queries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
-                  },
-              )
+              ledger->Ledger.settleItemsQuery(id)
+              queriesById->Map.delete(id)->ignore
+              switch pendingItemsQueries->Array.indexOf(query) {
+              | -1 => ()
+              | index =>
+                pendingItemsQueries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+              }
             }
             let queryControl = {
               respond: response => {
@@ -1198,6 +1015,7 @@ let make = (
             }
             let addresses = addressSet->AddressSet.addressesForTest
             query
+            ->Utils.Object.definePropertyWithValue("__id", {enumerable: false, value: id})
             ->Utils.Object.definePropertyWithValue(
               "addresses",
               {enumerable: false, value: addresses},
@@ -1211,12 +1029,13 @@ let make = (
               {enumerable: false, value: queryControl},
             )
             ->ignore
-            pendingItemsQueries->Array.push(query)->ignore
+            queriesById->Map.set(id, query)
+            pendingItemsQueries->Array.push(query)
           })
           notifyArrival()
           promise
         }),
-        onReorg: () => reorgCalls := reorgCalls.contents + 1,
+        onReorg: () => ledger->Ledger.recordReorg,
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
         | true =>
           Some(

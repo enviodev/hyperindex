@@ -35,7 +35,7 @@ describe("Polling-stall loophole", () => {
         pollingInterval: 1,
       },
     ],
-    ~reducedPollingInterval=10,
+    ~sourceTiming={reducedPollingInterval: 10},
     async (~t, ~indexer as _, ~source) => {
       let source = source(1337)
 

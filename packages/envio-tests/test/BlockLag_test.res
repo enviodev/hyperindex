@@ -32,7 +32,7 @@ describe("E2E blockLag tests", () => {
     // The processing loop reaches the post-catch-up height poll on its own
     // cadence, so the test answers polls as they come rather than at a fixed
     // tick. Keep the re-poll fast.
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       // Enter reorg threshold the standard way:
