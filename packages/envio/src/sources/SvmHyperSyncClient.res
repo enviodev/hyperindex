@@ -219,7 +219,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~programs=[],
-  ~onBlockRegistrations=[],
+  ~onBlockRegistrations,
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version

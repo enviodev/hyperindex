@@ -231,16 +231,14 @@ impl EvmHyperSyncClient {
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
-        for field in BlockField::in_store_mask(block_selection.mask()) {
-            if !block_fields.contains(&field) {
-                block_fields.push(field);
-            }
-        }
         // Force-add the always-required block fields, then validate the full
         // set. Validating the forced fields (not just the selection's) is what
         // guarantees the consumer's unconditional number/timestamp/hash reads
         // — the presence check, not the request, is the guarantee.
-        for &field in REQUIRED_BLOCK_FIELDS {
+        for field in BlockField::in_store_mask(block_selection.mask())
+            .into_iter()
+            .chain(REQUIRED_BLOCK_FIELDS.iter().copied())
+        {
             if !block_fields.contains(&field) {
                 block_fields.push(field);
             }
@@ -293,13 +291,7 @@ impl EvmHyperSyncClient {
                     ]
                 }),
             },
-            // A block handler runs on blocks no log landed on, so selecting the
-            // block table means asking for every block of the range.
-            include_all_blocks: if block_selection.is_empty() {
-                params.include_all_blocks
-            } else {
-                Some(true)
-            },
+            include_all_blocks: Some(block_query.include_all_blocks()),
             ..Default::default()
         };
 

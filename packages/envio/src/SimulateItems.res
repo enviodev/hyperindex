@@ -348,30 +348,23 @@ let parse = (
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
-    | (Evm | Svm, None, None) if raw->getContract->Option.isNone && raw->getEvent->Option.isNone =>
-      switch raw->getBlock {
-      | Some(_) as blockJson =>
-        let (block, blockNumber) = parseBlock(
-          ~ecosystem=config.ecosystem.name,
-          ~defaultBlockNumber=currentBlock.contents,
-          ~blockJson,
-        )
-        if ownBlockNumbers->Utils.Set.has(blockNumber) {
-          JsError.throwWithMessage(
-            `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is a second block ${blockNumber->Int.toString}. Give each block's fields in one item.`,
-          )
-        }
-        ownBlockNumbers->Utils.Set.add(blockNumber)->ignore
-        blocks->Dict.set(blockNumber->Int.toString, block)
-        currentBlock := blockNumber
-      | None =>
+    | (Evm | Svm, None, None)
+      if raw->getContract->Option.isNone &&
+      raw->getEvent->Option.isNone &&
+      raw->getBlock->Option.isSome =>
+      let (block, blockNumber) = parseBlock(
+        ~ecosystem=config.ecosystem.name,
+        ~defaultBlockNumber=currentBlock.contents,
+        ~blockJson=raw->getBlock,
+      )
+      if ownBlockNumbers->Utils.Set.has(blockNumber) {
         JsError.throwWithMessage(
-          `simulate: Invalid item. Each item must name what it is${switch config.ecosystem.name {
-            | Svm => ` with "program" and "instruction"`
-            | Evm | Fuel => ` with "contract" and "event"`
-            }}, or be a "block" on its own.`,
+          `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is a second block ${blockNumber->Int.toString}. Give each block's fields in one item.`,
         )
       }
+      ownBlockNumbers->Utils.Set.add(blockNumber)->ignore
+      blocks->Dict.set(blockNumber->Int.toString, block)
+      currentBlock := blockNumber
 
     | (Svm, Some(programName), Some(instructionName)) =>
       let eventConfig = switch findEventConfig(
@@ -575,7 +568,12 @@ let parse = (
       let (contractName, eventName) = switch (raw->getContract, raw->getEvent) {
       | (Some(c), Some(e)) => (c, e)
       | _ =>
-        JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)
+        JsError.throwWithMessage(
+          `simulate: Invalid item. Each item must have "contract" and "event" fields${config.ecosystem.name ===
+              Evm
+              ? `, or be a "block" on its own`
+              : ""}.`,
+        )
       }
       // Event simulate item
       let eventConfig = switch findEventConfig(~config, ~contractName, ~eventName) {

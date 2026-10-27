@@ -267,9 +267,7 @@ impl SvmHyperSyncClient {
                 parse_columns(&built.account_activity_columns).map_err(map_err)?;
         }
 
-        // A slot handler runs on slots no instruction landed on.
-        let include_all_blocks =
-            params.include_all_blocks.unwrap_or(false) || !block_selection.is_empty();
+        let include_all_blocks = block_query.include_all_blocks();
         // `include_all_blocks` returns every account activity row of the blocks
         // unless the query selects some, so when nothing reads them a selection
         // matching no transaction keeps them out.

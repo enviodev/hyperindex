@@ -61,7 +61,6 @@ impl Registration {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct BlockRegistrations(HashMap<i64, Registration>);
 
 impl BlockRegistrations {
@@ -189,6 +188,12 @@ impl BlockQuery {
         }
     }
 
+    /// A block handler runs on blocks no log or instruction landed on, so a
+    /// query selecting the block table asks for every block of its range.
+    pub(crate) fn include_all_blocks(&self) -> bool {
+        self.realtime || !self.selection.is_empty()
+    }
+
     /// Where the fetched range ends (exclusive), for a page that read up to
     /// `next_block` (exclusive).
     pub(crate) fn fetched_until(&self, next_block: u64) -> u64 {
@@ -203,7 +208,6 @@ impl BlockQuery {
 
 /// The block handlers a query runs, all of which run on some block of its
 /// range.
-#[derive(Default)]
 pub(crate) struct BlockSelection {
     registrations: Vec<Registration>,
 }
