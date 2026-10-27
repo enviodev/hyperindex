@@ -99,12 +99,14 @@ let fetch = (
   ~onBlockRegistrations=named("headers"),
   ~toBlock=Some(13),
   ~knownHeight=100,
+  ~includeAllBlocks=false,
+  ~itemsTarget=None,
 ) =>
   source.getItemsOrThrow(
     ~fromBlock=10,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks=false,
+    ~includeAllBlocks,
     ~knownHeight,
     ~partitionId="0",
     ~selection=FetchState.makeSelection(
@@ -112,7 +114,7 @@ let fetch = (
       ~onEventRegistrations=[],
       ~onBlockRegistrations,
     ),
-    ~itemsTarget=None,
+    ~itemsTarget,
     ~retry=0,
     ~logger=Logger.makeInMemory()->Logger.withFields({"test": "onBlock source contract"}),
   )
@@ -246,24 +248,19 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     ))
   })
 
-  Async.it("doesn't ask for blocks when the handler doesn't run in the range", async t => {
-    let queries = await MockHyperSyncServer.withServer(
+  // A selection with nothing to read in the range holds nothing there; on SVM,
+  // a query selecting nothing would even return every instruction.
+  Async.it("sends no query when no handler runs in the range", async t => {
+    let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
         let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
-        server->MockHyperSyncServer.pushResponse({blocks: []})
-        let _ = await source->fetch(~addressSet, ~onBlockRegistrations=named("early"))
-        server->MockHyperSyncServer.takeQueries
+        let page = await source->fetch(~addressSet, ~onBlockRegistrations=named("early"))
+        (server->MockHyperSyncServer.takeQueries, page.latestFetchedBlockNumber)
       },
     )
 
-    t.expect(queries).toEqual([
-      JSON.parseOrThrow(`{
-        "from_block": 10,
-        "to_block": 14,
-        "field_selection": {"block": ["hash", "number", "timestamp"]}
-      }`),
-    ])
+    t.expect((queries, latestFetchedBlockNumber)).toEqual(([], 13))
   })
 
   // Every block between two a handler runs on would cost more to read than a
@@ -331,6 +328,77 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
       ],
       100,
     ))
+  })
+
+  // A chain whose end block is still ahead queries up to it.
+  Async.it("bounds a sparse page ending past the head at the known height", async t => {
+    let latestFetchedBlockNumber = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({blocks: [header(10)]})
+        let page = await source->fetch(
+          ~addressSet,
+          ~onBlockRegistrations=named("sparse"),
+          ~toBlock=Some(20_000),
+        )
+        page.latestFetchedBlockNumber
+      },
+    )
+
+    t.expect(latestFetchedBlockNumber).toEqual(100)
+  })
+
+  // At the head every block's hash is kept for reorg detection, so a realtime
+  // page reads its whole range even for a sparse handler.
+  Async.it("reads every block of a realtime page", async t => {
+    let queries = await MockHyperSyncServer.withServer(
+      ~height=20_000,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
+        let _ = await source->fetch(
+          ~addressSet,
+          ~onBlockRegistrations=named("sparse"),
+          ~knownHeight=20_000,
+          ~includeAllBlocks=true,
+        )
+        server->MockHyperSyncServer.takeQueries
+      },
+    )
+
+    t.expect(queries).toEqual([
+      JSON.parseOrThrow(`{
+        "from_block": 10,
+        "to_block": 14,
+        "include_all_blocks": true,
+        "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
+      }`),
+    ])
+  })
+
+  // The page's item target counts handler runs; reading every block, the
+  // source reads as many blocks as the densest handler needs to reach it.
+  Async.it("caps a page reading every block at the blocks its item target needs", async t => {
+    let queries = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({blocks: [10, 11, 12, 13]->Array.map(header)})
+        let _ = await source->fetch(~addressSet, ~itemsTarget=Some(2))
+        server->MockHyperSyncServer.takeQueries
+      },
+    )
+
+    t.expect(queries).toEqual([
+      JSON.parseOrThrow(`{
+        "from_block": 10,
+        "to_block": 14,
+        "include_all_blocks": true,
+        "max_num_blocks": 4,
+        "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
+      }`),
+    ])
   })
 
   Async.it("routes the blocks the handler runs on, with its fields", async t => {

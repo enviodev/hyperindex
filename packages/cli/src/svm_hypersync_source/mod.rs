@@ -213,24 +213,31 @@ impl SvmHyperSyncClient {
             .selection_builder
             .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
-        let from_slot = u64::try_from(params.from_slot)
-            .context("from_slot must be non-negative")
-            .map_err(map_err)?;
-        let to_slot = params
-            .to_slot
-            .map(|to| u64::try_from(to).context("to_slot must be non-negative"))
-            .transpose()
-            .map_err(map_err)?;
-        let block_selection = self
+        let block_query = self
             .block_registrations
-            .select(&params.on_block_registration_indexes, from_slot, to_slot)
+            .plan(
+                &params.on_block_registration_indexes,
+                params.from_slot,
+                params.to_slot,
+                params.on_event_registration_indexes.is_empty(),
+                params.include_all_blocks.unwrap_or(false),
+                params.max_num_instructions,
+            )
             .map_err(map_err)?;
-        let blocks_read = to_slot
-            .filter(|_| params.on_event_registration_indexes.is_empty())
-            .and_then(|to| block_selection.blocks_read(from_slot, to));
-        let (from_slot, to_slot) = blocks_read.as_ref().map_or((from_slot, to_slot), |read| {
-            (read.from_block, Some(read.to_block))
-        });
+        let block_selection = &block_query.selection;
+        if let Some(next_slot) = block_query.unread_until() {
+            return Ok((
+                ItemsResponse {
+                    next_slot: next_slot as i64,
+                    blocks: Vec::new(),
+                    event_items: Vec::new(),
+                    block_items: Vec::new(),
+                },
+                TransactionStore::new_svm(),
+                BlockStore::new_svm(),
+            ));
+        }
+        let from_slot = block_query.from_block;
         let mut block_columns = built.block_columns.clone();
         for column in fields::block_mask_columns(block_selection.mask()).map_err(map_err)? {
             fields::push_unique(&mut block_columns, column);
@@ -262,7 +269,8 @@ impl SvmHyperSyncClient {
         let query = SolanaQuery {
             from_slot,
             // Inclusive on the boundary, exclusive on the wire.
-            to_slot: to_slot
+            to_slot: block_query
+                .to_block
                 .map(|b| b.checked_add(1).context("to_slot overflow"))
                 .transpose()
                 .map_err(map_err)?,
@@ -271,6 +279,7 @@ impl SvmHyperSyncClient {
             max_num_instructions: params
                 .max_num_instructions
                 .and_then(|v| usize::try_from(v).ok()),
+            max_num_blocks: block_query.max_blocks.and_then(|b| usize::try_from(b).ok()),
             // A slot handler runs on slots no instruction landed on.
             include_all_blocks: params.include_all_blocks.unwrap_or(false)
                 || !block_selection.is_empty(),
@@ -349,11 +358,9 @@ impl SvmHyperSyncClient {
             take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
 
         let response = ItemsResponse {
-            next_slot: i64::try_from(
-                blocks_read.map_or(resp.next_slot, |read| read.fetched_until(resp.next_slot)),
-            )
-            .context("next_slot overflow")
-            .map_err(map_err)?,
+            next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
+                .context("next_slot overflow")
+                .map_err(map_err)?,
             blocks: block_headers,
             event_items: items,
             block_items,

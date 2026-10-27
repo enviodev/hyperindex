@@ -67,12 +67,12 @@ let makeSelection = (
   ),
 }
 
-// A query for blocks alone reads up to the height the chain knows when it is
-// open-ended: the source picks the blocks to read within that range and
-// answers for the gaps between them, which can't run past the head.
-let queryToBlock = (selection: selection, ~toBlock, ~knownHeight) =>
-  switch (toBlock, selection.onEventRegistrations) {
-  | (None, []) => Some(knownHeight)
+// A query for blocks alone reads no further than the height the chain knows:
+// the source picks the blocks to read within its range and answers for the
+// gaps between them, which can't run past the head.
+let sourceToBlock = (selection: selection, ~toBlock, ~knownHeight) =>
+  switch selection.onEventRegistrations {
+  | [] => Some(toBlock->Option.mapOr(knownHeight, toBlock => Pervasives.min(toBlock, knownHeight)))
   | _ => toBlock
   }
 

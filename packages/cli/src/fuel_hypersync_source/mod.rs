@@ -86,34 +86,51 @@ impl FuelHyperSyncClient {
                 &client_filtered,
             )
             .map_err(map_err)?;
-        let from_block = u64::try_from(params.from_block)
-            .context("from_block must be >= 0")
-            .map_err(map_err)?;
-        let to_block = params
-            .to_block
-            .map(|to| u64::try_from(to).context("to_block must be >= 0"))
-            .transpose()
-            .map_err(map_err)?;
-        let block_selection = self
+        // Fuel never rolls back and caps no page, so neither realtime nor an
+        // item target shapes its block reads.
+        let block_query = self
             .block_registrations
-            .select(&params.on_block_registration_indexes, from_block, to_block)
+            .plan(
+                &params.on_block_registration_indexes,
+                params.from_block,
+                params.to_block,
+                params.on_event_registration_indexes.is_empty(),
+                false,
+                None,
+            )
             .map_err(map_err)?;
-        let blocks_read = to_block
-            .filter(|_| params.on_event_registration_indexes.is_empty())
-            .and_then(|to| block_selection.blocks_read(from_block, to));
-        let (from_block, to_block) = blocks_read.as_ref().map_or((from_block, to_block), |read| {
-            (read.from_block, Some(read.to_block))
-        });
+        let block_selection = &block_query.selection;
+        if let Some(next_block) = block_query.unread_until() {
+            let next_block = next_block as i64;
+            return Ok((
+                ItemsResponse {
+                    archive_height: Some(next_block - 1),
+                    next_block,
+                    event_items: Vec::new(),
+                    block_items: Vec::new(),
+                    rejected_log_data: Vec::new(),
+                },
+                BlockStore::new_fuel(),
+            ));
+        }
 
-        let query = build_query(from_block, to_block, &built, !block_selection.is_empty())
-            .context("build query")
-            .map_err(map_err)?;
+        let query = build_query(
+            block_query.from_block,
+            block_query.to_block,
+            &built,
+            !block_selection.is_empty(),
+        )
+        .context("build query")
+        .map_err(map_err)?;
         let res = self
             .inner
             .get_arrow(&query)
             .await
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
+        let next_block = u64::try_from(raw.next_block)
+            .context("next_block must be >= 0")
+            .map_err(map_err)?;
 
         // The page's raw blocks, keyed by height — merged into the per-chain
         // store where their ids drive reorg detection and materialisation.
@@ -135,8 +152,7 @@ impl FuelHyperSyncClient {
         // block handler needs. The page asked for every block of the range it
         // covered, so one missing is a bad answer, not a block to skip.
         let present: HashSet<i64> = raw.blocks.iter().map(|b| b.height).collect();
-        let block_items =
-            block_selection.route(from_block..u64::try_from(raw.next_block).unwrap_or(0));
+        let block_items = block_selection.route(block_query.from_block..next_block);
         if block_items
             .iter()
             .any(|item| !present.contains(&item.block_number))
@@ -165,9 +181,7 @@ impl FuelHyperSyncClient {
 
         let response = ItemsResponse {
             archive_height: raw.archive_height,
-            next_block: blocks_read.map_or(raw.next_block, |read| {
-                read.fetched_until(u64::try_from(raw.next_block).unwrap_or(0)) as i64
-            }),
+            next_block: block_query.fetched_until(next_block) as i64,
             event_items: items,
             block_items,
             rejected_log_data,

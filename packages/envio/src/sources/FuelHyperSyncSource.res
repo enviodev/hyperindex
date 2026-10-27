@@ -71,7 +71,7 @@ let make = (
       ~client,
       ~query={
         fromBlock,
-        toBlock: selection->FetchState.queryToBlock(~toBlock, ~knownHeight),
+        toBlock: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,

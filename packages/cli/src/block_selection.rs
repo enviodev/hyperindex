@@ -122,30 +122,87 @@ impl BlockRegistrations {
         registrations.sort_unstable_by_key(|r| r.index);
         Ok(BlockSelection { registrations })
     }
+
+    /// How a HyperSync query over `[from_block, to_block]` reads the block
+    /// table. A query selecting no other table starts at the first block a
+    /// handler runs on and, outside realtime, reads that block by itself when
+    /// the next is over `SPARSE_GAP` blocks further. In realtime every block's
+    /// hash is kept for reorg detection, so the whole range is read.
+    pub(crate) fn plan(
+        &self,
+        indexes: &[i64],
+        from_block: i64,
+        to_block: Option<i64>,
+        blocks_only: bool,
+        realtime: bool,
+        items_target: Option<i64>,
+    ) -> Result<BlockQuery> {
+        let from_block = u64::try_from(from_block).context("from_block must be >= 0")?;
+        let to_block = to_block
+            .map(|to| u64::try_from(to).context("to_block must be >= 0"))
+            .transpose()?;
+        let selection = self.select(indexes, from_block, to_block)?;
+        let read = match to_block {
+            Some(to_block) if blocks_only && !realtime => selection.read(from_block, to_block),
+            _ => None,
+        };
+        let (from_block, to_block, claimed_to_block) = match read {
+            Some((from, to, claimed)) => (from, Some(to), Some(claimed)),
+            None => (from_block, to_block, None),
+        };
+        let max_blocks = items_target
+            .filter(|_| blocks_only && !selection.is_empty() && to_block != Some(from_block))
+            .and_then(|target| u64::try_from(target).ok())
+            .map(|target| target.saturating_mul(selection.min_interval()));
+        Ok(BlockQuery {
+            selection,
+            blocks_only,
+            from_block,
+            to_block,
+            max_blocks,
+            claimed_to_block,
+        })
+    }
 }
 
 /// Past this many blocks to the next one a handler runs on, a request for the
 /// one block costs less than reading every block up to it.
 const SPARSE_GAP: u64 = 1000;
 
-/// The blocks a query selecting no other table reads, inclusive.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct BlocksRead {
+pub(crate) struct BlockQuery {
+    pub(crate) selection: BlockSelection,
+    blocks_only: bool,
     pub(crate) from_block: u64,
-    pub(crate) to_block: u64,
-    /// No handler runs past `to_block` up to here, so a page that read all of
-    /// `[from_block, to_block]` has fetched this far.
-    claimed_to_block: u64,
+    /// Inclusive.
+    pub(crate) to_block: Option<u64>,
+    /// Caps a page reading every block for its handlers at the blocks its
+    /// item target needs: the target counts handler runs, not blocks.
+    pub(crate) max_blocks: Option<u64>,
+    /// A query reading less than its range answers for the rest of it up to
+    /// here, where no handler runs.
+    claimed_to_block: Option<u64>,
 }
 
-impl BlocksRead {
+impl BlockQuery {
+    /// The end (exclusive) of a range a query for blocks alone has nothing to
+    /// read in, which it answers for without a request: on SVM a query
+    /// selecting nothing would return every instruction of the range.
+    pub(crate) fn unread_until(&self) -> Option<u64> {
+        if self.blocks_only && self.selection.is_empty() {
+            self.to_block?.checked_add(1)
+        } else {
+            None
+        }
+    }
+
     /// Where the fetched range ends (exclusive), for a page that read up to
     /// `next_block` (exclusive).
     pub(crate) fn fetched_until(&self, next_block: u64) -> u64 {
-        if next_block > self.to_block {
-            self.claimed_to_block + 1
-        } else {
-            next_block
+        match (self.to_block, self.claimed_to_block) {
+            (Some(to_block), Some(claimed_to_block)) if next_block > to_block => {
+                claimed_to_block + 1
+            }
+            _ => next_block,
         }
     }
 }
@@ -206,28 +263,26 @@ impl BlockSelection {
             .collect()
     }
 
-    /// What a query for blocks alone reads of `[from_block, to_block]`: from
-    /// the first block a handler runs on, and that block by itself when the
-    /// next is over `SPARSE_GAP` blocks further. `None` when no handler runs in
-    /// the range.
-    pub(crate) fn blocks_read(&self, from_block: u64, to_block: u64) -> Option<BlocksRead> {
+    /// The blocks a query for blocks alone reads of `[from_block, to_block]`,
+    /// and how far it answers for: `None` when no handler runs in the range.
+    fn read(&self, from_block: u64, to_block: u64) -> Option<(u64, u64, u64)> {
         let first = self.first_from(from_block).filter(|&b| b <= to_block)?;
         let next = first
             .checked_add(1)
             .and_then(|b| self.first_from(b))
             .filter(|&b| b <= to_block);
         Some(match next {
-            Some(next) if next - first <= SPARSE_GAP => BlocksRead {
-                from_block: first,
-                to_block,
-                claimed_to_block: to_block,
-            },
-            _ => BlocksRead {
-                from_block: first,
-                to_block: first,
-                claimed_to_block: next.map_or(to_block, |next| next - 1),
-            },
+            Some(next) if next - first <= SPARSE_GAP => (first, to_block, to_block),
+            _ => (first, first, next.map_or(to_block, |next| next - 1)),
         })
+    }
+
+    fn min_interval(&self) -> u64 {
+        self.registrations
+            .iter()
+            .map(|r| r.interval)
+            .min()
+            .unwrap_or(1)
     }
 
     fn first_from(&self, block_number: u64) -> Option<u64> {
@@ -329,36 +384,111 @@ mod tests {
         );
     }
 
+    fn planned(
+        inputs: &[OnBlockRegistrationInput],
+        range: (i64, Option<i64>),
+        blocks_only: bool,
+        realtime: bool,
+        items_target: Option<i64>,
+    ) -> BlockQuery {
+        let indexes: Vec<i64> = inputs.iter().map(|i| i.index).collect();
+        BlockRegistrations::new(inputs)
+            .unwrap()
+            .plan(
+                &indexes,
+                range.0,
+                range.1,
+                blocks_only,
+                realtime,
+                items_target,
+            )
+            .unwrap()
+    }
+
+    fn read_of(query: &BlockQuery, next_block: u64) -> (u64, Option<u64>, Option<u64>, u64) {
+        (
+            query.from_block,
+            query.to_block,
+            query.max_blocks,
+            query.fetched_until(next_block),
+        )
+    }
+
     #[test]
     fn reads_every_block_between_handler_blocks_a_short_gap_apart() {
-        let selection = select(&[input(0, 10, None, 1000)], 0, Some(5000));
-        let read = selection.blocks_read(0, 5000).unwrap();
-        assert_eq!(
-            (read.from_block, read.to_block, read.fetched_until(5001)),
-            (10, 5000, 5001)
+        let query = planned(
+            &[input(0, 10, None, 1000)],
+            (0, Some(5000)),
+            true,
+            false,
+            Some(3),
         );
+        assert_eq!(read_of(&query, 5001), (10, Some(5000), Some(3000), 5001));
     }
 
     #[test]
     fn reads_a_handler_block_alone_when_the_next_is_far() {
-        let selection = select(&[input(0, 10, None, 5000)], 0, Some(20_000));
-        let read = selection.blocks_read(0, 20_000).unwrap();
-        let last = selection.blocks_read(15_000, 16_000).unwrap();
+        let sparse = [input(0, 10, None, 5000)];
+        let first = planned(&sparse, (0, Some(20_000)), true, false, Some(3));
+        let last = planned(&sparse, (15_000, Some(16_000)), true, false, None);
         assert_eq!(
             (
-                (read.from_block, read.to_block),
-                read.fetched_until(11),
-                read.fetched_until(10),
-                (last.from_block, last.to_block, last.fetched_until(15_011)),
+                read_of(&first, 11),
+                first.fetched_until(10),
+                read_of(&last, 15_011)
             ),
-            ((10, 10), 5010, 10, (15_010, 15_010, 16_001))
+            (
+                (10, Some(10), None, 5010),
+                10,
+                (15_010, Some(15_010), None, 16_001)
+            )
+        );
+    }
+
+    #[test]
+    fn reads_the_whole_range_in_realtime_or_beside_other_tables() {
+        let sparse = [input(0, 10, None, 5000)];
+        assert_eq!(
+            (
+                read_of(
+                    &planned(&sparse, (0, Some(20_000)), true, true, None),
+                    20_001
+                ),
+                read_of(
+                    &planned(&sparse, (0, Some(20_000)), false, false, Some(3)),
+                    20_001
+                ),
+            ),
+            (
+                (0, Some(20_000), None, 20_001),
+                (0, Some(20_000), None, 20_001)
+            )
         );
     }
 
     #[test]
     fn reads_nothing_when_no_handler_runs_in_the_range() {
-        let selection = select(&[input(0, 10, None, 5000)], 0, None);
-        assert_eq!(selection.blocks_read(11, 5009), None);
+        let ended = [input(0, 10, Some(4000), 5000)];
+        assert_eq!(
+            (
+                planned(&ended, (11, Some(5009)), true, false, Some(3)).unread_until(),
+                planned(&ended, (11, None), true, false, Some(3)).unread_until(),
+                planned(&ended, (11, Some(5009)), false, false, Some(3)).unread_until(),
+            ),
+            (Some(5010), None, None)
+        );
+    }
+
+    #[test]
+    fn caps_blocks_by_the_densest_handler() {
+        let query = planned(
+            &[input(0, 0, None, 5), input(1, 0, None, 2)],
+            (0, Some(100)),
+            true,
+            false,
+            Some(3),
+        );
+        assert_eq!(query.max_blocks, Some(6));
     }
 
     #[test]
