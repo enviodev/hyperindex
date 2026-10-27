@@ -603,8 +603,10 @@ pub fn insert_tag(database: &str, chain_ids: &[i64]) -> String {
 }
 
 /// What every [`insert_tag`] in `database` starts with, whatever its chains.
+/// The name's length goes first: a database name may hold `:`, and without it
+/// `idx`'s prefix would also start every tag of `idx:v2`.
 pub fn insert_tag_prefix(database: &str) -> String {
-    format!("envio:{database}:")
+    format!("envio:{}:{database}:", database.len())
 }
 
 /// Unique to this insert among every process writing to the database.

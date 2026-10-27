@@ -717,6 +717,40 @@ async fn resuming_one_chain_leaves_another_chains_insert_running() {
     assert!(succeeded, "{query_id} was stopped by chain 1's resume");
 }
 
+/// Another deployment on the same server whose database name starts with this
+/// one's and a `:` (`idx` and `idx:v2`), driving the same chain, keeps its
+/// insert running through this deployment's resume.
+#[tokio::test]
+#[ignore = "needs a ClickHouse server"]
+async fn resuming_leaves_another_databases_insert_running() {
+    let live = Live::new();
+    let account = live.account();
+    initialize(&live, vec![account.clone()]).await;
+    let query_id = format!(
+        "{}other",
+        super::client::insert_tag(&format!("{}:v2", live.database), &[1])
+    );
+    let other = tokio::spawn(send_as(
+        query_id.clone(),
+        format!(
+            "INSERT INTO `{}`.envio_history_Account (id, owner, balance, envio_checkpoint_id, \
+             envio_change) SELECT toString(number), 'bob', '1', 1, 'SET' FROM numbers(3) \
+             WHERE sleepEachRow(1) = 0 SETTINGS max_block_size = 1",
+            live.database
+        ),
+    ));
+    until_running(&live, &query_id).await;
+
+    resume(&live.another_process(), vec![account], 0, 0).await;
+    let succeeded = other.await.unwrap();
+
+    live.drop_database().await;
+    assert!(
+        succeeded,
+        "{query_id} was stopped by another database's resume"
+    );
+}
+
 async fn until_running(live: &Live, query_id: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while live

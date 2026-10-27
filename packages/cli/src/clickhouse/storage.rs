@@ -497,10 +497,8 @@ impl Storage {
     /// that sent it is gone, and one landing after a trim would leave rows the
     /// next batches reuse the checkpoints of.
     async fn stop_inserts_left_running(&self, chain_ids: Option<&[i64]>) -> Result<()> {
-        let mut filter = format!(
-            "startsWith(query_id, {})",
-            literal(&insert_tag_prefix(self.database()))
-        );
+        let prefix = insert_tag_prefix(self.database());
+        let mut filter = format!("startsWith(query_id, {})", literal(&prefix));
         if let Some(chain_ids) = chain_ids {
             self.client.tag_inserts(chain_ids);
             let needles = chain_ids
@@ -508,7 +506,11 @@ impl Storage {
                 .map(|chain_id| literal(&format!(",{chain_id},")))
                 .collect::<Vec<_>>()
                 .join(", ");
-            filter.push_str(&format!(" AND multiSearchAny(query_id, [{needles}])"));
+            // Past the prefix, so a database name holding `,1,` names no chain.
+            filter.push_str(&format!(
+                " AND multiSearchAny(substring(query_id, {}), [{needles}])",
+                prefix.len() + 1
+            ));
         }
         self.client
             .statement(format!(
