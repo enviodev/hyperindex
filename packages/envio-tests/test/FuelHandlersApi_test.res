@@ -191,6 +191,9 @@ expectType<TypeEqual<FuelOnBlockHandlerArgs["block"]["height"], number>>(true);
 const _unselected: string = ({} as FuelOnBlockHandlerArgs["block"]).id;
 expectType<TypeEqual<FuelOnBlockHandlerArgs["context"], FuelOnBlockContext>>(true);
 expectType<
+  TypeEqual<FuelOnBlockHandlerArgs<{ readonly block: readonly ["id"] }>["block"]["id"], string>
+>(true);
+expectType<
   TypeEqual<FuelOnBlockHandler, (args: FuelOnBlockHandlerArgs) => Promise<void>>
 >(true);
 expectType<TypeEqual<FuelOnBlockWhereArgs["chain"]["id"], FuelChainId>>(true);

@@ -562,6 +562,10 @@ expectType<TypeEqual<EvmOnBlockBlock<{ readonly block: readonly ["miner"] }>["mi
   true,
 );
 expectType<TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>>(true);
+// A handler written apart from its registration names the selection first.
+expectType<
+  TypeEqual<EvmOnBlockHandlerArgs<{ readonly block: readonly ["miner"] }>["block"]["miner"], Address>
+>(true);
 expectType<
   TypeEqual<EvmOnBlockHandler, (args: EvmOnBlockHandlerArgs) => Promise<void>>
 >(true);

@@ -1093,8 +1093,8 @@ export type EvmOnBlockBlock<Fields = undefined> = SelectedFields<
 
 /** Arguments passed to an EVM block handler. */
 export type EvmOnBlockHandlerArgs<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
 > = {
   /** Block being processed: its number, plus the fields listed in the
       registration's `fields.block`. */
@@ -1105,14 +1105,14 @@ export type EvmOnBlockHandlerArgs<
 
 /** Handler function for an EVM `indexer.onBlock` registration. */
 export type EvmOnBlockHandler<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
-> = (args: EvmOnBlockHandlerArgs<Config, Fields>) => Promise<void>;
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = (args: EvmOnBlockHandlerArgs<Fields, Config>) => Promise<void>;
 
 /** Options for an EVM `indexer.onBlock` registration. */
 export type EvmOnBlockOptions<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends EvmOnBlockFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
 > = {
   /** Unique name for this block handler. Used as the key in error messages
       and in persisted progress tracking. */
@@ -1182,8 +1182,8 @@ export type FuelOnBlockFieldsSelection = {
 
 /** Arguments passed to a Fuel block handler. */
 export type FuelOnBlockHandlerArgs<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends FuelOnBlockFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
 > = {
   /** Block being processed: its height, plus the fields listed in the
       registration's `fields.block`. */
@@ -1198,14 +1198,14 @@ export type FuelOnBlockHandlerArgs<
 
 /** Handler function for a Fuel `indexer.onBlock` registration. */
 export type FuelOnBlockHandler<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends FuelOnBlockFieldsSelection | undefined = undefined,
-> = (args: FuelOnBlockHandlerArgs<Config, Fields>) => Promise<void>;
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = (args: FuelOnBlockHandlerArgs<Fields, Config>) => Promise<void>;
 
 /** Options for a Fuel `indexer.onBlock` registration. */
 export type FuelOnBlockOptions<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends FuelOnBlockFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
 > = {
   /** Unique name for this block handler. Used as the key in error messages
       and in persisted progress tracking. */
@@ -1261,8 +1261,8 @@ export type SvmOnSlotFieldsSelection = {
 
 /** Arguments passed to an SVM slot handler. */
 export type SvmOnSlotHandlerArgs<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends SvmOnSlotFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
 > = {
   /** Slot number being processed. */
   readonly slot: number;
@@ -1281,14 +1281,14 @@ export type SvmOnSlotHandlerArgs<
 
 /** Handler function for an SVM `indexer.onSlot` registration. */
 export type SvmOnSlotHandler<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends SvmOnSlotFieldsSelection | undefined = undefined,
-> = (args: SvmOnSlotHandlerArgs<Config, Fields>) => Promise<void>;
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = (args: SvmOnSlotHandlerArgs<Fields, Config>) => Promise<void>;
 
 /** Options for an SVM `indexer.onSlot` registration. */
 export type SvmOnSlotOptions<
-  Config extends IndexerConfigTypes = GlobalConfig,
   Fields extends SvmOnSlotFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
 > = {
   /** Unique name for this slot handler. Used as the key in error messages
       and in persisted progress tracking. */
@@ -1738,8 +1738,8 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              * any contract context.
              */
             readonly onBlock: <const F extends EvmOnBlockFieldsSelection | undefined = undefined>(
-              options: EvmOnBlockOptions<Config, F>,
-              handler: EvmOnBlockHandler<Config, F>,
+              options: EvmOnBlockOptions<F, Config>,
+              handler: EvmOnBlockHandler<F, Config>,
             ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
@@ -1820,8 +1820,8 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              * `where` semantics; Fuel filters on `block.height`. Always
              * available regardless of whether `contracts` are configured. */
             readonly onBlock: <const F extends FuelOnBlockFieldsSelection | undefined = undefined>(
-              options: FuelOnBlockOptions<Config, F>,
-              handler: FuelOnBlockHandler<Config, F>,
+              options: FuelOnBlockOptions<F, Config>,
+              handler: FuelOnBlockHandler<F, Config>,
             ) => void;
           } & (Config["fuel"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
@@ -1887,8 +1887,8 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
              * slot range and stride.
              */
             readonly onSlot: <const F extends SvmOnSlotFieldsSelection | undefined = undefined>(
-              options: SvmOnSlotOptions<Config, F>,
-              handler: SvmOnSlotHandler<Config, F>,
+              options: SvmOnSlotOptions<F, Config>,
+              handler: SvmOnSlotHandler<F, Config>,
             ) => void;
           } & (Config["svm"] extends {
             programs: infer Programs extends Record<string, Record<string, any>>;

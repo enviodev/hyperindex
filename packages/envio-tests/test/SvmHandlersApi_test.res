@@ -228,6 +228,12 @@ const _slotOpts: SvmOnSlotOptions = {
   where: ({ chain }) => (chain.id === 7565164 ? true : false),
 };
 expectType<SvmOnSlotOptions>(_slotOpts);
+expectType<
+  TypeEqual<
+    NonNullable<SvmOnSlotHandlerArgs<{ readonly block: readonly ["time"] }>["block"]>["time"],
+    number
+  >
+>(true);
 expectType<TypeEqual<SvmOnSlotContext["isPreload"], boolean>>(true);
 expectType<
   TypeEqual<SvmOnSlotContext["Account"]["set"], (entity: Account) => void>
