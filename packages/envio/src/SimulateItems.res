@@ -363,6 +363,7 @@ let parse = (
         }
         ownBlockNumbers->Utils.Set.add(blockNumber)->ignore
         blocks->Dict.set(blockNumber->Int.toString, block)
+        currentBlock := blockNumber
       | None =>
         JsError.throwWithMessage(
           `simulate: Invalid item. Each item must name what it is${switch config.ecosystem.name {
@@ -509,7 +510,12 @@ let parse = (
       | Some(block) => block.hash
       | None => None
       }
-      let (block, _) = parseBlock(~ecosystem=Svm, ~defaultBlockNumber=slot, ~blockJson)
+      let (block, blockSlot) = parseBlock(~ecosystem=Svm, ~defaultBlockNumber=slot, ~blockJson)
+      if blockSlot !== slot {
+        JsError.throwWithMessage(
+          `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is at slot ${slot->Int.toString} but its block is slot ${blockSlot->Int.toString}. Give the slot once.`,
+        )
+      }
       block->addCarriedBlock(~blockNumber=slot)
       svmBlocks
       ->Array.push({

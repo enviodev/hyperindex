@@ -26,6 +26,10 @@ type Header {
 type Tick {
   id: ID!
 }
+
+type Transferred {
+  id: ID!
+}
 `,
   ~handlers=`
 import { indexer } from "envio";
@@ -48,7 +52,9 @@ indexer.onBlock({ name: "ticks", where: () => ({ block: { number: { _lte: 3 } } 
   context.Tick.set({ id: \`\${block.number}\` });
 });
 
-indexer.onEvent({ contract: "Token", event: "Transfer" }, async () => {});
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Transferred.set({ id: \`\${event.block.number}\` });
+});
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -124,6 +130,25 @@ describe("onBlock field selection", () => {
       ],
       ticks: ["0", "1", "2", "3"],
     });
+  });
+
+  // An item without a block of its own follows the one before it, whether
+  // that was an event or a block given on its own.
+  it("places an event after a standalone block on that block", async (t) => {
+    const testIndexer = createTestIndexer();
+    await testIndexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 6,
+          simulate: [
+            { block: { number: 5, timestamp: 1_700_000_005, miner } },
+            { contract: "Token", event: "Transfer", params: { from: miner, to: miner, value: 1n } },
+          ],
+        },
+      },
+    });
+    t.expect((await testIndexer.Transferred.getAll()).map((transfer) => transfer.id)).toEqual(["5"]);
   });
 });
 `,
