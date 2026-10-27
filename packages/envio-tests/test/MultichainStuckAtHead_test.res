@@ -61,8 +61,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         pollingInterval: 1,
       },
     ],
-    ~reducedPollingInterval=1,
-    ~newBlockStallTimeoutRealtime=2_000,
+    ~sourceTiming={reducedPollingInterval: 1, newBlockStallTimeoutRealtime: 2_000},
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)

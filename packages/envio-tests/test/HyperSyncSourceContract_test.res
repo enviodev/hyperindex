@@ -756,33 +756,35 @@ describe("HyperSync source responses", () => {
     ))
   })
 
-  Async.it("counts a block-hash request behind the head once", async t => {
-    let samples = await MockHyperSyncServer.withServer(
-      ~height=100,
-      async server => {
-        let (source, _) = makeSource(~url=server->MockHyperSyncServer.url)
-        // The replica that answers first hasn't reached block 10.
-        server->MockHyperSyncServer.pushResponse({blocks: [], nextBlock: 10})
-        server->MockHyperSyncServer.pushResponse({
-          blocks: [JSON.parseOrThrow(`{"number":10,"hash":"${blockHash(10)}"}`)],
-          nextBlock: 11,
-        })
-        let sourceManager = SourceManager.make(
-          ~logger=Logger.makeInMemory(),
-          ~isRealtime=false,
-          ~sources=[source],
-        )
-        let _ = await sourceManager->SourceManager.getBlockHashes(
-          ~blockNumbers=[10],
-          ~isRealtime=false,
-        )
-        sourceManager
-        ->SourceManager.getRequestStatSamples
-        ->Array.map(({method, count}) => (method, count))
-      },
-    )
-    t.expect(samples).toEqual([("getBlockHashes", 2)])
-  })
+  // The same request is reported on the response and on the failure it carries,
+  // which is why the retry above it records only the response's.
+  Async.it(
+    "reports a block-hash request behind the head on the response and the failure",
+    async t => {
+      let reported = await MockHyperSyncServer.withServer(
+        ~height=100,
+        async server => {
+          let (source, _) = makeSource(~url=server->MockHyperSyncServer.url)
+          // The replica that answers hasn't reached block 10.
+          server->MockHyperSyncServer.pushResponse({blocks: [], nextBlock: 10})
+          let {result, requestStats} = await source.getBlockHashes(
+            ~blockNumbers=[10],
+            ~logger=Logger.makeInMemory()->Logger.withFields({"test": "block hashes"}),
+          )
+          let methods = (stats: array<Source.requestStat>) => stats->Array.map(stat => stat.method)
+          (
+            methods(requestStats),
+            switch result {
+            | Error(Source.SourceBehindHead({blockNumber, requestStats})) =>
+              Some((blockNumber, methods(requestStats)))
+            | _ => None
+            },
+          )
+        },
+      )
+      t.expect(reported).toEqual((["getBlockHashes"], Some((10, ["getBlockHashes"]))))
+    },
+  )
 
   Async.it("surfaces a page that withholds a selected block field", async t => {
     let result = await MockHyperSyncServer.withServer(
