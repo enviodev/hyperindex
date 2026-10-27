@@ -58,10 +58,11 @@ describe("A block handler selecting fields beside wildcard events", () => {
 
     t.expect({
       transfer: await indexer.Transfer.get("300-0"),
-      blocks: (await indexer.BlockSeen.getAll()).length,
+      blocks: (await indexer.BlockSeen.getAll()).sort((a, b) => Number(a.id) - Number(b.id)),
     }).toEqual({
       transfer: { id: "300-0", to: Addresses.mockAddresses[1], value: 3n },
-      blocks: 250,
+      // The mock chain's block timestamp is its number.
+      blocks: Array.from({ length: 250 }, (_, i) => ({ id: String(100 + i), timestamp: 100 + i })),
     });
   });
 });

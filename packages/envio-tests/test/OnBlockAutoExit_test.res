@@ -45,10 +45,11 @@ describe("Auto-exit with a block handler selecting fields", () => {
 
     t.expect({
       transfer: await indexer.Transfer.get("103-0"),
-      blocks: (await indexer.BlockSeen.getAll()).map((b) => b.id).sort(),
+      blocks: (await indexer.BlockSeen.getAll()).sort((a, b) => Number(a.id) - Number(b.id)),
     }).toEqual({
       transfer: { id: "103-0", to: Addresses.mockAddresses[1], value: 3n },
-      blocks: ["100", "101", "102", "103"],
+      // The mock chain's block timestamp is its number.
+      blocks: [100, 101, 102, 103].map((n) => ({ id: String(n), timestamp: n })),
     });
   });
 });

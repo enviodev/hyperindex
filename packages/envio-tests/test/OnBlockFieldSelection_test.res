@@ -79,6 +79,18 @@ describe("onBlock field selection", () => {
     );
   });
 
+  // A block handler runs on no transaction, so it has none to select.
+  it("rejects a transaction selection", (t) => {
+    t.expect(() =>
+      indexer.onBlock(
+        { name: "bad", fields: { transaction: ["hash"] } as never },
+        async () => {},
+      ),
+    ).toThrowError(
+      'Invalid "transaction" key in the fields option of \`indexer.onBlock("bad")\`. Valid keys: "block".',
+    );
+  });
+
   it("hands the handler the selected fields of each block", async (t) => {
     const testIndexer = createTestIndexer();
     await testIndexer.process({
