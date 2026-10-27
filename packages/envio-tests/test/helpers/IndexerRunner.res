@@ -47,6 +47,9 @@ type rec t = {
   getBatchWritePromise: unit => promise<unit>,
   getRollbackReadyPromise: unit => promise<unit>,
   waitUntilIdle: unit => promise<unit>,
+  // Moves a virtual-time run's clock forward, firing every source timer due
+  // on the way. Only a run on virtual time has a clock to move.
+  advanceTime: int => promise<unit>,
   waitUntilReady: unit => promise<unit>,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
@@ -180,7 +183,9 @@ let run = async (
   // reads the resumed indexer's lines after the ones that led to them.
   ~logger=Logger.makeInMemory(),
   ~backend: backend=selectedBackend,
-  ~sourceTiming=?,
+  ~sourceTiming: option<SourceManager.timing>=?,
+  // Runs the source layer's timers on this clock instead of real time.
+  ~clock: option<VirtualClock.t>=?,
   ~startBlockRetry=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
@@ -200,6 +205,11 @@ let run = async (
   ~onIndexerStopped: unit => unit=() => (),
   body: t => promise<unit>,
 ) => {
+  let sourceTiming = switch clock {
+  | Some(clock) => Some({...sourceTiming->Option.getOr({}), clock: clock->VirtualClock.toClock})
+  | None => sourceTiming
+  }
+
   // Postgres resources this run owns: one schema, plus every client and
   // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
@@ -448,6 +458,35 @@ let run = async (
       })
     }
 
+    let waitUntilIdle = async () => {
+      await state->Writing.flush
+      // Settling takes several ticks: the loop dispatches follow-up actions
+      // (the next query, the finalize pass) from inside the tick that looks
+      // idle, so one observation isn't enough.
+      let settled = ref(0)
+      let attempts = ref(0)
+      while settled.contents < 5 && attempts.contents < 5000 {
+        attempts := attempts.contents + 1
+        settled := if (
+            !(state->IndexerState.isProcessing) &&
+            state->IndexerState.writeFiber->Option.isNone &&
+            !(state->IndexerState.shouldFinalizeIndexes) &&
+            Frontier.equals(
+              state->IndexerState.committedFrontier,
+              state->IndexerState.processedFrontier,
+            )
+          ) {
+            settled.contents + 1
+          } else {
+            0
+          }
+        await Utils.delay(0)
+      }
+      if settled.contents < 5 {
+        JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
+      }
+    }
+
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
@@ -490,34 +529,15 @@ let run = async (
           resolve()
         })
       },
-      waitUntilIdle: async () => {
-        await state->Writing.flush
-        // Settling takes several ticks: the loop dispatches follow-up actions
-        // (the next query, the finalize pass) from inside the tick that looks
-        // idle, so one observation isn't enough.
-        let settled = ref(0)
-        let attempts = ref(0)
-        while settled.contents < 5 && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          settled := if (
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.shouldFinalizeIndexes) &&
-              Frontier.equals(
-                state->IndexerState.committedFrontier,
-                state->IndexerState.processedFrontier,
-              )
-            ) {
-              settled.contents + 1
-            } else {
-              0
-            }
-          await Utils.delay(0)
-        }
-        if settled.contents < 5 {
-          JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
-        }
-      },
+      waitUntilIdle,
+      advanceTime: millis =>
+        switch clock {
+        | Some(clock) => clock->VirtualClock.advance(millis, ~settle=waitUntilIdle)
+        | None =>
+          JsError.throwWithMessage(
+            "advanceTime needs a run on virtual time. Pass `~virtualTime=true` to Scenario.it.",
+          )
+        },
       releaseRealtime: () => state->IndexerState.releaseRealtime,
       waitUntilReady: async () => {
         let isReady = () =>

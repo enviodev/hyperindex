@@ -184,6 +184,13 @@ let run = async (
   // points each chain at a local server the test runs.
   ~yamlSources=false,
   ~sourceTiming=?,
+  // Runs the source layer's timers on a virtual clock that only the test moves,
+  // with `indexer.advanceTime`, and fails the run on a height call no
+  // expectation accounted for.
+  ~virtualTime=false,
+  // The virtual clock's seed. `ENVIO_TEST_SEED`, or a fresh one per run, when
+  // left out.
+  ~seed=?,
   // How long startup keeps asking for a `latest` start block. `Once` is what
   // `envio local db-migrate` runs with.
   ~startBlockRetry=?,
@@ -198,16 +205,24 @@ let run = async (
   ~mapStorage=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
-  let mocks =
-    sources->Array.map(({
-      chain,
-      ?methods,
-      ?sourceFor,
-      ?pollingInterval,
-      ?isWildcard,
-      ?autoHeight,
-      ?startupHeights,
-    }) => (
+  let clock = virtualTime ? Some(VirtualClock.make(~seed?)) : None
+  let mocks = sources->Array.mapWithIndex((
+    {chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard, ?autoHeight, ?startupHeights},
+    position,
+  ) => {
+    // Named the way the body reaches it, so a timeline line points at the
+    // mock it is about.
+    let index =
+      sources
+      ->Array.slice(~start=0, ~end=position)
+      ->Array.filter(earlier => earlier.chain === chain)
+      ->Array.length
+    let name =
+      index === 0
+        ? `source(${chain->Int.toString})`
+        : `source(${chain->Int.toString}, ~index=${index->Int.toString})`
+    let sharesChain = sources->Array.filter(other => other.chain === chain)->Array.length > 1
+    (
       chain,
       MockSource.make(
         methods->Option.getOr(defaultMethods),
@@ -217,8 +232,12 @@ let run = async (
         ~isWildcard?,
         ~autoHeight?,
         ~startupHeights?,
+        ~label=?sharesChain ? Some(name) : None,
+        ~note=?clock->Option.map(clock => event => clock->VirtualClock.note(`${name}: ${event}`)),
+        ~strictHeightCalls=virtualTime,
       ),
-    ))
+    )
+  })
 
   let config =
     (
@@ -265,6 +284,7 @@ let run = async (
         HandlerRegister.finishRegistration(~config)
       }),
     ~sourceTiming?,
+    ~clock?,
     ~startBlockRetry?,
     ~targetBufferSize?,
     ~holdRealtime?,
@@ -274,24 +294,27 @@ let run = async (
     ~mapStorage?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
-      switch await body(~indexer, ~source) {
+      switch {
+        await body(~indexer, ~source)
+        // Only after the body passed: a failing body has its own error to
+        // report, and answers it never got to were never going to be claimed.
+        mocks->Array.forEach(((_, mock)) => mock.validateAnswersClaimed())
+      } {
       | () => ()
       // A failure says what the mocks were left holding, so finding out what
       // the indexer asked for doesn't take a probe of its own.
-      | exception exn if mocks->Array.length > 0 =>
+      | exception exn if mocks->Array.length > 0 || clock->Option.isSome =>
         exn->IndexerRunner.appendToFailureMessage(
           mocks
           ->Array.map(((_, mock)) => "\n\n" ++ mock.describeState())
-          ->Array.join(""),
+          ->Array.join("") ++
+            clock->Option.mapOr("", clock => "\n\n" ++ clock->VirtualClock.describe),
         )
         switch exn {
         | JsExn(error) => JsExn.throw(error)
         | exn => throw(exn)
         }
       }
-      // Only after the body passed: a failing body has its own error to report,
-      // and answers it never got to were never going to be claimed anyway.
-      mocks->Array.forEach(((_, mock)) => mock.validateAnswersClaimed())
     },
   )
 }
@@ -311,6 +334,8 @@ let it = (
   // Shortens the stall, recovery and polling windows a test would otherwise
   // have to wait out in real time.
   ~sourceTiming=?,
+  // Runs the source layer on a clock only `indexer.advanceTime` moves. See `run`.
+  ~virtualTime=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -343,6 +368,7 @@ let it = (
         await scenario->run(
           ~sources,
           ~sourceTiming?,
+          ~virtualTime?,
           ~targetBufferSize?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,

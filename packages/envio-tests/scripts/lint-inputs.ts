@@ -103,6 +103,82 @@ for (const path of resFiles(testRoot)) {
   });
 }
 
+// A scenario on virtual time only moves when it advances its clock, so real
+// time spent between steps changes nothing it can observe, and a count taken
+// before a step stands in for what `expectNewHeightCalls` checks exactly.
+const realDelay = /\bUtils\.delay\((\d+)\)/;
+const pollSnapshot = /->\s*polls\b/;
+const scenarioStart = /\bScenario\.(?:it|run)\(/;
+
+// A scenario that shortens the source layer's windows on real time races its
+// own steps on a loaded runner. Existing ones are counted per file and the
+// count may only fall; a new one has to run on virtual time.
+const baselinePath = fileURLToPath(new URL("./real-time-timing-baseline.json", import.meta.url));
+const baseline: Record<string, number> = JSON.parse(readFileSync(baselinePath, "utf8"));
+const realTimeTiming: Record<string, number[]> = {};
+
+for (const path of resFiles(testRoot)) {
+  const file = relative(repoRoot, path);
+  const lines = readFileSync(path, "utf8").split("\n");
+  const starts = lines.flatMap((line, index) => (scenarioStart.test(line) ? [index] : []));
+  starts.forEach((start, position) => {
+    const end = starts[position + 1] ?? lines.length;
+    const block = lines.slice(start, end);
+    const code = block.map((line) => line.replace(/\/\/.*$/, ""));
+    if (code.some((line) => /~virtualTime=true\b/.test(line))) {
+      code.forEach((line, offset) => {
+        const delay = line.match(realDelay);
+        if (delay && Number(delay[1]) > 0) {
+          violations.push({
+            file,
+            line: start + offset + 1,
+            title: `Utils.delay(${delay[1]}) on virtual time`,
+            fix: `Replace it with \`await indexer.advanceTime(${delay[1]})\`: the source layer's timers only fire when the test advances the clock.`,
+          });
+        }
+        if (/\bDate\.now\(/.test(line)) {
+          violations.push({
+            file,
+            line: start + offset + 1,
+            title: "Date.now() on virtual time",
+            fix: "Time the scenario by how far it advanced: real time says nothing about when a virtual timer fired.",
+          });
+        }
+        if (pollSnapshot.test(line)) {
+          violations.push({
+            file,
+            line: start + offset + 1,
+            title: "Counting height calls by hand on virtual time",
+            fix: "Replace the count with `await mock.expectNewHeightCalls(n)` at the step that causes the polls.",
+          });
+        }
+      });
+    } else if (code.some((line) => /~sourceTiming=/.test(line))) {
+      (realTimeTiming[file] ??= []).push(start + 1);
+    }
+  });
+}
+
+for (const file of new Set([...Object.keys(baseline), ...Object.keys(realTimeTiming)])) {
+  const found = realTimeTiming[file] ?? [];
+  const allowed = baseline[file] ?? 0;
+  if (found.length > allowed) {
+    violations.push({
+      file,
+      line: found[found.length - 1],
+      title: `${found.length} real-time scenarios with ~sourceTiming, ${allowed} allowed`,
+      fix: "Add `~virtualTime=true` to the new scenario and drive its timers with `await indexer.advanceTime(ms)`: a shortened window on real time races the test's own steps on a loaded runner.",
+    });
+  } else if (found.length < allowed) {
+    violations.push({
+      file,
+      line: 1,
+      title: `Fewer real-time scenarios with ~sourceTiming than the baseline`,
+      fix: `Lower "${file}" in packages/envio-tests/scripts/real-time-timing-baseline.json to ${found.length}, so a later one can't take its place.`,
+    });
+  }
+}
+
 if (violations.length > 0) {
   // An annotation puts the rule on the line that broke it, in the PR diff. The log
   // alone is prose under a step named for the tests, which a reader reaches only

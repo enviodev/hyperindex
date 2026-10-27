@@ -60,6 +60,8 @@ Pick the highest rung that reproduces:
 
 Logs never reach the test output. A run's logger is passed in explicitly (there is no global one) and captures every line in memory: assert on them with `indexer.infoAndAboveLogs()` (as `{msg, params}`) or `indexer.allLogsAsJson()` (every line, trace included). Domain modules such as `FetchState` don't log: they report typed notices through `~onNotice`, and the chain that owns them logs. A failing run's message ends with `Logs: <path>`, a `.test-logs/*.jsonl` file holding all of them. Read it only when the failure needs it.
 
+A scenario whose behaviour depends on the source layer's timers — stall, polling cadence, backoff, retries — runs with `~virtualTime=true`. Nothing the indexer schedules fires until `await indexer.advanceTime(ms)`, so no timer can land between two steps, and each height call is named where the test causes it with `expectNewHeightCalls(n)`. A failure prints the clock's pending timers, its timeline and how far to advance; `ENVIO_TEST_SEED=<seed>` replays a run's jitter. Rust code that sleeps takes a `clock::Clock`, so it runs on the same clock.
+
 Link the issue above the case when there is one: `// https://github.com/enviodev/hyperindex/issues/N`
 
 Run only the tests relevant to your change — never the full suite locally. CI runs it on push.

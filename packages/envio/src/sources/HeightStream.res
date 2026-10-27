@@ -143,7 +143,7 @@ let subscribe = (
         failureCount.contents + 1
       }
 
-    let retryMillis = retryDelayFor(failureCount.contents)->Utils.jitter
+    let retryMillis = Clock.real->Clock.jitter(retryDelayFor(failureCount.contents))
 
     // A clean end to a connection that had proven itself is a rotation: routine,
     // and worth telling apart from the same clean end arriving early, which is a

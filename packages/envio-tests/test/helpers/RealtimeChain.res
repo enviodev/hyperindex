@@ -35,6 +35,13 @@ let reach = async (~sync: MockSource.t, ~mock=sync, ~head=100) => {
 // test does to the stream next, which would leave the test to a race.
 let goLive = async (mock: MockSource.t, ~indexer: IndexerRunner.t, ~head=100) => {
   mock.resolveGetHeightOrThrow(head)
+  // Lets the poll loop take that answer before the stream comes up. A loop
+  // still holding it sends no catch-up for the connect, and leaves the
+  // connection unproven until its next cadence. Microtasks only: on real time a
+  // short cadence would otherwise fire in between and put a poll in flight.
+  for _ in 1 to 20 {
+    await Promise.resolve()
+  }
   let pollsBeforeLive = mock->polls
   mock.setHeightSubscriptionStatus(Live)
   await mock.expectHeightCalls(pollsBeforeLive + 1)

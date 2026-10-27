@@ -84,19 +84,19 @@ let advanceThroughRetryWindow = async (harness, ~delay) => {
   (beforeEarliest, harness.drivers->Array.length)
 }
 
-describe("Utils.jitter", () => {
+describe("Clock.jitter", () => {
   it("Spreads a delay across the half-window below it", t => {
     // Every indexer on one provider loses its stream in the same instant when
     // that provider blinks; putting them all back on one schedule is what turns
     // a blip into a stampede.
-    let samples = Belt.Array.makeBy(200, _ => Utils.jitter(1_000))
+    let samples = Belt.Array.makeBy(200, _ => Clock.real->Clock.jitter(1_000))
     let first = samples->Array.getUnsafe(0)
 
     t.expect((
       samples->Array.every(v => v >= 500 && v < 1_000),
       samples->Array.some(v => v !== first),
       // A delay of nothing has nothing to spread.
-      Utils.jitter(0),
+      Clock.real->Clock.jitter(0),
     )).toStrictEqual((true, true, 0))
   })
 })
@@ -268,7 +268,10 @@ describe("HeightStream reconnect driver", () => {
 
   Async.it("Trims a failure detail that would flood the log", async t => {
     let harness = makeHarness()
-    (harness->driverAt(0)).onFailure(~reason=Source.SubscribeRejected, ~detail=String.repeat("y", 500))
+    (harness->driverAt(0)).onFailure(
+      ~reason=Source.SubscribeRejected,
+      ~detail=String.repeat("y", 500),
+    )
 
     await Vi.advanceTimersByTimeAsync(250)
     harness.unsubscribe()

@@ -79,6 +79,7 @@ type t = {
   // than any healthy getHeight, so a merely slow endpoint answers first and
   // nothing here fires in normal running.
   pollTimeoutMillis: int,
+  clock: Clock.t,
   mutable knownHeight: int,
   mutable waiters: array<waiter>,
   mutable stream: streamState,
@@ -110,12 +111,14 @@ let make = (
   ~recordRequestStats,
   ~getHeightRetryInterval,
   ~pollTimeoutMillis,
+  ~clock,
 ): t => {
   source,
   logger: logger->Logger.withFields({"source": source.name}),
   recordRequestStats,
   getHeightRetryInterval,
   pollTimeoutMillis,
+  clock,
   knownHeight: 0,
   waiters: [],
   stream: NeverEnabled,
@@ -275,26 +278,43 @@ let heightWithin = (feed: t): promise<pollOutcome> => {
     request
     ->Promise.thenResolve(res => Answered(res))
     ->Promise.catch(exn => Promise.resolve(Failed(exn))),
-    Promise.make((resolve, _reject) => timeoutId := Some(setTimeout(() => {
-            timedOut := true
-            resolve(TimedOut)
-          }, feed.pollTimeoutMillis))),
+    Promise.make((resolve, _reject) =>
+      timeoutId :=
+        Some(
+          feed.clock.setTimeout(
+            ~label="height poll timeout",
+            () => {
+              timedOut := true
+              resolve(TimedOut)
+            },
+            feed.pollTimeoutMillis,
+          ),
+        )
+    ),
   ])->Promise.thenResolve(outcome => {
-    timeoutId->Utils.clearTimeoutRef
+    feed.clock->Clock.clearRef(timeoutId)
     outcome
   })
 }
 
 let sleep = (feed: t, ~kind, millis) =>
   Promise.make((resolve, _reject) => {
-    let timeoutId = setTimeout(() => {
-      feed.sleeping = None
-      resolve()
-    }, millis)
+    let label = switch kind {
+    | Cadence => "height poll cadence"
+    | Backoff => "height poll backoff"
+    }
+    let timer = feed.clock.setTimeout(
+      ~label,
+      () => {
+        feed.sleeping = None
+        resolve()
+      },
+      millis,
+    )
     feed.sleeping = Some({
       kind,
       wake: () => {
-        clearTimeout(timeoutId)
+        feed.clock.clearTimeout(timer)
         feed.sleeping = None
         resolve()
       },

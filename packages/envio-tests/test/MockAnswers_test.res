@@ -472,7 +472,9 @@ describe("MockSource.expectHeightCalls", () => {
     let mock = source(1)
     await mock.expectHeightCalls(1)
     t.expect(await failureOf(mock.expectHeightCalls(0))).toEqual(
-      Some("expectHeightCalls expected 0 height calls, but the source has taken 1"),
+      Some(
+        "expectHeightCalls expected 0 height calls, but source for chain 1 has taken 1 (0 since the last expectation accounted for 1)",
+      ),
     )
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
@@ -487,7 +489,9 @@ describe("MockSource.expectHeightCalls", () => {
     let mock = source(1)
     await mock.expectHeightCalls(1)
     t.expect(await failureOf(mock.expectHeightCalls(2))).toEqual(
-      Some("expectHeightCalls timed out waiting for 2 height calls; the source has taken 1"),
+      Some(
+        "expectHeightCalls timed out waiting for 2 height calls; source for chain 1 has taken 1 (0 since the last expectation accounted for 1)",
+      ),
     )
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
@@ -607,7 +611,9 @@ Give each query its own entry, told apart by partitionId:
     let expectation = mock.expectHeightCalls(1)
     let _ = mock.source.getHeightOrThrow()
     t.expect(await failureOf(expectation)).toEqual(
-      Some("expectHeightCalls expected 1 height calls, but the source has taken 2"),
+      Some(
+        "expectHeightCalls expected 1 height calls, but source for chain 1 has taken 2 (2 since the last expectation accounted for 0)",
+      ),
     )
   })
 

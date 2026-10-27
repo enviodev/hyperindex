@@ -19,6 +19,8 @@ type loggerCtor
 type mockHyperSyncServerCtor
 // Test-only: the ledger behind envio-tests' MockSource.
 type mockSourceCtor
+// Test-only: the virtual clock a scenario's source layer runs on.
+type virtualClockCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -111,6 +113,8 @@ type addon = {
   mockHyperSyncServer: mockHyperSyncServerCtor,
   @as("MockSource")
   mockSource: mockSourceCtor,
+  @as("VirtualClock")
+  virtualClock: virtualClockCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
   normalizeEvmAddress: (~address: string, ~shouldChecksum: bool) => Null.t<Address.t>,
   renderAddresses: (
