@@ -120,10 +120,11 @@ describe("Height subscription", () => {
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
+      let pollsBeforeLive = mock->polls
       await mock->goLive(~indexer)
-      let pollsWhileLive = mock->polls
-      // The poke lands somewhere in [stallTimeout/2, stallTimeout).
-      await mock.expectHeightCalls(pollsWhileLive + 1)
+      // Past the connect's catch-up, the poke lands somewhere in
+      // [stallTimeout/2, stallTimeout), which can be before goLive returns.
+      await mock.expectHeightCalls(pollsBeforeLive + 2)
       mock.resolveGetHeightOrThrow(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
       t.expect(mock.pendingItemsQueries->Array.length).toEqual(1)
