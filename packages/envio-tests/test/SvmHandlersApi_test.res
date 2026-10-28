@@ -249,10 +249,10 @@ expectType<
   >
 >(true);
 
-expectType<TypeEqual<SvmOnSlotHandlerArgs["slot"], number>>(true);
-expectType<TypeEqual<SvmOnSlotHandlerArgs["context"], SvmOnSlotContext>>(true);
+expectType<TypeEqual<SvmOnSlotHandlerArgs<{}>["slot"], number>>(true);
+expectType<TypeEqual<SvmOnSlotHandlerArgs<{}>["context"], SvmOnSlotContext>>(true);
 expectType<
-  TypeEqual<SvmOnSlotHandler, (args: SvmOnSlotHandlerArgs) => Promise<void>>
+  TypeEqual<SvmOnSlotHandler<{}>, (args: SvmOnSlotHandlerArgs<{}>) => Promise<void>>
 >(true);
 
 // Typed the way onInstruction handlers are: the block is the same SvmBlock,
@@ -269,7 +269,7 @@ expectType<
 >(true);
 expectType<
   TypeEqual<
-    SvmOnSlotHandlerArgs["block"],
+    SvmOnSlotHandlerArgs<{}>["block"],
     FieldNotSelected<"Field 'block' is not selected for this handler. Add fields.block in the registration options.">
   >
 >(true);
@@ -278,6 +278,10 @@ expectType<
 >(true);
 // @ts-expect-error - the selection is the only type argument
 type _WithConfig = SvmOnSlotHandler<typeof fields, never>;
+// @ts-expect-error - the selection is required, as for onInstruction handlers
+type _Bare = SvmOnSlotHandler;
+// @ts-expect-error - the selection is required, as for onInstruction handlers
+type _BareArgs = SvmOnSlotHandlerArgs;
 
 expectType<TypeEqual<SvmOnSlotWhereArgs["chain"]["id"], SvmChainId>>(true);
 expectType<TypeEqual<SvmOnSlotWhereResult, boolean | SvmOnSlotFilter>>(true);

@@ -1113,7 +1113,7 @@ type EvmOnBlockOptionsFor<Fields extends EvmOnBlockFieldsSelection, Config exten
 
 /** Arguments passed to an EVM block handler. Takes the registration's fields
  * selection, like {@link EvmBlock}. */
-export type EvmOnBlockHandlerArgs<Fields extends EvmOnBlockFieldsSelection = {}> =
+export type EvmOnBlockHandlerArgs<Fields extends EvmOnBlockFieldsSelection> =
   EvmOnBlockArgsFor<Fields, GlobalConfig>;
 
 /** Handler function for an EVM `indexer.onBlock` registration. Takes the
@@ -1123,7 +1123,7 @@ export type EvmOnBlockHandlerArgs<Fields extends EvmOnBlockFieldsSelection = {}>
  *     const handleBlock: EvmOnBlockHandler<typeof fields> =
  *       async ({ block, context }) => { ... };
  */
-export type EvmOnBlockHandler<Fields extends EvmOnBlockFieldsSelection = {}> =
+export type EvmOnBlockHandler<Fields extends EvmOnBlockFieldsSelection> =
   EvmOnBlockHandlerFor<Fields, GlobalConfig>;
 
 /** Options for an EVM `indexer.onBlock` registration. */
@@ -1263,7 +1263,7 @@ type SvmOnSlotOptionsFor<Fields extends SvmOnSlotFieldsSelection, Config extends
 
 /** Arguments passed to an SVM slot handler. Takes the registration's fields
  * selection, like {@link SvmBlock}. */
-export type SvmOnSlotHandlerArgs<Fields extends SvmOnSlotFieldsSelection = {}> =
+export type SvmOnSlotHandlerArgs<Fields extends SvmOnSlotFieldsSelection> =
   SvmOnSlotArgsFor<Fields, GlobalConfig>;
 
 /** Handler function for an SVM `indexer.onSlot` registration. Takes the
@@ -1273,7 +1273,7 @@ export type SvmOnSlotHandlerArgs<Fields extends SvmOnSlotFieldsSelection = {}> =
  *     const handleSlot: SvmOnSlotHandler<typeof fields> =
  *       async ({ slot, block, context }) => { ... };
  */
-export type SvmOnSlotHandler<Fields extends SvmOnSlotFieldsSelection = {}> =
+export type SvmOnSlotHandler<Fields extends SvmOnSlotFieldsSelection> =
   SvmOnSlotHandlerFor<Fields, GlobalConfig>;
 
 /** Options for an SVM `indexer.onSlot` registration. */
