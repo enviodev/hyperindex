@@ -389,8 +389,8 @@ let parse = (
       let logs = item.logs->Option.map(logs =>
         logs->Array.map(
           (log): SvmHyperSyncClient.EventItems.log => {
-            kind: log.kind->Null.fromOption,
-            message: log.message->Null.fromOption,
+            kind: log.kind->Nullable.fromOption,
+            message: log.message->Nullable.fromOption,
           },
         )
       )
@@ -474,9 +474,9 @@ let parse = (
             // As the Rust client does: present exactly when this registration
             // selected `args`.
             args: onEventRegistration.fieldSelection.instructionFields->Utils.Set.has("args")
-              ? Null.make(args)
-              : Null.null,
-            logs: logs->Null.fromOption,
+              ? Nullable.make(args)
+              : Nullable.undefined,
+            logs: logs->Nullable.fromOption,
           },
           ~programName,
           ~instructionName,
