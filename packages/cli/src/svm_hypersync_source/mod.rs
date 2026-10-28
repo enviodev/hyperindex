@@ -493,18 +493,23 @@ fn build_event_items(
         if routed.is_empty() {
             continue;
         }
+        // An instruction no log attaches to still gets an empty list: a
+        // registration that selected `fields.log` must always see an array.
         let logs = if routed
             .iter()
             .flat_map(|(_, registrations)| registrations)
             .any(|reg| !reg.log_columns.is_empty())
         {
-            logs_by_key
-                .get(&(
-                    instr.slot,
-                    instr.transaction_index,
-                    instr.instruction_address.clone(),
-                ))
-                .cloned()
+            Some(
+                logs_by_key
+                    .get(&(
+                        instr.slot,
+                        instr.transaction_index,
+                        instr.instruction_address.clone(),
+                    ))
+                    .cloned()
+                    .unwrap_or_default(),
+            )
         } else {
             None
         };
