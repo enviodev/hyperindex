@@ -269,7 +269,7 @@ Development commands for starting, stopping, and restarting the indexer. Runs co
 
 ###### **Options:**
 
-* `-r`, `--restart` — Force restart: clear the database and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state
+* `-r`, `--restart` — Force restart: clear all indexed data and re-index from scratch. Required when config/schema/ABI changes are incompatible with the existing indexer state
 
 
 
@@ -340,8 +340,8 @@ Local Envio database commands
 ###### **Subcommands:**
 
 * `up` — Migrate latest schema to database
-* `down` — Drop database schema
-* `setup` — Setup database by dropping schema and then running migrations
+* `down` — Drop all indexed data
+* `setup` — Drop all indexed data and run migrations
 
 
 
@@ -355,7 +355,7 @@ Migrate latest schema to database
 
 ## `envio local db-migrate down`
 
-Drop database schema
+Drop all indexed data
 
 **Usage:** `envio local db-migrate down`
 
@@ -363,7 +363,7 @@ Drop database schema
 
 ## `envio local db-migrate setup`
 
-Setup database by dropping schema and then running migrations
+Drop all indexed data and run migrations
 
 **Usage:** `envio local db-migrate setup`
 
@@ -377,7 +377,7 @@ Start the indexer. Runs codegen automatically before launching so the on-disk ty
 
 ###### **Options:**
 
-* `-r`, `--restart` — Clear your database and restart indexing from scratch
+* `-r`, `--restart` — Clear all indexed data and restart indexing from scratch
 * `--chain <CHAIN_ID>` — Index only this chain, leaving the others to their own `envio start --chain` processes. Repeat the flag for several chains.
 
    Only needed to place chains yourself. Requires a per-chain schema, migrated before any process starts, and a separate `ENVIO_INDEXER_PORT` per process. A chain added to config.yaml after the migration joins the database when its process names only that chain.

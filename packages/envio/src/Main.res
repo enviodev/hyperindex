@@ -439,10 +439,8 @@ let getGlobalIndexer = (): 'indexer => {
   Utils.Proxy.make(Utils.Object.createNullObject(), traps)->(Utils.magic: {..} => 'indexer)
 }
 
-let migrate = async (~logger, ~reset) => {
-  let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
-  await persistence->Persistence.init(
+let migrateStorage = (persistence, ~config: Config.t, ~logger, ~reset) =>
+  persistence->Persistence.init(
     ~logger,
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
@@ -454,13 +452,19 @@ let migrate = async (~logger, ~reset) => {
     // A migration command runs once and exits, with nobody watching it recover:
     // an unreachable chain should say so now rather than hold the command open.
     ~startBlockRetry=StartBlockResolver.Once,
+    ~resume=false,
   )
+
+let migrate = async (~logger, ~reset) => {
+  let config = Config.load()
+  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
+  await persistence->migrateStorage(~config, ~logger, ~reset)
   await persistence.storage.close()
 }
 
 let dropSchema = async (~logger) => {
   let config = Config.load()
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~logger)
+  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
   await persistence.storage.reset()
   await persistence.storage.close()
 }
@@ -491,7 +495,7 @@ exception FatalError(exn)
     // module top level).
     let persistence = switch persistence {
     | Some(p) => p
-    | None => PgStorage.makePersistenceFromConfig(~config, ~logger)
+    | None => Storage.makePersistenceFromConfig(~config, ~logger)
     }
     setGlobalPersistence(persistence)
     let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)

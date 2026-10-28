@@ -13,10 +13,12 @@ let makeEntityConfig = (~name, ~postgres=true, ~clickhouse=false): Internal.enti
     } => Internal.entityConfig
   )
 
-let toNames = (targets: PruneStaleHistory.targets) =>
+let summary = (targets: PruneStaleHistory.targets) =>
   {
     "concurrent": targets.concurrent->Array.map(entityConfig => entityConfig.name),
     "forced": targets.forced->Array.map(entityConfig => entityConfig.name),
+    "checkpoints": targets.checkpoints,
+    "isRollback": targets.isRollback,
   }
 
 let intervalMillis = 1000.
@@ -49,15 +51,15 @@ describe("PruneStaleHistory.selectFrom", () => {
       ~safeCheckpoints,
     )
 
-    t.expect({
-      "safeCheckpoints": targets.safeCheckpoints,
-      "concurrent": (targets->toNames)["concurrent"],
-      "forced": (targets->toNames)["forced"],
-    }).toEqual({
-      "safeCheckpoints": safeCheckpoints,
-      "concurrent": ["never", "oldA", "oldB", "oldC", "oldD"],
-      "forced": [],
-    })
+    t.expect((targets.safeCheckpoints, targets->summary)).toEqual((
+      safeCheckpoints,
+      {
+        "concurrent": ["never", "oldA", "oldB", "oldC", "oldD"],
+        "forced": [],
+        "checkpoints": true,
+        "isRollback": false,
+      },
+    ))
   })
 
   it(
@@ -85,9 +87,11 @@ describe("PruneStaleHistory.selectFrom", () => {
         ~safeCheckpoints,
       )
 
-      t.expect(targets->toNames).toEqual({
+      t.expect(targets->summary).toEqual({
         "concurrent": ["e3", "e4", "e5", "e6", "e7"],
         "forced": ["e1", "e2", "e8"],
+        "checkpoints": true,
+        "isRollback": false,
       })
     },
   )
@@ -115,9 +119,11 @@ describe("PruneStaleHistory.selectFrom", () => {
       ~safeCheckpoints,
     )
 
-    t.expect(targets->toNames).toEqual({
+    t.expect(targets->summary).toEqual({
       "concurrent": [],
       "forced": ["e1", "e2", "e3", "e4", "e5"],
+      "checkpoints": true,
+      "isRollback": true,
     })
   })
 
@@ -135,9 +141,34 @@ describe("PruneStaleHistory.selectFrom", () => {
       ~safeCheckpoints,
     )
 
-    t.expect(targets->toNames).toEqual({
+    t.expect(targets->summary).toEqual({
       "concurrent": ["pg"],
       "forced": [],
+      "checkpoints": true,
+      "isRollback": false,
     })
+  })
+
+  // With every entity in ClickHouse, Postgres has no history to prune the
+  // checkpoints beside, so they keep an interval of their own.
+  it("Prunes the checkpoints once their own interval is up, with no entity to prune", t => {
+    let select = (~lastPrunedAtMillis) =>
+      PruneStaleHistory.selectFrom(
+        ~allEntities=[makeEntityConfig(~name="chOnly", ~postgres=false, ~clickhouse=true)],
+        ~lastPrunedAtMillis,
+        ~writtenEntityNames=Utils.Set.make(),
+        ~isRollback=false,
+        ~nowMillis,
+        ~intervalMillis,
+        ~safeCheckpoints,
+      )->summary
+
+    t.expect((
+      select(~lastPrunedAtMillis=Dict.fromArray([(PruneStaleHistory.checkpointsKey, 99_500.)])),
+      select(~lastPrunedAtMillis=Dict.fromArray([(PruneStaleHistory.checkpointsKey, 98_000.)])),
+    )).toEqual((
+      {"concurrent": [], "forced": [], "checkpoints": false, "isRollback": false},
+      {"concurrent": [], "forced": [], "checkpoints": true, "isRollback": false},
+    ))
   })
 })

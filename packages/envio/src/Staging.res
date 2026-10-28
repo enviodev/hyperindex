@@ -26,7 +26,7 @@ type column = {name: string, kind: kind, isNullable: bool, replacer?: JSON.repla
 
 type begun = {handle: int, buffers: array<ArrayBuffer.t>}
 
-// What the addon exposes, so this module stays free of any one sink's API.
+// What the addon exposes, so this module stays free of the storage's own API.
 type arena = {
   beginStage: (~table: int, ~rows: int) => begun,
   growStage: (~handle: int, ~column: int, ~needed: int, ~stale: ArrayBuffer.t) => ArrayBuffer.t,

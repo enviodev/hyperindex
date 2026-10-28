@@ -117,10 +117,23 @@ describe("Bytes as Uint8Array", () => {
       ])
       await indexer.getBatchWritePromise()
 
+      let clickHouseStored = switch IndexerRunner.selectedBackend {
+      | #clickhouse | #both =>
+        let database = TestClickHouse.currentDatabase()
+        let rows = await TestClickHouse.query(
+          `SELECT id, hex(data) AS data, hex(optData) AS optData, arrayMap(x -> hex(x), chunks) AS chunks, hex(tag) AS tag FROM \`${database}\`.\`Blob\` ORDER BY id FORMAT JSONEachRow`,
+        )
+        Some(rows->String.trim->String.split("\n")->Array.map(row => row->JSON.parseOrThrow))
+      | #postgres => None
+      }
+
+      let blobs: array<blob> = await indexer.query("Blob")
+      let history: array<Change.t<blob>> = await indexer.queryHistory("Blob")
       t.expect((
-        await (indexer.query("Blob"): promise<array<blob>>),
+        blobs->Array.toSorted((a, b) => String.compare(a.id, b.id)),
         queried,
-        await (indexer.queryHistory("Blob"): promise<array<Change.t<blob>>>),
+        history,
+        clickHouseStored,
       )).toEqual((
         [first, second],
         dict{"eq": [first], "in": [second]},
@@ -128,24 +141,17 @@ describe("Bytes as Uint8Array", () => {
           Set({checkpointId: 1n, entityId: "1"->EntityId.unsafeOfString, entity: first}),
           Set({checkpointId: 1n, entityId: "2"->EntityId.unsafeOfString, entity: second}),
         ],
+        switch IndexerRunner.selectedBackend {
+        | #clickhouse | #both =>
+          Some(
+            %raw(`[
+              { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
+              { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
+            ]`),
+          )
+        | #postgres => None
+        },
       ))
-
-      switch IndexerRunner.selectedBackend {
-      | #postgres => ()
-      | #clickhouse =>
-        let database = TestClickHouse.currentDatabase()
-        let rows = await TestClickHouse.query(
-          `SELECT id, hex(data) AS data, hex(optData) AS optData, arrayMap(x -> hex(x), chunks) AS chunks, hex(tag) AS tag FROM \`${database}\`.\`Blob\` ORDER BY id FORMAT JSONEachRow`,
-        )
-        t.expect(
-          rows->String.trim->String.split("\n")->Array.map(row => row->JSON.parseOrThrow),
-        ).toStrictEqual(
-          %raw(`[
-            { id: "1", data: "0001FEFF", optData: "5C782722", chunks: ["0102", "", "03"], tag: "AA" },
-            { id: "2", data: "", optData: null, chunks: [], tag: "BB" },
-          ]`),
-        )
-      }
     },
   )
 })

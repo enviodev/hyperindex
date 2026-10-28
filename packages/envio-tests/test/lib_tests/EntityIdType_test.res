@@ -27,22 +27,21 @@ let numericIdTable = Table.mkTable(
 describe("Non-string entity id support", () => {
   // Which of these becomes a Decimal and which falls back to String is Rust's
   // to decide from the precision; what this side owes it is the precision.
-  it("carries a numeric id's precision to the ClickHouse sink", t => {
+  it("carries a numeric id's precision to ClickHouse", t => {
     t.expect(
       [Table.Int32, BigInt({precision: 20}), BigInt({})]->Array.map(
-        fieldType => ClickHouse.makeColumnSpec(~name="id", ~fieldType),
+        fieldType => ClickHouse.column(~name="id", ~fieldType),
       ),
     ).toEqual([
-      {name: "id", fieldName: "id", fieldType: "Int32", isNullable: false, isArray: false},
+      {name: "id", fieldType: "Int32", isNullable: false, isArray: false},
       {
         name: "id",
-        fieldName: "id",
         fieldType: "BigInt",
         isNullable: false,
         isArray: false,
         precision: 20,
       },
-      {name: "id", fieldName: "id", fieldType: "BigInt", isNullable: false, isArray: false},
+      {name: "id", fieldType: "BigInt", isNullable: false, isArray: false},
     ])
   })
 
@@ -119,12 +118,7 @@ chains:
         events:
           - event: Transfer()
 `,
-  ~unsupported=[
-    {
-      backend: #clickhouse,
-      reason: "BigThing's unbounded BigInt id has no ClickHouse precision",
-    },
-  ],
+  ~unsupported=Scenario.noClickHouse("BigThing's unbounded BigInt id has no ClickHouse precision"),
 )
 
 describe("Non-string entity id — end-to-end via the in-process indexer", () => {
