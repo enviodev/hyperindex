@@ -42,11 +42,10 @@ describe("Polling-stall loophole", () => {
 
       source.resolveGetHeightOrThrow(300)
 
-      // Handler that never resolves keeps the batch in-progress,
-      // so isReady stays false while the buffer sits at the head.
-      let blockingHandler = async _ => {
-        let _ = await Promise.make((_, _) => ())
-      }
+      // A handler held until the end keeps the batch in progress, so isReady
+      // stays false while the buffer sits at the head.
+      let release = ref(() => ())
+      let blockingHandler = async _ => await Promise.make((resolve, _) => release := resolve)
       await source.expectItemsQueries([
         {
           fromBlock: 1,
@@ -68,6 +67,7 @@ describe("Polling-stall loophole", () => {
       source.setAutoHeight(300)
       await indexer.advanceTime(50)
       await source.expectNewHeightCalls(6)
+      release.contents()
     },
   )
 })

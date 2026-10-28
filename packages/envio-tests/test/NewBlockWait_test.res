@@ -246,14 +246,14 @@ describe("Waiting for the first height", () => {
   scenario->Scenario.it(
     "Slows the only source down to the stalled interval past the stall",
     ~sources=[{chain: 1337, pollingInterval: 1}],
-    ~sourceTiming={newBlockStallTimeout: 20, stalledPollingInterval: 10_000},
+    ~sourceTiming={newBlockStallTimeout: 20, stalledPollingInterval: 500},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.setAutoHeight(0)
       await sync.expectNewHeightCalls(1)
       await indexer.advanceTime(20)
       await sync.expectNewHeightCalls(20)
-      await indexer.advanceTime(9_999)
+      await indexer.advanceTime(499)
       await sync.expectNewHeightCalls(0)
       await indexer.advanceTime(1)
       await sync.expectNewHeightCalls(1)
