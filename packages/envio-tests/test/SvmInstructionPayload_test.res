@@ -123,7 +123,7 @@ describe("SVM instruction payload assembly", () => {
       data: Uint8Array.fromArray([0x09, 0xab, 0x00]),
       isInner: false,
       args: %raw(`{}`),
-      logs: Null.null,
+      logs: Nullable.undefined,
     }
     let instruction = SvmHyperSyncSource.toSvmInstruction(
       item,
@@ -155,7 +155,7 @@ describe("SVM instruction payload assembly", () => {
       data: Uint8Array.fromArray([0x09]),
       isInner: false,
       args: %raw(`{}`),
-      logs: Null.null,
+      logs: Nullable.undefined,
     }
     let instruction = SvmHyperSyncSource.toSvmInstruction(
       item,
@@ -212,7 +212,7 @@ describe("SVM instruction payload assembly", () => {
         data: Uint8Array.fromArray([0x09]),
         isInner: false,
         args: %raw(`{}`),
-        logs: Null.null,
+        logs: Nullable.undefined,
       }
       let decoded = SvmHyperSyncSource.toSvmInstruction(
         {...base, args: %raw(`{amountIn: 18446744073709551615n}`)},
@@ -235,9 +235,8 @@ describe("SVM instruction payload assembly", () => {
     },
   )
 
-  // NAPI sends Rust `None` as `null`: an instruction whose logs didn't attach
-  // arrives with `logs: null`, not with the key missing.
-  it("emits an empty logs array when log fields are selected and the logs are null", t => {
+  // NAPI leaves a Rust `None` object field as `undefined`, not `null`.
+  it("emits an empty logs array when log fields are selected and the logs are missing", t => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
@@ -252,7 +251,7 @@ describe("SVM instruction payload assembly", () => {
         data: Uint8Array.fromArray([0x09]),
         isInner: false,
         args: %raw(`{}`),
-        logs: Null.null,
+        logs: Nullable.undefined,
       },
       ~programName="Swapper",
       ~instructionName="swap",
@@ -277,8 +276,8 @@ describe("SVM instruction payload assembly", () => {
         data: Uint8Array.fromArray([0x09]),
         isInner: false,
         args: %raw(`{}`),
-        logs: Null.make([
-          {SvmHyperSyncClient.EventItems.kind: Null.make("data"), message: Null.null},
+        logs: Nullable.make([
+          {SvmHyperSyncClient.EventItems.kind: Nullable.make("data"), message: Nullable.undefined},
         ]),
       },
       ~programName="Swapper",

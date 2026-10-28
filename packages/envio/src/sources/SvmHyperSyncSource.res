@@ -40,13 +40,13 @@ let selectedLog = (
 ): Envio.svmLog => {
   let out = Dict.make()
   if logFields->Utils.Set.has("kind") {
-    switch log.kind->Null.toOption {
+    switch log.kind->Nullable.toOption {
     | Some(kind) => out->Dict.set("kind", kind)
     | None => ()
     }
   }
   if logFields->Utils.Set.has("message") {
-    switch log.message->Null.toOption {
+    switch log.message->Nullable.toOption {
     | Some(message) => out->Dict.set("message", message)
     | None => ()
     }
@@ -90,7 +90,7 @@ let toSvmInstruction = (
   if hasSelection("isInner") {
     out->setField("isInner", item.isInner)
   }
-  switch item.args->Null.toOption {
+  switch item.args->Nullable.toOption {
   | Some(args) => out->setField("args", args)
   | None => ()
   }
@@ -111,7 +111,7 @@ let toSvmInstruction = (
     out->setField(
       "logs",
       item.logs
-      ->Null.getOr([])
+      ->Nullable.getOr([])
       ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
     )
   }

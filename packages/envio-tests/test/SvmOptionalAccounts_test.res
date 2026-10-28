@@ -102,7 +102,7 @@ let namedAccountsOf = accounts => {
       data: Uint8Array.fromArray([0x09]),
       isInner: false,
       args: %raw(`{}`),
-      logs: Null.null,
+      logs: Nullable.undefined,
     },
     ~programName="Swapper",
     ~instructionName="swap",
