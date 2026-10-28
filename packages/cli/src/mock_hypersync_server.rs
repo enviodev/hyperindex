@@ -329,12 +329,13 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
                     .any(|selection| log_matches(log, selection))
         })
         .collect();
+    let log_blocks: std::collections::HashSet<u64> = logs
+        .iter()
+        .filter_map(|log| number(log, "block_number"))
+        .collect();
     let blocks: Vec<Value> = rows("blocks")
         .into_iter()
-        .filter(|block| {
-            logs.iter()
-                .any(|log| number(log, "block_number") == number(block, "number"))
-        })
+        .filter(|block| number(block, "number").is_some_and(|n| log_blocks.contains(&n)))
         .collect();
 
     serde_json::json!({

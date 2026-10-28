@@ -902,6 +902,38 @@ let make = (
     | Null => ()
     }
 
+  let loadFieldBloom = async (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~fieldName,
+    ~minCapacity,
+  ) =>
+    if !entityConfig.storage.postgres {
+      None
+    } else {
+      let table = entityConfig.table
+      let column = (table->Table.queryFields->Dict.getUnsafe(fieldName)).pgDbFieldName
+      let (chainColumn, chainId) = switch (scope, table->Table.getChainIdField) {
+      | (Chain(chainId), Some(field)) => (Some(field->Table.getPgDbFieldName), Some(chainId))
+      | _ => (None, None)
+      }
+      let {words, count} = await client->StorageClient.loadColumnBloom(
+        (entityConfig->entityTable).handle,
+        queryTableName(~entityConfig, ~scope),
+        column,
+        chainColumn,
+        chainId,
+        minCapacity,
+      )
+      // The bytes are copied into words of their own: the buffer napi hands
+      // over needn't start on a word boundary.
+      let bits = Uint32Array.fromLength(words->TypedArray.byteLength / 4)
+      Uint8Array.fromBuffer(bits->TypedArray.buffer)->TypedArray.setArray(
+        words->(Utils.magic: Uint8Array.t => array<int>),
+      )
+      Some((bits, count))
+    }
+
   let schemaIndexes = (~entities: array<Internal.entityConfig>, ~chainIds) =>
     getSchemaIndexes(
       ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
@@ -1446,6 +1478,7 @@ let make = (
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,
+    loadFieldBloom,
     ensureSchemaIndexes,
     finalizeBackfill,
     dumpEffectCache,

@@ -436,6 +436,19 @@ external ensureSchemaIndexes: (t, array<Core.pgIndexInput>) => promise<unit> = "
 external ensureQueryIndexes: (t, int, string, array<string>) => Null.t<promise<unit>> =
   "ensureQueryIndexes"
 
+type columnBloom = {words: Uint8Array.t, count: int}
+
+@send
+external loadColumnBloom: (
+  t,
+  int,
+  string,
+  string,
+  option<string>,
+  option<ChainId.t>,
+  int,
+) => promise<columnBloom> = "loadColumnBloom"
+
 @send external pruneCheckpoints: (t, bounds) => promise<unit> = "pruneCheckpoints"
 
 @send external pruneHistory: (t, int, bounds) => promise<unit> = "pruneHistory"

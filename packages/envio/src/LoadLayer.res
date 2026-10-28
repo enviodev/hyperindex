@@ -6,6 +6,70 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
   | Chain(chainId) => `.${chainId->ChainId.toString}`
   }
 
+// Every value the field holds in the scope's rows, into the filter. "rust" has
+// storage hash them where they are and hand over the bits; otherwise, or where
+// storage can't, the rows are loaded and hashed here.
+let seedExistence = (
+  ~storage: Persistence.storage,
+  ~entityConfig: Internal.entityConfig,
+  ~scope,
+  ~indexerState,
+  ~fieldName,
+) =>
+  async (bloom: BloomFilter.t) => {
+    let operation = `${entityConfig.name}.seedExistence.${fieldName}${scope->scopeKeySuffix}`
+    let storageName = storage.entityStoreName(entityConfig)
+    let timerRef = indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation)
+    let built = switch Env.existenceFilter {
+    | Some("rust") =>
+      await storage.loadFieldBloom(~entityConfig, ~scope, ~fieldName, ~minCapacity=65_536)
+    | _ => None
+    }
+    let count = switch built {
+    | Some((bits, count)) =>
+      bloom->BloomFilter.addBuiltLayer(~bits, ~count)
+      count
+    | None =>
+      let rows = await storage.loadOrThrow(
+        ~table=entityConfig.table,
+        ~filter=Dict.make()
+        ->EntityFilter.unsafeFromDict
+        ->EntityFilter.scoped(~table=entityConfig.table, ~scope),
+      )
+      rows->Array.forEach(row => {
+        let entity = row->(Utils.magic: unknown => Internal.entity)
+        if fieldName === Table.idFieldName {
+          bloom->BloomFilter.add(entity->InMemoryTable.Entity.getEntityIdUnsafe)
+        } else {
+          switch entity
+          ->(Utils.magic: Internal.entity => dict<Nullable.t<string>>)
+          ->Utils.Dict.dangerouslyGetNonOption(fieldName)
+          ->Option.flatMap(Nullable.toOption) {
+          | Some(value) => bloom->BloomFilter.add(value)
+          | None => ()
+          }
+        }
+      })
+      rows->Array.length
+    }
+    indexerState->IndexerState.endStorageLoad(
+      timerRef,
+      ~storage=storageName,
+      ~operation,
+      ~whereSize=0,
+      ~size=count,
+    )
+  }
+
+let onSeedError = (~indexerState, ~entityConfig: Internal.entityConfig, ~scope) =>
+  exn =>
+    indexerState
+    ->IndexerState.loggerForScope(scope)
+    ->Logger.warn(
+      "Failed seeding an entity existence filter",
+      ~params={"err": exn->Utils.prettifyExn, "entity": entityConfig.name},
+    )
+
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -25,27 +89,55 @@ let loadById = (
     let load = async (idsToLoad, ~onError as _) => {
       let storage = persistence->Persistence.getInitializedStorageOrThrow
       let storageName = storage.entityStoreName(entityConfig)
-      let timerRef =
-        indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
+      let idsToQuery = switch Env.existenceFilter {
+      | None => idsToLoad
+      | Some(_) =>
+        let filter = inMemTable.existence.ids
+        filter->EntityExistence.seedOnce(
+          ~seed=seedExistence(
+            ~storage,
+            ~entityConfig,
+            ~scope,
+            ~indexerState,
+            ~fieldName=Table.idFieldName,
+          ),
+          ~onError=onSeedError(~indexerState, ~entityConfig, ~scope),
+        )
+        idsToLoad->Array.filter(id => !(filter->EntityExistence.isKnownAbsent(id)))
+      }
 
       // Since LoadManager.call prevents registering entities already in the in-memory store,
       // we can be sure that we load only the new ones.
-      let dbEntities = try {
-        (
-          await storage.loadOrThrow(
-            ~table=entityConfig.table,
-            ~filter=EntityFilter.byIds(idsToLoad)->EntityFilter.scoped(
+      let dbEntities = if idsToQuery->Utils.Array.isEmpty {
+        []
+      } else {
+        let timerRef =
+          indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
+        let dbEntities = try {
+          (
+            await storage.loadOrThrow(
               ~table=entityConfig.table,
-              ~scope,
-            ),
+              ~filter=EntityFilter.byIds(idsToQuery)->EntityFilter.scoped(
+                ~table=entityConfig.table,
+                ~scope,
+              ),
+            )
+          )->(Utils.magic: array<unknown> => array<Internal.entity>)
+        } catch {
+        | Persistence.StorageError({message, reason}) =>
+          reason->ErrorHandling.mkLogAndRaise(
+            ~logger=indexerState->IndexerState.loggerForScope(scope),
+            ~msg=message,
           )
-        )->(Utils.magic: array<unknown> => array<Internal.entity>)
-      } catch {
-      | Persistence.StorageError({message, reason}) =>
-        reason->ErrorHandling.mkLogAndRaise(
-          ~logger=indexerState->IndexerState.loggerForScope(scope),
-          ~msg=message,
+        }
+        indexerState->IndexerState.endStorageLoad(
+          timerRef,
+          ~storage=storageName,
+          ~operation=key,
+          ~whereSize=idsToQuery->Array.length,
+          ~size=dbEntities->Array.length,
         )
+        dbEntities
       }
 
       let entitiesMap = Dict.make()
@@ -63,14 +155,6 @@ let loadById = (
           ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
         )
       })
-
-      indexerState->IndexerState.endStorageLoad(
-        timerRef,
-        ~storage=storageName,
-        ~operation=key,
-        ~whereSize=idsToLoad->Array.length,
-        ~size=dbEntities->Array.length,
-      )
     }
 
     loadManager->LoadManager.call(
@@ -335,6 +419,74 @@ let loadEffect = (
   )
 }
 
+// The filter with the values storage can't hold dropped, or None when that's
+// every value. Only a single String field's _eq or _in is narrowed: its values
+// are the text storage hashes too. The field's filter is made on the first
+// getWhere naming it, seeded from the rows in memory before any can be written.
+let narrowByExistence = (
+  filter: EntityFilter.t,
+  ~inMemTable: InMemoryTable.Entity.t,
+  ~storage: Persistence.storage,
+  ~entityConfig: Internal.entityConfig,
+  ~scope,
+  ~indexerState,
+) =>
+  switch filter->InMemoryTable.Entity.singleFieldValues {
+  | Some((fieldName, values)) =>
+    let existence = inMemTable.existence
+    let fieldFilter = if fieldName === Table.idFieldName {
+      Some(existence.ids)
+    } else {
+      switch existence->EntityExistence.fieldFilter(~fieldName) {
+      | Some(_) as fieldFilter => fieldFilter
+      | None =>
+        switch entityConfig.table
+        ->Table.queryFields
+        ->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+        | Some({fieldType: String, isArray: false}) =>
+          let fieldFilter = existence->EntityExistence.addFieldFilter(~fieldName)
+          inMemTable->InMemoryTable.Entity.forEachHeldEntity(entity =>
+            switch entity
+            ->(Utils.magic: Internal.entity => dict<Nullable.t<string>>)
+            ->Utils.Dict.dangerouslyGetNonOption(fieldName)
+            ->Option.flatMap(Nullable.toOption) {
+            | Some(value) => fieldFilter.bloom->BloomFilter.add(value)
+            | None => ()
+            }
+          )
+          Some(fieldFilter)
+        | _ => None
+        }
+      }
+    }
+    switch fieldFilter {
+    | Some(fieldFilter) =>
+      fieldFilter->EntityExistence.seedOnce(
+        ~seed=seedExistence(~storage, ~entityConfig, ~scope, ~indexerState, ~fieldName),
+        ~onError=onSeedError(~indexerState, ~entityConfig, ~scope),
+      )
+      let possible = values->Array.filter(value =>
+        switch value->(Utils.magic: unknown => JSON.t) {
+        | String(value) => !(fieldFilter->EntityExistence.isKnownAbsent(value))
+        | _ => true
+        }
+      )
+      if possible->Array.length === values->Array.length {
+        Some(filter)
+      } else if possible->Utils.Array.isEmpty {
+        None
+      } else {
+        Some(
+          Dict.fromArray([
+            (fieldName, dict{"_in": possible->(Utils.magic: array<unknown> => unknown)}),
+          ])->EntityFilter.unsafeFromDict,
+        )
+      }
+    | None => Some(filter)
+    }
+  | None => Some(filter)
+  }
+
 let loadByParsedFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -352,77 +504,95 @@ let loadByParsedFilter = (
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let storageName = storage.entityStoreName(entityConfig)
 
-    let timerRef = indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
-
-    let size = ref(0)
-
     filters->Array.forEach(filter =>
       inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter, ~table=entityConfig.table)
     )
 
-    // Any non-derived field can be filtered on, so the columns this query reads
-    // are indexed on demand before it runs rather than promised by the schema.
-    // Inside the load timing: waiting on the build is time the handler spends
-    // waiting for this operation, and it's the only thing that explains an
-    // occasional very slow getWhere.
-    await storage.ensureQueryIndexes(~entityConfig, ~scope, ~filters)
+    let toQuery = switch Env.existenceFilter {
+    | None => filters
+    | Some(_) =>
+      filters->Array.filterMap(filter =>
+        filter->narrowByExistence(~inMemTable, ~storage, ~entityConfig, ~scope, ~indexerState)
+      )
+    }
 
-    // Loading a superset of rows via a merged query is safe: every loaded
-    // entity is matched against all registered indexes, not only the
-    // query's own filter.
-    let queries = filters->EntityFilter.merge
+    if toQuery->Utils.Array.notEmpty {
+      let timerRef =
+        indexerState->IndexerState.startStorageLoad(~storage=storageName, ~operation=key)
 
-    let _ = await queries
-    ->Array.map(async filter => {
-      try {
-        let entities =
-          (
-            await storage.loadOrThrow(
-              ~table=entityConfig.table,
-              ~filter=filter->EntityFilter.scoped(~table=entityConfig.table, ~scope),
+      let size = ref(0)
+
+      // Any non-derived field can be filtered on, so the columns this query reads
+      // are indexed on demand before it runs rather than promised by the schema.
+      // Inside the load timing: waiting on the build is time the handler spends
+      // waiting for this operation, and it's the only thing that explains an
+      // occasional very slow getWhere.
+      await storage.ensureQueryIndexes(~entityConfig, ~scope, ~filters=toQuery)
+
+      // Loading a superset of rows via a merged query is safe: every loaded
+      // entity is matched against all registered indexes, not only the
+      // query's own filter.
+      let queries = toQuery->EntityFilter.merge
+
+      let _ = await queries
+      ->Array.map(async filter => {
+        try {
+          let entities =
+            (
+              await storage.loadOrThrow(
+                ~table=entityConfig.table,
+                ~filter=filter->EntityFilter.scoped(~table=entityConfig.table, ~scope),
+              )
+            )->(Utils.magic: array<unknown> => array<Internal.entity>)
+
+          let committedCheckpointId = indexerState->IndexerState.committedCheckpointIdFor(~scope)
+          entities->Array.forEach(entity => {
+            inMemTable->InMemoryTable.Entity.initValue(
+              ~committedCheckpointId,
+              ~key=entity.id,
+              ~entity=Some(entity),
             )
-          )->(Utils.magic: array<unknown> => array<Internal.entity>)
+          })
 
-        let committedCheckpointId = indexerState->IndexerState.committedCheckpointIdFor(~scope)
-        entities->Array.forEach(entity => {
-          inMemTable->InMemoryTable.Entity.initValue(
-            ~committedCheckpointId,
-            ~key=entity.id,
-            ~entity=Some(entity),
+          // Every row this filter's values could match is now in the table, so a
+          // later getWhere naming any of them needs no round trip of its own.
+          inMemTable->InMemoryTable.Entity.recordLoadedValues(~filter, ~table=entityConfig.table)
+
+          size := size.contents + entities->Array.length
+        } catch {
+        | Persistence.StorageError({message, reason}) =>
+          reason->ErrorHandling.mkLogAndRaise(
+            // The executed query might be merged from multiple getWhere calls, so
+            // report it as the operation users write with the values bound to its
+            // placeholders, instead of an internal filter representation they
+            // never constructed.
+            ~logger=indexerState
+            ->IndexerState.loggerForScope(scope)
+            ->Logger.withFields({
+              "operation": key,
+              "params": filter->EntityFilter.getParams,
+            }),
+            ~msg=message,
           )
-        })
+        }
+      })
+      ->Promise.all
 
-        // Every row this filter's values could match is now in the table, so a
-        // later getWhere naming any of them needs no round trip of its own.
+      indexerState->IndexerState.endStorageLoad(
+        timerRef,
+        ~storage=storageName,
+        ~operation=key,
+        ~whereSize=queries->Array.reduce(0, (acc, query) => acc + query->EntityFilter.valuesCount),
+        ~size=size.contents,
+      )
+    }
+
+    // A value narrowed away has no row to load, so it counts as loaded too.
+    if Env.existenceFilter->Option.isSome {
+      filters->Array.forEach(filter =>
         inMemTable->InMemoryTable.Entity.recordLoadedValues(~filter, ~table=entityConfig.table)
-
-        size := size.contents + entities->Array.length
-      } catch {
-      | Persistence.StorageError({message, reason}) =>
-        reason->ErrorHandling.mkLogAndRaise(
-          // The executed query might be merged from multiple getWhere calls, so
-          // report it as the operation users write with the values bound to its
-          // placeholders, instead of an internal filter representation they
-          // never constructed.
-          ~logger=indexerState
-          ->IndexerState.loggerForScope(scope)
-          ->Logger.withFields({
-            "operation": key,
-            "params": filter->EntityFilter.getParams,
-          }),
-          ~msg=message,
-        )
-      }
-    })
-    ->Promise.all
-
-    indexerState->IndexerState.endStorageLoad(
-      timerRef,
-      ~storage=storageName,
-      ~operation=key,
-      ~whereSize=queries->Array.reduce(0, (acc, query) => acc + query->EntityFilter.valuesCount),
-      ~size=size.contents,
-    )
+      )
+    }
   }
 
   // Keying an _in walks every value, so it's computed once here and handed to

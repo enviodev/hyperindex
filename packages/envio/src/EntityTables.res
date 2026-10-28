@@ -11,6 +11,11 @@ let make = (entities: array<Internal.entityConfig>): t => {
   init
 }
 
+// Fresh tables that keep each entity's existence filter, which has seen every
+// set the replaced ones did.
+let reset = (self: t): t =>
+  self->Dict.mapValues(table => InMemoryTable.Entity.make(~existence=table.existence))
+
 let get = (self: t, ~entityName: string) => {
   switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
   | Some(table) => table

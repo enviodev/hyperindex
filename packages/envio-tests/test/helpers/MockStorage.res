@@ -137,6 +137,8 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
         })
       },
       ensureQueryIndexes: (~entityConfig as _, ~scope as _, ~filters as _) => Promise.resolve(),
+      loadFieldBloom: (~entityConfig as _, ~scope as _, ~fieldName as _, ~minCapacity as _) =>
+        Promise.resolve(None),
       ensureSchemaIndexes: (~entities as _, ~chainIds as _) => Promise.resolve(),
       finalizeBackfill: (~entities as _, ~chainIds as _, ~readyAt as _) => Promise.resolve(),
       reset: () => JsError.throwWithMessage("Not implemented"),

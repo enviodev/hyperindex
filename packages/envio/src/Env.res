@@ -30,6 +30,17 @@ let clientFilterAddressThreshold =
 let inMemoryObjectsTarget =
   envSafe->EnvSafe.get("ENVIO_IN_MEMORY_OBJECTS_TARGET", S.int, ~fallback=100_000)->Int.toFloat
 
+// Prototype switch for EntityExistence: "js" seeds from full rows, "rust" from
+// bits storage builds. Unset or "off" disables it.
+let existenceFilter = switch envSafe->EnvSafe.get(
+  "ENVIO_EXISTENCE_FILTER",
+  S.option(S.string),
+  ~fallback=None,
+) {
+| Some("off") => None
+| mode => mode
+}
+
 // FIXME: This broke HS grafana dashboard. Should investigate it later. Maybe we should use :: as a default value?
 // We want to be able to set it to 0.0.0.0
 // to allow to passthrough the port from a Docker container

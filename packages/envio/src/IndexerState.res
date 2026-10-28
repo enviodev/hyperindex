@@ -305,6 +305,12 @@ let makeFromDbState = (
     ~onExit?,
   )
   state.crossChainState->CrossChainState.markCaughtUpOnResume
+  if initialState.cleanRun && Env.existenceFilter->Option.isSome {
+    let markSeeded = (tables: EntityTables.t) =>
+      tables->Utils.Dict.forEach(table => table.existence->EntityExistence.markSeeded)
+    state.entities->markSeeded
+    chainStates->Utils.Dict.forEach(cs => cs->ChainState.entities->markSeeded)
+  }
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
     state.effectState->EffectState.setUnregisteredCacheCount(~effectName, ~scope, ~count)
   })
@@ -927,9 +933,8 @@ let beginRollbackDiff = (
     ->Frontier.fromEntries
   }
   state.processedFrontier = Frontier.mergeMax(state.processedFrontier, diffFrontier)
-  let perChainEntities = state.allEntities->EntityTables.perChain
-  state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
-  state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
+  state.entities = state.entities->EntityTables.reset
+  state->chainStates->Utils.Dict.forEach(ChainState.resetEntities)
   state.effectState->EffectState.resetForRollback
   // The address store reports only what each rollback killed, and never
   // re-reports a registration it already tombstoned. A rollback that lands

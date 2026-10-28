@@ -43,6 +43,7 @@ module Entity = {
     // Lets a write skip index upkeep when no getWhere has built one, the common
     // case, without probing the index maps.
     mutable hasIndexes: bool,
+    existence: EntityExistence.t,
   }
 
   // Helper to extract an entity's id as a dict key. The raw id may be a
@@ -62,7 +63,8 @@ module Entity = {
     }
   }
 
-  let make = (): t => {
+  let make = (~existence=EntityExistence.make()): t => {
+    existence,
     latestEntityChangeById: Dict.make(),
     changesCount: 0.,
     dirtyIds: Utils.Set.make(),
@@ -200,7 +202,9 @@ module Entity = {
     }
 
     switch change {
-    | Set({entity}) => inMemTable->updateIndexes(~entity)
+    | Set({entity}) =>
+      inMemTable.existence->EntityExistence.add(~id=entityKey, ~entity)
+      inMemTable->updateIndexes(~entity)
     | Delete({entityId}) => inMemTable->deleteEntityFromIndexes(~entityId=entityId->EntityId.toKey)
     }
     inMemTable.latestEntityChangeById->Dict.set(entityKey, change)
@@ -231,6 +235,18 @@ module Entity = {
     | Set({entity}) => Some(entity)
     | Delete(_) => None
     }
+
+  // Every entity version the table holds, the superseded ones still to be
+  // written included.
+  let forEachHeldEntity = (inMemTable: t, fn) => {
+    let visit = change =>
+      switch change->mapChangeToEntity {
+      | Some(entity) => fn(entity)
+      | None => ()
+      }
+    inMemTable.latestEntityChangeById->Utils.Dict.forEach(visit)
+    inMemTable.prevEntityChanges->Array.forEach(visit)
+  }
 
   /** It returns option<option<'entity>> where the first option means
   that the entity is not set to the in memory store,

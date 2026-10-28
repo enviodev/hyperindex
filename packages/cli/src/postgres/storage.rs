@@ -9,6 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::join_all;
 use tokio_postgres::Row;
 
+use crate::bloom;
 use crate::columnar::ColumnKind;
 
 use super::client::{PgClient, Transaction};
@@ -894,6 +895,41 @@ impl Storage {
         let (sql, params) = select::load_query(self.schema(), table_name, conditions)?;
         let (rows, columns) = self.client.query(&sql, &params).await?;
         into_result(&rows, &columns)
+    }
+
+    /// A bloom filter layer holding every distinct value `column` has, as
+    /// text, in the rows of `chain_id`'s partition when there is one. Sized
+    /// for `min_capacity` keys or a quarter more than it holds, whichever is
+    /// more, so the layer takes the writes that follow without growing.
+    pub async fn column_bloom(
+        &self,
+        table_name: &str,
+        column: &str,
+        chain: Option<(&str, i64)>,
+        min_capacity: u64,
+    ) -> Result<(bloom::Layer, u64)> {
+        let condition = match chain {
+            Some((chain_column, chain_id)) => {
+                format!("{} = {chain_id}", internal::quote_ident(chain_column))
+            }
+            None => "TRUE".to_string(),
+        };
+        let sql = format!(
+            "SELECT DISTINCT {}::TEXT FROM {}.{} WHERE {condition};",
+            internal::quote_ident(column),
+            internal::quote_ident(self.schema()),
+            internal::quote_ident(table_name),
+        );
+        let (rows, _) = self.client.query(&sql, &[]).await?;
+        let count = rows.len() as u64;
+        let mut layer =
+            bloom::Layer::new(bloom::bit_count_for(min_capacity.max(count + count / 4)));
+        for row in &rows {
+            if let Some(value) = row.get::<_, Option<&str>>(0) {
+                layer.add(value);
+            }
+        }
+        Ok((layer, count))
     }
 
     pub async fn reset(&self) -> Result<()> {

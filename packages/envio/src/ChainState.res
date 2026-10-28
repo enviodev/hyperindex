@@ -455,7 +455,7 @@ let entities = (cs: t) => cs.entities
 
 // Rollback discards every uncommitted change, so this chain's partition is
 // rebuilt from scratch alongside the indexer's cross-chain one.
-let resetEntities = (cs: t, ~perChainEntities) => cs.entities = EntityTables.make(perChainEntities)
+let resetEntities = (cs: t) => cs.entities = cs.entities->EntityTables.reset
 let sourceManager = (cs: t) => cs.sourceManager
 let chainConfig = (cs: t) => cs.chainConfig
 let shouldRollbackOnReorg = (cs: t) => cs.shouldRollbackOnReorg

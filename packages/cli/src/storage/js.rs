@@ -85,6 +85,13 @@ pub struct PgTableInput {
     pub chain_id_column: Option<String>,
 }
 
+#[napi(object)]
+pub struct ColumnBloom {
+    pub words: Buffer,
+    /// The distinct values it was built from.
+    pub count: u32,
+}
+
 /// A table described for every store that keeps it: an entity for each store
 /// its schema names, the indexer's own tables for Postgres alone.
 #[napi(object)]
@@ -680,6 +687,43 @@ impl JsStorage {
             .await
             .map_err(to_napi)?;
         Ok(self.hold(result))
+    }
+
+    /// A bloom filter layer over every distinct value of `column` in Postgres,
+    /// as `BloomFilter.res` lays one out: its words, little-endian.
+    #[napi]
+    pub async fn load_column_bloom(
+        &self,
+        table: u32,
+        table_name: String,
+        column: String,
+        chain_column: Option<String>,
+        chain_id: Option<i64>,
+        min_capacity: u32,
+    ) -> napi::Result<ColumnBloom> {
+        let table = self.table(table)?;
+        if table.postgres.is_none() {
+            return Err(napi::Error::from_reason(format!(
+                "\"{}\" is not stored in Postgres",
+                table.name
+            )));
+        }
+        let chain = chain_column.as_deref().zip(chain_id);
+        let (layer, count) = self
+            .inner
+            .postgres
+            .column_bloom(&table_name, &column, chain, u64::from(min_capacity))
+            .await
+            .map_err(to_napi)?;
+        let bytes: Vec<u8> = layer
+            .words
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect();
+        Ok(ColumnBloom {
+            words: bytes.into(),
+            count: count as u32,
+        })
     }
 
     /// The buffers a result's columns live in. They stay valid until

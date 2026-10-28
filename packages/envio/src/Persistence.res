@@ -154,6 +154,14 @@ type storage = {
     ~scope: Internal.chainScope,
     ~filters: array<EntityFilter.t>,
   ) => promise<unit>,
+  // A BloomFilter layer over every distinct value the field holds in the
+  // scope's rows, built where the rows are. None for a store that can't.
+  loadFieldBloom: (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~fieldName: string,
+    ~minCapacity: int,
+  ) => promise<option<(Uint32Array.t, int)>>,
   // Creates every index the schema promises for the given chains, without
   // touching `ready_at`. For a resumed indexer that is already ready and so
   // never runs `finalizeBackfill`: an index dropped or invalidated while it was

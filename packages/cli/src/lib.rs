@@ -1,6 +1,7 @@
 mod address_store;
 mod block_hash_pagination;
 mod block_store;
+mod bloom;
 mod cli_args;
 mod clickhouse;
 mod client_filtered_contracts;
