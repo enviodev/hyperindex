@@ -256,9 +256,7 @@ describe("Deferred schema indexes", () => {
     ~mapStorage=storage => {
       ...storage,
       finalizeBackfill: (~chainIds, ~readyAt) =>
-        gate.contents.wait()->Promise.then(() =>
-          storage.finalizeBackfill(~chainIds, ~readyAt)
-        ),
+        gate.contents.wait()->Promise.then(() => storage.finalizeBackfill(~chainIds, ~readyAt)),
     },
     async (~t, ~indexer, ~source) => {
       let gate = gate.contents
@@ -309,9 +307,7 @@ describe("Deferred schema indexes", () => {
       ...storage,
       finalizeBackfill: (~chainIds, ~readyAt) => {
         joinFinalizeCalls := joinFinalizeCalls.contents + 1
-        joinGate.contents.wait()->Promise.then(() =>
-          storage.finalizeBackfill(~chainIds, ~readyAt)
-        )
+        joinGate.contents.wait()->Promise.then(() => storage.finalizeBackfill(~chainIds, ~readyAt))
       },
     },
     async (~t, ~indexer, ~source) => {

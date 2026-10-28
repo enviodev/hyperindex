@@ -377,7 +377,10 @@ let init = {
                   ~timing=?sourceTiming,
                 )
               )->Array.getUnsafe(0)
-            await persistence.storage.addChain(~chainConfig, ~contractMapping=stored.contractMapping)
+            await persistence.storage.addChain(
+              ~chainConfig,
+              ~contractMapping=stored.contractMapping,
+            )
           }
           if resume {
             let initialState = await persistence.storage.resumeInitialState(

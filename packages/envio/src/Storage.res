@@ -91,16 +91,6 @@ let storageErrorOf = exn =>
   | _ => exn
   }
 
-let rollbackRowStateSchema: Table.table => S.t<(
-  EntityId.t,
-  EntityHistory.RowAction.t,
-)> = Utils.WeakMap.memoize(table =>
-  S.object(s => (
-    s.field(Table.idFieldName, table->Table.getIdSchema),
-    s.field(EntityHistory.changeFieldName, EntityHistory.RowAction.schema),
-  ))
-)
-
 // The chain a rollback row belongs to, read from the chain-id column both
 // rollback queries select. None for a cross-chain entity, which has no column.
 let rollbackChainIdSchema: Table.table => option<S.t<ChainId.t>> = Utils.WeakMap.memoize(table =>
@@ -141,8 +131,9 @@ let stageOrThrow = (arena, ~columns, ~rows, fill) => {
 let stageRowsOrThrow = (arena, ~writers, items: array<dict<unknown>>) =>
   arena->stageOrThrow(~columns=writers->StagedRows.columnsOf, ~rows=items->Array.length, stage =>
     items->Array.forEachWithIndex((item, row) =>
-      writers->Array.forEachWithIndex(({field}: StagedRows.writer, column) =>
-        stage->StagedRows.writeField(~writers, ~column, ~row, item->Dict.getUnsafe(field.name))
+      writers->Array.forEachWithIndex(
+        ({field}: StagedRows.writer, column) =>
+          stage->StagedRows.writeField(~writers, ~column, ~row, item->Dict.getUnsafe(field.name)),
       )
     )
   )
@@ -160,21 +151,23 @@ let stageChangesOrThrow = (arena, ~writers, ~changes: array<Change.t<Internal.en
         switch change {
         | Set({entity}) =>
           let values = entity->(Utils.magic: Internal.entity => dict<unknown>)
-          writers->Array.forEachWithIndex(({field}: StagedRows.writer, column) =>
-            stage->StagedRows.writeField(
-              ~writers,
-              ~column,
-              ~row,
-              field.name === Table.idFieldName ? entityId : values->Dict.getUnsafe(field.name),
-            )
+          writers->Array.forEachWithIndex(
+            ({field}: StagedRows.writer, column) =>
+              stage->StagedRows.writeField(
+                ~writers,
+                ~column,
+                ~row,
+                field.name === Table.idFieldName ? entityId : values->Dict.getUnsafe(field.name),
+              ),
           )
         | Delete(_) =>
-          writers->Array.forEachWithIndex(({field}: StagedRows.writer, column) =>
-            if field.name === Table.idFieldName {
-              stage->StagedRows.writeField(~writers, ~column, ~row, entityId)
-            } else {
-              stage->Staging.writeDeletedValue(~column, ~row, %raw(`undefined`))
-            }
+          writers->Array.forEachWithIndex(
+            ({field}: StagedRows.writer, column) =>
+              if field.name === Table.idFieldName {
+                stage->StagedRows.writeField(~writers, ~column, ~row, entityId)
+              } else {
+                stage->Staging.writeDeletedValue(~column, ~row, %raw(`undefined`))
+              },
           )
         }
         stage->Staging.writeValue(
@@ -185,12 +178,10 @@ let stageChangesOrThrow = (arena, ~writers, ~changes: array<Change.t<Internal.en
         stage->Staging.writeValue(
           ~column=fields + 1,
           ~row,
-          (
-            switch change {
-            | Set(_) => 0.
-            | Delete(_) => 1.
-            }
-          )->(Utils.magic: float => unknown),
+          switch change {
+          | Set(_) => 0.
+          | Delete(_) => 1.
+          }->(Utils.magic: float => unknown),
         )
       }),
   )
@@ -198,7 +189,6 @@ let stageChangesOrThrow = (arena, ~writers, ~changes: array<Change.t<Internal.en
 
 let make = (
   ~client: StorageClient.t,
-  ~logger: Logger.t,
   // Where the effect cache is dumped to and uploaded from.
   ~cacheDir: option<NodeJs.Path.t>=?,
   // Decides how wide an address key is, both when the config's addresses are
@@ -221,97 +211,33 @@ let make = (
   layouts.entities->Array.forEachWithIndex((layout, index) =>
     entityIndexByName->Dict.set(layout.name, index)
   )
-  let entityIndex = (table: Table.table) =>
-    switch entityIndexByName->Utils.Dict.dangerouslyGetNonOption(table.tableName) {
-    | Some(index) => index
-    | None => JsError.throwWithMessage(`The storage has no entity "${table.tableName}".`)
-    }
   let entityWriters = layouts.entities->Array.map(layout => layout.fields->StagedRows.writersOf)
   let rawEventWriters = layouts.rawEvents->StagedRows.writersOf
   let effectCacheWriters = layouts.effectCache->StagedRows.writersOf
 
   let holding = () => client->StorageClient.holding
 
-  // Scans .envio/cache into a list of (cache table, absolute TSV path). Flat
-  // `<name>.tsv` files map to cross-chain caches; a numeric subdirectory
-  // `<chainId>/<name>.tsv` maps to a chain-scoped cache. Exactly one directory
-  // level is supported. A non-numeric directory that contains TSVs is rejected.
-  // Returns [] when .envio/cache doesn't exist.
-  let scanCacheDir = async () => {
-    let topEntries = try {
-      await NodeJs.Fs.Promises.readdir(cacheDirPath)
-    } catch {
-    | _ => []
-    }
-    let result = []
-    let _ = await topEntries
-    ->Array.map(async entry => {
-      let entryPath = NodeJs.Path.join(cacheDirPath, entry)
-      let isDir = (await NodeJs.Fs.Promises.stat(entryPath))->NodeJs.Fs.Promises.statsIsDirectory
-      if isDir {
-        let subEntries = await NodeJs.Fs.Promises.readdir(entryPath)
-        let tsvs = subEntries->Array.filter(sub => sub->String.endsWith(".tsv"))
-        switch Internal.EffectCache.parseChainId(entry) {
-        | Some(chainId) =>
-          tsvs->Array.forEach(sub => {
-            let effectName = sub->String.slice(~start=0, ~end=-4)
-            result
-            ->Array.push((
-              Internal.EffectCache.toTableName(~effectName, ~scope=Chain(chainId)),
-              NodeJs.Path.join(entryPath, sub)->NodeJs.Path.toString,
-            ))
-            ->ignore
-          })
-        | None =>
-          if tsvs->Utils.Array.notEmpty {
-            JsError.throwWithMessage(
-              `Invalid effect cache directory ".envio/cache/${entry}". Chain cache directories must be named by a numeric chain id (e.g. "1"). Found cache files: ${tsvs->Array.joinUnsafe(
-                  ", ",
-                )}.`,
-            )
-          }
-        }
-      } else if entry->String.endsWith(".tsv") {
-        let effectName = entry->String.slice(~start=0, ~end=-4)
-        result
-        ->Array.push((
-          Internal.EffectCache.toTableName(~effectName, ~scope=CrossChain),
-          entryPath->NodeJs.Path.toString,
-        ))
-        ->ignore
-      }
-    })
-    ->Promise.all
-    result
-  }
-
   let restoreEffectCache = async (~withUpload) => {
-    if withUpload {
-      switch await scanCacheDir() {
-      | [] => logger->Logger.info("No saved effect cache to load from .envio/cache.")
-      | entries =>
-        try {
-          await client->StorageClient.uploadEffectCache(
-            entries->Array.map(((table, path)): StorageClient.cacheUpload => {table, path}),
-          )
-          logger->Logger.info("Successfully uploaded cache.")
-        } catch {
-        | exn => logger->Logger.errorWithExn("Failed to upload cache, continuing without it.", exn)
-        }
-      }
-    }
-
     let cache = Dict.make()
-    (await client->StorageClient.effectCacheTables)->Array.forEach(({tableName, rows}) => {
-      switch Internal.EffectCache.fromTableName(tableName) {
-      | Some((effectName, scope)) =>
-        cache->Dict.set(
-          tableName,
-          ({effectName, scope, tableName, count: rows}: Persistence.effectCacheRecord),
-        )
-      | None => ()
-      }
-    })
+
+    (
+      await client->StorageClient.restoreEffectCache(cacheDirPath->NodeJs.Path.toString, withUpload)
+    )->Array.forEach(({effectName, ?chainId, tableName, rows}) =>
+      cache->Dict.set(
+        tableName,
+        (
+          {
+            effectName,
+            scope: switch chainId {
+            | Some(chainId) => Chain(chainId)
+            | None => CrossChain
+            },
+            tableName,
+            count: rows,
+          }: Persistence.effectCacheRecord
+        ),
+      )
+    )
     cache
   }
 
@@ -367,9 +293,9 @@ let make = (
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let conditions = LoadFilter.make(~filter, ~table, ~column=field => field.pgDbFieldName)
-    let loading = switch Internal.EffectCache.fromTableName(table.tableName) {
-    | Some(_) => client->StorageClient.loadEffectCache(~table=table.tableName, ~conditions)
-    | None => client->StorageClient.loadWhere(~entity=table->entityIndex, ~conditions)
+    let loading = switch entityIndexByName->Utils.Dict.dangerouslyGetNonOption(table.tableName) {
+    | Some(entity) => client->StorageClient.loadWhere(~entity, ~conditions)
+    | None => client->StorageClient.loadEffectCache(~table=table.tableName, ~conditions)
     }
     switch await loading {
     | exception exn =>
@@ -437,37 +363,8 @@ let make = (
   let finalizeBackfill = (~chainIds, ~readyAt: Date.t) =>
     client->StorageClient.finalizeBackfill(chainIds, readyAt->Date.getTime)
 
-  let dumpEffectCache = async () => {
-    try {
-      let tables =
-        (await client->StorageClient.effectCacheTables)->Array.filter(({rows}) => rows > 0)
-      if tables->Utils.Array.notEmpty {
-        logger->Logger.info(
-          `Dumping cache: ${tables
-            ->Array.map(({tableName, rows}) => tableName ++ " (" ++ rows->Int.toString ++ " rows)")
-            ->Array.joinUnsafe(", ")}`,
-        )
-        await client->StorageClient.dumpEffectCache(
-          tables->Array.filterMap(({tableName}) =>
-            Internal.EffectCache.fromTableName(tableName)->Option.map(((
-              effectName,
-              scope,
-            )): StorageClient.cacheDump => {
-              tableName,
-              // Chain-scoped caches dump into a directory of their chain's.
-              path: NodeJs.Path.join(
-                cacheDirPath,
-                Internal.EffectCache.toCachePath(~effectName, ~scope),
-              )->NodeJs.Path.toString,
-            })
-          ),
-        )
-        logger->Logger.info(`Successfully dumped cache to ${cacheDirPath->NodeJs.Path.toString}`)
-      }
-    } catch {
-    | exn => logger->Logger.errorWithExn(`Failed to dump cache.`, exn)
-    }
-  }
+  let dumpEffectCache = () =>
+    client->StorageClient.dumpEffectCache(cacheDirPath->NodeJs.Path.toString)
 
   let readAddressRows = (result): array<AddressRows.row> =>
     client
@@ -623,22 +520,12 @@ let make = (
       | None => Internal.CrossChain
       | Some(schema) => Internal.Chain(row->S.parseOrThrow(schema))
       }
-    let removals = removedIdRows->Array.map((row): Persistence.rollbackRemoval => {
-      entityId: row->S.parseOrThrow(rollbackRemovedIdSchema(entityConfig.table)),
-      scope: scopeOf(row),
-    })
-    let restoredEntitiesResult = []
-    rollbackRows->Array.forEach(row => {
-      let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema(entityConfig.table))
-      switch action {
-      | SET => restoredEntitiesResult->Array.push(row)->ignore
-      | DELETE => removals->Array.push({entityId, scope: scopeOf(row)})->ignore
-      }
-    })
-
     (
-      removals,
-      restoredEntitiesResult
+      removedIdRows->Array.map((row): Persistence.rollbackRemoval => {
+        entityId: row->S.parseOrThrow(rollbackRemovedIdSchema(entityConfig.table)),
+        scope: scopeOf(row),
+      }),
+      rollbackRows
       ->(Utils.magic: array<dict<unknown>> => array<unknown>)
       ->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
       ->(Utils.magic: array<unknown> => array<Internal.entity>),
@@ -714,6 +601,8 @@ let make = (
       handle
     }
     let stagingStarted = Performance.now()
+    let clickHouseStagingSeconds = ref(0.)
+    let clickHouseOnlyStagingSeconds = ref(0.)
     let input: StorageClient.batch = try {
       rollback: ?(
         rollback->Option.map(({
@@ -768,8 +657,16 @@ let make = (
         switch update.changes {
         | [] => None
         | _ =>
+          let started = Performance.now()
           let handle = try update->stageChanges->staged catch {
           | exn => throw(changesErrorOf(update.entityConfig, exn))
+          }
+          let seconds = started->Performance.secondsSince
+          if update.entityConfig.storage.clickhouse {
+            clickHouseStagingSeconds := clickHouseStagingSeconds.contents +. seconds
+          }
+          if !update.entityConfig.storage.postgres {
+            clickHouseOnlyStagingSeconds := clickHouseOnlyStagingSeconds.contents +. seconds
           }
           Some(
             (
@@ -837,7 +734,10 @@ let make = (
       client->StorageClient.discardStaged(handles)
       throw(exn)
     }
-    let stagingSeconds = stagingStarted->Performance.secondsSince
+    // Each store is charged for staging what it writes: an entity both keep
+    // is staged once for the two.
+    let postgresStagingSeconds =
+      stagingStarted->Performance.secondsSince -. clickHouseOnlyStagingSeconds.contents
 
     let timings = try await client->StorageClient.writeBatch(input) catch {
     | exn =>
@@ -845,11 +745,14 @@ let make = (
       client->StorageClient.discardStaged(handles)
       throw(exn->storageErrorOf)
     }
-    // One staging feeds every store, so its time is the store of record's.
     timings->Array.forEach(({store, seconds}) =>
       onWrite(
         ~storage=store->storeName,
-        ~timeSeconds=store === Postgres ? seconds +. stagingSeconds : seconds,
+        ~timeSeconds=seconds +.
+        switch store {
+        | Postgres => postgresStagingSeconds
+        | ClickHouse => clickHouseStagingSeconds.contents
+        },
       )
     )
   }
@@ -914,7 +817,6 @@ let makeStorageFromEnv = (
 ) => {
   make(
     ~client=clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled, ~maxConnections?),
-    ~logger,
     ~cacheDir?,
     ~ecosystem=config.ecosystem.name,
     ~onInitialize=?isHasuraEnabled

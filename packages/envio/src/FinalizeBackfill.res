@@ -69,5 +69,7 @@ let run = (state: IndexerState.t) =>
 // without the index, just slower.
 let repairSchemaIndexes = (state: IndexerState.t) => {
   let storage = state->IndexerState.persistence->Persistence.getInitializedStorageOrThrow
-  storage.ensureSchemaIndexes(~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds)
+  storage.ensureSchemaIndexes(
+    ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
+  )
 }

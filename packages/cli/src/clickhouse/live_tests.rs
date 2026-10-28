@@ -1267,12 +1267,12 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
         (
             (
                 vec![row(&["c"])],
-                vec![row(&["a", "alice", "1", "SET"])],
+                vec![row(&["a", "alice", "1"])],
                 vec![row(&["a", "alice", "2"])],
                 vec![row(&["c", "carol", "3"])],
             ),
             (vec![row(&["a", "alice", "1"])], Vec::<Vec<String>>::new()),
-            (vec![row(&["d"])], vec![row(&["a", "alice", "1", "SET"])]),
+            (vec![row(&["d"])], vec![row(&["a", "alice", "1"])]),
         )
     );
 }

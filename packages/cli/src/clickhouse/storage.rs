@@ -21,7 +21,7 @@ use super::{literal, quoted, table_ref};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::storage::changes::ChangeSet;
-use crate::storage::rows::{self, Cell, ColumnRead, ReadKind, ResultSet};
+use crate::storage::rows::{self, Cell, ColumnRead, Decoded, ReadKind, ResultSet};
 use crate::storage::schema::{Entity, FieldType, Schema};
 use crate::storage::types::{
     Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
@@ -879,20 +879,24 @@ impl Storage {
             self.client
                 .read(select::rollback_restored(self.database(), table, bounds)?),
         )?;
-        let removed = rows::lay_out(
-            &row_binary::decode(
+        let removed = Decoded {
+            cells: row_binary::decode(
                 &removed,
                 &key.iter()
                     .map(|column| (column.ch_type.clone(), column.read))
                     .collect::<Vec<_>>(),
             )?,
-            key.iter()
+            columns: key
+                .iter()
                 .map(|column| ColumnRead::scalar(&column.row_name, column.read))
                 .collect(),
-        )?;
+        };
         let (types, reads) = table.history_reads();
-        let restored = rows::lay_out(&row_binary::decode(&restored, &types)?, reads)?;
-        Ok((removed, restored))
+        let restored = Decoded {
+            cells: row_binary::decode(&restored, &types)?,
+            columns: reads,
+        };
+        rows::rollback(removed, restored)
     }
 
     /// Whether the batch was committed: one landed but not told to commit is

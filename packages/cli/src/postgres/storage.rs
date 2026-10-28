@@ -21,14 +21,15 @@ use super::insert;
 use super::internal;
 use super::param::Param;
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
-use super::rows::into_result;
+use super::rows::{decode_rows, into_result};
 use super::schema_indexes;
 use super::select;
 use super::write::{self, Render, Source};
 use crate::columnar::{Arena, Column, ColumnKind};
 use crate::entity_filter::Condition;
 use crate::storage::changes::ChangeSet;
-use crate::storage::rows::ResultSet;
+use crate::storage::effect_cache::{CacheDump, CacheFile};
+use crate::storage::rows::{self, ResultSet};
 use crate::storage::schema::{
     self, effect_cache_fields, raw_event_fields, raw_events_key, Entity, Field, Schema,
     RAW_EVENTS_TABLE,
@@ -39,8 +40,8 @@ use crate::storage::types::{
     CHECKPOINT_ID_COLUMN, DELETE, SET,
 };
 use crate::storage::{
-    AddChain, Batch, CacheDump, CacheFile, Failure, Handoff, Initialize, Resumed, RollbackWrite,
-    StoredConfigRead, WriteError,
+    AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, StoredConfigRead,
+    WriteError,
 };
 
 pub struct Settings {
@@ -902,10 +903,10 @@ impl Storage {
             self.client.query(&removed, &params),
             self.client.query(&restored, &params),
         )?;
-        Ok((
-            into_result(&removed, &removed_columns)?,
-            into_result(&restored, &restored_columns)?,
-        ))
+        rows::rollback(
+            decode_rows(&removed, &removed_columns)?,
+            decode_rows(&restored, &restored_columns)?,
+        )
     }
 
     pub async fn effect_cache_tables(&self) -> Result<Vec<CacheTable>> {

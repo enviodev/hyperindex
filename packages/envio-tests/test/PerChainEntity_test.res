@@ -663,7 +663,6 @@ describe("Per-chain history prune", () => {
 
           let storage = Storage.make(
             ~client=TestPgSchema.client(~pgSchema, ~config=pruneScenario.config),
-            ~logger=Logger.makeInMemory(),
             ~ecosystem=Evm,
           )
           let prune = entityConfig =>

@@ -3,20 +3,20 @@
 //! ClickHouse, when configured, keeps the entities the schema puts there and
 //! follows what Postgres commits.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 
 use super::batch::Batch;
+use super::effect_cache::{self, CacheDump, CacheEvent, CacheFile, EffectCache, StoredCache};
 use super::handoff::{Failure, Gate, Handoff, WriteError};
 use super::rows::ResultSet;
 use super::schema::{Entity, Schema};
-use super::types::{Bounds, CacheTable, ChainMeta, ProgressDiff, Sequence};
-use super::{
-    AddChain, CacheDump, CacheFile, Holding, Initialize, Resume, Resumed, Store, StoredConfigRead,
-};
+use super::types::{Bounds, ChainMeta, ProgressDiff, Sequence};
+use super::{AddChain, Holding, Initialize, Resume, Resumed, Store, StoredConfigRead};
 use crate::clickhouse;
 use crate::entity_filter::Condition;
 use crate::postgres;
@@ -251,6 +251,9 @@ impl Storage {
         table: &str,
         conditions: Vec<Condition>,
     ) -> Result<ResultSet> {
+        if EffectCache::from_table_name(table).is_none() {
+            bail!("\"{table}\" is neither an entity nor an effect cache.");
+        }
         self.postgres.load_where(table, conditions).await
     }
 
@@ -272,16 +275,82 @@ impl Storage {
         self.clickhouse()?.history(entity).await
     }
 
-    pub async fn effect_cache_tables(&self) -> Result<Vec<CacheTable>> {
-        self.postgres.effect_cache_tables().await
+    async fn stored_caches(&self) -> Result<Vec<StoredCache>> {
+        Ok(self
+            .postgres
+            .effect_cache_tables()
+            .await?
+            .into_iter()
+            .filter_map(|table| {
+                Some(StoredCache {
+                    cache: EffectCache::from_table_name(&table.table_name)?,
+                    rows: table.rows,
+                })
+            })
+            .collect())
     }
 
-    pub async fn upload_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
-        self.postgres.upload_effect_cache(files).await
+    /// The caches the store holds, after uploading the ones saved under
+    /// `cache_dir` when `upload` says to. A failed upload is reported, and the
+    /// run goes on without them.
+    pub async fn restore_effect_cache(
+        &self,
+        cache_dir: &Path,
+        upload: bool,
+        report: &(dyn Fn(CacheEvent) + Sync),
+    ) -> Result<Vec<StoredCache>> {
+        if upload {
+            let files = effect_cache::saved(cache_dir)
+                .await?
+                .into_iter()
+                .map(|(cache, path)| CacheFile {
+                    table: cache.table_name(),
+                    path: path.to_string_lossy().into_owned(),
+                })
+                .collect::<Vec<_>>();
+            report(if files.is_empty() {
+                CacheEvent::NothingSaved
+            } else {
+                match self.postgres.upload_effect_cache(&files).await {
+                    Ok(()) => CacheEvent::Uploaded,
+                    Err(error) => CacheEvent::UploadFailed(error),
+                }
+            });
+        }
+        self.stored_caches().await
     }
 
-    pub async fn dump_effect_cache(&self, files: &[CacheDump]) -> Result<()> {
-        self.postgres.dump_effect_cache(files).await
+    /// Saves every cache holding an output under `cache_dir`. Never fails: a
+    /// dump that doesn't finish is reported and leaves the files it would
+    /// replace.
+    pub async fn dump_effect_cache(&self, cache_dir: &Path, report: &(dyn Fn(CacheEvent) + Sync)) {
+        let dumped = async {
+            let caches = self
+                .stored_caches()
+                .await?
+                .into_iter()
+                .filter(|stored| stored.rows > 0)
+                .collect::<Vec<_>>();
+            if caches.is_empty() {
+                return Ok(false);
+            }
+            let dumps = caches
+                .iter()
+                .map(|stored| CacheDump {
+                    table_name: stored.cache.table_name(),
+                    path: stored.cache.file(cache_dir).to_string_lossy().into_owned(),
+                })
+                .collect::<Vec<_>>();
+            report(CacheEvent::Dumping(caches));
+            self.postgres.dump_effect_cache(&dumps).await?;
+            Ok(true)
+        }
+        .await;
+        match dumped {
+            Ok(true) => report(CacheEvent::Dumped),
+            Ok(false) => {}
+            Err(error) => report(CacheEvent::DumpFailed(error)),
+        }
     }
 
     /// ClickHouse first, and it refuses a database it may not empty before

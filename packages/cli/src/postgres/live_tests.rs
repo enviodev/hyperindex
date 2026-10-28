@@ -15,8 +15,8 @@ use super::param::Param;
 use futures_util::future;
 
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
+use crate::storage::effect_cache::CacheDump;
 use crate::storage::rows::{Cell, ReadKind};
-use crate::storage::CacheDump;
 use crate::test_servers;
 
 pub(crate) fn client() -> PgClient {

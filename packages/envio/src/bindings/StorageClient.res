@@ -172,7 +172,13 @@ type progressDiff = {
 
 type rollbackData = {removed: queryResult, restored: queryResult}
 
-type cacheTable = {tableName: string, rows: int}
+// `chainId` is left out for a cross-chain cache.
+type storedEffectCache = {
+  effectName: string,
+  chainId?: ChainId.t,
+  tableName: string,
+  rows: int,
+}
 
 // An optional field is left out rather than null, both ways: the addon refuses
 // a null for one, and leaves out one it has no value for.
@@ -381,15 +387,14 @@ external rollbackProgressDiff: (t, bounds) => promise<array<progressDiff>> = "ro
 
 @send external rollbackData: (t, int, bounds) => promise<rollbackData> = "rollbackData"
 
-@send external effectCacheTables: t => promise<array<cacheTable>> = "effectCacheTables"
+// Uploads the caches saved under the directory first when `upload` says to,
+// logging how that went.
+@send
+external restoreEffectCache: (t, string, bool) => promise<array<storedEffectCache>> =
+  "restoreEffectCache"
 
-type cacheUpload = {table: string, path: string}
-
-@send external uploadEffectCache: (t, array<cacheUpload>) => promise<unit> = "uploadEffectCache"
-
-type cacheDump = {tableName: string, path: string}
-
-@send external dumpEffectCache: (t, array<cacheDump>) => promise<unit> = "dumpEffectCache"
+// Never rejects: a dump that doesn't finish is logged.
+@send external dumpEffectCache: (t, string) => promise<unit> = "dumpEffectCache"
 
 @send external reset: t => promise<unit> = "reset"
 

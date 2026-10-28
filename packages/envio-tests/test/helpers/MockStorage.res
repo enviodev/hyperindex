@@ -10,10 +10,7 @@ type method = [
 type t = {
   holdingCalls: array<bool>,
   resolveHolding: Persistence.holding => unit,
-  initializeCalls: array<{
-    "chainConfigs": array<Config.chain>,
-    "envioInfo": JSON.t,
-  }>,
+  initializeCalls: array<{"chainConfigs": array<Config.chain>, "envioInfo": JSON.t}>,
   resolveInitialize: Persistence.initialState => unit,
   resumeInitialStateCalls: array<bool>,
   resolveLoadInitialState: Persistence.initialState => unit,
@@ -93,7 +90,10 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       readStoredConfig: implement(#readStoredConfig, () => Promise.resolve(stored)),
       addChain: (~chainConfig as _, ~contractMapping as _) =>
         JsError.throwWithMessage("Not implemented"),
-      resumeInitialState: implement(#resumeInitialState, (~chainIds as _, ~contractMapping as _) => {
+      resumeInitialState: implement(#resumeInitialState, (
+        ~chainIds as _,
+        ~contractMapping as _,
+      ) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
@@ -129,10 +129,8 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
       pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
-      getRollbackTargetCheckpoint: (
-        ~reorgChainId as _,
-        ~lastKnownValidBlockNumber as _,
-      ) => JsError.throwWithMessage("Not implemented"),
+      getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+        JsError.throwWithMessage("Not implemented"),
       getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
       getRollbackData: (~entityConfig as _, ~floors as _) =>
         JsError.throwWithMessage("Not implemented"),

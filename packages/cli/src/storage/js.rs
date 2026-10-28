@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -9,19 +10,19 @@ use serde_json::json;
 
 use super::batch::{Batch, EffectCacheWrite, RollbackWrite};
 use super::changes::{self, ChangeSet};
+use super::effect_cache::{CacheEvent, Scope};
 use super::rows::ResultSet;
 use super::schema::{effect_cache_fields, raw_event_fields, Encoding, Field, Schema};
 use super::types::{
-    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier,
-    Progress,
+    Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
 };
-use super::{AddChain, CacheDump, CacheFile, Holding, Initialize, Store};
+use super::{AddChain, Holding, Initialize, Store};
 use crate::clickhouse;
 use crate::clickhouse::client::{Connection, Tuning};
 use crate::columnar::{self, Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
-use crate::logger::{Level, Logger};
+use crate::logger::{BoundLogger, Level, Logger};
 use crate::postgres;
 use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
 use crate::postgres::error::to_napi;
@@ -208,9 +209,12 @@ pub struct RollbackDataOutput {
 }
 
 #[napi(object)]
-pub struct CacheUploadInput {
-    pub table: String,
-    pub path: String,
+pub struct StoredEffectCache {
+    pub effect_name: String,
+    /// The chain whose cache it is, for a per-chain one.
+    pub chain_id: Option<f64>,
+    pub table_name: String,
+    pub rows: i32,
 }
 
 /// One entity's changes within one chain scope, staged.
@@ -283,6 +287,7 @@ pub struct WriteTiming {
 #[napi(js_name = "Storage")]
 pub struct JsStorage {
     inner: super::Storage,
+    logger: BoundLogger,
     /// Result sets handed out but not yet read and released. An entry lives
     /// only between the call that returned it and `releaseResult`.
     results: Mutex<HashMap<u32, Arena>>,
@@ -354,8 +359,11 @@ impl JsStorage {
                             database: options.database,
                         },
                         Tuning::default(),
-                        Arc::new(move |message: &str| {
-                            logger.log(Level::WARN, message, &json!({"storage": "clickhouse"}));
+                        Arc::new({
+                            let logger = logger.clone();
+                            move |message: &str| {
+                                logger.log(Level::WARN, message, &json!({"storage": "clickhouse"}));
+                            }
                         }),
                         clickhouse::storage::Settings {
                             replicated: options.replicated,
@@ -368,6 +376,7 @@ impl JsStorage {
             })
             .transpose()?;
         Ok(Self {
+            logger,
             inner: super::Storage {
                 schema,
                 postgres,
@@ -773,29 +782,41 @@ impl JsStorage {
         })
     }
 
+    /// The caches the store holds, after uploading the ones saved under
+    /// `cacheDir` when `upload` says to.
     #[napi]
-    pub async fn effect_cache_tables(&self) -> napi::Result<Vec<CacheTable>> {
-        self.inner.effect_cache_tables().await.map_err(to_napi)
-    }
-
-    #[napi]
-    pub async fn upload_effect_cache(&self, files: Vec<CacheUploadInput>) -> napi::Result<()> {
-        let files = files
-            .into_iter()
-            .map(|file| CacheFile {
-                table: file.table,
-                path: file.path,
-            })
-            .collect::<Vec<_>>();
-        self.inner
-            .upload_effect_cache(&files)
+    pub async fn restore_effect_cache(
+        &self,
+        cache_dir: String,
+        upload: bool,
+    ) -> napi::Result<Vec<StoredEffectCache>> {
+        let cache_dir = PathBuf::from(cache_dir);
+        let report = |event: CacheEvent| event.log(&self.logger, &cache_dir);
+        let stored = self
+            .inner
+            .restore_effect_cache(&cache_dir, upload, &report)
             .await
-            .map_err(to_napi)
+            .map_err(to_napi)?;
+        Ok(stored
+            .into_iter()
+            .map(|stored| StoredEffectCache {
+                table_name: stored.cache.table_name(),
+                chain_id: match stored.cache.scope {
+                    Scope::CrossChain => None,
+                    Scope::Chain(chain_id) => Some(chain_id as f64),
+                },
+                effect_name: stored.cache.effect_name,
+                rows: stored.rows,
+            })
+            .collect())
     }
 
+    /// Never rejects: a dump that doesn't finish is logged.
     #[napi]
-    pub async fn dump_effect_cache(&self, files: Vec<CacheDump>) -> napi::Result<()> {
-        self.inner.dump_effect_cache(&files).await.map_err(to_napi)
+    pub async fn dump_effect_cache(&self, cache_dir: String) {
+        let cache_dir = PathBuf::from(cache_dir);
+        let report = |event: CacheEvent| event.log(&self.logger, &cache_dir);
+        self.inner.dump_effect_cache(&cache_dir, &report).await
     }
 
     #[napi]

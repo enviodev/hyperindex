@@ -64,10 +64,7 @@ describe("InMemoryStore chain metadata", () => {
     store->Writing.commitBatch(~batch=emptyBatch(~checkpointId=1n))
     await store->Writing.flush
 
-    t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual((
-      [],
-      [Some(dict{"1": meta})],
-    ))
+    t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual(([], [Some(dict{"1": meta})]))
   })
 
   Async.it("Flushes metadata via a standalone upsert when no batch is queued", async t => {
@@ -77,10 +74,7 @@ describe("InMemoryStore chain metadata", () => {
     store->Writing.setChainMeta(dict{"1": meta})
     await store->Writing.flush
 
-    t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual((
-      [dict{"1": meta}],
-      [],
-    ))
+    t.expect((setChainMetaCalls, writeBatchChainMetaCalls)).toEqual(([dict{"1": meta}], []))
   })
 
   Async.it("Drops unchanged metadata so it isn't written twice", async t => {

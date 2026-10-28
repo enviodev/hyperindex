@@ -335,4 +335,3 @@ let kindOf = (encoding: encoding) =>
   | Text | Digits | Decimal | Document | List => Text
   | Bytes => Bytes
   }
-

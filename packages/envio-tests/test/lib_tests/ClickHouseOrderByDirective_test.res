@@ -144,5 +144,4 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
       "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N, scale: M)` with M <= N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
     )
   })
-
 })

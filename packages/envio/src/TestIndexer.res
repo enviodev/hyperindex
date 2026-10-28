@@ -568,11 +568,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
   // so none of these is reached.
-  initialize: async (
-    ~chainConfigs as _=?,
-    ~contractMapping as _,
-    ~envioInfo as _,
-  ) =>
+  initialize: async (~chainConfigs as _=?, ~contractMapping as _, ~envioInfo as _) =>
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
@@ -620,10 +616,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
-  getRollbackTargetCheckpoint: async (
-    ~reorgChainId as _,
-    ~lastKnownValidBlockNumber as _,
-  ) =>
+  getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
