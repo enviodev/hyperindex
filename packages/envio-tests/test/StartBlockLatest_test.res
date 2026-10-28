@@ -120,16 +120,16 @@ describe("start_block: latest", () => {
         ~message="latest resolves to the head observed at first deploy",
       ).toEqual([(1337, 1000)])
 
-      t.expect(
-        source.getHeightOrThrowCalls->Array.length >= 2,
-        ~message="both the resolver's probe and the chain's own startup call hit the source",
-      ).toEqual(true)
+      // The resolver's probe and the chain's own startup call.
+      await source.expectNewHeightCallsAtLeast(2)
 
       // The head moves on while the indexer is "down" - restart must not
       // re-resolve "latest" against it.
       source.setAutoHeight(5000)
       let restarted = await indexer.restart()
       await restarted.waitUntilReady()
+      // The chain's own startup call, and no probe to re-resolve `latest`.
+      await source.expectNewHeightCalls(1)
 
       t.expect(
         await persistedStartBlocks(~sql, ~pgSchema),

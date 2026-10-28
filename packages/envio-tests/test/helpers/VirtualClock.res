@@ -6,11 +6,10 @@
 // let the indexer settle between timers.
 module Native = {
   type t
-  type fired = {id: int, label: string, js: bool}
+  type fired = {id: int}
 
   @send external make: (Core.virtualClockCtor, int) => t = "new"
   @send external now: t => float = "now"
-  @send external seed: t => int = "seed"
   @send external random: t => float = "random"
   @send external arm: (t, string, float) => int = "arm"
   @send external clear: (t, int) => unit = "clear"
@@ -80,6 +79,8 @@ let toClock = (clock: t): Clock.t => {
     | Some(turn) =>
       clearTimeout(turn)
       clock.turns->Map.delete(id)->ignore
+    // A turn that already ran; its negative id was never the clock's.
+    | None if id < 0 => ()
     | None =>
       clock.callbacks->Map.delete(id)->ignore
       clock.native->Native.clear(id)
@@ -105,14 +106,12 @@ let advance = async (clock: t, millis, ~settle: unit => promise<unit>) => {
   let continue = ref(true)
   while continue.contents {
     switch clock.native->Native.fireNext(until)->Nullable.toOption {
-    | Some({id, js}) =>
-      if js {
-        switch clock.callbacks->Map.get(id) {
-        | Some(callback) =>
-          clock.callbacks->Map.delete(id)->ignore
-          callback()
-        | None => ()
-        }
+    | Some({id}) =>
+      switch clock.callbacks->Map.get(id) {
+      | Some(callback) =>
+        clock.callbacks->Map.delete(id)->ignore
+        callback()
+      | None => ()
       }
       await settle()
     | None => continue := false

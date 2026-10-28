@@ -85,7 +85,6 @@ type t = {
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
-  retryBackoffScale: float,
   clock: Clock.t,
   // Why a source was last disabled for good. A disabled source is never
   // retried, so by the time the manager runs out of sources this is the reason
@@ -346,7 +345,6 @@ type timing = {
   reducedPollingInterval?: int,
   recoveryTimeout?: float,
   getHeightRetryInterval?: (~retry: int) => int,
-  retryBackoffScale?: float,
   heightPollTimeout?: int,
   clock?: Clock.t,
 }
@@ -403,7 +401,6 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
     stalledPollingInterval,
     reducedPollingInterval,
     recoveryTimeout,
-    retryBackoffScale: timing.retryBackoffScale->Option.getOr(1.),
     clock,
     statusStart: Performance.now(),
     status: Idle,
@@ -585,13 +582,8 @@ let retryBackoffMillis = retry =>
 // 0, these must never busy-loop when there is no other source to move to.
 let minRecoverableBackoffMillis = 50
 
-// The logged backoff stays the unscaled one, so a scaled-down test still reads
-// the schedule an operator would see.
 let sleepBackoff = (sourceManager: t, millis) =>
-  sourceManager.clock->Clock.delay(
-    ~label="retry backoff",
-    (millis->Int.toFloat *. sourceManager.retryBackoffScale)->Float.toInt,
-  )
+  sourceManager.clock->Clock.delay(~label="retry backoff", millis)
 
 // Back off before retrying the same request, failing the source over first when
 // another one can actually take over. Marking `lastFailedAt` only demotes this

@@ -106,8 +106,11 @@ for (const path of resFiles(testRoot)) {
 // A scenario on virtual time only moves when it advances its clock, so real
 // time spent between steps changes nothing it can observe, and a count taken
 // before a step stands in for what `expectNewHeightCalls` checks exactly.
-const realDelay = /\bUtils\.delay\((\d+)\)/;
-const pollSnapshot = /->\s*polls\b/;
+// A zero delay is a turn of the event loop, not time.
+const realDelay = /\bUtils\.delay\((?!0\))([^)]*)\)/;
+const realClock = /\b(?:Date\.now|realNow|realSetTimeout)\(/;
+// `length - 1` indexes the latest call, which is how a test answers one poll.
+const pollSnapshot = /\bgetHeightOrThrowCalls->Array\.length\b(?!\s*-\s*1)/;
 const scenarioStart = /\bScenario\.(?:it|run)\(/;
 
 for (const path of resFiles(testRoot)) {
@@ -151,7 +154,7 @@ for (const path of resFiles(testRoot)) {
     if (onVirtualScenario || code.some((line) => /~virtualTime=true\b/.test(line))) {
       code.forEach((line, offset) => {
         const delay = line.match(realDelay);
-        if (delay && Number(delay[1]) > 0) {
+        if (delay) {
           violations.push({
             file,
             line: start + offset + 1,
@@ -159,11 +162,11 @@ for (const path of resFiles(testRoot)) {
             fix: `Replace it with \`await indexer.advanceTime(${delay[1]})\`: the source layer's timers only fire when the test advances the clock.`,
           });
         }
-        if (/\bDate\.now\(/.test(line)) {
+        if (realClock.test(line)) {
           violations.push({
             file,
             line: start + offset + 1,
-            title: "Date.now() on virtual time",
+            title: "Reading the real clock on virtual time",
             fix: "Time the scenario by how far it advanced: real time says nothing about when a virtual timer fired.",
           });
         }

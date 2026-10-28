@@ -415,14 +415,12 @@ let failThroughBackoff = async (
   ~alsoWatching: array<MockSource.t>=[],
   ~reply,
   ~waits: array<int>,
-  ~firstRetry=0,
 ) => {
   let early = []
   let watched = [source]->Array.concat(alsoWatching)
-  for index in 0 to waits->Array.length - 1 {
-    let retryCount = firstRetry + index
+  for retryCount in 0 to waits->Array.length - 1 {
     await source.expectItemsQueries([{retryCount, reply}])
-    let wait = waits->Array.getUnsafe(index)
+    let wait = waits->Array.getUnsafe(retryCount)
     if wait > 0 {
       await indexer.advanceTime(wait - 1)
       if watched->Array.some(mock => mock.pendingItemsQueries->Array.length > 0) {

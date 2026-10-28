@@ -23,9 +23,15 @@ let decodeLogs = async (
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
         ("data", JSON.String(data)),
         ("blockNumber", JSON.String("0x1")),
-        ("transactionHash", JSON.String("0xabababababababababababababababababababababababababababababababab")),
+        (
+          "transactionHash",
+          JSON.String("0xabababababababababababababababababababababababababababababababab"),
+        ),
         ("transactionIndex", JSON.String("0x0")),
-        ("blockHash", JSON.String("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0")),
+        (
+          "blockHash",
+          JSON.String("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"),
+        ),
         ("logIndex", JSON.String(`0x${i->Int.toString(~radix=16)}`)),
         ("removed", JSON.Boolean(false)),
       ]),

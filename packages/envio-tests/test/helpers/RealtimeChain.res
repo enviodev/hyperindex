@@ -7,8 +7,6 @@ let streaming: array<MockSource.method> = [
   #createHeightSubscription,
 ]
 
-let polls = (mock: MockSource.t) => mock.getHeightOrThrowCalls->Array.length
-
 let upTo = toBlock => MockSource.Respond({items: [], latestFetchedBlockNumber: toBlock})
 
 // Answers the query a new head starts, which puts the chain back to waiting.
@@ -39,14 +37,10 @@ let goLive = async (mock: MockSource.t, ~indexer: IndexerRunner.t, ~head=100) =>
   mock.resolveGetHeightOrThrow(head)
   // Lets the poll loop take that answer before the stream comes up. A loop
   // still holding it sends no catch-up for the connect, and leaves the
-  // connection unproven until its next cadence. Microtasks only: on real time a
-  // short cadence would otherwise fire in between and put a poll in flight.
-  for _ in 1 to 20 {
-    await Promise.resolve()
-  }
-  let pollsBeforeLive = mock->polls
+  // connection unproven until its next cadence.
+  await indexer.advanceTime(0)
   mock.setHeightSubscriptionStatus(Live)
-  await mock.expectHeightCalls(pollsBeforeLive + 1)
+  await mock.expectNewHeightCalls(1)
   mock.resolveGetHeightOrThrow(head)
   mock.triggerHeightSubscription(head + 1)
   await mock->answerQuery(~fromBlock=head + 1, ~toBlock=head + 1)

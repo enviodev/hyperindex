@@ -624,6 +624,8 @@ describe("Height subscription", () => {
         () => mock.heightSubscriptionCalls->Array.length > 0,
         ~message="the height subscription",
       )
+      // The backfill's head, then the poll its last wait leaves in flight.
+      await mock.expectNewHeightCalls(2)
       await mock->goLive(~indexer)
       let whileHealthy = await indexer->streamMetrics
 

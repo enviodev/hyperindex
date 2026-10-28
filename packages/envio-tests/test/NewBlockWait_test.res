@@ -37,17 +37,6 @@ let backfill = async (~sync: MockSource.t, ~head=100) => {
 let hasLog = (indexer: IndexerRunner.t, msg) =>
   indexer.allLogsAsJson()->Array.some(line => line->Dict.get("msg") == Some(String(msg)))
 
-let heightRetryIntervals = (indexer: IndexerRunner.t) =>
-  indexer.allLogsAsJson()->Array.filterMap(line =>
-    switch line->Dict.get("msg") {
-    | Some(String(msg)) =>
-      msg
-      ->String.match(/^Height retrieval from MockSource source .*Retrying in (\d+)ms\.$/)
-      ->Option.flatMap(match => match->Array.get(1)->Option.flatMap(x => x))
-    | _ => None
-    }
-  )
-
 let recruitedFallback = "No new blocks detected within 0s. Continuing polling with secondary RPC sources from the configuration."
 let slowedDown = "No new blocks detected within 0s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync"
 
@@ -144,7 +133,7 @@ describe("Waiting for the first height", () => {
       await sync.expectNewHeightCalls(1)
       sync.resolveGetHeightOrThrow(101)
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      t.expect(indexer->heightRetryIntervals).toEqual(["4", "8", "10", "4"])
+      t.expect(indexer->RealtimeChain.heightRetryIntervals).toEqual(["4", "8", "10", "4"])
     },
   )
 
@@ -180,7 +169,7 @@ describe("Waiting for the first height", () => {
       await indexer.advanceTime(50)
       await failing.expectNewHeightCalls(0)
       await healthy.expectNewHeightCalls(0)
-      t.expect(indexer->heightRetryIntervals).toEqual(["4", "8", "10", "10"])
+      t.expect(indexer->RealtimeChain.heightRetryIntervals).toEqual(["4", "8", "10", "10"])
     },
   )
 

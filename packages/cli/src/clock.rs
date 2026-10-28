@@ -146,10 +146,6 @@ impl VirtualClock {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub fn seed(&self) -> u32 {
-        self.state().seed
-    }
-
     pub fn arm_js(&self, label: &str, millis: f64) -> u32 {
         self.state().arm(label, millis, Owner::Js)
     }
@@ -178,19 +174,12 @@ impl VirtualClock {
         };
         // Woken with the lock released: an executor that polls on wake would
         // otherwise re-enter it from the sleep's own poll.
-        let js = match timer.owner {
-            Owner::Js => true,
-            Owner::Rust(waker) => {
-                if let Some(waker) = waker {
-                    waker.wake();
-                }
-                false
-            }
-        };
+        if let Owner::Rust(Some(waker)) = timer.owner {
+            waker.wake();
+        }
         Some(FiredTimer {
             id: timer.id,
             label: timer.label,
-            js,
         })
     }
 
@@ -306,10 +295,10 @@ impl Drop for VirtualSleep {
 
 #[napi(object)]
 pub struct FiredTimer {
+    /// Names a callback only when ReScript armed the timer; a Rust sleep is
+    /// woken in place.
     pub id: u32,
     pub label: String,
-    /// Whether the ReScript side holds this timer's callback.
-    pub js: bool,
 }
 
 /// The test-facing handle on a [`VirtualClock`].
@@ -330,11 +319,6 @@ impl VirtualClockHandle {
     #[napi]
     pub fn now(&self) -> f64 {
         self.clock.now_ms()
-    }
-
-    #[napi]
-    pub fn seed(&self) -> u32 {
-        self.clock.seed()
     }
 
     #[napi]
