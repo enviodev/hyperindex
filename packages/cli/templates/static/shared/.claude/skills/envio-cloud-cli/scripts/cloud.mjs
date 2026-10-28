@@ -6,9 +6,10 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 const IN_PROGRESS = 75;
+const DEFAULT_TIMEOUT_S = 100;
 
 const usage = `Usage:
   node cloud.mjs check [root-dir]
@@ -17,11 +18,12 @@ const usage = `Usage:
       Waits until Envio Cloud has seen <commit> and reports its status.
       --deploy deploys it when it is 'inactive' (auto-deploy off) and waits for it to start.
   node cloud.mjs wait-synced <indexer> <commit> <org> [--timeout <s>]
-      Waits until every chain has caught up, then prints the GraphQL endpoint and checks it answers.
+      Waits until every chain has caught up, then prints the GraphQL endpoint and tries a _meta query on it.
 
-Time budget defaults to 540 s, under a 10-minute tool call limit. Exit code 75 means
-"still in progress": run the same command again. The envio-cloud command defaults to
-"npx -y envio-cloud"; override it with ENVIO_CLOUD_CLI.`;
+The time budget defaults to ${DEFAULT_TIMEOUT_S} s, which fits a 2-minute tool call; with a
+10-minute tool call pass --timeout 540. Exit code 75 means "still in progress": run the
+same command again. The envio-cloud command defaults to "npx -y envio-cloud"; override
+it with ENVIO_CLOUD_CLI.`;
 
 const COMMIT_STATUS = {
   pending: { wait: true, meaning: "Envio Cloud is still processing the commit" },
@@ -59,24 +61,37 @@ const COMMIT_STATUS = {
   },
 };
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 function parseArgs(argv) {
   const positional = [];
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--deploy") flags.deploy = true;
-    else if (arg === "--timeout") flags.timeout = argv[++i];
-    else positional.push(arg);
+    else if (arg === "--timeout") {
+      flags.timeout = Number(argv[++i]);
+      if (!(flags.timeout > 0)) flags.invalid = true;
+    } else positional.push(arg);
   }
   return { positional, flags };
 }
 
+// Sleeps for `ms`, but never past the deadline.
+const sleepUntil = (deadline, ms) =>
+  new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(ms, deadline - Date.now()))));
+
 function cloud(args) {
   const [cmd, ...base] = (process.env.ENVIO_CLOUD_CLI || "npx -y envio-cloud").split(" ");
-  const result = spawnSync(cmd, [...base, ...args], { encoding: "utf8" });
-  return { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  // npx is npx.cmd on Windows, which Node only spawns through a shell.
+  const result = spawnSync(cmd, [...base, ...args], {
+    encoding: "utf8",
+    shell: process.platform === "win32",
+    timeout: 120_000,
+  });
+  return {
+    code: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr || result.error?.message || "",
+  };
 }
 
 // Envio Cloud's JSON envelope is {"ok": true, "data": ...} or {"ok": false, "error": "..."}.
@@ -107,13 +122,22 @@ const sameCommit = (a, b) => a.startsWith(b) || b.startsWith(a);
 
 async function waitCommit([indexer, commit, org], flags) {
   if (!indexer || !commit || !org) return usageError();
-  const deadline = Date.now() + Number(flags.timeout ?? 540) * 1000;
+  const deadline = Date.now() + (flags.timeout ?? DEFAULT_TIMEOUT_S) * 1000;
+
+  // A wrong name would otherwise read as "not seen yet" until the budget runs out.
+  const indexerInfo = cloudJson(["indexer", "get", indexer, org]);
+  if (indexerInfo.error) failOnAuth(indexerInfo.error);
+  if (!indexerInfo.error && !indexerInfo.data) {
+    console.log(`Indexer '${indexer}' not found in organisation '${org}'. Check with: npx -y envio-cloud indexer list --org ${org}`);
+    return 1;
+  }
+
   let deployed = false;
   let lastLine = "";
   while (true) {
     const { data, error } = cloudJson(["indexer", "commits", indexer, org, "--limit", "20"]);
     if (error) failOnAuth(error);
-    const commits = Array.isArray(data) ? data : data?.commits ?? [];
+    const commits = Array.isArray(data) ? data : [];
     const found = commits.find((c) => c.commit_hash && sameCommit(c.commit_hash, commit));
     const status = found?.status;
     const line = error
@@ -138,7 +162,7 @@ async function waitCommit([indexer, commit, org], flags) {
       console.log(info?.fix ? `Fix: ${info.fix}` : "See the commit statuses table in reference.md.");
       return 1;
     }
-    if (Date.now() > deadline) {
+    if (Date.now() >= deadline) {
       if (deployed && status === "inactive") {
         // Envio Cloud can accept a deploy without starting one, e.g. when the commit's code is gone.
         console.log("The deploy was accepted but nothing started. Push a new commit to the branch (an empty one works).");
@@ -153,17 +177,19 @@ async function waitCommit([indexer, commit, org], flags) {
       console.log("Still in progress: run the same command again.");
       return IN_PROGRESS;
     }
-    await sleep(Number(process.env.CLOUD_POLL_MS ?? 10_000));
+    await sleepUntil(deadline, 10_000);
   }
 }
 
+// A chain is synced when the indexer says it's ready. Before it knows the chain
+// head, block_height is 0, so the block comparison only counts once it's set.
 function chainLine(c) {
-  const caughtUp = c.timestamp_caught_up_to_head_or_endblock || c.has_processed_to_end_block;
-  const lag = Number(c.block_height) - Number(c.latest_processed_block);
-  return {
-    caughtUp: Boolean(caughtUp) || lag <= 0,
-    text: `chain ${c.chain_id}: ${c.latest_processed_block}/${c.block_height}${caughtUp ? " (caught up)" : ` (${lag} behind)`}`,
-  };
+  const ready = c.is_ready ?? Boolean(c.timestamp_caught_up_to_head_or_endblock || c.has_processed_to_end_block);
+  const height = Number(c.block_height);
+  const processed = Number(c.latest_processed_block);
+  const caughtUp = ready || (height > 0 && processed >= height);
+  const progress = height > 0 ? `${processed}/${height}` : `${processed}/? (chain head not known yet)`;
+  return { caughtUp, text: `chain ${c.chain_id}: ${progress}${caughtUp ? " (caught up)" : ""}` };
 }
 
 async function checkEndpoint(indexer, commit, org) {
@@ -179,6 +205,7 @@ async function checkEndpoint(indexer, commit, org) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query: "{ _meta { isReady progressBlock } }" }),
+      signal: AbortSignal.timeout(15_000),
     });
     console.log(`_meta query: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
   } catch (e) {
@@ -188,10 +215,15 @@ async function checkEndpoint(indexer, commit, org) {
 
 async function waitSynced([indexer, commit, org], flags) {
   if (!indexer || !commit || !org) return usageError();
-  const deadline = Date.now() + Number(flags.timeout ?? 540) * 1000;
+  const deadline = Date.now() + (flags.timeout ?? DEFAULT_TIMEOUT_S) * 1000;
   while (true) {
     const { data, error } = cloudJson(["deployment", "status", indexer, commit, org]);
     if (error) failOnAuth(error);
+    if (error?.includes("_meta")) {
+      console.log(error);
+      console.log(`Progress without _meta: npx -y envio-cloud deployment metrics ${indexer} ${commit} ${org}`);
+      return 1;
+    }
     const chains = Array.isArray(data) ? data.map(chainLine) : [];
     if (chains.length === 0) {
       console.log(error ? `No sync metrics yet: ${error}` : "No sync metrics yet (still building?)");
@@ -203,7 +235,7 @@ async function waitSynced([indexer, commit, org], flags) {
         return 0;
       }
     }
-    if (Date.now() > deadline) {
+    if (Date.now() >= deadline) {
       if (chains.length === 0) {
         console.log(
           `No progress reported. Check the build: npx -y envio-cloud deployment logs ${indexer} ${commit} ${org} --build --level error`,
@@ -212,54 +244,74 @@ async function waitSynced([indexer, commit, org], flags) {
       console.log("Still in progress: run the same command again.");
       return IN_PROGRESS;
     }
-    await sleep(Number(process.env.CLOUD_POLL_MS ?? 30_000));
+    await sleepUntil(deadline, 30_000);
   }
 }
 
-function check([rootDir = "."], flags) {
+function readPackageJson(pkgPath, problems) {
+  try {
+    return JSON.parse(readFileSync(pkgPath, "utf8"));
+  } catch (e) {
+    problems.push(`${pkgPath} is not valid JSON: ${e.message}`);
+    return null;
+  }
+}
+
+function checkEnvioVersion(pkg, problems) {
+  const version = pkg.dependencies?.envio ?? pkg.devDependencies?.envio;
+  if (!version) return problems.push('package.json has no "envio" dependency');
+  if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
+    return problems.push(`"envio": "${version}" is not an exact version; Envio Cloud rejects ranges, latest and workspace:*`);
+  }
+  const [major, minor, patch] = version.split(/[.-]/).map(Number);
+  if (major < 2 || (major === 2 && (minor < 21 || (minor === 21 && patch < 5)))) {
+    problems.push(`envio ${version} is older than 2.21.5, the minimum on Envio Cloud`);
+  }
+  if (major === 2 && minor === 29) problems.push(`envio 2.29.x is not supported on Envio Cloud`);
+}
+
+// Paths in config.yaml that Envio Cloud's upload leaves out.
+function checkConfigPaths(config, problems) {
+  for (const match of config.matchAll(/^\s*(?:abi_file_path|handlers?|schema|idl):\s*(\S+)/gm)) {
+    const path = match[1].replace(/["']/g, "").replace(/^\.\//, "");
+    if (path.startsWith("../") || isAbsolute(path)) {
+      problems.push(`${path} is outside the root dir, which is the only folder uploaded`);
+    } else if (/(^|\/)(generated|node_modules)\//.test(path) || /(^|\/)\.(?!envio\/)[^/]+\//.test(path)) {
+      problems.push(`${path} is in a folder Envio Cloud skips (generated, node_modules, dot folders other than .envio)`);
+    }
+  }
+}
+
+function checkGit(rootDir, problems, notes) {
+  const git = (...args) => spawnSync("git", ["-C", rootDir, ...args], { encoding: "utf8" });
+  const status = git("status", "--porcelain", "--", ".");
+  if (status.status !== 0) {
+    notes.push(`${rootDir} is not in a git repository: Envio Cloud deploys from a GitHub repo`);
+    return;
+  }
+  if (status.stdout.trim()) problems.push(`uncommitted changes in ${rootDir}: Envio Cloud builds only what is pushed`);
+  const unpushed = git("log", "--oneline", "@{u}..HEAD");
+  if (unpushed.status !== 0) notes.push("this branch has no upstream yet: push it before deploying");
+  else if (unpushed.stdout.trim()) notes.push("local commits not pushed yet: Envio Cloud sees only pushed commits");
+}
+
+function check([rootDir = "."]) {
   const problems = [];
   const notes = [];
   const pkgPath = join(rootDir, "package.json");
   if (!existsSync(pkgPath)) {
     problems.push(`${pkgPath} not found: Envio Cloud builds from the indexer's root dir (--root-dir)`);
   } else {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    const version = pkg.dependencies?.envio ?? pkg.devDependencies?.envio;
-    if (!version) problems.push('package.json has no "envio" dependency');
-    else if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
-      problems.push(`"envio": "${version}" is not an exact version; Envio Cloud rejects ranges, latest and workspace:*`);
-    } else {
-      const [major, minor, patch] = version.split(/[.-]/).map(Number);
-      if (major === 2 && (minor < 21 || (minor === 21 && patch < 5))) {
-        problems.push(`envio ${version} is older than 2.21.5, the minimum on Envio Cloud`);
-      }
-      if (major === 2 && minor === 29) problems.push(`envio 2.29.x is not supported on Envio Cloud`);
-    }
+    const pkg = readPackageJson(pkgPath, problems);
+    if (pkg) checkEnvioVersion(pkg, problems);
     notes.push("Envio Cloud ignores your lockfile and resolves dependency ranges fresh: pin exact versions if a build differs from local.");
   }
 
   const configPath = ["config.yaml", "config.yml"].map((f) => join(rootDir, f)).find(existsSync);
-  if (!configPath) {
-    problems.push(`no config.yaml in ${rootDir}; pass --config-file if it has another name`);
-  } else {
-    const config = readFileSync(configPath, "utf8");
-    for (const match of config.matchAll(/^\s*(?:abi_file_path|handler|schema):\s*(\S+)/gm)) {
-      const path = match[1].replace(/["']/g, "").replace(/^\.\//, "");
-      if (path.startsWith("../")) {
-        problems.push(`${path} is outside the root dir, which is the only folder uploaded`);
-      } else if (/(^|\/)(generated|node_modules)\//.test(path) || /(^|\/)\.(?!envio\/)[^/]+\//.test(path)) {
-        problems.push(`${path} is in a folder Envio Cloud skips (generated, node_modules, dot folders other than .envio)`);
-      }
-    }
-  }
+  if (configPath) checkConfigPaths(readFileSync(configPath, "utf8"), problems);
+  else problems.push(`no config.yaml in ${rootDir}; pass --config-file if it has another name`);
 
-  const git = (...args) => spawnSync("git", ["-C", rootDir, ...args], { encoding: "utf8" });
-  const dirty = git("status", "--porcelain", "--", ".").stdout.trim();
-  if (dirty) problems.push(`uncommitted changes in ${rootDir}: Envio Cloud builds only what is pushed`);
-  const unpushed = git("log", "--oneline", "@{u}..HEAD");
-  if (unpushed.status === 0 && unpushed.stdout.trim()) {
-    notes.push("local commits not pushed yet: Envio Cloud sees only pushed commits");
-  }
+  checkGit(rootDir, problems, notes);
 
   for (const note of notes) console.log(`note: ${note}`);
   for (const problem of problems) console.log(`problem: ${problem}`);
@@ -276,4 +328,12 @@ const [command, ...rest] = process.argv.slice(2);
 const { positional, flags } = parseArgs(rest);
 const commands = { check, "wait-commit": waitCommit, "wait-synced": waitSynced };
 const run = commands[command];
-process.exit(run ? await run(positional, flags) : command === "help" ? (console.log(usage), 0) : usageError());
+process.exit(
+  flags.invalid
+    ? usageError()
+    : run
+      ? await run(positional, flags)
+      : command === "help"
+        ? (console.log(usage), 0)
+        : usageError(),
+);

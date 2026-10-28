@@ -15,7 +15,7 @@ metadata:
 
 Run commands as `npx -y envio-cloud <command>`. Shell state doesn't survive between tool calls, so each recipe sets its own variables. Always pass the indexer and organisation explicitly.
 
-`scripts/cloud.mjs`, next to this file, does the polling for you: `node <this-skill-dir>/scripts/cloud.mjs help`. From an indexer's root that's `node .claude/skills/envio-cloud-cli/scripts/cloud.mjs`. Exit code `75` means "still in progress, run the same command again"; it stays under a 10-minute tool call.
+`scripts/cloud.mjs`, next to this file, does the polling for you: `node <this-skill-dir>/scripts/cloud.mjs help`. From an indexer's root that's `node .claude/skills/envio-cloud-cli/scripts/cloud.mjs`. Each command waits up to 100 s, inside a 2-minute tool call; with a 10-minute tool call, pass `--timeout 540`. Exit code `75` means "still in progress, run the same command again".
 
 How Envio Cloud works:
 
@@ -77,10 +77,10 @@ BROWSER=echo npx -y envio-cloud login > envio-login.log 2>&1   # background; pol
 
 ```bash
 for i in $(seq 1 30); do grep -q 'login?cli=' envio-login.log && break; sleep 1; done
-grep -o 'https://envio.dev/app/login?cli=[A-Za-z0-9]*' envio-login.log
+grep -o 'https://envio.dev/app/login?cli=[^[:space:]]*' envio-login.log
 ```
 
-Send the link to the user: "Open this link and sign in to let this session use your Envio account." The process exits 0 once they approve. It first tries the GitHub CLI's token, so a 401 note before the link is harmless. Never hand the deployment back to the user without offering the link first.
+Send the link to the user: "Open this link and sign in to let this session use your Envio account." The process exits 0 once they approve. It first tries the GitHub CLI's token, so a 401 note before the link is harmless. No link in the log usually means that token worked, so read the log before asking for anything. Never hand the deployment back to the user without offering the link first.
 
 The session lasts 30 days. On "session expired", run `npx -y envio-cloud logout` and log in again: plain `login` keeps reporting the old session.
 
@@ -127,7 +127,7 @@ CLOUD=<this-skill-dir>/scripts/cloud.mjs   # e.g. <indexer-root>/.claude/skills/
 **3a. Push** to the indexer's branch. If you can push there, push a real change; for a first deployment, documenting the deployment in the README works. To redeploy unchanged code, an empty commit works: `git commit --allow-empty -m "Redeploy"`. If you can't push there, ask the user to push or merge, and wait.
 
 ```bash
-C=$(git rev-parse --short=7 HEAD)
+C=$(git rev-parse HEAD | cut -c1-7)   # Envio Cloud matches exactly 7 characters
 ```
 
 **3b. Wait for Envio Cloud to pick it up, and deploy if needed.**
