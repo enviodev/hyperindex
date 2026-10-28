@@ -550,6 +550,66 @@ describe("E2E tests", () => {
     ])
   })
 
+  scenario->Scenario.it(
+    "Counts laying rows out toward the storage write metric",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+
+      let serializeMillis = 200.
+      let slowEffect = Envio.createEffect(
+        {
+          name: "slowlySerialized",
+          input: S.string,
+          output: S.string->S.transform(
+            _ => {
+              parser: value => value,
+              serializer: value => {
+                let until = Date.now() +. serializeMillis
+                while Date.now() < until {
+                  ()
+                }
+                value
+              },
+            },
+          ),
+          rateLimit: Disable,
+          cache: true,
+        },
+        async ({input}) => input,
+      )
+
+      sourceMock.resolveGetHeightOrThrow(300)
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Bounded(100),
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let _ = await (args.context->asContext).effect(slowEffect, "test")
+                },
+              },
+            ],
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      // Postgres keeps the effect cache, whether or not ClickHouse writes too.
+      t.expect(
+        (await indexer.metric("envio_storage_write_seconds"))
+        ->Array.find(({labels}) => labels->Dict.get("storage") === Some("postgres"))
+        ->Option.map(
+          ({value}) => value->Float.fromString->Option.getOr(0.) *. 1000. >= serializeMillis,
+        ),
+      ).toEqual(Some(true))
+    },
+  )
+
   // Reproduction for https://github.com/enviodev/hyperindex/issues/1173
   // The effect context's `log` getter is compiled as an arrow function, so
   // `this` is captured from the surrounding ESM module scope (undefined under
@@ -1450,9 +1510,11 @@ describe("E2E tests", () => {
 
       // Both items should now be in DB
       t.expect(
-        await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+        (await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>))->Array.toSorted(
+          (a, b) => String.compare(a.id, b.id),
+        ),
         ~message="Both items should be in DB after chunk1 fully completes",
-      ).toEqual([{id: "item-850", value: "from-chunk1"}, {id: "item-2000", value: "from-chunk3"}])
+      ).toEqual([{id: "item-2000", value: "from-chunk3"}, {id: "item-850", value: "from-chunk1"}])
     },
   )
 

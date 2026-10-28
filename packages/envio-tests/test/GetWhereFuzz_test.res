@@ -25,13 +25,13 @@ let makeRandom: int => unit => float = %raw(`seed => {
 
 external u: 'a => unknown = "%identity"
 
+// ClickHouse refuses a nullable list column, so only Postgres is fuzzed with one.
+let hasNullableList = IndexerRunner.selectedBackend === #postgres
+
 // Enum members are declared out of alphabetical order on purpose: Postgres
 // orders an enum by declaration, and the matcher has to follow.
 let scenario = Scenario.make(
   ~supervised=false,
-  // getWhere reads Postgres either way, and ClickHouse refuses the nullable
-  // list column the grammar has to cover.
-  ~unsupported=[{backend: #clickhouse, reason: "nullable list columns aren't supported there"}],
   ~schema=`
 enum Kind {
   ZETA
@@ -59,7 +59,7 @@ type Row {
   strs: [String!]!
   ints: [Int!]!
   bigs: [BigInt!]!
-  optBytes: [Bytes!]
+  ${hasNullableList ? "optBytes: [Bytes!]" : ""}
 }
 `,
   ~configYaml=`
@@ -138,11 +138,13 @@ let columns = [
   {
     name: "json",
     // jsonb has an ordering, but not one a handler could sensibly rely on, so
-    // only equality is compared. A document need not be an object.
+    // only equality is compared. A document need not be an object, and one is
+    // the same document whatever order its keys were set in.
     pool: [
       {"a": 1}->u,
       {"a": 2}->u,
       {"a": 1, "b": [1, 2]}->u,
+      {"b": [1, 2], "a": 1}->u,
       {"b": "x"}->u,
       "abc"->u,
       true->u,
@@ -174,7 +176,7 @@ let columns = [
     ->nullable,
     operators: allOperators,
   },
-]
+]->Array.filter(column => hasNullableList || column.name !== "optBytes")
 
 let pick = (random, items) =>
   items->Array.getUnsafe((random() *. items->Array.length->Int.toFloat)->Float.toInt)

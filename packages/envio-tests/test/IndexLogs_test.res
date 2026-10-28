@@ -74,6 +74,12 @@ describe("Index logs", () => {
   // fails on the server.
   indexed->Scenario.it(
     "carry the server's code when a build fails",
+    ~unsupported=[
+      {
+        backend: #clickhouse,
+        reason: "drops a column off a Postgres entity table, which the ClickHouse leg has none of",
+      },
+    ],
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
@@ -86,8 +92,13 @@ describe("Index logs", () => {
         },
       ])
       await indexer.waitUntilReady()
-      let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Sql.queryForTests(`ALTER TABLE "${pgSchema}"."Token" DROP COLUMN "owner";`)
+      await indexer.usePostgresSql(
+        async sql => {
+          let _ = await sql->Sql.queryForTests(
+            `ALTER TABLE "${indexer.pgSchema}"."Token" DROP COLUMN "owner";`,
+          )
+        },
+      )
 
       source.setAutoHeight(100)
       let restarted = await indexer.restart()

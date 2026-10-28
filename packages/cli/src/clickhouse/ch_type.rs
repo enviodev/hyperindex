@@ -46,6 +46,14 @@ pub enum ChType {
 pub const MAX_DECIMAL_PRECISION: u32 = 38;
 
 impl ChType {
+    /// The type a value has once it is known to be there.
+    pub fn base(&self) -> &ChType {
+        match self {
+            ChType::Nullable(inner) => inner,
+            other => other,
+        }
+    }
+
     pub fn enum_value(&self, name: &str) -> Option<i16> {
         match self {
             ChType::Enum { variants } => variants
@@ -61,6 +69,23 @@ impl ChType {
             1
         } else {
             2
+        }
+    }
+
+    pub fn column_kind(&self) -> ColumnKind {
+        match self {
+            ChType::Nullable(inner) => inner.column_kind(),
+            ChType::Int32
+            | ChType::UInt32
+            | ChType::Float64
+            | ChType::Bool
+            | ChType::DateTime64 => ColumnKind::F64,
+            ChType::UInt64 => ColumnKind::U64,
+            ChType::Int64 => ColumnKind::I64,
+            ChType::Bytes => ColumnKind::Bytes,
+            ChType::String | ChType::Decimal { .. } | ChType::Enum { .. } | ChType::Array(_) => {
+                ColumnKind::Text
+            }
         }
     }
 }
@@ -204,25 +229,6 @@ impl fmt::Display for ChType {
     }
 }
 
-impl ChType {
-    pub fn column_kind(&self) -> ColumnKind {
-        match self {
-            ChType::Nullable(inner) => inner.column_kind(),
-            ChType::Int32
-            | ChType::UInt32
-            | ChType::Float64
-            | ChType::Bool
-            | ChType::DateTime64 => ColumnKind::F64,
-            ChType::UInt64 => ColumnKind::U64,
-            ChType::Int64 => ColumnKind::I64,
-            ChType::Bytes => ColumnKind::Bytes,
-            ChType::String | ChType::Decimal { .. } | ChType::Enum { .. } | ChType::Array(_) => {
-                ColumnKind::Text
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
@@ -236,10 +242,6 @@ pub(crate) mod test_support {
             scale: None,
             enum_variants: None,
         }
-    }
-
-    pub fn rendered(spec: &FieldSpec) -> String {
-        spec.ch_type(ChainIdMode::Int32).unwrap().to_string()
     }
 
     pub fn parse_type(text: &str) -> ChType {
@@ -311,6 +313,10 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    fn rendered(spec: &FieldSpec) -> String {
+        spec.ch_type(ChainIdMode::Int32).unwrap().to_string()
+    }
+
     #[test]
     fn every_field_type_renders_its_column_type() {
         let rendered_types = [
@@ -345,11 +351,6 @@ mod tests {
                 "DateTime64(3, 'UTC')",
             ]
         );
-    }
-
-    #[test]
-    fn a_date_column_is_always_millisecond_precision() {
-        assert_eq!(rendered(&field("Date")), "DateTime64(3, 'UTC')");
     }
 
     #[test]

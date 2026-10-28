@@ -427,8 +427,7 @@ let expectedRows =
   )
   ->ServedEvmChain.sorted
 
-let readRawEvents = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
+let readRawEvents = async (sql, ~pgSchema) => {
   let rows: array<rawEvent> = await sql->Sql.queryForTests(
     `SELECT "chain_id", "event_name", "block_number", "log_index"
        FROM "${pgSchema}"."raw_events"
@@ -449,22 +448,24 @@ describe("onEvent where params", () => {
           t.expect((
             await indexer->ServedEvmChain.readRouted,
             whereCalls->Array.toSorted((a, b) => String.compare(a.id, b.id)),
-            await readRawEvents(indexer),
           )).toEqual((
             expectedRows,
             // Two callbacks, each called once per chain.
             [1, 2, 3, 4]->Array.map(chainId => {id: chainId->Int.toString, count: 2}),
-            // A `false` where drops the event from its chain entirely, raw events
-            // included, while an event with no handler is still kept raw.
-            [
-              {chain_id: 1, event_name: "Dropped", block_number: 21, log_index: 0},
-              {chain_id: 1, event_name: "Bare", block_number: 23, log_index: 0},
-              {chain_id: 2, event_name: "Bare", block_number: 23, log_index: 0},
-              {chain_id: 3, event_name: "Dropped", block_number: 21, log_index: 0},
-              {chain_id: 3, event_name: "Bare", block_number: 23, log_index: 0},
-              {chain_id: 4, event_name: "Bare", block_number: 23, log_index: 0},
-            ],
           ))
+          // A `false` where drops the event from its chain entirely, raw events
+          // included, while an event with no handler is still kept raw.
+          await indexer.usePostgresSql(
+            async sql =>
+              t.expect(await sql->readRawEvents(~pgSchema=indexer.pgSchema)).toEqual([
+                {chain_id: 1, event_name: "Dropped", block_number: 21, log_index: 0},
+                {chain_id: 1, event_name: "Bare", block_number: 23, log_index: 0},
+                {chain_id: 2, event_name: "Bare", block_number: 23, log_index: 0},
+                {chain_id: 3, event_name: "Dropped", block_number: 21, log_index: 0},
+                {chain_id: 3, event_name: "Bare", block_number: 23, log_index: 0},
+                {chain_id: 4, event_name: "Bare", block_number: 23, log_index: 0},
+              ]),
+          )
         },
       ),
   )

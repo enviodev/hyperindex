@@ -121,27 +121,21 @@ pub fn lend_for_reading<'env>(
     expose(env, arena).inspect_err(|_| arena.finish_lending())
 }
 
-/// A batch lent to JavaScript to fill, and what its sink needs to write it.
-pub struct Staged<M> {
-    pub meta: M,
+/// A batch lent to JavaScript to fill, and the names its columns are sealed
+/// under.
+pub struct Staged {
+    pub names: Vec<String>,
     pub arena: Arena,
 }
 
-/// The batches a sink has lent out, by handle, from `begin` until the sink
-/// takes them to write.
-pub struct Stages<M> {
-    batches: Mutex<HashMap<u32, Staged<M>>>,
+/// The batches lent out, by handle, from `begin` until a store takes them to
+/// write.
+#[derive(Default)]
+pub struct Stages {
+    batches: Mutex<HashMap<u32, Staged>>,
 }
 
-impl<M> Default for Stages<M> {
-    fn default() -> Self {
-        Self {
-            batches: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-impl<M> Stages<M> {
+impl Stages {
     /// Lays out a batch and lends JavaScript its buffers, as
     /// `{ handle, buffers }`. Nothing may await between here and `commit`.
     pub fn begin<'env>(
@@ -150,7 +144,7 @@ impl<M> Stages<M> {
         handle: u32,
         rows: u32,
         kinds: &[ColumnKind],
-        meta: M,
+        names: Vec<String>,
     ) -> napi::Result<Object<'env>> {
         let mut arena = Arena::new(rows as usize, kinds).map_err(to_napi)?;
         let buffers = expose(env, &mut arena)?;
@@ -159,7 +153,7 @@ impl<M> Stages<M> {
         self.batches
             .lock()
             .unwrap()
-            .insert(handle, Staged { meta, arena });
+            .insert(handle, Staged { names, arena });
         let mut result = Object::new(env)?;
         result.set("handle", handle)?;
         result.set("buffers", buffers)?;
@@ -167,7 +161,7 @@ impl<M> Stages<M> {
     }
 
     #[cfg(test)]
-    pub fn insert(&self, handle: u32, staged: Staged<M>) {
+    pub fn insert(&self, handle: u32, staged: Staged) {
         self.batches.lock().unwrap().insert(handle, staged);
     }
 
@@ -186,17 +180,11 @@ impl<M> Stages<M> {
 
     /// Ends the filling phase: every buffer is detached, so a view JavaScript
     /// kept throws rather than writing into memory Rust is about to read.
-    pub fn commit(
-        &self,
-        handle: u32,
-        buffers: Vec<ArrayBuffer>,
-        names: impl FnOnce(&M) -> Vec<String>,
-    ) -> napi::Result<()> {
+    pub fn commit(&self, handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
         let mut batches = self.batches.lock().unwrap();
         detach_or_abandon(&mut batches, handle, buffers)?;
         let staged = batches.get_mut(&handle).ok_or_else(|| unknown(handle))?;
-        let names = names(&staged.meta);
-        staged.arena.seal(&names).map_err(to_napi)
+        staged.arena.seal(&staged.names).map_err(to_napi)
     }
 
     /// Drops a batch that threw while it was being filled, detaching its
@@ -215,7 +203,7 @@ impl<M> Stages<M> {
 
     /// Hands over a committed batch to be written. One that was never committed
     /// stays where it is, still lent out, for `abort` to take back.
-    pub fn take_sealed(&self, handle: u32) -> napi::Result<Staged<M>> {
+    pub fn take_sealed(&self, handle: u32) -> napi::Result<Staged> {
         let mut batches = self.batches.lock().unwrap();
         if !batches
             .get(&handle)
@@ -246,8 +234,8 @@ fn unknown(handle: u32) -> napi::Error {
 /// outlive the view — so it leaves the registry without being freed. The handle
 /// stops working, which is what makes the leak one batch rather than a write
 /// into memory that has been handed to something else.
-fn detach_or_abandon<M>(
-    batches: &mut HashMap<u32, Staged<M>>,
+fn detach_or_abandon(
+    batches: &mut HashMap<u32, Staged>,
     handle: u32,
     buffers: Vec<ArrayBuffer>,
 ) -> napi::Result<()> {
@@ -269,9 +257,15 @@ mod tests {
     /// abandons the batch rather than freeing memory a view may still reach.
     #[test]
     fn a_batch_never_committed_is_kept_for_abort() {
-        let stages = Stages::<()>::default();
+        let stages = Stages::default();
         let arena = Arena::new(1, &[ColumnKind::F64]).unwrap();
-        stages.insert(1, Staged { meta: (), arena });
+        stages.insert(
+            1,
+            Staged {
+                names: vec![],
+                arena,
+            },
+        );
         let refused = stages
             .take_sealed(1)
             .err()

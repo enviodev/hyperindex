@@ -1,5 +1,3 @@
-type t = PgClient.t
-
 // As `SslSetting::parse` in packages/cli/src/postgres/client.rs spells them.
 @unboxed
 type sslMode =
@@ -33,16 +31,40 @@ let sslModeToString = mode =>
 %%private(let isDate: unknown => bool = %raw(`(value) => value instanceof Date`))
 @send external toISOString: unknown => string = "toISOString"
 
-// A document as the text a jsonb column stores. jsonb refuses the NUL
-// character however it is spelled, and `JSON.stringify` spells it `\u0000`: an
-// escape after an even run of backslashes, which leaving out is what lets the
-// rest of the document be stored. A raw NUL byte never reaches here escaped,
-// and the addon leaves those out of every parameter.
-let stringifyDocument = (value: unknown): string =>
-  value
-  ->stringify
-  ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
-  ->Utils.replaceLoneSurrogateEscapes
+// A plain object's keys in one order. Anything else — an array, a Uint8Array, a
+// boxed primitive — is left for `JSON.stringify` to spell as it always does.
+%%private(
+  let withSortedKeys: (string, unknown) => unknown = %raw(`(_, value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  }`)
+)
+@val @scope("JSON")
+external stringifyWith: (unknown, (string, unknown) => unknown) => string = "stringify"
+
+// jsonb refuses the NUL character however it is spelled, and `JSON.stringify`
+// spells it `\u0000`: an escape after an even run of backslashes, which leaving
+// out is what lets the rest of the document be stored. A raw NUL byte never
+// reaches here escaped, and the addon leaves those out of every parameter.
+%%private(
+  let storable = json =>
+    json
+    ->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\u0000/g, "")
+    ->Utils.replaceLoneSurrogateEscapes
+)
+
+// A document as the text a jsonb column stores, which keeps no key order of
+// its own.
+let stringifyDocument = (value: unknown): string => value->stringify->storable
+
+// A document's text, spelled one way whatever order its keys were set in.
+let sortedDocument = (value: unknown): string => value->stringifyWith(withSortedKeys)
+
+// A document as ClickHouse stores and filters it, which compares documents as
+// their text.
+let canonicalDocument = (value: unknown): string => value->sortedDocument->storable
 
 // Every parameter reaches the server as text — the statement's own casts say
 // what type to read it back as, so a value only has to render itself.
@@ -97,7 +119,5 @@ let params = (values: array<unknown>): array<Null.t<string>> =>
 // selected. The server decides what is in them, so the caller names their shape.
 let queryForTests = (client, sql, ~params as values: array<unknown>=[]): promise<array<'row>> =>
   client
-  ->PgClient.queryForTests(sql, ~params=params(values))
+  ->StorageClient.queryForTests(sql, ~params=params(values))
   ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<'row>>)
-
-let close = client => client->PgClient.close

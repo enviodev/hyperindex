@@ -48,7 +48,7 @@ let setCounter = (~count) =>
 // rows this test planted.
 let orphanCheckpointId = "999999999"
 
-describe("ClickHouse sink resuming past its own rows", () => {
+describe("ClickHouse resuming past its own rows", () => {
   scenario->Scenario.it(
     "drops history and checkpoints written past the resumed checkpoint",
     ~sources=[{chain: 1}],
