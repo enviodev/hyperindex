@@ -210,9 +210,7 @@ let report = async (indexer: IndexerRunner.t, ~seconds) => {
   // Any read the filters answered wrongly shows up as a different ledger.
   let checksum =
     accounts
-    ->Array.map(account =>
-      account["id"] ++ "=" ++ account["balance"]->JSON.stringifyAny->Option.getOr("")
-    )
+    ->Array.map(account => account["id"] ++ "=" ++ account["balance"]->String.make)
     ->Array.concat(approvals->Array.map(approval => approval["id"]))
     ->Array.toSorted(String.compare)
     ->Array.join(",")
@@ -279,10 +277,12 @@ describe("erc20 load bench", () => {
       ~yamlSources=true,
       async (~indexer, ~source as _) => {
         await indexer->waitForProgress(~block=height / 2, ~deadline=Date.now() +. 1_200_000.)
+        await indexer.waitUntilIdle()
         let resumed = await indexer.restart()
         let startedAt = Performance.now()
         hyperSync->MockHyperSyncServer.setHeight(height)
         await resumed->waitForProgress(~block=height, ~deadline=Date.now() +. 1_200_000.)
+        await resumed.waitUntilIdle()
         await resumed->report(~seconds=startedAt->Performance.secondsSince)
       },
     )
