@@ -100,9 +100,6 @@ pub enum IndexEvent {
 
 pub type Report = Arc<dyn Fn(IndexEvent) + Send + Sync>;
 
-/// Every index build blocks writes to its table for as long as it runs, and on
-/// a large database that is not quick. Both build paths say so up front, so a
-/// stalled-looking indexer is explainable from the logs alone.
 const SLOW_ON_LARGE_DATABASE: &str = "This can take a long time on a large database.";
 
 fn seconds_text(seconds: f64) -> String {
