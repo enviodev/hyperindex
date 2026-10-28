@@ -1380,13 +1380,26 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
   acc
 }
 
-// The `incompatible config` error listing each path in `changedPaths`, plus
-// the remediation options. `~resetCommand` is rendered as-is for option 2
-// (the wipe-and-redo). `~runCommand` controls option 3 (parallel indexer
-// recipe): when `None`, option 3 is omitted — the migrate flow uses this
-// because running a second indexer doesn't apply. `~hasClickhouse` adds the
-// extra env line so users running both Postgres and Clickhouse get a complete
-// override.
+%%private(let resume = "resume indexing where it left off")
+%%private(let startOver = "delete all indexed data and start over")
+
+%%private(
+  let pickOne = (ways: array<(string, string)>) => {
+    let col = ways->Array.reduce(0, (col, (way, _)) => Math.Int.max(col, way->String.length)) + 2
+    ways
+    ->Array.mapWithIndex(((way, effect), index) =>
+      `  ${(index + 1)->Int.toString}. ${way}${" "->String.repeat(
+          col - way->String.length,
+        )}# ${effect}`
+    )
+    ->Array.join("\n")
+  }
+)
+
+// `~runCommand` controls option 3 (parallel indexer recipe): when `None`,
+// option 3 is omitted — the migrate flow uses this because running a second
+// indexer doesn't apply. `~hasClickhouse` adds the env line that points a second
+// indexer at a ClickHouse database of its own.
 let incompatibleMessage = (
   changedPaths: array<string>,
   ~resetCommand: string,
@@ -1394,21 +1407,35 @@ let incompatibleMessage = (
   ~hasClickhouse: bool,
 ) => {
   let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-  let option1 = "Revert the changes above"
-  let padTo = (s, col) => s ++ " "->String.repeat(Math.Int.max(col - String.length(s), 1))
-  let col = Math.Int.max(String.length(option1), String.length(resetCommand)) + 2
   let option3 = switch runCommand {
   | None => ""
   | Some(cmd) =>
     let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
     `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
   }
-  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n  1. ${option1->padTo(
-      col,
-    )}# resume indexing where it left off\n  2. ${resetCommand->padTo(
-      col,
-    )}# delete all indexed data and start over${option3}`
+  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n${pickOne([
+      ("Revert the changes above", resume),
+      (resetCommand, startOver),
+    ])}${option3}`
 }
+
+let strandedMessage = (~resetCommand) =>
+  `ClickHouse holds indexed data that Postgres has none of: ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside, or that schema was dropped.\n\nPick one:\n${pickOne([
+      ("Point ENVIO_PG_SCHEMA at the schema it was indexed alongside", resume),
+      (resetCommand, "delete what ClickHouse holds, whichever indexer wrote it, and start over"),
+      (
+        "Point ENVIO_CLICKHOUSE_DATABASE at a new database",
+        "keep the existing data and index from scratch",
+      ),
+    ])}`
+
+let setUpMeanwhileMessage = `Another indexer set up this storage while this one waited on an RPC for a "latest" start block, so this one stops rather than build over it. Stop that indexer before starting this one, or point ENVIO_PG_SCHEMA (and ENVIO_CLICKHOUSE_DATABASE) at storage of this one's own.`
+
+let divergedMessage = (~resetCommand) =>
+  `ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, or setting it up didn't finish.\n\nPick one:\n${pickOne([
+      ("Point ENVIO_CLICKHOUSE_DATABASE at the database indexed alongside it", resume),
+      (resetCommand, startOver),
+    ])}`
 
 // The returned value is a pure function of the JSON: it holds only event
 // definitions, never handler/contractRegister/where state (that's layered on

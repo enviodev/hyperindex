@@ -50,15 +50,11 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, co
   context.EntityWithTimestamp.set({ id: "ch-only", timestamp: new Date(event.block.number) });
 });
 `,
-  ~unsupported=[
-    {
-      backend: #postgres,
-      reason: "the ClickHouse-only entity needs a ClickHouse database to write into",
-    },
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type simpleEntity = {id: string, value: string}
+type entityWithTimestamp = {id: string, timestamp: Date.t}
 
 let setValue = (~block, value): MockSource.itemMock => {
   event: "Gravatar.TestEvent",
@@ -89,7 +85,7 @@ let raiseOnIndexerError = promise =>
 
 describe("Rollback with a ClickHouse-only entity", () => {
   scenario->Scenario.it(
-    "Skips ClickHouse-only entities on rollback instead of querying their missing history tables",
+    "Rolls back a ClickHouse-only entity without a Postgres history table to query",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     ~onError=errHandler => {
@@ -115,22 +111,15 @@ describe("Rollback with a ClickHouse-only entity", () => {
       ])
       await indexer.getBatchWritePromise()->raiseOnIndexerError
 
-      let missingHistoryRelationError = try {
-        let _ = await indexer.queryHistory(chOnlyEntityName)
-        "the history table exists"
-      } catch {
-      | exn =>
-        exn->JsExn.fromException->Option.flatMap(JsExn.message)->Option.getOr("unknown error")
-      }
-      t.expect(
-        (
-          missingHistoryRelationError->String.includes(
-            `relation "${indexer.pg.pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
-          ),
-          await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-        ),
-        ~message="The ClickHouse-only entity should have no Postgres history table, while the Postgres entity is written",
-      ).toEqual((true, [{id: "1", value: "value-2"}]))
+      await indexer.usePostgresSql(async sql => {
+        let postgresHistory: array<unknown> = await sql->Sql.queryForTests(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema = '${indexer.pgSchema}' AND table_name = 'envio_history_${chOnlyEntityName}'`,
+        )
+        t.expect(
+          (postgresHistory, await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)),
+          ~message="The ClickHouse-only entity should have no Postgres history table, while the Postgres entity is written",
+        ).toEqual(([], [{id: "1", value: "value-2"}]))
+      })
 
       // Should trigger rollback
       await sourceMock.expectItemsQueries([
@@ -169,9 +158,12 @@ describe("Rollback with a ClickHouse-only entity", () => {
       await indexer.getBatchWritePromise()->raiseOnIndexerError
 
       t.expect(
-        await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
-        ~message="The Postgres entity created after the rollback target should be reverted",
-      ).toEqual([])
+        (
+          await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
+          await (indexer.query(chOnlyEntityName): promise<array<entityWithTimestamp>>),
+        ),
+        ~message="Both entities created after the rollback target should be reverted",
+      ).toEqual(([], []))
     },
   )
 })

@@ -7,7 +7,7 @@ open Vitest
 // accepts whatever it is handed, so a wrong Decimal scale, enum number or
 // DateTime64 tick is stored silently and shows up nowhere but the stored value.
 // Going through a real run also covers what a unit test cannot: the table
-// registration the sink does at startup, the checkpoint ordering the view reads
+// registration the store does at startup, the checkpoint ordering the view reads
 // through, and the entity serializers.
 
 let scenario = Scenario.make(
@@ -166,8 +166,9 @@ describe("ClickHouse stores every schema type", () => {
           // back as the text of JSON null rather than as an absent value.
           optJson: "null",
           optJsonNull: "null",
-          // A String element holds whatever text it is given.
-          arrayOfJson: ['{"a":1}', "2", "true", "s"],
+          // Each element is its document's text, so one that is a string
+          // keeps its quotes and parses back to the string it was.
+          arrayOfJson: ['{"a":1}', "2", "true", '"s"'],
           enumField: "ADMIN",
           optEnumField: null,
         }`),

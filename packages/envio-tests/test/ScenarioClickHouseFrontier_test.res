@@ -1,10 +1,10 @@
 open Vitest
 
-// A batch reaches ClickHouse as entity rows first and their checkpoints last,
-// so a checkpoint row is what makes the rows it covers readable. Where each
-// chain counts its own checkpoints, the ids of two chains are not comparable:
-// a sibling's higher id must not make another chain's not-yet-checkpointed rows
-// readable.
+// A batch reaches ClickHouse as entity rows first and their chains' frontier
+// last, so a chain's frontier is what makes the rows it covers readable. Where
+// each chain counts its own checkpoints, the ids of two chains are not
+// comparable: a sibling's higher id must not make another chain's rows past its
+// own frontier readable.
 
 let chainYaml = chainId =>
   `

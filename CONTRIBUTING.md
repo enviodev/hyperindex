@@ -120,7 +120,7 @@ Entry point:
 - `Main.start` (in `packages/envio`) is the indexer entry proper. Responsibilities:
   - Loads runtime configuration (`Config.res`).
   - Starts an Express server that serves `/metrics`, `/health`, and the Development Console endpoints.
-  - Initializes the Persistence layer (Postgres + Hasura) — a single `init()` call that also handles `~reset` + `upsertPersistedState` when `~migrate` is provided.
+  - Initializes the Persistence layer (Postgres, ClickHouse when configured, and Hasura) — a single `init()` call that creates the storage, resumes it, or refuses one it can't resume; `~reset` starts it over.
   - Loads user handler modules via `HandlerLoader.registerAllHandlers`.
   - Loads initial state (to resume from a previous run).
   - Builds the indexer state (`IndexerState.make`) and starts `IndexerLoop.res`, which orchestrates the fetch / process / rollback loops.
@@ -129,14 +129,14 @@ Configuration layer:
 
 - `Config.res` – strongly typed runtime config. Parsed from the JSON the Rust CLI embeds in the `Command` payload (primed via `Config.prime` in `Bin.res`), or, when called outside the CLI (worker threads, test harnesses), lazy-loaded via the `getConfigJson` NAPI call.
 - Handler registrations (`indexer.onEvent(...)`) land in `HandlerRegister.res` at module load time and are merged into `Config.t` on the next `Config.load()` (see `buildContractEvents`).
-- Environment variables (`.env`) feed `Env.res`, consumed by `PgStorage` / `ClickHouse` for connection settings.
+- Environment variables (`.env`) feed `Env.res`, consumed by `Storage` / `ClickHouse` for connection settings.
 
 Persistence layer:
 
-- `PgStorage.res` – low-level Postgres adapter.
+- `Storage.res` – the storage, backed by the Rust `Storage` class (`packages/cli/src/storage`, bound in `bindings/StorageClient.res`). Postgres keeps the indexer's own state and the entities configured for it; ClickHouse, when configured, keeps the entities configured for it, which handlers read and write there.
 - `Hasura.res` – Hasura metadata integration.
 - `Persistence.res` – high-level persistence façade.
-- `IO.res` – commits batched entity changes using the persistence layer. (should be refactored to use `PgStorage.res` and `Persistence.res`)
+- `Writing.res` – commits each batch's entity changes through the persistence layer.
 
 Data sourcing (fetch side):
 
@@ -152,7 +152,7 @@ Event processing:
 - `BatchProcessing.res` – the single batch-processing loop (usually 5000-event batches).
 - `Rollback.res` – the reorg rollback state machine.
 - `EventProcessing.res` – runs handlers & builds in-memory entity updates.
-- `IO.res` – flushes the batch to Postgres in a single transaction.
+- `Writing.res` – flushes the batch to every configured store: Postgres commits once ClickHouse holds the rows, and ClickHouse makes them readable once Postgres committed.
 
 Monitoring & health:
 

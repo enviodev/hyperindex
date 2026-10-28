@@ -1,5 +1,5 @@
 // getWhere against linked-entity columns from a handler. Both cases are
-// in-memory-only regressions: PgStorage queries the FK column directly, so
+// in-memory-only regressions: the storage queries the FK column directly, so
 // neither reproduced against Postgres.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`

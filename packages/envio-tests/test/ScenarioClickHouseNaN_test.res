@@ -45,9 +45,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) =>
   context.Readings.set(${readings});
 });
 `,
-    ~unsupported=[
-      {backend: #postgres, reason: "the ClickHouse-only entity needs a ClickHouse database"},
-    ],
+    ~unsupported=Scenario.configuresOwnStorage,
   )
 
 let storedReadings = async () => {

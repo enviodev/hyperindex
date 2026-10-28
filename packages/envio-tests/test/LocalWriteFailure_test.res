@@ -58,33 +58,20 @@ describe("A batch whose write fails in JavaScript", () => {
       ])
       let failure = await refusal.awaitRefusalReason()
 
-      let {sql, pgSchema} = indexer.pg
-      let checkpoints: array<{
-        "count": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_checkpoints";`,
-      )
-      let raw: array<{
-        "n": string,
-      }> = await sql->Sql.queryForTests(`SELECT count(*)::text AS "n" FROM "${pgSchema}"."Tally";`)
-      let progress: array<{
-        "progress_block": int,
-      }> = await sql->Sql.queryForTests(
-        `SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`,
-      )
+      let tallies: array<unknown> = await indexer.query("Tally")
 
       t.expect((
         failure,
-        raw->Array.map(row => row["n"]),
-        checkpoints->Array.map(row => row["count"]),
-        progress->Array.map(row => row["progress_block"]),
+        tallies,
+        await indexer.queryCheckpoints(),
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
       )).toEqual((
         Some(
           "NaN is not a finite number, so it cannot be stored in the `count` column. Store a finite number, or keep it out of the entity.",
         ),
         // Neither the entity nor anything written beside it.
-        ["0"],
-        ["0"],
+        [],
+        [],
         [-1],
       ))
     },

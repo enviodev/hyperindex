@@ -70,38 +70,38 @@ describe("Json documents of every shape", () => {
         ~timeoutMs=15000.,
       )
 
-      let {sql, pgSchema} = indexer.pg
-      let stored: array<{
-        "id": string,
-        "one": string,
-        "many": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT "id", "one"::text AS "one", "many"::text AS "many" FROM "${pgSchema}"."Doc" ORDER BY "id" COLLATE "C";`,
-      )
-      let history: array<{
-        "count": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_history_Doc";`,
-      )
+      t.expect(failure.contents).toEqual(None)
+      await indexer.usePostgresSql(async sql => {
+        let stored: array<{
+          "id": string,
+          "one": string,
+          "many": string,
+        }> = await sql->Sql.queryForTests(
+          `SELECT "id", "one"::text AS "one", "many"::text AS "many" FROM "${indexer.pgSchema}"."Doc" ORDER BY "id" COLLATE "C";`,
+        )
+        let history: array<{
+          "count": string,
+        }> = await sql->Sql.queryForTests(
+          `SELECT count(*)::text AS "count" FROM "${indexer.pgSchema}"."envio_history_Doc";`,
+        )
 
-      let many = `{"{\\"a\\": 1}","[1, true]",2,true,false,"\\"s\\"","\\"a \\\\\\"quoted\\\\\\", {braced} value\\""}`
-      t.expect((
-        failure.contents,
-        stored->Array.map(row => (row["id"], row["one"], row["many"])),
-        history->Array.map(row => row["count"]),
-      )).toEqual((
-        None,
-        [
-          ("0", `{"a": 1}`, many),
-          ("1", `[1, true]`, many),
-          ("2", `2`, many),
-          ("3", `true`, many),
-          ("4", `false`, many),
-          ("5", `"s"`, many),
-          ("6", `"a \\"quoted\\", {braced} value"`, many),
-        ],
-        ["7"],
-      ))
+        let many = `{"{\\"a\\": 1}","[1, true]",2,true,false,"\\"s\\"","\\"a \\\\\\"quoted\\\\\\", {braced} value\\""}`
+        t.expect((
+          stored->Array.map(row => (row["id"], row["one"], row["many"])),
+          history->Array.map(row => row["count"]),
+        )).toEqual((
+          [
+            ("0", `{"a": 1}`, many),
+            ("1", `[1, true]`, many),
+            ("2", `2`, many),
+            ("3", `true`, many),
+            ("4", `false`, many),
+            ("5", `"s"`, many),
+            ("6", `"a \\"quoted\\", {braced} value"`, many),
+          ],
+          ["7"],
+        ))
+      })
     },
   )
 })

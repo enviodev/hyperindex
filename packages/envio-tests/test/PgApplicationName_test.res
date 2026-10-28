@@ -33,14 +33,17 @@ describe("A Postgres connection the indexer opens", () => {
     "is named after hyperindex and its version",
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source as _) => {
-      let {sql} = indexer.pg
-      let named: array<{
-        "name": string,
-      }> = await sql->Sql.queryForTests(`SELECT application_name AS "name" FROM pg_stat_activity WHERE pid = pg_backend_pid();`)
+      await indexer.usePostgresSql(
+        async sql => {
+          let named: array<{
+            "name": string,
+          }> = await sql->Sql.queryForTests(`SELECT application_name AS "name" FROM pg_stat_activity WHERE pid = pg_backend_pid();`)
 
-      t.expect(named->Array.map(row => row["name"])).toEqual([
-        `hyperindex/${Utils.EnvioPackage.value.version}`,
-      ])
+          t.expect(named->Array.map(row => row["name"])).toEqual([
+            `hyperindex/${Utils.EnvioPackage.value.version}`,
+          ])
+        },
+      )
     },
   )
 })

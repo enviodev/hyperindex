@@ -108,30 +108,37 @@ describe("Two entities whose names truncate alike", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      let {sql, pgSchema} = indexer.pg
-      let historyTables: array<{
-        "name": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT table_name AS "name" FROM information_schema.tables
-          WHERE table_schema = '${pgSchema}' AND table_name LIKE 'envio_history_BBB%'
-          ORDER BY table_name`,
-      )
-      let historyTables =
-        historyTables->Array.filter(
-          table => table["name"]->String.endsWith("$1") || table["name"]->String.endsWith("$11"),
-        )
+      await indexer.usePostgresSql(
+        async sql => {
+          let historyTables: array<{
+            "name": string,
+          }> = await sql->Sql.queryForTests(
+            `SELECT table_name AS "name" FROM information_schema.tables
+            WHERE table_schema = '${indexer.pgSchema}' AND table_name LIKE 'envio_history_BBB%'
+            ORDER BY table_name`,
+          )
+          let historyTables =
+            historyTables->Array.filter(
+              table =>
+                table["name"]->String.endsWith("$1") || table["name"]->String.endsWith("$11"),
+            )
 
-      // The names are what make the collision real: indexes 1 and 11, both cut
-      // to the identifier limit.
-      t.expect((
-        historyTables->Array.map(table => table["name"]),
-        (await indexer.queryHistory(first))->ids,
-        (await indexer.queryHistory(second))->ids,
-      )).toEqual((
-        [`envio_history_${"B"->String.repeat(46)}$11`, `envio_history_${"B"->String.repeat(47)}$1`],
-        ["first"],
-        ["second"],
-      ))
+          // The names are what make the collision real: indexes 1 and 11, both cut
+          // to the identifier limit.
+          t.expect((
+            historyTables->Array.map(table => table["name"]),
+            (await indexer.queryHistory(first))->ids,
+            (await indexer.queryHistory(second))->ids,
+          )).toEqual((
+            [
+              `envio_history_${"B"->String.repeat(46)}$11`,
+              `envio_history_${"B"->String.repeat(47)}$1`,
+            ],
+            ["first"],
+            ["second"],
+          ))
+        },
+      )
     },
   )
 })

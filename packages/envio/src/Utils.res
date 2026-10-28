@@ -617,19 +617,6 @@ module Schema = {
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
 
-  // JSON `null` is a document, and Postgres stores it as one. Reaching the
-  // ClickHouse sink as a JS `null` it would instead read as a field the handler
-  // never set, which a String column has no way to hold — so it travels as the
-  // text it would have been serialized to. Every other document is left for the
-  // sink to serialize.
-  let clickHouseJson = S.json(~validate=false)->S.preprocess(_ => {
-    serializer: value =>
-      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
-      | None => "null"->magic
-      | Some(json) => json
-      },
-  })
-
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
   let clickHouseDate =
     S.json(~validate=false)
@@ -969,7 +956,9 @@ module Promise = {
 
 // `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no
 // JSON parser that decodes to UTF-8 accepts. It becomes the replacement
-// character a text encoder writes for it. An escape only after an even run of
-// backslashes.
+// character a text encoder writes for it, as the character rather than its
+// escape: that is how `JSON.stringify` spells the document read back, so a
+// store comparing documents as text finds it. An escape only after an even run
+// of backslashes.
 let replaceLoneSurrogateEscapes = (json: string) =>
-  json->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "\\ufffd")
+  json->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "�")

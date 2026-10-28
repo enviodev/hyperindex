@@ -59,7 +59,7 @@ let chainIds = [1->ChainId.fromInt, 137->ChainId.fromInt]
 describe("Per-chain entity partitions", () => {
   it("Names one partition per chain, and only for a per-chain entity", t => {
     t.expect(
-      chainIds->Array.map(chainId => PgStorage.partitionTableName(~entityConfig=counter, ~chainId)),
+      chainIds->Array.map(chainId => Storage.partitionTableName(~entityConfig=counter, ~chainId)),
     ).toEqual(["Counter$1", "Counter$137"])
   })
 
@@ -72,7 +72,7 @@ describe("Per-chain entity partitions", () => {
     let suffix = `$${longCounter.index->Int.toString}$137`
     let names =
       chainIds->Array.map(
-        chainId => PgStorage.partitionTableName(~entityConfig=longCounter, ~chainId),
+        chainId => Storage.partitionTableName(~entityConfig=longCounter, ~chainId),
       )
     // Chain 1 leaves the name whole under the limit; chain 137 pushes it over,
     // and the result sits exactly on the limit rather than past it.
@@ -157,69 +157,71 @@ describe("Per-chain entity partitions against Postgres", () => {
 
       let rows: array<counterRow> = await indexer.query("Counter")
 
-      let {sql, pgSchema} = indexer.pg
+      t.expect(rows->Array.toSorted((a, b) => Int.compare(a.chainId, b.chainId))).toEqual([
+        {id: "total", count: 1n, owner: "alice", chainId: 1},
+        {id: "total", count: 10n, owner: "alice", chainId: 137},
+      ])
 
-      // Every relation the Counter entity owns: the parent, its partitions, and
-      // its history table — with what each one is attached to.
-      let relations: array<relation> = await sql->Sql.queryForTests(
-        `SELECT c.relname AS "name", c.relkind::text AS "kind", COALESCE(p.relname, '') AS "parent"
-         FROM pg_class c
-         JOIN pg_namespace n ON n.oid = c.relnamespace
-         LEFT JOIN pg_inherits inh ON inh.inhrelid = c.oid
-         LEFT JOIN pg_class p ON p.oid = inh.inhparent
-         WHERE n.nspname = '${pgSchema}'
-           AND c.relkind IN ('r', 'p')
-           AND c.relname ~ '^(envio_history_)?Counter([$][0-9]+)?$'
-         ORDER BY c.relname`,
-      )
+      await indexer.usePostgresSql(
+        async sql => {
+          // Every relation the Counter entity owns: the parent, its partitions, and
+          // its history table — with what each one is attached to.
+          let relations: array<relation> = await sql->Sql.queryForTests(
+            `SELECT c.relname AS "name", c.relkind::text AS "kind", COALESCE(p.relname, '') AS "parent"
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           LEFT JOIN pg_inherits inh ON inh.inhrelid = c.oid
+           LEFT JOIN pg_class p ON p.oid = inh.inhparent
+           WHERE n.nspname = '${indexer.pgSchema}'
+             AND c.relkind IN ('r', 'p')
+             AND c.relname ~ '^(envio_history_)?Counter([$][0-9]+)?$'
+           ORDER BY c.relname`,
+          )
 
-      // Postgres cascades a partitioned index down to every partition. The
-      // indexer declared its index on the parent, so that is what has to
-      // satisfy the declaration — a child's copy must never stand in for it.
-      let catalog = await sql->PgCatalog.indexes(~pgSchema)
-      let ownerIndex =
-        catalog
-        ->Array.find(index => index.tableName === "Counter" && index.columns == ["owner"])
-        ->Option.map(index => (index.tableName, index.name, index.isValid))
+          // Postgres cascades a partitioned index down to every partition. The
+          // indexer declared its index on the parent, so that is what has to
+          // satisfy the declaration — a child's copy must never stand in for it.
+          let catalog = await sql->PgCatalog.indexes(~pgSchema=indexer.pgSchema)
+          let ownerIndex =
+            catalog
+            ->Array.find(index => index.tableName === "Counter" && index.columns == ["owner"])
+            ->Option.map(index => (index.tableName, index.name, index.isValid))
 
-      let plan: array<{
-        "QUERY PLAN": string,
-      }> = await sql->Sql.queryForTests(
-        `EXPLAIN SELECT * FROM "${pgSchema}"."Counter" WHERE "chainId" = 137`,
+          let plan: array<{
+            "QUERY PLAN": string,
+          }> = await sql->Sql.queryForTests(
+            `EXPLAIN SELECT * FROM "${indexer.pgSchema}"."Counter" WHERE "chainId" = 137`,
+          )
+
+          t.expect((
+            relations,
+            ownerIndex,
+            // Nothing anywhere in the schema — partitions included — is unusable.
+            catalog->Array.filterMap(index => index.isValid ? None : Some(index.name)),
+            // Only chain 137's partition survives planning; the other is pruned.
+            plan
+            ->Array.map(row => row["QUERY PLAN"])
+            ->Array.filterMap(
+              line =>
+                line
+                ->String.match(/Counter\$\d+/)
+                ->Option.flatMap(m => m->Array.get(0)->Option.getOr(None)),
+            ),
+          )).toEqual((
+            [
+              {name: "Counter", kind: "p", parent: ""},
+              {name: "Counter$1", kind: "r", parent: "Counter"},
+              {name: "Counter$137", kind: "r", parent: "Counter"},
+              {name: "envio_history_Counter", kind: "r", parent: ""},
+            ],
+            Some(("Counter", ownerIndexName, true)),
+            [],
+            [`Counter$137`],
+          ))
+        },
       )
 
       await indexer.stop()
-
-      t.expect((
-        rows->Array.toSorted((a, b) => Int.compare(a.chainId, b.chainId)),
-        relations,
-        ownerIndex,
-        // Nothing anywhere in the schema — partitions included — is unusable.
-        catalog->Array.filterMap(index => index.isValid ? None : Some(index.name)),
-        // Only chain 137's partition survives planning; the other is pruned.
-        plan
-        ->Array.map(row => row["QUERY PLAN"])
-        ->Array.filterMap(
-          line =>
-            line
-            ->String.match(/Counter\$\d+/)
-            ->Option.flatMap(m => m->Array.get(0)->Option.getOr(None)),
-        ),
-      )).toEqual((
-        [
-          {id: "total", count: 1n, owner: "alice", chainId: 1},
-          {id: "total", count: 10n, owner: "alice", chainId: 137},
-        ],
-        [
-          {name: "Counter", kind: "p", parent: ""},
-          {name: "Counter$1", kind: "r", parent: "Counter"},
-          {name: "Counter$137", kind: "r", parent: "Counter"},
-          {name: "envio_history_Counter", kind: "r", parent: ""},
-        ],
-        Some(("Counter", ownerIndexName, true)),
-        [],
-        [`Counter$137`],
-      ))
     },
   )
 })
@@ -231,6 +233,12 @@ describe("Per-chain entity partitions against Postgres", () => {
 describe("A chain-scoped load", () => {
   scenario->Scenario.it(
     "names its chain in the statement rather than binding it",
+    ~unsupported=[
+      {
+        backend: #clickhouse,
+        reason: "loads through a Postgres storage over the entity's partitions, which the ClickHouse leg has none of",
+      },
+    ],
     ~sources=[{chain: 1, methods}, {chain: 137, methods}],
     async (~t, ~indexer, ~source) => {
       source(1).resolveGetHeightOrThrow(300)
@@ -238,16 +246,16 @@ describe("A chain-scoped load", () => {
       await Utils.delay(0)
       await indexer.stop()
 
-      let {pgSchema} = indexer.pg
+      let pgSchema = indexer.pgSchema
       let filter =
         dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
         ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)
         ->EntityFilter.scoped(~table=counter.table, ~scope=Chain(137->ChainId.fromInt))
-      let client = PgStorage.makeClient(~logger=Logger.makeInMemory(), ~pgSchema, ~maxConnections=1)
-      let storage = PgStorage.make(
+      let client = TestPgSchema.client(~pgSchema, ~maxConnections=1)
+      let storage = Storage.make(
+        ~client,
         ~logger=Logger.makeInMemory(),
-        ~pgSchema,
-        ~sql=client,
+        ~entities=[counter],
         ~ecosystem=Evm,
       )
       let _ = await storage.loadOrThrow(~filter, ~table=counter.table)

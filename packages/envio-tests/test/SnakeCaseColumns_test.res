@@ -93,41 +93,45 @@ describe("Snake-case columns", () => {
       ])
       await restarted.waitUntilReady()
 
-      let {sql, pgSchema} = restarted.pg
-      let raw: array<{
-        "id": string,
-        "transaction_index": int,
-        "token_owner_id": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT "id", "transaction_index", "token_owner_id" FROM "${pgSchema}"."Snapshot" ORDER BY "id";`,
-      )
-      let history: array<{
-        "id": string,
-        "transaction_index": int,
-        "envio_change": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT "id", "transaction_index", "envio_change"::text FROM "${pgSchema}"."envio_history_Snapshot" ORDER BY "id";`,
-      )
+      await restarted.usePostgresSql(
+        async sql => {
+          let pgSchema = restarted.pgSchema
+          let raw: array<{
+            "id": string,
+            "transaction_index": int,
+            "token_owner_id": string,
+          }> = await sql->Sql.queryForTests(
+            `SELECT "id", "transaction_index", "token_owner_id" FROM "${pgSchema}"."Snapshot" ORDER BY "id";`,
+          )
+          let history: array<{
+            "id": string,
+            "transaction_index": int,
+            "envio_change": string,
+          }> = await sql->Sql.queryForTests(
+            `SELECT "id", "transaction_index", "envio_change"::text FROM "${pgSchema}"."envio_history_Snapshot" ORDER BY "id";`,
+          )
 
-      let indexed =
-        (await sql->PgCatalog.indexes(~pgSchema))
-        ->Array.filter(index => index.tableName === "Snapshot" && !index.isUnique)
-        ->Array.map(index => index.columns)
+          let indexed =
+            (await sql->PgCatalog.indexes(~pgSchema))
+            ->Array.filter(index => index.tableName === "Snapshot" && !index.isUnique)
+            ->Array.map(index => index.columns)
 
-      t.expect((raw, history, indexed)).toEqual((
-        [
-          {"id": "1", "transaction_index": 5, "token_owner_id": "user-1"},
-          {"id": "got", "transaction_index": 5, "token_owner_id": "user-1"},
-          {"id": "where", "transaction_index": 5, "token_owner_id": "user-1"},
-        ],
-        [
-          {"id": "1", "transaction_index": 5, "envio_change": "SET"},
-          {"id": "got", "transaction_index": 5, "envio_change": "SET"},
-          {"id": "where", "transaction_index": 5, "envio_change": "SET"},
-        ],
-        // The schema's `@index` lands on the renamed column.
-        [["transaction_index"]],
-      ))
+          t.expect((raw, history, indexed)).toEqual((
+            [
+              {"id": "1", "transaction_index": 5, "token_owner_id": "user-1"},
+              {"id": "got", "transaction_index": 5, "token_owner_id": "user-1"},
+              {"id": "where", "transaction_index": 5, "token_owner_id": "user-1"},
+            ],
+            [
+              {"id": "1", "transaction_index": 5, "envio_change": "SET"},
+              {"id": "got", "transaction_index": 5, "envio_change": "SET"},
+              {"id": "where", "transaction_index": 5, "envio_change": "SET"},
+            ],
+            // The schema's `@index` lands on the renamed column.
+            [["transaction_index"]],
+          ))
+        },
+      )
     },
   )
 })

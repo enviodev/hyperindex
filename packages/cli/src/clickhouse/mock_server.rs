@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use tokio::net::{TcpListener, TcpStream};
 
+use super::ch_type::ChType;
 use crate::mock_http;
+use crate::storage::rows::{Cell, ReadKind};
 
 pub type StatementFn = dyn Fn(&str) -> (u16, String) + Send + Sync;
 
@@ -12,6 +14,10 @@ struct State {
     statements: Option<Arc<StatementFn>>,
     statements_seen: Vec<String>,
     reject_next: usize,
+    /// Reads still to be answered by closing the connection, as a stale pooled
+    /// connection the server already let go of is.
+    drop_next_reads: usize,
+    reject_next_reads: usize,
     /// Inserts still to be accepted and then failed. The body is recorded as
     /// landed — the server took the rows — but the client is told it did not.
     accept_then_error: usize,
@@ -21,6 +27,7 @@ struct State {
     queries: usize,
     heads: Vec<String>,
     display_name: Option<String>,
+    keep_alive: Option<String>,
 }
 
 pub struct MockClickHouse {
@@ -68,6 +75,31 @@ impl MockClickHouse {
         .await
     }
 
+    pub async fn dropping_reads(n: usize, statements: Arc<StatementFn>) -> Self {
+        Self::serving(State {
+            statements: Some(statements),
+            drop_next_reads: n,
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn rejecting_reads(
+        n: usize,
+        status: u16,
+        rejection: &str,
+        statements: Arc<StatementFn>,
+    ) -> Self {
+        Self::serving(State {
+            statements: Some(statements),
+            reject_next_reads: n,
+            rejection: rejection.to_string(),
+            rejection_status: status,
+            ..Default::default()
+        })
+        .await
+    }
+
     async fn serving(state: State) -> Self {
         let state = Arc::new(Mutex::new(state));
         let accept_state = state.clone();
@@ -109,6 +141,11 @@ impl MockClickHouse {
         self.state.lock().unwrap().statements_seen.clone()
     }
 
+    /// Answers with a `Keep-Alive` header, as a ClickHouse server does.
+    pub fn keep_alive(&self, value: &str) {
+        self.state.lock().unwrap().keep_alive = Some(value.to_string());
+    }
+
     pub fn serve_as(&self, display_name: &str) {
         self.state.lock().unwrap().display_name = Some(display_name.to_string());
     }
@@ -121,21 +158,14 @@ impl MockClickHouse {
         self.accepted()
             .iter()
             .map(|body| {
-                let mut rows = Vec::new();
-                let mut i = 0usize;
-                while i < body.len() {
-                    let (len, read) = super::row_binary::read_varint(&body[i..])
-                        .expect("accepted body is not a String column");
-                    i += read;
-                    let end = i + len as usize;
-                    let bytes = body
-                        .get(i..end)
-                        .expect("accepted body ends mid-string")
-                        .to_vec();
-                    rows.push(String::from_utf8(bytes).unwrap());
-                    i = end;
-                }
-                rows
+                super::row_binary::decode(body, &[(ChType::String, ReadKind::Text)])
+                    .expect("accepted body is not a String column")
+                    .into_iter()
+                    .map(|cell| match cell {
+                        Cell::Str(text) => text.into_owned(),
+                        other => panic!("a String column read back as {other:?}"),
+                    })
+                    .collect()
             })
             .collect()
     }
@@ -164,43 +194,55 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
         state.lock().unwrap().heads.push(request.head);
 
         let (status, body) = if request.path.contains("INSERT") {
-            let outcome = {
-                let mut state = state.lock().unwrap();
-                state.seen += 1;
-                if state.reject_next > 0 {
-                    state.reject_next -= 1;
-                    Some((state.rejection_status, state.rejection.clone()))
+            let mut state = state.lock().unwrap();
+            state.seen += 1;
+            if state.reject_next > 0 {
+                state.reject_next -= 1;
+                (state.rejection_status, state.rejection.clone())
+            } else {
+                state.accepted.push(request.body);
+                if state.accept_then_error > 0 {
+                    state.accept_then_error -= 1;
+                    (state.rejection_status, state.rejection.clone())
                 } else {
-                    state.accepted.push(request.body);
-                    if state.accept_then_error > 0 {
-                        state.accept_then_error -= 1;
-                        Some((state.rejection_status, state.rejection.clone()))
-                    } else {
-                        None
-                    }
+                    (200, String::new())
                 }
-            };
-            outcome.unwrap_or((200, String::new()))
+            }
         } else {
             let statement = String::from_utf8_lossy(&request.body).to_string();
-            let answer = {
+            let (rejection, answer) = {
                 let mut state = state.lock().unwrap();
+                if state.drop_next_reads > 0 {
+                    state.drop_next_reads -= 1;
+                    return Ok(());
+                }
                 state.queries += 1;
                 state.statements_seen.push(statement.clone());
-                state.statements.clone()
+                let rejection = (state.reject_next_reads > 0).then(|| {
+                    state.reject_next_reads -= 1;
+                    (state.rejection_status, state.rejection.clone())
+                });
+                (rejection, state.statements.clone())
             };
-            match answer {
-                Some(answer) => answer(&statement),
-                None => (
+            match (rejection, answer) {
+                (Some(rejection), _) => rejection,
+                (None, Some(answer)) => answer(&statement),
+                (None, None) => (
                     400,
-                    "the sink should not be querying the server".to_string(),
+                    "the store should not be querying the server".to_string(),
                 ),
             }
         };
-        let display_name = state.lock().unwrap().display_name.clone();
+        let (display_name, keep_alive) = {
+            let state = state.lock().unwrap();
+            (state.display_name.clone(), state.keep_alive.clone())
+        };
         let mut headers = vec![("Connection", "keep-alive")];
         if let Some(display_name) = &display_name {
             headers.push(("X-ClickHouse-Server-Display-Name", display_name.as_str()));
+        }
+        if let Some(keep_alive) = &keep_alive {
+            headers.push(("Keep-Alive", keep_alive.as_str()));
         }
         mock_http::write_response(&mut stream, status, &headers, body.as_bytes()).await?;
     }

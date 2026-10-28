@@ -1,9 +1,8 @@
 open Vitest
 
 // A DateTime64 column represents 1900-01-01 through 2299-12-31. RowBinary
-// carries the raw tick, so a date past that lands without complaint and reads
-// back as a different date — Postgres, which holds the same entity, keeps the
-// one the handler wrote.
+// carries the raw tick, so a date past that would land without complaint and
+// read back as a different date than the one the handler wrote.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -42,9 +41,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) =>
   context.Expiry.set({ id: "never", at: new Date("9999-12-31T00:00:00.000Z") });
 });
 `,
-  ~unsupported=[
-    {backend: #postgres, reason: "the ClickHouse-only entity needs a ClickHouse database"},
-  ],
+  ~unsupported=Scenario.configuresOwnStorage,
 )
 
 let storedExpiries = async () => {

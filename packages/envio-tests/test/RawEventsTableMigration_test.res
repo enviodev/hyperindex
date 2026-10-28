@@ -22,6 +22,12 @@ type Gravatar {
   owner: String!
 }
 `,
+  ~unsupported=[
+    {
+      backend: #clickhouse,
+      reason: "reads raw_events' columns with Postgres SQL, which a run keeping no entity in Postgres skips",
+    },
+  ],
 )
 
 describe("Raw Events Table Migrations", () => {
@@ -29,33 +35,37 @@ describe("Raw Events Table Migrations", () => {
     "Raw events table should migrate successfully",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~t, ~indexer, ~source as _) => {
-      let {sql, pgSchema} = indexer.pg
-      let rawEventsColumnsRes: array<{
-        "column_name": string,
-        "data_type": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
+      await indexer.usePostgresSql(
+        async sql => {
+          let pgSchema = indexer.pgSchema
+          let rawEventsColumnsRes: array<{
+            "column_name": string,
+            "data_type": string,
+          }> = await sql->Sql.queryForTests(
+            `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type
            FROM INFORMATION_SCHEMA.COLUMNS
            WHERE TABLE_SCHEMA = '${pgSchema}'
              AND TABLE_NAME = 'raw_events'
            ORDER BY ORDINAL_POSITION;`,
-      )
+          )
 
-      t.expect(rawEventsColumnsRes).toEqual([
-        {"column_name": "chain_id", "data_type": "integer"},
-        {"column_name": "event_id", "data_type": "bigint"},
-        {"column_name": "event_name", "data_type": "text"},
-        {"column_name": "contract_name", "data_type": "text"},
-        {"column_name": "block_number", "data_type": "integer"},
-        {"column_name": "log_index", "data_type": "integer"},
-        {"column_name": "src_address", "data_type": "text"},
-        {"column_name": "block_hash", "data_type": "text"},
-        {"column_name": "block_timestamp", "data_type": "integer"},
-        {"column_name": "block_fields", "data_type": "jsonb"},
-        {"column_name": "transaction_fields", "data_type": "jsonb"},
-        {"column_name": "params", "data_type": "jsonb"},
-        {"column_name": "serial", "data_type": "bigint"},
-      ])
+          t.expect(rawEventsColumnsRes).toEqual([
+            {"column_name": "chain_id", "data_type": "integer"},
+            {"column_name": "event_id", "data_type": "bigint"},
+            {"column_name": "event_name", "data_type": "text"},
+            {"column_name": "contract_name", "data_type": "text"},
+            {"column_name": "block_number", "data_type": "integer"},
+            {"column_name": "log_index", "data_type": "integer"},
+            {"column_name": "src_address", "data_type": "text"},
+            {"column_name": "block_hash", "data_type": "text"},
+            {"column_name": "block_timestamp", "data_type": "integer"},
+            {"column_name": "block_fields", "data_type": "jsonb"},
+            {"column_name": "transaction_fields", "data_type": "jsonb"},
+            {"column_name": "params", "data_type": "jsonb"},
+            {"column_name": "serial", "data_type": "bigint"},
+          ])
+        },
+      )
     },
   )
 })

@@ -53,6 +53,12 @@ indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }
   context.Domain.set({ id: "spam", name: "${longName}" });
 });
 `,
+  ~unsupported=[
+    {
+      backend: #clickhouse,
+      reason: "the refusal is a Postgres index's row limit, and ClickHouse keeps the entity with no such index",
+    },
+  ],
 )
 
 describe("An indexed String field given a value too large to index", () => {

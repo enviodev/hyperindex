@@ -5,12 +5,6 @@
 // so pointing a run at its own database is a matter of setting them before the
 // storage is built.
 
-@val external pid: int = "process.pid"
-
-let prefix = "envio_test_"
-
-let counter = ref(0)
-
 let host = () =>
   switch %raw(`process.env.ENVIO_CLICKHOUSE_HOST`)->Nullable.toOption {
   | Some("") | None => "http://localhost:8123"
@@ -53,12 +47,7 @@ async (host, username, password, query) => {
 
 let query = statement => exec(~host=host(), ~username=username(), ~password=password(), statement)
 
-// `<prefix><createdAtMs>_<pid>_<counter>`, mirroring TestPgSchema so the same
-// sweeper logic recognises a leftover database.
-let make = () => {
-  counter := counter.contents + 1
-  `${prefix}${Date.now()->Float.toString}_${pid->Int.toString}_${counter.contents->Int.toString}`
-}
+let make = TestPgSchema.make
 
 // Points the runtime at `database`. The env is process-global, so this must run
 // with no await between it and the storage that reads it — otherwise a second
@@ -73,6 +62,60 @@ let use = (~database) => {
 let drop = async (~database) => {
   let _ = await query(`DROP DATABASE IF EXISTS \`${database}\``)
 }
+
+let envNames = [
+  "ENVIO_CLICKHOUSE_HOST",
+  "ENVIO_CLICKHOUSE_USERNAME",
+  "ENVIO_CLICKHOUSE_PASSWORD",
+  "ENVIO_CLICKHOUSE_DATABASE",
+]
+
+// The env `use` sets, as it was before, for a run to put back once it is done:
+// a later run in the same worker that provides no database of its own must not
+// find this one's.
+let savedEnv = () => {
+  let env = NodeJs.Process.process.env
+  let saved = envNames->Array.map(name => (name, env->Dict.get(name)))
+  () =>
+    saved->Array.forEach(((name, value)) =>
+      switch value {
+      | Some(value) => env->Dict.set(name, value)
+      | None => env->Dict.delete(name)
+      }
+    )
+}
+
+// A storage that never reaches a server: registering a table only parses its
+// column types, which is all a staging test needs, and neither store connects
+// before its first statement.
+let offlineClient = (~chainIdMode=ChainId.Int32) =>
+  Storage.makeClient(
+    ~logger=Logger.makeInMemory(),
+    ~chainIdMode,
+    ~postgres=Storage.postgresOptions(~maxConnections=1),
+    ~clickhouse={
+      url: "http://127.0.0.1:1",
+      username: "default",
+      password: "",
+      database: "unused",
+      replicated: false,
+    },
+  )
+
+let registered = (client, input: StorageClient.tableInput) => {
+  let registered = client->StorageClient.registerTable(input)
+  ClickHouse.makeTable(
+    ~handle=registered.handle,
+    ~name=input.name,
+    registered.clickhouse->Option.getOrThrow,
+  )
+}
+
+let entityTable = (client, entityConfig: Internal.entityConfig) =>
+  client->registered({
+    name: entityConfig.table.tableName,
+    clickhouse: ClickHouse.entityTable(entityConfig),
+  })
 
 // The database the current run is pointed at, set by `use`.
 let currentDatabase = () =>
