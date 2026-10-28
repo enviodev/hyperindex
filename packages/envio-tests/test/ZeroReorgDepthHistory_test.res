@@ -104,15 +104,22 @@ describe("A chain with no reorg depth keeps no history", () => {
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
-      let history: array<Change.t<counter>> = await indexer.queryHistory("Counter")
       t.expect(
         (
           await indexer.metric("envio_reorg_threshold"),
-          history->Array.length,
           (await indexer.queryCheckpoints())->Array.length,
         ),
-        ~message="A chain no rollback can reach writes no history, and no checkpoints to anchor it",
-      ).toEqual(([{IndexerRunner.value: "1", labels: Dict.make()}], 0, 0))
+        ~message="A chain no rollback can reach writes no checkpoints",
+      ).toEqual(([{IndexerRunner.value: "1", labels: Dict.make()}], 0))
+      await indexer.usePostgresSql(
+        async _ => {
+          let history: array<Change.t<counter>> = await indexer.queryHistory("Counter")
+          t.expect(
+            history->Array.length,
+            ~message="A chain no rollback can reach writes no history",
+          ).toBe(0)
+        },
+      )
     },
   )
 

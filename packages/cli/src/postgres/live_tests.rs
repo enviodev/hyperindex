@@ -6,19 +6,20 @@
 //! JavaScript side are written against the text form, so anywhere the two
 //! disagree is a value they would misread.
 //!
-//! Ignored by a plain `cargo test`, which needs no database. CI runs them
-//! against the Postgres its `cargo-test` job starts; locally, run
-//! `cargo test --lib postgres::live -- --ignored --test-threads=1`.
+//! Ignored by a plain `cargo test`, which starts no server. Run with
+//! `cargo test --lib postgres::live -- --ignored --test-threads=1`, which
+//! starts its own.
 
 use super::client::{PgClient, PgConnectionOptions, SslSetting, MAX_PREPARED_STATEMENTS};
 use super::param::Param;
-use super::rows::Cell;
-use super::rows::ReadKind;
 use futures_util::future;
 
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
+use crate::storage::rows::{Cell, ReadKind};
+use crate::storage::CacheDump;
+use crate::test_servers;
 
-fn client() -> PgClient {
+pub(crate) fn client() -> PgClient {
     client_with(2)
 }
 
@@ -29,14 +30,11 @@ fn pinned_client() -> PgClient {
 
 fn client_with(max_connections: usize) -> PgClient {
     PgClient::connect(PgConnectionOptions {
-        host: std::env::var("ENVIO_PG_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        port: std::env::var("ENVIO_PG_PORT")
-            .ok()
-            .and_then(|port| port.parse().ok())
-            .unwrap_or(5433),
-        user: std::env::var("ENVIO_PG_USER").unwrap_or_else(|_| "postgres".to_string()),
-        password: std::env::var("ENVIO_PG_PASSWORD").unwrap_or_else(|_| "testing".to_string()),
-        database: std::env::var("ENVIO_PG_DATABASE").unwrap_or_else(|_| "envio-dev".to_string()),
+        host: "127.0.0.1".to_string(),
+        port: test_servers::postgres().port,
+        user: "postgres".to_string(),
+        password: test_servers::PASSWORD.to_string(),
+        database: "postgres".to_string(),
         ssl: SslSetting::Disable,
         max_connections,
         application_name: Some("envio-live-test".to_string()),
@@ -332,19 +330,17 @@ async fn array_columns_lay_out_as_lists() {
         )
         .await
         .expect("the query runs");
-    let types = columns
-        .iter()
-        .map(|column| column.ty.clone())
-        .collect::<Vec<_>>();
 
-    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
+    let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
+    let arena = &result.arena;
 
     assert_eq!(
         (
             arena.rows(),
-            types
+            result
+                .columns
                 .iter()
-                .map(super::rows::column_read_kind)
+                .map(|column| column.kind)
                 .collect::<Vec<_>>(),
             // the null array in the third row, and nothing else
             (0..3)
@@ -360,7 +356,7 @@ async fn array_columns_lay_out_as_lists() {
 }
 
 /// Every column type the schema can declare, in one result, laid out without
-/// complaint. The point is coverage of `into_arena`'s dispatch rather than of
+/// complaint. The point is coverage of `into_result`'s dispatch rather than of
 /// any one value.
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
@@ -375,12 +371,8 @@ async fn every_column_type_lays_out() {
         )
         .await
         .expect("the query runs");
-    let types = columns
-        .iter()
-        .map(|column| column.ty.clone())
-        .collect::<Vec<_>>();
-    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
-    assert_eq!(arena.rows(), 1);
+    let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
+    assert_eq!(result.arena.rows(), 1);
 }
 
 /// A query matching nothing still has to describe its columns, or the other
@@ -396,12 +388,8 @@ async fn an_empty_result_still_describes_its_columns() {
         )
         .await
         .expect("the query runs");
-    let types = columns
-        .iter()
-        .map(|column| column.ty.clone())
-        .collect::<Vec<_>>();
-    let arena = super::rows::into_arena(&rows, &types).expect("the rows lay out");
-    assert_eq!((arena.rows(), arena.columns().len()), (0, 2));
+    let result = super::rows::into_result(&rows, &columns).expect("the rows lay out");
+    assert_eq!((result.arena.rows(), result.arena.columns().len()), (0, 2));
 }
 
 /// A transaction holds one connection, so a temporary table made inside it is
@@ -727,7 +715,7 @@ async fn a_statement_that_returns_no_columns_is_an_empty_result() {
         .await
         .unwrap();
     assert_eq!((rows.len(), columns.len()), (0, 0));
-    super::rows::into_arena(&rows, &[]).unwrap();
+    super::rows::into_result(&rows, &[]).unwrap();
 }
 
 /// A prepared statement carries the plan the server made for it, and the plan
@@ -1277,13 +1265,15 @@ async fn a_table_copies_out_to_a_file_and_back_in() {
         .await
         .unwrap();
 
+    let mut file = tokio::fs::File::create(path).await.unwrap();
     client
         .copy_out(
             "COPY copy_round_trip TO STDOUT WITH (FORMAT text, HEADER)",
-            path,
+            &mut file,
         )
         .await
         .unwrap();
+    tokio::io::AsyncWriteExt::flush(&mut file).await.unwrap();
     let written = std::fs::read_to_string(path).unwrap();
 
     client.batch("TRUNCATE copy_round_trip").await.unwrap();
@@ -1368,12 +1358,20 @@ async fn a_copy_that_fails_part_way_leaves_the_previous_file() {
     let path = dir.join("cache.tsv");
     std::fs::write(&path, "the previous dump\n").unwrap();
 
-    let failed = client
-        .copy_out(
-            "COPY (SELECT CASE WHEN i < 50000 THEN i ELSE 1 / (i - i) END \
-             FROM generate_series(1, 100000) AS i) TO STDOUT",
-            path.to_str().unwrap(),
-        )
+    let dump = CacheDump {
+        table_name: "cache".to_string(),
+        path: path.to_string_lossy().into_owned(),
+    };
+    let failed = dump
+        .replace_with(async |file| {
+            client
+                .copy_out(
+                    "COPY (SELECT CASE WHEN i < 50000 THEN i ELSE 1 / (i - i) END \
+                     FROM generate_series(1, 100000) AS i) TO STDOUT",
+                    file,
+                )
+                .await
+        })
         .await
         .err()
         .map(|error| super::error::message_of(&error));

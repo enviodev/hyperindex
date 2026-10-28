@@ -117,7 +117,7 @@ let make = (~columns: array<Staging.column>) => {
     },
     abortStage: (~handle as _, ~buffers as _) => mock.aborted = true,
   }
-  (mock, arena->(Utils.magic: Staging.arena => ClickHouseSink.t))
+  (mock, arena)
 }
 
 let staged = mock =>

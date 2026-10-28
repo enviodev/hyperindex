@@ -7,9 +7,9 @@ let setup = async () => {
   // A failure links its run's logs here; the links a previous run printed are
   // gone with it.
   rmSync(".test-logs", {"recursive": true, "force": true})
-  let sql = PgStorage.makeClient(~logger=Logger.makeInMemory())
+  let sql = TestPgSchema.client()
   let cleanup = async () => {
-    let _ = await sql->Sql.close
+    let _ = await sql->StorageClient.close
   }
   switch await TestPgSchema.sweep(sql) {
   | _ => await cleanup()

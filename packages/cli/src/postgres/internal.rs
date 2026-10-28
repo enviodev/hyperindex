@@ -1,14 +1,15 @@
 //! The tables the indexer keeps for itself, and every statement against them.
 
 use super::ddl::{ColumnSpec, TableSpec};
-use super::history::{bounds, Sequence};
+use super::history::bounds;
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use crate::storage::types::{
+    ChainConfig, Sequence, CHAINS_TABLE as CHAINS, CHECKPOINTS_TABLE as CHECKPOINTS,
+    INFO_TABLE as INFO,
+};
 
-pub const CHAINS: &str = "envio_chains";
-pub const INFO: &str = "envio_info";
 pub const CONTRACTS: &str = "envio_contracts";
 pub const ADDRESSES: &str = "envio_addresses";
-pub const CHECKPOINTS: &str = "envio_checkpoints";
 pub const META_VIEW: &str = "_meta";
 pub const CHAIN_METADATA_VIEW: &str = "chain_metadata";
 
@@ -81,7 +82,7 @@ pub fn tables(sequence: Sequence) -> Vec<TableSpec> {
                 nullable("progress_block_time", FieldType::Date),
                 // The last checkpoint the chain committed. Kept here rather than
                 // read off the checkpoints: their rows are only kept while a
-                // rollback could reach them, but an append-only sink resolves
+                // rollback could reach them, but an append-only store resolves
                 // current state through every id ever handed out, so a resume
                 // has to continue the sequence where no row backs it.
                 column("checkpoint_id", FieldType::UInt64),
@@ -99,6 +100,10 @@ pub fn tables(sequence: Sequence) -> Vec<TableSpec> {
                     ..key("id", FieldType::Int32)
                 },
                 column("config", FieldType::String),
+                // Initialize writes one random id here and into the ClickHouse
+                // database it builds. A start refuses a ClickHouse holding a
+                // different id: it was built beside another Postgres.
+                column("instance", FieldType::String),
             ],
         ),
         // The canonical contract ids: a name's position in the list written at
@@ -150,15 +155,6 @@ pub fn chain_id_array(pg_schema: &str, chain_id_mode: ChainIdMode) -> String {
         false,
         chain_id_mode,
     )
-}
-
-/// What a chain starts out as.
-pub struct ChainConfig {
-    pub id: i64,
-    pub ecosystem: String,
-    pub start_block: i32,
-    pub end_block: Option<i32>,
-    pub max_reorg_depth: i32,
 }
 
 /// One `INSERT` for the chains' first rows, values written in: it runs inside
@@ -229,13 +225,18 @@ pub fn views(pg_schema: &str) -> String {
 
 pub fn write_info(pg_schema: &str) -> String {
     format!(
-        "INSERT INTO \"{pg_schema}\".\"{INFO}\" (\"id\", \"config\") VALUES (1, $1) ON CONFLICT \
-         (\"id\") DO UPDATE SET \"config\" = EXCLUDED.\"config\";"
+        "INSERT INTO \"{pg_schema}\".\"{INFO}\" (\"id\", \"config\", \"instance\") VALUES (1, $1, \
+         $2) ON CONFLICT (\"id\") DO UPDATE SET \"config\" = EXCLUDED.\"config\", \"instance\" = \
+         EXCLUDED.\"instance\";"
     )
 }
 
 pub fn read_info(pg_schema: &str) -> String {
     format!("SELECT \"config\" FROM \"{pg_schema}\".\"{INFO}\" LIMIT 1;")
+}
+
+pub fn read_instance(pg_schema: &str) -> String {
+    format!("SELECT \"instance\" FROM \"{pg_schema}\".\"{INFO}\" LIMIT 1;")
 }
 
 pub fn insert_contracts(pg_schema: &str) -> String {
@@ -288,18 +289,18 @@ pub fn read_addresses(pg_schema: &str, only_config: bool) -> String {
 
 pub fn read_stored_chains(pg_schema: &str) -> String {
     format!(
-        "SELECT \"id\"::float8, \"ecosystem\", \"start_block\", \"end_block\", \
+        "SELECT \"id\"::int8, \"ecosystem\", \"start_block\", \"end_block\", \
          \"max_reorg_depth\" FROM \"{pg_schema}\".\"{CHAINS}\";"
     )
 }
 
 pub fn read_resumed_chains(pg_schema: &str) -> String {
     format!(
-        "SELECT \"id\"::float8, \"start_block\", \"end_block\", \"max_reorg_depth\", \
+        "SELECT \"id\"::int8, \"start_block\", \"end_block\", \"max_reorg_depth\", \
          \"first_event_block\", (extract(epoch from \"ready_at\") * 1000)::float8, \
          \"events_processed\"::float8, \"progress_block\", \
          extract(epoch from \"progress_block_time\")::float8, \"source_block\", \
-         \"checkpoint_id\"::TEXT FROM \"{pg_schema}\".\"{CHAINS}\";"
+         \"checkpoint_id\"::int8 FROM \"{pg_schema}\".\"{CHAINS}\";"
     )
 }
 
@@ -367,7 +368,7 @@ pub fn read_reorg_checkpoints(pg_schema: &str) -> String {
          WHERE \"max_reorg_depth\" > 0\n    \
          AND \"progress_block\" > \"source_block\" - \"max_reorg_depth\"\n\
          )\n\
-         SELECT cp.\"id\"::TEXT, cp.\"chain_id\"::float8, cp.\"block_number\", cp.\"block_hash\"\n\
+         SELECT cp.\"id\"::int8, cp.\"chain_id\"::int8, cp.\"block_number\", cp.\"block_hash\"\n\
          FROM \"{pg_schema}\".\"{CHECKPOINTS}\" cp\n\
          INNER JOIN reorg_chains rc ON cp.\"chain_id\" = rc.id\n\
          WHERE cp.\"block_hash\" IS NOT NULL\n  \
@@ -400,15 +401,28 @@ pub fn prune_checkpoints(pg_schema: &str, sequence: Sequence) -> anyhow::Result<
 
 pub fn rollback_target_checkpoint(pg_schema: &str) -> String {
     format!(
-        "SELECT \"id\"::TEXT FROM \"{pg_schema}\".\"{CHECKPOINTS}\"\nWHERE \"chain_id\" = $1 \
+        "SELECT \"id\"::int8 FROM \"{pg_schema}\".\"{CHECKPOINTS}\"\nWHERE \"chain_id\" = $1 \
          AND \"block_number\" <= $2\nORDER BY \"id\" DESC\nLIMIT 1;"
+    )
+}
+
+/// The chain's first checkpoint when one is given as `$1`; every chain's
+/// otherwise.
+pub fn lowest_checkpoint(pg_schema: &str, per_chain: bool) -> String {
+    let chain = if per_chain {
+        "\nWHERE \"chain_id\" = $1"
+    } else {
+        ""
+    };
+    format!(
+        "SELECT \"id\"::int8 FROM \"{pg_schema}\".\"{CHECKPOINTS}\"{chain}\nORDER BY \"id\"\nLIMIT 1;"
     )
 }
 
 pub fn rollback_progress_diff(pg_schema: &str, sequence: Sequence) -> anyhow::Result<String> {
     let bounds = bounds(sequence, Some("chain_id"), "t")?;
     Ok(format!(
-        "SELECT t.\"chain_id\"::float8, SUM(t.\"events_processed\")::TEXT, \
+        "SELECT t.\"chain_id\"::int8, SUM(t.\"events_processed\")::int8, \
          MIN(t.\"block_number\") - 1\nFROM \"{pg_schema}\".\"{CHECKPOINTS}\" t{}\nWHERE \
          t.\"id\" > {}\nGROUP BY t.\"chain_id\";",
         bounds.join, bounds.checkpoint_id
