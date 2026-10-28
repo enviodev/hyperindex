@@ -86,8 +86,6 @@ describe("simulated transactions", () => {
             {
               transaction: { from: alice, to: token, input: "0xa9059cbb", status: 0, transactionIndex: 1 },
             },
-            // Matches nobody.
-            { transaction: { from: bob, to: bob }, block: { number: 7 } },
           ],
         },
       },
@@ -97,6 +95,48 @@ describe("simulated transactions", () => {
       { id: "from-alice:3:1", from: alice, value: 0n, status: 0, timestamp: 0 },
       { id: "token-ok:3:0", from: alice, value: 0n, status: -1, timestamp: -1 },
     ]);
+  });
+
+  it("reports a transaction no handler matched as unrouted, beside one that ran", async (t) => {
+    const indexer = createTestIndexer();
+    const error = await indexer
+      .process({
+        chains: {
+          1: {
+            startBlock: 0,
+            endBlock: 10,
+            simulate: [
+              { transaction: { from: alice, to: token }, block: { number: 3 } },
+              { transaction: { from: bob, to: bob }, block: { number: 4 } },
+            ],
+          },
+        },
+      })
+      .then(() => "no error", (error: Error) => error.message);
+
+    t.expect(error).toContain("never reached a handler");
+    t.expect(error).toContain("chain 1: 1");
+  });
+
+  it("rejects two transactions at the same coordinates", async (t) => {
+    const indexer = createTestIndexer();
+    const error = await indexer
+      .process({
+        chains: {
+          1: {
+            startBlock: 0,
+            endBlock: 10,
+            simulate: [
+              { transaction: { from: alice, to: token }, block: { number: 3 } },
+              // Same block as the item before, and the default index 0 again.
+              { transaction: { from: alice, to: token } },
+            ],
+          },
+        },
+      })
+      .then(() => "no error", (error: Error) => error.message);
+
+    t.expect(error).toContain("both resolve to transaction 0 of block 3");
   });
 });
 `,

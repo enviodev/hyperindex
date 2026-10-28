@@ -43,6 +43,9 @@ type sourceConfig =
   // like every other source, so it can apply the same gates.
   | SimulateSourceConfig({
       items: array<Internal.item>,
+      // Each item's position in the user's `simulate` array, for reporting:
+      // one simulated event or transaction makes an item per handler.
+      itemIndexes: array<int>,
       // The block a block handler selecting fields reads at a number, if the
       // simulated chain has one there.
       getBlock: int => option<Internal.eventBlock>,

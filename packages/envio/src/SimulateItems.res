@@ -246,6 +246,7 @@ let deriveSrcAddress = (
 
 type parseResult = {
   items: array<Internal.item>,
+  itemIndexes: array<int>,
   getBlock: int => option<Internal.eventBlock>,
   transactionStore: option<TransactionStore.t>,
   blockStore: option<BlockStore.t>,
@@ -329,6 +330,7 @@ let parse = (
   let currentLogIndex = ref(0)
 
   let items = []
+  let itemIndexes = []
   // One block per number, which the block handlers that select fields read: a
   // block given on its own, otherwise the first one an item carried.
   let blocks: dict<Internal.eventBlock> = Dict.make()
@@ -348,6 +350,10 @@ let parse = (
 
   simulateItems->Array.forEachWithIndex((rawJson, itemIndex) => {
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
+    let push = item => {
+      items->Array.push(item)
+      itemIndexes->Array.push(itemIndex)
+    }
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
     // A transaction on its own, routed to the transaction handlers like a
@@ -371,20 +377,28 @@ let parse = (
       let transactionIndex = (
         transaction->(Utils.magic: Internal.eventTransaction => {"transactionIndex": int})
       )["transactionIndex"]
+      let coordinate = `${blockNumber->Int.toString}:tx${transactionIndex->Int.toString}`
+      switch seenCoordinates->Dict.get(coordinate) {
+      | Some(firstIndex) =>
+        JsError.throwWithMessage(
+          `simulate: items at index ${firstIndex->Int.toString} and ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} both resolve to transaction ${transactionIndex->Int.toString} of block ${blockNumber->Int.toString}. Give each transaction a distinct transactionIndex.`,
+        )
+      | None => seenCoordinates->Dict.set(coordinate, itemIndex)
+      }
       currentBlock := blockNumber
+      // One item per handler, matched against its filter when fetched, so a
+      // transaction no filter matches is left for the dead-input tracker.
       onTransactionRegistrations->Array.forEach(onTransactionRegistration =>
-        if onTransactionRegistration->TransactionItem.matches(~transaction) {
-          items->Array.push(
-            Internal.Transaction({
-              onTransactionRegistration,
-              chainId,
-              blockNumber,
-              transactionIndex,
-              transaction,
-              block,
-            }),
-          )
-        }
+        push(
+          Internal.Transaction({
+            onTransactionRegistration,
+            chainId,
+            blockNumber,
+            transactionIndex,
+            transaction,
+            block,
+          }),
+        )
       )
     | (Evm | Svm, None, None)
       if raw->getContract->Option.isNone &&
@@ -584,8 +598,7 @@ let parse = (
         )
         let payloadDict = payload->(Utils.magic: Envio.svmInstruction => dict<unknown>)
         payloadDict->Dict.set("srcAddress", programId->(Utils.magic: string => unknown))
-        items
-        ->Array.push(
+        push(
           Internal.Event({
             onEventRegistration,
             chainId,
@@ -595,8 +608,7 @@ let parse = (
             transactionIndex,
             payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
           }),
-        )
-        ->ignore
+        )->ignore
       })
 
     | (Svm, _, _) =>
@@ -711,8 +723,7 @@ let parse = (
         let onEventRegistration = {...reg, index: onEventRegistrationIndex}
         onEventRegistrations->Array.push(onEventRegistration)->ignore
 
-        items
-        ->Array.push(
+        push(
           Internal.Event({
             onEventRegistration,
             chainId,
@@ -734,8 +745,7 @@ let parse = (
               }: Evm.payload
             )->Evm.fromPayload,
           }),
-        )
-        ->ignore
+        )->ignore
       })
     }
   })
@@ -758,12 +768,14 @@ let parse = (
   switch config.ecosystem.name {
   | Svm => {
       items,
+      itemIndexes,
       getBlock,
       transactionStore: Some(TransactionStore.fromSvmJs(svmTxs, svmActivities)),
       blockStore: Some(BlockStore.fromJs(svmBlocks, ~ecosystem=Svm)),
     }
   | _ => {
       items,
+      itemIndexes,
       getBlock,
       transactionStore: None,
       blockStore: None,
@@ -808,7 +820,7 @@ let patchConfig = (
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
           let chainConfig = {...chainConfig, startBlock: Config.Block(startBlock), endBlock}
-          let {items, getBlock, transactionStore, blockStore} = parse(
+          let {items, itemIndexes, getBlock, transactionStore, blockStore} = parse(
             ~simulateItems,
             ~config,
             ~chainConfig,
@@ -819,6 +831,7 @@ let patchConfig = (
             ...chainConfig,
             sourceConfig: Config.SimulateSourceConfig({
               items,
+              itemIndexes,
               getBlock,
               endBlock,
               ?transactionStore,

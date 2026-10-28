@@ -179,10 +179,13 @@ let make = (
 
       let parsedQueueItems = items->Array.filter(item =>
         switch item {
-        | Internal.Transaction({onTransactionRegistration, blockNumber}) =>
+        | Internal.Transaction({onTransactionRegistration, blockNumber, ?transaction}) =>
           blockNumber >= fromBlock &&
           blockNumber <= toBlockQueried &&
-          selectionTransactionIndexes->Utils.Set.has(onTransactionRegistration.index)
+          selectionTransactionIndexes->Utils.Set.has(onTransactionRegistration.index) &&
+          transaction->Option.mapOr(false, transaction =>
+            onTransactionRegistration->TransactionItem.matches(~transaction)
+          )
         | Internal.Block(_) => false
         | Internal.Event(_) =>
           let eventItem = item->Internal.castUnsafeEventItem
