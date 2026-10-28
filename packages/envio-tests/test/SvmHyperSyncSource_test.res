@@ -77,8 +77,8 @@ let mockResponse: SvmHyperSyncClient.Items.response = {
       accounts: [],
       data: Uint8Array.fromArray([0x21]),
       isInner: false,
-      args: Null.null,
-      logs: Null.null,
+      args: Nullable.undefined,
+      logs: Nullable.undefined,
     },
   ],
 }
