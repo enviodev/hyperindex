@@ -163,13 +163,14 @@ Mock source for chain 1 at the failure:
         async (~indexer as _, ~source) => {
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
+          await mock.expectNewHeightCalls(1)
           await mock.respondEmptyUpTo(300)
         },
       ),
     )
     t.expect(rejection->stripLogsLink).toEqual(
       Some(
-        Nullable.make(`Height calls no expectation accounted for on source for chain 1: 2 (calls 1 to 2). Name each poll where the test causes it with \`expectNewHeightCalls(n)\`, so one nobody planned for fails at the step that caused it.
+        Nullable.make(`Height calls no expectation accounted for on source for chain 1: 1 (calls 2 to 2). Name each poll where the test causes it with \`expectNewHeightCalls(n)\`, so one nobody planned for fails at the step that caused it.
 
 Mock source for chain 1 at the failure:
   pending item queries: none
