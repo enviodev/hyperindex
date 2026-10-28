@@ -207,6 +207,13 @@ async function checkEndpoint(indexer, commit, org) {
       body: JSON.stringify({ query: "{ _meta { isReady progressBlock } }" }),
       signal: AbortSignal.timeout(15_000),
     });
+    if (response.status === 401 || response.status === 403) {
+      console.log(
+        `_meta query: HTTP ${response.status}. The endpoint is protected by API keys or an IP allow-list; ` +
+          `clients need a key from: npx -y envio-cloud indexer security api-key list ${indexer} ${org}`,
+      );
+      return;
+    }
     console.log(`_meta query: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
   } catch (e) {
     console.log(`_meta query failed: ${e.message}`);
