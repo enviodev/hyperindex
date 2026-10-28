@@ -148,6 +148,7 @@ let installMockSourceRegistrations = (
         let registrations: HandlerRegister.chainRegistrations = {
           onEventRegistrations: [],
           onBlockRegistrations: [],
+          onTransactionRegistrations: [],
         }
         registrationsByChainId->Dict.set(key, registrations)
         registrations
@@ -201,10 +202,29 @@ type pendingItemsQuery = {
 // Non-enumerable on the query, so a whole-value `toEqual` snapshot of the
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
-@get external includeAllBlocks: pendingItemsQuery => bool = "includeAllBlocks"
+@get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
+
+// A block the chain has, for the block handlers of the query's selection that
+// run on it. Its number, timestamp and hash are those of `itemMock`'s block.
+type blockMock = {
+  blockNumber: int,
+  blockFields?: dict<unknown>,
+}
+
+// A transaction the chain has, for the transaction handlers of the query's
+// selection whose filter matches it. Its block is built like `blockMock`'s.
+type transactionMock = {
+  blockNumber: int,
+  transactionIndex: int,
+  // Laid over the index and a hash derived from the coordinates; `from`,
+  // `to`, `input` and `status` are what the filters match on.
+  transactionFields?: dict<unknown>,
+}
 
 type itemsResponse = {
   items: array<itemMock>,
+  blocks?: array<blockMock>,
+  transactions?: array<transactionMock>,
   // Defaults to the query's toBlock, or its fromBlock when unbounded.
   latestFetchedBlockNumber?: int,
   latestFetchedBlockHash?: string,
@@ -596,8 +616,11 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~knownHeight,
+    ~selection: FetchState.selection,
   ): Source.blockRangeFetchResponse => {
     let items = response.items
+    let blocks = response.blocks->Option.getOr([])
+    let transactions = response.transactions->Option.getOr([])
     let latestFetchedBlockNumber =
       response.latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
@@ -648,12 +671,18 @@ let make = (
     // from, so those blocks carry a hash and a timestamp too. Without them the
     // store only ever learns the range's seam and end, and reorg detection
     // never sees the blocks events landed on.
-    items->Array.forEach(item => {
-      if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
+    Array.concat(
+      Array.concat(
+        items->Array.map(item => item.blockNumber),
+        blocks->Array.map(block => block.blockNumber),
+      ),
+      transactions->Array.map(tx => tx.blockNumber),
+    )->Array.forEach(blockNumber => {
+      if !(observedBlocks->Array.some(b => b.blockNumber === blockNumber)) {
         observedBlocks->Array.push({
-          blockNumber: item.blockNumber,
-          blockHash: mockBlockHash(item.blockNumber),
-          blockTimestamp: item.blockNumber,
+          blockNumber,
+          blockHash: mockBlockHash(blockNumber),
+          blockTimestamp: blockNumber,
         })
       }
     })
@@ -664,7 +693,8 @@ let make = (
     })
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
-      parsedQueueItems: items->Array.map(item => {
+      parsedQueueItems: items
+      ->Array.map(item => {
         let onEventRegistration =
           state.onEventRegistrationRef.contents->Option.getOrThrow(
             ~message="MockSource on-event registration was not installed before resolving items",
@@ -702,7 +732,56 @@ let make = (
           transactionIndex: 0,
           payload: payload->Evm.fromPayload,
         })
-      }),
+      })
+      ->Array.concat(
+        blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
+          selection.onBlockRegistrations
+          ->Array.filter(reg => reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0))
+          ->Array.map(onBlockRegistration => Internal.Block({
+            onBlockRegistration,
+            blockNumber,
+            block: Dict.fromArray([
+              ("number", blockNumber->(Utils.magic: int => unknown)),
+              ("timestamp", blockNumber->(Utils.magic: int => unknown)),
+              ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
+            ])
+            ->Dict.assign(blockFields->Option.getOr(Dict.make()))
+            ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+          }))
+        ),
+      )
+      ->Array.concat(
+        transactions->Array.flatMap(({blockNumber, transactionIndex, ?transactionFields}) => {
+          let transaction =
+            Dict.fromArray([
+              ("transactionIndex", transactionIndex->(Utils.magic: int => unknown)),
+              (
+                "hash",
+                evmBlockHash(`0x${blockNumber->Int.toString}${transactionIndex->Int.toString}`)->(
+                  Utils.magic: string => unknown
+                ),
+              ),
+            ])
+            ->Dict.assign(transactionFields->Option.getOr(Dict.make()))
+            ->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+          let block =
+            Dict.fromArray([
+              ("number", blockNumber->(Utils.magic: int => unknown)),
+              ("timestamp", blockNumber->(Utils.magic: int => unknown)),
+              ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
+            ])->(Utils.magic: dict<unknown> => Internal.eventBlock)
+          selection.onTransactionRegistrations
+          ->Array.filter(reg => reg->TransactionItem.matches(~transaction))
+          ->Array.map(onTransactionRegistration => Internal.Transaction({
+            onTransactionRegistration,
+            chainId,
+            blockNumber,
+            transactionIndex,
+            transaction,
+            block,
+          }))
+        }),
+      ),
       transactionStore: None,
       blockStore: responseBlockStore,
       latestFetchedBlockNumber,
@@ -943,10 +1022,10 @@ let make = (
           ~fromBlock,
           ~toBlock,
           ~addressSet,
-          ~includeAllBlocks,
+          ~reorgableFrom,
           ~knownHeight,
           ~partitionId,
-          ~selection as _,
+          ~selection,
           ~itemsTarget as _,
           ~retry,
           ~logger as _,
@@ -975,7 +1054,7 @@ let make = (
             let queryControl = {
               respond: response => {
                 settle()
-                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight))
+                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight, ~selection))
               },
               fail: exn => {
                 settle()
@@ -990,8 +1069,8 @@ let make = (
               {enumerable: false, value: addresses},
             )
             ->Utils.Object.definePropertyWithValue(
-              "includeAllBlocks",
-              {enumerable: false, value: includeAllBlocks},
+              "reorgableFrom",
+              {enumerable: false, value: reorgableFrom},
             )
             ->Utils.Object.definePropertyWithValue(
               "__control",

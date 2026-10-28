@@ -11,7 +11,9 @@ metadata:
 # Block Handlers
 
 Process every block (or every Nth block) using `indexer.onBlock`. No contract
-address or `config.yaml` entry needed.
+address or `config.yaml` entry needed. To run on the transactions of a block
+instead, filtered by sender, recipient or selector, see `indexer.onTransaction`
+in the `indexer-transactions` skill.
 
 ## Handler
 
@@ -54,11 +56,25 @@ indexer.onBlock(
 |--------|------|----------|-------------|
 | `name` | `string` | yes | Handler name for logging |
 | `where` | `({ chain }) => boolean \| filter` | no | Predicate evaluated once per configured chain at registration. Return `false` to skip a chain, `true` / omit to match every block, or `{block: {number: {_gte?, _lte?, _every?}}}` to restrict range and stride. `_every` aligns relative to `_gte`, preserving `(blockNumber - _gte) % _every === 0`. |
+| `fields` | `{ block?: BlockField[] }` | no | Block fields the handler reads besides the number, e.g. `{ block: ["timestamp", "hash"] }`. Selecting any makes the indexer fetch every block the handler runs on, so keep `_every` as large as the use case allows. Reading a field not listed is a type error. `config.yaml` `field_selection` does not apply to block handlers. |
+
+## Block fields
+
+```ts
+indexer.onBlock(
+  { name: "Timestamps", where: () => ({ block: { number: { _every: 1000 } } }), fields: { block: ["timestamp"] } },
+  async ({ block, context }) => {
+    context.BlockTime.set({ id: `${block.number}`, timestamp: block.timestamp });
+  }
+);
+```
+
+In `createTestIndexer`, give the fields of a block as its own simulate item: `simulate: [{ block: { number: 1000, timestamp: 1700000000 } }]`. A block without one gets the same defaults as an event's block.
 
 ## Other ecosystems
 
-- **Fuel**: same `indexer.onBlock` API; filter is keyed by `block.height` instead of `block.number`.
-- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}` (no `block` wrapper).
+- **Fuel**: same `indexer.onBlock` API; filter is keyed by `block.height` instead of `block.number`. Fuel block handlers get the height alone: `fields` isn't supported.
+- **SVM**: use `indexer.onSlot`; filter shape is `{slot: {_gte?, _lte?, _every?}}` and the handler arg is `{slot: number, context}`. With `fields: { block: ["time", "hash", ...] }` it also gets `block`, which is `undefined` on a slot the chain skipped; the handler still runs on every matching slot. In `createTestIndexer` a slot has a block only when given a `{ block: { slot, ... } }` simulate item.
 
 ## Notes
 

@@ -303,11 +303,27 @@ let getGlobalIndexer = (): 'indexer => {
 
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown})
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
     HandlerRegister.registerOnBlock(
       ~name=raw["name"],
       ~where=raw["where"],
+      ~fields=raw["fields"],
       ~handler=handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>),
+      ~getChainsObject=config => {
+        let (chains, _) = buildChainsObject(~config)
+        chains->(Utils.magic: {..} => dict<unknown>)
+      },
+    )
+  }
+
+  let onTransactionFn = (rawOptions: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onTransaction")
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
+    HandlerRegister.registerOnTransaction(
+      ~name=raw["name"],
+      ~where=raw["where"],
+      ~fields=raw["fields"],
+      ~handler=handler->(Utils.magic: 'b => Internal.onTransactionArgs => promise<unit>),
       ~getChainsObject=config => {
         let (chains, _) = buildChainsObject(~config)
         chains->(Utils.magic: {..} => dict<unknown>)
@@ -331,7 +347,18 @@ let getGlobalIndexer = (): 'indexer => {
     | Some(k) => k
     | None => {
         let keys = switch Config.load().ecosystem.name {
-        | Evm | Fuel => [
+        | Evm => [
+            "name",
+            "description",
+            "chainIds",
+            "chains",
+            "onEvent",
+            "contractRegister",
+            "onBlock",
+            "onTransaction",
+            "~internalAndWillBeRemovedSoon_onRollbackCommit",
+          ]
+        | Fuel => [
             "name",
             "description",
             "chainIds",
@@ -372,6 +399,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | "onTransaction" => onTransactionFn->Utils.magic
     | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(

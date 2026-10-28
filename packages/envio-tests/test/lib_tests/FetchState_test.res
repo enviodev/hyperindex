@@ -13,7 +13,7 @@ let defaultQuery: FetchState.query = {
   isChunk: false,
   itemsTarget: Some(0),
   itemsEst: 0,
-  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
+  selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[]),
   addresses: TestAddresses.setOf([]),
 }
 
@@ -111,6 +111,17 @@ let mockEvent = (
 let mockBlockItem = (~blockNumber, ~registrationIndex=0): Internal.item => Internal.Block({
   blockNumber,
   onBlockRegistration: Utils.magic({"index": registrationIndex}),
+})
+
+let mockTransactionItem = (
+  ~blockNumber,
+  ~transactionIndex,
+  ~registrationIndex=0,
+): Internal.item => Internal.Transaction({
+  chainId: 1->ChainId.fromInt,
+  blockNumber,
+  transactionIndex,
+  onTransactionRegistration: Utils.magic({"index": registrationIndex}),
 })
 
 let dcToRegistration = (dc: Internal.indexingAddress): AddressStore.registration => {
@@ -314,7 +325,7 @@ describe("FetchState.make", () => {
         )
       },
       ~message=`Should panic if there's nothing to fetch`,
-      "Invalid configuration: Nothing to fetch on chain 0. addresses=0, onEventRegistrations=1, normalRegistrations=1. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
+      "Invalid configuration: Nothing to fetch on chain 0. addresses=0, onEventRegistrations=1, normalRegistrations=1. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock or onTransaction handlers.",
     )
   })
 
@@ -1670,6 +1681,8 @@ describe("FetchState.registerDynamicContracts", () => {
                   // Even though normal2 is also a wildcard event
                   // it should be a part of the normal selection
                   onEventRegistrations: [wildcard1, wildcard2],
+                  onBlockRegistrations: [],
+                  onTransactionRegistrations: [],
                 },
                 addresses: TestAddresses.setOf([]),
                 mergeBlock: None,
@@ -1686,6 +1699,8 @@ describe("FetchState.registerDynamicContracts", () => {
                 selection: {
                   dependsOnAddresses: true,
                   onEventRegistrations: [normal1, normal2],
+                  onBlockRegistrations: [],
+                  onTransactionRegistrations: [],
                 },
                 addresses: TestAddresses.setOf(
                   ~contractName="NftFactory",
@@ -2465,6 +2480,8 @@ describe("FetchState.getNextQuery & integration", () => {
     let selection: FetchState.selection = {
       dependsOnAddresses: false,
       onEventRegistrations: [open_, restricted],
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     }
     let registrationIds = (selection: FetchState.selection) =>
       selection.onEventRegistrations->Array.map(reg => reg.eventConfig.contractName)
@@ -2481,6 +2498,8 @@ describe("FetchState.getNextQuery & integration", () => {
       "allBelow": {
         FetchState.dependsOnAddresses: false,
         onEventRegistrations: [restricted],
+        onBlockRegistrations: [],
+        onTransactionRegistrations: [],
       }
       ->FetchState.narrowSelectionToRange(~toBlock=Some(99))
       ->registrationIds,
@@ -2554,6 +2573,8 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: {
             dependsOnAddresses: false,
             onEventRegistrations: [wildcard],
+            onBlockRegistrations: [],
+            onTransactionRegistrations: [],
           },
           addresses: TestAddresses.setOf([]),
         },
@@ -2753,6 +2774,8 @@ describe("FetchState.getNextQuery & integration", () => {
           selection: {
             dependsOnAddresses: false,
             onEventRegistrations: wildcardEventConfigs,
+            onBlockRegistrations: [],
+            onTransactionRegistrations: [],
           },
           addresses: TestAddresses.setOf([]),
           fromBlock: 0,
@@ -2790,6 +2813,8 @@ describe("FetchState.getNextQuery & integration", () => {
               selection: {
                 dependsOnAddresses: false,
                 onEventRegistrations: wildcardEventConfigs,
+                onBlockRegistrations: [],
+                onTransactionRegistrations: [],
               },
               addresses: TestAddresses.setOf([]),
               mergeBlock: None,
@@ -2965,6 +2990,8 @@ describe("FetchState unit tests for specific cases", () => {
       selection: {
         dependsOnAddresses: false,
         onEventRegistrations: [wildcard],
+        onBlockRegistrations: [],
+        onTransactionRegistrations: [],
       },
       addresses: TestAddresses.setOf([]),
     }
@@ -3011,6 +3038,8 @@ describe("FetchState unit tests for specific cases", () => {
           selection: {
             dependsOnAddresses: false,
             onEventRegistrations: [wildcard],
+            onBlockRegistrations: [],
+            onTransactionRegistrations: [],
           },
           addresses: TestAddresses.setOf([]),
         },
@@ -3978,6 +4007,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
     endBlock,
     interval,
     handler: Utils.magic("mock handler"),
+    blockFieldMask: None,
   }
 
   // A partition can sit past the head, on a start block the chain hasn't reached
@@ -4243,7 +4273,10 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
   // changed the result (and could even push total consumption above
   // rangeBudget). With the fix, every partition's share is ipb - reserved,
   // fixed for the whole round, so the outcome doesn't depend on order.
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
 
   let makeTwoPartitionFetchState = (~order: array<string>): FetchState.t => {
     let overshootPartition: FetchState.partition = {
@@ -4329,7 +4362,10 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
   // "capped" can only fetch one chunk (mergeBlock caps its range); "deep" has
   // unbounded range but stops at the shared target. The greedy pass walks both,
   // spending budget as it fills each toward the target and its range end.
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
 
   let makeChunkPartition = (~id, ~address, ~mergeBlock): FetchState.partition => {
     id,
@@ -4398,7 +4434,10 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
   // Partition "1" already holds a 1500-item in-flight chunk, so the fresh
   // budget is only chainTargetItems minus that reservation — new queries draw
   // from what's left, not the full target.
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
 
   let makePartition = (
     ~id,
@@ -4635,7 +4674,10 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
 })
 
 describe("FetchState.getNextQuery target containment", () => {
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
 
   let makePartition = (
     ~latestFetchedBlock,
@@ -4774,7 +4816,10 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
   // Single partition with density 10 items/block and chunk history 10 ->
   // chunkSize = ceil(10 * 1.8) = 18, so a chunk costs 180 items at multiplier
   // 1, 270 at the 1.5x backfill headroom, 540 at the 3x realtime headroom.
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
 
   let makeFetchState = (~eventDensity=Some(10.)): FetchState.t => {
     optimizedPartitions: FetchState.OptimizedPartitions.make(
@@ -4870,7 +4915,10 @@ describe("Response density and source range capacity update independently", () =
   // chunks send no cap, so their partial responses are always genuine capacity
   // evidence. Either way the items/block ratio is current density evidence,
   // blended 1:1 with the stored density.
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
   let addresses = TestAddresses.setOf([mockAddress0])
 
   let makeFetchState = (~eventDensity=Some(1.), ~sourceRangeCapacity=300): FetchState.t => {
@@ -5024,6 +5072,63 @@ describe("mergeIntoBuffer", () => {
     t.expect([]->FetchState.mergeIntoBuffer([blockItem, event])).toEqual([event, blockItem])
   })
 
+  it("runs a transaction item before its own events and after the ones before it", t => {
+    // Events carry the transaction index they came from; a transaction item
+    // sits between the events of the transactions around it, ahead of its
+    // own, and a block item stays last whatever the indexes.
+    let earlierTxEvent = Internal.Event({
+      chainId: 1->ChainId.fromInt,
+      blockNumber: 7,
+      logIndex: 0,
+      transactionIndex: 0,
+      onEventRegistration: Utils.magic({"index": 0}),
+      payload: "earlier"->(Utils.magic: string => Internal.eventPayload),
+    })
+    let ownEvent = Internal.Event({
+      chainId: 1->ChainId.fromInt,
+      blockNumber: 7,
+      logIndex: 3,
+      transactionIndex: 2,
+      onEventRegistration: Utils.magic({"index": 0}),
+      payload: "own"->(Utils.magic: string => Internal.eventPayload),
+    })
+    let laterTxEvent = Internal.Event({
+      chainId: 1->ChainId.fromInt,
+      blockNumber: 7,
+      logIndex: 9,
+      transactionIndex: 5,
+      onEventRegistration: Utils.magic({"index": 0}),
+      payload: "later"->(Utils.magic: string => Internal.eventPayload),
+    })
+    let transaction = mockTransactionItem(~blockNumber=7, ~transactionIndex=2)
+    let secondHandler = mockTransactionItem(
+      ~blockNumber=7,
+      ~transactionIndex=2,
+      ~registrationIndex=1,
+    )
+    let blockItem = mockBlockItem(~blockNumber=7)
+    let nextBlockTransaction = mockTransactionItem(~blockNumber=8, ~transactionIndex=0)
+    t.expect(
+      []->FetchState.mergeIntoBuffer([
+        nextBlockTransaction,
+        blockItem,
+        laterTxEvent,
+        secondHandler,
+        ownEvent,
+        transaction,
+        earlierTxEvent,
+      ]),
+    ).toEqual([
+      earlierTxEvent,
+      transaction,
+      secondHandler,
+      ownEvent,
+      laterTxEvent,
+      blockItem,
+      nextBlockTransaction,
+    ])
+  })
+
   it("keeps a deep call and a later transaction's call distinct", t => {
     // Guards the pair that the superseded packed key conflated: it folded the
     // path into the transaction's stride, so `tx 0, path [0,0,0]` and
@@ -5049,7 +5154,10 @@ describe("mergeIntoBuffer", () => {
 })
 
 describe("FetchState.getNextQuery caps per-chain concurrency", () => {
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
   let addresses = TestAddresses.setOf([mockAddress0])
 
   let makePartition = (~idx, ~inFlight): FetchState.partition => {
@@ -5281,6 +5389,57 @@ describe("FetchState client-side address filtering", () => {
       ).toEqual(([(false, Some(["Gravatar"]), [])], ["Gravatar"]))
     },
   )
+
+  it("leaves the block partition out of the collapse", t => {
+    let blockRegistration: Internal.onBlockRegistration = {
+      index: 0,
+      name: "headers",
+      chainId,
+      startBlock: Some(0),
+      endBlock: None,
+      interval: 1,
+      handler: Utils.magic("mock handler"),
+      blockFieldMask: Some(3.),
+    }
+    let (fetchState, addressStore) = makeFs(
+      ~onEventRegistrations=[baseEventConfig],
+      ~addresses=[makeConfigContract("Gravatar", mockAddress0)],
+      ~startBlock=0,
+      ~endBlock=None,
+      ~maxAddrInPartition=10,
+      ~chainId,
+      ~maxOnBlockBufferSize=targetBufferSize,
+      ~knownHeight=100,
+      ~clientFilterAddressThreshold=Some(1),
+      ~onBlockRegistrations=[blockRegistration],
+    )
+    let updated =
+      fetchState->registerDynamicContracts(
+        ~addressStore,
+        [
+          makeDynContractRegistration(
+            ~blockNumber=3,
+            ~contractAddress=mockAddress1,
+          )->dcToRegistration,
+          makeDynContractRegistration(
+            ~blockNumber=4,
+            ~contractAddress=mockAddress2,
+          )->dcToRegistration,
+        ],
+      )
+
+    t.expect(
+      updated.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.map(
+        p => (
+          p.selection.onEventRegistrations->Array.length,
+          p.selection.onBlockRegistrations->Array.map(reg => reg.name),
+          p.selection.clientFilteredContracts,
+        ),
+      ),
+    ).toEqual([(0, ["headers"], None), (1, [], Some(["Gravatar"]))])
+  })
 
   it("stays server-side while under the threshold", t => {
     let (fetchState, addressStore) = makeGravatarFs(~clientFilterAddressThreshold=Some(10))

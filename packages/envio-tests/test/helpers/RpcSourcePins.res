@@ -68,8 +68,8 @@ let normalizeEvent = item =>
         transaction: payload.transaction,
       }
     }
-  | Internal.Block(_) =>
-    JsError.throwWithMessage("RPC source contract pin unexpectedly received an onBlock item")
+  | Internal.Block(_) | Internal.Transaction(_) =>
+    JsError.throwWithMessage("RPC source contract pin unexpectedly received a handler item")
   }
 
 // The page's reorg hashes as a stable (blockNumber, blockHash) list, ascending

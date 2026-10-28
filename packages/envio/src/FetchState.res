@@ -1,7 +1,14 @@
 type indexingAddress = Internal.indexingContract
 
+// What a partition fetches, one list per table a source can query: event
+// registrations select logs, block registrations select blocks, transaction
+// registrations select transactions. Any may be empty, not all.
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
+  // Only the registrations that select block fields: a block handler reading
+  // just the number is generated locally and never reaches a source.
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations: array<Internal.onTransactionRegistration>,
   // Whether the partition's queries are built from its own address list
   // (server-side address filtering). This is the *partition* property; not to
   // be confused with the per-registration `Internal.onEventRegistration.dependsOnAddresses`.
@@ -25,12 +32,12 @@ type selection = {
 
 // The earliest block any of the registrations can produce an item at, or `None`
 // when one of them is unrestricted. Nothing below it is worth querying.
-let deriveSelectionStartBlock = (onEventRegistrations: array<Internal.onEventRegistration>) => {
+let deriveSelectionStartBlock = (startBlocks: array<option<int>>) => {
   let earliest = ref(None)
   let idx = ref(0)
-  let unrestricted = ref(onEventRegistrations->Utils.Array.isEmpty)
-  while !unrestricted.contents && idx.contents < onEventRegistrations->Array.length {
-    switch (onEventRegistrations->Array.getUnsafe(idx.contents)).startBlock {
+  let unrestricted = ref(startBlocks->Utils.Array.isEmpty)
+  while !unrestricted.contents && idx.contents < startBlocks->Array.length {
+    switch startBlocks->Array.getUnsafe(idx.contents) {
     | None => unrestricted := true
     | Some(startBlock) =>
       switch earliest.contents {
@@ -43,12 +50,40 @@ let deriveSelectionStartBlock = (onEventRegistrations: array<Internal.onEventReg
   unrestricted.contents ? None : earliest.contents
 }
 
-let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFilteredContracts=?) => {
+let makeSelection = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
+  ~onTransactionRegistrations: array<Internal.onTransactionRegistration>=[],
+  ~dependsOnAddresses,
+  ~clientFilteredContracts=?,
+) => {
   onEventRegistrations,
+  onBlockRegistrations,
+  onTransactionRegistrations,
   dependsOnAddresses,
   ?clientFilteredContracts,
-  startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
+  // A transaction registration has no start block of its own, so a selection
+  // holding one is unrestricted.
+  startBlock: ?(
+    onTransactionRegistrations->Utils.Array.notEmpty
+      ? None
+      : deriveSelectionStartBlock(
+          Array.concat(
+            onEventRegistrations->Array.map(reg => reg.startBlock),
+            onBlockRegistrations->Array.map(reg => reg.startBlock),
+          ),
+        )
+  ),
 }
+
+// A query for blocks or transactions alone reads no further than the height
+// the chain knows: the source picks the blocks to read within its range and
+// answers for the gaps between them, which can't run past the head.
+let sourceToBlock = (selection: selection, ~toBlock, ~knownHeight) =>
+  switch selection.onEventRegistrations {
+  | [] => Some(toBlock->Option.mapOr(knownHeight, toBlock => Pervasives.min(toBlock, knownHeight)))
+  | _ => toBlock
+  }
 
 // A partition's frontier never sits below the block before its selection can
 // first match: the blocks below hold nothing for it, so they count as fetched
@@ -176,6 +211,8 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
     | _ =>
       makeSelection(
         ~onEventRegistrations=inRange,
+        ~onBlockRegistrations=selection.onBlockRegistrations,
+        ~onTransactionRegistrations=selection.onTransactionRegistrations,
         ~dependsOnAddresses=selection.dependsOnAddresses,
         ~clientFilteredContracts=?selection.clientFilteredContracts,
       )
@@ -858,6 +895,8 @@ type t = {
   // size). Event fetch depth is bounded separately, by CrossChainState's
   // cross-chain admission against the indexer-wide buffer pool.
   maxOnBlockBufferSize: int,
+  // The block handlers whose items are generated here, block by block. Those
+  // selecting block fields are fetched instead, through a partition's selection.
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
@@ -906,6 +945,7 @@ Comparitor for two events from the same chain. No need for chain id or timestamp
 let getRegistrationIndex = (item: Internal.item): int =>
   switch item {
   | Event({onEventRegistration}) => onEventRegistration.index
+  | Transaction({onTransactionRegistration}) => onTransactionRegistration.index
   | Block({onBlockRegistration}) => onBlockRegistration.index
   }
 
@@ -954,18 +994,20 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
   }
 }
 
-// Total order on buffer items: block, then item kind, then the ecosystem's
-// within-block order, then registration index. Returns a plain int (-1/0/1)
-// with explicit field comparisons so it can be called directly from the
-// merge/insertion loops below — no Array.sort callback, no allocated key. `0`
-// means a true duplicate: the same log routed to the same registration (two
-// registrations for one log differ by index and are kept).
+// Total order on buffer items: block, then the block's handlers last, then
+// transaction index, then a transaction's handlers ahead of its events, then
+// the ecosystem's within-block order, then registration index. Returns a plain
+// int (-1/0/1) with explicit field comparisons so it can be called directly
+// from the merge/insertion loops below — no Array.sort callback, no allocated
+// key. `0` means a true duplicate: the same log routed to the same registration
+// (two registrations for one log differ by index and are kept).
 //
 // Kind outranks the log index so that every event of a block precedes that
-// block's handlers by construction. A sentinel log index for block items
-// would put the same guarantee at the mercy of how large an ecosystem's key
-// grows — which is how SVM, keyed by transaction index, came to run slot
-// handlers ahead of most of a slot's instructions.
+// block's handlers by construction, whatever an ecosystem's key grows to. Two
+// events are ordered by log index alone: their transaction index climbs with
+// it, so it is only read when a transaction item is involved.
+let blockKind = 2
+
 let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   let ba = a->Internal.getItemBlockNumber
   let bb = b->Internal.getItemBlockNumber
@@ -974,13 +1016,28 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   } else {
     let ka = a->Internal.getItemKind
     let kb = b->Internal.getItemKind
-    if ka !== kb {
-      ka < kb ? -1 : 1
-    } else {
+    if ka === 0 && kb === 0 {
       let la = a->Internal.getItemLogIndex
       let lb = b->Internal.getItemLogIndex
       if la != lb {
         la < lb ? -1 : 1
+      } else {
+        compareTiebreak(a, b)
+      }
+    } else if ka === blockKind || kb === blockKind {
+      if ka !== kb {
+        ka < kb ? -1 : 1
+      } else {
+        compareTiebreak(a, b)
+      }
+    } else {
+      let ta = a->Internal.getItemTransactionIndex
+      let tb = b->Internal.getItemTransactionIndex
+      if ta != tb {
+        ta < tb ? -1 : 1
+      } else if ka !== kb {
+        // The transaction's handlers run before its events.
+        ka > kb ? -1 : 1
       } else {
         compareTiebreak(a, b)
       }
@@ -993,13 +1050,19 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
 // registration index is equal. Only meaningful on neighbours of a sorted
 // buffer, where such items sit next to each other.
 let isSameLog = (a: Internal.item, b: Internal.item): bool =>
-  a->Internal.getItemKind === 0 &&
-  b->Internal.getItemKind === 0 &&
-  a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
-  a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
-  switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
-  | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
-  | _ => true
+  switch (a->Internal.getItemKind, b->Internal.getItemKind) {
+  | (0, 0) =>
+    a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
+    a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
+    switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+    | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
+    | _ => true
+    }
+  // One transaction routed to two handlers.
+  | (1, 1) =>
+    a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
+      a->Internal.getItemTransactionIndex === b->Internal.getItemTransactionIndex
+  | _ => false
   }
 
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
@@ -1087,20 +1150,7 @@ let appendOnBlockItems = (
 
     for configIdx in 0 to onBlockRegistrations->Array.length - 1 {
       let onBlockRegistration = onBlockRegistrations->Array.getUnsafe(configIdx)
-
-      let handlerStartBlock = switch onBlockRegistration.startBlock {
-      | Some(startBlock) => startBlock
-      | None => indexerStartBlock
-      }
-
-      if (
-        blockNumber >= handlerStartBlock &&
-        switch onBlockRegistration.endBlock {
-        | Some(endBlock) => blockNumber <= endBlock
-        | None => true
-        } &&
-        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockRegistration.interval) === 0
-      ) {
+      if onBlockRegistration->BlockItem.runsOn(~blockNumber, ~chainStartBlock=indexerStartBlock) {
         mutItems->Array.push(
           Block({
             onBlockRegistration,
@@ -1321,6 +1371,12 @@ let collapseClientFilteredContracts = (
 
     partitions->Array.forEach(p =>
       switch p {
+      // The block and transaction partitions read no logs, so no client
+      // filtering touches them.
+      | {selection: {onBlockRegistrations, onTransactionRegistrations}}
+        if onBlockRegistrations->Utils.Array.notEmpty ||
+          onTransactionRegistrations->Utils.Array.notEmpty =>
+        kept->Array.push(p)->ignore
       | {selection: {dependsOnAddresses: false}, mergeBlock: None}
         if standingRef.contents->Option.isNone =>
         standingRef := Some(p)
@@ -2627,6 +2683,7 @@ let make = (
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
   ~onBlockRegistrations=[],
+  ~onTransactionRegistrations: array<Internal.onTransactionRegistration>=[],
   ~blockLag=0,
   ~firstEventBlock=None,
   ~clientFilterAddressThreshold=None,
@@ -2647,16 +2704,15 @@ let make = (
     }
   })
 
-  let partitions = []
+  let (fetchedOnBlockRegistrations, onBlockRegistrations) =
+    onBlockRegistrations->Belt.Array.partition(BlockItem.isFetched)
 
-  if notDependingOnAddresses->Array.length > 0 {
+  let partitions = []
+  let pushAddressFreePartition = selection =>
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
       latestFetchedBlock,
-      selection: makeSelection(
-        ~dependsOnAddresses=false,
-        ~onEventRegistrations=notDependingOnAddresses,
-      ),
+      selection,
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,
       dynamicContract: None,
@@ -2666,6 +2722,35 @@ let make = (
       eventDensity: None,
       latestSourceRangeCapacityUpdateBlock: 0,
     })
+
+  if notDependingOnAddresses->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=notDependingOnAddresses),
+    )
+  }
+
+  // Apart from the wildcard events: a source reads blocks at a pace of its own
+  // (RPC pays a request per block), which would hold the log pages to it.
+  if fetchedOnBlockRegistrations->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=[],
+        ~onBlockRegistrations=fetchedOnBlockRegistrations,
+      ),
+    )
+  }
+
+  // Apart from the block partition too: a page of transactions is paced by how
+  // many it returns, a page of blocks by how many blocks it reads.
+  if onTransactionRegistrations->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=[],
+        ~onTransactionRegistrations,
+      ),
+    )
   }
 
   let normalSelection = makeSelection(
@@ -2753,7 +2838,8 @@ let make = (
 
   if (
     optimizedPartitions->OptimizedPartitions.count === 0 &&
-      onBlockRegistrations->Utils.Array.isEmpty
+    onBlockRegistrations->Utils.Array.isEmpty &&
+    onTransactionRegistrations->Utils.Array.isEmpty
   ) {
     JsError.throwWithMessage(
       `Invalid configuration: Nothing to fetch on chain ${chainId->ChainId.toString}. ` ++
@@ -2761,7 +2847,7 @@ let make = (
       `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
       `normalRegistrations=${normalRegistrations
         ->Array.length
-        ->Int.toString}. ` ++ `Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.`,
+        ->Int.toString}. ` ++ `Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock or onTransaction handlers.`,
     )
   }
 
@@ -2965,6 +3051,7 @@ let rollback = (
     ~mutItems=fetchState.buffer->Array.filter(item =>
       switch item {
       | Event({blockNumber})
+      | Transaction({blockNumber})
       | Block({blockNumber}) => blockNumber
       } <=
       targetBlockNumber

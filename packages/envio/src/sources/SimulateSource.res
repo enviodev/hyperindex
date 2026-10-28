@@ -24,8 +24,43 @@ let topicAt = (eventConfig: Internal.evmEventConfig, ~params: dict<unknown>, pos
     )
   }
 
+// A block item for every block in [fromBlock, toBlock] a selected registration
+// runs on, each carrying its block inline — the way `block_selection.rs` routes
+// a native source's blocks. One the simulated chain has no block for is skipped.
+let blockItems = (
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+  ~fromBlock,
+  ~toBlock,
+  ~getBlock,
+) => {
+  let items = []
+  if onBlockRegistrations->Utils.Array.notEmpty {
+    for blockNumber in fromBlock to toBlock {
+      let running =
+        onBlockRegistrations->Array.filter(reg =>
+          reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0)
+        )
+      if running->Utils.Array.notEmpty {
+        let block = getBlock(blockNumber)
+        running->Array.forEach(onBlockRegistration =>
+          items->Array.push(
+            Internal.Block({
+              onBlockRegistration,
+              blockNumber,
+              ?block,
+              skipped: ?(block->Option.isNone ? Some(true) : None),
+            }),
+          )
+        )
+      }
+    }
+  }
+  items
+}
+
 let make = (
   ~items: array<Internal.item>,
+  ~getBlock: int => option<Internal.eventBlock>,
   ~endBlock: int,
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,
@@ -55,7 +90,7 @@ let make = (
       ~fromBlock,
       ~toBlock,
       ~addressSet,
-      ~includeAllBlocks as _,
+      ~reorgableFrom as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection: FetchState.selection,
@@ -139,31 +174,51 @@ let make = (
         | Fuel | Svm => true
         }
 
-      let parsedQueueItems = items->Array.filter(item => {
-        let eventItem = item->Internal.castUnsafeEventItem
-        let {blockNumber, onEventRegistration} = eventItem
-        if blockNumber < fromBlock || blockNumber > toBlockQueried {
-          false
-        } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
-          false
-        } else if !(onEventRegistration->hasStarted(~blockNumber)) {
-          false
-        } else if !topicFiltersMatch(eventItem) {
-          false
-        } else {
-          onEventRegistration.isWildcard ||
-          eventItem.payload
-          ->Internal.getPayloadSrcAddress
-          ->isAddressAllowed(
-            ~contractName=onEventRegistration.eventConfig.contractName,
-            ~blockNumber,
+      let selectionTransactionIndexes =
+        selection.onTransactionRegistrations->Array.map(reg => reg.index)->Utils.Set.fromArray
+
+      let parsedQueueItems = items->Array.filter(item =>
+        switch item {
+        | Internal.Transaction({onTransactionRegistration, blockNumber, ?transaction}) =>
+          blockNumber >= fromBlock &&
+          blockNumber <= toBlockQueried &&
+          selectionTransactionIndexes->Utils.Set.has(onTransactionRegistration.index) &&
+          transaction->Option.mapOr(false, transaction =>
+            onTransactionRegistration->TransactionItem.matches(~transaction)
           )
+        | Internal.Block(_) => false
+        | Internal.Event(_) =>
+          let eventItem = item->Internal.castUnsafeEventItem
+          let {blockNumber, onEventRegistration} = eventItem
+          if blockNumber < fromBlock || blockNumber > toBlockQueried {
+            false
+          } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
+            false
+          } else if !(onEventRegistration->hasStarted(~blockNumber)) {
+            false
+          } else if !topicFiltersMatch(eventItem) {
+            false
+          } else {
+            onEventRegistration.isWildcard ||
+            eventItem.payload
+            ->Internal.getPayloadSrcAddress
+            ->isAddressAllowed(
+              ~contractName=onEventRegistration.eventConfig.contractName,
+              ~blockNumber,
+            )
+          }
         }
-      })
+      )
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        parsedQueueItems,
+        parsedQueueItems: parsedQueueItems->Array.concat(
+          selection.onBlockRegistrations->blockItems(
+            ~fromBlock,
+            ~toBlock=toBlockQueried,
+            ~getBlock,
+          ),
+        ),
         // EVM/Fuel keep transaction and block inline. SVM simulate returns a
         // store page so materialize + activity attach run the same path as HyperSync.
         transactionStore,

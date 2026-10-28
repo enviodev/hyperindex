@@ -127,27 +127,26 @@ module ResponseTypes = {
   }
 }
 
-module EventItems = {
-  // The whole per-query input: slot range, the partition's registration
-  // selection (by index), and its current addresses (program ids per program
-  // name). Instruction selections, field selection, and routing are derived
-  // on the Rust side.
+module Items = {
+  // The whole per-query input beside the partition's address set: slot range
+  // and what it selects from each table. Instruction selections, field
+  // selection, and routing are derived on the Rust side.
   type query = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
     toSlot: option<int>,
     // Absent means no server-side cap on the number of instructions returned.
     maxNumInstructions?: int,
-    registrationIndexes: array<int>,
+    onEventRegistrationIndexes: array<int>,
+    onBlockRegistrationIndexes: array<int>,
     // Program names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent program is filtered server-side.
     clientFilteredContracts: option<array<string>>,
-    // Return a block for every slot in the range, not only the ones an
-    // instruction landed on. Absent means only the slots instructions came
-    // from, which leaves a skipped slot indistinguishable from an unfetched
-    // one.
-    includeAllBlocks?: bool,
+    // Slots at or above this one can still be reorged, so a page reaching
+    // them reads every slot of its range, which also tells a skipped slot from
+    // an unfetched one. Absent when the range is final.
+    reorgableFrom?: int,
   }
 
   // NAPI leaves a Rust `None` field of an object as `undefined`, not `null`,
@@ -183,7 +182,8 @@ module EventItems = {
     // blocks live in the block store returned alongside, which keeps only the
     // slots items reference.
     blocks: array<ResponseTypes.block>,
-    items: array<item>,
+    eventItems: array<item>,
+    blockItems: array<BlockItem.t>,
   }
 }
 
@@ -195,10 +195,10 @@ type t = {
   // Returns the routed items plus pages of raw transactions and blocks (kept
   // in Rust), keyed by (slot, transactionIndex) / slot, materialised at batch
   // prep.
-  getEventItems: (
-    ~query: EventItems.query,
+  getItems: (
+    ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
+  ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
 }
 
 @send
@@ -207,6 +207,7 @@ external classFromConfig: (
   cfg,
   string,
   array<Registration.program>,
+  array<BlockItem.registrationInput>,
   AddressStore.t,
 ) => t = "fromConfig"
 
@@ -217,6 +218,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~programs=[],
+  ~onBlockRegistrations,
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
@@ -230,6 +232,7 @@ let make = (
     },
     `hyperindex/${envioVersion}`,
     programs,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
     addressStore,
   )
 }

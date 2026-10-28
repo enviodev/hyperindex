@@ -295,8 +295,10 @@ fn not_cached() -> Result<Vec<u8>> {
 }
 
 /// The page HyperSync would serve `query` from the chain's rows: the logs in
-/// `[from_block, to_block)` some log selection matches, with the blocks those
-/// logs belong to. The range ends at the server's height, as HyperSync's does.
+/// `[from_block, to_block)` some log selection matches and the transactions
+/// some transaction selection matches, with the blocks those rows belong to,
+/// or every block of the range under `include_all_blocks`. The range ends at
+/// the server's height, as HyperSync's does.
 fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
     let from_block = query.get("from_block").and_then(Value::as_u64).unwrap_or(0);
     let next_block = query
@@ -313,35 +315,88 @@ fn chain_page(chain: &Value, query: &Value, height: u64) -> Value {
             .unwrap_or_default()
     };
     let number = |row: &Value, key: &str| row.get(key).and_then(Value::as_u64);
-    let selections = query
-        .get("logs")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let in_range = |row: &Value, key: &str| {
+        number(row, key).is_some_and(|block| block >= from_block && block < next_block)
+    };
+    let selections = |table: &str| -> Vec<Value> {
+        query
+            .get(table)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
 
+    let log_selections = selections("logs");
     let logs: Vec<Value> = rows("logs")
         .into_iter()
         .filter(|log| {
-            number(log, "block_number")
-                .is_some_and(|block| block >= from_block && block < next_block)
-                && selections
+            in_range(log, "block_number")
+                && log_selections
                     .iter()
                     .any(|selection| log_matches(log, selection))
         })
         .collect();
+    let transaction_selections = selections("transactions");
+    let transactions: Vec<Value> = rows("transactions")
+        .into_iter()
+        .filter(|tx| {
+            in_range(tx, "block_number")
+                && transaction_selections
+                    .iter()
+                    .any(|selection| transaction_matches(tx, selection))
+        })
+        .collect();
+    let include_all_blocks = query
+        .get("include_all_blocks")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let blocks: Vec<Value> = rows("blocks")
         .into_iter()
         .filter(|block| {
-            logs.iter()
-                .any(|log| number(log, "block_number") == number(block, "number"))
+            (include_all_blocks && in_range(block, "number"))
+                || logs
+                    .iter()
+                    .chain(transactions.iter())
+                    .any(|row| number(row, "block_number") == number(block, "number"))
         })
         .collect();
 
     serde_json::json!({
         "nextBlock": next_block,
         "blocks": blocks,
+        "transactions": transactions,
         "logs": logs,
     })
+}
+
+/// HyperSync's transaction filter: every listed sender, recipient and selector
+/// must match one of its values, and the status when given. The selector is
+/// the first four bytes of the row's `input`.
+fn transaction_matches(tx: &Value, selection: &Value) -> bool {
+    let any_of = |values: Option<&Value>, actual: Option<&str>| match values
+        .and_then(Value::as_array)
+        .filter(|values| !values.is_empty())
+    {
+        None => true,
+        Some(values) => actual.is_some_and(|actual| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|value| value.eq_ignore_ascii_case(actual))
+        }),
+    };
+    let text = |key: &str| tx.get(key).and_then(Value::as_str);
+    let sighash = text("input")
+        .filter(|input| input.len() >= 10)
+        .map(|input| &input[..10]);
+    let status_matches = match selection.get("status").and_then(Value::as_u64) {
+        None => true,
+        Some(wanted) => tx.get("status").and_then(Value::as_u64) == Some(wanted),
+    };
+    any_of(selection.get("from"), text("from"))
+        && any_of(selection.get("to"), text("to"))
+        && any_of(selection.get("sighash"), sighash)
+        && status_matches
 }
 
 /// HyperSync's log filter: every listed address and topic position must match
@@ -470,7 +525,8 @@ async fn stream_heights(
 /// Row keys are HyperSync field names (`snake_case`, as in the query's
 /// `field_selection`). Values are `0x` hex strings, or numbers for the
 /// numeric fields. A key the row omits comes back null, which is how a test
-/// makes the server withhold a field the query asked for.
+/// makes the server withhold a field the query asked for. A key the query
+/// didn't select never comes back, as from HyperSync.
 fn build_page(spec: Option<&Value>, query: &Value, height: u64) -> Result<Vec<u8>> {
     let empty = Value::Null;
     let spec = spec.unwrap_or(&empty);
@@ -489,10 +545,18 @@ fn build_page(spec: Option<&Value>, query: &Value, height: u64) -> Result<Vec<u8
         .and_then(Value::as_i64)
         .unwrap_or(height as i64);
 
-    let blocks = encode_table(spec.get("blocks"), block_kind).context("encode blocks")?;
-    let transactions =
-        encode_table(spec.get("transactions"), transaction_kind).context("encode transactions")?;
-    let logs = encode_table(spec.get("logs"), log_kind).context("encode logs")?;
+    let blocks = encode_table(
+        Some(&project(spec.get("blocks"), "block", query)),
+        block_kind,
+    )
+    .context("encode blocks")?;
+    let transactions = encode_table(
+        Some(&project(spec.get("transactions"), "transaction", query)),
+        transaction_kind,
+    )
+    .context("encode transactions")?;
+    let logs = encode_table(Some(&project(spec.get("logs"), "log", query)), log_kind)
+        .context("encode logs")?;
 
     let mut message = capnp::message::Builder::new_default();
     {
@@ -526,6 +590,47 @@ fn build_page(spec: Option<&Value>, query: &Value, height: u64) -> Result<Vec<u8
     let mut out = Vec::new();
     capnp::serialize_packed::write_message(&mut out, &message).context("write capnp message")?;
     Ok(out)
+}
+
+/// The rows cut down to the query's field selection on `table`, as HyperSync
+/// answers, with `sighash` derived from the calldata. A table the query
+/// selects nothing on comes back whole, for a page spelled out without one.
+fn project(rows: Option<&Value>, table: &str, query: &Value) -> Value {
+    let rows = rows.cloned().unwrap_or(Value::Null);
+    let selected: Vec<&str> = match query
+        .get("field_selection")
+        .and_then(|selection| selection.get(table))
+        .and_then(Value::as_array)
+    {
+        Some(fields) => fields.iter().filter_map(Value::as_str).collect(),
+        None => return rows,
+    };
+    let Value::Array(rows) = rows else {
+        return rows;
+    };
+    Value::Array(
+        rows.into_iter()
+            .map(|row| {
+                let Value::Object(row) = row else {
+                    return row;
+                };
+                let mut projected = serde_json::Map::new();
+                for &name in &selected {
+                    let value = match row.get(name) {
+                        Some(value) => value.clone(),
+                        None if name == "sighash" => match row.get("input").and_then(Value::as_str)
+                        {
+                            Some(input) if input.len() >= 10 => Value::String(input[..10].into()),
+                            _ => continue,
+                        },
+                        None => continue,
+                    };
+                    projected.insert(name.to_string(), value);
+                }
+                Value::Object(projected)
+            })
+            .collect(),
+    )
 }
 
 fn field_u64(value: &Value, name: &str) -> Result<u64> {
@@ -891,6 +996,30 @@ mod tests {
     }
 
     #[test]
+    fn a_page_carries_only_the_fields_the_query_selected() {
+        let decoded = decode(
+            serde_json::json!({"transactions": [{
+                "transaction_index": 0,
+                "to": "0x00000000000000000000000000000000000000aa",
+                "input": "0xa9059cbb0011",
+                "status": 1,
+            }]}),
+            serde_json::json!({"field_selection": {"transaction": ["sighash", "status"]}}),
+        );
+        let transaction = &decoded.transactions[0];
+        assert_eq!(
+            (
+                transaction.transaction_index,
+                transaction.to.as_ref().map(Hex::encode_hex),
+                transaction.input.as_ref().map(Hex::encode_hex),
+                transaction.sighash.as_ref().map(Hex::encode_hex),
+                transaction.status.as_ref().map(|status| status.to_u8()),
+            ),
+            (None, None, None, Some("0xa9059cbb".to_string()), Some(1))
+        );
+    }
+
+    #[test]
     fn a_key_a_single_row_omits_decodes_as_null() {
         let decoded = decode(
             serde_json::json!({"transactions": [
@@ -946,7 +1075,74 @@ mod tests {
             serde_json::json!({
                 "nextBlock": 8,
                 "blocks": [{"number": 5}],
+                "transactions": [],
                 "logs": [log(5, "0x00000000000000000000000000000000000000AA", "0x0a")],
+            })
+        );
+    }
+
+    #[test]
+    fn a_chain_serves_the_transactions_a_selection_matches_with_their_blocks() {
+        let tx = |block: u64, from: &str, to: &str, input: &str, status: u64| {
+            serde_json::json!({
+                "block_number": block, "transaction_index": 0,
+                "from": from, "to": to, "input": input, "status": status,
+            })
+        };
+        let alice = "0x00000000000000000000000000000000000000aa";
+        let bob = "0x00000000000000000000000000000000000000bb";
+        let chain = serde_json::json!({
+            "blocks": [{"number": 5}, {"number": 6}, {"number": 7}, {"number": 8}],
+            "transactions": [
+                tx(5, "0x00000000000000000000000000000000000000AA", bob, "0xa9059cbb00", 1),
+                tx(6, bob, alice, "0x", 1),
+                tx(7, bob, bob, "0xa9059cbb11", 0),
+                tx(8, alice, bob, "0x", 1),
+            ],
+        });
+        let page = chain_page(
+            &chain,
+            &serde_json::json!({
+                "from_block": 5,
+                "to_block": 8,
+                "transactions": [
+                    {"from": [alice]},
+                    {"sighash": ["0xa9059cbb"], "status": 1},
+                ],
+            }),
+            7,
+        );
+        assert_eq!(
+            page,
+            serde_json::json!({
+                "nextBlock": 8,
+                "blocks": [{"number": 5}],
+                "transactions": [
+                    tx(5, "0x00000000000000000000000000000000000000AA", bob, "0xa9059cbb00", 1),
+                ],
+                "logs": [],
+            })
+        );
+    }
+
+    #[test]
+    fn a_chain_serves_every_block_of_the_range_when_asked_to() {
+        let chain = serde_json::json!({
+            "blocks": [{"number": 5}, {"number": 6}, {"number": 7}],
+            "logs": [],
+        });
+        let page = chain_page(
+            &chain,
+            &serde_json::json!({"from_block": 6, "to_block": 20, "include_all_blocks": true}),
+            7,
+        );
+        assert_eq!(
+            page,
+            serde_json::json!({
+                "nextBlock": 8,
+                "blocks": [{"number": 6}, {"number": 7}],
+                "transactions": [],
+                "logs": [],
             })
         );
     }

@@ -118,6 +118,19 @@ type onBlockOptions<'chain> = {
   where?: onBlockWhereArgs<'chain> => unknown,
 }
 
+// Mirrors `EvmOnTransactionHandlerArgs` in `index.d.ts`.
+type evmOnTransactionArgs<'context> = {
+  transaction: Internal.eventTransaction,
+  block: Internal.eventBlock,
+  context: 'context,
+}
+
+type onTransactionOptions<'chain> = {
+  name: string,
+  where?: onBlockWhereArgs<'chain> => unknown,
+  fields?: unknown,
+}
+
 type whereOperator<'fieldType> = {
   /** Matches entities where the field equals the given value. */
   _eq?: 'fieldType,

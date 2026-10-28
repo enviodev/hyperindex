@@ -430,6 +430,72 @@ let resolveInlineFieldSelection = (
   )
 }
 
+// Resolve a block handler's `fields` option, the same shape `onEvent` takes but
+// with the block table alone to select from. The block's key comes with every
+// selection, so a selection of nothing else is no selection.
+let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t): option<float> =>
+  if typeof(fields) === #undefined {
+    None
+  } else {
+    let registration = `\`indexer.${ecosystem.onBlockMethodName}("${name}")\``
+    switch ecosystem.onBlockFields {
+    | None =>
+      JsError.throwWithMessage(
+        `Fuel block handlers can't select block fields. Remove the fields option of ${registration}.`,
+      )
+    | Some({fields: validFields, keyField, mask}) =>
+      validateFieldsShapeOrThrow(fields, ~registration, ~validKeys=["block"], ~shapeNoun="block")
+      let blockFields = parseFieldsOrThrow(
+        selectionList(fields, "block"),
+        ~valid=Utils.Set.fromArray(validFields),
+        ~kind="block",
+        ~registration,
+      )
+      blockFields->Utils.Set.delete(keyField)->ignore
+      if blockFields->Utils.Set.size === 0 {
+        None
+      } else {
+        blockFields->Utils.Set.add(keyField)->ignore
+        Some(mask(blockFields))
+      }
+    }
+  }
+
+let onTransactionAlwaysSelectedTransactionFields = ["transactionIndex", "hash", "from", "to"]
+let onTransactionAlwaysSelectedBlockFields = ["number", "timestamp", "hash"]
+
+let resolveOnTransactionFieldSelection = (fields: unknown, ~name): Internal.fieldSelection => {
+  let registration = `\`indexer.onTransaction("${name}")\``
+  let fields =
+    typeof(fields) === #undefined ? Dict.make()->(Utils.magic: dict<unit> => unknown) : fields
+  validateFieldsShapeOrThrow(
+    fields,
+    ~registration,
+    ~validKeys=["transaction", "block"],
+    ~shapeNoun="transaction and block",
+  )
+  let transactionFields = parseFieldsOrThrow(
+    selectionList(fields, "transaction"),
+    ~valid=validTransactionFields,
+    ~kind="transaction",
+    ~registration,
+  )
+  let blockFields = parseFieldsOrThrow(
+    selectionList(fields, "block"),
+    ~valid=validBlockFields,
+    ~kind="block",
+    ~registration,
+  )
+  transactionFields->Utils.Set.addMany(onTransactionAlwaysSelectedTransactionFields)
+  blockFields->Utils.Set.addMany(onTransactionAlwaysSelectedBlockFields)
+  Internal.makeFieldSelection(
+    ~blockFields,
+    ~transactionFields,
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+  )
+}
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (

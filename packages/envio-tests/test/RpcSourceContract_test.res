@@ -96,7 +96,7 @@ let invoke = (
   ~retry=0,
 ) => {
   source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock=100,
     ~toBlock=Some(100),
     ~addressSet=addressStore->AddressStore.makeSet(
@@ -106,6 +106,8 @@ let invoke = (
     ~partitionId="pin-partition",
     ~selection={
       dependsOnAddresses: true,
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=Some(5_000),
@@ -582,7 +584,7 @@ describe("RPC source public contract", () => {
           RpcSourcePins.capture(
             () =>
               source.getItemsOrThrow(
-                ~includeAllBlocks=false,
+                ~reorgableFrom=None,
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
                 ~addressSet=addressStore->AddressStore.makeSet(
@@ -592,6 +594,8 @@ describe("RPC source public contract", () => {
                 ~partitionId="pin-partition",
                 ~selection={
                   dependsOnAddresses: true,
+                  onBlockRegistrations: [],
+                  onTransactionRegistrations: [],
                   onEventRegistrations: [(registration :> Internal.onEventRegistration)],
                 },
                 ~itemsTarget=Some(5_000),
@@ -717,7 +721,7 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItemsOrThrow(
-              ~includeAllBlocks=false,
+              ~reorgableFrom=None,
               ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressSet=addressStore->AddressStore.emptySet,
@@ -725,6 +729,8 @@ describe("RPC source public contract", () => {
               ~partitionId="skip-all",
               ~selection={
                 dependsOnAddresses: false,
+                onBlockRegistrations: [],
+                onTransactionRegistrations: [],
                 onEventRegistrations: [(registration :> Internal.onEventRegistration)],
               },
               ~itemsTarget=Some(5_000),
@@ -842,7 +848,7 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItemsOrThrow(
-              ~includeAllBlocks=false,
+              ~reorgableFrom=None,
               ~fromBlock=100,
               ~toBlock=Some(100),
               ~addressSet=addressStore
@@ -852,6 +858,8 @@ describe("RPC source public contract", () => {
               ~partitionId="contract-scope",
               ~selection={
                 dependsOnAddresses: true,
+                onBlockRegistrations: [],
+                onTransactionRegistrations: [],
                 onEventRegistrations: [
                   (eventA :> Internal.onEventRegistration),
                   (eventB :> Internal.onEventRegistration),

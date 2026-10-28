@@ -26,6 +26,7 @@ let makeOnBlockRegistration = (
   endBlock,
   interval,
   handler: Utils.magic("mock handler"),
+  blockFieldMask: None,
 }
 
 let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBlockRegistrations) => {
@@ -78,6 +79,7 @@ let itemCoordinate = (item: Internal.item) =>
       blockNumber,
       blockHandler(onBlockRegistration.index),
     )
+  | Internal.Transaction(_) => JsError.throwWithMessage("Expected an event or block item")
   }
 
 describe("FetchState onBlock functionality", () => {
@@ -113,7 +115,7 @@ describe("FetchState onBlock functionality", () => {
         item =>
           switch item {
           | Block(_) => true
-          | Event(_) => false
+          | Event(_) | Transaction(_) => false
           },
       )
       ->Array.last

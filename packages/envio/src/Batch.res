@@ -263,8 +263,7 @@ let make = (
         // The buffer is sorted, so a log's items are consecutive: the first of
         // them is the only one that counts as an event.
         let isNewEvent =
-          idx === 0 ||
-            !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
+          idx === 0 || !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
         if isNewEvent {
           chainEventsProcessed := chainEventsProcessed.contents + 1
         }
@@ -389,8 +388,7 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   while idx.contents < checkpointsLength && result.contents === None {
     let checkpointChainId = batch.checkpointChainIds->Array.getUnsafe(idx.contents)
     if (
-      checkpointChainId === chainId &&
-        batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
+      checkpointChainId === chainId && batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
     ) {
       result := Some(batch.checkpointBlockNumbers->Array.getUnsafe(idx.contents))
     } else {
@@ -400,7 +398,9 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   result.contents
 }
 
-let findLastEventItem = (batch: t, ~chainId) => {
+// The block of the chain's last event or transaction item, for the latency
+// metric. Absent when the payload block is: an SVM slot with no block row.
+let findLastProcessedBlock = (batch: t, ~chainId): option<Internal.eventBlock> => {
   let idx = ref(batch.items->Array.length - 1)
   let result = ref(None)
   while idx.contents >= 0 && result.contents === None {
@@ -409,13 +409,15 @@ let findLastEventItem = (batch: t, ~chainId) => {
     | Internal.Event(_) as eventItem => {
         let eventItem = eventItem->Internal.castUnsafeEventItem
         if eventItem.chainId === chainId {
-          result := Some(eventItem)
+          result := Some(eventItem.payload->Internal.getPayloadBlock->Nullable.toOption)
         } else {
           idx := idx.contents - 1
         }
       }
-    | Internal.Block(_) => idx := idx.contents - 1
+    | Internal.Transaction({chainId: itemChainId, ?block}) if itemChainId === chainId =>
+      result := Some(block)
+    | Internal.Block(_) | Internal.Transaction(_) => idx := idx.contents - 1
     }
   }
-  result.contents
+  result.contents->Option.flatMap(block => block)
 }

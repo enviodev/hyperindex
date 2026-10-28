@@ -23,9 +23,15 @@ let decodeLogs = async (
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
         ("data", JSON.String(data)),
         ("blockNumber", JSON.String("0x1")),
-        ("transactionHash", JSON.String("0xabababababababababababababababababababababababababababababababab")),
+        (
+          "transactionHash",
+          JSON.String("0xabababababababababababababababababababababababababababababababab"),
+        ),
         ("transactionIndex", JSON.String("0x0")),
-        ("blockHash", JSON.String("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0")),
+        (
+          "blockHash",
+          JSON.String("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"),
+        ),
         ("logIndex", JSON.String(`0x${i->Int.toString(~radix=16)}`)),
         ("removed", JSON.Boolean(false)),
       ]),
@@ -90,7 +96,9 @@ let decodeLogs = async (
           fromBlock: 0,
           toBlockCeiling: 0,
           partitionId: "0",
-          registrationIndexes: eventRegistrations->Array.map(reg => reg.index),
+          onEventRegistrationIndexes: eventRegistrations->Array.map(reg => reg.index),
+          onBlockRegistrationIndexes: [],
+          onTransactionRegistrationIndexes: [],
           clientFilteredContracts: None,
           retry: 0,
         },
@@ -98,7 +106,7 @@ let decodeLogs = async (
         BlockStore.make(~ecosystem=Ecosystem.Evm),
         TransactionStore.make(~ecosystem=Ecosystem.Evm),
       )
-      result.items
+      result.eventItems
     },
   )
 }

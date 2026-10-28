@@ -1,5 +1,6 @@
 mod address_store;
 mod block_hash_pagination;
+mod block_selection;
 mod block_store;
 mod cli_args;
 mod clickhouse;
@@ -42,6 +43,7 @@ mod template_dirs;
 #[cfg(test)]
 mod test_servers;
 mod text_position;
+mod transaction_selection;
 mod transaction_store;
 mod ts_loader;
 mod tui;

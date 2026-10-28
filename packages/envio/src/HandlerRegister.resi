@@ -1,6 +1,7 @@
 type chainRegistrations = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   onBlockRegistrations: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations: array<Internal.onTransactionRegistration>,
 }
 type registrationsByChainId = dict<chainRegistrations>
 
@@ -44,6 +45,15 @@ let defaultBlockRange: blockRange
 let registerOnBlock: (
   ~name: string,
   ~where: unknown,
+  ~fields: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
+  ~getChainsObject: Config.t => dict<unknown>,
+) => unit
+
+let registerOnTransaction: (
+  ~name: string,
+  ~where: unknown,
+  ~fields: unknown,
+  ~handler: Internal.onTransactionArgs => promise<unit>,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => unit

@@ -85,10 +85,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
-          selection: {
-            dependsOnAddresses: false,
-            onEventRegistrations,
-          },
+          selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations),
           addresses: TestAddresses.setOf([]),
         }
 
@@ -147,6 +144,11 @@ let getItemKey = (item: Internal.item) =>
   switch item {
   | Event({chainId, blockNumber, logIndex}) => (chainId, blockNumber, logIndex)
   | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
+  | Transaction({chainId, blockNumber, transactionIndex}) => (
+      chainId,
+      blockNumber,
+      transactionIndex,
+    )
   }
 
 // Advance each chain's fetchState to its post-batch state, simulating the loop
@@ -262,7 +264,10 @@ describe("IndexerState", () => {
                 fromBlock: 0,
                 toBlock: None,
                 isChunk: false,
-                selection: {dependsOnAddresses: false, onEventRegistrations},
+                selection: FetchState.makeSelection(
+                  ~dependsOnAddresses=false,
+                  ~onEventRegistrations,
+                ),
                 addresses: TestAddresses.setOf([]),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -340,7 +345,7 @@ describe("IndexerState", () => {
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
-          selection: {dependsOnAddresses: false, onEventRegistrations},
+          selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations),
           addresses: TestAddresses.setOf([]),
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])

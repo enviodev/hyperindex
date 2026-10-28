@@ -261,10 +261,21 @@ let makeInternal = (
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
   // are already collected by `HandlerRegister.finishRegistration`, keyed by
   // chain - this just looks up this chain's slice.
-  let {onEventRegistrations, onBlockRegistrations} =
+  let {onEventRegistrations, onBlockRegistrations, onTransactionRegistrations} =
     registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->ChainId.toString)
-    ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
+    ->Option.getOr({
+      onEventRegistrations: [],
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
+    })
+  // A block handler without `_gte` counts its interval from the chain's start
+  // block. Spelled out here because a source matching blocks to handlers needs
+  // the origin, and the chain's start block is only resolved by now.
+  let onBlockRegistrations = onBlockRegistrations->Array.map(reg => {
+    ...reg,
+    startBlock: Some(reg.startBlock->Option.getOr(startBlock)),
+  })
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
@@ -307,6 +318,7 @@ let makeInternal = (
       chainConfig.blockLag,
     ),
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~firstEventBlock,
     // Fuel and SVM route through the address store like EVM does, so the
     // client-side path works for them - but their address counts are nowhere
@@ -336,6 +348,8 @@ let makeInternal = (
   let sources = ChainSources.make(
     ~chainConfig,
     ~onEventRegistrations,
+    ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~addressStore,
     ~lowercaseAddresses,
     ~blockStore,
@@ -796,7 +810,7 @@ type transactionGroups = {
 type blockGroups = {
   blockBlockNumbers: array<int>,
   blockMasks: array<float>,
-  blockItemGroups: array<array<Internal.eventItem>>,
+  blockHolderGroups: array<array<Internal.blockHolder>>,
 }
 
 // Walk `items` once to build both the transaction-store and block-store
@@ -813,7 +827,18 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
 
   let blockBlockNumbers = []
   let blockMasks = []
-  let blockItemGroups = []
+  let blockHolderGroups = []
+  let addBlockHolder = (holder, ~blockNumber, ~mask) => {
+    let last = blockHolderGroups->Array.length - 1
+    if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
+      blockHolderGroups->Array.getUnsafe(last)->Array.push(holder)
+      blockMasks->Array.setUnsafe(last, FieldMask.orMask(blockMasks->Array.getUnsafe(last), mask))
+    } else {
+      blockBlockNumbers->Array.push(blockNumber)
+      blockMasks->Array.push(mask)
+      blockHolderGroups->Array.push([holder])
+    }
+  }
 
   items->Array.forEach(item =>
     switch item {
@@ -851,24 +876,56 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
       | Some(_) => () // Simulate carries the block inline.
       | None =>
-        let mask = eventItem.onEventRegistration.fieldSelection.blockMask
-        let last = blockItemGroups->Array.length - 1
-        if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
-          blockItemGroups->Array.getUnsafe(last)->Array.push(eventItem)
-          blockMasks->Array.setUnsafe(
+        eventItem.payload
+        ->Internal.payloadBlockHolder
+        ->addBlockHolder(~blockNumber, ~mask=eventItem.onEventRegistration.fieldSelection.blockMask)
+      }
+    // A transaction item is its own holder: the stores write under the
+    // `transaction` and `block` keys the handler reads. Simulate and mock
+    // sources carry both inline.
+    | Internal.Transaction({transaction: ?Some(_), block: ?Some(_)}) => ()
+    | Internal.Transaction({
+        onTransactionRegistration: {fieldSelection},
+        blockNumber,
+        transactionIndex,
+        ?transaction,
+        ?block,
+      }) =>
+      if transaction->Option.isNone {
+        anyTransactionFieldSelected := true
+        let last = payloadGroups->Array.length - 1
+        let holder = item->Internal.itemTransactionHolder
+        if (
+          last >= 0 &&
+          txBlockNumbers->Array.getUnsafe(last) == blockNumber &&
+          transactionIndices->Array.getUnsafe(last) == transactionIndex
+        ) {
+          payloadGroups->Array.getUnsafe(last)->Array.push(holder)
+          transactionMasks->Array.setUnsafe(
             last,
-            FieldMask.orMask(blockMasks->Array.getUnsafe(last), mask),
+            FieldMask.orMask(
+              transactionMasks->Array.getUnsafe(last),
+              fieldSelection.transactionMask,
+            ),
           )
         } else {
-          blockBlockNumbers->Array.push(blockNumber)
-          blockMasks->Array.push(mask)
-          blockItemGroups->Array.push([eventItem])
+          txBlockNumbers->Array.push(blockNumber)
+          transactionIndices->Array.push(transactionIndex)
+          transactionMasks->Array.push(fieldSelection.transactionMask)
+          payloadGroups->Array.push([holder])
         }
       }
-    // onBlock items build their block from the handler's own block number, not
-    // from the stores - which is what lets the sources keep only the blocks and
-    // transactions an event item references.
-    | Internal.Block(_) => ()
+      if block->Option.isNone {
+        item->Internal.itemBlockHolder->addBlockHolder(~blockNumber, ~mask=fieldSelection.blockMask)
+      }
+    | Internal.Block({block: ?Some(_)}) => () // Simulate carries the block inline.
+    | Internal.Block({skipped: ?Some(true)}) => ()
+    | Internal.Block({onBlockRegistration: {blockFieldMask: Some(mask)}, blockNumber}) =>
+      item->Internal.itemBlockHolder->addBlockHolder(~blockNumber, ~mask)
+    // A handler reading only the block number gets its block built from the
+    // item's own number, which is why a source only keeps blocks some item
+    // selected fields of.
+    | Internal.Block({onBlockRegistration: {blockFieldMask: None}}) => ()
     }
   )
 
@@ -880,7 +937,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       payloadGroups,
       anyTransactionFieldSelected: anyTransactionFieldSelected.contents,
     },
-    {blockBlockNumbers, blockMasks, blockItemGroups},
+    {blockBlockNumbers, blockMasks, blockHolderGroups},
   )
 }
 
@@ -921,15 +978,15 @@ let applyTransactionGroups = async (
 
 // Materialise a `BlockStore` against precomputed groups (see `groupBatchItems`).
 let applyBlockGroups = async (store: BlockStore.t, g: blockGroups, ~shouldChecksum) => {
-  if g.blockItemGroups->Utils.Array.notEmpty {
+  if g.blockHolderGroups->Utils.Array.notEmpty {
     let blocks = await store->BlockStore.materialize(
       ~blockNumbers=g.blockBlockNumbers,
       ~masks=g.blockMasks,
       ~shouldChecksum,
     )
-    g.blockItemGroups->Array.forEachWithIndex((group, i) => {
+    g.blockHolderGroups->Array.forEachWithIndex((group, i) => {
       let block = blocks->Array.getUnsafe(i)
-      group->Array.forEach(ei => ei.payload->Internal.setPayloadBlock(block))
+      group->Array.forEach(holder => holder->Internal.setHolderBlock(block))
     })
   }
 }
@@ -1047,6 +1104,17 @@ let enterReorgThreshold = (cs: t) => {
 }
 
 let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
+
+// The first block a query can find still reorgable, the same window reorg
+// detection compares. Before the threshold, fetching stops below it; a chain
+// that never rolls back never enters the threshold, so realtime opens it too,
+// where reorgs are still detected and reported.
+let reorgableFrom = (cs: t, ~isRealtime) =>
+  if cs.isInReorgThreshold || isRealtime {
+    Some(Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0))
+  } else {
+    None
+  }
 
 // Whether the chain's writes need history: only what a rollback could still
 // reach. A chain with no reorg depth is never rolled back, however far its
@@ -1209,16 +1277,11 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 
   switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(chainId) {
   | Some(chainAfterBatch) => {
-      // Calculate and set latency metrics. The payload block is materialised or
-      // inline by processing time; its timestamp may still be absent (e.g. an
-      // SVM slot with no block row) - the metric is skipped then.
+      // Calculate and set latency metrics. The block is materialised or inline
+      // by processing time; its timestamp may still be absent (e.g. an SVM
+      // slot with no block row) - the metric is skipped then.
       switch batch
-      ->Batch.findLastEventItem(~chainId)
-      ->Option.flatMap(eventItem =>
-        eventItem.payload
-        ->Internal.getPayloadBlock
-        ->Nullable.toOption
-      )
+      ->Batch.findLastProcessedBlock(~chainId)
       ->Option.flatMap(block =>
         block
         ->(Utils.magic: Internal.eventBlock => dict<unknown>)

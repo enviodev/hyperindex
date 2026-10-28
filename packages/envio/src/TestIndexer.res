@@ -658,6 +658,7 @@ let cloneRegistrations = (
       {
         HandlerRegister.onEventRegistrations: chainRegistrations.onEventRegistrations->Array.copy,
         onBlockRegistrations: chainRegistrations.onBlockRegistrations->Array.copy,
+        onTransactionRegistrations: chainRegistrations.onTransactionRegistrations->Array.copy,
       },
     )
   )

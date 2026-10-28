@@ -7,6 +7,8 @@ type options = {
   chainId: ChainId.t,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  onBlockRegistrations?: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations?: array<Internal.onTransactionRegistration>,
   lowercaseAddresses: bool,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
@@ -25,6 +27,8 @@ let make = (
     url,
     chainId,
     onEventRegistrations,
+    ?onBlockRegistrations,
+    ?onTransactionRegistrations,
     lowercaseAddresses,
     addressStore,
     blockStore,
@@ -41,10 +45,14 @@ let make = (
   | Some(host) => host
   }
   let name = `RPC (${urlHost})`
+  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
+  let onTransactionRegistrations = onTransactionRegistrations->Option.getOr([])
 
   let rpcClient = EvmRpcClient.make(
     ~url,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -55,7 +63,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks as _,
+    ~reorgableFrom as _,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -71,7 +79,11 @@ let make = (
     | None => knownHeight
     }
 
-    if selection.onEventRegistrations->Utils.Array.isEmpty {
+    if (
+      selection.onEventRegistrations->Utils.Array.isEmpty &&
+      selection.onBlockRegistrations->Utils.Array.isEmpty &&
+      selection.onTransactionRegistrations->Utils.Array.isEmpty
+    ) {
       throw(
         Source.GetItemsError(
           UnsupportedSelection({
@@ -87,7 +99,11 @@ let make = (
         fromBlock,
         toBlockCeiling: toBlock,
         partitionId,
-        registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
+        onTransactionRegistrationIndexes: selection.onTransactionRegistrations->Array.map(reg =>
+          reg.index
+        ),
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
       },
@@ -175,7 +191,15 @@ let make = (
 
     let parsingTimeRef = Performance.now()
     let parsedQueueItems =
-      result.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      result.eventItems
+      ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      ->Array.concat(result.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
+      ->Array.concat(
+        result.transactionItems->TransactionItem.toInternalItems(
+          ~onTransactionRegistrations,
+          ~chainId,
+        ),
+      )
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     {

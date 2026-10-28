@@ -276,6 +276,17 @@ pub fn block_extra_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     extra_columns(BLOCK, selected)
 }
 
+/// The columns filling the block store fields set in `mask`.
+pub fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
+    use strum::VariantArray;
+    let selected: Vec<String> = crate::block_store::SvmBlockField::VARIANTS
+        .iter()
+        .filter(|field| mask & (1u64 << (**field as u32)) != 0)
+        .map(|field| field.name().to_string())
+        .collect();
+    block_extra_columns(&selected)
+}
+
 pub fn instruction_query_columns(
     selected: &[String],
     has_account_filters: bool,

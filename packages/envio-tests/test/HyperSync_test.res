@@ -15,8 +15,7 @@ let addressStore = AddressStore.make(
 describe_skip("Test Hyperliquid broken transaction response", () => {
   Async.it("should handle broken transaction response", async _t => {
     let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-    let page = await HyperSync.GetLogs.query(
-      ~includeAllBlocks=false,
+    let page = await HyperSync.GetItems.query(
       ~client=HyperSyncClient.make(
         ~url="https://645749.hypersync.xyz",
         ~apiToken=testApiToken,
@@ -46,12 +45,16 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
         ],
         ~addressStore,
       ),
-      ~fromBlock=12403138,
-      ~toBlock=Some(12403139),
-      ~maxNumLogs=Some(5000),
-      ~registrationIndexes=[0],
+      ~query={
+        fromBlock: 12403138,
+        toBlock: Some(12403139),
+        maxNumLogs: 5000,
+        onEventRegistrationIndexes: [0],
+        onBlockRegistrationIndexes: [],
+        onTransactionRegistrationIndexes: [],
+        clientFilteredContracts: None,
+      },
       ~addressSet=addressStore->AddressStore.emptySet,
-      ~clientFilteredContracts=None,
     )
 
     Console.log(page)

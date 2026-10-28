@@ -8,6 +8,12 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
+let hasContractRegister = (item: Internal.item) =>
+  switch item {
+  | Event({onEventRegistration: {contractRegister: Some(_)}}) => true
+  | Event(_) | Block(_) | Transaction(_) => false
+  }
+
 let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
   let contractRegister = switch (item->Internal.castUnsafeEventItem).onEventRegistration {
   | {contractRegister: Some(contractRegister)} => contractRegister
@@ -96,10 +102,10 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
-    let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
-      let eventItem = item->Internal.castUnsafeEventItem
-      eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
-    })
+    let numContractRegisterEvents =
+      parsedQueueItems->Array.reduce(0, (count, item) =>
+        item->hasContractRegister ? count + 1 : count
+      )
     if numContractRegisterEvents === 0 {
       chainState
       ->ChainState.logger
@@ -203,8 +209,7 @@ let rec onQueryResponse = async (
       let itemsWithContractRegister = []
       for idx in 0 to newItems->Array.length - 1 {
         let item = newItems->Array.getUnsafe(idx)
-        let eventItem = item->Internal.castUnsafeEventItem
-        if eventItem.onEventRegistration.contractRegister !== None {
+        if item->hasContractRegister {
           itemsWithContractRegister->Array.push(item)
         }
       }
@@ -266,10 +271,17 @@ and applyQueryResponse = (
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
-  if state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0 {
-    chainState->ChainState.setEndBlockToFirstEvent(
-      ~blockNumber=newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
-    )
+  if state->IndexerState.exitAfterFirstEventBlock {
+    switch newItems->Array.find(item =>
+      switch item {
+      | Internal.Event(_) | Transaction(_) => true
+      | Block(_) => false
+      }
+    ) {
+    | Some(item) =>
+      chainState->ChainState.setEndBlockToFirstEvent(~blockNumber=item->Internal.getItemBlockNumber)
+    | None => ()
+    }
   }
 }
 
@@ -340,6 +352,7 @@ let fetchChain = async (
               ~query,
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
+              ~reorgableFrom=chainState->ChainState.reorgableFrom(~isRealtime),
             )
             await onQueryResponse(
               state,

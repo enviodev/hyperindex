@@ -1,6 +1,6 @@
 open Vitest
 
-let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+let normalSelection = FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[])
 
 let mockFullPartition = (
   ~partitionIndex,

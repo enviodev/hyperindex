@@ -259,7 +259,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         fromBlock,
         toBlockCeiling,
         partitionId: "0",
-        registrationIndexes: indexes,
+        onEventRegistrationIndexes: indexes,
+        onBlockRegistrationIndexes: [],
+        onTransactionRegistrationIndexes: [],
         clientFilteredContracts: None,
         retry: 0,
       },
@@ -313,7 +315,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~indexes=[3],
           ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
-        let {EvmRpcClient.items: items, toBlock} = result
+        let {EvmRpcClient.eventItems: items, toBlock} = result
         (
           toBlock,
           items->Array.map(
@@ -384,7 +386,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let ({EvmRpcClient.items: items}, _, _) = await client->callNextPage(
+        let ({EvmRpcClient.eventItems: items}, _, _) = await client->callNextPage(
           ~fromBlock=1,
           ~toBlockCeiling=1,
           ~indexes=[3],
@@ -493,7 +495,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~indexes=[3],
           ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
-        (result.kind, result.items->Array.length)
+        (result.kind, result.eventItems->Array.length)
       },
     )
 
@@ -684,7 +686,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             ~indexes=[3],
             ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
           )
-          (result.kind, result.items->Array.length, peakInFlight.contents)
+          (result.kind, result.eventItems->Array.length, peakInFlight.contents)
         },
       )
 
