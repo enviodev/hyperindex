@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use napi::bindgen_prelude::{ArrayBuffer, Buffer, Object, PromiseRaw};
-use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
-use napi::{Env, Status};
+use napi::Env;
 use napi_derive::napi;
+use serde_json::json;
 
 use super::rows::ResultSet;
 use super::types::{
@@ -22,6 +22,7 @@ use crate::clickhouse::table::ClickHouseTableInput;
 use crate::columnar::{self, Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
+use crate::logger::{Level, Logger};
 use crate::postgres;
 use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
 use crate::postgres::ddl::{ColumnSpec, TableSpec};
@@ -435,24 +436,16 @@ pub struct JsStorage {
 
 #[napi]
 impl JsStorage {
-    /// `onIndexEvent` hears what Postgres's indexes are doing, and `onWarning`
-    /// what ClickHouse retried, for the logs.
+    /// Logs what Postgres's indexes are doing and what ClickHouse retried
+    /// through `logger`, with `boundFieldsJson` as the JavaScript logger binds
+    /// them.
     #[napi(factory)]
     pub fn create(
-        env: &Env,
         options: StorageOptions,
-        mut on_index_event: ThreadsafeFunction<IndexEvent, (), IndexEvent, Status, false>,
-        mut on_warning: ThreadsafeFunction<String, (), String, Status, false>,
+        logger: &Logger,
+        bound_fields_json: Vec<String>,
     ) -> napi::Result<Self> {
-        // Unreferenced, or a storage nobody closed would keep the process from
-        // exiting. The deprecation points at the `Weak` type parameter instead,
-        // but a weak callback can be collected once JS drops its own reference —
-        // which it does immediately, the closure being passed inline — and the
-        // events would then stop arriving with nothing to show for it.
-        #[allow(deprecated)]
-        on_index_event.unref(env)?;
-        #[allow(deprecated)]
-        on_warning.unref(env)?;
+        let logger = logger.bind(bound_fields_json);
         let chain_id_mode = ChainIdMode::parse(&options.chain_id_mode).map_err(to_napi)?;
         let pg = options.postgres;
         let port = u16::try_from(pg.port)
@@ -473,13 +466,14 @@ impl JsStorage {
         let postgres = Arc::new(postgres::storage::Storage::new(
             client,
             postgres::storage::Settings {
-                pg_schema: pg.pg_schema,
+                pg_schema: pg.pg_schema.clone(),
                 pg_user: pg.user,
                 chain_id_mode,
                 numeric_array_as_text: pg.is_hasura_enabled,
             },
-            Arc::new(move |event| {
-                on_index_event.call(event, ThreadsafeFunctionCallMode::NonBlocking);
+            Arc::new({
+                let logger = logger.clone();
+                move |event: IndexEvent| event.log(&logger, &pg.pg_schema)
             }),
         ));
         let clickhouse = options
@@ -495,8 +489,7 @@ impl JsStorage {
                         },
                         Tuning::default(),
                         Arc::new(move |message: &str| {
-                            on_warning
-                                .call(message.to_string(), ThreadsafeFunctionCallMode::NonBlocking);
+                            logger.log(Level::WARN, message, &json!({"storage": "clickhouse"}));
                         }),
                         clickhouse::storage::Settings {
                             chain_id_mode,

@@ -305,32 +305,16 @@ type batch = {
 
 type writeTiming = {store: store, seconds: float}
 
-// What a build was for, which decides how much an existing index has to match.
-type indexPurpose = | @as("Query") Query | @as("Schema") Schema
-
-@tag("kind")
-type indexEvent =
-  | Invalid({names: array<string>})
-  | Planned({declared: int, missing: array<string>, rebuilt: array<string>})
-  | Building({purpose: indexPurpose, name: string, tableName: string, isRebuild: bool})
-  | Built({purpose: indexPurpose, name: string, seconds: float})
-  | Failed({
-      purpose: indexPurpose,
-      name: string,
-      tableName: string,
-      columns: array<string>,
-      error: string,
-      code?: string,
-    })
-  | ResyncFailed({name: string, error: string, code?: string})
-  | Committed({count: int, seconds: float})
-
 @send
-external classCreate: (Core.storageCtor, options, indexEvent => unit, string => unit) => t =
-  "create"
+external classCreate: (Core.storageCtor, options, Logger.native, array<string>) => t = "create"
 
-let make = (options, ~onIndexEvent, ~onWarning) =>
-  Core.getAddon().storage->classCreate(options, onIndexEvent, onWarning)
+// The addon logs through `logger` itself, with the fields bound to it.
+let make = (options, ~logger: Logger.t) =>
+  Core.getAddon().storage->classCreate(
+    options,
+    logger.output.native,
+    logger.boundFieldsJson,
+  )
 
 @send external registerTable: (t, tableInput) => registeredTable = "registerTable"
 

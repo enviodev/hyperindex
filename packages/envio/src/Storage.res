@@ -1,10 +1,3 @@
-let formatSeconds = seconds => (Math.round(seconds *. 100.) /. 100.)->Float.toString
-
-// Every index build blocks writes to its table for as long as it runs, and on a
-// large database that is not quick. Both build paths say so up front, so a
-// stalled-looking indexer is explainable from the logs alone.
-let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
-
 let storeName = (store: StorageClient.store) =>
   switch store {
   | Postgres => "postgres"
@@ -12,84 +5,6 @@ let storeName = (store: StorageClient.store) =>
   }
 
 let postgresName = Postgres->storeName
-
-let logIndexEvent = (~logger, ~pgSchema, event: StorageClient.indexEvent) =>
-  switch event {
-  | Invalid({names}) =>
-    logger->Logger.warn(
-      `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
-      ~params={"storage": postgresName, "indexes": names},
-    )
-  | Planned({declared, missing, rebuilt}) =>
-    if rebuilt->Utils.Array.notEmpty {
-      logger->Logger.warn(
-        `PostgreSQL reports ${rebuilt
-          ->Array.length
-          ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
-        ~params={"storage": postgresName, "indexes": rebuilt},
-      )
-    }
-    switch missing {
-    // The line that matters next is the indexer reporting itself ready, which
-    // finalization logs.
-    | [] =>
-      logger->Logger.info(
-        `All ${declared->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
-        ~params={"storage": postgresName},
-      )
-    | _ =>
-      logger->Logger.info(
-        `Creating the ${missing
-          ->Array.length
-          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
-        ~params={"storage": postgresName, "indexes": missing},
-      )
-    }
-  | Building({purpose: Query, name, tableName, isRebuild}) =>
-    logger->Logger.info(
-      `${isRebuild
-          ? "Rebuilding unusable index"
-          : "Creating index"} "${name}" to serve a getWhere query on "${tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
-      ~params={"storage": postgresName},
-    )
-  | Building({purpose: Schema, name, isRebuild}) =>
-    logger->Logger.info(
-      `${isRebuild
-          ? "Rebuilding unusable index"
-          : "Creating missing index"} "${name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
-      ~params={"storage": postgresName},
-    )
-  | Built({purpose, name, seconds}) =>
-    logger->Logger.info(
-      `Index "${name}" is ready after ${seconds->formatSeconds}s.${switch purpose {
-        | Query => " Resuming indexing."
-        | Schema => ""
-        }}`,
-      ~params={"storage": postgresName},
-    )
-  | Failed({purpose: Query, tableName, columns, error, ?code}) =>
-    logger->Logger.warn(
-      `Failed to create an index on "${tableName}"(${columns
-        ->Array.map(column => `"${column}"`)
-        ->Array.joinUnsafe(", ")}) for a getWhere query. The query runs without it.`,
-      ~params={"storage": postgresName, "err": error, "code": code},
-    )
-  | Failed({purpose: Schema, name, error, ?code}) =>
-    logger->Logger.warn(
-      `Failed to restore the schema index "${name}". Queries relying on it run unindexed until the next restart.`,
-      ~params={"storage": postgresName, "err": error, "code": code},
-    )
-  | ResyncFailed({name, error, ?code}) =>
-    logger->Logger.trace(
-      `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
-      ~params={"storage": postgresName, "err": error, "code": code},
-    )
-  | Committed({count, seconds}) =>
-    logger->Logger.info(
-      `Committed ${count->Int.toString} schema indexes and the ready timestamp in ${seconds->formatSeconds}s.`,
-      ~params={"storage": postgresName},
-    )
-  }
 
 let postgresOptions = (
   ~pgSchema=Env.Db.publicSchema,
@@ -122,11 +37,7 @@ let makeClient = (
   ~postgres: StorageClient.postgresOptions,
   ~clickhouse: option<StorageClient.clickHouseOptions>=?,
 ): StorageClient.t =>
-  StorageClient.make(
-    {chainIdMode: (chainIdMode :> string), postgres, ?clickhouse},
-    ~onIndexEvent=event => logIndexEvent(~logger, ~pgSchema=postgres.pgSchema, event),
-    ~onWarning=message => logger->Logger.warn(message, ~params={"storage": ClickHouse->storeName}),
-  )
+  StorageClient.make({chainIdMode: (chainIdMode :> string), postgres, ?clickhouse}, ~logger)
 
 // A per-chain entity's rows are partitioned by the chain that owns them, so a
 // chain-filtered read scans one chain's partition rather than the whole table.

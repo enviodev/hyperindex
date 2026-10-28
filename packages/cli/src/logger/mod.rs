@@ -14,7 +14,7 @@ use std::{
     mem::ManuallyDrop,
     os::fd::FromRawFd,
     path::Path,
-    sync::{mpsc, Mutex, OnceLock},
+    sync::{mpsc, Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
@@ -129,8 +129,7 @@ impl Batch {
         }
     }
 
-    #[cfg(test)]
-    fn push(&mut self, level: Level, msg: &str, bindings: Option<&str>, params: Option<&str>) {
+    fn push(&mut self, level: Level, msg: &str, bindings: &[String], params: Option<&str>) {
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |since| since.as_millis() as f64);
@@ -141,8 +140,8 @@ impl Batch {
         self.bytes.push(level.value() as u8);
         self.bytes.extend_from_slice(&millis.to_le_bytes());
         push_text(&mut self.bytes, msg);
-        self.bytes.push(u8::from(bindings.is_some()));
-        if let Some(bindings) = bindings {
+        self.bytes.push(bindings.len() as u8);
+        for bindings in bindings {
             push_text(&mut self.bytes, bindings);
         }
         match params {
@@ -456,14 +455,44 @@ enum Output {
 /// arrive with each line, so a logger scoped to a chain or a query is a value
 /// on the caller's side that costs nothing until it writes.
 #[napi]
+#[derive(Clone)]
 pub struct Logger {
     min_level: Level,
-    output: Output,
+    output: Arc<Output>,
+}
+
+/// Rust's own way into a run's logger, carrying the fields of the JavaScript
+/// logger it stands for. A line goes straight to the output, so it can land
+/// ahead of lines JavaScript logged earlier but hasn't handed over yet.
+#[derive(Clone)]
+pub struct BoundLogger {
+    logger: Logger,
+    fields_json: Arc<[String]>,
+}
+
+impl BoundLogger {
+    pub fn log(&self, level: Level, msg: &str, params: &Value) {
+        if level.severity() < self.logger.min_level.severity() {
+            return;
+        }
+        let mut batch = Batch::default();
+        batch.push(level, msg, &self.fields_json, Some(&params.to_string()));
+        self.logger.take(batch);
+    }
 }
 
 impl Logger {
+    /// `fields_json` are the JavaScript logger's bound fields as it keeps them,
+    /// parents first.
+    pub fn bind(&self, fields_json: Vec<String>) -> BoundLogger {
+        BoundLogger {
+            logger: self.clone(),
+            fields_json: fields_json.into(),
+        }
+    }
+
     fn take(&self, batch: Batch) {
-        match &self.output {
+        match &*self.output {
             Output::Memory(lines) => {
                 if let Ok(mut lines) = lines.lock() {
                     batch.with_records(|record| lines.push(format::to_captured_line(record)));
@@ -478,14 +507,15 @@ impl Logger {
     #[cfg(test)]
     fn log(&self, level: Level, msg: &str, bindings: Option<&str>, params: Option<&str>) {
         let mut batch = Batch::default();
-        batch.push(level, msg, bindings, params);
+        let bindings: Vec<String> = bindings.into_iter().map(str::to_string).collect();
+        batch.push(level, msg, &bindings, params);
         self.take(batch);
     }
 
     /// The writer may be stuck on a full queue as well as on a write, so the
     /// request to flush waits within the same deadline as its answer.
     fn flush_within(&self, timeout: Duration) {
-        let Output::Written(sender) = &self.output else {
+        let Output::Written(sender) = &*self.output else {
             return;
         };
         let deadline = Instant::now() + timeout;
@@ -522,7 +552,7 @@ impl Logger {
         })?;
         Ok(Logger {
             min_level,
-            output: Output::Written(sender),
+            output: Arc::new(Output::Written(sender)),
         })
     }
 
@@ -532,7 +562,7 @@ impl Logger {
     pub fn make_in_memory() -> Logger {
         Logger {
             min_level: Level::TRACE,
-            output: Output::Memory(Mutex::new(Vec::new())),
+            output: Arc::new(Output::Memory(Mutex::new(Vec::new()))),
         }
     }
 
@@ -565,7 +595,7 @@ impl Logger {
 
     #[napi]
     pub fn in_memory_lines(&self) -> Vec<Value> {
-        match &self.output {
+        match &*self.output {
             Output::Memory(lines) => lines.lock().map(|lines| lines.clone()).unwrap_or_default(),
             Output::Written(_) => Vec::new(),
         }
@@ -685,13 +715,13 @@ mod tests {
     fn a_damaged_batch_keeps_the_lines_before_the_damage() {
         let logger = Logger::make_in_memory();
         let mut cut_short = Batch::default();
-        cut_short.push(Level::INFO, "whole", None, None);
-        cut_short.push(Level::INFO, "cut", None, Some(r#"{"a":1}"#));
+        cut_short.push(Level::INFO, "whole", &[], None);
+        cut_short.push(Level::INFO, "cut", &[], Some(r#"{"a":1}"#));
         cut_short.bytes.truncate(cut_short.bytes.len() - 3);
         cut_short.lines += 1;
         logger.take(cut_short);
         let mut unknown_level = Batch::default();
-        unknown_level.push(Level::INFO, "unknown level", None, None);
+        unknown_level.push(Level::INFO, "unknown level", &[], None);
         unknown_level.bytes[0] = 99;
         logger.take(unknown_level);
         assert_eq!(
@@ -708,14 +738,14 @@ mod tests {
         let (reader, writer) = unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
         let logger = std::sync::Arc::new(Logger {
             min_level: Level::TRACE,
-            output: Output::Written(
+            output: Arc::new(Output::Written(
                 spawn_writer(vec![Sink {
                     format: Format::Json,
                     target: Target::File(writer),
                     level: Level::TRACE,
                 }])
                 .unwrap(),
-            ),
+            )),
         });
         let line = "x".repeat(1 << 17);
         let filling = {
