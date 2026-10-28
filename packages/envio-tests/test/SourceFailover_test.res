@@ -25,6 +25,7 @@ type Gravatar {
   owner: String!
 }
 `,
+  ~virtualTime=true,
 )
 
 let withBackoff = MockSource.Fail(
@@ -62,19 +63,6 @@ let failOver = async (~failing: MockSource.t, ~next: MockSource.t, ~fromBlock, ~
   await next.expectItemsQueries([{fromBlock, retryCount: 3, reply: upTo(toBlock)}])
 }
 
-let polls = (mock: MockSource.t) => mock.getHeightOrThrowCalls->Array.length
-
-// Recovery is measured with Date.now(), while timers run on the event loop's
-// cached clock, so a plain delay of `recoveryTimeout` can fire with Date.now()
-// a millisecond short and leave the source still in recovery. Every caller
-// starts waiting after the failure was recorded, so this waits it out exactly.
-let waitOutRecovery = async (~recoveryTimeout) => {
-  let since = Date.now()
-  while Date.now() -. since < recoveryTimeout {
-    await Utils.delay(Math.Int.max(1, (recoveryTimeout -. (Date.now() -. since))->Float.toInt))
-  }
-}
-
 describe("Source failover", () => {
   scenario->Scenario.it(
     "Retries on same source twice before switching, then alternates every second retry",
@@ -98,48 +86,34 @@ describe("Source failover", () => {
   scenario->Scenario.it(
     "Keeps retrying a source behind the head for about 10 seconds before failing over",
     ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
-    ~sourceTiming={retryBackoffScale: 0.05},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
       sync.resolveGetHeightOrThrow(100)
-      let arrivedAt = []
-      // A replica only briefly behind its siblings must not be traded away
-      // within a few retries.
-      for retryCount in 0 to 12 {
-        await sync.expectItemsQueries([
-          {
-            retryCount,
-            reply: Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
-          },
-        ])
-        arrivedAt->Array.push(Date.now())
-      }
-      await fallback.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
-      arrivedAt->Array.push(Date.now())
-      let at = index => arrivedAt->Array.getUnsafe(index)
-      // At this scale: 475ms of backoff on the source, then a move to the
-      // fallback paced only by the 2.5ms floor, not the 50ms logged for it.
-      let onSource = at(12) -. at(0)
-      let toFallback = at(13) -. at(12)
       // 100ms doubling to a 1s cap: about 10s on the source before the 13th
-      // attempt moves to the fallback.
-      t.expect(
-        (
-          onSource >= 475. *. 0.9,
-          toFallback < 25.,
-          indexer.allLogsAsJson()->Array.filterMap(
-            line =>
-              switch line->Dict.get("backOffMilliseconds") {
-              | Some(Number(ms)) => Some(ms)
-              | _ => None
-              },
-          ),
+      // attempt moves to the fallback, paced only by the 50ms floor. A replica
+      // only briefly behind its siblings must not be traded away within a few
+      // retries.
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync,
+        ~alsoWatching=[fallback],
+        ~reply=Fail(Source.SourceBehindHead({blockNumber: 1, requestStats: []})),
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 50],
+      )
+      await fallback.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
+      await sync.expectNewHeightCalls(1)
+      t.expect((
+        early,
+        indexer.allLogsAsJson()->Array.filterMap(
+          line =>
+            switch line->Dict.get("backOffMilliseconds") {
+            | Some(Number(ms)) => Some(ms)
+            | _ => None
+            },
         ),
-        ~message=`on the source ${onSource->Float.toString}ms, to the fallback ${toFallback->Float.toString}ms`,
-      ).toEqual((
-        true,
-        true,
+      )).toEqual((
+        [],
         [100., 200., 400., 800., 1000., 1000., 1000., 1000., 1000., 1000., 1000., 1000., 1000.],
       ))
     },
@@ -203,35 +177,37 @@ describe("Source failover", () => {
 
   scenario->Scenario.it(
     "Goes back to a failed primary only once the recovery timeout has passed, every time it fails",
-    // A new head reaches the chain on the next poll, which has to come well
-    // inside the recovery timeout.
     ~sources=[
-      {chain: 1337, pollingInterval: 1},
-      {chain: 1337, sourceFor: Fallback, pollingInterval: 1},
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
     ],
     ~sourceTiming={recoveryTimeout: 200.},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
-      let setHead = head => [sync, fallback]->Array.forEach(mock => mock.setAutoHeight(head))
+      // A new head reaches the chain on the next poll.
+      let newHead = async head => {
+        [sync, fallback]->Array.forEach(mock => mock.setAutoHeight(head))
+        await indexer.advanceTime(50)
+      }
       sync.resolveGetHeightOrThrow(100)
       await failOver(~failing=sync, ~next=fallback, ~fromBlock=1, ~toBlock=100)
 
       // Sync is still within its recovery timeout.
-      setHead(101)
+      await newHead(101)
       await fallback.expectItemsQueries([{fromBlock: 101, reply: upTo(101)}])
 
-      await waitOutRecovery(~recoveryTimeout=200.)
-      setHead(102)
+      await indexer.advanceTime(200)
+      await newHead(102)
       // A success clears the failure, so failing again starts a fresh recovery
       // timeout rather than counting from the first one.
       await failOver(~failing=sync, ~next=fallback, ~fromBlock=102, ~toBlock=102)
 
-      setHead(103)
+      await newHead(103)
       await fallback.expectItemsQueries([{fromBlock: 103, reply: upTo(103)}])
 
-      await waitOutRecovery(~recoveryTimeout=200.)
-      setHead(104)
+      await indexer.advanceTime(200)
+      await newHead(104)
       await sync.expectItemsQueries([{fromBlock: 104, reply: LeavePending}])
       t.expect(fallback.pendingItemsQueries).toEqual([])
     },
@@ -360,13 +336,13 @@ describe("Source failover", () => {
       live.setAutoHeight(101)
       await live.expectItemsQueries([{fromBlock: 101, reply: unsupported}])
       await sync.expectItemsQueries([{fromBlock: 101, reply: upTo(101)}])
-      let livePolls = live->polls
+      await live.expectNewHeightCalls(1)
 
       // Several stall windows of the realtime wait that follows.
-      await Utils.delay(50)
-      t.expect((
-        live->polls,
-        // The stall did run, and found nothing left to recruit.
+      await indexer.advanceTime(50)
+      await live.expectNewHeightCalls(0)
+      // The stall did run, and found nothing left to recruit.
+      t.expect(
         indexer.allLogsAsJson()->Array.some(
           line =>
             line->Dict.get("msg") ==
@@ -376,7 +352,7 @@ describe("Source failover", () => {
                 ),
               ),
         ),
-      )).toEqual((livePolls, true))
+      ).toBe(true)
     },
   )
 })

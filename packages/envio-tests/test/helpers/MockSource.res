@@ -268,9 +268,13 @@ type t = {
   expectHeightCalls: int => promise<unit>,
   // Waits for exactly `count` height calls past the ones the last expectation
   // accounted for, so a test names the polls a step causes without counting
-  // from the first. On virtual time, a call no expectation accounts for fails
-  // the scenario.
+  // from the first. On virtual time, once a test accounts for this source's
+  // height calls this way, one no expectation accounts for fails the scenario.
   expectNewHeightCalls: int => promise<unit>,
+  // Waits for at least `count` new height calls and accounts for all of them.
+  // For a step whose number of polls rides on the clock's jitter, such as a
+  // polling cadence started by a stall poke anywhere in its window.
+  expectNewHeightCallsAtLeast: int => promise<unit>,
   // Answer every height call with `height` from now on, one answer covering any
   // number of polls. A restarted indexer learns the head on its own this way,
   // before the test body gets a chance to resolve anything.
@@ -311,9 +315,10 @@ type t = {
   // What the source has been asked and not answered, for a failure report.
   describeState: unit => string,
   // Throws if a height answer given before its call arrived is still waiting
-  // for one, naming the call sites — or, with `~strictHeightCalls`, if the
-  // source took a height call no expectation accounted for. Run at the end of a
-  // passing scenario.
+  // for one, naming the call sites — or, with `~strictHeightCalls` and a test
+  // that accounts for height calls with `expectNewHeightCalls`, if the source
+  // took one no expectation accounted for. Run at the end of a passing
+  // scenario.
   validateAnswersClaimed: unit => unit,
   // Voids the queries the indexer has in flight. A restarted indexer re-issues
   // its own, and answering a stopped indexer's leftovers instead is a bug the
@@ -381,6 +386,7 @@ module Ledger = {
   @send external checkHeightCalls: (t, int) => heightCallsCheck = "checkHeightCalls"
   @send external heightCallsTimeoutMessage: (t, int) => string = "heightCallsTimeoutMessage"
   @send external claimedHeightCalls: t => int = "claimedHeightCalls"
+  @send external checkHeightCallsAtLeast: (t, int) => bool = "checkHeightCallsAtLeast"
   @send
   external unclaimedHeightCallsMessage: t => Nullable.t<string> = "unclaimedHeightCallsMessage"
   @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
@@ -793,6 +799,11 @@ let make = (
     )
   }
 
+  // A test that accounts for height calls step by step is one about polling,
+  // and owes an account of every call. One that only waits for a call to
+  // arrive is about something else.
+  let countsHeightCalls = ref(false)
+
   let expectHeightCalls = async count => {
     let deadline = realNow() +. 2000.
     let rec awaitCount = async () => {
@@ -807,6 +818,23 @@ let make = (
           } else {
             JsError.throwWithMessage(ledger->Ledger.heightCallsTimeoutMessage(count))
           }
+        }
+      }
+    }
+    await awaitCount()
+  }
+
+  let expectNewHeightCallsAtLeast = async count => {
+    countsHeightCalls := true
+    let target = ledger->Ledger.claimedHeightCalls + count
+    let deadline = realNow() +. 2000.
+    let rec awaitCount = async () => {
+      await awaitSettled(~deadline)
+      if !(ledger->Ledger.checkHeightCallsAtLeast(target)) {
+        if await nextArrival(~deadline) {
+          await awaitCount()
+        } else {
+          JsError.throwWithMessage(ledger->Ledger.heightCallsTimeoutMessage(target))
         }
       }
     }
@@ -832,7 +860,11 @@ let make = (
     rejectGetHeightOrThrow: exn =>
       ledger->Ledger.rejectHeights->settleHeightCalls(caller => caller["reject"](exn->Obj.magic)),
     expectHeightCalls,
-    expectNewHeightCalls: count => expectHeightCalls(ledger->Ledger.claimedHeightCalls + count),
+    expectNewHeightCalls: count => {
+      countsHeightCalls := true
+      expectHeightCalls(ledger->Ledger.claimedHeightCalls + count)
+    },
+    expectNewHeightCallsAtLeast,
     reorgCallCount: () => ledger->Ledger.reorgCallCount,
     pendingItemsQueries,
     expectItemsQueries,
@@ -919,7 +951,7 @@ let make = (
       | Some(message) => JsError.throwWithMessage(message)
       | None => ()
       }
-      if strictHeightCalls {
+      if strictHeightCalls && countsHeightCalls.contents {
         switch ledger->Ledger.unclaimedHeightCallsMessage->Nullable.toOption {
         | Some(message) => JsError.throwWithMessage(message)
         | None => ()

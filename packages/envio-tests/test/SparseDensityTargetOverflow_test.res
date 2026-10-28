@@ -33,6 +33,7 @@ type Gravatar {
   owner: String!
 }
 `,
+  ~virtualTime=true,
 )
 
 describe("Sparse-density target overflow", () => {

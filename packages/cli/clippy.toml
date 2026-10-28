@@ -1,0 +1,10 @@
+disallowed-methods = [
+  { path = "tokio::time::sleep", reason = "sleep on the `clock::Clock` the source was given, so a test on virtual time sees and moves the timer" },
+  { path = "tokio::time::sleep_until", reason = "sleep on the `clock::Clock` the source was given, so a test on virtual time sees and moves the timer" },
+  { path = "tokio::time::timeout", reason = "race the work against a `clock::Clock` sleep, so a test on virtual time sees and moves the deadline" },
+  { path = "tokio::time::timeout_at", reason = "race the work against a `clock::Clock` sleep, so a test on virtual time sees and moves the deadline" },
+  { path = "tokio::time::interval", reason = "loop over `clock::Clock` sleeps, so a test on virtual time sees and moves each tick" },
+  { path = "tokio::time::interval_at", reason = "loop over `clock::Clock` sleeps, so a test on virtual time sees and moves each tick" },
+  { path = "std::thread::sleep", reason = "sleep on the `clock::Clock` the source was given, so a test on virtual time sees and moves the timer" },
+  { path = "std::time::SystemTime::now", reason = "read `clock::Clock::now_ms`, so a test on virtual time controls it; `Instant::now` stays for measuring how long real work took" },
+]

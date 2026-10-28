@@ -21,6 +21,8 @@ let answerQuery = async (mock: MockSource.t, ~fromBlock, ~toBlock) =>
 let reach = async (~sync: MockSource.t, ~mock=sync, ~head=100) => {
   sync.resolveGetHeightOrThrow(head)
   await sync->answerQuery(~fromBlock=1, ~toBlock=head)
+  // The backfill's head, then the poll its last wait leaves in flight.
+  await sync.expectNewHeightCalls(2)
   await Scenario.waitUntil(
     () => mock.heightSubscriptionCalls->Array.length > 0,
     ~message="the height subscription",

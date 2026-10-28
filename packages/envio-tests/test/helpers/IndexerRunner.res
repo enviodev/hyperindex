@@ -205,6 +205,10 @@ let run = async (
   ~onIndexerStopped: unit => unit=() => (),
   body: t => promise<unit>,
 ) => {
+  // Startup keeps the real clock: it runs before the body can step anything,
+  // so there is no step for a timer to race, and nothing that could advance
+  // a virtual one.
+  let startupTiming = sourceTiming
   let sourceTiming = switch clock {
   | Some(clock) => Some({...sourceTiming->Option.getOr({}), clock: clock->VirtualClock.toClock})
   | None => sourceTiming
@@ -287,7 +291,7 @@ let run = async (
       ~isDevelopmentMode=true,
       ~announceResume=!asWorker,
       ~startBlockRetry?,
-      ~sourceTiming?,
+      ~sourceTiming=?startupTiming,
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a
@@ -532,7 +536,32 @@ let run = async (
       waitUntilIdle,
       advanceTime: millis =>
         switch clock {
-        | Some(clock) => clock->VirtualClock.advance(millis, ~settle=waitUntilIdle)
+        | Some(clock) =>
+          // Lets whatever a timer started run to where it waits on the test or
+          // on another timer. Weaker than `waitUntilIdle`: a chain mid-rollback,
+          // or left waiting on a query, is settled without being idle. So is a
+          // batch a test keeps from finishing, once nothing has touched the
+          // clock or the sources for a while.
+          let settle = async () => {
+            await state->Writing.flush
+            let idle = ref(0)
+            let still = ref(0)
+            let events = ref(clock.events)
+            while idle.contents < 5 && still.contents < 50 {
+              idle := if (
+                  !(state->IndexerState.isProcessing) &&
+                  state->IndexerState.writeFiber->Option.isNone
+                ) {
+                  idle.contents + 1
+                } else {
+                  0
+                }
+              still := (clock.events === events.contents ? still.contents + 1 : 0)
+              events := clock.events
+              await Utils.delay(0)
+            }
+          }
+          clock->VirtualClock.advance(millis, ~settle)
         | None =>
           JsError.throwWithMessage(
             "advanceTime needs a run on virtual time. Pass `~virtualTime=true` to Scenario.it.",

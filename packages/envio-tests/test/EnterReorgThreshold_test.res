@@ -22,6 +22,7 @@ type Gravatar {
 // threshold. Head starts at 1000, so the pre-threshold head is 800.
 let multichain = Scenario.make(
   ~supervised=false,
+  ~virtualTime=true,
   ~configYaml=`
 name: enter-reorg-threshold-multichain
 contracts:
@@ -55,6 +56,7 @@ chains:
 
 let singleChain = Scenario.make(
   ~supervised=false,
+  ~virtualTime=true,
   ~configYaml=`
 name: enter-reorg-threshold-single
 chains:

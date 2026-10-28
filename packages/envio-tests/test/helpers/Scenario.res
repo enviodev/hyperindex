@@ -20,6 +20,9 @@ type t = {
   // reorg-threshold transition itself: the hold deferring that transition is
   // the premise such a body sets up being taken away.
   supervised: bool,
+  // What `run` and `it` default `~virtualTime` to, for a file whose scenarios
+  // all depend on the source layer's timers.
+  virtualTime: bool,
 }
 
 type sourceMock = {
@@ -62,6 +65,7 @@ let make = (
   ~handlers=?,
   ~unsupported=[],
   ~supervised=true,
+  ~virtualTime=false,
 ): t => {
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
@@ -107,6 +111,7 @@ let make = (
     unsupported,
     site,
     supervised,
+    virtualTime,
   }
 }
 
@@ -186,8 +191,8 @@ let run = async (
   ~sourceTiming=?,
   // Runs the source layer's timers on a virtual clock that only the test moves,
   // with `indexer.advanceTime`, and fails the run on a height call no
-  // expectation accounted for.
-  ~virtualTime=false,
+  // expectation accounted for. Defaults to the scenario's.
+  ~virtualTime=?,
   // The virtual clock's seed. `ENVIO_TEST_SEED`, or a fresh one per run, when
   // left out.
   ~seed=?,
@@ -205,6 +210,7 @@ let run = async (
   ~mapStorage=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
+  let virtualTime = virtualTime->Option.getOr(scenario.virtualTime)
   let clock = virtualTime ? Some(VirtualClock.make(~seed?)) : None
   let mocks = sources->Array.mapWithIndex((
     {chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard, ?autoHeight, ?startupHeights},
@@ -396,6 +402,36 @@ let it = (
       register(`${name} [supervised]`, ~superviseRun=true)
     }
   }
+}
+
+// Answers a query's attempts one after another with `reply`, advancing the
+// clock by each wait the retry schedule promises before the next. An attempt
+// arriving a millisecond before its wait is up breaks the schedule, so the
+// result names the retries that did: an empty list is the schedule kept.
+let failThroughBackoff = async (
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  // Where the next attempt could land instead, after a failover.
+  ~alsoWatching: array<MockSource.t>=[],
+  ~reply,
+  ~waits: array<int>,
+  ~firstRetry=0,
+) => {
+  let early = []
+  let watched = [source]->Array.concat(alsoWatching)
+  for index in 0 to waits->Array.length - 1 {
+    let retryCount = firstRetry + index
+    await source.expectItemsQueries([{retryCount, reply}])
+    let wait = waits->Array.getUnsafe(index)
+    if wait > 0 {
+      await indexer.advanceTime(wait - 1)
+      if watched->Array.some(mock => mock.pendingItemsQueries->Array.length > 0) {
+        early->Array.push(retryCount)->ignore
+      }
+      await indexer.advanceTime(1)
+    }
+  }
+  early
 }
 
 let resolveInitialHeight = async (~source: MockSource.t, ~head) => {

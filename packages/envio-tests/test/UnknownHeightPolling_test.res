@@ -24,6 +24,7 @@ type Gravatar {
   owner: String!
 }
 `,
+    ~virtualTime=true,
   )
 
 // Answers every height call with a height that leaves the wait unsatisfied, so
@@ -39,14 +40,6 @@ let sources = (~height): array<Scenario.sourceMock> => [
 
 let reducedPollingInterval = 1000
 
-let countPolls = async (~source: MockSource.t) => {
-  let deadline = Date.now() +. 50.
-  while Date.now() < deadline {
-    await Utils.delay(2)
-  }
-  source.getHeightOrThrowCalls->Array.length
-}
-
 describe("Polling while the chain waits for new blocks", () => {
   makeScenario(
     ~name="unknown-height",
@@ -55,18 +48,14 @@ describe("Polling while the chain waits for new blocks", () => {
     "Polls at the source interval while the chain has no known height",
     ~sources=sources(~height=0),
     ~sourceTiming={reducedPollingInterval: reducedPollingInterval},
-    async (~t, ~indexer as _, ~source) => {
-      let calls = await countPolls(~source=source(1337))
-
+    async (~t as _, ~indexer, ~source) => {
+      let mock = source(1337)
+      await mock.expectNewHeightCalls(1)
       // Reduced polling is for a chain that knows where the head is. Before the
-      // first height lands there is nothing to be idle about, so the window has
-      // to hold many polls at the 1ms interval rather than the single one a
-      // 1000ms reduced interval leaves room for. The bound is loose because the
-      // measurement is which cadence is in force, not the rate itself.
-      t.expect(
-        calls > 5,
-        ~message=`should poll at the source interval while the height is unknown (got ${calls->Int.toString})`,
-      ).toBe(true)
+      // first height lands there is nothing to be idle about, so it polls every
+      // 1ms of the source's interval rather than every reduced 1000ms.
+      await indexer.advanceTime(10)
+      await mock.expectNewHeightCalls(10)
     },
   )
 
@@ -77,17 +66,19 @@ describe("Polling while the chain waits for new blocks", () => {
     "Keeps reduced polling when the known height is below the lag holding the head back",
     ~sources=sources(~height=50),
     ~sourceTiming={reducedPollingInterval: reducedPollingInterval},
-    async (~t, ~indexer as _, ~source) => {
-      let calls = await countPolls(~source=source(1337))
-
+    async (~t as _, ~indexer, ~source) => {
+      let mock = source(1337)
+      await mock.expectNewHeightCalls(1)
+      // The cadence the first wait slept on, chosen before any height landed.
+      await indexer.advanceTime(1)
+      await mock.expectNewHeightCalls(1)
       // Pre-threshold the lag is the whole reorg depth, so a chain 50 blocks
       // long can't fetch anything - but it does know its head, and asking for it
-      // faster would buy nothing. Only the first wait (at height 0) polls at the
-      // source interval; once the height lands the cadence drops back.
-      t.expect(
-        calls <= 4,
-        ~message=`should stay on reduced polling once a height is known (got ${calls->Int.toString})`,
-      ).toBe(true)
+      // faster would buy nothing.
+      await indexer.advanceTime(reducedPollingInterval - 1)
+      await mock.expectNewHeightCalls(0)
+      await indexer.advanceTime(1)
+      await mock.expectNewHeightCalls(1)
     },
   )
 })

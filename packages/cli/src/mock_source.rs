@@ -404,6 +404,17 @@ impl Ledger {
         }
     }
 
+    /// For a step whose number of polls rides on the clock's jitter: met once
+    /// `count` calls are in, and then accounts for every call so far.
+    fn check_height_calls_at_least(&mut self, count: u32) -> bool {
+        let taken = self.height_calls.len() as u32;
+        let done = taken >= count;
+        if done {
+            self.claimed_height_calls = self.claimed_height_calls.max(taken);
+        }
+        done
+    }
+
     /// How messages name this mock: the way the test reaches it when one chain
     /// has several, otherwise by its chain.
     fn source_name(&self) -> String {
@@ -880,6 +891,11 @@ impl MockSource {
     }
 
     #[napi]
+    pub fn check_height_calls_at_least(&mut self, count: u32) -> bool {
+        self.ledger.check_height_calls_at_least(count)
+    }
+
+    #[napi]
     pub fn claimed_height_calls(&self) -> u32 {
         self.ledger.claimed_height_calls
     }
@@ -1084,6 +1100,25 @@ mod tests {
                 2,
                 Some("Height calls no expectation accounted for on source for chain 1: 2 (calls 3 to 4). Name each poll where the test causes it with `expectNewHeightCalls(n)`, so one nobody planned for fails at the step that caused it.")
             )
+        );
+    }
+
+    #[test]
+    fn accounts_for_every_call_once_at_least_the_count_is_in() {
+        let mut ledger = ledger();
+        ledger.take_height_call();
+        let short = ledger.check_height_calls_at_least(2);
+        ledger.take_height_call();
+        ledger.take_height_call();
+        let met = ledger.check_height_calls_at_least(2);
+        assert_eq!(
+            (
+                short,
+                met,
+                ledger.claimed_height_calls,
+                ledger.unclaimed_height_calls_message()
+            ),
+            (false, true, 3, None)
         );
     }
 

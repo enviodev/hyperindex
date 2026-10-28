@@ -110,22 +110,45 @@ const realDelay = /\bUtils\.delay\((\d+)\)/;
 const pollSnapshot = /->\s*polls\b/;
 const scenarioStart = /\bScenario\.(?:it|run)\(/;
 
-// A scenario that shortens the source layer's windows on real time races its
-// own steps on a loaded runner. Existing ones are counted per file and the
-// count may only fall; a new one has to run on virtual time.
-const baselinePath = fileURLToPath(new URL("./real-time-timing-baseline.json", import.meta.url));
-const baseline: Record<string, number> = JSON.parse(readFileSync(baselinePath, "utf8"));
-const realTimeTiming: Record<string, number[]> = {};
-
 for (const path of resFiles(testRoot)) {
   const file = relative(repoRoot, path);
   const lines = readFileSync(path, "utf8").split("\n");
+  // A scenario made with `~virtualTime=true` puts every test run on it on
+  // virtual time, unless the test says `~virtualTime=false`.
+  const virtualScenarios = new Set<string>();
+  // Scenarios a file makes through a function of its own count the same way.
+  lines.forEach((line, index) => {
+    const bound = line.match(/^let (\w+) =/);
+    if (!bound) return;
+    const next = lines.findIndex((later, at) => at > index && /^(let|describe)\b/.test(later));
+    const region = lines
+      .slice(index, next === -1 ? lines.length : next)
+      .map((line) => line.replace(/\/\/.*$/, ""));
+    if (
+      region.some((line) => /\bScenario\.make\(/.test(line)) &&
+      region.some((line) => /~virtualTime=true\b/.test(line))
+    ) {
+      virtualScenarios.add(bound[1]);
+    }
+  });
   const starts = lines.flatMap((line, index) => (scenarioStart.test(line) ? [index] : []));
   starts.forEach((start, position) => {
     const end = starts[position + 1] ?? lines.length;
     const block = lines.slice(start, end);
     const code = block.map((line) => line.replace(/\/\/.*$/, ""));
-    if (code.some((line) => /~virtualTime=true\b/.test(line))) {
+    const receiver = block[0].match(/(\w+)\s*->\s*Scenario\.(?:it|run)\(|Scenario\.(?:it|run)\(\s*(\w+)/);
+    // `makeScenario(~name=...)->Scenario.it(` spreads the receiver over the
+    // lines before the one that names `Scenario.it`.
+    const factoryCall = lines
+      .slice(Math.max(0, start - 6), start + 1)
+      .join("\n")
+      .match(/(\w+)\([^()]*\)\s*->\s*Scenario\.(?:it|run)\($/m);
+    const name = receiver?.[1] ?? receiver?.[2] ?? factoryCall?.[1];
+    const onVirtualScenario =
+      name !== undefined &&
+      virtualScenarios.has(name) &&
+      !code.some((line) => /~virtualTime=false\b/.test(line));
+    if (onVirtualScenario || code.some((line) => /~virtualTime=true\b/.test(line))) {
       code.forEach((line, offset) => {
         const delay = line.match(realDelay);
         if (delay && Number(delay[1]) > 0) {
@@ -153,47 +176,85 @@ for (const path of resFiles(testRoot)) {
           });
         }
       });
-    } else if (code.some((line) => /~sourceTiming=/.test(line))) {
-      (realTimeTiming[file] ??= []).push(start + 1);
+    } else {
+      // A window shortened on real time races the test's own steps on a loaded
+      // runner: what lands between two of them is down to the scheduler.
+      const timing = code.findIndex((line) => /~sourceTiming=/.test(line));
+      if (timing !== -1) {
+        violations.push({
+          file,
+          line: start + timing + 1,
+          title: "~sourceTiming on real time",
+          fix: "Add `~virtualTime=true` to the scenario, or to `Scenario.make` for the whole file, and drive its timers with `await indexer.advanceTime(ms)`.",
+        });
+      }
     }
   });
 }
 
-for (const file of new Set([...Object.keys(baseline), ...Object.keys(realTimeTiming)])) {
-  const found = realTimeTiming[file] ?? [];
-  const allowed = baseline[file] ?? 0;
-  if (found.length > allowed) {
-    violations.push({
-      file,
-      line: found[found.length - 1],
-      title: `${found.length} real-time scenarios with ~sourceTiming, ${allowed} allowed`,
-      fix: "Add `~virtualTime=true` to the new scenario and drive its timers with `await indexer.advanceTime(ms)`: a shortened window on real time races the test's own steps on a loaded runner.",
+// The source layer's time is whatever its clock says, so a scenario on virtual
+// time sees every timer it arms. One armed on the real clock fires on its own
+// schedule, between a test's steps, with nothing in the test to say so.
+const sourcesRoot = fileURLToPath(new URL("../../envio/src/sources", import.meta.url));
+const realTimeSources: Record<string, string> = {
+  "HeightStream.res":
+    "the RPC and HyperSync sources build it without a clock, and its own tests fake the timers",
+};
+// `Performance.now()` stays: it measures how long real work took, for request
+// stats, and a virtual clock would report every request as instant.
+const realTime = [
+  {
+    pattern: /(?<![.\w])(?:setTimeout|clearTimeout|setInterval)\(/,
+    use: "`clock.setTimeout(~label, ...)` and `clock.clearTimeout`",
+  },
+  { pattern: /\bUtils\.delay\(/, use: "`clock->Clock.delay(~label, millis)`" },
+  { pattern: /\bDate\.now\(/, use: "`clock.now()`" },
+  { pattern: /\bMath\.random\(/, use: "`clock.random()`" },
+];
+const sourceViolations: violation[] = [];
+for (const path of resFiles(sourcesRoot)) {
+  const name = relative(sourcesRoot, path);
+  if (name in realTimeSources) continue;
+  const file = relative(repoRoot, path);
+  readFileSync(path, "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      const code = line.replace(/\/\/.*$/, "");
+      for (const { pattern, use } of realTime) {
+        if (pattern.test(code)) {
+          sourceViolations.push({
+            file,
+            line: index + 1,
+            title: `${code.match(pattern)?.[0]}...) on the real clock`,
+            fix: `Use ${use} on the clock the module was given: a virtual-time scenario only sees and moves time that goes through it.`,
+          });
+        }
+      }
     });
-  } else if (found.length < allowed) {
-    violations.push({
-      file,
-      line: 1,
-      title: `Fewer real-time scenarios with ~sourceTiming than the baseline`,
-      fix: `Lower "${file}" in packages/envio-tests/scripts/real-time-timing-baseline.json to ${found.length}, so a later one can't take its place.`,
-    });
-  }
 }
 
-if (violations.length > 0) {
+const report = (list: violation[], heading: string) => {
   // An annotation puts the rule on the line that broke it, in the PR diff. The log
   // alone is prose under a step named for the tests, which a reader reaches only
   // after scrolling past the service-container dumps that follow a failed job.
   if (process.env.GITHUB_ACTIONS) {
-    for (const { file, line, title, fix } of violations) {
+    for (const { file, line, title, fix } of list) {
       console.log(`::error file=${file},line=${line},title=${title}::${fix}`);
     }
   }
   console.error(
-    [
-      "These tests guess at how long the indexer takes to ask the source:",
-      "",
-      ...violations.map(({ file, line, title, fix }) => `${file}:${line}: ${title}. ${fix}`),
-    ].join("\n"),
+    [heading, "", ...list.map(({ file, line, title, fix }) => `${file}:${line}: ${title}. ${fix}`)].join(
+      "\n",
+    ),
   );
+};
+
+if (violations.length > 0) {
+  report(violations, "These tests guess at how long the indexer takes to ask the source:");
+}
+if (sourceViolations.length > 0) {
+  report(sourceViolations, "The source layer reads time the tests can't control:");
+}
+if (violations.length > 0 || sourceViolations.length > 0) {
   process.exit(1);
 }

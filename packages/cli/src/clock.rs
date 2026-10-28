@@ -258,6 +258,12 @@ impl Clock for VirtualClock {
     }
 
     fn sleep(&self, label: &str, millis: u64) -> Sleep {
+        // No time passes, so there is nothing for a test to advance. The
+        // ReScript side runs its zero-delay timers on the next turn the same way.
+        if millis == 0 {
+            self.note(format!("ran {label} with no delay"));
+            return Box::pin(std::future::ready(()));
+        }
         let id = self.state().arm(label, millis as f64, Owner::Rust(None));
         Box::pin(VirtualSleep {
             clock: self.clone(),
@@ -445,6 +451,16 @@ mod tests {
                 vec!["rust retry".to_string()],
                 vec![200.]
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn runs_a_zero_delay_sleep_without_advancing() {
+        let clock = VirtualClock::new(1);
+        clock.sleep("retry", 0).await;
+        assert_eq!(
+            (clock.now_ms(), fire_all(&clock, 0.)),
+            (0., Vec::<String>::new())
         );
     }
 

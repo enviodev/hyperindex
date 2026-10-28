@@ -26,6 +26,7 @@ type Counter {
   count: BigInt!
 }
 `,
+  ~virtualTime=true,
 )
 
 let sources: array<Scenario.sourceMock> = [
@@ -88,6 +89,7 @@ describe("Block-hash lookups", () => {
     await reorgAtHead(~indexer, ~mock)
     await mock->awaitLookup(~count=1)
     mock.failGetBlockHashes(Source.RateLimited({resetMs: 50, requestStats: []}))
+    await indexer.advanceTime(50)
     await mock->finishRollback
 
     let rateLimitedSeconds =
@@ -104,8 +106,8 @@ describe("Block-hash lookups", () => {
           },
       ),
       // The lookup's wait counts towards the chain's rate-limited time too.
-      rateLimitedSeconds->Array.map(seconds => seconds >= 0.05),
-    )).toEqual(([Number(50.)], [true]))
+      rateLimitedSeconds,
+    )).toEqual(([Number(50.)], [0.05]))
   })
 
   scenario->Scenario.it(
@@ -120,6 +122,7 @@ describe("Block-hash lookups", () => {
         {blockNumber: 200, blockHash: "0x200", blockTimestamp: 200},
         {blockNumber: 200, blockHash: "0x201", blockTimestamp: 200},
       ])
+      await indexer.advanceTime(100)
       await mock->finishRollback
       t.expect((mock->lookups, mock.reorgCallCount() - reorgsBefore)).toEqual((2, 1))
     },
@@ -134,54 +137,55 @@ describe("Block-hash lookups", () => {
     await reorgAtHead(~indexer, ~mock)
     await mock->awaitLookup(~count=1)
     mock.resolveGetBlockHashes([])
+    await indexer.advanceTime(100)
     await mock->finishRollback
     t.expect(mock->lookups).toEqual(2)
   })
 
-  scenario->Scenario.it(
-    "Backs off and retries a lookup that failed",
-    ~sources,
-    ~sourceTiming={retryBackoffScale: 0.01},
-    async (~t, ~indexer, ~source) => {
-      let mock = source(1)
-      await reorgAtHead(~indexer, ~mock)
-      await mock->awaitLookup(~count=1)
-      mock.failGetBlockHashes(JsError.make("connection reset")->(Utils.magic: JsError.t => exn))
-      await mock->finishRollback
-      t.expect(
-        indexer.allLogsAsJson()->Array.filterMap(
-          line =>
-            switch (line->Dict.get("msg"), line->Dict.get("backOffMilliseconds")) {
-            | (Some(String("Failed to fetch block hashes. Retrying.")), Some(ms)) => Some(ms)
-            | _ => None
-            },
-        ),
-      ).toEqual([Number(100.)])
-    },
-  )
+  scenario->Scenario.it("Backs off and retries a lookup that failed", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    await reorgAtHead(~indexer, ~mock)
+    await mock->awaitLookup(~count=1)
+    mock.failGetBlockHashes(JsError.make("connection reset")->(Utils.magic: JsError.t => exn))
+    await indexer.advanceTime(100)
+    await mock->finishRollback
+    t.expect(
+      indexer.allLogsAsJson()->Array.filterMap(
+        line =>
+          switch (line->Dict.get("msg"), line->Dict.get("backOffMilliseconds")) {
+          | (Some(String("Failed to fetch block hashes. Retrying.")), Some(ms)) => Some(ms)
+          | _ => None
+          },
+      ),
+    ).toEqual([Number(100.)])
+  })
 
-  scenario->Scenario.it(
-    "Counts a lookup that failed behind the head once",
-    ~sources,
-    ~sourceTiming={retryBackoffScale: 0.01},
-    async (~t, ~indexer, ~source) => {
-      let mock = source(1)
-      await reorgAtHead(~indexer, ~mock)
-      await mock->awaitLookup(~count=1)
-      // A native source reports the request both on the response and on the
-      // failure it carries, so a retry can still count it.
-      let requestStats = [{Source.method: "getBlockHashes", seconds: 0.1}]
-      mock.failGetBlockHashes(
-        Source.SourceBehindHead({blockNumber: 200, requestStats}),
-        ~requestStats,
-      )
-      await mock->finishRollback
-      t.expect(
-        (await indexer.metric("envio_source_request_total"))->Array.filterMap(
-          ({value, labels}: IndexerRunner.metric) =>
-            labels->Dict.get("method") == Some("getBlockHashes") ? Some(value) : None,
-        ),
-      ).toEqual(["1"])
-    },
-  )
+  scenario->Scenario.it("Counts a lookup that failed behind the head once", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    await reorgAtHead(~indexer, ~mock)
+    await mock->awaitLookup(~count=1)
+    // A native source reports the request both on the response and on the
+    // failure it carries, so a retry can still count it.
+    let requestStats = [{Source.method: "getBlockHashes", seconds: 0.1}]
+    mock.failGetBlockHashes(
+      Source.SourceBehindHead({blockNumber: 200, requestStats}),
+      ~requestStats,
+    )
+    await indexer.advanceTime(100)
+    await mock->finishRollback
+    t.expect(
+      (await indexer.metric("envio_source_request_total"))->Array.filterMap(
+        ({value, labels}: IndexerRunner.metric) =>
+          labels->Dict.get("method") == Some("getBlockHashes") ? Some(value) : None,
+      ),
+    ).toEqual(["1"])
+  })
 })

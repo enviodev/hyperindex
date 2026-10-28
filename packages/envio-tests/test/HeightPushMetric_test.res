@@ -28,6 +28,7 @@ type Gravatar {
   owner: String!
 }
 `,
+  ~virtualTime=true,
 )
 
 describe("Height subscription push metrics", () => {
@@ -62,21 +63,19 @@ describe("Height subscription push metrics", () => {
 
       // The realtime wait polls once more; a same-height response is what makes
       // it open the subscription.
-      let subscriptionOpened = () => sourceMock.heightSubscriptionCalls->Array.length > 0
-      let deadline = Date.now() +. 5_000.
-      while !subscriptionOpened() && Date.now() < deadline {
-        try sourceMock.resolveGetHeightOrThrow(100) catch {
-        | _ => ()
-        }
-        await Utils.delay(1)
-      }
-      t.expect(subscriptionOpened(), ~message="the height subscription should be open").toBe(true)
+      sourceMock.setAutoHeight(100)
+      await indexer.advanceTime(1)
+      await sourceMock.expectNewHeightCallsAtLeast(1)
+      t.expect(
+        sourceMock.heightSubscriptionCalls->Array.length > 0,
+        ~message="the height subscription should be open",
+      ).toBe(true)
 
       // Both shipped transports report Live the moment they connect, and the
       // wait polls at full rate next to the stream until one does, so without
       // this the pushes below are counted on a path no real source takes.
       sourceMock.setHeightSubscriptionStatus(Live)
-      await Utils.delay(0)
+      await sourceMock.expectNewHeightCalls(1)
 
       let heightPushSamples = async () => {
         let samples = await indexer.metric("envio_source_request_total")
@@ -108,7 +107,7 @@ describe("Height subscription push metrics", () => {
       // The stream re-emits a head we already know, as it does on reconnect.
       sourceMock.triggerHeightSubscription(101)
       sourceMock.triggerHeightSubscription(100)
-      await Utils.delay(0)
+      await indexer.waitUntilIdle()
 
       t.expect(
         await heightPushSamples(),

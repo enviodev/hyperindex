@@ -21,7 +21,16 @@ module Native = {
   @send external describe: t => string = "describe"
 }
 
-type t = {native: Native.t, callbacks: Map.t<int, unit => unit>}
+type t = {
+  native: Native.t,
+  callbacks: Map.t<int, unit => unit>,
+  // Zero-delay timers, keyed by the negative ids handed out for them.
+  turns: Map.t<int, timeoutId>,
+  mutable nextTurn: int,
+  // Every timer armed, cleared or run and every note, so a caller can tell a
+  // run that is still doing things from one that has gone quiet.
+  mutable events: int,
+}
 
 let seedFromEnv = () =>
   switch %raw(`process.env.ENVIO_TEST_SEED`)->Nullable.toOption {
@@ -37,25 +46,53 @@ let seedFromEnv = () =>
 let make = (~seed=seedFromEnv()) => {
   native: Core.getAddon().virtualClock->Native.make(seed),
   callbacks: Map.make(),
+  turns: Map.make(),
+  nextTurn: 0,
+  events: 0,
 }
 
 let toClock = (clock: t): Clock.t => {
   now: () => clock.native->Native.now,
   setTimeout: (~label, callback, millis) => {
-    let id = clock.native->Native.arm(label, millis->Int.toFloat)
-    clock.callbacks->Map.set(id, callback)
-    id->(Utils.magic: int => Clock.timer)
+    clock.events = clock.events + 1
+    if millis <= 0 {
+      // No time passes, only a turn of the event loop, so there is nothing for
+      // a test to advance: waiting on it would be noise in every retry.
+      clock.nextTurn = clock.nextTurn - 1
+      let id = clock.nextTurn
+      clock.turns->Map.set(id, setTimeout(() => {
+          clock.turns->Map.delete(id)->ignore
+          clock.events = clock.events + 1
+          clock.native->Native.note(`ran ${label} with no delay`)
+          callback()
+        }, 0))
+      id->(Utils.magic: int => Clock.timer)
+    } else {
+      let id = clock.native->Native.arm(label, millis->Int.toFloat)
+      clock.callbacks->Map.set(id, callback)
+      id->(Utils.magic: int => Clock.timer)
+    }
   },
   clearTimeout: timer => {
+    clock.events = clock.events + 1
     let id = timer->(Utils.magic: Clock.timer => int)
-    clock.callbacks->Map.delete(id)->ignore
-    clock.native->Native.clear(id)
+    switch clock.turns->Map.get(id) {
+    | Some(turn) =>
+      clearTimeout(turn)
+      clock.turns->Map.delete(id)->ignore
+    | None =>
+      clock.callbacks->Map.delete(id)->ignore
+      clock.native->Native.clear(id)
+    }
   },
   random: () => clock.native->Native.random,
 }
 
 // Puts something the test did on the timeline, between the timers around it.
-let note = (clock: t, event) => clock.native->Native.note(event)
+let note = (clock: t, event) => {
+  clock.events = clock.events + 1
+  clock.native->Native.note(event)
+}
 
 // Fires every timer due in the next `millis`, in order, letting the indexer
 // settle after each so a timer one of them arms lands in the same pass.
