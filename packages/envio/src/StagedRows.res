@@ -87,15 +87,16 @@ let columnsOf = (writers: array<writer>): array<Staging.column> =>
     isNullable: field.isNullable,
   })
 
-// A document always says something: one the handler left out of a column
-// that can't be NULL is the document `null`.
+// JSON `null` is a document of its own, which a column that can't be NULL
+// stores as one. Left out, the value is no document and is refused like any
+// other.
 let writeField = (stage, ~writers: array<writer>, ~column, ~row, value: unknown) => {
   let {field, encode} = writers->Array.getUnsafe(column)
   if value->Staging.isAbsent {
     stage->Staging.writeValue(
       ~column,
       ~row,
-      field.encoding === Staging.Document && !field.isNullable
+      field.encoding === Staging.Document && !field.isNullable && value === %raw(`null`)
         ? "null"->(Utils.magic: string => unknown)
         : value,
     )

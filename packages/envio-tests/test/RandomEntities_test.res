@@ -224,8 +224,8 @@ let makeValue = (random, column) =>
     random->pick(column.generator.values)
   }
 
-// What the statement that binds a cell at a time splits a batch at.
-let maxItemsPerChunk = 500
+// Past what one statement's parameters could hold, were each cell its own.
+let largeBatch = 500
 
 type case = {
   seed: int,
@@ -240,9 +240,8 @@ let makeCase = seed => {
   let columns = Array.fromInitializer(~length=1 + random->below(6), index =>
     random->makeColumn(index)
   )
-  // Mostly small batches, and now and then one past the point where the
-  // statement that binds a cell at a time splits into chunks.
-  let rowCount = random->chance(8) ? maxItemsPerChunk + random->below(60) : 1 + random->below(11)
+  // Mostly small batches, and now and then a large one.
+  let rowCount = random->chance(8) ? largeBatch + random->below(60) : 1 + random->below(11)
   let derived = random->chance(20)
   let snakeCase = random->chance(15)
   let rows = Array.fromInitializer(~length=rowCount, index => {
@@ -352,8 +351,8 @@ describe("Entities a handler sets", () => {
           if case.snakeCase {
             saw("a renamed column")
           }
-          if case.rows->Array.length > maxItemsPerChunk {
-            saw("a batch past one chunk")
+          if case.rows->Array.length > largeBatch {
+            saw("a large batch")
           }
           saw(case.columns->Array.some(column => column.isList) ? "a list table" : "a scalar table")
           case.columns->Array.forEach(column => {
@@ -418,7 +417,7 @@ describe("Entities a handler sets", () => {
             "a relation column",
             "a renamed column",
             "a derived field",
-            "a batch past one chunk",
+            "a large batch",
             "a list table",
             "a scalar table",
           ])

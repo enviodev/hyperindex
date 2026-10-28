@@ -2,9 +2,7 @@ open Vitest
 
 // A division by zero in a handler is a NaN or an Infinity. A float field's
 // schema reads neither back, so storing one leaves an entity no later handler
-// can load; the write refuses it instead. An entity with a list field is bound
-// a cell at a time rather than staged (LocalWriteFailure_test), and has to
-// refuse it the same way.
+// can load; the write refuses it instead, in a list as in a scalar.
 
 let scenario = Scenario.make(
   ~configYaml=`
