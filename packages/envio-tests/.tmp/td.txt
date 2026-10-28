@@ -1,3 +1,0 @@
-start false
-stops 2002
-end 2034

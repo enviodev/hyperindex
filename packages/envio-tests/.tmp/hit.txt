@@ -1,1 +1,0 @@
-Stalls polling when chain buffer is at the head but events not yet processed
