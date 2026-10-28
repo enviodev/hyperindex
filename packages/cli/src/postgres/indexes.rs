@@ -109,66 +109,101 @@ fn seconds_text(seconds: f64) -> String {
     format!("{}", (seconds * 100.0).round() / 100.0)
 }
 
-fn failure_params(error: &str, code: &Option<String>) -> Value {
-    let mut params = json!({"storage": "postgres", "err": error});
-    if let Some(code) = code {
-        params["code"] = json!(code);
+fn failure(error: &str, code: &Option<String>) -> Value {
+    match code {
+        Some(code) => json!({"err": error, "code": code}),
+        None => json!({"err": error}),
     }
-    params
+}
+
+fn log_postgres(logger: &BoundLogger, level: Level, msg: &str, mut params: Value) {
+    params["storage"] = json!("postgres");
+    logger.log(level, msg, &params);
 }
 
 impl IndexEvent {
     pub fn log(&self, logger: &BoundLogger, pg_schema: &str) {
-        let storage = json!({"storage": "postgres"});
-        match self {
-            IndexEvent::Invalid { names } => logger.log(
-                Level::WARN,
-                &format!("Ignoring invalid PostgreSQL indexes in schema \"{pg_schema}\". They can't serve queries, so the indexer builds its own alongside them."),
-                &json!({"storage": "postgres", "indexes": names}),
-            ),
-            IndexEvent::Planned { declared, missing, rebuilt } => {
-                if !rebuilt.is_empty() {
-                    logger.log(
-                        Level::WARN,
-                        &format!("PostgreSQL reports {} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.", rebuilt.len()),
-                        &json!({"storage": "postgres", "indexes": rebuilt}),
-                    );
-                }
-                // The line that matters next is the indexer reporting itself
-                // ready, which finalization logs.
-                if missing.is_empty() {
-                    logger.log(
-                        Level::INFO,
-                        &format!("All {declared} schema indexes are already in place. Marking the indexer ready."),
-                        &storage,
-                    );
-                } else {
-                    logger.log(
-                        Level::INFO,
-                        &format!("Creating the {} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. {SLOW_ON_LARGE_DATABASE}", missing.len()),
-                        &json!({"storage": "postgres", "indexes": missing}),
-                    );
-                }
+        if let IndexEvent::Planned { rebuilt, .. } = self {
+            if !rebuilt.is_empty() {
+                log_postgres(
+                    logger,
+                    Level::WARN,
+                    &format!(
+                        "PostgreSQL reports {} of the indexer's own indexes as invalid, so they \
+                         can't serve queries. Rebuilding them.",
+                        rebuilt.len()
+                    ),
+                    json!({"indexes": rebuilt}),
+                );
             }
-            IndexEvent::Building { purpose: Purpose::Query, name, table_name, is_rebuild } => logger.log(
-                Level::INFO,
-                &format!(
-                    "{} \"{name}\" to serve a getWhere query on \"{table_name}\". Writes to the table are paused until it completes. {SLOW_ON_LARGE_DATABASE}",
-                    if *is_rebuild { "Rebuilding unusable index" } else { "Creating index" },
+        }
+        let (level, msg, params) = match self {
+            IndexEvent::Invalid { names } => (
+                Level::WARN,
+                format!(
+                    "Ignoring invalid PostgreSQL indexes in schema \"{pg_schema}\". They can't \
+                     serve queries, so the indexer builds its own alongside them."
                 ),
-                &storage,
+                json!({"indexes": names}),
             ),
-            IndexEvent::Building { purpose: Purpose::Schema, name, is_rebuild, .. } => logger.log(
+            // The line that matters next is the indexer reporting itself ready,
+            // which finalization logs.
+            IndexEvent::Planned {
+                declared, missing, ..
+            } if missing.is_empty() => (
                 Level::INFO,
-                &format!(
-                    "{} \"{name}\" the schema promises but the database no longer has. Writes to the table are paused until it completes. {SLOW_ON_LARGE_DATABASE}",
-                    if *is_rebuild { "Rebuilding unusable index" } else { "Creating missing index" },
+                format!(
+                    "All {declared} schema indexes are already in place. Marking the indexer \
+                     ready."
                 ),
-                &storage,
+                json!({}),
             ),
-            IndexEvent::Built { purpose, name, seconds } => logger.log(
+            IndexEvent::Planned { missing, .. } => (
                 Level::INFO,
-                &format!(
+                format!(
+                    "Creating the {} remaining schema indexes before the indexer reports ready. \
+                     Writes are paused until they are committed. {SLOW_ON_LARGE_DATABASE}",
+                    missing.len()
+                ),
+                json!({"indexes": missing}),
+            ),
+            IndexEvent::Building {
+                purpose,
+                name,
+                table_name,
+                is_rebuild,
+            } => {
+                let (verb, serving) = match purpose {
+                    Purpose::Query => (
+                        "Creating index",
+                        format!("to serve a getWhere query on \"{table_name}\""),
+                    ),
+                    Purpose::Schema => (
+                        "Creating missing index",
+                        "the schema promises but the database no longer has".to_string(),
+                    ),
+                };
+                let verb = if *is_rebuild {
+                    "Rebuilding unusable index"
+                } else {
+                    verb
+                };
+                (
+                    Level::INFO,
+                    format!(
+                        "{verb} \"{name}\" {serving}. Writes to the table are paused until it \
+                         completes. {SLOW_ON_LARGE_DATABASE}"
+                    ),
+                    json!({}),
+                )
+            }
+            IndexEvent::Built {
+                purpose,
+                name,
+                seconds,
+            } => (
+                Level::INFO,
+                format!(
                     "Index \"{name}\" is ready after {}s.{}",
                     seconds_text(*seconds),
                     match purpose {
@@ -176,32 +211,60 @@ impl IndexEvent {
                         Purpose::Schema => "",
                     },
                 ),
-                &storage,
+                json!({}),
             ),
-            IndexEvent::Failed { purpose: Purpose::Query, table_name, columns, error, code, .. } => logger.log(
+            IndexEvent::Failed {
+                purpose: Purpose::Query,
+                table_name,
+                columns,
+                error,
+                code,
+                ..
+            } => (
                 Level::WARN,
-                &format!(
-                    "Failed to create an index on \"{table_name}\"({}) for a getWhere query. The query runs without it.",
-                    columns.iter().map(|column| format!("\"{column}\"")).collect::<Vec<_>>().join(", "),
+                format!(
+                    "Failed to create an index on \"{table_name}\"({}) for a getWhere query. \
+                     The query runs without it.",
+                    columns
+                        .iter()
+                        .map(|column| format!("\"{column}\""))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 ),
-                &failure_params(error, code),
+                failure(error, code),
             ),
-            IndexEvent::Failed { purpose: Purpose::Schema, name, error, code, .. } => logger.log(
+            IndexEvent::Failed {
+                purpose: Purpose::Schema,
+                name,
+                error,
+                code,
+                ..
+            } => (
                 Level::WARN,
-                &format!("Failed to restore the schema index \"{name}\". Queries relying on it run unindexed until the next restart."),
-                &failure_params(error, code),
+                format!(
+                    "Failed to restore the schema index \"{name}\". Queries relying on it run \
+                     unindexed until the next restart."
+                ),
+                failure(error, code),
             ),
-            IndexEvent::ResyncFailed { name, error, code } => logger.log(
+            IndexEvent::ResyncFailed { name, error, code } => (
                 Level::TRACE,
-                &format!("Could not re-read the index \"{name}\" after a failed build. The next attempt reads it again."),
-                &failure_params(error, code),
+                format!(
+                    "Could not re-read the index \"{name}\" after a failed build. The next \
+                     attempt reads it again."
+                ),
+                failure(error, code),
             ),
-            IndexEvent::Committed { count, seconds } => logger.log(
+            IndexEvent::Committed { count, seconds } => (
                 Level::INFO,
-                &format!("Committed {count} schema indexes and the ready timestamp in {}s.", seconds_text(*seconds)),
-                &storage,
+                format!(
+                    "Committed {count} schema indexes and the ready timestamp in {}s.",
+                    seconds_text(*seconds)
+                ),
+                json!({}),
             ),
-        }
+        };
+        log_postgres(logger, level, &msg, params);
     }
 }
 
