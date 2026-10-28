@@ -210,7 +210,7 @@ impl EvmHyperSyncClient {
                 params.to_block,
                 !selects_logs,
                 params.reorgable_from,
-                params.max_num_logs,
+                params.items_target,
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;
@@ -218,7 +218,8 @@ impl EvmHyperSyncClient {
             let next_block = next_block as i64;
             return Ok((
                 ItemsResponse {
-                    archive_height: Some(next_block - 1),
+                    // No request was made, so the source learned no height.
+                    archive_height: None,
                     next_block,
                     event_items: Vec::new(),
                     block_items: Vec::new(),
@@ -270,7 +271,7 @@ impl EvmHyperSyncClient {
                     .map(log_selection_from_built)
                     .collect()
             }),
-            max_num_logs: params.max_num_logs.filter(|_| selects_logs),
+            max_num_logs: params.items_target.filter(|_| selects_logs),
             max_num_blocks: block_query.max_blocks.map(|b| b as i64),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
@@ -379,8 +380,9 @@ pub struct ItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
-    /// `None` sends no server-side cap on the number of logs returned.
-    pub max_num_logs: Option<i64>,
+    /// Soft cap on the page's items: the logs it selects, or for a query
+    /// selecting blocks alone, its block handlers' runs. `None` sends no cap.
+    pub items_target: Option<i64>,
     /// The event registrations selecting logs, by the index the client was
     /// constructed with. Empty selects no logs.
     pub on_event_registration_indexes: Vec<i64>,

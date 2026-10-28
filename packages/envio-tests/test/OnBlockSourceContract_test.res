@@ -96,6 +96,7 @@ let makeHyperSyncSource = (~url) => {
 let fetch = (
   source: Source.t,
   ~addressSet,
+  ~fromBlock=10,
   ~onBlockRegistrations=named("headers"),
   ~toBlock=Some(13),
   ~knownHeight=100,
@@ -103,7 +104,7 @@ let fetch = (
   ~itemsTarget=None,
 ) =>
   source.getItemsOrThrow(
-    ~fromBlock=10,
+    ~fromBlock,
     ~toBlock,
     ~addressSet,
     ~reorgableFrom,
@@ -222,6 +223,55 @@ describe("A block handler selecting fields, fetched from an RPC", () => {
   })
 })
 
+describe("A block handler with no block to read, fetched from an RPC", () => {
+  // A final range needs no reorg observation, so a page holding no handler
+  // block makes no request and answers up to the next block a handler runs on.
+  Async.it("reads nothing up to the next handler block in a final range", async t => {
+    let latestFetchedBlockNumber = await MockRpcServer.withScenario(
+      ~name="final range without a handler block",
+      ~calls=[],
+      async mock => {
+        let (source, addressSet) = makeRpcSource(~url=mock.url)
+        (
+          await source->fetch(
+            ~addressSet,
+            ~fromBlock=11,
+            ~onBlockRegistrations=named("sparse"),
+            ~toBlock=Some(20_000),
+            ~knownHeight=20_000,
+          )
+        ).latestFetchedBlockNumber
+      },
+    )
+
+    t.expect(latestFetchedBlockNumber).toEqual(5009)
+  })
+
+  // Where blocks can still be reorged the page's boundary blocks are its reorg
+  // observation, so they are read even with no handler block between them.
+  Async.it("still reads the boundary blocks of a reorgable range", async t => {
+    let latestFetchedBlockNumber = await MockRpcServer.withScenario(
+      ~name="reorgable range without a handler block",
+      ~calls=[110, 11]->Array.map(getBlockCall),
+      async mock => {
+        let (source, addressSet) = makeRpcSource(~url=mock.url)
+        (
+          await source->fetch(
+            ~addressSet,
+            ~fromBlock=11,
+            ~onBlockRegistrations=named("sparse"),
+            ~toBlock=Some(20_000),
+            ~knownHeight=20_000,
+            ~reorgableFrom=Some(11),
+          )
+        ).latestFetchedBlockNumber
+      },
+    )
+
+    t.expect(latestFetchedBlockNumber).toEqual(110)
+  })
+})
+
 describe("A block handler selecting fields, fetched from HyperSync", () => {
   // The range's last block runs no handler, yet the page has read it.
   Async.it("asks for every block in the range with the selected fields", async t => {
@@ -256,11 +306,12 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
       async server => {
         let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
         let page = await source->fetch(~addressSet, ~onBlockRegistrations=named("early"))
-        (server->MockHyperSyncServer.takeQueries, page.latestFetchedBlockNumber)
+        (server->MockHyperSyncServer.takeQueries, (page.latestFetchedBlockNumber, page.knownHeight))
       },
     )
 
-    t.expect((queries, latestFetchedBlockNumber)).toEqual(([], 13))
+    // Asking nothing, the source learned no height of its own to report.
+    t.expect((queries, latestFetchedBlockNumber)).toEqual(([], (13, 0)))
   })
 
   // Over blocks that can still be reorged the page's hashes feed reorg

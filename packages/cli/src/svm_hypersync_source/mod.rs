@@ -222,7 +222,7 @@ impl SvmHyperSyncClient {
                 params.to_slot,
                 params.on_event_registration_indexes.is_empty(),
                 params.reorgable_from,
-                params.max_num_instructions,
+                params.items_target,
             )
             .map_err(map_err)?;
         let block_selection = &block_query.selection;
@@ -230,7 +230,6 @@ impl SvmHyperSyncClient {
             return Ok((
                 ItemsResponse {
                     next_slot: next_slot as i64,
-                    blocks: Vec::new(),
                     event_items: Vec::new(),
                     block_items: Vec::new(),
                 },
@@ -289,9 +288,7 @@ impl SvmHyperSyncClient {
                 .map_err(map_err)?,
             instruction_calls: built.instruction_selections.clone(),
             field_selection,
-            max_num_instructions: params
-                .max_num_instructions
-                .and_then(|v| usize::try_from(v).ok()),
+            max_num_instructions: params.items_target.and_then(|v| usize::try_from(v).ok()),
             max_num_blocks: block_query.max_blocks.and_then(|b| usize::try_from(b).ok()),
             include_all_blocks,
             account_activity,
@@ -366,14 +363,12 @@ impl SvmHyperSyncClient {
             std::mem::take(&mut resp.account_activity),
             Some(&referenced_transactions),
         );
-        let (block_headers, block_store) =
-            take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
+        let block_store = take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
 
         let response = ItemsResponse {
             next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
                 .context("next_slot overflow")
                 .map_err(map_err)?,
-            blocks: block_headers,
             event_items: items,
             block_items,
         };
@@ -407,8 +402,9 @@ pub struct ItemsQuery {
     pub from_slot: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_slot: Option<i64>,
-    /// `None` sends no server-side cap on the number of instructions returned.
-    pub max_num_instructions: Option<i64>,
+    /// Soft cap on the page's items: the instructions it selects, or for a query
+    /// selecting blocks alone, its block handlers' runs. `None` sends no cap.
+    pub items_target: Option<i64>,
     /// The instruction registrations selecting instructions, by index. Empty
     /// selects no instructions.
     pub on_event_registration_indexes: Vec<i64>,
@@ -461,10 +457,6 @@ pub struct EventItem {
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
     pub next_slot: i64,
-    /// The page's lean block headers, one per slot; used for reorg detection
-    /// and the batch's latest timestamp. The full blocks live in the
-    /// `BlockStore` returned alongside this response.
-    pub blocks: Vec<types::Block>,
     pub event_items: Vec<EventItem>,
     pub block_items: Vec<BlockItem>,
 }
@@ -628,18 +620,17 @@ where
 ///
 /// `slots` restricts what is stored to the slots routed items reference;
 /// `None` stores every block (the raw `get` query, which builds no items).
-/// Headers are built for every returned block either way — reorg detection and
-/// the batch's latest timestamp read them whether an item landed there or not.
+/// Every returned block must carry its slot and hash either way: reorg
+/// detection reads them whether an item landed there or not.
 fn take_blocks(
     resp: &mut simple::SolanaResponse,
     slots: Option<&HashSet<u64>>,
-) -> Result<(Vec<types::Block>, BlockStore)> {
+) -> Result<BlockStore> {
     let mut raw_blocks = std::mem::take(&mut resp.blocks);
-    let block_headers: Vec<types::Block> = raw_blocks
-        .iter()
-        .map(types::Block::from_raw)
-        .collect::<Result<Vec<_>>>()
-        .context("mapping solana block headers")?;
+    for block in &raw_blocks {
+        types::required(block.slot, "block.slot")?;
+        types::required(block.blockhash.as_ref(), "block.blockhash")?;
+    }
     if let Some(slots) = slots {
         // Slots whose instructions were all dropped by client-side routing, and
         // slots `include_all_blocks` returned that carried no instruction at
@@ -659,7 +650,7 @@ fn take_blocks(
     }
     let block_store = BlockStore::new_svm();
     block_store.insert_svm_blocks(raw_blocks);
-    Ok((block_headers, block_store))
+    Ok(block_store)
 }
 
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
@@ -702,7 +693,7 @@ mod tests {
         };
         let referenced: HashSet<u64> = [42].into_iter().collect();
 
-        let (_, store) = take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
+        let store = take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
 
         assert_eq!(
             (
@@ -1507,7 +1498,7 @@ mod tests {
             vec![],
             None,
         );
-        let (_, block_store) = take_blocks(&mut resp, None).expect("take blocks");
+        let block_store = take_blocks(&mut resp, None).expect("take blocks");
 
         let txs = store
             .materialize(
@@ -1554,8 +1545,7 @@ mod tests {
             ..Default::default()
         };
         let referenced: HashSet<u64> = [42u64].into_iter().collect();
-        let (headers, block_store) =
-            take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
+        let block_store = take_blocks(&mut resp, Some(&referenced)).expect("take blocks");
 
         let mask = (1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64;
         let cols = block_store
@@ -1563,22 +1553,14 @@ mod tests {
             .await
             .expect("materialize");
 
+        // Slot 43's instructions were all dropped, but its block keeps a
+        // hash-only row so a fork on it can still be detected.
         assert_eq!(
-            (
-                headers.iter().map(|b| b.slot).collect::<Vec<_>>(),
-                str_column(&cols, "hash"),
-            ),
-            (
-                // Reorg detection and the batch's latest timestamp read every
-                // returned slot, so headers aren't filtered.
-                vec![42, 43],
-                // Slot 43's instructions were all dropped, but its block keeps a
-                // hash-only row so a fork on it can still be detected.
-                vec![
-                    Some(blockhash(42).to_string()),
-                    Some(blockhash(43).to_string()),
-                ],
-            )
+            str_column(&cols, "hash"),
+            vec![
+                Some(blockhash(42).to_string()),
+                Some(blockhash(43).to_string()),
+            ]
         );
     }
 }

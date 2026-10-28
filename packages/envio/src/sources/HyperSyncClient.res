@@ -258,8 +258,9 @@ module Items = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
-    // Absent means no server-side cap on the number of logs returned.
-    maxNumLogs?: int,
+    // Soft cap on the page's items: the logs it selects, or for a query
+    // selecting blocks alone, its block handlers' runs. Absent sends no cap.
+    itemsTarget?: int,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations

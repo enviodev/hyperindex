@@ -93,16 +93,15 @@ let makeOnBlockArgs = (
   ~ecosystem: t,
   ~context,
 ): Internal.onBlockArgs => {
-  let block = block->(Utils.magic: option<Internal.eventBlock> => option<Internal.blockEvent>)
   switch ecosystem.name {
   | Svm => {slot: blockNumber, ?block, context}
   | Evm | Fuel =>
     let block = switch block {
     | Some(block) => block
     | None =>
-      let blockEvent = Dict.make()
-      blockEvent->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
-      blockEvent->(Utils.magic: dict<unknown> => Internal.blockEvent)
+      let keyOnly = Dict.make()
+      keyOnly->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
+      keyOnly->(Utils.magic: dict<unknown> => Internal.eventBlock)
     }
     {block, context}
   }

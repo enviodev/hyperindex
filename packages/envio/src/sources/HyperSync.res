@@ -161,7 +161,9 @@ module GetItems = {
       blockItems: res.blockItems,
       nextBlock: res.nextBlock,
       responseBlocks: res.responseBlocks,
-      archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0
+      // None when the height is 0, or when the page was answered without a
+      // request; 0 reports no height, which never lowers a known one.
+      archiveHeight: res.archiveHeight->Option.getOr(0),
       transactionStore,
       blockStore,
     }

@@ -326,7 +326,6 @@ type eventPayload
 // Generic access to the payload's `block`: written/enriched at batch prep for
 // store-backed ecosystems (EVM/SVM HyperSync) and present inline otherwise.
 @get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
-@set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
 
 // Whatever a materialised block is written onto: an event's payload, or a block
 // item. Both keep it under `block`.
@@ -719,12 +718,9 @@ type rawEvent = {
   params: JSON.t,
 }
 
-// Opaque type to support both EVM and other ecosystems
-type blockEvent
-
 type onBlockArgs = {
   slot?: int,
-  block?: blockEvent,
+  block?: eventBlock,
   context: handlerContext,
 }
 

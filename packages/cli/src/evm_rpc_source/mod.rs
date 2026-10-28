@@ -141,6 +141,10 @@ pub struct NextPageParams {
     /// How many times this query has already been retried, which sets how long
     /// a transient miss waits before the next attempt.
     pub retry: i64,
+    /// Blocks at or above this one can still be reorged, so a page reaching
+    /// them reads its boundary blocks for reorg detection. Absent when the
+    /// whole range is final.
+    pub reorgable_from: Option<i64>,
 }
 
 /// What a page read came back as, and so which of `NextPageResult`'s optional
@@ -525,6 +529,32 @@ impl EvmRpcClient {
                 Some(interval_end),
             )
             .map_err(map_err)?;
+        // A page selecting only blocks, where no handler runs, reads nothing:
+        // over a final range it has no reorg observation to make either, so it
+        // answers without a request up to the next block a handler runs on.
+        if params.on_event_registration_indexes.is_empty() && block_selection.is_empty() {
+            let next_handler_block = self
+                .block_registrations
+                .select(
+                    &params.on_block_registration_indexes,
+                    from_block,
+                    Some(to_block_ceiling),
+                )
+                .map_err(map_err)?
+                .first_from(from_block);
+            let claimed_to = next_handler_block.map_or(to_block_ceiling, |block| block - 1);
+            if params
+                .reorgable_from
+                .is_none_or(|reorgable_from| (claimed_to as i64) < reorgable_from)
+            {
+                let (blocks, transactions) = self.empty_stores();
+                return Ok((
+                    NextPageResult::new(PageOutcome::Ok, claimed_to, self.inner.take_stats()),
+                    blocks,
+                    transactions,
+                ));
+            }
+        }
         let to_block =
             block_selection.range_end(from_block, interval_end, MAX_HANDLER_BLOCKS_PER_PAGE);
         // A block handler can select fields no event registration does, so a
@@ -723,8 +753,9 @@ impl EvmRpcClient {
         let block_items = query
             .block_selection
             .route(query.from_block..query.to_block + 1);
+        let mask = query.block_selection.mask();
         for item in &block_items {
-            refs.add_block(item.block_number as u64, query.block_selection.mask());
+            refs.add_block(item.block_number as u64, mask);
         }
 
         let page = enrich::page(

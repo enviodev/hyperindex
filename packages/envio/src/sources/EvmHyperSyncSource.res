@@ -86,7 +86,7 @@ let make = (
       ~query={
         fromBlock,
         toBlock: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
-        maxNumLogs: ?itemsTarget,
+        ?itemsTarget,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,

@@ -48,7 +48,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
       ~query={
         fromBlock: 12403138,
         toBlock: Some(12403139),
-        maxNumLogs: 5000,
+        itemsTarget: 5000,
         onEventRegistrationIndexes: [0],
         onBlockRegistrationIndexes: [],
         clientFilteredContracts: None,

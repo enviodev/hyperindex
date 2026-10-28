@@ -67,7 +67,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
     ~query={
       fromBlock,
       toBlock: Some(toBlock),
-      maxNumLogs: 10_000,
+      itemsTarget: 10_000,
       onEventRegistrationIndexes: registrationIndexes,
       onBlockRegistrationIndexes: [],
       clientFilteredContracts: None,

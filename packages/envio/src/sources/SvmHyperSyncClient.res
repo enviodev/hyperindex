@@ -117,16 +117,6 @@ module Registration = {
   }
 }
 
-module ResponseTypes = {
-  // Lean per-slot header for reorg detection and each item's slot/time; the
-  // selectable fields live in the block store and are materialised on demand.
-  type block = {
-    slot: int,
-    blockhash: string,
-    blockTime: Null.t<int>,
-  }
-}
-
 module Items = {
   // The whole per-query input beside the partition's address set: slot range
   // and what it selects from each table. Instruction selections, field
@@ -135,8 +125,9 @@ module Items = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
     toSlot: option<int>,
-    // Absent means no server-side cap on the number of instructions returned.
-    maxNumInstructions?: int,
+    // Soft cap on the page's items: the instructions it selects, or for a query
+    // selecting slots alone, its slot handlers' runs. Absent sends no cap.
+    itemsTarget?: int,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
     // Program names to fetch address-free even though their registrations
@@ -177,11 +168,6 @@ module Items = {
 
   type response = {
     nextSlot: int,
-    // One lean header per returned slot, including slots no item references —
-    // reorg detection and the batch's latest timestamp read them all. The full
-    // blocks live in the block store returned alongside, which keeps only the
-    // slots items reference.
-    blocks: array<ResponseTypes.block>,
     eventItems: array<item>,
     blockItems: array<BlockItem.t>,
   }

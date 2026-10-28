@@ -59,13 +59,6 @@ let makeReg = (~eventConfig=makeEventConfig(), ~where=None, ~index=0) => {
 
 let mockResponse: SvmHyperSyncClient.Items.response = {
   nextSlot: slot + 1,
-  blocks: [
-    {
-      slot,
-      blockhash: blockHash,
-      blockTime: Null.make(blockTime),
-    },
-  ],
   blockItems: [],
   eventItems: [
     {
@@ -235,7 +228,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         {
           fromSlot: slot - 10,
           toSlot: Some(slot + 10),
-          maxNumInstructions: 5000,
+          itemsTarget: 5000,
           onEventRegistrationIndexes: [0],
           onBlockRegistrationIndexes: [],
           clientFilteredContracts: None,

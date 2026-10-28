@@ -167,7 +167,7 @@ let make = (
     let query: SvmHyperSyncClient.Items.query = {
       fromSlot: fromBlock,
       toSlot: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
-      maxNumInstructions: ?itemsTarget,
+      ?itemsTarget,
       onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
       onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
       clientFilteredContracts: selection.clientFilteredContracts,

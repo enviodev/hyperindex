@@ -18,6 +18,9 @@ type nextPageParams = {
   onBlockRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
+  // Blocks at or above this one can still be reorged, so a page reaching them
+  // reads its boundary blocks for reorg detection. None when the range is final.
+  reorgableFrom?: int,
 }
 
 // Rust reports what to do about a page it could not read rather than throwing

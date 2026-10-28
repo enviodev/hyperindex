@@ -148,7 +148,7 @@ impl BlockRegistrations {
         let max_blocks = items_target
             .filter(|_| blocks_only && !selection.is_empty() && to_block != Some(from_block))
             .and_then(|target| u64::try_from(target).ok())
-            .map(|target| target.saturating_mul(selection.min_interval()));
+            .map(|target| selection.blocks_for_runs(target));
         Ok(BlockQuery {
             selection,
             blocks_only,
@@ -282,15 +282,18 @@ impl BlockSelection {
         })
     }
 
-    fn min_interval(&self) -> u64 {
-        self.registrations
+    /// How many blocks hold `runs` handler runs: each handler runs once every
+    /// `interval` blocks, so together they run `Σ 1/interval` times a block.
+    fn blocks_for_runs(&self, runs: u64) -> u64 {
+        let runs_per_block: f64 = self
+            .registrations
             .iter()
-            .map(|r| r.interval)
-            .min()
-            .unwrap_or(1)
+            .map(|r| 1.0 / r.interval as f64)
+            .sum();
+        ((runs as f64 / runs_per_block) as u64).max(1)
     }
 
-    fn first_from(&self, block_number: u64) -> Option<u64> {
+    pub(crate) fn first_from(&self, block_number: u64) -> Option<u64> {
         self.registrations
             .iter()
             .filter_map(|r| r.first_from(block_number))
@@ -497,15 +500,20 @@ mod tests {
     }
 
     #[test]
-    fn caps_blocks_by_the_densest_handler() {
-        let query = planned(
-            &[input(0, 0, None, 5), input(1, 0, None, 2)],
-            (0, Some(100)),
-            true,
-            None,
-            Some(3),
+    fn caps_blocks_at_the_handler_runs_the_target_counts() {
+        let cap = |inputs: &[OnBlockRegistrationInput]| {
+            planned(inputs, (0, Some(100_000)), true, None, Some(3)).max_blocks
+        };
+        // Every 5 and every 2 blocks run 0.7 times a block, so 4 blocks hold
+        // the 3 runs the target asks for; one handler every 1000 needs 3000.
+        assert_eq!(
+            (
+                cap(&[input(0, 0, None, 5), input(1, 0, None, 2)]),
+                cap(&[input(0, 0, None, 1000)]),
+                cap(&[input(0, 0, None, 1), input(1, 0, None, 1)]),
+            ),
+            (Some(4), Some(3000), Some(1))
         );
-        assert_eq!(query.max_blocks, Some(6));
     }
 
     #[test]

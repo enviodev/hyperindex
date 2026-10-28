@@ -1409,7 +1409,6 @@ export type SvmAllFieldsSelection = {
   readonly log: readonly SvmLogFieldName[];
 };
 
-
 type SvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
   ? unknown
   : IsWidenedArray<ListedArray<Fields, "instruction">> extends true
