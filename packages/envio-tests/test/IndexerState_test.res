@@ -398,8 +398,14 @@ describe("IndexerState", () => {
           ) :> Internal.onEventRegistration),
         ]
         let query: FetchState.query = {
-          ...defaultQuery,
+          partitionId: "0",
+          itemsTarget: Some(0),
+          itemsEst: 0,
+          fromBlock: 0,
+          toBlock: None,
+          isChunk: false,
           selection: {dependsOnAddresses: false, onEventRegistrations},
+          addresses: TestAddresses.setOf([]),
         }
         let makeEvent = (~chainId, ~blockNumber, ~logIndex, ~registrationIndex) => Internal.Event({
           chainId,
@@ -416,6 +422,7 @@ describe("IndexerState", () => {
         let chainId = chainConfig.id
         let addressStore = TestAddresses.makeStore(~onEventRegistrations)
         let fetchState = FetchState.make(
+          ~onNotice=ignore,
           ~maxAddrInPartition=Env.maxAddrInPartition,
           ~endBlock=None,
           ~onEventRegistrations,
@@ -447,19 +454,24 @@ describe("IndexerState", () => {
             ~chainConfig,
             ~fetchState,
             ~addressStore,
-            ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+            ~sourceManager=SourceManager.make(
+              ~logger=Logger.makeInMemory(),
+              ~sources=[mockSource.source],
+              ~isRealtime=false,
+            ),
             ~maxReorgDepth=200,
             ~shouldRollbackOnReorg=false,
             ~committedProgressBlockNumber=-1,
-            ~logger=Logging.getLogger(),
+            ~logger=Logger.makeInMemory(),
           ),
         )
         let state = IndexerState.make(
+          ~logger=Logger.makeInMemory(),
           ~config,
           ~persistence=TestIndexerState.defaultPersistence(),
           ~chainStates,
           ~isRealtime=false,
-          ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+          ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
         )
 
         // A batch of 2 still takes all of block 5, so it ends between blocks.
