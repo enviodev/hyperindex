@@ -9,7 +9,7 @@ exception ProcessingError({message: string, exn: exn, item: Internal.item})
 // An event registered only for its contract register has no handler to run.
 let hasHandler = (item: Internal.item) =>
   switch item {
-  | Block(_) => true
+  | Block(_) | Transaction(_) => true
   | Event(_) => (item->Internal.castUnsafeEventItem).onEventRegistration.handler !== None
   }
 
@@ -19,6 +19,24 @@ let invokeHandler = (runtime: HandlerRuntime.t, item: Internal.item) => {
   switch item {
   | Block({onBlockRegistration: {handler}, blockNumber, ?block}) =>
     handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~block, ~ecosystem, ~context))
+  | Transaction({onTransactionRegistration: {handler, name}, blockNumber, ?transaction, ?block}) =>
+    // Both are written at batch prep for every transaction item, so a missing
+    // one is a bug in materialisation rather than a selection the user left out.
+    let missing = what =>
+      JsError.throwWithMessage(
+        `The ${what} of block ${blockNumber->Int.toString} wasn't materialised for \`indexer.onTransaction("${name}")\`. Please, report to the Envio team.`,
+      )
+    handler({
+      transaction: switch transaction {
+      | Some(transaction) => transaction
+      | None => missing("transaction")
+      },
+      block: switch block {
+      | Some(block) => block
+      | None => missing("block")
+      },
+      context,
+    })
   | Event(_) =>
     let handler = (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
     handler({event: item->Ecosystem.getItemEvent(~ecosystem), context})
@@ -47,12 +65,13 @@ let eventStat = (runtime: HandlerRuntime.t, item: Internal.item) =>
         (item->Internal.castUnsafeEventItem).onEventRegistration.eventConfig,
       ),
     )
-  | Block(_) => None
+  | Block(_) | Transaction(_) => None
   }
 
 let handlerErrorMessage = (item: Internal.item) =>
   `Unexpected error in the ${switch item {
     | Block(_) => "block"
+    | Transaction(_) => "transaction"
     | Event(_) => "event"
     }} handler. Please handle the error to keep the indexer running smoothly.`
 

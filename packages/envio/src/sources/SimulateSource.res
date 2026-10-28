@@ -174,27 +174,38 @@ let make = (
         | Fuel | Svm => true
         }
 
-      let parsedQueueItems = items->Array.filter(item => {
-        let eventItem = item->Internal.castUnsafeEventItem
-        let {blockNumber, onEventRegistration} = eventItem
-        if blockNumber < fromBlock || blockNumber > toBlockQueried {
-          false
-        } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
-          false
-        } else if !(onEventRegistration->hasStarted(~blockNumber)) {
-          false
-        } else if !topicFiltersMatch(eventItem) {
-          false
-        } else {
-          onEventRegistration.isWildcard ||
-          eventItem.payload
-          ->Internal.getPayloadSrcAddress
-          ->isAddressAllowed(
-            ~contractName=onEventRegistration.eventConfig.contractName,
-            ~blockNumber,
-          )
+      let selectionTransactionIndexes =
+        selection.onTransactionRegistrations->Array.map(reg => reg.index)->Utils.Set.fromArray
+
+      let parsedQueueItems = items->Array.filter(item =>
+        switch item {
+        | Internal.Transaction({onTransactionRegistration, blockNumber}) =>
+          blockNumber >= fromBlock &&
+          blockNumber <= toBlockQueried &&
+          selectionTransactionIndexes->Utils.Set.has(onTransactionRegistration.index)
+        | Internal.Block(_) => false
+        | Internal.Event(_) =>
+          let eventItem = item->Internal.castUnsafeEventItem
+          let {blockNumber, onEventRegistration} = eventItem
+          if blockNumber < fromBlock || blockNumber > toBlockQueried {
+            false
+          } else if !(selectionRegistrationIndexes->Utils.Set.has(onEventRegistration.index)) {
+            false
+          } else if !(onEventRegistration->hasStarted(~blockNumber)) {
+            false
+          } else if !topicFiltersMatch(eventItem) {
+            false
+          } else {
+            onEventRegistration.isWildcard ||
+            eventItem.payload
+            ->Internal.getPayloadSrcAddress
+            ->isAddressAllowed(
+              ~contractName=onEventRegistration.eventConfig.contractName,
+              ~blockNumber,
+            )
+          }
         }
-      })
+      )
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,

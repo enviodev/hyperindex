@@ -144,6 +144,11 @@ let getItemKey = (item: Internal.item) =>
   switch item {
   | Event({chainId, blockNumber, logIndex}) => (chainId, blockNumber, logIndex)
   | Block({onBlockRegistration: {chainId}, blockNumber}) => (chainId, blockNumber, 0)
+  | Transaction({chainId, blockNumber, transactionIndex}) => (
+      chainId,
+      blockNumber,
+      transactionIndex,
+    )
   }
 
 // Advance each chain's fetchState to its post-batch state, simulating the loop

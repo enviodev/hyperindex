@@ -1,6 +1,7 @@
 type itemsPage = {
   eventItems: array<EvmEventItem.t>,
   blockItems: array<BlockItem.t>,
+  transactionItems: array<TransactionItem.t>,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,

@@ -262,6 +262,7 @@ module Items = {
     maxNumLogs?: int,
     onEventRegistrationIndexes: array<int>,
     onBlockRegistrationIndexes: array<int>,
+    onTransactionRegistrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.
@@ -276,6 +277,7 @@ module Items = {
     nextBlock: int,
     eventItems: array<EvmEventItem.t>,
     blockItems: array<BlockItem.t>,
+    transactionItems: array<TransactionItem.t>,
     // Blocks the server returned for the query, counted before routing drops
     // the ones no item joins to.
     responseBlocks: int,
@@ -302,6 +304,7 @@ external classNew: (
   string,
   array<Registration.input>,
   array<BlockItem.registrationInput>,
+  array<TransactionItem.registrationInput>,
   AddressStore.t,
 ) => t = "new"
 
@@ -323,6 +326,7 @@ let make = (
   ~httpReqTimeoutMillis,
   ~eventRegistrations,
   ~onBlockRegistrations=[],
+  ~onTransactionRegistrations=[],
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -349,6 +353,7 @@ let make = (
     `hyperindex/${envioVersion}`,
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
+    onTransactionRegistrations->TransactionItem.toRegistrationInputs,
     addressStore,
   )
 }

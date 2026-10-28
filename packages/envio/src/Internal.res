@@ -744,6 +744,26 @@ type onBlockRegistration = {
   blockFieldMask: option<float>,
 }
 
+type onTransactionArgs = {
+  transaction: eventTransaction,
+  block: eventBlock,
+  context: handlerContext,
+}
+
+// A filter field lists the accepted values, empty meaning any; `status` absent
+// runs on reverted and successful transactions alike.
+type onTransactionRegistration = {
+  index: int,
+  name: string,
+  chainId: ChainId.t,
+  from: array<Address.t>,
+  to: array<Address.t>,
+  sighash: array<string>,
+  status: option<int>,
+  handler: onTransactionArgs => promise<unit>,
+  fieldSelection: fieldSelection,
+}
+
 @tag("kind")
 type item =
   | @as(0)
@@ -762,6 +782,16 @@ type item =
       payload: eventPayload,
     })
   | @as(1)
+  Transaction({
+      onTransactionRegistration: onTransactionRegistration,
+      chainId: ChainId.t,
+      blockNumber: int,
+      transactionIndex: int,
+      // Written at batch prep from the chain's stores.
+      transaction?: eventTransaction,
+      block?: eventBlock,
+    })
+  | @as(2)
   Block({
       onBlockRegistration: onBlockRegistration,
       blockNumber: int,
@@ -776,6 +806,9 @@ type item =
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 external itemBlockHolder: item => blockHolder = "%identity"
+// A transaction item holds its transaction under the key an event payload
+// does, so the store writes onto both the same way.
+external itemTransactionHolder: item => eventPayload = "%identity"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"
@@ -783,6 +816,9 @@ external getItemBlockNumber: item => int = "blockNumber"
 // comparator reads this only after the kinds match.
 @get
 external getItemLogIndex: item => int = "logIndex"
+// Only meaningful on an `Event` or a `Transaction`.
+@get
+external getItemTransactionIndex: item => int = "transactionIndex"
 @get
 external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
 // The variant tag. Read directly so the comparator can order every event of a
@@ -793,6 +829,7 @@ external getItemKind: item => int = "kind"
 let getItemChainId = item =>
   switch item {
   | Event({chainId})
+  | Transaction({chainId})
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 

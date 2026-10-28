@@ -177,6 +177,7 @@ type rawSimulateItem
 @get external getProgram: rawSimulateItem => option<string> = "program"
 @get external getInstruction: rawSimulateItem => option<string> = "instruction"
 @get external getBlock: rawSimulateItem => option<JSON.t> = "block"
+@get external getTransaction: rawSimulateItem => option<JSON.t> = "transaction"
 
 let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: string) => {
   let found = ref(None)
@@ -320,6 +321,7 @@ let parse = (
   ~config: Config.t,
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~onTransactionRegistrations: array<Internal.onTransactionRegistration>=[],
 ): parseResult => {
   let chainId = chainConfig.id
   let startBlock = chainConfig->Config.startBlockOrZero
@@ -348,6 +350,42 @@ let parse = (
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
+    // A transaction on its own, routed to the transaction handlers like a
+    // fetched one.
+    | (Evm, None, None)
+      if raw->getContract->Option.isNone &&
+      raw->getEvent->Option.isNone &&
+      raw->getTransaction->Option.isSome =>
+      if onTransactionRegistrations->Utils.Array.isEmpty {
+        JsError.throwWithMessage(
+          `simulate: item at index ${itemIndex->Int.toString} is a transaction, but no transaction handler is registered on chain ${chainId->ChainId.toString}. Register one with indexer.onTransaction before simulating it.`,
+        )
+      }
+      let (block, blockNumber) = parseBlock(
+        ~ecosystem=Evm,
+        ~defaultBlockNumber=currentBlock.contents,
+        ~blockJson=raw->getBlock,
+      )
+      block->addCarriedBlock(~blockNumber)
+      let transaction = parseEvmSimulateTransaction(~transactionJson=raw->getTransaction)
+      let transactionIndex = (
+        transaction->(Utils.magic: Internal.eventTransaction => {"transactionIndex": int})
+      )["transactionIndex"]
+      currentBlock := blockNumber
+      onTransactionRegistrations->Array.forEach(onTransactionRegistration =>
+        if onTransactionRegistration->TransactionItem.matches(~transaction) {
+          items->Array.push(
+            Internal.Transaction({
+              onTransactionRegistration,
+              chainId,
+              blockNumber,
+              transactionIndex,
+              transaction,
+              block,
+            }),
+          )
+        }
+      )
     | (Evm | Svm, None, None)
       if raw->getContract->Option.isNone &&
       raw->getEvent->Option.isNone &&
@@ -760,6 +798,7 @@ let patchConfig = (
             let registrations: HandlerRegister.chainRegistrations = {
               onEventRegistrations: [],
               onBlockRegistrations: [],
+              onTransactionRegistrations: [],
             }
             registrationsByChainId->Dict.set(chainIdStr, registrations)
             registrations
@@ -774,6 +813,7 @@ let patchConfig = (
             ~config,
             ~chainConfig,
             ~onEventRegistrations=chainRegistrations.onEventRegistrations,
+            ~onTransactionRegistrations=chainRegistrations.onTransactionRegistrations,
           )
           {
             ...chainConfig,

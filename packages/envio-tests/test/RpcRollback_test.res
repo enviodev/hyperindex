@@ -156,6 +156,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
     ~selection={
       dependsOnAddresses: true,
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=None,

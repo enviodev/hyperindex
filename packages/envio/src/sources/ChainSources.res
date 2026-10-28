@@ -5,6 +5,7 @@ let make = (
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
+  ~onTransactionRegistrations: array<Internal.onTransactionRegistration>=[],
   ~addressStore: AddressStore.t,
   ~lowercaseAddresses: bool,
   ~blockStore: BlockStore.t,
@@ -32,6 +33,7 @@ let make = (
         Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
       ),
       ~onBlockRegistrations,
+      ~onTransactionRegistrations,
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,

@@ -83,6 +83,12 @@ let loggerForItem = (item: Internal.item, ~ecosystem: t, ~logger: Logger.t): Log
           JSON.String(onBlockRegistration.name),
         )},"block":${blockNumber->Int.toString}}`,
     )
+  | Transaction({blockNumber, transactionIndex, onTransactionRegistration}) =>
+    logger->Logger.withFieldsJson(
+      `{"onTransaction":${JSON.stringify(
+          JSON.String(onTransactionRegistration.name),
+        )},"block":${blockNumber->Int.toString},"transactionIndex":${transactionIndex->Int.toString}}`,
+    )
   }
 
 // `block` is the item's materialised selection, which already carries the key;

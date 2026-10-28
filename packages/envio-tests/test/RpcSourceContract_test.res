@@ -107,6 +107,7 @@ let invoke = (
     ~selection={
       dependsOnAddresses: true,
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=Some(5_000),
@@ -594,6 +595,7 @@ describe("RPC source public contract", () => {
                 ~selection={
                   dependsOnAddresses: true,
                   onBlockRegistrations: [],
+                  onTransactionRegistrations: [],
                   onEventRegistrations: [(registration :> Internal.onEventRegistration)],
                 },
                 ~itemsTarget=Some(5_000),
@@ -728,6 +730,7 @@ describe("RPC source public contract", () => {
               ~selection={
                 dependsOnAddresses: false,
                 onBlockRegistrations: [],
+                onTransactionRegistrations: [],
                 onEventRegistrations: [(registration :> Internal.onEventRegistration)],
               },
               ~itemsTarget=Some(5_000),
@@ -856,6 +859,7 @@ describe("RPC source public contract", () => {
               ~selection={
                 dependsOnAddresses: true,
                 onBlockRegistrations: [],
+                onTransactionRegistrations: [],
                 onEventRegistrations: [
                   (eventA :> Internal.onEventRegistration),
                   (eventB :> Internal.onEventRegistration),

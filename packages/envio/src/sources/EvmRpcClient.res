@@ -16,6 +16,7 @@ type nextPageParams = {
   partitionId: string,
   onEventRegistrationIndexes: array<int>,
   onBlockRegistrationIndexes: array<int>,
+  onTransactionRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
 }
@@ -37,6 +38,7 @@ type nextPageResult = {
   toBlock: int,
   eventItems: array<EvmEventItem.t>,
   blockItems: array<BlockItem.t>,
+  transactionItems: array<TransactionItem.t>,
   message: option<string>,
   providerMessage: option<string>,
   blockNumber: option<int>,
@@ -71,6 +73,7 @@ external classNew: (
   cfg,
   array<HyperSyncClient.Registration.input>,
   array<BlockItem.registrationInput>,
+  array<TransactionItem.registrationInput>,
   ~checksumAddresses: bool,
   ~addressStore: AddressStore.t,
 ) => t = "new"
@@ -83,6 +86,7 @@ let make = (
   ~headers=?,
   ~eventRegistrations=[],
   ~onBlockRegistrations=[],
+  ~onTransactionRegistrations=[],
   ~addressStore,
 ) =>
   Core.getAddon().evmRpcClient->classNew(
@@ -99,6 +103,7 @@ let make = (
     },
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
+    onTransactionRegistrations->TransactionItem.toRegistrationInputs,
     ~checksumAddresses,
     ~addressStore,
   )

@@ -316,6 +316,21 @@ let getGlobalIndexer = (): 'indexer => {
     )
   }
 
+  let onTransactionFn = (rawOptions: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onTransaction")
+    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
+    HandlerRegister.registerOnTransaction(
+      ~name=raw["name"],
+      ~where=raw["where"],
+      ~fields=raw["fields"],
+      ~handler=handler->(Utils.magic: 'b => Internal.onTransactionArgs => promise<unit>),
+      ~getChainsObject=config => {
+        let (chains, _) = buildChainsObject(~config)
+        chains->(Utils.magic: {..} => dict<unknown>)
+      },
+    )
+  }
+
   // Ecosystem-specific surface: EVM/Fuel expose event + block handlers; SVM
   // exposes slot handlers only. The TS `.d.ts` already models this separation
   // — the Proxy mirrors it at runtime so `Object.keys(indexer)` reflects the
@@ -332,7 +347,18 @@ let getGlobalIndexer = (): 'indexer => {
     | Some(k) => k
     | None => {
         let keys = switch Config.load().ecosystem.name {
-        | Evm | Fuel => [
+        | Evm => [
+            "name",
+            "description",
+            "chainIds",
+            "chains",
+            "onEvent",
+            "contractRegister",
+            "onBlock",
+            "onTransaction",
+            "~internalAndWillBeRemovedSoon_onRollbackCommit",
+          ]
+        | Fuel => [
             "name",
             "description",
             "chainIds",
@@ -373,6 +399,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "onInstruction" => onInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
+    | "onTransaction" => onTransactionFn->Utils.magic
     | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic
     | _ =>
       JsError.throwWithMessage(

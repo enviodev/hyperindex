@@ -1123,6 +1123,105 @@ export type EvmOnBlockOptions<
   readonly fields?: Fields & FieldsLiteralCheck<Fields>;
 };
 
+// ============== EVM onTransaction types ==============
+
+/**
+ * Structured filter object returned by an EVM `indexer.onTransaction` `where`
+ * predicate. Fields within `transaction` are ANDed; values within a field are
+ * ORed. An absent field matches any value, so `{}` matches every transaction.
+ */
+export type EvmOnTransactionFilter = {
+  readonly transaction?: {
+    /** Senders to match. */
+    readonly from?: readonly string[];
+    /** Recipients to match. A contract creation has no recipient and never matches. */
+    readonly to?: readonly string[];
+    /** 4-byte function selectors the calldata starts with, e.g. `"0xa9059cbb"`. */
+    readonly sighash?: readonly string[];
+    /** `1` for transactions that succeeded, `0` for reverted ones. Absent
+        matches both: a reverted transaction is still mined. */
+    readonly status?: 0 | 1;
+  };
+};
+
+/**
+ * Return type of an EVM `indexer.onTransaction` `where` predicate. The
+ * predicate must explicitly return — an implicit `undefined` is not accepted.
+ * - `false` → skip this chain entirely.
+ * - `true` → run on every transaction of the chain.
+ * - {@link EvmOnTransactionFilter} → run on the transactions it matches.
+ */
+export type EvmOnTransactionWhereResult = boolean | EvmOnTransactionFilter;
+
+/** Argument passed to an EVM `indexer.onTransaction` `where` predicate. */
+export type EvmOnTransactionWhereArgs<Config extends IndexerConfigTypes = GlobalConfig> = {
+  /** Configured chain being evaluated. Use `chain.id` to branch per chain. */
+  readonly chain: EvmChain<EvmChainIds<Config>, EvmContractNames<Config>>;
+};
+
+/** Context for EVM `indexer.onTransaction` handlers. Alias of {@link EvmOnEventContext}. */
+export type EvmOnTransactionContext<Config extends IndexerConfigTypes = GlobalConfig> =
+  EvmOnEventContext<Config>;
+
+/** The `fields` option of `indexer.onTransaction`: the transaction and block
+ * fields the handler reads beyond the ones every transaction handler gets. */
+export type EvmOnTransactionFieldsSelection = {
+  readonly transaction?: readonly EvmTransactionFieldName[];
+  readonly block?: readonly EvmBlockFieldName[];
+};
+
+/** Included in every transaction handler's selection without being listed:
+ * the keys the transaction is matched and fetched by. */
+type EvmAlwaysSelectedTransactionField = "transactionIndex" | "hash" | "from" | "to";
+type EvmOnTransactionAlwaysSelectedBlockField = "number" | "timestamp" | "hash";
+
+/** Arguments passed to an EVM transaction handler. */
+export type EvmOnTransactionHandlerArgs<
+  Fields extends EvmOnTransactionFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = {
+  /** Transaction being processed: its index, hash, sender and recipient, plus
+      the fields listed in the registration's `fields.transaction`. */
+  readonly transaction: SelectedFields<
+    EvmAllTransactionFields,
+    EvmAlwaysSelectedTransactionField | ListedFields<Fields, "transaction">,
+    "transaction"
+  >;
+  /** The transaction's block: number, timestamp and hash, plus the fields
+      listed in the registration's `fields.block`. */
+  readonly block: SelectedFields<
+    EvmAllBlockFields,
+    EvmOnTransactionAlwaysSelectedBlockField | ListedFields<Fields, "block">,
+    "block"
+  >;
+  /** Handler context: entity operations, logger, effect caller, chain state. */
+  readonly context: EvmOnTransactionContext<Config>;
+};
+
+/** Handler function for an EVM `indexer.onTransaction` registration. */
+export type EvmOnTransactionHandler<
+  Fields extends EvmOnTransactionFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = (args: EvmOnTransactionHandlerArgs<Fields, Config>) => Promise<void>;
+
+/** Options for an EVM `indexer.onTransaction` registration. */
+export type EvmOnTransactionOptions<
+  Fields extends EvmOnTransactionFieldsSelection | undefined = undefined,
+  Config extends IndexerConfigTypes = GlobalConfig,
+> = {
+  /** Unique name for this transaction handler. Used as the key in error
+      messages and in persisted progress tracking. */
+  readonly name: string;
+  /** Optional predicate evaluated once per configured chain at registration
+      time. Return `false` to skip a chain, `true` to run on every transaction,
+      or a filter object naming the senders, recipients, selectors or status
+      to match. Omitted means every transaction of every chain. */
+  readonly where?: (args: EvmOnTransactionWhereArgs<Config>) => EvmOnTransactionWhereResult;
+  /** Transaction and block fields this handler reads besides the ones every
+      transaction handler gets. */
+  readonly fields?: Fields & FieldsLiteralCheck<Fields>;
+};
+
 // ============== Fuel onBlock types ==============
 
 /**
@@ -1703,6 +1802,21 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
               options: EvmOnBlockOptions<F, Config>,
               handler: EvmOnBlockHandler<F, Config>,
             ) => void;
+            /**
+             * Register a transaction handler. `where` is evaluated once per
+             * configured chain at registration time; return `false` to skip a
+             * chain, `true` to run on every transaction, or an
+             * {@link EvmOnTransactionFilter} naming senders, recipients,
+             * function selectors or a status. Within a block the handler runs
+             * before the event handlers of the same transaction. Always
+             * available regardless of whether `contracts` are configured.
+             */
+            readonly onTransaction: <
+              const F extends EvmOnTransactionFieldsSelection | undefined = undefined
+            >(
+              options: EvmOnTransactionOptions<F, Config>,
+              handler: EvmOnTransactionHandler<F, Config>,
+            ) => void;
           } & (Config["evm"] extends {
             contracts: infer Contracts extends Record<string, Record<string, any>>;
           }
@@ -1900,6 +2014,7 @@ type CodegenRequiredFallback = {
   readonly onEvent: (...hint: CodegenRequiredHint[]) => void;
   readonly onInstruction: (...hint: CodegenRequiredHint[]) => void;
   readonly onBlock: (...hint: CodegenRequiredHint[]) => void;
+  readonly onTransaction: (...hint: CodegenRequiredHint[]) => void;
   readonly onSlot: (...hint: CodegenRequiredHint[]) => void;
   readonly contractRegister: (...hint: CodegenRequiredHint[]) => void;
 };
@@ -1998,7 +2113,19 @@ type EvmTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig>
   /** The block number to stop processing at. Defaults to max simulate block number when simulate is provided. */
   endBlock?: number;
   /** Simulate items to process instead of fetching from real sources. */
-  simulate?: (EvmSimulateItem<Config> | EvmSimulateBlock)[];
+  simulate?: (EvmSimulateItem<Config> | EvmSimulateBlock | EvmSimulateTransaction)[];
+};
+
+/** A simulated transaction, run by the `indexer.onTransaction` handlers whose
+ * filter matches it. Fields not given get the defaults an event's transaction
+ * gets; the block is the one the previous item landed on unless given. */
+type EvmSimulateTransaction = {
+  /** Transaction fields, keyed by the names `fields.transaction` selects. The
+      sender, recipient, calldata and status are what the handlers' filters
+      match on. */
+  transaction: Partial<EvmAllTransactionFields>;
+  /** Block fields, keyed by the names `fields.block` selects. */
+  block?: { readonly number?: number } & Partial<EvmAllBlockFields>;
 };
 
 /** A simulated block header, read by the block handlers that select fields.

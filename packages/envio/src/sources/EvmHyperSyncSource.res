@@ -6,6 +6,7 @@ type options = {
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
   onBlockRegistrations?: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations?: array<Internal.onTransactionRegistration>,
   apiToken: option<string>,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
@@ -23,6 +24,7 @@ let make = (
     endpointUrl,
     onEventRegistrations,
     ?onBlockRegistrations,
+    ?onTransactionRegistrations,
     apiToken,
     clientTimeoutMillis,
     lowercaseAddresses,
@@ -35,6 +37,7 @@ let make = (
 ): t => {
   let name = "HyperSync"
   let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
+  let onTransactionRegistrations = onTransactionRegistrations->Option.getOr([])
 
   // Per source, so one rejected token is reported once rather than on every
   // height retry for the life of the process.
@@ -48,6 +51,7 @@ let make = (
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -89,6 +93,9 @@ let make = (
         maxNumLogs: ?itemsTarget,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
+        onTransactionRegistrationIndexes: selection.onTransactionRegistrations->Array.map(reg =>
+          reg.index
+        ),
         clientFilteredContracts: selection.clientFilteredContracts,
         // Absent rather than false, so a range that wants only the blocks its
         // logs came from sends the query it always sent.
@@ -151,6 +158,12 @@ let make = (
       pageUnsafe.eventItems
       ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
       ->Array.concat(pageUnsafe.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
+      ->Array.concat(
+        pageUnsafe.transactionItems->TransactionItem.toInternalItems(
+          ~onTransactionRegistrations,
+          ~chainId,
+        ),
+      )
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 

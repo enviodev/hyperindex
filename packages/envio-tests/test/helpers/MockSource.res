@@ -148,6 +148,7 @@ let installMockSourceRegistrations = (
         let registrations: HandlerRegister.chainRegistrations = {
           onEventRegistrations: [],
           onBlockRegistrations: [],
+          onTransactionRegistrations: [],
         }
         registrationsByChainId->Dict.set(key, registrations)
         registrations
@@ -210,9 +211,20 @@ type blockMock = {
   blockFields?: dict<unknown>,
 }
 
+// A transaction the chain has, for the transaction handlers of the query's
+// selection whose filter matches it. Its block is built like `blockMock`'s.
+type transactionMock = {
+  blockNumber: int,
+  transactionIndex: int,
+  // Laid over the index and a hash derived from the coordinates; `from`,
+  // `to`, `input` and `status` are what the filters match on.
+  transactionFields?: dict<unknown>,
+}
+
 type itemsResponse = {
   items: array<itemMock>,
   blocks?: array<blockMock>,
+  transactions?: array<transactionMock>,
   // Defaults to the query's toBlock, or its fromBlock when unbounded.
   latestFetchedBlockNumber?: int,
   latestFetchedBlockHash?: string,
@@ -608,6 +620,7 @@ let make = (
   ): Source.blockRangeFetchResponse => {
     let items = response.items
     let blocks = response.blocks->Option.getOr([])
+    let transactions = response.transactions->Option.getOr([])
     let latestFetchedBlockNumber =
       response.latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
@@ -659,8 +672,11 @@ let make = (
     // store only ever learns the range's seam and end, and reorg detection
     // never sees the blocks events landed on.
     Array.concat(
-      items->Array.map(item => item.blockNumber),
-      blocks->Array.map(block => block.blockNumber),
+      Array.concat(
+        items->Array.map(item => item.blockNumber),
+        blocks->Array.map(block => block.blockNumber),
+      ),
+      transactions->Array.map(tx => tx.blockNumber),
     )->Array.forEach(blockNumber => {
       if !(observedBlocks->Array.some(b => b.blockNumber === blockNumber)) {
         observedBlocks->Array.push({
@@ -733,6 +749,38 @@ let make = (
             ->(Utils.magic: dict<unknown> => Internal.eventBlock),
           }))
         ),
+      )
+      ->Array.concat(
+        transactions->Array.flatMap(({blockNumber, transactionIndex, ?transactionFields}) => {
+          let transaction =
+            Dict.fromArray([
+              ("transactionIndex", transactionIndex->(Utils.magic: int => unknown)),
+              (
+                "hash",
+                evmBlockHash(`0x${blockNumber->Int.toString}${transactionIndex->Int.toString}`)->(
+                  Utils.magic: string => unknown
+                ),
+              ),
+            ])
+            ->Dict.assign(transactionFields->Option.getOr(Dict.make()))
+            ->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+          let block =
+            Dict.fromArray([
+              ("number", blockNumber->(Utils.magic: int => unknown)),
+              ("timestamp", blockNumber->(Utils.magic: int => unknown)),
+              ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
+            ])->(Utils.magic: dict<unknown> => Internal.eventBlock)
+          selection.onTransactionRegistrations
+          ->Array.filter(reg => reg->TransactionItem.matches(~transaction))
+          ->Array.map(onTransactionRegistration => Internal.Transaction({
+            onTransactionRegistration,
+            chainId,
+            blockNumber,
+            transactionIndex,
+            transaction,
+            block,
+          }))
+        }),
       ),
       transactionStore: None,
       blockStore: responseBlockStore,

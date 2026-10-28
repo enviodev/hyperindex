@@ -10,6 +10,10 @@ use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::request_stats::{rate_limited_err, RequestStat};
+use crate::transaction_selection::{
+    OnTransactionRegistrationInput, TransactionItem, TransactionRegistrations,
+    TransactionSelection, TransactionView,
+};
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -55,6 +59,7 @@ pub struct EvmHyperSyncClient {
     decoder: Decoder,
     selection_builder: SelectionBuilder,
     block_registrations: BlockRegistrations,
+    transaction_registrations: TransactionRegistrations,
 }
 
 impl EvmHyperSyncClient {
@@ -83,10 +88,13 @@ impl EvmHyperSyncClient {
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
         block_registrations: Vec<OnBlockRegistrationInput>,
+        transaction_registrations: Vec<OnTransactionRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
         let block_registrations = BlockRegistrations::new(&block_registrations).map_err(map_err)?;
+        let transaction_registrations =
+            TransactionRegistrations::new(&transaction_registrations).map_err(map_err)?;
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
@@ -112,6 +120,7 @@ impl EvmHyperSyncClient {
             decoder,
             selection_builder,
             block_registrations,
+            transaction_registrations,
         })
     }
 
@@ -185,6 +194,11 @@ impl EvmHyperSyncClient {
             params.client_filtered_contracts.unwrap_or_default(),
         );
         let selects_logs = !params.on_event_registration_indexes.is_empty();
+        let transaction_selection = self
+            .transaction_registrations
+            .select(&params.on_transaction_registration_indexes)
+            .map_err(map_err)?;
+        let selects_transactions = !transaction_selection.is_empty();
         let built = self
             .selection_builder
             .build(
@@ -208,7 +222,7 @@ impl EvmHyperSyncClient {
                 &params.on_block_registration_indexes,
                 params.from_block,
                 params.to_block,
-                !selects_logs,
+                !selects_logs && !selects_transactions,
                 params.include_all_blocks.unwrap_or(false),
                 params.max_num_logs,
             )
@@ -222,6 +236,7 @@ impl EvmHyperSyncClient {
                     next_block,
                     event_items: Vec::new(),
                     block_items: Vec::new(),
+                    transaction_items: Vec::new(),
                     response_blocks: 0,
                 },
                 TransactionStore::new_evm(),
@@ -229,7 +244,12 @@ impl EvmHyperSyncClient {
             ));
         }
 
-        let requested_transaction_fields = built.transaction_fields;
+        let mut requested_transaction_fields = built.transaction_fields;
+        for field in transaction_selection.transaction_fields() {
+            if !requested_transaction_fields.contains(&field) {
+                requested_transaction_fields.push(field);
+            }
+        }
         let mut block_fields = built.block_fields;
         // Force-add the always-required block fields, then validate the full
         // set. Validating the forced fields (not just the selection's) is what
@@ -237,6 +257,7 @@ impl EvmHyperSyncClient {
         // — the presence check, not the request, is the guarantee.
         for field in BlockField::in_store_mask(block_selection.mask())
             .into_iter()
+            .chain(transaction_selection.block_fields())
             .chain(REQUIRED_BLOCK_FIELDS.iter().copied())
         {
             if !block_fields.contains(&field) {
@@ -246,14 +267,20 @@ impl EvmHyperSyncClient {
         let validated_block_fields = block_fields;
 
         let mut transaction_fields = requested_transaction_fields.clone();
-        // Transactions are accumulated into the store keyed by
-        // (blockNumber, transactionIndex), so those keys must come back on each
-        // transaction row whenever any transaction field is requested.
-        if !transaction_fields.is_empty() {
-            for field in [
+        // The store keys come with every transaction row. A transaction
+        // handler's rows also carry the hash it reads and what its filter is
+        // re-checked on client-side: the server answers with the selected
+        // fields alone.
+        if !transaction_fields.is_empty() || selects_transactions {
+            let mut keys = vec![
                 TransactionField::BlockNumber,
                 TransactionField::TransactionIndex,
-            ] {
+            ];
+            if selects_transactions {
+                keys.push(TransactionField::Hash);
+                keys.extend(transaction_selection.routing_fields());
+            }
+            for field in keys {
                 if !transaction_fields.contains(&field) {
                     transaction_fields.push(field);
                 }
@@ -270,11 +297,23 @@ impl EvmHyperSyncClient {
                     .map(log_selection_from_built)
                     .collect()
             }),
+            transactions: selects_transactions.then(|| {
+                transaction_selection
+                    .filters()
+                    .into_iter()
+                    .map(napi::bindgen_prelude::Either::B)
+                    .collect()
+            }),
             max_num_logs: params.max_num_logs.filter(|_| selects_logs),
+            // The item target counts handler runs, which for a transaction
+            // page is one per routed transaction.
+            max_num_transactions: params
+                .max_num_logs
+                .filter(|_| selects_transactions && !selects_logs),
             max_num_blocks: block_query.max_blocks.map(|b| b as i64),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
-                transaction: selects_logs.then_some(transaction_fields),
+                transaction: (selects_logs || selects_transactions).then_some(transaction_fields),
                 // Everything get_items reads off the log: decode inputs, the
                 // flattened item fields, and the transaction-store keys.
                 log: selects_logs.then(|| {
@@ -319,7 +358,7 @@ impl EvmHyperSyncClient {
         let block_store = BlockStore::new_evm();
         // The range the page covered: `include_all_blocks` leaves no gaps in it.
         let block_items = block_selection.route(block_query.from_block..(next_block as u64));
-        let event_items = tokio::task::block_in_place(|| {
+        let (event_items, transaction_items) = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
                 response.data.transactions,
@@ -332,6 +371,7 @@ impl EvmHyperSyncClient {
                 &block_store,
                 &set_cache,
                 &block_items,
+                &transaction_selection,
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -364,6 +404,7 @@ impl EvmHyperSyncClient {
             next_block: block_query.fetched_until(next_block as u64) as i64,
             event_items,
             block_items,
+            transaction_items,
             response_blocks,
         };
         Ok((items, transaction_store, block_store))
@@ -387,6 +428,8 @@ pub struct ItemsQuery {
     /// The block handlers selecting blocks, by the index the client was
     /// constructed with. Empty selects no more blocks than the logs come from.
     pub on_block_registration_indexes: Vec<i64>,
+    /// The transaction handlers selecting transactions, by registration index.
+    pub on_transaction_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -445,6 +488,7 @@ pub struct ItemsResponse {
     pub next_block: i64,
     pub event_items: Vec<EventItem>,
     pub block_items: Vec<BlockItem>,
+    pub transaction_items: Vec<TransactionItem>,
     /// Blocks the server returned for this query, before routing drops the ones
     /// no item joins to. The server returns one block per number, so this is a
     /// distinct count.
@@ -506,14 +550,15 @@ fn push_unique(missing: &mut Vec<String>, name: String) {
     }
 }
 
-/// Builds the page's event items and its deduplicated block headers, fills the
-/// page's transaction and block stores, and checks that every requested
-/// block/transaction field came back. Only the blocks and transactions a routed
-/// item joins to reach the stores — a log that routes nowhere is dropped, and
-/// so is everything joined to it. Returns `ConvertError::MissingFields`
-/// (surfaced as `ImpossibleForTheQuery` on the JS side) when the source omitted
-/// a requested non-nullable field or a joined row, and propagates genuine decode
-/// errors otherwise.
+/// Builds the page's event and transaction items and its deduplicated block
+/// headers, fills the page's transaction and block stores, and checks that
+/// every requested block/transaction field came back. Only the blocks and
+/// transactions a routed item joins to reach the stores — a log that routes
+/// nowhere is dropped, and so is everything joined to it. Returns
+/// `ConvertError::MissingFields` (surfaced as `ImpossibleForTheQuery` on the
+/// JS side) when the source omitted a requested non-nullable field or a joined
+/// row, and propagates genuine decode errors otherwise.
+#[allow(clippy::too_many_arguments)]
 fn process_response(
     blocks: Vec<Vec<simple_types::Block>>,
     transactions: Vec<Vec<simple_types::Transaction>>,
@@ -526,7 +571,8 @@ fn process_response(
     block_store: &BlockStore,
     set_cache: &SetCache,
     handler_blocks: &[BlockItem],
-) -> std::result::Result<Vec<EventItem>, ConvertError> {
+    transaction_selection: &TransactionSelection,
+) -> std::result::Result<(Vec<EventItem>, Vec<TransactionItem>), ConvertError> {
     let mut missing: Vec<String> = Vec::new();
 
     // Route before touching the joined tables: routing is what decides which
@@ -534,6 +580,34 @@ fn process_response(
     let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
     let mut referenced_blocks: HashSet<u64> = HashSet::new();
     let mut referenced_transactions: HashSet<(u64, u32)> = HashSet::new();
+
+    // A routed transaction and its block are referenced like a log's. The
+    // server returns a transaction once however many filters it matched, so
+    // it is routed again here to every handler it runs.
+    let mut transaction_items = Vec::new();
+    if !transaction_selection.is_empty() {
+        for tx in transactions.iter().flatten() {
+            let (Some(block_number), Some(transaction_index)) =
+                (tx.block_number, tx.transaction_index)
+            else {
+                continue;
+            };
+            let routed = transaction_selection.route(&TransactionView::of(tx));
+            if routed.is_empty() {
+                continue;
+            }
+            let key = transaction_key(block_number, transaction_index);
+            referenced_blocks.insert(key.0);
+            referenced_transactions.insert(key);
+            for index in routed {
+                transaction_items.push(TransactionItem {
+                    block_number: key.0 as i64,
+                    transaction_index: key.1 as i64,
+                    on_transaction_registration_index: index,
+                });
+            }
+        }
+    }
     {
         // One read lock for the whole page: registration from the JS thread waits
         // only as long as routing takes.
@@ -684,7 +758,7 @@ fn process_response(
         .collect();
     block_store.insert_evm_blocks(store_blocks);
 
-    Ok(items)
+    Ok((items, transaction_items))
 }
 
 /// Key into the `TransactionStore`. The log side (which decides what a routed
@@ -897,6 +971,13 @@ mod tests {
         set_of(&evm_store(&[]), &[])
     }
 
+    fn no_transaction_handlers() -> TransactionSelection {
+        TransactionRegistrations::new(&[])
+            .unwrap()
+            .select(&[])
+            .unwrap()
+    }
+
     // Routes `full_log` (zero topic0, one topic, empty data) to a wildcard
     // registration so success-path tests still produce an item now that
     // unrouted logs are dropped.
@@ -975,6 +1056,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -1005,6 +1087,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -1040,6 +1123,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -1063,7 +1147,7 @@ mod tests {
             timestamp: Some(Default::default()),
             ..Default::default()
         };
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block]],
             vec![],
             vec![vec![full_log(1)]],
@@ -1080,6 +1164,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -1112,6 +1197,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -1146,6 +1232,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .err()
         .expect("expected MissingFields error");
@@ -1177,7 +1264,7 @@ mod tests {
         };
 
         let store = TransactionStore::new_evm();
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block]],
             vec![vec![tx]],
             vec![vec![full_log(7)]],
@@ -1189,6 +1276,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .expect("expected success when block and transaction join");
 
@@ -1220,7 +1308,7 @@ mod tests {
 
         let transaction_store = TransactionStore::new_evm();
         let block_store = BlockStore::new_evm();
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block(1), block(2)]],
             vec![vec![tx(1), tx(2)]],
             vec![vec![full_log(1), unrouted_log(2)]],
@@ -1232,6 +1320,7 @@ mod tests {
             &block_store,
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .expect("expected success");
 
@@ -1277,7 +1366,7 @@ mod tests {
         // routes nowhere, so nothing will ever read them and the page stands.
         // Without this, filtering the stores would silently diverge from what
         // the coverage check still insists the source deliver.
-        let items = process_response(
+        let (items, _) = process_response(
             vec![],
             vec![],
             vec![vec![unrouted_log(1)]],
@@ -1289,6 +1378,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .expect("an unrouted log's absent block and transaction are not missing fields");
 
@@ -1307,7 +1397,7 @@ mod tests {
             gas_used: (number == 1).then(Default::default),
             ..Default::default()
         };
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block(1), block(2)]],
             vec![],
             vec![vec![full_log(1), unrouted_log(2)]],
@@ -1324,6 +1414,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .expect("an unreferenced block's absent selected field is not a missing field");
 
@@ -1347,7 +1438,7 @@ mod tests {
             ..Default::default()
         };
 
-        let items = process_response(
+        let (items, _) = process_response(
             vec![vec![block]],
             vec![vec![
                 simple_types::Transaction {
@@ -1367,6 +1458,7 @@ mod tests {
             &BlockStore::new_evm(),
             empty_set().cache(),
             &[],
+            &no_transaction_handlers(),
         )
         .expect("a keyless transaction's absent field is not a missing field");
 

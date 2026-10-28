@@ -11,7 +11,7 @@ type partitionQueryResponse = {
 let hasContractRegister = (item: Internal.item) =>
   switch item {
   | Event({onEventRegistration: {contractRegister: Some(_)}}) => true
-  | Event(_) | Block(_) => false
+  | Event(_) | Block(_) | Transaction(_) => false
   }
 
 let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
@@ -274,7 +274,7 @@ and applyQueryResponse = (
   if state->IndexerState.exitAfterFirstEventBlock {
     switch newItems->Array.find(item =>
       switch item {
-      | Internal.Event(_) => true
+      | Internal.Event(_) | Transaction(_) => true
       | Block(_) => false
       }
     ) {

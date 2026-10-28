@@ -461,6 +461,40 @@ let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t):
     }
   }
 
+let onTransactionAlwaysSelectedTransactionFields = ["transactionIndex", "hash", "from", "to"]
+let onTransactionAlwaysSelectedBlockFields = ["number", "timestamp", "hash"]
+
+let resolveOnTransactionFieldSelection = (fields: unknown, ~name): Internal.fieldSelection => {
+  let registration = `\`indexer.onTransaction("${name}")\``
+  let fields = typeof(fields) === #undefined ? %raw(`{}`) : fields
+  validateFieldsShapeOrThrow(
+    fields,
+    ~registration,
+    ~validKeys=["transaction", "block"],
+    ~shapeNoun="transaction and block",
+  )
+  let transactionFields = parseFieldsOrThrow(
+    selectionList(fields, "transaction"),
+    ~valid=validTransactionFields,
+    ~kind="transaction",
+    ~registration,
+  )
+  let blockFields = parseFieldsOrThrow(
+    selectionList(fields, "block"),
+    ~valid=validBlockFields,
+    ~kind="block",
+    ~registration,
+  )
+  transactionFields->Utils.Set.addMany(onTransactionAlwaysSelectedTransactionFields)
+  blockFields->Utils.Set.addMany(onTransactionAlwaysSelectedBlockFields)
+  Internal.makeFieldSelection(
+    ~blockFields,
+    ~transactionFields,
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+  )
+}
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (

@@ -1278,9 +1278,16 @@ impl ProjectTemplate {
         // The onBlock handler signature mirrors the TypeScript surface in
         // `packages/envio/index.d.ts` (`EvmOnBlockHandlerArgs`,
         // `FuelOnBlockHandlerArgs`).
-        let (on_block_handler_type, chain_id_cases) = match &cfg.human_config {
+        let (on_block_handler_type, on_transaction_field, chain_id_cases) = match &cfg.human_config
+        {
             HumanConfig::Evm(hcfg) => (
                 "Envio.evmOnBlockArgs<handlerContext> => promise<unit>",
+                r#"
+  /** Register a transaction handler. Evaluates `where` once per configured chain at registration time. */
+  onTransaction: (
+    Envio.onTransactionOptions<indexerChain>,
+    Envio.evmOnTransactionArgs<handlerContext> => promise<unit>,
+  ) => unit,"#,
                 hcfg.chains
                     .iter()
                     .map(|chain| chain.id.to_string())
@@ -1288,6 +1295,7 @@ impl ProjectTemplate {
             ),
             HumanConfig::Fuel(hcfg) => (
                 "Envio.fuelOnBlockArgs<handlerContext> => promise<unit>",
+                "",
                 hcfg.chains
                     .iter()
                     .map(|chain| chain.id.to_string())
@@ -1412,7 +1420,7 @@ type indexer = {{
   onBlock: (
     Envio.onBlockOptions<indexerChain>,
     {on_block_handler_type},
-  ) => unit,
+  ) => unit,{on_transaction_field}
 }}"#
         );
 

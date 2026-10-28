@@ -261,10 +261,14 @@ let makeInternal = (
   // Handler binding + `where`-derived fetch state, and onBlock registrations,
   // are already collected by `HandlerRegister.finishRegistration`, keyed by
   // chain - this just looks up this chain's slice.
-  let {onEventRegistrations, onBlockRegistrations} =
+  let {onEventRegistrations, onBlockRegistrations, onTransactionRegistrations} =
     registrationsByChainId
     ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->ChainId.toString)
-    ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
+    ->Option.getOr({
+      onEventRegistrations: [],
+      onBlockRegistrations: [],
+      onTransactionRegistrations: [],
+    })
   // A block handler without `_gte` counts its interval from the chain's start
   // block. Spelled out here because a source matching blocks to handlers needs
   // the origin, and the chain's start block is only resolved by now.
@@ -314,6 +318,7 @@ let makeInternal = (
       chainConfig.blockLag,
     ),
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~firstEventBlock,
     // Fuel and SVM route through the address store like EVM does, so the
     // client-side path works for them - but their address counts are nowhere
@@ -344,6 +349,7 @@ let makeInternal = (
     ~chainConfig,
     ~onEventRegistrations,
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~addressStore,
     ~lowercaseAddresses,
     ~blockStore,
@@ -873,6 +879,44 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
         eventItem.payload
         ->Internal.payloadBlockHolder
         ->addBlockHolder(~blockNumber, ~mask=eventItem.onEventRegistration.fieldSelection.blockMask)
+      }
+    // A transaction item is its own holder: the stores write under the
+    // `transaction` and `block` keys the handler reads. Simulate and mock
+    // sources carry both inline.
+    | Internal.Transaction({transaction: ?Some(_), block: ?Some(_)}) => ()
+    | Internal.Transaction({
+        onTransactionRegistration: {fieldSelection},
+        blockNumber,
+        transactionIndex,
+        ?transaction,
+        ?block,
+      }) =>
+      if transaction->Option.isNone {
+        anyTransactionFieldSelected := true
+        let last = payloadGroups->Array.length - 1
+        let holder = item->Internal.itemTransactionHolder
+        if (
+          last >= 0 &&
+          txBlockNumbers->Array.getUnsafe(last) == blockNumber &&
+          transactionIndices->Array.getUnsafe(last) == transactionIndex
+        ) {
+          payloadGroups->Array.getUnsafe(last)->Array.push(holder)
+          transactionMasks->Array.setUnsafe(
+            last,
+            FieldMask.orMask(
+              transactionMasks->Array.getUnsafe(last),
+              fieldSelection.transactionMask,
+            ),
+          )
+        } else {
+          txBlockNumbers->Array.push(blockNumber)
+          transactionIndices->Array.push(transactionIndex)
+          transactionMasks->Array.push(fieldSelection.transactionMask)
+          payloadGroups->Array.push([holder])
+        }
+      }
+      if block->Option.isNone {
+        item->Internal.itemBlockHolder->addBlockHolder(~blockNumber, ~mask=fieldSelection.blockMask)
       }
     | Internal.Block({block: ?Some(_)}) => () // Simulate carries the block inline.
     | Internal.Block({skipped: ?Some(true)}) => ()

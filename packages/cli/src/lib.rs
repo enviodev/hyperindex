@@ -40,6 +40,7 @@ mod svm;
 mod svm_hypersync_source;
 mod template_dirs;
 mod text_position;
+mod transaction_selection;
 mod transaction_store;
 mod ts_loader;
 mod tui;

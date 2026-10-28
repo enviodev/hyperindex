@@ -92,6 +92,7 @@ let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Fact
 let makeSelection = (): FetchState.selection => {
   onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
   onBlockRegistrations: [],
+  onTransactionRegistrations: [],
   dependsOnAddresses: true,
 }
 

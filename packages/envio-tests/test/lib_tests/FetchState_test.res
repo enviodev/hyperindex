@@ -113,6 +113,17 @@ let mockBlockItem = (~blockNumber, ~registrationIndex=0): Internal.item => Inter
   onBlockRegistration: Utils.magic({"index": registrationIndex}),
 })
 
+let mockTransactionItem = (
+  ~blockNumber,
+  ~transactionIndex,
+  ~registrationIndex=0,
+): Internal.item => Internal.Transaction({
+  chainId: 1->ChainId.fromInt,
+  blockNumber,
+  transactionIndex,
+  onTransactionRegistration: Utils.magic({"index": registrationIndex}),
+})
+
 let dcToRegistration = (dc: Internal.indexingAddress): AddressStore.registration => {
   address: dc.address,
   contractName: dc.contractName,
@@ -314,7 +325,7 @@ describe("FetchState.make", () => {
         )
       },
       ~message=`Should panic if there's nothing to fetch`,
-      "Invalid configuration: Nothing to fetch on chain 0. addresses=0, onEventRegistrations=1, normalRegistrations=1. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock handlers.",
+      "Invalid configuration: Nothing to fetch on chain 0. addresses=0, onEventRegistrations=1, normalRegistrations=1. Make sure that you provided at least one contract address to index, or have events with Wildcard mode enabled, or have onBlock or onTransaction handlers.",
     )
   })
 
@@ -1671,6 +1682,7 @@ describe("FetchState.registerDynamicContracts", () => {
                   // it should be a part of the normal selection
                   onEventRegistrations: [wildcard1, wildcard2],
                   onBlockRegistrations: [],
+                  onTransactionRegistrations: [],
                 },
                 addresses: TestAddresses.setOf([]),
                 mergeBlock: None,
@@ -1688,6 +1700,7 @@ describe("FetchState.registerDynamicContracts", () => {
                   dependsOnAddresses: true,
                   onEventRegistrations: [normal1, normal2],
                   onBlockRegistrations: [],
+                  onTransactionRegistrations: [],
                 },
                 addresses: TestAddresses.setOf(
                   ~contractName="NftFactory",
@@ -2468,6 +2481,7 @@ describe("FetchState.getNextQuery & integration", () => {
       dependsOnAddresses: false,
       onEventRegistrations: [open_, restricted],
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     }
     let registrationIds = (selection: FetchState.selection) =>
       selection.onEventRegistrations->Array.map(reg => reg.eventConfig.contractName)
@@ -2485,6 +2499,7 @@ describe("FetchState.getNextQuery & integration", () => {
         FetchState.dependsOnAddresses: false,
         onEventRegistrations: [restricted],
         onBlockRegistrations: [],
+        onTransactionRegistrations: [],
       }
       ->FetchState.narrowSelectionToRange(~toBlock=Some(99))
       ->registrationIds,
@@ -2559,6 +2574,7 @@ describe("FetchState.getNextQuery & integration", () => {
             dependsOnAddresses: false,
             onEventRegistrations: [wildcard],
             onBlockRegistrations: [],
+            onTransactionRegistrations: [],
           },
           addresses: TestAddresses.setOf([]),
         },
@@ -2759,6 +2775,7 @@ describe("FetchState.getNextQuery & integration", () => {
             dependsOnAddresses: false,
             onEventRegistrations: wildcardEventConfigs,
             onBlockRegistrations: [],
+            onTransactionRegistrations: [],
           },
           addresses: TestAddresses.setOf([]),
           fromBlock: 0,
@@ -2797,6 +2814,7 @@ describe("FetchState.getNextQuery & integration", () => {
                 dependsOnAddresses: false,
                 onEventRegistrations: wildcardEventConfigs,
                 onBlockRegistrations: [],
+                onTransactionRegistrations: [],
               },
               addresses: TestAddresses.setOf([]),
               mergeBlock: None,
@@ -2973,6 +2991,7 @@ describe("FetchState unit tests for specific cases", () => {
         dependsOnAddresses: false,
         onEventRegistrations: [wildcard],
         onBlockRegistrations: [],
+        onTransactionRegistrations: [],
       },
       addresses: TestAddresses.setOf([]),
     }
@@ -3020,6 +3039,7 @@ describe("FetchState unit tests for specific cases", () => {
             dependsOnAddresses: false,
             onEventRegistrations: [wildcard],
             onBlockRegistrations: [],
+            onTransactionRegistrations: [],
           },
           addresses: TestAddresses.setOf([]),
         },
@@ -5050,6 +5070,63 @@ describe("mergeIntoBuffer", () => {
     let event = mockEvent(~blockNumber=7, ~logIndex=1_500)
     let blockItem = mockBlockItem(~blockNumber=7)
     t.expect([]->FetchState.mergeIntoBuffer([blockItem, event])).toEqual([event, blockItem])
+  })
+
+  it("runs a transaction item before its own events and after the ones before it", t => {
+    // Events carry the transaction index they came from; a transaction item
+    // sits between the events of the transactions around it, ahead of its
+    // own, and a block item stays last whatever the indexes.
+    let earlierTxEvent = Internal.Event({
+      chainId: 1->ChainId.fromInt,
+      blockNumber: 7,
+      logIndex: 0,
+      transactionIndex: 0,
+      onEventRegistration: Utils.magic({"index": 0}),
+      payload: "earlier"->(Utils.magic: string => Internal.eventPayload),
+    })
+    let ownEvent = Internal.Event({
+      chainId: 1->ChainId.fromInt,
+      blockNumber: 7,
+      logIndex: 3,
+      transactionIndex: 2,
+      onEventRegistration: Utils.magic({"index": 0}),
+      payload: "own"->(Utils.magic: string => Internal.eventPayload),
+    })
+    let laterTxEvent = Internal.Event({
+      chainId: 1->ChainId.fromInt,
+      blockNumber: 7,
+      logIndex: 9,
+      transactionIndex: 5,
+      onEventRegistration: Utils.magic({"index": 0}),
+      payload: "later"->(Utils.magic: string => Internal.eventPayload),
+    })
+    let transaction = mockTransactionItem(~blockNumber=7, ~transactionIndex=2)
+    let secondHandler = mockTransactionItem(
+      ~blockNumber=7,
+      ~transactionIndex=2,
+      ~registrationIndex=1,
+    )
+    let blockItem = mockBlockItem(~blockNumber=7)
+    let nextBlockTransaction = mockTransactionItem(~blockNumber=8, ~transactionIndex=0)
+    t.expect(
+      []->FetchState.mergeIntoBuffer([
+        nextBlockTransaction,
+        blockItem,
+        laterTxEvent,
+        secondHandler,
+        ownEvent,
+        transaction,
+        earlierTxEvent,
+      ]),
+    ).toEqual([
+      earlierTxEvent,
+      transaction,
+      secondHandler,
+      ownEvent,
+      laterTxEvent,
+      blockItem,
+      nextBlockTransaction,
+    ])
   })
 
   it("keeps a deep call and a later transaction's call distinct", t => {

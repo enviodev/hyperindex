@@ -1262,7 +1262,7 @@ let make = (
             seenLogCoordinates->Utils.Set.add(coordinate)->ignore
             Some(config.ecosystem.toRawEvent(eventItem))
           }
-        | Internal.Block(_) => None
+        | Internal.Block(_) | Internal.Transaction(_) => None
         }
       )
     } else {

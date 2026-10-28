@@ -24,7 +24,7 @@ use hypersync_client::format::{self, Hex};
 use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::{json, Value as Json};
 
-use super::client::{JsonRpcClient, RpcError};
+use super::client::{parse_hex_u64, JsonRpcClient, RpcError};
 use super::fields::{
     tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
     TX_EAGER_EXCLUDED_MASK,
@@ -33,6 +33,7 @@ use super::inflight::Inflight;
 use super::responses::{self, ResponseError};
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
+use crate::transaction_selection::{TransactionItem, TransactionSelection, TransactionView};
 use crate::transaction_store::TransactionStore;
 
 /// What a shared read hands to every waiter. The failure rides inside the
@@ -50,6 +51,8 @@ pub(crate) type TxKey = (u64, u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum FetchKey {
     Block(u64),
+    /// The block with its transactions in full, for the transaction handlers.
+    FullBlock(u64),
     Transaction([u8; 32]),
     Receipt([u8; 32]),
 }
@@ -57,7 +60,7 @@ pub(crate) enum FetchKey {
 impl FetchKey {
     fn method(&self) -> &'static str {
         match self {
-            FetchKey::Block(_) => "eth_getBlockByNumber",
+            FetchKey::Block(_) | FetchKey::FullBlock(_) => "eth_getBlockByNumber",
             FetchKey::Transaction(_) => "eth_getTransactionByHash",
             FetchKey::Receipt(_) => "eth_getTransactionReceipt",
         }
@@ -68,6 +71,7 @@ impl FetchKey {
             // `false`: transaction hashes only. The logs already name every
             // transaction this page cares about.
             FetchKey::Block(number) => json!([format!("0x{number:x}"), false]),
+            FetchKey::FullBlock(number) => json!([format!("0x{number:x}"), true]),
             FetchKey::Transaction(hash) | FetchKey::Receipt(hash) => {
                 json!([format::Hash::from(*hash).encode_hex()])
             }
@@ -259,11 +263,190 @@ pub(crate) struct EnrichRequest<'a> {
     pub block_read: &'a BlockRead,
     /// The union of every registration's transaction selection on this chain.
     pub chain_tx_mask: u64,
+    /// Already read for the transaction handlers, so not requested again.
+    pub scanned: ScannedPage,
 }
 
 pub(crate) struct EnrichedPage {
     pub blocks: BlockStore,
     pub transactions: TransactionStore,
+}
+
+/// A range read in full for its transaction handlers: the headers, the
+/// routed transactions grouped by the fields they were read for, and their
+/// items.
+#[derive(Default)]
+pub(crate) struct ScannedPage {
+    pub blocks: Vec<Block>,
+    pub transactions: Vec<(u64, Vec<Transaction>)>,
+    pub items: Vec<TransactionItem>,
+}
+
+/// One transaction as `eth_getBlockByNumber(_, true)` lists it.
+struct ScannedTransaction<'a> {
+    raw: &'a Json,
+    index: u32,
+    hash: format::Hash,
+    from: Option<format::Address>,
+    to: Option<format::Address>,
+    input: Option<format::Data>,
+}
+
+impl<'a> ScannedTransaction<'a> {
+    fn parse(raw: &'a Json) -> anyhow::Result<Self> {
+        Ok(ScannedTransaction {
+            raw,
+            index: parse_hex_u64(
+                &hex_text(raw, "transactionIndex")?
+                    .ok_or_else(|| anyhow::anyhow!("transaction carries no transactionIndex"))?,
+            )?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("transaction index does not fit a block"))?,
+            hash: decode_hex_field(raw, "hash")?
+                .ok_or_else(|| anyhow::anyhow!("transaction carries no hash"))?,
+            from: decode_hex_field(raw, "from")?,
+            to: decode_hex_field(raw, "to")?,
+            input: decode_hex_field(raw, "input")?,
+        })
+    }
+
+    fn view(&self, status: Option<u8>) -> TransactionView<'_> {
+        TransactionView {
+            from: self.from.as_ref().map(AsRef::as_ref),
+            to: self.to.as_ref().map(AsRef::as_ref),
+            input: self.input.as_ref().map(AsRef::as_ref),
+            status,
+        }
+    }
+}
+
+/// A transaction field's hex text, absent when the response omits or nulls it.
+fn hex_text(raw: &Json, key: &str) -> anyhow::Result<Option<String>> {
+    raw.get(key)
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| anyhow::anyhow!("transaction field {key:?} is not a string"))
+        })
+        .transpose()
+}
+
+fn decode_hex_field<T: Hex>(raw: &Json, key: &str) -> anyhow::Result<Option<T>> {
+    hex_text(raw, key)?
+        .map(|text| {
+            T::decode_hex(&text)
+                .map_err(|e| anyhow::anyhow!("transaction field {key:?} {text:?}: {e}"))
+        })
+        .transpose()
+}
+
+fn receipt_status(receipt: &Json) -> anyhow::Result<u8> {
+    let status = receipt
+        .get("status")
+        .and_then(Json::as_str)
+        .ok_or_else(|| anyhow::anyhow!("receipt carries no status"))?;
+    u8::try_from(parse_hex_u64(status)?).map_err(|_| anyhow::anyhow!("receipt status {status:?}"))
+}
+
+/// Read `[from_block, to_block]` in full and route every transaction to the
+/// handlers it runs. A receipt is read only where routing needs the status or
+/// a routed handler selected a field only the receipt carries.
+pub(crate) async fn scan_transactions(
+    client: &Arc<JsonRpcClient>,
+    fetches: &Fetches,
+    from_block: u64,
+    to_block: u64,
+    selection: &TransactionSelection,
+    handler_fields: &HashMap<i64, SelectedFields>,
+    block_read: &BlockRead,
+    chain_tx_mask: u64,
+) -> Result<ScannedPage, EnrichError> {
+    let scanned = join_all((from_block..=to_block).map(|number| async move {
+        let response = require(client, fetches, FetchKey::FullBlock(number), number).await?;
+        let block =
+            responses::build_block(&response, number, &block_read.fields, &block_read.selected)
+                .map_err(|error| EnrichError::from_response(number, error))?;
+        let malformed = |error: anyhow::Error| {
+            EnrichError::from_response(number, ResponseError::Malformed(error))
+        };
+        let raw_transactions = response
+            .get("transactions")
+            .and_then(Json::as_array)
+            .ok_or_else(|| malformed(anyhow::anyhow!("block carries no transactions list")))?;
+
+        let mut rows: HashMap<u64, Vec<Transaction>> = HashMap::new();
+        let mut items = Vec::new();
+        for raw in raw_transactions {
+            let tx = ScannedTransaction::parse(raw).map_err(malformed)?;
+            if !selection.matches_call(&tx.view(None)) {
+                continue;
+            }
+            let mut receipt = None;
+            let mut status = None;
+            if selection.needs_status(&tx.view(None)) {
+                let fetched =
+                    require(client, fetches, FetchKey::Receipt(**tx.hash), number).await?;
+                status = Some(receipt_status(&fetched).map_err(malformed)?);
+                receipt = Some(fetched);
+            }
+            let routed = selection.route(&tx.view(status));
+            if routed.is_empty() {
+                continue;
+            }
+            let wanted = routed.iter().fold(0, |acc, index| {
+                acc | handler_fields.get(index).map_or(0, |fields| fields.tx_mask)
+            }) & !tx_mask_of(Carrier::Log);
+            let reads = ResponsesToRead::for_mask(wanted);
+            if reads.receipt && receipt.is_none() {
+                receipt =
+                    Some(require(client, fetches, FetchKey::Receipt(**tx.hash), number).await?);
+            }
+            // The body came with the block, so it is read whatever was wanted.
+            let reads = ResponsesToRead {
+                transaction: true,
+                receipt: receipt.is_some(),
+            };
+            let covering = wanted | (chain_tx_mask & !TX_EAGER_EXCLUDED_MASK & reads.carries());
+            let fields = tx_fields_in(covering);
+            let mut row = responses::build_transaction(
+                number,
+                tx.index,
+                &tx.hash,
+                Some(tx.raw),
+                receipt.as_deref(),
+                &fields,
+            )
+            .map_err(|error| EnrichError::from_response(number, error))?;
+            if responses::needs_effective_gas_price(&row, &fields) {
+                responses::fill_effective_gas_price(&mut row, tx.raw)
+                    .map_err(|error| EnrichError::from_response(number, error))?;
+            }
+            responses::check_transaction(&row, &tx_fields_in(wanted))
+                .map_err(|error| EnrichError::from_response(number, error))?;
+            rows.entry(covering | tx_mask_of(Carrier::Log))
+                .or_default()
+                .push(row);
+            for index in routed {
+                items.push(TransactionItem {
+                    block_number: number as i64,
+                    transaction_index: i64::from(tx.index),
+                    on_transaction_registration_index: index,
+                });
+            }
+        }
+        Ok((block, rows, items))
+    }))
+    .await;
+
+    let mut page = ScannedPage::default();
+    for (block, rows, items) in collect_worst(scanned)? {
+        page.blocks.push(block);
+        page.transactions.extend(rows);
+        page.items.extend(items);
+    }
+    Ok(page)
 }
 
 /// Read one JSON-RPC result, sharing an identical request already in flight.
@@ -350,9 +533,20 @@ pub(crate) async fn page(
         known_transactions,
         block_read,
         chain_tx_mask,
+        scanned,
     } = request;
 
-    let block_numbers = plan_blocks(&refs, from_block, to_block, known_blocks);
+    // A block the transaction handlers read in full is not read again for the
+    // logs that landed on it.
+    let scanned_numbers: std::collections::HashSet<u64> = scanned
+        .blocks
+        .iter()
+        .filter_map(|block| block.number)
+        .collect();
+    let block_numbers: Vec<u64> = plan_blocks(&refs, from_block, to_block, known_blocks)
+        .into_iter()
+        .filter(|number| !scanned_numbers.contains(number))
+        .collect();
     let tx_plan = plan_transactions(&refs, known_transactions, chain_tx_mask);
 
     // Both sides are awaited, then judged together. Taking whichever failed
@@ -366,7 +560,7 @@ pub(crate) async fn page(
         fetch_transactions(client, fetches, &tx_plan),
     )
     .await;
-    let (blocks, transactions) = match (blocks, transactions) {
+    let (mut blocks, mut transactions) = match (blocks, transactions) {
         (Ok(blocks), Ok(transactions)) => (blocks, transactions),
         (blocks, transactions) => {
             return Err(
@@ -375,6 +569,8 @@ pub(crate) async fn page(
             )
         }
     };
+    blocks.extend(scanned.blocks);
+    transactions.extend(scanned.transactions);
 
     let page_blocks = BlockStore::new_evm();
     let page_transactions = TransactionStore::new_evm();

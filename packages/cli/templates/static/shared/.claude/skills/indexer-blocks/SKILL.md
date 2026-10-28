@@ -11,7 +11,9 @@ metadata:
 # Block Handlers
 
 Process every block (or every Nth block) using `indexer.onBlock`. No contract
-address or `config.yaml` entry needed.
+address or `config.yaml` entry needed. To run on the transactions of a block
+instead, filtered by sender, recipient or selector, see `indexer.onTransaction`
+in the `indexer-transactions` skill.
 
 ## Handler
 

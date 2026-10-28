@@ -592,6 +592,100 @@ expectType<EvmOnBlockFilter>(_empty);
 `)
   )
 
+  it("shapes the onTransaction surface", _ =>
+    check(`
+import type {
+  Address,
+  EvmChainId,
+  EvmOnEventContext,
+  EvmOnTransactionContext,
+  EvmOnTransactionFilter,
+  EvmOnTransactionHandler,
+  EvmOnTransactionHandlerArgs,
+  EvmOnTransactionOptions,
+  EvmOnTransactionWhereArgs,
+  EvmOnTransactionWhereResult,
+  Hex,
+} from "envio";
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<TypeEqual<EvmOnTransactionContext, EvmOnEventContext>>(true);
+const _opts: EvmOnTransactionOptions = {
+  name: "t",
+  where: ({ chain }) => chain.id === 1 && { transaction: { from: ["0x"], to: ["0x"], sighash: ["0xa9059cbb"], status: 1 } },
+};
+expectType<EvmOnTransactionOptions>(_opts);
+
+// The key fields come without being listed.
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["transaction"]["hash"], Hex>>(true);
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["transaction"]["from"], Address | undefined>>(true);
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["transaction"]["to"], Address | undefined>>(true);
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["transaction"]["transactionIndex"], number>>(true);
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["block"]["number"], number>>(true);
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["block"]["timestamp"], number>>(true);
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["block"]["hash"], Hex>>(true);
+// @ts-expect-error - a transaction field the registration didn't select
+const _unselectedTx: Hex = ({} as EvmOnTransactionHandlerArgs["transaction"]).input;
+// @ts-expect-error - a block field the registration didn't select
+const _unselectedBlock: Address = ({} as EvmOnTransactionHandlerArgs["block"]).miner;
+expectType<TypeEqual<EvmOnTransactionHandlerArgs["context"], EvmOnTransactionContext>>(true);
+// A handler written apart from its registration names the selection first.
+expectType<
+  TypeEqual<
+    EvmOnTransactionHandlerArgs<{ readonly transaction: readonly ["input"]; readonly block: readonly ["miner"] }>["transaction"]["input"],
+    Hex
+  >
+>(true);
+expectType<
+  TypeEqual<
+    EvmOnTransactionHandlerArgs<{ readonly transaction: readonly ["input"]; readonly block: readonly ["miner"] }>["block"]["miner"],
+    Address
+  >
+>(true);
+expectType<
+  TypeEqual<EvmOnTransactionHandler, (args: EvmOnTransactionHandlerArgs) => Promise<void>>
+>(true);
+
+expectType<TypeEqual<EvmOnTransactionWhereArgs["chain"]["id"], EvmChainId>>(true);
+expectType<TypeEqual<EvmOnTransactionWhereArgs["chain"]["Token"]["name"], "Token">>(true);
+expectType<TypeEqual<EvmOnTransactionWhereResult, boolean | EvmOnTransactionFilter>>(true);
+type _Predicate = (args: { readonly chain: { readonly id: number } }) => EvmOnTransactionWhereResult;
+// @ts-expect-error - implicit undefined return is not assignable
+const _missingReturn: _Predicate = ({ chain }) => {
+  if (chain.id === 1) return true;
+};
+// @ts-expect-error - status is 0 or 1
+const _badStatus: EvmOnTransactionFilter = { transaction: { status: 2 } };
+// @ts-expect-error - a transaction filter has no block range
+const _badKey: EvmOnTransactionFilter = { block: { number: { _gte: 1 } } };
+
+if (0) {
+  indexer.onTransaction(
+    {
+      name: "typed",
+      where: ({ chain }) => chain.id === 1 && { transaction: { from: ["0x"] } },
+      fields: { transaction: ["input", "value"], block: ["timestamp"] },
+    },
+    async ({ transaction, block, context }) => {
+      expectType<TypeEqual<typeof transaction.input, Hex>>(true);
+      expectType<TypeEqual<typeof transaction.value, bigint>>(true);
+      expectType<TypeEqual<typeof transaction.hash, Hex>>(true);
+      expectType<TypeEqual<typeof block.timestamp, number>>(true);
+      // @ts-expect-error - not selected
+      const _gas: bigint = transaction.gas;
+      context.log.info("ok");
+    },
+  );
+  indexer.onTransaction(
+    // @ts-expect-error - a field selection must be a literal array
+    { name: "widened", fields: { transaction: [] as string[] } },
+    async () => {},
+  );
+}
+`)
+  )
+
   it("guards the indexer.onEvent / contractRegister registration surface", _ =>
     check(`
 import { indexer } from "envio";

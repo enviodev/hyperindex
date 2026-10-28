@@ -8,6 +8,7 @@ type options = {
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
   onBlockRegistrations?: array<Internal.onBlockRegistration>,
+  onTransactionRegistrations?: array<Internal.onTransactionRegistration>,
   lowercaseAddresses: bool,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
@@ -27,6 +28,7 @@ let make = (
     chainId,
     onEventRegistrations,
     ?onBlockRegistrations,
+    ?onTransactionRegistrations,
     lowercaseAddresses,
     addressStore,
     blockStore,
@@ -44,11 +46,13 @@ let make = (
   }
   let name = `RPC (${urlHost})`
   let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
+  let onTransactionRegistrations = onTransactionRegistrations->Option.getOr([])
 
   let rpcClient = EvmRpcClient.make(
     ~url,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~onBlockRegistrations,
+    ~onTransactionRegistrations,
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -77,7 +81,8 @@ let make = (
 
     if (
       selection.onEventRegistrations->Utils.Array.isEmpty &&
-        selection.onBlockRegistrations->Utils.Array.isEmpty
+      selection.onBlockRegistrations->Utils.Array.isEmpty &&
+      selection.onTransactionRegistrations->Utils.Array.isEmpty
     ) {
       throw(
         Source.GetItemsError(
@@ -96,6 +101,9 @@ let make = (
         partitionId,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
+        onTransactionRegistrationIndexes: selection.onTransactionRegistrations->Array.map(reg =>
+          reg.index
+        ),
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
       },
@@ -186,6 +194,12 @@ let make = (
       result.eventItems
       ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
       ->Array.concat(result.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
+      ->Array.concat(
+        result.transactionItems->TransactionItem.toInternalItems(
+          ~onTransactionRegistrations,
+          ~chainId,
+        ),
+      )
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     {

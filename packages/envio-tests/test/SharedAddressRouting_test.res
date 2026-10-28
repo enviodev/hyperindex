@@ -104,6 +104,7 @@ let fetch = (source: Source.t, ~addressSet) =>
       dependsOnAddresses: true,
       onEventRegistrations: onEventRegistrations(),
       onBlockRegistrations: [],
+      onTransactionRegistrations: [],
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,
@@ -140,7 +141,8 @@ let routed = (item: Internal.item) =>
         payload.srcAddress->Address.toString,
       )
     }
-  | Internal.Block(_) => JsError.throwWithMessage("Expected an event item")
+  | Internal.Block(_) | Internal.Transaction(_) =>
+    JsError.throwWithMessage("Expected an event item")
   }
 
 describe("An address indexed by two contracts", () => {

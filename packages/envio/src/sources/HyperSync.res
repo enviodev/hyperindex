@@ -96,6 +96,7 @@ let reraiseIfRecoverable = exn =>
 type itemsPage = {
   eventItems: array<EvmEventItem.t>,
   blockItems: array<BlockItem.t>,
+  transactionItems: array<TransactionItem.t>,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,
@@ -159,6 +160,7 @@ module GetItems = {
     {
       eventItems: res.eventItems,
       blockItems: res.blockItems,
+      transactionItems: res.transactionItems,
       nextBlock: res.nextBlock,
       responseBlocks: res.responseBlocks,
       archiveHeight: res.archiveHeight->Option.getOr(0), //Archive Height is only None if height is 0

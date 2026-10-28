@@ -142,7 +142,8 @@ let materializedBlocks = async (page: Source.blockRangeFetchResponse) => {
         blockNumber,
         block->Option.map(block => block->(Utils.magic: Internal.eventBlock => blockView)),
       )
-    | Internal.Event(_) => JsError.throwWithMessage("Expected a block item")
+    | Internal.Event(_) | Internal.Transaction(_) =>
+      JsError.throwWithMessage("Expected a block item")
     }
   )
 }
