@@ -63,14 +63,13 @@ From `npx -y envio-cloud indexer commits <indexer> <org> -o json` (fields `commi
 | `deploy` | Deployment starting | Wait |
 | `active` | Has a deployment | Wait for sync |
 | `inactive` | Not deployed: auto-deploy off, or the deployment / indexing-hour limit | `deployment deploy`, after freeing a slot if at 3 deployments |
-| `deletingDeploymemt` (sic) | Its deployment is being deleted | Push a new commit to deploy again |
+| `deletingDeploymemt` | Its deployment is being deleted | Push a new commit to deploy again |
 | `configFileMissing` | Config file not found | Fix `--config-file` (relative to the root dir) or `--root-dir` |
 | `packageJsonMissing` | No `package.json` in the root dir | Fix `--root-dir` |
 | `failedToDownload` | Couldn't fetch the commit from GitHub | Check the root dir and the GitHub App's access, push again |
 | `versionNotSupported` | Unsupported `envio` version | Pin a supported exact version |
 | `clickhouseConfigMismatch` | `storage.clickhouse` doesn't match the indexer's setup | Align the config with the plan |
 | `clickhouseVersionNotSupported` | ClickHouse needs envio 3.0.2+ | Upgrade envio |
-| `reorgsEnabled` | `rollback_on_reorg` was on, which the plan didn't allow when the commit was processed | Push a new commit; if it's rejected again, ask the user whether to set `rollback_on_reorg: false` or upgrade the plan |
 
 ## Commands
 
@@ -86,4 +85,4 @@ Deployment commands take `<indexer> <commit> [org]`; most others take `<indexer>
 - `-o json` prints `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`. Informational lines go to stderr, so don't merge stderr into JSON you parse (`2>&1`). Check the exit code first: 0 success, 1 user error, 2 server error. Some errors print only to stderr.
 - `indexer get -o json` → `data.deployments[]` with `commit_hash`, `prod_status` (`none`, `pending`, `prod`) and `gql_endpoint`. For an indexer that doesn't exist it returns `{"ok": true}` with no `data`.
 - `deployment status -o json` → one entry per chain with `block_height`, `latest_processed_block` and `timestamp_caught_up_to_head_or_endblock`. An empty list means no metrics yet.
-- Commands that ask for confirmation (`add`, `deploy`, `promote`, `restart`, `delete`, `security api-key ...`) take `--yes`. Without an answer they're cancelled and exit 1, except `indexer add` in envio-cloud 1.0.0 and older, which exits 0 having done nothing.
+- Commands that ask for confirmation (`add`, `deploy`, `promote`, `restart`, `delete`, `security api-key ...`) take `--yes`. Without an answer they're cancelled and do nothing.
