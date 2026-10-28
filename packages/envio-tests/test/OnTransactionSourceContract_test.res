@@ -65,7 +65,7 @@ let onTransactionRegistrations = () => {
 
 let named = name => onTransactionRegistrations()->Array.filter(reg => reg.name === name)
 
-let makeHyperSyncSource = (~url) => {
+let makeHyperSyncSource = (~url, ~lowercaseAddresses=true) => {
   let addressStore = TestAddresses.storeOf(~contracts=[], ~addresses=[])
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
@@ -74,7 +74,7 @@ let makeHyperSyncSource = (~url) => {
     onTransactionRegistrations: onTransactionRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
-    lowercaseAddresses: true,
+    lowercaseAddresses,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
@@ -305,6 +305,42 @@ describe("A transaction handler, fetched from HyperSync", () => {
         Some({number: 12, timestamp: 1_700_000_012, hash: blockHash(12)}),
       ),
     ])
+  })
+
+  // A chain keeping checksummed addresses hands them to the handler that way,
+  // as to an event handler; routing matched on the bytes either way.
+  Async.it("hands the handler checksummed addresses when the chain keeps them", async t => {
+    let items = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(
+          ~url=server->MockHyperSyncServer.url,
+          ~lowercaseAddresses=false,
+        )
+        server->MockHyperSyncServer.pushResponse({
+          blocks: [header(10)],
+          transactions: [transaction(~number=10, ~index=0, ~from=alice, ~to=token, ())],
+        })
+        let page = await source->fetch(~addressSet, ~onTransactionRegistrations=named("from-alice"))
+        await ChainState.materializePageItems(
+          ~items=page.parsedQueueItems,
+          ~transactionStore=page.transactionStore->Option.getOrThrow,
+          ~blockStore=page.blockStore,
+          ~shouldChecksum=true,
+        )
+        page.parsedQueueItems->Array.map(
+          item =>
+            switch item {
+            | Internal.Transaction({transaction: ?Some(transaction)}) =>
+              let view = transaction->(Utils.magic: Internal.eventTransaction => transactionView)
+              (view.from, view.to)
+            | _ => JsError.throwWithMessage("Expected a materialised transaction item")
+            },
+        )
+      },
+    )
+
+    t.expect(items).toEqual([("0x00000000000000000000000000000000000000AA", token)])
   })
 
   // The handlers read the transaction's keys unconditionally, so a row the

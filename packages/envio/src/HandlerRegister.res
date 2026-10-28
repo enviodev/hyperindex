@@ -977,7 +977,9 @@ let registerOnTransaction = (
         // filter object is forgotten.
         if from->Utils.Array.isEmpty && to->Utils.Array.isEmpty && sighash->Utils.Array.isEmpty {
           logger->Logger.warn(
-            `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->ChainId.toString}: its \`where\` names no from, to or sighash filter.`,
+            `\`indexer.onTransaction("${name}")\` runs on every transaction of chain ${chainId->ChainId.toString}: its \`where\` names no from, to or sighash filter.${status->Option.isSome
+                ? " Over an RPC source its status filter reads a receipt for every transaction."
+                : ""}`,
           )
         }
         let chainRegs = registration->getChainRegistrations(~chainId)

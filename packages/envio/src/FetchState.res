@@ -64,14 +64,15 @@ let makeSelection = (
   ?clientFilteredContracts,
   // A transaction registration has no start block of its own, so a selection
   // holding one is unrestricted.
-  startBlock: ?deriveSelectionStartBlock(
-    Array.concat(
-      Array.concat(
-        onEventRegistrations->Array.map(reg => reg.startBlock),
-        onBlockRegistrations->Array.map(reg => reg.startBlock),
-      ),
-      onTransactionRegistrations->Array.map(_ => None),
-    ),
+  startBlock: ?(
+    onTransactionRegistrations->Utils.Array.notEmpty
+      ? None
+      : deriveSelectionStartBlock(
+          Array.concat(
+            onEventRegistrations->Array.map(reg => reg.startBlock),
+            onBlockRegistrations->Array.map(reg => reg.startBlock),
+          ),
+        )
   ),
 }
 
@@ -1002,13 +1003,9 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
 // (two registrations for one log differ by index and are kept).
 //
 // Kind outranks the log index so that every event of a block precedes that
-// block's handlers by construction. A sentinel log index for block items
-// would put the same guarantee at the mercy of how large an ecosystem's key
-// grows — which is how SVM, keyed by transaction index, came to run slot
-// handlers ahead of most of a slot's instructions. Two events are ordered by
-// log index alone, as they always were: their transaction index climbs with
-// it, so it is only read when a transaction item is involved, to place it
-// before the events of its own transaction and after those of the ones before.
+// block's handlers by construction, whatever an ecosystem's key grows to. Two
+// events are ordered by log index alone: their transaction index climbs with
+// it, so it is only read when a transaction item is involved.
 let blockKind = 2
 
 let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
@@ -1053,13 +1050,19 @@ let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
 // registration index is equal. Only meaningful on neighbours of a sorted
 // buffer, where such items sit next to each other.
 let isSameLog = (a: Internal.item, b: Internal.item): bool =>
-  a->Internal.getItemKind === 0 &&
-  b->Internal.getItemKind === 0 &&
-  a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
-  a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
-  switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
-  | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
-  | _ => true
+  switch (a->Internal.getItemKind, b->Internal.getItemKind) {
+  | (0, 0) =>
+    a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
+    a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
+    switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+    | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
+    | _ => true
+    }
+  // One transaction routed to two handlers.
+  | (1, 1) =>
+    a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
+      a->Internal.getItemTransactionIndex === b->Internal.getItemTransactionIndex
+  | _ => false
   }
 
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped

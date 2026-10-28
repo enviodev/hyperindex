@@ -58,6 +58,23 @@ indexer.onTransaction(
     });
   },
 );
+
+// Runs after the transaction handlers of its own transaction.
+indexer.onEvent(
+  { contract: "Token", event: "Transfer", fields: { transaction: ["transactionIndex"] } },
+  async ({ event, context }) => {
+    const afterTransaction = await context.Seen.get(
+      \`from-alice:\${event.block.number}:\${event.transaction.transactionIndex}\`,
+    );
+    context.Seen.set({
+      id: \`transfer:\${event.block.number}:\${event.logIndex}\`,
+      from: afterTransaction ? "after-transaction" : "before-transaction",
+      value: 0n,
+      status: -1,
+      timestamp: -1,
+    });
+  },
+);
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -95,6 +112,64 @@ describe("simulated transactions", () => {
       { id: "from-alice:3:1", from: alice, value: 0n, status: 0, timestamp: 0 },
       { id: "token-ok:3:0", from: alice, value: 0n, status: -1, timestamp: -1 },
     ]);
+  });
+
+  it("run a transaction's handler before the event handlers of its transaction", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        1: {
+          startBlock: 0,
+          endBlock: 10,
+          simulate: [
+            // Given ahead of its transaction, which still runs first.
+            {
+              contract: "Token",
+              event: "Transfer",
+              params: { from: alice, to: bob, value: 1n },
+              transaction: { transactionIndex: 1 },
+              block: { number: 3 },
+            },
+            { transaction: { from: alice, to: token, transactionIndex: 1 }, block: { number: 3 } },
+          ],
+        },
+      },
+    });
+    t.expect((await indexer.Seen.getAll()).map(({ id, from }) => ({ id, from })).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "from-alice:3:1", from: alice },
+      { id: "transfer:3:0", from: "after-transaction" },
+    ]);
+  });
+
+  it("rejects a block's events given out of transaction order", async (t) => {
+    const indexer = createTestIndexer();
+    const error = await indexer
+      .process({
+        chains: {
+          1: {
+            startBlock: 0,
+            endBlock: 10,
+            simulate: [
+              {
+                contract: "Token",
+                event: "Transfer",
+                params: { from: alice, to: bob, value: 1n },
+                transaction: { transactionIndex: 2 },
+                block: { number: 3 },
+              },
+              {
+                contract: "Token",
+                event: "Transfer",
+                params: { from: alice, to: bob, value: 1n },
+                transaction: { transactionIndex: 1 },
+              },
+            ],
+          },
+        },
+      })
+      .then(() => "no error", (error: Error) => error.message);
+
+    t.expect(error).toContain("Give a block's events in transaction order");
   });
 
   it("reports a transaction no handler matched as unrouted, beside one that ran", async (t) => {

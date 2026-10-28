@@ -1266,16 +1266,11 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
 
   switch batch.progressedChainsById->ChainId.Dict.dangerouslyGetNonOption(chainId) {
   | Some(chainAfterBatch) => {
-      // Calculate and set latency metrics. The payload block is materialised or
-      // inline by processing time; its timestamp may still be absent (e.g. an
-      // SVM slot with no block row) - the metric is skipped then.
+      // Calculate and set latency metrics. The block is materialised or inline
+      // by processing time; its timestamp may still be absent (e.g. an SVM
+      // slot with no block row) - the metric is skipped then.
       switch batch
-      ->Batch.findLastEventItem(~chainId)
-      ->Option.flatMap(eventItem =>
-        eventItem.payload
-        ->Internal.getPayloadBlock
-        ->Nullable.toOption
-      )
+      ->Batch.findLastProcessedBlock(~chainId)
       ->Option.flatMap(block =>
         block
         ->(Utils.magic: Internal.eventBlock => dict<unknown>)

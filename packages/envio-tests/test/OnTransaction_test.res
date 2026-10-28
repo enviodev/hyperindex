@@ -135,6 +135,16 @@ indexer.onTransaction(
 );
 
 indexer.onTransaction(
+  { name: "to-token-reverted", where: () => ({ transaction: { to: ["${token}"], status: 0 } }) },
+  async (args) => seen(args, "to-token-reverted"),
+);
+
+indexer.onTransaction(
+  { name: "from-either", where: () => ({ transaction: { from: ["${alice}", "${bob}"] } }) },
+  async (args) => seen(args, "from-either"),
+);
+
+indexer.onTransaction(
   { name: "transfers", where: () => ({ transaction: { sighash: ["${transferSelector}"] } }) },
   async (args) => seen(args, "transfers"),
 );
@@ -143,6 +153,13 @@ indexer.onTransaction(
 indexer.onTransaction(
   { name: "all", where: ({ chain }) => chain.id === 1 },
   async (args) => seen(args, "all"),
+);
+
+// Every reverted transaction of chain 2, whoever sent it: over RPC that is a
+// receipt per transaction.
+indexer.onTransaction(
+  { name: "reverted-anywhere", where: ({ chain }) => chain.id === 2 && { transaction: { status: 0 } } },
+  async (args) => seen(args, "reverted-anywhere"),
 );
 
 // Runs after the transaction handlers of its own transaction, so it sees what
@@ -219,6 +236,12 @@ let expectedSeen = chainId => {
       keys(~blockNumber=5, ~from=other, ~to=token, "to-token"),
       keys(~blockNumber=1, ~from=alice, ~to=token, "to-token-ok"),
       keys(~blockNumber=5, ~from=other, ~to=token, "to-token-ok"),
+      keys(~blockNumber=3, ~from=bob, ~to=token, "to-token-reverted"),
+      keys(~blockNumber=1, ~from=alice, ~to=token, "from-either"),
+      keys(~blockNumber=2, ~from=alice, ~to=other, "from-either"),
+      keys(~blockNumber=3, ~from=bob, ~to=token, "from-either"),
+      keys(~blockNumber=4, ~from=bob, ~to=alice, "from-either"),
+      keys(~blockNumber=6, ~from=bob, ~to="none", "from-either"),
       keys(~blockNumber=1, ~from=alice, ~to=token, "transfers"),
       keys(~blockNumber=3, ~from=bob, ~to=token, "transfers"),
     ],
@@ -231,7 +254,7 @@ let expectedSeen = chainId => {
           keys(~blockNumber=5, ~from=other, ~to=token, "all"),
           keys(~blockNumber=6, ~from=bob, ~to="none", "all"),
         ]
-      : [],
+      : [keys(~blockNumber=3, ~from=bob, ~to=token, "reverted-anywhere")],
   )
 }
 
@@ -255,6 +278,8 @@ let expectedTransactionFilters = distinctTransactionFilters([
       {from: [alice], to: [], sighash: [], status: None},
       {from: [], to: [token], sighash: [], status: None},
       {from: [], to: [token], sighash: [], status: Some(1)},
+      {from: [], to: [token], sighash: [], status: Some(0)},
+      {from: [alice, bob], to: [], sighash: [], status: None},
       {from: [], to: [], sighash: [transferSelector], status: None},
       {from: [], to: [], sighash: [], status: None},
     ],
@@ -287,6 +312,12 @@ let rpcReads = (requests: array<ServedEvmChain.rpcRequest>) => {
   (blocksInFull, receipts, byHash->Array.length)
 }
 
+// A chain's metric by chain id, sorted.
+let byChain = (metrics: array<IndexerRunner.metric>, f) =>
+  metrics
+  ->Array.map(metric => (metric.labels->Dict.get("chainId")->Option.getOr("?"), f(metric.value)))
+  ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
+
 describe("onTransaction", () => {
   Async.it(
     "runs each handler on the transactions its filter matches, over HyperSync and RPC alike",
@@ -302,16 +333,27 @@ describe("onTransaction", () => {
             indexer.infoAndAboveLogs()->Array.filterMap(
               ({msg}) => msg->String.includes("runs on every transaction") ? Some(msg) : None,
             ),
+            // One processed event per transaction however many handlers ran
+            // on it, plus the log.
+            (await indexer.metric("envio_progress_events"))->byChain(value => value),
+            // Latency is measured from the last transaction's block (served
+            // block 6 is at second 6), not the last event's (block 1).
+            (await indexer.metric("envio_progress_latency"))->byChain(
+              value => value->Float.fromString->Option.getOr(0.) < Date.now() -. 3000.,
+            ),
           )).toEqual((
             Array.concat(expectedSeen(1), expectedSeen(2))->Array.toSorted(
               (a, b) => String.compare(a.id, b.id),
             ),
             ["1-1-after-transaction", "2-1-after-transaction"],
             expectedTransactionFilters,
-            ([1, 2, 3, 4, 5, 6], [hash(1), hash(2), hash(3), hash(5)], 0),
+            ([1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]->Array.map(hash), 0),
             [
               "`indexer.onTransaction(\"all\")` runs on every transaction of chain 1: its `where` names no from, to or sighash filter.",
+              "`indexer.onTransaction(\"reverted-anywhere\")` runs on every transaction of chain 2: its `where` names no from, to or sighash filter. Over an RPC source its status filter reads a receipt for every transaction.",
             ],
+            [("1", "7"), ("2", "7")],
+            [("1", true), ("2", true)],
           )),
       ),
   )

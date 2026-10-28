@@ -347,6 +347,7 @@ let parse = (
   // Coordinate "block:logIndex" -> the index of the first item that claimed it,
   // used to reject two items resolving to the same (block, logIndex).
   let seenCoordinates = Dict.make()
+  let lastTransactionIndexByBlock: dict<int> = Dict.make()
 
   simulateItems->Array.forEachWithIndex((rawJson, itemIndex) => {
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
@@ -621,7 +622,7 @@ let parse = (
         JsError.throwWithMessage(
           `simulate: Invalid item. Each item must have "contract" and "event" fields${config.ecosystem.name ===
               Evm
-              ? `, or be a "block" on its own`
+              ? `, or be a "block" or a "transaction" on its own`
               : ""}.`,
         )
       }
@@ -697,6 +698,22 @@ let parse = (
       | None => seenCoordinates->Dict.set(coordinate, itemIndex)
       }
 
+      // The buffer orders a transaction item against events by transaction
+      // index and events among themselves by log index, which only agree when
+      // a block's events come in transaction order, as a chain's do.
+      let transactionIndex =
+        (
+          transaction->(Utils.magic: Internal.eventTransaction => {"transactionIndex": option<int>})
+        )["transactionIndex"]->Option.getOr(0)
+      let blockKey = blockNumber->Int.toString
+      switch lastTransactionIndexByBlock->Dict.get(blockKey) {
+      | Some(last) if transactionIndex < last =>
+        JsError.throwWithMessage(
+          `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is in transaction ${transactionIndex->Int.toString} of block ${blockNumber->Int.toString}, after an item in transaction ${last->Int.toString}. Give a block's events in transaction order.`,
+        )
+      | _ => lastTransactionIndexByBlock->Dict.set(blockKey, transactionIndex)
+      }
+
       // Fan the simulated event out to every registration that would actually
       // run here the way real routing does (one item per registration).
       // Registrations are built the same way `HandlerRegister.finishRegistration`
@@ -729,9 +746,7 @@ let parse = (
             chainId,
             blockNumber,
             logIndex,
-            // Simulate keeps the transaction inline on the payload, so the store
-            // key is unused.
-            transactionIndex: 0,
+            transactionIndex,
             payload: (
               {
                 contractName: eventConfig.contractName,

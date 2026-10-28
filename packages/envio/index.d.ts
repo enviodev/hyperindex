@@ -1215,7 +1215,8 @@ export type EvmOnTransactionOptions<
   /** Optional predicate evaluated once per configured chain at registration
       time. Return `false` to skip a chain, `true` to run on every transaction,
       or a filter object naming the senders, recipients, selectors or status
-      to match. Omitted means every transaction of every chain. */
+      to match. Omitted means every transaction of every chain, which the
+      indexer warns about per chain at startup. */
   readonly where?: (args: EvmOnTransactionWhereArgs<Config>) => EvmOnTransactionWhereResult;
   /** Transaction and block fields this handler reads besides the ones every
       transaction handler gets. */

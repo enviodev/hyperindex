@@ -398,7 +398,9 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   result.contents
 }
 
-let findLastEventItem = (batch: t, ~chainId) => {
+// The block of the chain's last event or transaction item, for the latency
+// metric. Absent when the payload block is: an SVM slot with no block row.
+let findLastProcessedBlock = (batch: t, ~chainId): option<Internal.eventBlock> => {
   let idx = ref(batch.items->Array.length - 1)
   let result = ref(None)
   while idx.contents >= 0 && result.contents === None {
@@ -407,13 +409,15 @@ let findLastEventItem = (batch: t, ~chainId) => {
     | Internal.Event(_) as eventItem => {
         let eventItem = eventItem->Internal.castUnsafeEventItem
         if eventItem.chainId === chainId {
-          result := Some(eventItem)
+          result := Some(eventItem.payload->Internal.getPayloadBlock->Nullable.toOption)
         } else {
           idx := idx.contents - 1
         }
       }
+    | Internal.Transaction({chainId: itemChainId, ?block}) if itemChainId === chainId =>
+      result := Some(block)
     | Internal.Block(_) | Internal.Transaction(_) => idx := idx.contents - 1
     }
   }
-  result.contents
+  result.contents->Option.flatMap(block => block)
 }

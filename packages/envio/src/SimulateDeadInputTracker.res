@@ -87,6 +87,6 @@ let failureMessage = (t: t): option<string> =>
       )
       ->Array.join("\n")
     Some(
-      `simulate: ${count->Int.toString} ${itemWord} you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:\n${lines}`,
+      `simulate: ${count->Int.toString} ${itemWord} you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, a where/block filter that excluded the event, or a transaction no handler's filter matches. Unrouted items, by index in each chain's simulate array:\n${lines}`,
     )
   }

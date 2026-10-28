@@ -76,7 +76,9 @@ matching more than one runs each of them.
 `block` always carries `number`, `timestamp` and `hash`. List anything else in
 `fields`; reading a field you didn't list is a type error. The field names are
 the ones listed under "Available Transaction Fields" and "Available Block
-Fields" below. `context` is the same as an event handler's.
+Fields" below. `context` is the same as an event handler's, and the handler
+runs in the preload pass before the run proper, like an event handler
+(`context.isPreload`).
 
 ### Ordering
 
@@ -92,8 +94,20 @@ transactions are fetched. Over an RPC source there is no transaction filter in
 JSON-RPC, so every block of the range is read in full (`eth_getBlockByNumber`
 with transactions) and filtered client-side, with a receipt read only where a
 `status` filter or a receipt-carried field (`status`, `gasUsed`, ...) needs it.
-That is one request per block during a backfill, so prefer HyperSync for
-historical ranges.
+That is one request per block during a backfill, plus one per transaction a
+`status` filter has to check (every transaction, for a filter naming no
+`from`, `to` or `sighash`), so prefer HyperSync for historical ranges.
+
+### Limits
+
+- EVM only; registering on Fuel or Solana throws.
+- Filter values are static. `to: chain.Contract.addresses` for dynamically
+  registered contracts is not supported, and the filter takes no block range:
+  a handler runs from the chain's `start_block`.
+- A transaction handler cannot register contracts; that stays with
+  `contractRegister`.
+- `raw_events` rows are written for events only, not for transaction handler
+  runs.
 
 ### Testing
 

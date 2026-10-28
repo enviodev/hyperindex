@@ -466,7 +466,8 @@ let onTransactionAlwaysSelectedBlockFields = ["number", "timestamp", "hash"]
 
 let resolveOnTransactionFieldSelection = (fields: unknown, ~name): Internal.fieldSelection => {
   let registration = `\`indexer.onTransaction("${name}")\``
-  let fields = typeof(fields) === #undefined ? %raw(`{}`) : fields
+  let fields =
+    typeof(fields) === #undefined ? Dict.make()->(Utils.magic: dict<unit> => unknown) : fields
   validateFieldsShapeOrThrow(
     fields,
     ~registration,

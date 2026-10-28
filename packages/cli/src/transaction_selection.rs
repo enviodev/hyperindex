@@ -67,12 +67,15 @@ struct Registration {
     block_fields: Vec<BlockField>,
 }
 
+/// `accepted` is sorted and deduplicated by `decode_all`, so a handler
+/// naming thousands of addresses costs a binary search per transaction.
 fn any_of<const N: usize>(accepted: &[FixedSizeData<N>], actual: Option<&[u8]>) -> bool {
     accepted.is_empty()
         || actual.is_some_and(|actual| {
-            accepted
-                .iter()
-                .any(|value| value.as_ref() == &actual[..N.min(actual.len())])
+            actual.len() >= N
+                && accepted
+                    .binary_search_by(|value| value.as_ref().cmp(&actual[..N]))
+                    .is_ok()
         })
 }
 
@@ -110,13 +113,16 @@ fn hex_list<const N: usize>(values: &[FixedSizeData<N>]) -> Option<Vec<String>> 
 pub(crate) struct TransactionRegistrations(HashMap<i64, Registration>);
 
 fn decode_all<const N: usize>(values: &[String], what: &str) -> Result<Vec<FixedSizeData<N>>> {
-    values
+    let mut decoded = values
         .iter()
         .map(|value| {
             FixedSizeData::<N>::decode_hex(value)
                 .with_context(|| format!("transaction handler {what} {value:?}"))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    decoded.sort_unstable();
+    decoded.dedup();
+    Ok(decoded)
 }
 
 impl TransactionRegistrations {
@@ -400,6 +406,32 @@ mod tests {
                     TransactionField::Sighash,
                     TransactionField::Status,
                 ],
+            )
+        );
+    }
+
+    #[test]
+    fn matches_an_address_given_in_any_order_or_twice() {
+        let selection = selection(&[input(0, &[BOB, ALICE, BOB], &[], &[], None)]);
+        let routed = |hex: &str| {
+            let sender = address(hex);
+            selection.route(&TransactionView {
+                from: Some(sender.as_ref()),
+                ..Default::default()
+            })
+        };
+        assert_eq!(
+            (
+                routed(ALICE),
+                routed(BOB),
+                routed("0x00000000000000000000000000000000000000cc"),
+                selection.filters()[0].from.clone(),
+            ),
+            (
+                vec![0],
+                vec![0],
+                vec![],
+                Some(vec![ALICE.into(), BOB.into()])
             )
         );
     }
