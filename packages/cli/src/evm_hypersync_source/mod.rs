@@ -223,7 +223,7 @@ impl EvmHyperSyncClient {
                 params.from_block,
                 params.to_block,
                 !selects_logs && !selects_transactions,
-                params.include_all_blocks.unwrap_or(false),
+                params.reorgable_from,
                 params.max_num_logs,
             )
             .map_err(map_err)?;
@@ -434,9 +434,11 @@ pub struct ItemsQuery {
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
-    /// Return a header for every block in the range, not only the ones a log
-    /// landed on. Absent means only the blocks logs came from.
-    pub include_all_blocks: Option<bool>,
+    /// Blocks at or above this number can still be reorged on the chain. A
+    /// page reaching them must link to the page before it for reorg
+    /// detection, so it reads every block of its range. Absent when the whole
+    /// range is final.
+    pub reorgable_from: Option<i64>,
 }
 
 fn log_selection_from_built(

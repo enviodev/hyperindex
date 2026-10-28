@@ -97,7 +97,7 @@ let fetch = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~knownHeight,
     ~partitionId="0",
     ~selection=FetchState.makeSelection(

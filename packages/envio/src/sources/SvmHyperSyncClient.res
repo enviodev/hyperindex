@@ -143,18 +143,17 @@ module Items = {
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent program is filtered server-side.
     clientFilteredContracts: option<array<string>>,
-    // Return a block for every slot in the range, not only the ones an
-    // instruction landed on. Absent means only the slots instructions came
-    // from, which leaves a skipped slot indistinguishable from an unfetched
-    // one.
-    includeAllBlocks?: bool,
+    // Slots at or above this one can still be reorged, so a page reaching
+    // them reads every slot of its range, which also tells a skipped slot from
+    // an unfetched one. Absent when the range is final.
+    reorgableFrom?: int,
   }
 
-  // NAPI encodes Rust `None` as `null`, never `undefined`, so an unselected
-  // key arrives as an explicit null rather than a missing field.
+  // NAPI leaves a Rust `None` field of an object as `undefined`, not `null`,
+  // so `Option` fields decode as `Nullable`.
   type log = {
-    kind: Null.t<string>,
-    message: Null.t<string>,
+    kind: Nullable.t<string>,
+    message: Nullable.t<string>,
   }
 
   // One routed instruction; `block` and `transaction` are materialised from
@@ -169,11 +168,11 @@ module Items = {
     data: Uint8Array.t,
     isInner: bool,
     // Borsh-decoded args as a JS value tree (wide integers as bigint).
-    // Non-null exactly when the routed registration selected `args`: an
+    // Present exactly when the routed registration selected `args`: an
     // instruction its layout rejects is dropped in Rust.
-    args: Null.t<unknown>,
-    // Non-null only when the routed registration selected `fields.log`.
-    logs: Null.t<array<log>>,
+    args: Nullable.t<unknown>,
+    // Present exactly when the routed registration selected `fields.log`.
+    logs: Nullable.t<array<log>>,
   }
 
   type response = {

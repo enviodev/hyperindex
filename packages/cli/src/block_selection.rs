@@ -115,25 +115,30 @@ impl BlockRegistrations {
 
     /// How a HyperSync query over `[from_block, to_block]` reads the block
     /// table. A query selecting no other table starts at the first block a
-    /// handler runs on and, outside realtime, reads that block by itself when
-    /// the next is over `SPARSE_GAP` blocks further. In realtime every block's
-    /// hash is kept for reorg detection, so the whole range is read.
+    /// handler runs on and reads that block by itself when the next is over
+    /// `SPARSE_GAP` blocks further, leaving the gap unread. A range reaching
+    /// `reorgable_from` is read whole instead: each page there must link to
+    /// the one before it for reorg detection, which an unread gap breaks.
     pub(crate) fn plan(
         &self,
         indexes: &[i64],
         from_block: i64,
         to_block: Option<i64>,
         blocks_only: bool,
-        realtime: bool,
+        reorgable_from: Option<i64>,
         items_target: Option<i64>,
     ) -> Result<BlockQuery> {
+        let read_every_block =
+            reorgable_from.is_some_and(|from| to_block.is_none_or(|to| to >= from));
         let from_block = u64::try_from(from_block).context("from_block must be >= 0")?;
         let to_block = to_block
             .map(|to| u64::try_from(to).context("to_block must be >= 0"))
             .transpose()?;
         let selection = self.select(indexes, from_block, to_block)?;
         let read = match to_block {
-            Some(to_block) if blocks_only && !realtime => selection.read(from_block, to_block),
+            Some(to_block) if blocks_only && !read_every_block => {
+                selection.read(from_block, to_block)
+            }
             _ => None,
         };
         let (from_block, to_block, claimed_to_block) = match read {
@@ -147,7 +152,7 @@ impl BlockRegistrations {
         Ok(BlockQuery {
             selection,
             blocks_only,
-            realtime,
+            read_every_block,
             from_block,
             to_block,
             max_blocks,
@@ -163,7 +168,7 @@ const SPARSE_GAP: u64 = 1000;
 pub(crate) struct BlockQuery {
     pub(crate) selection: BlockSelection,
     blocks_only: bool,
-    realtime: bool,
+    read_every_block: bool,
     pub(crate) from_block: u64,
     /// Inclusive.
     pub(crate) to_block: Option<u64>,
@@ -178,10 +183,10 @@ pub(crate) struct BlockQuery {
 impl BlockQuery {
     /// The end (exclusive) of a range a query for blocks alone has nothing to
     /// read in, which it answers for without a request: on SVM a query
-    /// selecting nothing would return every instruction of the range. Not in
-    /// realtime, where the page's hashes feed reorg detection.
+    /// selecting nothing would return every instruction of the range. Not
+    /// where the range can still be reorged, whose hashes feed reorg detection.
     pub(crate) fn unread_until(&self) -> Option<u64> {
-        if self.blocks_only && !self.realtime && self.selection.is_empty() {
+        if self.blocks_only && !self.read_every_block && self.selection.is_empty() {
             self.to_block?.checked_add(1)
         } else {
             None
@@ -189,9 +194,11 @@ impl BlockQuery {
     }
 
     /// A block handler runs on blocks no log or instruction landed on, so a
-    /// query selecting the block table asks for every block of its range.
+    /// query selecting the block table asks for every block of its range, as
+    /// does one reaching blocks that can still be reorged: its hashes feed
+    /// reorg detection, and its last block's time is the progress block's.
     pub(crate) fn include_all_blocks(&self) -> bool {
-        self.realtime || !self.selection.is_empty()
+        self.read_every_block || !self.selection.is_empty()
     }
 
     /// Where the fetched range ends (exclusive), for a page that read up to
@@ -386,7 +393,7 @@ mod tests {
         inputs: &[OnBlockRegistrationInput],
         range: (i64, Option<i64>),
         blocks_only: bool,
-        realtime: bool,
+        reorgable_from: Option<i64>,
         items_target: Option<i64>,
     ) -> BlockQuery {
         let indexes: Vec<i64> = inputs.iter().map(|i| i.index).collect();
@@ -397,7 +404,7 @@ mod tests {
                 range.0,
                 range.1,
                 blocks_only,
-                realtime,
+                reorgable_from,
                 items_target,
             )
             .unwrap()
@@ -418,7 +425,7 @@ mod tests {
             &[input(0, 10, None, 1000)],
             (0, Some(5000)),
             true,
-            false,
+            None,
             Some(3),
         );
         assert_eq!(read_of(&query, 5001), (10, Some(5000), Some(3000), 5001));
@@ -427,8 +434,8 @@ mod tests {
     #[test]
     fn reads_a_handler_block_alone_when_the_next_is_far() {
         let sparse = [input(0, 10, None, 5000)];
-        let first = planned(&sparse, (0, Some(20_000)), true, false, Some(3));
-        let last = planned(&sparse, (15_000, Some(16_000)), true, false, None);
+        let first = planned(&sparse, (0, Some(20_000)), true, None, Some(3));
+        let last = planned(&sparse, (15_000, Some(16_000)), true, None, None);
         assert_eq!(
             (
                 read_of(&first, 11),
@@ -444,22 +451,33 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_whole_range_in_realtime_or_beside_other_tables() {
+    fn reads_the_whole_range_where_it_can_be_reorged_or_beside_other_tables() {
         let sparse = [input(0, 10, None, 5000)];
         assert_eq!(
             (
                 read_of(
-                    &planned(&sparse, (0, Some(20_000)), true, true, None),
+                    &planned(&sparse, (0, Some(20_000)), true, Some(19_800), None),
                     20_001
                 ),
                 read_of(
-                    &planned(&sparse, (0, Some(20_000)), false, false, Some(3)),
+                    &planned(&sparse, (0, None), true, Some(19_800), None),
                     20_001
+                ),
+                read_of(
+                    &planned(&sparse, (0, Some(20_000)), false, None, Some(3)),
+                    20_001
+                ),
+                // Every block of the range is final, so the gap may stay unread.
+                read_of(
+                    &planned(&sparse, (0, Some(20_000)), true, Some(20_001), None),
+                    11
                 ),
             ),
             (
                 (0, Some(20_000), None, 20_001),
-                (0, Some(20_000), None, 20_001)
+                (0, None, None, 20_001),
+                (0, Some(20_000), None, 20_001),
+                (10, Some(10), None, 5010)
             )
         );
     }
@@ -469,10 +487,10 @@ mod tests {
         let ended = [input(0, 10, Some(4000), 5000)];
         assert_eq!(
             (
-                planned(&ended, (11, Some(5009)), true, false, Some(3)).unread_until(),
-                planned(&ended, (11, None), true, false, Some(3)).unread_until(),
-                planned(&ended, (11, Some(5009)), false, false, Some(3)).unread_until(),
-                planned(&ended, (11, Some(5009)), true, true, Some(3)).unread_until(),
+                planned(&ended, (11, Some(5009)), true, None, Some(3)).unread_until(),
+                planned(&ended, (11, None), true, None, Some(3)).unread_until(),
+                planned(&ended, (11, Some(5009)), false, None, Some(3)).unread_until(),
+                planned(&ended, (11, Some(5009)), true, Some(4800), Some(3)).unread_until(),
             ),
             (Some(5010), None, None, None)
         );
@@ -484,7 +502,7 @@ mod tests {
             &[input(0, 0, None, 5), input(1, 0, None, 2)],
             (0, Some(100)),
             true,
-            false,
+            None,
             Some(3),
         );
         assert_eq!(query.max_blocks, Some(6));

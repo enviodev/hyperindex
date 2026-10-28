@@ -68,7 +68,7 @@ let getItems = async (
     ~addressStore=store,
   )
   let response = await source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet,

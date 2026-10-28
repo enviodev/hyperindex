@@ -534,10 +534,13 @@ type _badEnumLookup = Enum<"NotAnEnum">;
 
   it("shapes the onBlock surface", _ =>
     check(`
+import { indexer } from "envio";
 import type {
   Address,
+  EvmBlock,
   EvmChainId,
   EvmOnBlockContext,
+  EvmOnBlockFieldsSelection,
   EvmOnBlockFilter,
   EvmOnBlockHandler,
   EvmOnBlockHandlerArgs,
@@ -554,17 +557,36 @@ const _blockOpts: EvmOnBlockOptions = {
   where: ({ chain }) => (chain.id === 1 ? true : false),
 };
 expectType<EvmOnBlockOptions>(_blockOpts);
-expectType<TypeEqual<EvmOnBlockHandlerArgs["block"]["number"], number>>(true);
+expectType<TypeEqual<EvmOnBlockHandlerArgs<{}>["block"]["number"], number>>(true);
 // @ts-expect-error - a field the registration didn't select
-const _unselected: string = ({} as EvmOnBlockHandlerArgs["block"]).hash;
-expectType<TypeEqual<EvmOnBlockHandlerArgs["context"], EvmOnBlockContext>>(true);
+const _unselected: string = ({} as EvmOnBlockHandlerArgs<{}>["block"]).hash;
+expectType<TypeEqual<EvmOnBlockHandlerArgs<{}>["context"], EvmOnBlockContext>>(true);
 // A handler written apart from its registration names the selection first.
 expectType<
   TypeEqual<EvmOnBlockHandlerArgs<{ readonly block: readonly ["miner"] }>["block"]["miner"], Address>
 >(true);
 expectType<
-  TypeEqual<EvmOnBlockHandler, (args: EvmOnBlockHandlerArgs) => Promise<void>>
+  TypeEqual<EvmOnBlockHandler<{}>, (args: EvmOnBlockHandlerArgs<{}>) => Promise<void>>
 >(true);
+
+// Typed the way onInstruction handlers are: the block is a payload type of its
+// own, and the handler types take the selection alone.
+const fields = { block: ["miner"] } as const satisfies EvmOnBlockFieldsSelection;
+if (0) {
+  indexer.onBlock({ name: "b", fields }, async ({ block }) => {
+    expectType<TypeEqual<typeof block, EvmBlock<typeof fields>>>(true);
+  });
+}
+expectType<TypeEqual<EvmOnBlockHandlerArgs<typeof fields>["block"], EvmBlock<typeof fields>>>(true);
+expectType<
+  TypeEqual<EvmOnBlockHandler<typeof fields>, (args: EvmOnBlockHandlerArgs<typeof fields>) => Promise<void>>
+>(true);
+// @ts-expect-error - the selection is the only type argument
+type _WithConfig = EvmOnBlockHandler<typeof fields, never>;
+// @ts-expect-error - the selection is required, as for onInstruction handlers
+type _Bare = EvmOnBlockHandler;
+// @ts-expect-error - the selection is required, as for onInstruction handlers
+type _BareArgs = EvmOnBlockHandlerArgs;
 
 expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["id"], EvmChainId>>(true);
 expectType<TypeEqual<EvmOnBlockWhereArgs["chain"]["isRealtime"], boolean>>(true);
