@@ -1,7 +1,13 @@
 // Live cross-check: the transactions `indexer.onTransaction` runs on over an
-// RPC source must be exactly the ones the same public node holds when read
-// directly, for a sender filter (reverted included) and a recipient-plus-
-// selector filter.
+// RPC source must be exactly the ones the same node holds when every block
+// of the range is read directly, for a sender filter (reverted included) and
+// a recipient-plus-selector filter.
+
+let apiToken =
+  Env.envioApiToken->Option.getOrThrow(
+    ~message="ENVIO_API_TOKEN env var must be set to run the live onTransaction RPC cross-check",
+  )
+let rpcUrl = `https://eth.rpc.hypersync.xyz/${apiToken}`
 
 let wallet = "0x28C6c06298d514Db089934071355E5743bf21d60"
 let usdt = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
@@ -81,12 +87,12 @@ const usdt = "${usdt}".toLowerCase();
 const fromBlock = ${fromBlock->Int.toString};
 const toBlock = ${toBlock->Int.toString};
 
-// The public node is load-balanced and rate-limited: a null or an error for
-// something the chain has is asked again, the way the indexer's source does.
+// A null or an error for something the chain has is asked again, the way the
+// indexer's source does.
 const rpc = async (method: string, params: unknown[]) => {
   for (let attempt = 0; ; attempt++) {
     try {
-      const response = await fetch("https://ethereum-rpc.publicnode.com", {
+      const response = await fetch("${rpcUrl}", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
@@ -172,7 +178,7 @@ name: evm-ontransaction-cross-check-rpc-live
 chains:
   - id: 1
     rpc:
-      url: https://ethereum-rpc.publicnode.com
+      url: ${rpcUrl}
       for: sync
     start_block: ${fromBlock->Int.toString}
     end_block: ${toBlock->Int.toString}

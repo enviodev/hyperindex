@@ -1,5 +1,10 @@
-// Live test against a public Ethereum RPC: the handler of the HyperSync live
-// test read through the RPC source, which filters client-side.
+// Live test over an Ethereum RPC: the handler of the HyperSync live test read
+// through the RPC source, which filters client-side.
+
+let apiToken =
+  Env.envioApiToken->Option.getOrThrow(
+    ~message="ENVIO_API_TOKEN env var must be set to run the live onTransaction RPC test",
+  )
 
 let wallet = "0x28C6c06298d514Db089934071355E5743bf21d60"
 
@@ -9,7 +14,7 @@ name: evm-ontransaction-rpc-live
 chains:
   - id: 1
     rpc:
-      url: https://ethereum-rpc.publicnode.com
+      url: https://eth.rpc.hypersync.xyz/${apiToken}
       for: sync
     start_block: 23500000
     end_block: 23500004
