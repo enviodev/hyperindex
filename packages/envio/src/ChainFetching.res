@@ -352,6 +352,7 @@ let fetchChain = async (
               ~query,
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
+              ~reorgableFrom=chainState->ChainState.reorgableFrom(~isRealtime),
             )
             await onQueryResponse(
               state,

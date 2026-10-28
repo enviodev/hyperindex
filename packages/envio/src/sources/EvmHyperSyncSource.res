@@ -66,7 +66,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks,
+    ~reorgableFrom,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -90,9 +90,7 @@ let make = (
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,
-        // Absent rather than false, so a range that wants only the blocks its
-        // logs came from sends the query it always sent.
-        includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
+        ?reorgableFrom,
       },
       ~addressSet,
     ) catch {

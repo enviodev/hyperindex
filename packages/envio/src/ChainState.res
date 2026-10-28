@@ -1061,6 +1061,17 @@ let enterReorgThreshold = (cs: t) => {
 
 let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
 
+// The first block a query can find still reorgable, the same window reorg
+// detection compares. Before the threshold, fetching stops below it; a chain
+// that never rolls back never enters the threshold, so realtime opens it too,
+// where reorgs are still detected and reported.
+let reorgableFrom = (cs: t, ~isRealtime) =>
+  if cs.isInReorgThreshold || isRealtime {
+    Some(Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth, 0))
+  } else {
+    None
+  }
+
 // Whether the chain's writes need history: only what a rollback could still
 // reach. A chain with no reorg depth is never rolled back, however far its
 // progress has run.

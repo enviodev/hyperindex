@@ -201,7 +201,7 @@ type pendingItemsQuery = {
 // Non-enumerable on the query, so a whole-value `toEqual` snapshot of the
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
-@get external includeAllBlocks: pendingItemsQuery => bool = "includeAllBlocks"
+@get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
 
 // A block the chain has, for the block handlers of the query's selection that
 // run on it. Its number, timestamp and hash are those of `itemMock`'s block.
@@ -974,7 +974,7 @@ let make = (
           ~fromBlock,
           ~toBlock,
           ~addressSet,
-          ~includeAllBlocks,
+          ~reorgableFrom,
           ~knownHeight,
           ~partitionId,
           ~selection,
@@ -1021,8 +1021,8 @@ let make = (
               {enumerable: false, value: addresses},
             )
             ->Utils.Object.definePropertyWithValue(
-              "includeAllBlocks",
-              {enumerable: false, value: includeAllBlocks},
+              "reorgableFrom",
+              {enumerable: false, value: reorgableFrom},
             )
             ->Utils.Object.definePropertyWithValue(
               "__control",

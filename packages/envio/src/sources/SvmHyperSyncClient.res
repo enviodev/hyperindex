@@ -143,11 +143,10 @@ module Items = {
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent program is filtered server-side.
     clientFilteredContracts: option<array<string>>,
-    // Return a block for every slot in the range, not only the ones an
-    // instruction landed on. Absent means only the slots instructions came
-    // from, which leaves a skipped slot indistinguishable from an unfetched
-    // one.
-    includeAllBlocks?: bool,
+    // Slots at or above this one can still be reorged, so a page reaching
+    // them reads every slot of its range, which also tells a skipped slot from
+    // an unfetched one. Absent when the range is final.
+    reorgableFrom?: int,
   }
 
   // NAPI leaves a Rust `None` field of an object as `undefined`, not `null`,

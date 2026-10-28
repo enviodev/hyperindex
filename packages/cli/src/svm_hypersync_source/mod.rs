@@ -221,7 +221,7 @@ impl SvmHyperSyncClient {
                 params.from_slot,
                 params.to_slot,
                 params.on_event_registration_indexes.is_empty(),
-                params.include_all_blocks.unwrap_or(false),
+                params.reorgable_from,
                 params.max_num_instructions,
             )
             .map_err(map_err)?;
@@ -418,10 +418,11 @@ pub struct ItemsQuery {
     /// depend on addresses (client-side filtering). Absent or empty means every
     /// address-dependent program is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
-    /// Return a block for every slot in the range, not only the ones an
-    /// instruction landed on. Absent means only the slots instructions came
-    /// from.
-    pub include_all_blocks: Option<bool>,
+    /// Slots at or above this one can still be reorged on the chain. A
+    /// page reaching them must link to the page before it for reorg
+    /// detection, so it reads every slot of its range. Absent when the whole
+    /// range is final.
+    pub reorgable_from: Option<i64>,
 }
 
 #[napi(object)]

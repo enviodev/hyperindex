@@ -994,6 +994,7 @@ let executeQuery = async (
   ~query: FetchState.query,
   ~knownHeight,
   ~isRealtime,
+  ~reorgableFrom,
 ) => {
   // Read when the manager actually runs out of sources, not on the way in: the
   // reason is recorded by the failure that disabled the last one.
@@ -1054,7 +1055,7 @@ let executeQuery = async (
         ~fromBlock=query.fromBlock,
         ~toBlock,
         ~addressSet=query.addresses,
-        ~includeAllBlocks=isRealtime,
+        ~reorgableFrom,
         ~partitionId=query.partitionId,
         ~knownHeight,
         ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),

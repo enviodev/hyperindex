@@ -59,7 +59,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks as _,
+    ~reorgableFrom as _,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,

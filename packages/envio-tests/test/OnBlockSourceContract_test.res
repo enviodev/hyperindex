@@ -99,14 +99,14 @@ let fetch = (
   ~onBlockRegistrations=named("headers"),
   ~toBlock=Some(13),
   ~knownHeight=100,
-  ~includeAllBlocks=false,
+  ~reorgableFrom=None,
   ~itemsTarget=None,
 ) =>
   source.getItemsOrThrow(
     ~fromBlock=10,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks,
+    ~reorgableFrom,
     ~knownHeight,
     ~partitionId="0",
     ~selection=FetchState.makeSelection(
@@ -263,9 +263,9 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     t.expect((queries, latestFetchedBlockNumber)).toEqual(([], 13))
   })
 
-  // At the head the page's hashes feed reorg detection, so it is sent even
-  // with no handler block to read.
-  Async.it("still sends a realtime query when no handler runs in the range", async t => {
+  // Over blocks that can still be reorged the page's hashes feed reorg
+  // detection, so it is sent even with no handler block to read.
+  Async.it("still sends a query over reorgable blocks when no handler runs in them", async t => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
@@ -274,7 +274,7 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
         let _ = await source->fetch(
           ~addressSet,
           ~onBlockRegistrations=named("early"),
-          ~includeAllBlocks=true,
+          ~reorgableFrom=Some(10),
         )
         server->MockHyperSyncServer.takeQueries
       },
@@ -327,6 +327,42 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     ))
   })
 
+  // A single-block read leaves the claimed gap unread, so the next page could
+  // not link to it. Where that gap can still be reorged, the page reads its
+  // whole range instead, before the indexer is realtime as well as after.
+  Async.it("reads a sparse handler's range whole once it reaches reorgable blocks", async t => {
+    let (queries, latestFetchedBlockNumber) = await MockHyperSyncServer.withServer(
+      ~height=20_000,
+      async server => {
+        let (source, addressSet) = makeHyperSyncSource(~url=server->MockHyperSyncServer.url)
+        server->MockHyperSyncServer.pushResponse({
+          blocks: [10, 5010, 10_010, 15_010]->Array.map(header),
+          nextBlock: 20_001,
+        })
+        let page = await source->fetch(
+          ~addressSet,
+          ~onBlockRegistrations=named("sparse"),
+          ~toBlock=Some(20_000),
+          ~knownHeight=20_000,
+          ~reorgableFrom=Some(19_800),
+        )
+        (server->MockHyperSyncServer.takeQueries, page.latestFetchedBlockNumber)
+      },
+    )
+
+    t.expect((queries, latestFetchedBlockNumber)).toEqual((
+      [
+        JSON.parseOrThrow(`{
+        "from_block": 10,
+        "to_block": 20001,
+        "include_all_blocks": true,
+        "field_selection": {"block": ["hash", "miner", "number", "timestamp"]}
+      }`),
+      ],
+      20_000,
+    ))
+  })
+
   // A query open to the head reads up to the height the chain knows, so the
   // gap a page claims never runs past it.
   Async.it("bounds an open-ended sparse page at the known height", async t => {
@@ -376,9 +412,9 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     t.expect(latestFetchedBlockNumber).toEqual(100)
   })
 
-  // At the head every block's hash is kept for reorg detection, so a realtime
-  // page reads its whole range even for a sparse handler.
-  Async.it("reads every block of a realtime page", async t => {
+  // Every hash of a range that can still be reorged is kept for reorg
+  // detection, so its page is read whole even for a sparse handler.
+  Async.it("reads every block of a page reaching reorgable blocks", async t => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=20_000,
       async server => {
@@ -388,7 +424,7 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
           ~addressSet,
           ~onBlockRegistrations=named("sparse"),
           ~knownHeight=20_000,
-          ~includeAllBlocks=true,
+          ~reorgableFrom=Some(13),
         )
         server->MockHyperSyncServer.takeQueries
       },
