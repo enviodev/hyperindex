@@ -64,6 +64,8 @@ A scenario whose behaviour depends on the source layer's timers — stall, polli
 
 Link the issue above the case when there is one: `// https://github.com/enviodev/hyperindex/issues/N`
 
+Test files in `packages/envio-tests` share a worker process and its module cache; `test/helpers/FreshProcess.res` resets the runtime's process-global state before each file. Module-level state a file leaves behind elsewhere leaks into the next one: reset it, or mark the file `// vitest: isolate` to give it a process of its own.
+
 Run only the tests relevant to your change — never the full suite locally. CI runs it on push.
 
 `pnpm vitest run` skips the checks that guard test inputs, so a green local run can

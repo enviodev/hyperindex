@@ -662,17 +662,22 @@ let cloneRegistrations = (
 // User handlers register into the process-global HandlerRegister as an import
 // side effect. Capture the resolved registrations once per process (imports are
 // module-cached anyway) and reuse them across every createTestIndexer run, so
-// the global registration cycle runs a single time and never races.
-let registrationsRef: ref<option<promise<HandlerRegister.registrationsByChainId>>> = ref(None)
+// the global registration cycle runs a single time and never races. Kept in
+// `EnvioGlobal` with the rest of the process state, so resetting that resets
+// this too.
 let getRegistrations = (~config, ~logger) =>
-  switch registrationsRef.contents {
+  switch EnvioGlobal.value.testIndexerRegistrations->(
+    Utils.magic: option<unknown> => option<promise<HandlerRegister.registrationsByChainId>>
+  ) {
   | Some(promise) => promise
   | None =>
     let promise =
       HandlerLoader.getAutoLoadFiles(~config)->Promise.then(autoLoadFiles =>
         HandlerLoader.registerAllHandlers(~config, ~logger, ~autoLoadFiles)
       )
-    registrationsRef := Some(promise)
+    EnvioGlobal.value.testIndexerRegistrations = Some(
+      promise->(Utils.magic: promise<HandlerRegister.registrationsByChainId> => unknown),
+    )
     promise
   }
 

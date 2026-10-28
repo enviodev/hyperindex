@@ -729,6 +729,8 @@ let run = async (
   // against the vanished schema and report that instead of the real failure.
   // After a failed body, a stop can wait on a write the body stalled and was
   // never going to release, which would bury the failure under a suite timeout.
+  // Only a run that already failed waits on this, so it bounds how long its
+  // report takes rather than whether anything passes.
   let boundedStop = stop =>
     switch outcome {
     | Some(_) =>
@@ -736,7 +738,7 @@ let run = async (
         Promise.race([
           stop(),
           Promise.make((resolve, _reject) =>
-            MockSource.realSetTimeout(() => resolve(), 5000)->ignore
+            MockSource.realSetTimeout(() => resolve(), 2000)->ignore
           ),
         ])
     | None => stop

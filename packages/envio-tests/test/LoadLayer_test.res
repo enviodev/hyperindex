@@ -902,7 +902,8 @@ describe("LoadLayer effect scope isolation", () => {
         name: "chainScopedRateLimit",
         input: S.string,
         output: S.string,
-        rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
+        // Long enough that the window can't close mid-test on a loaded machine.
+        rateLimit: Enable({calls: 1, per: Milliseconds(500)}),
         crossChain: false,
         cache: false,
       },
@@ -1032,7 +1033,8 @@ chains:
         name: "rollbackRateLimit",
         input: S.string,
         output: S.string,
-        rateLimit: Enable({calls: 1, per: Milliseconds(50)}),
+        // Long enough that the window can't close mid-test on a loaded machine.
+        rateLimit: Enable({calls: 1, per: Milliseconds(500)}),
         crossChain: false,
         cache: false,
       },

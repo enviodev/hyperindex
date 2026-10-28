@@ -3,7 +3,7 @@ open Vitest
 // Invalid `indexer.onBlock` options throw at the user's registration call site.
 //
 // This file must not import the handler fixtures — it drives the global
-// registry lifecycle itself, relying on vitest's per-file isolation.
+// registry lifecycle itself, from the fresh state each file starts with.
 
 let config = TestConfig.fromUserApi(`
 name: handler-register-lifecycle

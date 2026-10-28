@@ -265,7 +265,7 @@ type t = {
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
   // Waits until the source has taken `count` height calls in all, then fails
   // if it has taken more. Answering them is still up to the resolvers above.
-  expectHeightCalls: int => promise<unit>,
+  expectHeightCalls: (int, ~within: float=?) => promise<unit>,
   // Waits for exactly `count` height calls past the ones the last expectation
   // accounted for, so a test names the polls a step causes without counting
   // from the first. On virtual time, once a test accounts for this source's
@@ -290,7 +290,9 @@ type t = {
   // them in list order. An entry that replies needs exactly one matching query;
   // `LeavePending` accounts for every remaining query it matches. A pending
   // query no entry accounts for, and no earlier list left pending, fails it.
-  expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
+  // `~within` is how long any expectation waits, 2s by default. A test about
+  // the timeout itself shortens it, since a real wait proves nothing more.
+  expectItemsQueries: (array<expectedItemsQuery>, ~within: float=?) => promise<unit>,
   // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
   // queries and answers every one up to its own toBlock, never past
   // `blockNumber`, until every partition it answers gets there. A query starting
@@ -311,7 +313,7 @@ type t = {
   // replies with `reply`. A lookup of other blocks, or more than one pending,
   // fails at once naming what was asked. A rollback only looks up hashes when
   // the chain has a stored block between its threshold and the reorged block.
-  expectBlockHashLookup: expectedBlockHashLookup => promise<unit>,
+  expectBlockHashLookup: (expectedBlockHashLookup, ~within: float=?) => promise<unit>,
   // What the source has been asked and not answered, for a failure report.
   describeState: unit => string,
   // Throws if a height answer given before its call arrived is still waiting
@@ -742,8 +744,8 @@ let make = (
     }
   }
 
-  let expectItemsQueries = async expected => {
-    let deadline = realNow() +. 2000.
+  let expectItemsQueries = async (expected, ~within=2000.) => {
+    let deadline = realNow() +. within
     let rec awaitMatch = async () => {
       await awaitSettled(~deadline)
       let outcome = ledger->Ledger.matchItemsQueries(expected->toLedgerEntries)
@@ -804,8 +806,8 @@ let make = (
   // arrive is about something else.
   let countsHeightCalls = ref(false)
 
-  let expectHeightCalls = async count => {
-    let deadline = realNow() +. 2000.
+  let expectHeightCalls = async (count, ~within=2000.) => {
+    let deadline = realNow() +. within
     let rec awaitCount = async () => {
       await awaitSettled(~deadline)
       let {done, error} = ledger->Ledger.checkHeightCalls(count)
@@ -926,8 +928,8 @@ let make = (
       ledger
       ->Ledger.settleAllBlockHashLookups("failGetBlockHashes")
       ->settleBlockHashLookups({Source.result: Error(exn), requestStats}),
-    expectBlockHashLookup: async ({blockNumbers, reply}) => {
-      let deadline = realNow() +. 2000.
+    expectBlockHashLookup: async ({blockNumbers, reply}, ~within=2000.) => {
+      let deadline = realNow() +. within
       let rec awaitLookup = async () => {
         await awaitSettled(~deadline)
         let {status, id, message} = ledger->Ledger.matchBlockHashLookup(blockNumbers)

@@ -20,6 +20,9 @@ type t = {
   rollbackCommitCallbacks: array<unknown>,
   mutable indexerState: option<unknown>,
   mutable persistence: option<unknown>,
+  // The registrations every `createTestIndexer` in a process shares, resolved
+  // once (`TestIndexer`).
+  mutable testIndexerRegistrations: option<unknown>,
 }
 
 // Record type with `mutable` so assignment typechecks; ReScript keeps the
@@ -44,8 +47,24 @@ let value: t = {
       rollbackCommitCallbacks: [],
       indexerState: None,
       persistence: None,
+      testIndexerRegistrations: None,
     }
     globalThis.__envioGlobal = Nullable.make(fresh)
     fresh
   }
+}
+
+// Test-only: the state a fresh process starts with, for a test runner that
+// reuses one process across test files.
+let reset = () => {
+  value.activeRegistration = None
+  value.preRegistered->Array.splice(~start=0, ~remove=value.preRegistered->Array.length, ~insert=[])
+  value.rollbackCommitCallbacks->Array.splice(
+    ~start=0,
+    ~remove=value.rollbackCommitCallbacks->Array.length,
+    ~insert=[],
+  )
+  value.indexerState = None
+  value.persistence = None
+  value.testIndexerRegistrations = None
 }

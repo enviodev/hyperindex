@@ -65,17 +65,19 @@ let writeModule = (~kind, ~site, ~source) => {
 }
 
 // Config priming and the handler registry are process-global, so a fixture that
-// runs tests owns the process. Under `pool: "forks"` that means one such fixture
-// per test file; parse-only calls are unrestricted.
+// runs tests owns the process while its file runs: one such fixture per test
+// file; parse-only calls are unrestricted. Files sharing a worker start from a
+// fresh process's state (`FreshProcess`).
 let ranTestAt: ref<option<string>> = ref(None)
 
 let claimProcess = (~site) => {
+  let fileOf = site => site->String.split(":")->Array.getUnsafe(0)
   switch ranTestAt.contents {
-  | Some(previous) =>
+  | Some(previous) if fileOf(previous) === fileOf(site) =>
     JsError.throwWithMessage(
       `fromUserApi already ran a test module at ${previous}. The parsed config and handler registry are process-global, so each one needs its own test file.`,
     )
-  | None => ()
+  | _ => ()
   }
   ranTestAt := Some(site)
 }

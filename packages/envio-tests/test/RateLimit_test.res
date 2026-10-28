@@ -2,6 +2,7 @@ open Vitest
 
 // Time a chain spent waiting out rate limits, as the metric reports it.
 let scenario = Scenario.make(
+  ~virtualTime=true,
   ~configYaml=`
 name: rate-limit
 rollback_on_reorg: false
@@ -56,12 +57,9 @@ describe("Rate-limit time", () => {
       let mock = source(1)
       mock.resolveGetHeightOrThrow(100)
       await mock.expectItemsQueries([{fromBlock: 1, retryCount: 0, reply: rateLimited(200)}])
+      await indexer.advanceTime(200)
       await mock.expectItemsQueries([{fromBlock: 1, retryCount: 1, reply: LeavePending}])
-      let seconds = switch await indexer->rateLimitedSeconds {
-      | [(_, Some(seconds))] => seconds
-      | _ => 0.
-      }
-      t.expect(seconds >= 0.2 && seconds < 0.4).toBe(true)
+      t.expect(await indexer->rateLimitedSeconds).toEqual([(Some("1"), Some(0.2))])
     },
   )
 
@@ -77,16 +75,13 @@ describe("Rate-limit time", () => {
         {partitionId: "0", retryCount: 0, reply: rateLimited(300)},
         {partitionId: "1", retryCount: 0, reply: rateLimited(300)},
       ])
+      await indexer.advanceTime(300)
       await mock.expectItemsQueries([
         {partitionId: "0", retryCount: 1, reply: LeavePending},
         {partitionId: "1", retryCount: 1, reply: LeavePending},
       ])
-      let seconds = switch await indexer->rateLimitedSeconds {
-      | [(_, Some(seconds))] => seconds
-      | _ => 0.
-      }
       // Two 300ms waits side by side are 300ms of the chain being throttled.
-      t.expect(seconds >= 0.3 && seconds < 0.5).toBe(true)
+      t.expect(await indexer->rateLimitedSeconds).toEqual([(Some("1"), Some(0.3))])
     },
   )
 })
