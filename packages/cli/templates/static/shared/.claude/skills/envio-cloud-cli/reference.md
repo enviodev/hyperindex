@@ -36,7 +36,7 @@ Recommend Production when the user wants a stable URL, a public app, or data tha
 
 - **Per organisation:** 3 Development plan indexers.
 - **Per indexer:** 3 deployments. Delete an old one before deploying another.
-- **Development plan deletion:** deployments over 20 GB or older than 30 days are deleted. Reaching 100,000 events processed, 5 GB of storage, or 7 days without queries starts a 7-day grace period, then 3 days read-only, then deletion. Upgrading keeps the indexer running.
+- **Development plan deletion:** deployments over 20 GB or older than 30 days are deleted. Reaching 100,000 events processed or 5 GB of storage starts a 7-day grace period, then 3 days read-only, then deletion. A deployment with no queries for 7 days gets a warning and is deleted 24 hours later unless it receives a query. Upgrading keeps the indexer running.
 - **Builds** stop after about 30 minutes. Failed deployments are marked for deletion after a while.
 - **Paused indexers** don't deploy pushes: usually an unpaid bill, or Development limits. The user settles it in the dashboard and contacts Envio.
 - **Members** with the `reader` role don't trigger auto-deploys. People must be in the GitHub organisation and added by an Envio organisation admin on the Members page.
@@ -70,6 +70,7 @@ From `npx -y envio-cloud indexer commits <indexer> <org> -o json` (fields `commi
 | `versionNotSupported` | Unsupported `envio` version | Pin a supported exact version |
 | `clickhouseConfigMismatch` | `storage.clickhouse` doesn't match the indexer's setup | Align the config with the plan |
 | `clickhouseVersionNotSupported` | ClickHouse needs envio 3.0.2+ | Upgrade envio |
+| `reorgsEnabled` | `rollback_on_reorg` was on, which the plan didn't allow when the commit was processed | Push a new commit; if it's rejected again, ask the user whether to set `rollback_on_reorg: false` or upgrade the plan |
 
 ## Commands
 
@@ -85,4 +86,4 @@ Deployment commands take `<indexer> <commit> [org]`; most others take `<indexer>
 - `-o json` prints `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`. Informational lines go to stderr, so don't merge stderr into JSON you parse (`2>&1`). Check the exit code first: 0 success, 1 user error, 2 server error. Some errors print only to stderr.
 - `indexer get -o json` → `data.deployments[]` with `commit_hash`, `prod_status` (`none`, `pending`, `prod`) and `gql_endpoint`. For an indexer that doesn't exist it returns `{"ok": true}` with no `data`.
 - `deployment status -o json` → one entry per chain with `block_height`, `latest_processed_block` and `timestamp_caught_up_to_head_or_endblock`. An empty list means no metrics yet.
-- Commands that ask for confirmation (`add`, `deploy`, `promote`, `restart`, `delete`, `security api-key ...`) take `--yes`. Without an answer, `indexer add` exits 0 having done nothing; the others exit 1.
+- Commands that ask for confirmation (`add`, `deploy`, `promote`, `restart`, `delete`, `security api-key ...`) take `--yes`. Without an answer they're cancelled and exit 1, except `indexer add` in envio-cloud 1.0.0 and older, which exits 0 having done nothing.

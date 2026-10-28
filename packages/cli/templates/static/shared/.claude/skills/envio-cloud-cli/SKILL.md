@@ -108,7 +108,7 @@ AUTO=true                # false: pushes wait as 'inactive' until you deploy the
      --auto-deploy="$AUTO" --description "<one line>" --dry-run
    ```
 
-   If the summary is right, run it again with `--yes` instead of `--dry-run`. **Always pass `--yes`**: without it, a non-interactive run prints "Operation cancelled." and exits 0 without adding anything.
+   If the summary is right, run it again with `--yes` instead of `--dry-run`. **Always pass `--yes`**: without it, a non-interactive run prints "Operation cancelled." without adding anything, and CLI versions up to 1.0.0 still exit 0.
 
    Add `--env-file <path>` when the indexer reads env vars; every key MUST start with `ENVIO_`. `--tier` defaults to `development` and `--access-type` to `public`.
 5. **Check:** `npx -y envio-cloud indexer settings get "$IDX" "$ORG"` shows the branch, root dir and auto-deploy you meant.
@@ -146,7 +146,7 @@ node "$CLOUD" wait-synced "$IDX" "$C" "$ORG"
 
 It prints per-chain progress, and once every chain has caught up it prints the deployment's GraphQL URL and checks that it answers. On exit 75, run it again. Builds take a few minutes, with a 30-minute limit; sync time depends on the start block and event volume. No progress after two rounds → [4. Debug a deployment](#4-debug-a-deployment).
 
-Don't use `--watch-till-synced` or `metrics --watch` in an agent session: they retry forever and never time out.
+Don't use `--watch-till-synced` or `metrics --watch` in an agent session: they never time out, and up to envio-cloud 1.0.0 they can wait forever on a live chain.
 
 **3d. Verify the data.** Query one real entity on the URL and compare it with a local run when you have one. When a browser app on another origin will call it, check CORS:
 

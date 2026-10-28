@@ -57,6 +57,10 @@ const COMMIT_STATUS = {
     meaning: "ClickHouse needs envio 3.0.2 or newer",
     fix: "upgrade envio in package.json",
   },
+  reorgsEnabled: {
+    meaning: "rollback_on_reorg was on, which the plan didn't allow when the commit was processed",
+    fix: "push a new commit; if it's rejected again, ask the user whether to set rollback_on_reorg: false or upgrade the plan",
+  },
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
