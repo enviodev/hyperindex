@@ -180,7 +180,8 @@ let logRanges = (mock: MockRpcServer.t) =>
         ->Array.getUnsafe(0)
         ->JSON.Decode.object
         ->Option.getOrThrow
-      let field = name => filter->Dict.getUnsafe(name)->JSON.Decode.string->Option.getOrThrow
+      let field = name =>
+        filter->Dict.getUnsafe(name)->JSON.Decode.string->Option.getOrThrow
       Some(`${field("fromBlock")}-${field("toBlock")}`)
     | _ => None
     }

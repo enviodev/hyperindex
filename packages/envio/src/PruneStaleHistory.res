@@ -15,7 +15,18 @@ type targets = {
   safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   concurrent: array<Internal.entityConfig>,
   forced: array<Internal.entityConfig>,
+  // Whether the checkpoints are due. They are pruned on an interval of their
+  // own: with every entity kept in ClickHouse, Postgres has no entity history
+  // to prune beside them.
+  checkpoints: bool,
+  // A rollback's write must not overlap their prune, so beside one they wait
+  // for the forced group, after the write.
+  isRollback: bool,
 }
+
+// Where the checkpoints' last prune is kept, beside the entities' own: `$` can't
+// occur in an entity's name.
+let checkpointsKey = "$checkpoints"
 
 // Where each chain's history may be pruned back to, or None while nowhere can.
 //
@@ -54,15 +65,14 @@ let selectFrom = (
 ) => {
   let byOldestPrune = ((a, _), (b, _)) => a -. b
   let toEntities = candidates => candidates->Array.map(((_, entityConfig)) => entityConfig)
+  let lastPrunedAtOf = key =>
+    lastPrunedAtMillis->Utils.Dict.dangerouslyGetNonOption(key)->Option.getOr(0.)
 
   let concurrentCandidates = []
   let forcedCandidates = []
   allEntities->Array.forEach(entityConfig => {
     if entityConfig.storage.postgres {
-      let lastPrunedAt =
-        lastPrunedAtMillis
-        ->Utils.Dict.dangerouslyGetNonOption(entityConfig.name)
-        ->Option.getOr(0.)
+      let lastPrunedAt = lastPrunedAtOf(entityConfig.name)
       if (
         !isRollback &&
         !(writtenEntityNames->Utils.Set.has(entityConfig.name)) &&
@@ -92,6 +102,8 @@ let selectFrom = (
     ->Array.toSorted(byOldestPrune)
     ->Array.slice(~start=0, ~end=maxEntitiesPerWrite)
     ->toEntities,
+    checkpoints: nowMillis -. lastPrunedAtOf(checkpointsKey) >= intervalMillis,
+    isRollback,
   }
 }
 
@@ -153,6 +165,7 @@ let pruneEntities = (state: IndexerState.t, ~entities, ~safeCheckpoints) =>
   )
 
 let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
+  state->IndexerState.lastPrunedAtMillis->Dict.set(checkpointsKey, Date.now())
   switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpoints) {
   | () => ()
   | exception exn =>
@@ -165,24 +178,22 @@ let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
   }
 }
 
-let runConcurrent = async (state: IndexerState.t, ~targets) => {
+let runConcurrent = async (state: IndexerState.t, ~targets) =>
   switch targets {
-  | Some({safeCheckpoints, concurrent}) if concurrent->Utils.Array.notEmpty =>
-    await pruneCheckpoints(state, ~safeCheckpoints)
+  | Some({safeCheckpoints, concurrent, checkpoints, isRollback}) =>
+    if checkpoints && !isRollback {
+      await pruneCheckpoints(state, ~safeCheckpoints)
+    }
     await pruneEntities(state, ~entities=concurrent, ~safeCheckpoints)
-  | Some(_) | None => ()
+  | None => ()
   }
-}
 
-let runForced = async (state: IndexerState.t, ~targets) => {
+let runForced = async (state: IndexerState.t, ~targets) =>
   switch targets {
-  | Some({safeCheckpoints, concurrent, forced}) if forced->Utils.Array.notEmpty =>
-    // When nothing ran concurrently (eg a rollback write), checkpoint pruning
-    // lands here, after the write, so it never overlaps a rollback transaction.
-    if concurrent->Utils.Array.isEmpty {
+  | Some({safeCheckpoints, forced, checkpoints, isRollback}) =>
+    if checkpoints && isRollback {
       await pruneCheckpoints(state, ~safeCheckpoints)
     }
     await pruneEntities(state, ~entities=forced, ~safeCheckpoints)
-  | Some(_) | None => ()
+  | None => ()
   }
-}

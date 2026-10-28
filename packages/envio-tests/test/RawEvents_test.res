@@ -27,6 +27,12 @@ type Gravatar {
   id: ID!
 }
 `,
+  ~unsupported=[
+    {
+      backend: #clickhouse,
+      reason: "reads raw_events with Postgres SQL, which a run keeping no entity in Postgres skips",
+    },
+  ],
 )
 
 type row = {
@@ -36,8 +42,7 @@ type row = {
   log_index: int,
 }
 
-let read = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
+let read = async (sql, ~pgSchema) => {
   let rows: array<row> = await sql->Sql.queryForTests(
     `SELECT "chain_id", "contract_name", "block_number", "log_index"
        FROM "${pgSchema}"."raw_events" ORDER BY "serial";`,
@@ -82,25 +87,33 @@ describe("Raw events", () => {
         },
       ])
       await indexer.getBatchWritePromise()
-      let beforeReorg = await read(indexer)
+      await indexer.usePostgresSql(
+        async sql => {
+          let beforeReorg = await sql->read(~pgSchema=indexer.pgSchema)
 
-      await Scenario.reorgAbove(
-        ~indexer,
-        ~source,
-        ~head=300,
-        ~validUpTo=100,
-        ~refetched=[event(~block=200, ~logIndex=1)],
+          await Scenario.reorgAbove(
+            ~indexer,
+            ~source,
+            ~head=300,
+            ~validUpTo=100,
+            ~refetched=[event(~block=200, ~logIndex=1)],
+          )
+
+          t.expect((beforeReorg, await sql->read(~pgSchema=indexer.pgSchema))).toEqual((
+            [
+              row(~block=50, ~logIndex=0),
+              row(~block=50, ~logIndex=3),
+              row(~block=200, ~logIndex=1),
+            ],
+            [
+              row(~block=50, ~logIndex=0),
+              row(~block=50, ~logIndex=3),
+              row(~block=200, ~logIndex=1),
+              row(~block=200, ~logIndex=1),
+            ],
+          ))
+        },
       )
-
-      t.expect((beforeReorg, await read(indexer))).toEqual((
-        [row(~block=50, ~logIndex=0), row(~block=50, ~logIndex=3), row(~block=200, ~logIndex=1)],
-        [
-          row(~block=50, ~logIndex=0),
-          row(~block=50, ~logIndex=3),
-          row(~block=200, ~logIndex=1),
-          row(~block=200, ~logIndex=1),
-        ],
-      ))
     },
   )
 
@@ -140,17 +153,19 @@ describe("Raw events", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      let {sql, pgSchema} = indexer.pg
-      let rows: array<JSON.t> = await sql->Sql.queryForTests(
-        `SELECT "chain_id", "event_id"::text AS "event_id", "event_name", "contract_name",
+      await indexer.usePostgresSql(
+        async sql => {
+          let pgSchema = indexer.pgSchema
+          let rows: array<JSON.t> = await sql->Sql.queryForTests(
+            `SELECT "chain_id", "event_id"::text AS "event_id", "event_name", "contract_name",
                 "block_number", "log_index", "src_address", "block_hash", "block_timestamp",
                 "block_fields", "transaction_fields", "params"
            FROM "${pgSchema}"."raw_events";`,
-      )
+          )
 
-      t.expect(rows).toEqual([
-        JSON.parseOrThrow(
-          `{
+          t.expect(rows).toEqual([
+            JSON.parseOrThrow(
+              `{
           "chain_id": 1,
           "event_id": "${EventUtils.packEventIndex(~logIndex=3, ~blockNumber=5)->BigInt.toString}",
           "event_name": "MockEvent",
@@ -164,8 +179,10 @@ describe("Raw events", () => {
           "transaction_fields": {"hash": "0xtxhash", "transactionIndex": 7, "value": "5"},
           "params": "null"
         }`,
-        ),
-      ])
+            ),
+          ])
+        },
+      )
     },
   )
 })

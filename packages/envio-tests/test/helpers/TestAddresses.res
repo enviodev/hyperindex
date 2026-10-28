@@ -65,19 +65,20 @@ let storeOf = (
   ~ecosystem: Ecosystem.name=Evm,
 ) => {
   let store = AddressStore.make(~ecosystem, ~contracts)
-  let _ = store->AddressStore.seedRows(
-    rowsOf(
-      ~addresses,
-      // A row's contract id is its contract's position in the store's own list.
-      ~contractId=name =>
-        switch contracts->Array.findIndex(c => c.name === name) {
-        | -1 =>
-          JsError.throwWithMessage(`Contract "${name}" isn't among the test store's contracts`)
-        | idx => idx
-        },
-      ~ecosystem,
-    ),
-  )
+  let _ =
+    store->AddressStore.seedRows(
+      rowsOf(
+        ~addresses,
+        // A row's contract id is its contract's position in the store's own list.
+        ~contractId=name =>
+          switch contracts->Array.findIndex(c => c.name === name) {
+          | -1 =>
+            JsError.throwWithMessage(`Contract "${name}" isn't among the test store's contracts`)
+          | idx => idx
+          },
+        ~ecosystem,
+      ),
+    )
   store
 }
 
