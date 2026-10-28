@@ -259,8 +259,16 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
         ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
     ~params={"retry": retry, "waitMs": waitMs},
   )
+  let waitedAt = Date.now()
   sourceManager->startRateLimitTimeout(~resetMs=waitMs)
   await Utils.delay(waitMs)
+  // Timers run on the event loop's cached clock, so one can fire with Date.now()
+  // a millisecond short of the wait it was set for, and the wait is counted by
+  // Date.now(). Temporary until main takes the same fix.
+  let short = waitedAt +. waitMs->Int.toFloat -. Date.now()
+  if short > 0. {
+    await Utils.delay(short->Math.ceil->Float.toInt)
+  }
   sourceManager->stopRateLimitTimeout
 }
 
