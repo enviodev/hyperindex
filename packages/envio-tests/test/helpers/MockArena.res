@@ -83,7 +83,7 @@ let slotOf = (columns: array<Staging.column>, ~column) => {
 let make = (~columns: array<Staging.column>) => {
   let mock = {columns, buffers: [], rows: 0, committed: None, aborted: false}
   let arena: Staging.arena = {
-    beginStage: (~table as _, ~rows) => {
+    beginStage: (~rows) => {
       mock.rows = rows
       mock.buffers = []
       columns->Array.forEach(({kind}) => {

@@ -2,8 +2,9 @@ use std::fmt;
 
 use anyhow::{bail, Result};
 
-use crate::columnar::ColumnKind;
 use crate::config_parsing::system_config::ChainIdMode;
+pub use crate::storage::schema::Field as FieldSpec;
+use crate::storage::schema::FieldType;
 
 /// How wide an `Enum` column's variant list can get before it needs two bytes.
 /// ClickHouse's `Enum8` spans -128..=127, but envio numbers from 1, so 127 is
@@ -71,23 +72,6 @@ impl ChType {
             2
         }
     }
-
-    pub fn column_kind(&self) -> ColumnKind {
-        match self {
-            ChType::Nullable(inner) => inner.column_kind(),
-            ChType::Int32
-            | ChType::UInt32
-            | ChType::Float64
-            | ChType::Bool
-            | ChType::DateTime64 => ColumnKind::F64,
-            ChType::UInt64 => ColumnKind::U64,
-            ChType::Int64 => ColumnKind::I64,
-            ChType::Bytes => ColumnKind::Bytes,
-            ChType::String | ChType::Decimal { .. } | ChType::Enum { .. } | ChType::Array(_) => {
-                ColumnKind::Text
-            }
-        }
-    }
 }
 
 /// Bytes ClickHouse uses for a `Decimal` of the given precision. Every Decimal
@@ -100,16 +84,6 @@ pub fn decimal_bytes(precision: u32) -> Result<usize> {
         19..=MAX_DECIMAL_PRECISION => Ok(16),
         other => bail!("unsupported Decimal precision {other}"),
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct FieldSpec {
-    pub field_type: String,
-    pub is_nullable: bool,
-    pub is_array: bool,
-    pub precision: Option<u32>,
-    pub scale: Option<u32>,
-    pub enum_variants: Option<Vec<String>>,
 }
 
 /// The Decimal a bounded numeric field fits in, or `String` when no Decimal is
@@ -137,36 +111,39 @@ pub fn stored_as_string(precision: Option<u32>, scale: u32) -> bool {
 
 impl FieldSpec {
     pub fn ch_type(&self, chain_id_mode: ChainIdMode) -> Result<ChType> {
-        let base = match self.field_type.as_str() {
-            "String" | "Json" => ChType::String,
-            "Bytea" => ChType::Bytes,
-            "Boolean" => ChType::Bool,
-            "Uint32" => ChType::UInt32,
-            "UInt52" | "UInt64" => ChType::UInt64,
-            "Int32" | "Serial" => ChType::Int32,
-            "BigSerial" => ChType::Int64,
-            "Number" => ChType::Float64,
-            "Date" => ChType::DateTime64,
-            "ChainId" => match chain_id_mode {
+        let base = match &self.field_type {
+            FieldType::String | FieldType::Json => ChType::String,
+            FieldType::Bytea => ChType::Bytes,
+            FieldType::Boolean => ChType::Bool,
+            FieldType::Uint32 => ChType::UInt32,
+            FieldType::UInt52 | FieldType::UInt64 => ChType::UInt64,
+            FieldType::Int32 | FieldType::Serial => ChType::Int32,
+            FieldType::BigSerial => ChType::Int64,
+            FieldType::Number => ChType::Float64,
+            FieldType::Date => ChType::DateTime64,
+            FieldType::ChainId => match chain_id_mode {
                 ChainIdMode::Int32 => ChType::Int32,
                 ChainIdMode::Int64 => ChType::UInt64,
             },
-            "BigInt" => decimal_or_string(self.precision, 0),
-            "BigDecimal" => match (self.precision, self.scale) {
-                (Some(precision), Some(scale)) => decimal_or_string(Some(precision), scale),
-                _ => ChType::String,
+            FieldType::BigInt { precision } => decimal_or_string(*precision, 0),
+            FieldType::BigDecimal { config } => match config {
+                Some((precision, scale)) => decimal_or_string(Some(*precision), *scale),
+                None => ChType::String,
             },
-            "Enum" => {
-                let variants = self.enum_variants.clone().unwrap_or_default();
+            FieldType::Enum { variants, .. } => {
                 if variants.is_empty() {
                     bail!("an Enum field has no variants");
                 }
                 if variants.len() > i16::MAX as usize {
                     bail!("an Enum field has {} variants, more than a ClickHouse Enum16 column can number", variants.len());
                 }
-                ChType::Enum { variants }
+                ChType::Enum {
+                    variants: variants.clone(),
+                }
             }
-            other => bail!("unsupported field type `{other}`"),
+            FieldType::SmallInt => {
+                bail!("ClickHouse doesn't support the internal SmallInt column type")
+            }
         };
         if self.is_array {
             // ClickHouse refuses `Nullable(Array(T))` outright, so a nullable
@@ -185,7 +162,7 @@ impl FieldSpec {
         // A Json column holds the document's text, and JSON carries a `null` of
         // its own — so a nullable one would give the field two ways to say
         // nothing, only one of which reads back as a document.
-        Ok(if self.is_nullable && self.field_type != "Json" {
+        Ok(if self.is_nullable && self.field_type != FieldType::Json {
             ChType::Nullable(Box::new(base))
         } else {
             base
@@ -234,14 +211,39 @@ pub(crate) mod test_support {
     use super::*;
 
     pub fn field(field_type: &str) -> FieldSpec {
-        FieldSpec {
-            field_type: field_type.to_string(),
-            is_nullable: false,
-            is_array: false,
-            precision: None,
-            scale: None,
-            enum_variants: None,
-        }
+        FieldSpec::new(
+            "value",
+            match field_type {
+                "String" => FieldType::String,
+                "Json" => FieldType::Json,
+                "Bytea" => FieldType::Bytea,
+                "Boolean" => FieldType::Boolean,
+                "Uint32" => FieldType::Uint32,
+                "UInt52" => FieldType::UInt52,
+                "UInt64" => FieldType::UInt64,
+                "Int32" => FieldType::Int32,
+                "Serial" => FieldType::Serial,
+                "BigSerial" => FieldType::BigSerial,
+                "Number" => FieldType::Number,
+                "Date" => FieldType::Date,
+                "ChainId" => FieldType::ChainId,
+                "SmallInt" => FieldType::SmallInt,
+                "BigInt" => FieldType::BigInt { precision: None },
+                "BigDecimal" => FieldType::BigDecimal { config: None },
+                other => panic!("test field type `{other}` is not one the schema names"),
+            },
+        )
+    }
+
+    pub fn typed(field_type: FieldType) -> FieldSpec {
+        FieldSpec::new("value", field_type)
+    }
+
+    pub fn enumeration(variants: Vec<String>) -> FieldSpec {
+        typed(FieldType::Enum {
+            name: "Kind".to_string(),
+            variants,
+        })
     }
 
     pub fn parse_type(text: &str) -> ChType {
@@ -399,34 +401,23 @@ mod tests {
     #[test]
     fn numeric_precision_decides_decimal_or_string() {
         let rendered_types = [
-            FieldSpec {
+            typed(FieldType::BigInt {
                 precision: Some(38),
-                ..field("BigInt")
-            },
-            FieldSpec {
+            }),
+            typed(FieldType::BigInt {
                 precision: Some(39),
-                ..field("BigInt")
-            },
-            FieldSpec {
-                precision: Some(0),
-                ..field("BigInt")
-            },
+            }),
+            typed(FieldType::BigInt { precision: Some(0) }),
             field("BigInt"),
-            FieldSpec {
-                precision: Some(10),
-                scale: Some(8),
-                ..field("BigDecimal")
-            },
-            FieldSpec {
-                precision: Some(39),
-                scale: Some(2),
-                ..field("BigDecimal")
-            },
-            FieldSpec {
-                precision: Some(10),
-                scale: Some(11),
-                ..field("BigDecimal")
-            },
+            typed(FieldType::BigDecimal {
+                config: Some((10, 8)),
+            }),
+            typed(FieldType::BigDecimal {
+                config: Some((39, 2)),
+            }),
+            typed(FieldType::BigDecimal {
+                config: Some((10, 11)),
+            }),
             field("BigDecimal"),
         ]
         .map(|spec| rendered(&spec));
@@ -459,11 +450,9 @@ mod tests {
             (Some(10), 11),
         ];
         let rendered_as_string = cases.map(|(precision, scale)| {
-            rendered(&FieldSpec {
-                precision,
-                scale: Some(scale),
-                ..field("BigDecimal")
-            }) == "String"
+            rendered(&typed(FieldType::BigDecimal {
+                config: precision.map(|precision| (precision, scale)),
+            })) == "String"
         });
 
         assert_eq!(
@@ -474,12 +463,9 @@ mod tests {
 
     #[test]
     fn enum_numbering_matches_between_ddl_and_encoder() {
-        let ch_type = FieldSpec {
-            enum_variants: Some(vec!["SET".to_string(), "DELETE".to_string()]),
-            ..field("Enum")
-        }
-        .ch_type(ChainIdMode::Int32)
-        .unwrap();
+        let ch_type = enumeration(vec!["SET".to_string(), "DELETE".to_string()])
+            .ch_type(ChainIdMode::Int32)
+            .unwrap();
         assert_eq!(
             (
                 ch_type.to_string(),
@@ -501,13 +487,10 @@ mod tests {
         let widths = [127, 128].map(|count| {
             let variants: Vec<String> = (0..count).map(|i| format!("V{i}")).collect();
             let bytes = ChType::enum_bytes(&variants);
-            let rendered = FieldSpec {
-                enum_variants: Some(variants),
-                ..field("Enum")
-            }
-            .ch_type(ChainIdMode::Int32)
-            .unwrap()
-            .to_string();
+            let rendered = enumeration(variants)
+                .ch_type(ChainIdMode::Int32)
+                .unwrap()
+                .to_string();
             (bytes, rendered.starts_with("Enum16("))
         });
         assert_eq!(widths, [(1, false), (2, true)]);
@@ -515,12 +498,9 @@ mod tests {
 
     #[test]
     fn escapes_a_quote_or_backslash_in_a_variant_name() {
-        let ch_type = FieldSpec {
-            enum_variants: Some(vec!["it's".to_string(), "back\\slash".to_string()]),
-            ..field("Enum")
-        }
-        .ch_type(ChainIdMode::Int32)
-        .unwrap();
+        let ch_type = enumeration(vec!["it's".to_string(), "back\\slash".to_string()])
+            .ch_type(ChainIdMode::Int32)
+            .unwrap();
         assert_eq!(
             ch_type.to_string(),
             r"Enum8('it''s' = 1, 'back\\slash' = 2)"
@@ -529,67 +509,22 @@ mod tests {
 
     #[test]
     fn rejects_an_enum_with_no_variants() {
-        let error = FieldSpec {
-            enum_variants: Some(vec![]),
-            ..field("Enum")
-        }
-        .ch_type(ChainIdMode::Int32)
-        .unwrap_err();
+        let error = enumeration(vec![]).ch_type(ChainIdMode::Int32).unwrap_err();
         assert_eq!(error.to_string(), "an Enum field has no variants");
     }
 
     #[test]
     fn rejects_a_field_type_the_mapping_does_not_cover() {
-        let error = field("Tuple").ch_type(ChainIdMode::Int32).unwrap_err();
-        assert_eq!(error.to_string(), "unsupported field type `Tuple`");
+        let error = field("SmallInt").ch_type(ChainIdMode::Int32).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "ClickHouse doesn't support the internal SmallInt column type"
+        );
     }
 
     #[test]
     fn precision_fixes_the_backing_width() {
         let widths = [9u32, 10, 18, 19, 38].map(|precision| decimal_bytes(precision).unwrap());
         assert_eq!(widths, [4, 8, 8, 16, 16]);
-    }
-
-    #[test]
-    fn column_kind_follows_the_type() {
-        let kinds = [
-            field("Int32"),
-            field("UInt64"),
-            FieldSpec {
-                is_nullable: true,
-                ..field("String")
-            },
-            FieldSpec {
-                is_array: true,
-                ..field("String")
-            },
-            field("Date"),
-            field("BigSerial"),
-            field("Bytea"),
-            FieldSpec {
-                is_nullable: true,
-                ..field("Bytea")
-            },
-            // A list travels as JSON text whatever its element type.
-            FieldSpec {
-                is_array: true,
-                ..field("Bytea")
-            },
-        ]
-        .map(|spec| spec.ch_type(ChainIdMode::Int32).unwrap().column_kind());
-        assert_eq!(
-            kinds,
-            [
-                ColumnKind::F64,
-                ColumnKind::U64,
-                ColumnKind::Text,
-                ColumnKind::Text,
-                ColumnKind::F64,
-                ColumnKind::I64,
-                ColumnKind::Bytes,
-                ColumnKind::Bytes,
-                ColumnKind::Text,
-            ]
-        );
     }
 }

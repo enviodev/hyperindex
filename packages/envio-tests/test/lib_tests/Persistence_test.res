@@ -65,9 +65,7 @@ describe("Test Persistence layer init", () => {
       1,
       [
         {
-          "entities": persistence.allEntities,
           "chainConfigs": [],
-          "enums": persistence.allEnums,
           "envioInfo": envioInfo,
         },
       ],
@@ -137,9 +135,7 @@ describe("Test Persistence layer init", () => {
       1,
       2,
       {
-        "entities": persistence.allEntities,
         "chainConfigs": [],
-        "enums": persistence.allEnums,
         "envioInfo": envioInfo,
       },
     ))

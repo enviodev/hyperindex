@@ -10,6 +10,7 @@ let postgresOptions = (
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled=false,
   ~maxConnections=Env.Db.maxConnections,
+  ~isolated=false,
 ): StorageClient.postgresOptions => {
   {
     host: Env.Db.host,
@@ -26,431 +27,27 @@ let postgresOptions = (
     // Hasura cannot read a `numeric[]`, so a schema it tracks stores those as
     // `text[]` (issue #788).
     isHasuraEnabled,
+    isolated,
   }
 }
 
-// One client per storage: the stores and the chain-id mode it was created with
-// decide every statement the addon builds.
+// One client per storage: the config it was created with decides every table
+// and every statement the addon builds. Without one it keeps no entities.
 let makeClient = (
   ~logger: Logger.t,
-  ~chainIdMode: ChainId.mode=Int32,
+  ~config: option<Config.t>=?,
   ~postgres: StorageClient.postgresOptions,
   ~clickhouse: option<StorageClient.clickHouseOptions>=?,
 ): StorageClient.t =>
-  StorageClient.make({chainIdMode: (chainIdMode :> string), postgres, ?clickhouse}, ~logger)
-
-// A per-chain entity's rows are partitioned by the chain that owns them, so a
-// chain-filtered read scans one chain's partition rather than the whole table.
-// `$` can't occur in a GraphQL entity name, so a partition name can never
-// collide with the table another entity claims; past the identifier limit the
-// entity index keeps what survives truncation unique.
-let partitionTableName = (~entityConfig: Internal.entityConfig, ~chainId: ChainId.t) => {
-  let chainIdStr = chainId->ChainId.toString
-  Table.fitPgTableName(
-    `${entityConfig.table.tableName}$${chainIdStr}`,
-    ~uniqueSuffix=`$${entityConfig.index->Int.toString}$${chainIdStr}`,
-  )
-}
-
-// The physical tables an index on the entity is built on. A per-chain entity's
-// rows are partitioned by chain, and an index declared on the parent cascades
-// to every partition, which is what a run driving every chain wants: one
-// declaration, one build. An isolated run instead builds on its own chains'
-// partitions only: the planner uses a partition's own index either way, and
-// building one chain's index then neither waits for nor locks the rows of a
-// chain a sibling process drives.
-let indexTableNames = (entityConfig: Internal.entityConfig, ~partitionChainIds) =>
-  switch (entityConfig.table->Table.getChainIdField, partitionChainIds) {
-  | (Some(_), Some(chainIds)) =>
-    chainIds->Array.map(chainId => partitionTableName(~entityConfig, ~chainId))
-  | _ => [entityConfig.table.tableName]
-  }
-
-// Every index the entity schema promises: an `@index` field, a composite index,
-// or the index backing a derived relationship. Deferred past the initial DDL
-// and created once backfill completes, so a chain that reports itself ready
-// always has all of them. With `partitionChainIds`, a per-chain entity's index
-// is one per partition of those chains rather than one on the parent.
-//
-// `entities` is the Postgres-backed set, and every `@derivedFrom` target within
-// it resolves: config parsing rejects a Postgres entity deriving from one that
-// isn't in Postgres (`validate_relationship_storage`).
-let getSchemaIndexes = (
-  ~entities: array<Internal.entityConfig>,
-  ~partitionChainIds: option<array<ChainId.t>>=?,
-): array<IndexDefinition.t> => {
-  let derivedSchema = Schema.make(entities->Array.map(e => e.table))
-  let all = []
-
-  entities->Array.forEach(({table}) => {
-    table
-    ->Table.getSingleIndexes
-    ->Array.forEach(column =>
-      all->Array.push(IndexDefinition.single(~tableName=table.tableName, ~column))->ignore
-    )
-    table
-    ->Table.getCompositeIndexes
-    ->Array.forEach(indexFields =>
-      all
-      ->Array.push(IndexDefinition.fromIndexFields(~tableName=table.tableName, ~indexFields))
-      ->ignore
-    )
-  })
-
-  entities->Array.forEach(({table}) =>
-    table
-    ->Table.getDerivedFromFields
-    ->Array.forEach(derivedFromField => {
-      let column =
-        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
-      all
-      ->Array.push(IndexDefinition.single(~tableName=derivedFromField.derivedFromEntity, ~column))
-      ->ignore
-    })
+  StorageClient.make(
+    {postgres, ?clickhouse},
+    ~configJson=?config->Option.map(config => config.envioInfo->JSON.stringify),
+    ~logger,
   )
 
-  // An `@index` field and a derived relationship pointing at it describe the
-  // same index, so the list is deduped on identity rather than on name.
-  let seen = Utils.Set.make()
-  let entityByTableName = Dict.make()
-  entities->Array.forEach(entityConfig =>
-    entityByTableName->Dict.set(entityConfig.table.tableName, entityConfig)
-  )
-
-  all
-  ->Array.filter(definition => {
-    let identity = definition->IndexDefinition.describe
-    if seen->Utils.Set.has(identity) {
-      false
-    } else {
-      seen->Utils.Set.add(identity)->ignore
-      true
-    }
-  })
-  ->Array.flatMap(definition =>
-    entityByTableName
-    ->Dict.get(definition.tableName)
-    ->Option.getOrThrow
-    ->indexTableNames(~partitionChainIds)
-    ->Array.map(tableName => {...definition, IndexDefinition.tableName})
-  )
-}
-
-let pgColumnInput = (field: Table.field): Core.pgColumnInput => {
-  let (fieldType, precision, scale, enumName) = field.fieldType->Table.pgFieldTypeParts
-  {
-    name: field->Table.getPgDbFieldName,
-    fieldType,
-    isArray: field.isArray,
-    isNullable: field.isNullable,
-    isPrimaryKey: field.isPrimaryKey,
-    defaultValue: ?field.defaultValue,
-    ?precision,
-    ?scale,
-    ?enumName,
-  }
-}
-
-// The entity as it's stored: the handler-visible schema plus the chain-id
-// column a per-chain entity's table carries. The value for that column is
-// stamped from the flush group's scope right before serialization, so it never
-// has to be re-derived from a checkpoint.
-let rowSchemaCache = Utils.WeakMap.make()
-let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =>
-  switch rowSchemaCache->Utils.WeakMap.get(entityConfig) {
-  | Some(cached) => cached
-  | None =>
-    let schema = switch entityConfig.table->Table.getChainIdField {
-    | None => entityConfig.schema
-    | Some(chainIdField) =>
-      S.schema(s => {
-        let dict = Dict.make()
-        switch entityConfig.schema->S.classify {
-        | Object({items}) =>
-          items->Array.forEach(({location, schema}) => dict->Dict.set(location, s.matches(schema)))
-        | _ =>
-          JsError.throwWithMessage(
-            `Unexpected non-object schema for entity "${entityConfig.name}".`,
-          )
-        }
-        dict->Dict.set(chainIdField.fieldName, s.matches(ChainId.schema->S.toUnknown))
-        dict
-      })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>)
-    }
-    rowSchemaCache->Utils.WeakMap.set(entityConfig, schema)->ignore
-    schema
-  }
-
-// How a batch of a Postgres table's rows crosses over: staged into an arena
-// column by column, or rendered a parameter per cell when it has an array
-// column.
-type postgresTable = {staged: option<array<Staging.column>>}
-
-// A table as the addon writes it: its handle, the columns a batch's rows carry
-// in the order the addon expects them, and what each store that keeps it made
-// of it.
-type registered = {
-  handle: int,
-  home: StorageClient.store,
-  table: Table.table,
-  fields: array<Table.field>,
-  postgres: option<postgresTable>,
-  clickhouse: option<ClickHouse.table>,
-}
-
-%%private(
-  let register = (
-    client: StorageClient.t,
-    ~table: Table.table,
-    ~itemSchema: S.t<unknown>,
-    ~postgres=true,
-    ~clickhouse: option<StorageClient.clickHouseTable>=?,
-    ~appendOnly=false,
-    ~history=?,
-  ): registered => {
-    let fields = table->Table.schemaOrderedFields(~schema=itemSchema)
-    let chainIdField = table->Table.getChainIdField
-    let registered = client->StorageClient.registerTable({
-      name: table.tableName,
-      postgres: ?(
-        postgres
-          ? Some({
-              Core.columns: table->Table.getFields->Array.map(pgColumnInput),
-              writeColumns: fields->Array.map(Table.getPgDbFieldName),
-              partitionByColumn: ?(chainIdField->Option.map(Table.getPgDbFieldName)),
-              appendOnly,
-              historyTable: ?history,
-              chainIdColumn: ?switch history {
-              | Some(_) => chainIdField->Option.map(Table.getPgDbFieldName)
-              | None => None
-              },
-            })
-          : None
-      ),
-      ?clickhouse,
-    })
-    {
-      handle: registered.handle,
-      home: registered.home,
-      table,
-      fields,
-      postgres: registered.postgres->Option.map(({?kinds}): postgresTable => {
-        staged: kinds->Option.map(kinds =>
-          PgWriting.columns(fields, ~kinds=kinds->Array.map(Staging.kindOfOrdinal))
-        ),
-      }),
-      // Named for where its rows go, which for an entity is its history table.
-      clickhouse: registered.clickhouse->Option.map(
-        ClickHouse.makeTable(
-          ~handle=registered.handle,
-          ~name=history->Option.getOr(table.tableName),
-          _,
-        ),
-      ),
-    }
-  }
-)
-
-let registerEntity = (client, entityConfig: Internal.entityConfig) =>
-  client->register(
-    ~table=entityConfig.table,
-    ~itemSchema=entityConfig->getRowSchema->S.toUnknown,
-    ~postgres=entityConfig.storage.postgres,
-    ~clickhouse=?entityConfig.storage.clickhouse
-      ? Some(ClickHouse.entityTable(entityConfig))
-      : None,
-    ~history=EntityHistory.historyTableName(
-      ~entityName=entityConfig.name,
-      ~entityIndex=entityConfig.index,
-    ),
-  )
-
-// A json column holds a document, which is as readily a string or a boolean as
-// an object. By the time a parameter is rendered there is only the value to go
-// on, and there a string is text and a boolean is `t` — neither of which the
-// server will read back as the document it was. So the document becomes its own
-// text here, where the column it belongs to is still known.
-//
-// JSON `null` is a document of its own, which a required column stores as one.
-// A column that takes NULL keeps the two apart the other way: there `null` is
-// the absent value, since only one of the two can survive the field's schema.
-%%private(
-  let renderDocument = (value, ~isNullable) =>
-    switch value->(Utils.magic: unknown => Nullable.t<unknown>) {
-    | Value(_) => value->Sql.stringifyDocument->(Utils.magic: string => unknown)
-    | Null if !isNullable => "null"->(Utils.magic: string => unknown)
-    | Null | Undefined => value
-    }
-)
-
-// A list of documents is bound as an array whose elements are each their own
-// document's text.
-%%private(
-  let renderDocuments = (columns: array<array<unknown>>, ~at: array<(int, Table.field)>) => {
-    at->Array.forEach(((index, field)) => {
-      let values = columns->Array.getUnsafe(index)
-      for row in 0 to values->Array.length - 1 {
-        let value = values->Array.getUnsafe(row)
-        values->Array.setUnsafe(
-          row,
-          switch value->(Utils.magic: unknown => Nullable.t<array<unknown>>)->Nullable.toOption {
-          | Some(documents) if field.isArray =>
-            documents
-            ->Array.map(document => document->renderDocument(~isNullable=true))
-            ->(Utils.magic: array<unknown> => unknown)
-          | _ => value->renderDocument(~isNullable=field.isNullable)
-          },
-        )
-      }
-    })
-    columns
-  }
-)
-
-// An item schema compiled for one table's columns: rows in, one array per
-// column out. The values are validated by the type system on the way in, and a
-// value its column cannot take is refused by the server, which says why.
-type converters = Utils.WeakMap.t<S.t<unknown>, array<unknown> => array<array<unknown>>>
-let arenaConverters: converters = Utils.WeakMap.make()
-let cellConverters: converters = Utils.WeakMap.make()
-let converterOf = (registered, ~forArena, ~itemSchema) => {
-  let converters = forArena ? arenaConverters : cellConverters
-  switch converters->Utils.WeakMap.get(itemSchema) {
-  | Some(convert) => convert
-  | None =>
-    let documents =
-      registered.fields->Array.filterMapWithIndex((field, index) =>
-        field.fieldType === Table.Json ? Some((index, field)) : None
-      )
-    // Booleans travel as 1/0 and bigints as their digits, which is what an
-    // arena's slots hold.
-    let schema = forArena ? registered.table->Table.toDbSchema(~schema=itemSchema) : itemSchema
-    let convert = S.compile(
-      S.unnest(schema)
-      ->S.preprocess(_ => {
-        serializer: columns =>
-          columns
-          ->(Utils.magic: unknown => array<array<unknown>>)
-          ->renderDocuments(~at=documents)
-          ->(Utils.magic: array<array<unknown>> => unknown),
-      })
-      ->S.toUnknown,
-      ~input=Value,
-      ~output=Unknown,
-      ~mode=Sync,
-      ~typeValidation=false,
-    )->(Utils.magic: (unknown => unknown) => array<unknown> => array<array<unknown>>)
-    converters->Utils.WeakMap.set(itemSchema, convert)->ignore
-    convert
-  }
-}
-
-// Staging refuses a non-finite float for a staged table. A table bound a cell
-// at a time has to refuse it too: the server would store it, and the field's
-// schema would then refuse it on every load.
-%%private(
-  let refuseNonFinite = (values: array<array<unknown>>, ~fields: array<Table.field>) =>
-    fields->Array.forEachWithIndex((field, index) =>
-      if field.fieldType === Table.Number {
-        let column = field->Table.getPgDbFieldName
-        let check = (value: Nullable.t<float>) =>
-          switch value {
-          | Value(number) => number->Staging.finiteOrThrow(~column)->ignore
-          | Null | Undefined => ()
-          }
-        values
-        ->Array.getUnsafe(index)
-        ->Array.forEach(value =>
-          if field.isArray {
-            switch value->(Utils.magic: unknown => Nullable.t<array<Nullable.t<float>>>) {
-            | Value(elements) => elements->Array.forEach(check)
-            | Null | Undefined => ()
-            }
-          } else {
-            check(value->(Utils.magic: unknown => Nullable.t<float>))
-          }
-        )
-      }
-    )
-)
-
-// What a batch has laid out on its way to the addon: the staged handles, freed
-// if the write never reaches it, and each store's time spent laying its rows
-// out, which is part of writing to it.
-type staged = {handles: array<int>, seconds: dict<float>}
-
-let stagedFor = (staged, ~store, stage) => {
-  let started = Performance.now()
-  let result = stage()
-  let name = store->storeName
-  staged.seconds->Dict.set(
-    name,
-    staged.seconds->Dict.get(name)->Option.getOr(0.) +. started->Performance.secondsSince,
-  )
-  result
-}
-
-// A Postgres table's rows for a write. A staged batch is handed back by handle.
-%%private(
-  let rowsOrThrow = (
-    client: StorageClient.t,
-    registered,
-    ~itemSchema,
-    items: array<unknown>,
-    ~staged: staged,
-  ): StorageClient.rows =>
-    staged->stagedFor(~store=Postgres, () => {
-      let rows = items->Array.length
-      try {
-        switch registered.postgres {
-        | Some({staged: Some(columns)}) =>
-          let values = (registered->converterOf(~forArena=true, ~itemSchema))(items)
-          let handle =
-            client
-            ->StorageClient.arena(~store=Postgres)
-            ->PgWriting.stage(~table=registered.handle, ~columns, ~values, ~rows)
-          staged.handles->Array.push(handle)
-          ({staged: handle, rows}: StorageClient.rows)
-        | Some({staged: None}) =>
-          let values = (registered->converterOf(~forArena=false, ~itemSchema))(items)
-          values->refuseNonFinite(~fields=registered.fields)
-          {
-            cells: values->Utils.Array.flatten->Sql.params,
-            rows,
-          }
-        | None => JsError.throwWithMessage(`Postgres doesn't keep "${registered.table.tableName}"`)
-        }
-      } catch {
-      | S.Raised(_) as exn =>
-        throw(
-          Persistence.StorageError({
-            message: `Failed to convert items for table "${registered.table.tableName}"`,
-            reason: exn,
-          }),
-        )
-      | exn =>
-        throw(
-          Persistence.StorageError({
-            message: `Failed to insert items into table "${registered.table.tableName}"`,
-            reason: exn->Utils.prettifyExn,
-          }),
-        )
-      }
-    })
-)
-
-// Ids as the text their column reads them from.
-let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
-  table
-  ->Table.encodeIdsToJson(ids)
-  ->(Utils.magic: JSON.t => array<unknown>)
-  ->Array.map(Sql.render)
-
-let bounds = (
-  {sequence, byChain}: CheckpointSequence.checkpointBoundsByChain,
-): StorageClient.bounds => {
-  let (chainIds, checkpointIds) = byChain->Frontier.unnestParams
-  {sequence, chainIds, checkpointIds}
+let bounds = ({byChain}: CheckpointSequence.checkpointBoundsByChain): StorageClient.bounds => {
+  chainIds: byChain->Frontier.chainIds,
+  checkpointIds: byChain->Frontier.chainIds->Array.map(chainId => byChain->Frontier.get(chainId)),
 }
 
 let progress = (chain: InternalTable.Chains.progressedChain): StorageClient.progress => {
@@ -519,20 +116,94 @@ let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memo
   S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema))
 )
 
+// A change set is the entity's fields, then each change's checkpoint and 1
+// for a change that deletes the entity.
+let changeColumns: array<Staging.column> = [
+  {name: EntityHistory.checkpointIdFieldName, kind: I64, isNullable: false},
+  {name: EntityHistory.changeFieldName, kind: F64, isNullable: false},
+]
+
+// Fills a stage the addon lent for `rows`, handing it back once every value
+// is in, or abandoning it if one is refused.
+let stageOrThrow = (arena, ~columns, ~rows, fill) => {
+  let stage = arena->Staging.begin(~rows, ~columns)
+  try {
+    fill(stage)
+    stage->Staging.commit
+  } catch {
+  | exn =>
+    stage->Staging.abort
+    throw(exn)
+  }
+}
+
+// Rows of a fixed layout, each value read off the item by its column's name.
+let stageRowsOrThrow = (arena, ~writers, items: array<dict<unknown>>) =>
+  arena->stageOrThrow(~columns=writers->StagedRows.columnsOf, ~rows=items->Array.length, stage =>
+    items->Array.forEachWithIndex((item, row) =>
+      writers->Array.forEachWithIndex(({field}: StagedRows.writer, column) =>
+        stage->StagedRows.writeField(~writers, ~column, ~row, item->Dict.getUnsafe(field.name))
+      )
+    )
+  )
+
+// Every change a group made, in order: what a set wrote, or the id a delete
+// removed. Each store reads what it keeps off the same rows.
+let stageChangesOrThrow = (arena, ~writers, ~changes: array<Change.t<Internal.entity>>) => {
+  let fields = writers->Array.length
+  arena->stageOrThrow(
+    ~columns=writers->StagedRows.columnsOf->Array.concat(changeColumns),
+    ~rows=changes->Array.length,
+    stage =>
+      changes->Array.forEachWithIndex((change, row) => {
+        let entityId = change->Change.getEntityId->(Utils.magic: EntityId.t => unknown)
+        switch change {
+        | Set({entity}) =>
+          let values = entity->(Utils.magic: Internal.entity => dict<unknown>)
+          writers->Array.forEachWithIndex(({field}: StagedRows.writer, column) =>
+            stage->StagedRows.writeField(
+              ~writers,
+              ~column,
+              ~row,
+              field.name === Table.idFieldName ? entityId : values->Dict.getUnsafe(field.name),
+            )
+          )
+        | Delete(_) =>
+          writers->Array.forEachWithIndex(({field}: StagedRows.writer, column) =>
+            if field.name === Table.idFieldName {
+              stage->StagedRows.writeField(~writers, ~column, ~row, entityId)
+            } else {
+              stage->Staging.writeDeletedValue(~column, ~row, %raw(`undefined`))
+            }
+          )
+        }
+        stage->Staging.writeValue(
+          ~column=fields,
+          ~row,
+          change->Change.getCheckpointId->(Utils.magic: bigint => unknown),
+        )
+        stage->Staging.writeValue(
+          ~column=fields + 1,
+          ~row,
+          (
+            switch change {
+            | Set(_) => 0.
+            | Delete(_) => 1.
+            }
+          )->(Utils.magic: float => unknown),
+        )
+      }),
+  )
+}
+
 let make = (
   ~client: StorageClient.t,
   ~logger: Logger.t,
-  // The entities a load can name before initialize or resume has.
-  ~entities: array<Internal.entityConfig>=[],
   // Where the effect cache is dumped to and uploaded from.
   ~cacheDir: option<NodeJs.Path.t>=?,
   // Decides how wide an address key is, both when the config's addresses are
   // encoded at initialize and when stored rows are grouped on resume.
   ~ecosystem: Ecosystem.name,
-  // An `envio start --chain` process: builds and looks for a per-chain entity's
-  // indexes on its own chains' partitions, never on the parent table, so no
-  // build reaches into the rows a sibling process drives.
-  ~isolated=false,
   ~onInitialize=?,
 ): Persistence.storage => {
   let cacheDirPath = switch cacheDir {
@@ -545,53 +216,19 @@ let make = (
     ])
   }
 
-  // Every table is registered with the addon once, by name: the handle is what
-  // an operation names it by.
-  let registry: dict<registered> = Dict.make()
-  let registered = (~table: Table.table, register) =>
-    switch registry->Utils.Dict.dangerouslyGetNonOption(table.tableName) {
-    | Some(registered) => registered
-    | None =>
-      let registered = register()
-      registry->Dict.set(table.tableName, registered)
-      registered
+  let layouts = client->StorageClient.layouts
+  let entityIndexByName = Dict.make()
+  layouts.entities->Array.forEachWithIndex((layout, index) =>
+    entityIndexByName->Dict.set(layout.name, index)
+  )
+  let entityIndex = (table: Table.table) =>
+    switch entityIndexByName->Utils.Dict.dangerouslyGetNonOption(table.tableName) {
+    | Some(index) => index
+    | None => JsError.throwWithMessage(`The storage has no entity "${table.tableName}".`)
     }
-  let entityTable = (entityConfig: Internal.entityConfig) =>
-    registered(~table=entityConfig.table, () => client->registerEntity(entityConfig))
-  let ownTable = (~table: Table.table, ~itemSchema: S.t<unknown>, ~appendOnly=?) =>
-    registered(~table, () => client->register(~table, ~itemSchema, ~appendOnly?))
-  let rawEventsTable = () =>
-    ownTable(
-      ~table=InternalTable.RawEvents.table,
-      ~itemSchema=InternalTable.RawEvents.schema->S.toUnknown,
-      ~appendOnly=true,
-    )
-  // Every cache table has the same two columns, whatever its effect's output.
-  let cacheTable = (table: Table.table) =>
-    ownTable(~table, ~itemSchema=Internal.cacheItemSchema->S.toUnknown)
-  entities->Array.forEach(entityConfig => entityConfig->entityTable->ignore)
-  let tableOf = (table: Table.table) =>
-    switch registry->Utils.Dict.dangerouslyGetNonOption(table.tableName) {
-    | Some(registered) => registered
-    // An effect's cache is loaded before anything wrote or created it.
-    | None if Internal.EffectCache.fromTableName(table.tableName)->Option.isSome =>
-      cacheTable(table)
-    | None => JsError.throwWithMessage(`The storage has no table "${table.tableName}".`)
-    }
-
-  // A per-chain entity's Postgres rows live in one partition per chain.
-  let partitions = (entities: array<Internal.entityConfig>, ~chainIds) =>
-    entities
-    ->Array.filter(entityConfig =>
-      entityConfig.storage.postgres && entityConfig.table->Table.getChainIdField->Option.isSome
-    )
-    ->Array.flatMap(entityConfig =>
-      chainIds->Array.map((chainId): StorageClient.partition => {
-        table: (entityConfig->entityTable).handle,
-        chainId,
-        name: partitionTableName(~entityConfig, ~chainId),
-      })
-    )
+  let entityWriters = layouts.entities->Array.map(layout => layout.fields->StagedRows.writersOf)
+  let rawEventWriters = layouts.rawEvents->StagedRows.writersOf
+  let effectCacheWriters = layouts.effectCache->StagedRows.writersOf
 
   let holding = () => client->StorageClient.holding
 
@@ -618,9 +255,11 @@ let make = (
         | Some(chainId) =>
           tsvs->Array.forEach(sub => {
             let effectName = sub->String.slice(~start=0, ~end=-4)
-            let table = Internal.makeCacheTable(~effectName, ~scope=Chain(chainId))
             result
-            ->Array.push((table, NodeJs.Path.join(entryPath, sub)->NodeJs.Path.toString))
+            ->Array.push((
+              Internal.EffectCache.toTableName(~effectName, ~scope=Chain(chainId)),
+              NodeJs.Path.join(entryPath, sub)->NodeJs.Path.toString,
+            ))
             ->ignore
           })
         | None =>
@@ -634,8 +273,12 @@ let make = (
         }
       } else if entry->String.endsWith(".tsv") {
         let effectName = entry->String.slice(~start=0, ~end=-4)
-        let table = Internal.makeCacheTable(~effectName, ~scope=CrossChain)
-        result->Array.push((table, entryPath->NodeJs.Path.toString))->ignore
+        result
+        ->Array.push((
+          Internal.EffectCache.toTableName(~effectName, ~scope=CrossChain),
+          entryPath->NodeJs.Path.toString,
+        ))
+        ->ignore
       }
     })
     ->Promise.all
@@ -649,10 +292,7 @@ let make = (
       | entries =>
         try {
           await client->StorageClient.uploadEffectCache(
-            entries->Array.map(((table, path)): StorageClient.cacheUpload => {
-              table: (table->cacheTable).handle,
-              path,
-            }),
+            entries->Array.map(((table, path)): StorageClient.cacheUpload => {table, path}),
           )
           logger->Logger.info("Successfully uploaded cache.")
         } catch {
@@ -677,8 +317,6 @@ let make = (
 
   let initialize = async (
     ~chainConfigs=[],
-    ~entities=[],
-    ~enums=[],
     ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
@@ -688,17 +326,6 @@ let make = (
       )
 
     await client->StorageClient.initialize({
-      sequence: CheckpointSequence.fromEntities(entities),
-      tables: [rawEventsTable().handle]->Array.concat(
-        entities->Array.map(entityConfig => (entityConfig->entityTable).handle),
-      ),
-      partitions: entities->partitions(
-        ~chainIds=chainConfigs->Array.map((chainConfig: Config.chain) => chainConfig.id),
-      ),
-      enums: enums->Array.map((enumConfig: Table.enumConfig<Table.enum>): StorageClient.enum => {
-        name: enumConfig.name,
-        variants: enumConfig.variants->(Utils.magic: array<Table.enum> => array<string>),
-      }),
       chains: chainConfigs->Array.map(toChainConfig),
       envioInfo: envioInfo->JSON.stringify,
       contractNames: contractMapping->ContractMapping.names,
@@ -740,7 +367,11 @@ let make = (
 
   let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
     let conditions = LoadFilter.make(~filter, ~table, ~column=field => field.pgDbFieldName)
-    switch await client->StorageClient.loadWhere(~table=(table->tableOf).handle, ~conditions) {
+    let loading = switch Internal.EffectCache.fromTableName(table.tableName) {
+    | Some(_) => client->StorageClient.loadEffectCache(~table=table.tableName, ~conditions)
+    | None => client->StorageClient.loadWhere(~entity=table->entityIndex, ~conditions)
+    }
+    switch await loading {
     | exception exn =>
       throw(
         Persistence.StorageError({
@@ -784,53 +415,27 @@ let make = (
     columns
   }
 
-  let partitionChainIds = chainIds => isolated ? Some(chainIds) : None
-
-  // The physical table a query index for `scope` is built on. A per-chain
-  // entity's query carries the scope's chain id, so it is planned against that
-  // chain's partition, which an index on the parent covers by cascading.
-  let queryTableName = (~entityConfig: Internal.entityConfig, ~scope: Internal.chainScope) =>
-    switch scope {
-    | Chain(chainId) =>
-      indexTableNames(
-        entityConfig,
-        ~partitionChainIds=partitionChainIds([chainId]),
-      )->Array.getUnsafe(0)
-    | CrossChain => entityConfig.table.tableName
-    }
-
   let ensureQueryIndexes = async (
     ~entityConfig: Internal.entityConfig,
     ~scope: Internal.chainScope,
     ~filters: array<EntityFilter.t>,
   ) =>
     switch client->StorageClient.ensureQueryIndexes(
-      (entityConfig->entityTable).handle,
-      queryTableName(~entityConfig, ~scope),
-      filterColumns(~table=entityConfig.table, ~filters),
+      ~entity=entityConfig.index,
+      ~chainId=scope->Internal.chainScopeChainId->Null.fromOption,
+      ~columns=filterColumns(~table=entityConfig.table, ~filters),
     ) {
     | Value(building) => await building
     | Null => ()
     }
 
-  let schemaIndexes = (~entities: array<Internal.entityConfig>, ~chainIds) =>
-    getSchemaIndexes(
-      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
-      ~partitionChainIds=?partitionChainIds(chainIds),
-    )->Array.map(IndexDefinition.toInput)
-
   // Runs on a resumed indexer that is already ready, so handlers may be issuing
   // getWhere queries alongside it. Nothing here writes `ready_at` — the chains
   // already carry theirs.
-  let ensureSchemaIndexes = (~entities, ~chainIds) =>
-    client->StorageClient.ensureSchemaIndexes(schemaIndexes(~entities, ~chainIds))
+  let ensureSchemaIndexes = (~chainIds) => client->StorageClient.ensureSchemaIndexes(chainIds)
 
-  let finalizeBackfill = (~entities, ~chainIds, ~readyAt: Date.t) =>
-    client->StorageClient.finalizeBackfill(
-      schemaIndexes(~entities, ~chainIds),
-      chainIds,
-      readyAt->Date.getTime,
-    )
+  let finalizeBackfill = (~chainIds, ~readyAt: Date.t) =>
+    client->StorageClient.finalizeBackfill(chainIds, readyAt->Date.getTime)
 
   let dumpEffectCache = async () => {
     try {
@@ -905,27 +510,18 @@ let make = (
     }
   }
 
-  let addChain = (~chainConfig: Config.chain, ~entities, ~contractMapping) =>
+  let addChain = (~chainConfig: Config.chain, ~contractMapping) =>
     client->StorageClient.addChain({
       chain: chainConfig->toChainConfig,
-      partitions: entities->partitions(~chainIds=[chainConfig.id]),
       addresses: chainConfig
       ->ChainState.configStorageRows(~ecosystem, ~contractMapping)
       ->addressColumns,
     })
 
-  let resumeInitialState = async (
-    ~entities: array<Internal.entityConfig>,
-    ~chainIds,
-    ~contractMapping,
-  ): Persistence.initialState => {
+  let resumeInitialState = async (~chainIds, ~contractMapping): Persistence.initialState => {
     let (cache, resumed) = await Promise.all2((
       restoreEffectCache(~withUpload=false),
-      client->StorageClient.resume({
-        sequence: CheckpointSequence.fromEntities(entities),
-        tables: entities->Array.map(entityConfig => (entityConfig->entityTable).handle),
-        chainIds,
-      }),
+      client->StorageClient.resume(chainIds),
     ))
     let addressRowsByChainId = resumed.addresses->readAddressRows->AddressRows.group
     let stored =
@@ -948,12 +544,12 @@ let make = (
       sourceBlockNumber: chain.sourceBlock,
     })
     let checkpointFrontier = Frontier.fromEntries(
-      stored->Array.map(((id, chain)) => (id, chain.checkpointId->BigInt.fromStringOrThrow)),
+      stored->Array.map(((id, chain)) => (id, chain.checkpointId)),
     )
     let reorgCheckpoints = resumed.reorgCheckpoints->Array.map((
       checkpoint
     ): Internal.reorgCheckpoint => {
-      checkpointId: checkpoint.id->BigInt.fromStringOrThrow,
+      checkpointId: checkpoint.id,
       chainId: checkpoint.chainId->ChainId.normalizeOrThrow,
       blockNumber: checkpoint.blockNumber,
       blockHash: checkpoint.blockHash,
@@ -990,19 +586,13 @@ let make = (
   let pruneStaleCheckpoints = (~safeCheckpoints) =>
     client->StorageClient.pruneCheckpoints(safeCheckpoints->bounds)
 
-  let pruneStaleEntityHistory = (~entityConfig, ~safeCheckpoints) =>
-    client->StorageClient.pruneHistory((entityConfig->entityTable).handle, safeCheckpoints->bounds)
+  let pruneStaleEntityHistory = (~entityConfig: Internal.entityConfig, ~safeCheckpoints) =>
+    client->StorageClient.pruneHistory(entityConfig.index, safeCheckpoints->bounds)
 
-  let getRollbackTargetCheckpoint = async (~reorgChainId, ~lastKnownValidBlockNumber, ~sequence) =>
+  let getRollbackTargetCheckpoint = async (~reorgChainId, ~lastKnownValidBlockNumber) =>
     (
-      await client->StorageClient.rollbackTargetCheckpoint(
-        reorgChainId,
-        lastKnownValidBlockNumber,
-        sequence,
-      )
-    )
-    ->Nullable.toOption
-    ->Option.map(BigInt.fromStringOrThrow)
+      await client->StorageClient.rollbackTargetCheckpoint(reorgChainId, lastKnownValidBlockNumber)
+    )->Nullable.toOption
 
   let getRollbackProgressDiff = async (~floors: RollbackFloors.t) =>
     (
@@ -1017,7 +607,7 @@ let make = (
 
   let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors: RollbackFloors.t) => {
     let {removed, restored} = await client->StorageClient.rollbackData(
-      (entityConfig->entityTable).handle,
+      entityConfig.index,
       floors.checkpointBounds->bounds,
     )
     let removedIdRows = try client->StorageClient.read(removed) catch {
@@ -1055,161 +645,45 @@ let make = (
     )
   }
 
-  // One write group's changes, laid out for every store that keeps the entity:
-  // for Postgres the latest change of each id for the entity table, and every
-  // change for its history; for ClickHouse every change as a history row.
-  let entityWrite = (
-    {entityConfig, scope, changes, shouldSaveHistory}: Persistence.updatedEntity,
-    ~rollback: option<Persistence.rollback>,
-    ~config: Config.t,
-    ~staged,
-  ): StorageClient.entityWrite => {
-    let table = entityConfig->entityTable
+  let stageRows = (~table, ~writers, items) =>
+    client
+    ->StorageClient.arena((~rows) => client->StorageClient.beginRows(~table, ~rows))
+    ->stageRowsOrThrow(~writers, items)
 
-    let chainIdStamp = switch (entityConfig.table->Table.getChainIdField, scope) {
-    | (Some(field), Internal.Chain(chainId)) => Some((field, chainId))
-    | _ => None
-    }
+  let stageChanges = ({entityConfig, changes}: Persistence.updatedEntity) =>
+    client
+    ->StorageClient.arena((~rows) =>
+      client->StorageClient.beginChanges(~entity=entityConfig.index, ~rows)
+    )
+    ->stageChangesOrThrow(~writers=entityWriters->Array.getUnsafe(entityConfig.index), ~changes)
 
-    let postgresWrite = (): StorageClient.postgresEntityWrite => {
-      // Every row in this group belongs to the group's scope, so the chain id
-      // is stamped once here instead of being looked up per row downstream.
-      let stamped = switch chainIdStamp {
-      | Some((field, chainId)) =>
-        changes->Array.map(change =>
-          switch change {
-          | Change.Set(set) =>
-            Change.Set({
-              ...set,
-              entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
-            })
-          | Delete(_) => change
-          }
-        )
-      | None => changes
-      }
-
-      // The rollback-diff change is written to the entity table only, never the
-      // history table; when present it is an id's oldest change.
-      let diffCheckpointId =
-        rollback->Option.flatMap(r =>
-          config.checkpointSequence->CheckpointSequence.findForScope(r.diffFrontier, ~scope)
-        )
-
-      let historySets = []
-      let historySetCheckpointIds = []
-      let historyDeleteIds = []
-      let historyDeleteCheckpointIds = []
-      let idsWithDiff = Utils.Set.make()
-
-      // Each id's latest change (the last one seen) and, when saving history,
-      // every change but the diff for the history table. Keyed by the id's
-      // string key, while what goes to SQL keeps the real id so it serializes
-      // with the id column's type.
-      let latestChangeById = Dict.make()
-      let orderedIds = []
-      stamped->Array.forEach(change => {
-        let entityId = change->Change.getEntityId
-        let entityKey = entityId->EntityId.toKey
-        if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey)->Option.isNone {
-          orderedIds->Array.push(entityId)
-        }
-        latestChangeById->Dict.set(entityKey, change)
-        if shouldSaveHistory {
-          if Some(change->Change.getCheckpointId) === diffCheckpointId {
-            idsWithDiff->Utils.Set.add(entityKey)->ignore
-          } else {
-            switch change {
-            | Delete({entityId, checkpointId}) =>
-              historyDeleteIds->Array.push(entityId)
-              historyDeleteCheckpointIds->Array.push(checkpointId->BigInt.toString)
-            | Set({entity, checkpointId}) =>
-              historySets->Array.push(entity)
-              historySetCheckpointIds->Array.push(checkpointId->BigInt.toString)
-            }
-          }
-        }
-      })
-
-      let sets = []
-      let deletes = []
-      let backfill = []
-      orderedIds->Array.forEach(entityId => {
-        let entityKey = entityId->EntityId.toKey
-        switch latestChangeById->Dict.getUnsafe(entityKey) {
-        | Set({entity}) => sets->Array.push(entity)
-        | Delete({entityId}) => deletes->Array.push(entityId)
-        }
-
-        // An id needs a history backfill iff none of its changes is the diff.
-        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
-          backfill->Array.push(entityId)
-        }
-      })
-
-      let rowsOf = entities =>
-        entities->Utils.Array.notEmpty
-          ? Some(
-              client->rowsOrThrow(
-                table,
-                ~itemSchema=entityConfig->getRowSchema->S.toUnknown,
-                entities->(Utils.magic: array<Internal.entity> => array<unknown>),
-                ~staged,
-              ),
-            )
-          : None
-      {
-        sets: ?rowsOf(sets),
-        deletes: entityConfig.table->renderIds(deletes),
-        history: ?(
-          shouldSaveHistory
-            ? Some(
-                (
-                  {
-                    backfill: entityConfig.table->renderIds(backfill),
-                    sets: ?rowsOf(historySets),
-                    setCheckpointIds: historySetCheckpointIds,
-                    deleteIds: entityConfig.table->renderIds(historyDeleteIds),
-                    deleteCheckpointIds: historyDeleteCheckpointIds,
-                  }: StorageClient.historyWrite
-                ),
-              )
-            : None
-        ),
-      }
-    }
-
-    {
-      table: table.handle,
-      chainId: ?(chainIdStamp->Option.map(((_, chainId)) => chainId)),
-      postgres: ?(table.postgres->Option.map(_ => postgresWrite())),
-      clickhouse: ?switch (table.clickhouse, changes) {
-      | (_, []) | (None, _) => None
-      | (Some(chTable), _) =>
-        let handle = staged->stagedFor(~store=ClickHouse, () =>
-          client
-          ->StorageClient.arena(~store=ClickHouse)
-          ->ClickHouse.stageChangesOrThrow(chTable, ~entityConfig, ~scope, ~changes)
-        )
-        staged.handles->Array.push(handle)
-        Some(handle)
-      },
-    }
-  }
+  // A value a store can't take is reported as the store's own refusal: the
+  // store of record's, for an entity it keeps.
+  let changesErrorOf = (entityConfig: Internal.entityConfig, exn) => Persistence.StorageError({
+    message: entityConfig.storage.postgres
+      ? `Failed to insert items into table "${entityConfig.table.tableName}"`
+      : `Failed to convert items for ClickHouse table "${EntityHistory.historyTableName(
+            ~entityName=entityConfig.name,
+            ~entityIndex=entityConfig.index,
+          )}"`,
+    reason: exn->Utils.prettifyExn,
+  })
 
   let writeBatch = async (
     ~batch: Batch.t,
     ~rollback: option<Persistence.rollback>,
     ~config: Config.t,
-    ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<Persistence.updatedEffectCache>,
     ~updatedEntities: array<Persistence.updatedEntity>,
     ~registeredAddresses: array<AddressRows.staged>,
     ~chainMetaData,
     ~onWrite,
   ) => {
-    let (frontierChainIds, frontierCheckpointIds) =
-      Persistence.writtenFrontier(~batch, ~rollback)->Frontier.unnestParams
+    let (frontierChainIds, frontierCheckpointIds) = {
+      let frontier = Persistence.writtenFrontier(~batch, ~rollback)
+      let chainIds = frontier->Frontier.chainIds
+      (chainIds, chainIds->Array.map(chainId => frontier->Frontier.get(chainId)))
+    }
 
     // A single on-chain log fans out to one item per matching registration;
     // `raw_events` records the log itself, so it is deduped by its coordinate
@@ -1234,7 +708,12 @@ let make = (
       []
     }
 
-    let staged = {handles: [], seconds: Dict.make()}
+    let handles = []
+    let staged = handle => {
+      handles->Array.push(handle)
+      handle
+    }
+    let stagingStarted = Performance.now()
     let input: StorageClient.batch = try {
       rollback: ?(
         rollback->Option.map(({
@@ -1244,7 +723,6 @@ let make = (
           diffCheckpoints,
         }): StorageClient.rollbackWrite => {
           bounds: floors.checkpointBounds->bounds,
-          tables: allEntities->Array.map(entityConfig => (entityConfig->entityTable).handle),
           progress: progressedChains->Array.map(progress),
           removedAddresses: {
             chainIds: rolledBackAddresses->Array.map(key => key.chainId),
@@ -1253,7 +731,7 @@ let make = (
           },
           diffCheckpoints: diffCheckpoints->Array.map((diff): StorageClient.diffCheckpoint => {
             chainId: diff.chainId,
-            checkpointId: diff.checkpointId->BigInt.toString,
+            checkpointId: diff.checkpointId,
             blockNumber: diff.blockNumber,
           }),
         })
@@ -1269,26 +747,41 @@ let make = (
       ),
       rawEvents: ?(
         rawEvents->Utils.Array.notEmpty
-          ? {
-              let table = rawEventsTable()
-              Some(
-                (
-                  {
-                    table: table.handle,
-                    rows: client->rowsOrThrow(
-                      table,
-                      ~itemSchema=InternalTable.RawEvents.schema->S.toUnknown,
-                      rawEvents->(Utils.magic: array<Internal.rawEvent> => array<unknown>),
-                      ~staged,
-                    ),
-                  }: StorageClient.tableWrite
-                ),
-              )
-            }
+          ? Some(
+              try stageRows(
+                ~table=RawEvents,
+                ~writers=rawEventWriters,
+                rawEvents->(Utils.magic: array<Internal.rawEvent> => array<dict<unknown>>),
+              )->staged catch {
+              | exn =>
+                throw(
+                  Persistence.StorageError({
+                    message: `Failed to insert items into table "${InternalTable.RawEvents.table.tableName}"`,
+                    reason: exn->Utils.prettifyExn,
+                  }),
+                )
+              },
+            )
           : None
       ),
-      entities: updatedEntities->Array.map(update =>
-        update->entityWrite(~rollback, ~config, ~staged)
+      changes: updatedEntities->Array.filterMap(update =>
+        switch update.changes {
+        | [] => None
+        | _ =>
+          let handle = try update->stageChanges->staged catch {
+          | exn => throw(changesErrorOf(update.entityConfig, exn))
+          }
+          Some(
+            (
+              {
+                entity: update.entityConfig.index,
+                chainId: ?(update.scope->Internal.chainScopeChainId),
+                keepsHistory: update.shouldSaveHistory,
+                changes: handle,
+              }: StorageClient.changes
+            ),
+          )
+        }
       ),
       chainMeta: chainMetaData->Option.mapOr([], chainMeta),
       addresses: registeredAddresses->Array.map(staged => staged.row)->addressColumns,
@@ -1296,7 +789,7 @@ let make = (
       // A checkpoint anchors the history its chain keeps, which the batch
       // decides chain by chain.
       checkpoints: {
-        ids: batch.checkpointIds->Array.map(id => id->BigInt.toString),
+        ids: batch.checkpointIds,
         chainIds: batch.checkpointChainIds,
         blockNumbers: batch.checkpointBlockNumbers,
         blockHashes: batch.checkpointBlockHashes,
@@ -1312,44 +805,64 @@ let make = (
         items,
         shouldInitialize,
       }): StorageClient.effectCacheWrite => {
-        let registered = table->cacheTable
-        {
-          table: registered.handle,
-          create: shouldInitialize,
-          rows: client->rowsOrThrow(
-            registered,
-            ~itemSchema=itemSchema->S.toUnknown,
-            items->(Utils.magic: array<Internal.effectCacheItem> => array<unknown>),
-            ~staged,
+        table: table.tableName,
+        create: shouldInitialize,
+        rows: try stageRows(
+          ~table=EffectCache,
+          ~writers=effectCacheWriters,
+          items->Array.map(item =>
+            item
+            ->S.reverseConvertOrThrow(itemSchema)
+            ->(Utils.magic: unknown => dict<unknown>)
           ),
-        }
+        )->staged catch {
+        | S.Raised(_) as exn =>
+          throw(
+            Persistence.StorageError({
+              message: `Failed to convert items for table "${table.tableName}"`,
+              reason: exn,
+            }),
+          )
+        | exn =>
+          throw(
+            Persistence.StorageError({
+              message: `Failed to insert items into table "${table.tableName}"`,
+              reason: exn->Utils.prettifyExn,
+            }),
+          )
+        },
       }),
     } catch {
     | exn =>
-      client->StorageClient.discardStaged(staged.handles)
+      client->StorageClient.discardStaged(handles)
       throw(exn)
     }
+    let stagingSeconds = stagingStarted->Performance.secondsSince
 
     let timings = try await client->StorageClient.writeBatch(input) catch {
     | exn =>
       // Batches the addon never took, because it refused the call itself.
-      client->StorageClient.discardStaged(staged.handles)
+      client->StorageClient.discardStaged(handles)
       throw(exn->storageErrorOf)
     }
-    timings->Array.forEach(({store, seconds}) => {
-      let name = store->storeName
+    // One staging feeds every store, so its time is the store of record's.
+    timings->Array.forEach(({store, seconds}) =>
       onWrite(
-        ~storage=name,
-        ~timeSeconds=seconds +. staged.seconds->Dict.get(name)->Option.getOr(0.),
+        ~storage=store->storeName,
+        ~timeSeconds=store === Postgres ? seconds +. stagingSeconds : seconds,
       )
-    })
+    )
   }
 
   let close = () => client->StorageClient.close
 
   {
     name: postgresName,
-    entityStoreName: entityConfig => (entityConfig->entityTable).home->storeName,
+    entityStoreName: entityConfig =>
+      (layouts.entities->Array.getUnsafe(entityConfig.index)).home->Option.mapOr(
+        postgresName,
+        storeName,
+      ),
     holding,
     initialize,
     readStoredConfig,
@@ -1381,8 +894,13 @@ let clientFromEnv = (
 ) =>
   makeClient(
     ~logger,
-    ~chainIdMode=config.chainIdMode,
-    ~postgres=postgresOptions(~pgSchema, ~isHasuraEnabled, ~maxConnections?),
+    ~config,
+    ~postgres=postgresOptions(
+      ~pgSchema,
+      ~isHasuraEnabled,
+      ~maxConnections?,
+      ~isolated=config.isolated,
+    ),
     ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsFromEnvOrThrow()) : None,
   )
 
@@ -1397,10 +915,8 @@ let makeStorageFromEnv = (
   make(
     ~client=clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled, ~maxConnections?),
     ~logger,
-    ~entities=config.userEntities,
     ~cacheDir?,
     ~ecosystem=config.ecosystem.name,
-    ~isolated=config.isolated,
     ~onInitialize=?isHasuraEnabled
       ? Some(
           () =>

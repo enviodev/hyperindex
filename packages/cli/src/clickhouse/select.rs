@@ -11,6 +11,7 @@ use super::ch_type::ChType;
 use super::table::{Column, Table};
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
+use crate::storage::schema::FieldType;
 use crate::storage::types::{Bounds, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, SET};
 
 /// Where each chain's committed rows end. A row stamped past its chain's id
@@ -230,7 +231,12 @@ fn decimal_scale(text: &str, column_scale: u32) -> u32 {
 }
 
 /// One element as the column's own type reads it.
-fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> Result<String> {
+fn element(
+    text: &str,
+    kind: ValueKind,
+    field_type: &FieldType,
+    ch_type: &ChType,
+) -> Result<String> {
     Ok(match kind {
         ValueKind::Text | ValueKind::Enum | ValueKind::Json => literal(text),
         ValueKind::Boolean => match text {
@@ -249,7 +255,9 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
             // A bound wider than any Decimal keeps the number as its text, so
             // it is compared as the number it spells rather than as text,
             // which orders "9" after "10".
-            ChType::String if field_type == "BigInt" => literal(&integer_key(&integer(text)?)),
+            ChType::String if matches!(field_type, FieldType::BigInt { .. }) => {
+                literal(&integer_key(&integer(text)?))
+            }
             ChType::String => literal(&decimal_key(text)?),
             // Decimals of two scales compare exactly, so the value keeps
             // every digit it has past the column's.
@@ -270,8 +278,8 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
 /// number it spells, and a list of them as the numbers they spell.
 fn compared(column: &Column, kind: ValueKind) -> String {
     let name = quoted(&column.name);
-    let as_number = |text: &str| match column.field.field_type.as_str() {
-        "BigInt" => integer_order(text),
+    let as_number = |text: &str| match column.field.field_type {
+        FieldType::BigInt { .. } => integer_order(text),
         _ => decimal_order(text),
     };
     match (kind, column.ch_type.base()) {
@@ -863,7 +871,7 @@ mod tests {
     #[test]
     fn an_unbounded_decimal_is_compared_by_its_key() {
         let ratio = Table::new(
-            entity_input(
+            &entity_input(
                 "Ratio",
                 vec![column("id", "String"), column("value", "BigDecimal")],
             ),

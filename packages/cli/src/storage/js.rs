@@ -1,165 +1,109 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
-use napi::bindgen_prelude::{ArrayBuffer, Buffer, Object, PromiseRaw};
+use napi::bindgen_prelude::{ArrayBuffer, BigInt, Buffer, Object, PromiseRaw};
 use napi::Env;
 use napi_derive::napi;
 use serde_json::json;
 
+use super::batch::{Batch, EffectCacheWrite, RollbackWrite};
+use super::changes::{self, ChangeSet};
 use super::rows::ResultSet;
+use super::schema::{effect_cache_fields, raw_event_fields, Encoding, Field, Schema};
 use super::types::{
     Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier,
-    Progress, Sequence,
+    Progress,
 };
-use super::{
-    AddChain, Batch, CacheDump, CacheFile, EffectCacheWrite, EntityWrite, Enum, HistoryWrite,
-    Holding, Initialize, Partition, PgEntityWrite, RollbackWrite, Rows, Store, Table, TableWrite,
-};
+use super::{AddChain, CacheDump, CacheFile, Holding, Initialize, Store};
 use crate::clickhouse;
 use crate::clickhouse::client::{Connection, Tuning};
-use crate::clickhouse::table::ClickHouseTableInput;
 use crate::columnar::{self, Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::logger::{Level, Logger};
 use crate::postgres;
 use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
-use crate::postgres::ddl::{ColumnSpec, TableSpec};
 use crate::postgres::error::to_napi;
-use crate::postgres::index_definition::{Direction, IndexColumn, IndexDefinition, BTREE};
-use crate::postgres::indexes::{Coverage, IndexEvent, Purpose};
+use crate::postgres::indexes::IndexEvent;
 use crate::postgres::param::Param;
-use crate::postgres::pg_type::FieldType;
-use crate::postgres::storage::{HistoryRegistration, TableRegistration};
 
-/// One column, flattened for the boundary: napi carries no tagged union, so the
-/// variant arrives as `fieldType` plus whichever of the modifiers it takes.
 #[napi(object)]
-pub struct PgColumnInput {
-    /// The database column name, renames already resolved.
+pub struct PostgresOptions {
+    pub host: String,
+    pub port: u32,
+    pub user: String,
+    pub password: String,
+    pub database: String,
+    /// As `ENVIO_PG_SSL_MODE` spells it.
+    pub ssl: String,
+    pub max_connections: u32,
+    pub application_name: String,
+    pub pg_schema: String,
+    pub is_hasura_enabled: bool,
+    pub isolated: bool,
+}
+
+#[napi(object)]
+pub struct ClickHouseOptions {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+    pub database: String,
+    pub replicated: bool,
+    pub database_engine: Option<String>,
+}
+
+#[napi(object)]
+pub struct StorageOptions {
+    pub postgres: PostgresOptions,
+    pub clickhouse: Option<ClickHouseOptions>,
+}
+
+/// One value a staged row carries, and how JavaScript has to encode it.
+#[napi(object)]
+pub struct StagedField {
     pub name: String,
-    pub field_type: String,
-    pub is_array: bool,
+    pub encoding: Encoding,
+    /// What a list's elements are encoded as; the field's own for a scalar.
+    pub element: Encoding,
     pub is_nullable: bool,
-    pub is_primary_key: bool,
-    pub default_value: Option<String>,
-    /// `BigInt` and `BigDecimal` only.
-    pub precision: Option<u32>,
-    /// `BigDecimal` only.
-    pub scale: Option<u32>,
-    /// `Enum` only: the name of its Postgres type.
-    pub enum_name: Option<String>,
 }
 
-impl TryFrom<PgColumnInput> for ColumnSpec {
-    type Error = anyhow::Error;
-
-    fn try_from(input: PgColumnInput) -> anyhow::Result<Self> {
-        Ok(ColumnSpec {
-            field_type: FieldType::parse(
-                &input.field_type,
-                input.precision,
-                input.scale,
-                input.enum_name.as_deref(),
-            )?,
-            name: input.name,
-            is_array: input.is_array,
-            is_nullable: input.is_nullable,
-            is_primary_key: input.is_primary_key,
-            default_value: input.default_value,
-        })
+impl From<&Field> for StagedField {
+    fn from(field: &Field) -> Self {
+        Self {
+            name: field.name.clone(),
+            encoding: field.encoding(),
+            element: field.field_type.encoding(),
+            is_nullable: field.is_nullable,
+        }
     }
 }
 
 #[napi(object)]
-pub struct PgTableInput {
-    /// In the order the table declares them.
-    pub columns: Vec<PgColumnInput>,
-    /// The columns a batch's rows carry, in the order they are laid out.
-    pub write_columns: Vec<String>,
-    pub partition_by_column: Option<String>,
-    pub append_only: bool,
-    /// An entity's history table.
-    pub history_table: Option<String>,
-    /// A per-chain entity's chain column.
-    pub chain_id_column: Option<String>,
-}
-
-/// A table described for every store that keeps it: an entity for each store
-/// its schema names, the indexer's own tables for Postgres alone.
-#[napi(object)]
-pub struct TableInput {
+pub struct EntityLayout {
     pub name: String,
-    pub postgres: Option<PgTableInput>,
-    pub clickhouse: Option<ClickHouseTableInput>,
+    /// The store the entity is read from; none when no configured store keeps
+    /// it, which only an operation on it reports.
+    pub home: Option<Store>,
+    /// What a change set stages ahead of each change's checkpoint and whether
+    /// it deletes.
+    pub fields: Vec<StagedField>,
 }
 
 #[napi(object)]
-pub struct PgRegistered {
-    /// The slot each write column travels in, for a table whose batches can be
-    /// staged.
-    pub kinds: Option<Vec<u8>>,
+pub struct Layouts {
+    /// By entity index.
+    pub entities: Vec<EntityLayout>,
+    pub raw_events: Vec<StagedField>,
+    pub effect_cache: Vec<StagedField>,
 }
 
-#[napi(object)]
-pub struct ClickHouseRegistered {
-    pub names: Vec<String>,
-    pub kinds: Vec<u8>,
-    pub nullable: Vec<bool>,
-}
-
-#[napi(object)]
-pub struct RegisteredTable {
-    pub handle: u32,
-    /// The store the table is read from.
-    pub home: Store,
-    pub postgres: Option<PgRegistered>,
-    pub clickhouse: Option<ClickHouseRegistered>,
-}
-
-#[napi(object)]
-pub struct PgIndexColumnInput {
-    pub name: String,
-    pub direction: String,
-}
-
-#[napi(object)]
-pub struct PgIndexInput {
-    pub table_name: String,
-    pub columns: Vec<PgIndexColumnInput>,
-    pub method: String,
-}
-
-impl TryFrom<PgIndexColumnInput> for IndexColumn {
-    type Error = anyhow::Error;
-
-    fn try_from(input: PgIndexColumnInput) -> anyhow::Result<Self> {
-        Ok(IndexColumn {
-            name: input.name,
-            direction: match input.direction.as_str() {
-                "Asc" => Direction::Asc,
-                "Desc" => Direction::Desc,
-                other => anyhow::bail!("`{other}` is not an index column direction"),
-            },
-        })
-    }
-}
-
-impl TryFrom<PgIndexInput> for IndexDefinition {
-    type Error = anyhow::Error;
-
-    fn try_from(input: PgIndexInput) -> anyhow::Result<Self> {
-        Ok(IndexDefinition {
-            table_name: input.table_name,
-            columns: input
-                .columns
-                .into_iter()
-                .map(IndexColumn::try_from)
-                .collect::<anyhow::Result<Vec<_>>>()?,
-            method: input.method,
-        })
-    }
+#[napi(string_enum)]
+pub enum StagedTable {
+    RawEvents,
+    EffectCache,
 }
 
 /// A result set laid out in the arena, waiting to be read.
@@ -182,43 +126,9 @@ pub struct QueryResult {
 }
 
 #[napi(object)]
-pub struct PostgresOptions {
-    pub host: String,
-    pub port: u32,
-    pub user: String,
-    pub password: String,
-    pub database: String,
-    /// As `ENVIO_PG_SSL_MODE` spells it.
-    pub ssl: String,
-    pub max_connections: u32,
-    pub application_name: String,
-    pub pg_schema: String,
-    pub is_hasura_enabled: bool,
-}
-
-#[napi(object)]
-pub struct ClickHouseOptions {
-    pub url: String,
-    pub username: String,
-    pub password: String,
-    pub database: String,
-    pub replicated: bool,
-    pub database_engine: Option<String>,
-}
-
-#[napi(object)]
-pub struct StorageOptions {
-    /// `Int32` or `Int64`.
-    pub chain_id_mode: String,
-    pub postgres: PostgresOptions,
-    pub clickhouse: Option<ClickHouseOptions>,
-}
-
-#[napi(object)]
 pub struct BoundsInput {
-    pub sequence: Sequence,
     pub chain_ids: Vec<i64>,
-    pub checkpoint_ids: Vec<String>,
+    pub checkpoint_ids: Vec<BigInt>,
 }
 
 #[napi(object)]
@@ -231,18 +141,7 @@ pub struct AddressesInput {
 }
 
 #[napi(object)]
-pub struct PartitionInput {
-    pub table: u32,
-    pub chain_id: i64,
-    pub name: String,
-}
-
-#[napi(object)]
 pub struct InitializeInput {
-    pub sequence: Sequence,
-    pub tables: Vec<u32>,
-    pub partitions: Vec<PartitionInput>,
-    pub enums: Vec<Enum>,
     pub chains: Vec<ChainConfig>,
     pub envio_info: String,
     pub contract_names: Vec<String>,
@@ -252,17 +151,7 @@ pub struct InitializeInput {
 #[napi(object)]
 pub struct AddChainInput {
     pub chain: ChainConfig,
-    pub partitions: Vec<PartitionInput>,
     pub addresses: AddressesInput,
-}
-
-#[napi(object)]
-pub struct ResumeInput {
-    pub sequence: Sequence,
-    /// Every entity table.
-    pub tables: Vec<u32>,
-    /// The chains this run drives.
-    pub chain_ids: Vec<i64>,
 }
 
 #[napi(object)]
@@ -287,12 +176,12 @@ pub struct ResumedChainOutput {
     /// Unix seconds.
     pub progress_block_time: Option<f64>,
     pub source_block: i32,
-    pub checkpoint_id: String,
+    pub checkpoint_id: BigInt,
 }
 
 #[napi(object)]
 pub struct ReorgCheckpointOutput {
-    pub id: String,
+    pub id: BigInt,
     pub chain_id: i64,
     pub block_number: i32,
     pub block_hash: String,
@@ -320,55 +209,30 @@ pub struct RollbackDataOutput {
 
 #[napi(object)]
 pub struct CacheUploadInput {
-    pub table: u32,
+    pub table: String,
     pub path: String,
 }
 
-/// Rows staged into an arena, or rendered one parameter per cell, every row's
-/// first column first.
+/// One entity's changes within one chain scope, staged.
 #[napi(object)]
-pub struct RowsInput {
-    pub staged: Option<u32>,
-    pub cells: Option<Vec<Option<String>>>,
-    pub rows: u32,
-}
-
-#[napi(object)]
-pub struct HistoryWriteInput {
-    pub backfill: Vec<String>,
-    pub sets: Option<RowsInput>,
-    pub set_checkpoint_ids: Vec<String>,
-    pub delete_ids: Vec<String>,
-    pub delete_checkpoint_ids: Vec<String>,
-}
-
-#[napi(object)]
-pub struct PgEntityWriteInput {
-    pub sets: Option<RowsInput>,
-    pub deletes: Vec<String>,
-    pub history: Option<HistoryWriteInput>,
-}
-
-#[napi(object)]
-pub struct EntityWriteInput {
-    pub table: u32,
+pub struct ChangesInput {
+    pub entity: u32,
+    /// The scope's chain, for a per-chain entity.
     pub chain_id: Option<i64>,
-    pub postgres: Option<PgEntityWriteInput>,
-    /// Every change as a history row, staged.
-    pub clickhouse: Option<u32>,
+    pub keeps_history: bool,
+    pub changes: u32,
 }
 
 #[napi(object)]
 pub struct DiffCheckpointInput {
     pub chain_id: i64,
-    pub checkpoint_id: String,
+    pub checkpoint_id: BigInt,
     pub block_number: i32,
 }
 
 #[napi(object)]
 pub struct RollbackWriteInput {
     pub bounds: BoundsInput,
-    pub tables: Vec<u32>,
     pub progress: Vec<Progress>,
     pub removed_addresses: AddressesInput,
     pub diff_checkpoints: Vec<DiffCheckpointInput>,
@@ -376,7 +240,7 @@ pub struct RollbackWriteInput {
 
 #[napi(object)]
 pub struct CheckpointsInput {
-    pub ids: Vec<String>,
+    pub ids: Vec<BigInt>,
     pub chain_ids: Vec<i64>,
     pub block_numbers: Vec<i32>,
     pub block_hashes: Vec<Option<String>>,
@@ -387,28 +251,22 @@ pub struct CheckpointsInput {
 #[napi(object)]
 pub struct FrontierInput {
     pub chain_ids: Vec<i64>,
-    pub checkpoint_ids: Vec<String>,
-}
-
-#[napi(object)]
-pub struct TableWriteInput {
-    pub table: u32,
-    pub rows: RowsInput,
+    pub checkpoint_ids: Vec<BigInt>,
 }
 
 #[napi(object)]
 pub struct EffectCacheWriteInput {
-    pub table: u32,
+    pub table: String,
     pub create: bool,
-    pub rows: RowsInput,
+    pub rows: u32,
 }
 
 #[napi(object)]
 pub struct BatchInput {
     pub rollback: Option<RollbackWriteInput>,
     pub progress: Vec<Progress>,
-    pub raw_events: Option<TableWriteInput>,
-    pub entities: Vec<EntityWriteInput>,
+    pub raw_events: Option<u32>,
+    pub changes: Vec<ChangesInput>,
     pub chain_meta: Vec<ChainMeta>,
     pub addresses: AddressesInput,
     pub frontier: FrontierInput,
@@ -425,7 +283,6 @@ pub struct WriteTiming {
 #[napi(js_name = "Storage")]
 pub struct JsStorage {
     inner: super::Storage,
-    tables: RwLock<Vec<Arc<Table>>>,
     /// Result sets handed out but not yet read and released. An entry lives
     /// only between the call that returned it and `releaseResult`.
     results: Mutex<HashMap<u32, Arena>>,
@@ -436,17 +293,22 @@ pub struct JsStorage {
 
 #[napi]
 impl JsStorage {
-    /// Logs what Postgres's indexes are doing and what ClickHouse retried
-    /// through `logger`, with `boundFieldsJson` as the JavaScript logger binds
-    /// them.
+    /// The storage of the entities `configJson` — the config the CLI wrote —
+    /// declares, or of none. Logs what Postgres's indexes are doing and what
+    /// ClickHouse retried through `logger`, with `boundFieldsJson` as the
+    /// JavaScript logger binds them.
     #[napi(factory)]
     pub fn create(
         options: StorageOptions,
+        config_json: Option<String>,
         logger: &Logger,
         bound_fields_json: Vec<String>,
     ) -> napi::Result<Self> {
         let logger = logger.bind(bound_fields_json);
-        let chain_id_mode = ChainIdMode::parse(&options.chain_id_mode).map_err(to_napi)?;
+        let schema = Arc::new(match config_json {
+            Some(json) => Schema::from_config_json(&json).map_err(to_napi)?,
+            None => Schema::empty(ChainIdMode::Int32),
+        });
         let pg = options.postgres;
         let port = u16::try_from(pg.port)
             .map_err(|_| napi::Error::from_reason(format!("`{}` is not a port", pg.port)))?;
@@ -463,19 +325,23 @@ impl JsStorage {
             connect_timeout: std::time::Duration::from_secs(30),
         })
         .map_err(to_napi)?;
-        let postgres = Arc::new(postgres::storage::Storage::new(
-            client,
-            postgres::storage::Settings {
-                pg_schema: pg.pg_schema.clone(),
-                pg_user: pg.user,
-                chain_id_mode,
-                numeric_array_as_text: pg.is_hasura_enabled,
-            },
-            Arc::new({
-                let logger = logger.clone();
-                move |event: IndexEvent| event.log(&logger, &pg.pg_schema)
-            }),
-        ));
+        let postgres = Arc::new(
+            postgres::storage::Storage::new(
+                client,
+                postgres::storage::Settings {
+                    pg_schema: pg.pg_schema.clone(),
+                    pg_user: pg.user,
+                    numeric_array_as_text: pg.is_hasura_enabled,
+                    isolated: pg.isolated,
+                },
+                schema.clone(),
+                Arc::new({
+                    let logger = logger.clone();
+                    move |event: IndexEvent| event.log(&logger, &pg.pg_schema)
+                }),
+            )
+            .map_err(to_napi)?,
+        );
         let clickhouse = options
             .clickhouse
             .map(|options| -> napi::Result<_> {
@@ -492,10 +358,10 @@ impl JsStorage {
                             logger.log(Level::WARN, message, &json!({"storage": "clickhouse"}));
                         }),
                         clickhouse::storage::Settings {
-                            chain_id_mode,
                             replicated: options.replicated,
                             database_engine: options.database_engine,
                         },
+                        schema.clone(),
                     )
                     .map_err(to_napi)?,
                 ))
@@ -503,94 +369,70 @@ impl JsStorage {
             .transpose()?;
         Ok(Self {
             inner: super::Storage {
+                schema,
                 postgres,
                 clickhouse,
             },
-            tables: RwLock::new(Vec::new()),
             results: Mutex::new(HashMap::new()),
             staged: Default::default(),
             next_handle: AtomicU32::new(0),
         })
     }
 
-    /// Registers a table with every store that keeps it. A Postgres table's
-    /// batches are staged when it has no column of arrays: unnesting one
-    /// spreads it across the rows instead of keeping it as a value, so such a
-    /// table binds a parameter per cell instead.
+    /// How every batch JavaScript stages is laid out.
     #[napi]
-    pub fn register_table(&self, input: TableInput) -> napi::Result<RegisteredTable> {
-        let postgres = match input.postgres {
-            Some(table) => Some(Arc::new(
-                self.inner
-                    .postgres
-                    .register(pg_registration(input.name.clone(), table).map_err(to_napi)?)
-                    .map_err(to_napi)?,
-            )),
-            None => None,
-        };
-        let clickhouse = match (&self.inner.clickhouse, input.clickhouse) {
-            (Some(store), Some(table)) => Some(Arc::new(store.register(table).map_err(to_napi)?)),
-            _ => None,
-        };
-        let table = Table {
-            name: input.name,
-            postgres,
-            clickhouse,
-        };
-        let home = self.inner.home(&table).map_err(to_napi)?;
-        let mut tables = self.tables.write().unwrap();
-        let registered = RegisteredTable {
-            handle: tables.len() as u32,
-            home,
-            postgres: table.postgres.as_ref().map(|table| PgRegistered {
-                kinds: table
-                    .kinds
-                    .as_ref()
-                    .map(|kinds| kinds.iter().map(|&kind| kind as u8).collect()),
-            }),
-            clickhouse: table.clickhouse.as_ref().map(|table| {
-                let (names, kinds, nullable) = table.staged_layout();
-                ClickHouseRegistered {
-                    names,
-                    kinds: kinds.into_iter().map(|kind| kind as u8).collect(),
-                    nullable,
-                }
-            }),
-        };
-        tables.push(Arc::new(table));
-        Ok(registered)
+    pub fn layouts(&self) -> Layouts {
+        Layouts {
+            entities: self
+                .inner
+                .schema
+                .entities
+                .iter()
+                .map(|entity| EntityLayout {
+                    name: entity.name.clone(),
+                    home: self.inner.home(entity).ok(),
+                    fields: entity.fields.iter().map(StagedField::from).collect(),
+                })
+                .collect(),
+            raw_events: raw_event_fields().iter().map(StagedField::from).collect(),
+            effect_cache: effect_cache_fields()
+                .iter()
+                .map(StagedField::from)
+                .collect(),
+        }
     }
 
-    /// Lays out a batch for one store's table and lends JavaScript the memory
-    /// to fill it in. Nothing may await between here and `commitStage` — see the
-    /// phase rules in `columnar`.
+    /// Lays out an entity's change set and lends JavaScript the memory to fill
+    /// it in. Nothing may await between here and `commitStage` — see the phase
+    /// rules in `columnar`.
     #[napi]
-    pub fn begin_stage<'env>(
+    pub fn begin_changes<'env>(
         &self,
         env: &'env Env,
-        table: u32,
-        store: Store,
+        entity: u32,
         rows: u32,
     ) -> napi::Result<Object<'env>> {
-        let table = self.table(table)?;
-        let (names, kinds): (Vec<String>, Vec<ColumnKind>) = match store {
-            Store::Postgres => {
-                let table = table.postgres().map_err(to_napi)?;
-                let kinds = table.kinds.clone().ok_or_else(|| {
-                    napi::Error::from_reason(format!(
-                        "\"{}\" has an array column, so its rows are bound a cell at a time",
-                        table.name()
-                    ))
-                })?;
-                (table.write_column_names(), kinds)
-            }
-            Store::ClickHouse => {
-                let (names, kinds, _) = table.clickhouse().map_err(to_napi)?.staged_layout();
-                (names, kinds)
-            }
+        let entity = self.inner.schema.entity(entity).map_err(to_napi)?;
+        let (names, kinds) = changes::layout(entity);
+        self.begin(env, rows, &kinds, names)
+    }
+
+    #[napi]
+    pub fn begin_rows<'env>(
+        &self,
+        env: &'env Env,
+        table: StagedTable,
+        rows: u32,
+    ) -> napi::Result<Object<'env>> {
+        let fields = match table {
+            StagedTable::RawEvents => raw_event_fields(),
+            StagedTable::EffectCache => effect_cache_fields(),
         };
-        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.staged.begin(env, handle, rows, &kinds, names)
+        let (names, kinds): (Vec<String>, Vec<ColumnKind>) = fields
+            .iter()
+            .map(|field| (field.name.clone(), field.encoding().kind()))
+            .unzip();
+        self.begin(env, rows, &kinds, names)
     }
 
     #[napi]
@@ -619,7 +461,7 @@ impl JsStorage {
     }
 
     /// Frees batches staged for a write the addon never took: one whose next
-    /// table failed to convert, or one `writeBatch` refused before reading.
+    /// table failed to stage, or one `writeBatch` refused before reading.
     #[napi]
     pub fn discard_staged(&self, handles: Vec<u32>) {
         for handle in handles {
@@ -636,40 +478,66 @@ impl JsStorage {
         sql: String,
         params: Vec<Option<String>>,
     ) -> napi::Result<QueryResult> {
+        let params = params
+            .into_iter()
+            .map(|param| param.map_or(Param::Null, Param::Text))
+            .collect::<Vec<_>>();
         let (rows, columns) = self
             .inner
             .postgres
             .client
-            .query(&sql, &to_params(params))
+            .query(&sql, &params)
             .await
             .map_err(to_napi)?;
         Ok(self.hold(postgres::rows::into_result(&rows, &columns).map_err(to_napi)?))
     }
 
-    /// Every committed history row of a table ClickHouse keeps, for tests to
+    /// Every committed history row of an entity ClickHouse keeps, for tests to
     /// read back.
     #[napi]
-    pub async fn history_for_tests(&self, table: u32) -> napi::Result<QueryResult> {
-        let table = self.table(table)?;
-        let clickhouse = self
+    pub async fn history_for_tests(&self, entity: u32) -> napi::Result<QueryResult> {
+        let entity = self.entity(entity)?;
+        let result = self
             .inner
-            .clickhouse
-            .as_ref()
-            .ok_or_else(|| napi::Error::from_reason("No ClickHouse is configured"))?;
-        let result = clickhouse.history(&table).await.map_err(to_napi)?;
+            .clickhouse_history(&entity)
+            .await
+            .map_err(to_napi)?;
+        Ok(self.hold(result))
+    }
+
+    /// Every current row of an entity's ClickHouse copy, wherever it is read
+    /// from, for tests to hold it to Postgres's.
+    #[napi]
+    pub async fn clickhouse_rows_for_tests(&self, entity: u32) -> napi::Result<QueryResult> {
+        let entity = self.entity(entity)?;
+        let result = self.inner.clickhouse_rows(&entity).await.map_err(to_napi)?;
         Ok(self.hold(result))
     }
 
     #[napi]
     pub async fn load_where(
         &self,
-        table: u32,
+        entity: u32,
         conditions: Vec<Condition>,
     ) -> napi::Result<QueryResult> {
-        let table = self.table(table)?;
+        let entity = self.entity(entity)?;
         let result = self
             .inner
-            .load_where(&table, conditions)
+            .load_where(&entity, conditions)
+            .await
+            .map_err(to_napi)?;
+        Ok(self.hold(result))
+    }
+
+    #[napi]
+    pub async fn load_effect_cache(
+        &self,
+        table: String,
+        conditions: Vec<Condition>,
+    ) -> napi::Result<QueryResult> {
+        let result = self
+            .inner
+            .load_effect_cache(&table, conditions)
             .await
             .map_err(to_napi)?;
         Ok(self.hold(result))
@@ -724,10 +592,6 @@ impl JsStorage {
     #[napi]
     pub async fn initialize(&self, input: InitializeInput) -> napi::Result<()> {
         let input = Initialize {
-            sequence: input.sequence,
-            tables: self.tables_of(&input.tables)?,
-            partitions: self.partitions(input.partitions)?,
-            enums: input.enums,
             chains: input.chains,
             envio_info: input.envio_info,
             contract_names: input.contract_names,
@@ -740,20 +604,14 @@ impl JsStorage {
     pub async fn add_chain(&self, input: AddChainInput) -> napi::Result<()> {
         let input = AddChain {
             chain: input.chain,
-            partitions: self.partitions(input.partitions)?,
             addresses: addresses(input.addresses)?,
         };
-        self.inner.postgres.add_chain(&input).await.map_err(to_napi)
+        self.inner.add_chain(input).await.map_err(to_napi)
     }
 
     #[napi]
     pub async fn read_stored_config(&self) -> napi::Result<StoredConfigOutput> {
-        let read = self
-            .inner
-            .postgres
-            .read_stored_config()
-            .await
-            .map_err(to_napi)?;
+        let read = self.inner.read_stored_config().await.map_err(to_napi)?;
         Ok(StoredConfigOutput {
             envio_info: read.config.envio_info,
             contract_names: read.config.contract_names,
@@ -762,14 +620,10 @@ impl JsStorage {
         })
     }
 
+    /// Resumes the chains this run drives.
     #[napi]
-    pub async fn resume(&self, input: ResumeInput) -> napi::Result<ResumedOutput> {
-        let tables = self.tables_of(&input.tables)?;
-        let resumed = self
-            .inner
-            .resume(input.sequence, tables, input.chain_ids)
-            .await
-            .map_err(to_napi)?;
+    pub async fn resume(&self, chain_ids: Vec<i64>) -> napi::Result<ResumedOutput> {
+        let resumed = self.inner.resume(&chain_ids).await.map_err(to_napi)?;
         Ok(ResumedOutput {
             chains: resumed
                 .chains
@@ -785,7 +639,7 @@ impl JsStorage {
                     progress_block: chain.progress_block,
                     progress_block_time: chain.progress_block_time,
                     source_block: chain.source_block,
-                    checkpoint_id: chain.checkpoint_id.to_string(),
+                    checkpoint_id: BigInt::from(chain.checkpoint_id),
                 })
                 .collect(),
             addresses: self.hold(resumed.addresses),
@@ -793,7 +647,7 @@ impl JsStorage {
                 .reorg_checkpoints
                 .into_iter()
                 .map(|checkpoint| ReorgCheckpointOutput {
-                    id: checkpoint.id.to_string(),
+                    id: BigInt::from(checkpoint.id),
                     chain_id: checkpoint.chain_id,
                     block_number: checkpoint.block_number,
                     block_hash: checkpoint.block_hash,
@@ -804,25 +658,15 @@ impl JsStorage {
 
     #[napi]
     pub async fn set_chain_meta(&self, chains: Vec<ChainMeta>) -> napi::Result<()> {
-        self.inner
-            .postgres
-            .set_chain_meta(&chains)
-            .await
-            .map_err(to_napi)
+        self.inner.set_chain_meta(&chains).await.map_err(to_napi)
     }
 
-    /// `readyAt` in unix milliseconds.
+    /// Builds every index the schema promises for the chains, then stamps
+    /// them ready at `readyAt`, in unix milliseconds.
     #[napi]
-    pub async fn finalize_backfill(
-        &self,
-        definitions: Vec<PgIndexInput>,
-        chain_ids: Vec<i64>,
-        ready_at: f64,
-    ) -> napi::Result<()> {
-        let definitions = definitions_of(definitions)?;
+    pub async fn finalize_backfill(&self, chain_ids: Vec<i64>, ready_at: f64) -> napi::Result<()> {
         self.inner
-            .postgres
-            .finalize_backfill(definitions, &chain_ids, ready_at)
+            .finalize_backfill(&chain_ids, ready_at)
             .await
             .map_err(to_napi)
     }
@@ -831,75 +675,47 @@ impl JsStorage {
     /// rejects: a failed build is reported, and its queries run unindexed
     /// until the next restart.
     #[napi]
-    pub async fn ensure_schema_indexes(&self, definitions: Vec<PgIndexInput>) -> napi::Result<()> {
-        let definitions = definitions_of(definitions)?;
-        self.inner
-            .postgres
-            .indexes
-            .ensure(definitions, Purpose::Schema)
-            .await;
-        Ok(())
+    pub async fn ensure_schema_indexes(&self, chain_ids: Vec<i64>) {
+        self.inner.ensure_schema_indexes(&chain_ids).await
     }
 
     /// The single-column indexes a getWhere on `columns` wants. Null when the
-    /// catalog already covers them, which is every call but the first — and
-    /// every call to a store that builds none: this runs on every batched
-    /// load, so it answers without leaving the thread. Never rejects: a failed
-    /// build is reported, and the query runs without it.
+    /// catalog already covers them, which is every call but the first: this
+    /// runs on every batched load, so it answers without leaving the thread.
+    /// Never rejects: a failed build is reported, and the query runs without
+    /// it.
     #[napi]
     pub fn ensure_query_indexes<'env>(
         &self,
         env: &'env Env,
-        table: u32,
-        table_name: String,
+        entity: u32,
+        chain_id: Option<i64>,
         columns: Vec<String>,
     ) -> napi::Result<Option<PromiseRaw<'env, ()>>> {
-        let table = self.table(table)?;
-        if table.postgres.is_none() {
-            return Ok(None);
+        let entity = self.entity(entity)?;
+        match self.inner.ensure_query_indexes(&entity, chain_id, columns) {
+            None => Ok(None),
+            Some(building) => env
+                .spawn_future(async move {
+                    building.await;
+                    Ok(())
+                })
+                .map(Some),
         }
-        let definitions = columns
-            .into_iter()
-            .map(|name| IndexDefinition {
-                table_name: table_name.clone(),
-                columns: vec![IndexColumn {
-                    name,
-                    direction: Direction::Asc,
-                }],
-                method: BTREE.to_string(),
-            })
-            .collect::<Vec<_>>();
-        let indexes = &self.inner.postgres.indexes;
-        if indexes.covers_all(&definitions, Coverage::LeadingColumns) {
-            return Ok(None);
-        }
-        let indexes = indexes.clone();
-        env.spawn_future(async move {
-            indexes.ensure(definitions, Purpose::Query).await;
-            Ok(())
-        })
-        .map(Some)
     }
 
     #[napi]
     pub async fn prune_checkpoints(&self, bounds: BoundsInput) -> napi::Result<()> {
-        let bounds = to_bounds(bounds)?;
-        self.inner
-            .postgres
-            .prune_checkpoints(&bounds)
-            .await
-            .map_err(to_napi)
+        let bounds = self.bounds(bounds)?;
+        self.inner.prune_checkpoints(&bounds).await.map_err(to_napi)
     }
 
-    /// ClickHouse keeps every history row: its reads resolve the entities from
-    /// them.
     #[napi]
-    pub async fn prune_history(&self, table: u32, bounds: BoundsInput) -> napi::Result<()> {
-        let table = self.table(table)?;
-        let bounds = to_bounds(bounds)?;
+    pub async fn prune_history(&self, entity: u32, bounds: BoundsInput) -> napi::Result<()> {
+        let entity = self.entity(entity)?;
+        let bounds = self.bounds(bounds)?;
         self.inner
-            .postgres
-            .prune_history(table.postgres().map_err(to_napi)?, &bounds)
+            .prune_history(&entity, &bounds)
             .await
             .map_err(to_napi)
     }
@@ -909,14 +725,13 @@ impl JsStorage {
         &self,
         chain_id: i64,
         block_number: i32,
-        sequence: Sequence,
-    ) -> napi::Result<Option<String>> {
+    ) -> napi::Result<Option<BigInt>> {
         Ok(self
             .inner
-            .rollback_target_checkpoint(chain_id, block_number, sequence)
+            .rollback_target_checkpoint(chain_id, block_number)
             .await
             .map_err(to_napi)?
-            .map(|id| id.to_string()))
+            .map(BigInt::from))
     }
 
     #[napi]
@@ -924,10 +739,9 @@ impl JsStorage {
         &self,
         bounds: BoundsInput,
     ) -> napi::Result<Vec<ProgressDiffOutput>> {
-        let bounds = to_bounds(bounds)?;
+        let bounds = self.bounds(bounds)?;
         Ok(self
             .inner
-            .postgres
             .rollback_progress_diff(&bounds)
             .await
             .map_err(to_napi)?
@@ -943,44 +757,37 @@ impl JsStorage {
     #[napi]
     pub async fn rollback_data(
         &self,
-        table: u32,
+        entity: u32,
         bounds: BoundsInput,
     ) -> napi::Result<RollbackDataOutput> {
-        let table = self.table(table)?;
-        let bounds = to_bounds(bounds)?;
-        let (removed, restored) = self
+        let entity = self.entity(entity)?;
+        let bounds = self.bounds(bounds)?;
+        let data = self
             .inner
-            .rollback_data(&table, &bounds)
+            .rollback_data(&entity, &bounds)
             .await
             .map_err(to_napi)?;
         Ok(RollbackDataOutput {
-            removed: self.hold(removed),
-            restored: self.hold(restored),
+            removed: self.hold(data.removed),
+            restored: self.hold(data.restored),
         })
     }
 
     #[napi]
     pub async fn effect_cache_tables(&self) -> napi::Result<Vec<CacheTable>> {
-        self.inner
-            .postgres
-            .effect_cache_tables()
-            .await
-            .map_err(to_napi)
+        self.inner.effect_cache_tables().await.map_err(to_napi)
     }
 
     #[napi]
     pub async fn upload_effect_cache(&self, files: Vec<CacheUploadInput>) -> napi::Result<()> {
         let files = files
             .into_iter()
-            .map(|file| {
-                Ok(CacheFile {
-                    table: self.table(file.table)?,
-                    path: file.path,
-                })
+            .map(|file| CacheFile {
+                table: file.table,
+                path: file.path,
             })
-            .collect::<napi::Result<Vec<_>>>()?;
+            .collect::<Vec<_>>();
         self.inner
-            .postgres
             .upload_effect_cache(&files)
             .await
             .map_err(to_napi)
@@ -988,11 +795,7 @@ impl JsStorage {
 
     #[napi]
     pub async fn dump_effect_cache(&self, files: Vec<CacheDump>) -> napi::Result<()> {
-        self.inner
-            .postgres
-            .dump_effect_cache(&files)
-            .await
-            .map_err(to_napi)
+        self.inner.dump_effect_cache(&files).await.map_err(to_napi)
     }
 
     #[napi]
@@ -1025,46 +828,20 @@ impl JsStorage {
     }
 }
 
-fn definitions_of(definitions: Vec<PgIndexInput>) -> napi::Result<Vec<IndexDefinition>> {
-    definitions
-        .into_iter()
-        .map(IndexDefinition::try_from)
-        .collect::<anyhow::Result<Vec<_>>>()
-        .map_err(to_napi)
-}
-
-fn pg_registration(name: String, table: PgTableInput) -> anyhow::Result<TableRegistration> {
-    Ok(TableRegistration {
-        spec: TableSpec {
-            table_name: name,
-            columns: table
-                .columns
-                .into_iter()
-                .map(ColumnSpec::try_from)
-                .collect::<anyhow::Result<Vec<_>>>()?,
-            partition_by_column: table.partition_by_column,
-        },
-        write_columns: table.write_columns,
-        append_only: table.append_only,
-        history: table.history_table.map(|table_name| HistoryRegistration {
-            table_name,
-            chain_id_column: table.chain_id_column,
-        }),
-    })
-}
-
 impl JsStorage {
-    fn table(&self, handle: u32) -> napi::Result<Arc<Table>> {
-        self.tables
-            .read()
-            .unwrap()
-            .get(handle as usize)
-            .cloned()
-            .ok_or_else(|| napi::Error::from_reason(format!("Unknown table {handle}")))
+    fn begin<'env>(
+        &self,
+        env: &'env Env,
+        rows: u32,
+        kinds: &[ColumnKind],
+        names: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        self.staged.begin(env, handle, rows, kinds, names)
     }
 
-    fn tables_of(&self, handles: &[u32]) -> napi::Result<Vec<Arc<Table>>> {
-        handles.iter().map(|&handle| self.table(handle)).collect()
+    fn entity(&self, index: u32) -> napi::Result<Arc<super::schema::Entity>> {
+        self.inner.schema.entity(index).cloned().map_err(to_napi)
     }
 
     fn hold(&self, result: ResultSet) -> QueryResult {
@@ -1083,33 +860,16 @@ impl JsStorage {
         result
     }
 
-    fn partitions(&self, partitions: Vec<PartitionInput>) -> napi::Result<Vec<Partition>> {
-        partitions
-            .into_iter()
-            .map(|partition| {
-                Ok(Partition {
-                    table: self.table(partition.table)?,
-                    chain_id: partition.chain_id,
-                    name: partition.name,
-                })
-            })
-            .collect()
-    }
-
-    fn rows(&self, rows: RowsInput, problems: &mut Vec<napi::Error>) -> Option<Rows> {
-        match (rows.staged, rows.cells) {
-            (Some(handle), _) => self.arena(handle, problems).map(Rows::Staged),
-            (None, Some(cells)) => Some(Rows::Cells {
-                cells: to_params(cells),
-                rows: rows.rows as usize,
-            }),
-            (None, None) => {
-                problems.push(napi::Error::from_reason(
-                    "Rows have to be staged or given as cells",
-                ));
-                None
-            }
-        }
+    fn bounds(&self, bounds: BoundsInput) -> napi::Result<Bounds> {
+        same_length(
+            "bound",
+            &[bounds.chain_ids.len(), bounds.checkpoint_ids.len()],
+        )?;
+        Ok(Bounds {
+            sequence: self.inner.schema.sequence,
+            chain_ids: bounds.chain_ids,
+            checkpoint_ids: checkpoint_ids(bounds.checkpoint_ids)?,
+        })
     }
 
     fn arena(&self, handle: u32, problems: &mut Vec<napi::Error>) -> Option<Arena> {
@@ -1127,82 +887,43 @@ impl JsStorage {
     /// for a `discardStaged` nobody makes.
     fn to_batch(&self, batch: BatchInput) -> napi::Result<Batch> {
         let mut problems = Vec::new();
-        let table = |handle: u32, problems: &mut Vec<napi::Error>| {
-            self.table(handle)
-                .map_err(|error| problems.push(error))
-                .ok()
-        };
-        let raw_events = batch.raw_events.and_then(|write| {
-            let rows = self.rows(write.rows, &mut problems)?;
-            Some(TableWrite {
-                table: table(write.table, &mut problems)?,
-                rows,
-            })
-        });
-        let entities = batch
-            .entities
+        let raw_events = batch
+            .raw_events
+            .and_then(|handle| self.arena(handle, &mut problems));
+        let changes = batch
+            .changes
             .into_iter()
-            .filter_map(|write| {
-                let postgres = write.postgres.map(|write| PgEntityWrite {
-                    sets: write.sets.and_then(|rows| self.rows(rows, &mut problems)),
-                    deletes: write.deletes,
-                    history: write.history.map(|history| {
-                        let sets = history.sets.and_then(|rows| {
-                            let rows = self.rows(rows, &mut problems)?;
-                            same_length(
-                                "history set",
-                                &[rows.len(), history.set_checkpoint_ids.len()],
-                            )
-                            .map_err(|problem| problems.push(problem))
-                            .ok()?;
-                            Some((rows, history.set_checkpoint_ids))
-                        });
-                        if let Err(problem) = same_length(
-                            "history delete",
-                            &[
-                                history.delete_ids.len(),
-                                history.delete_checkpoint_ids.len(),
-                            ],
-                        ) {
-                            problems.push(problem);
-                        }
-                        HistoryWrite {
-                            backfill: history.backfill,
-                            sets,
-                            delete_ids: history.delete_ids,
-                            delete_checkpoint_ids: history.delete_checkpoint_ids,
-                        }
-                    }),
-                });
-                let clickhouse = write
-                    .clickhouse
-                    .and_then(|handle| self.arena(handle, &mut problems));
-                Some(EntityWrite {
-                    table: table(write.table, &mut problems)?,
-                    chain_id: write.chain_id,
-                    postgres,
-                    clickhouse,
-                })
+            .filter_map(|input| {
+                let rows = self.arena(input.changes, &mut problems)?;
+                let entity = self
+                    .entity(input.entity)
+                    .map_err(|error| problems.push(error))
+                    .ok()?;
+                ChangeSet::new(entity, input.chain_id, input.keeps_history, rows)
+                    .map(Arc::new)
+                    .map_err(|error| problems.push(to_napi(error)))
+                    .ok()
             })
             .collect();
         let effect_caches = batch
             .effect_caches
             .into_iter()
             .filter_map(|write| {
-                let rows = self.rows(write.rows, &mut problems)?;
                 Some(EffectCacheWrite {
-                    table: table(write.table, &mut problems)?,
+                    rows: self.arena(write.rows, &mut problems)?,
+                    table: write.table,
                     create: write.create,
-                    rows,
                 })
             })
             .collect();
+        if let Some(problem) = problems.into_iter().next() {
+            return Err(problem);
+        }
         let rollback = batch
             .rollback
             .map(|rollback| -> napi::Result<RollbackWrite> {
                 Ok(RollbackWrite {
-                    bounds: to_bounds(rollback.bounds)?,
-                    tables: self.tables_of(&rollback.tables)?,
+                    bounds: self.bounds(rollback.bounds)?,
                     progress: rollback.progress,
                     removed_addresses: addresses(rollback.removed_addresses)?,
                     diff_checkpoints: rollback
@@ -1217,10 +938,8 @@ impl JsStorage {
                         })
                         .collect::<napi::Result<_>>()?,
                 })
-            });
-        if let Some(problem) = problems.into_iter().next() {
-            return Err(problem);
-        }
+            })
+            .transpose()?;
         same_length(
             "frontier",
             &[
@@ -1241,18 +960,18 @@ impl JsStorage {
             ],
         )?;
         Ok(Batch {
-            rollback: rollback.transpose()?,
+            rollback,
             progress: batch.progress,
             raw_events,
-            entities,
+            changes,
             chain_meta: batch.chain_meta,
             addresses: addresses(batch.addresses)?,
             frontier: Frontier {
                 chain_ids: batch.frontier.chain_ids,
-                checkpoint_ids: checkpoint_ids(&batch.frontier.checkpoint_ids)?,
+                checkpoint_ids: checkpoint_ids(batch.frontier.checkpoint_ids)?,
             },
             checkpoints: Checkpoints {
-                ids: checkpoint_ids(&batch.checkpoints.ids)?,
+                ids: checkpoint_ids(batch.checkpoints.ids)?,
                 chain_ids: batch.checkpoints.chain_ids,
                 block_numbers: batch.checkpoints.block_numbers,
                 block_hashes: batch.checkpoints.block_hashes,
@@ -1281,13 +1000,17 @@ fn same_length(rows: &str, lengths: &[usize]) -> napi::Result<()> {
     }
 }
 
-fn checkpoint_id(id: &str) -> napi::Result<i64> {
-    id.parse::<i64>()
-        .map_err(|_| napi::Error::from_reason(format!("`{id}` is not a checkpoint id")))
+fn checkpoint_id(id: &BigInt) -> napi::Result<i64> {
+    match id.get_i64() {
+        (id, true) => Ok(id),
+        (_, false) => Err(napi::Error::from_reason(
+            "A checkpoint id is out of the 64-bit range",
+        )),
+    }
 }
 
-fn checkpoint_ids(ids: &[String]) -> napi::Result<Vec<i64>> {
-    ids.iter().map(|id| checkpoint_id(id)).collect()
+fn checkpoint_ids(ids: Vec<BigInt>) -> napi::Result<Vec<i64>> {
+    ids.iter().map(checkpoint_id).collect()
 }
 
 fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
@@ -1308,28 +1031,6 @@ fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
         contract_ids: addresses.contract_ids,
         registration_blocks: addresses.registration_blocks.unwrap_or_default(),
     })
-}
-
-fn to_bounds(bounds: BoundsInput) -> napi::Result<Bounds> {
-    same_length(
-        "bound",
-        &[bounds.chain_ids.len(), bounds.checkpoint_ids.len()],
-    )?;
-    Ok(Bounds {
-        sequence: bounds.sequence,
-        chain_ids: bounds.chain_ids,
-        checkpoint_ids: checkpoint_ids(&bounds.checkpoint_ids)?,
-    })
-}
-
-fn to_params(params: Vec<Option<String>>) -> Vec<Param> {
-    params
-        .into_iter()
-        .map(|param| match param {
-            None => Param::Null,
-            Some(text) => Param::Text(text),
-        })
-        .collect()
 }
 
 /// After a failed lend. A result already lent out still has JavaScript views

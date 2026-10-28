@@ -11,9 +11,7 @@ type t = {
   holdingCalls: array<bool>,
   resolveHolding: Persistence.holding => unit,
   initializeCalls: array<{
-    "entities": array<Internal.entityConfig>,
     "chainConfigs": array<Config.chain>,
-    "enums": array<Table.enumConfig<Table.enum>>,
     "envioInfo": JSON.t,
   }>,
   resolveInitialize: Persistence.initialState => unit,
@@ -81,18 +79,10 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
           holdingResolveFns->Array.push(resolve)->ignore
         })
       }),
-      initialize: implement(#initialize, (
-        ~chainConfigs=[],
-        ~entities=[],
-        ~enums=[],
-        ~contractMapping as _,
-        ~envioInfo,
-      ) => {
+      initialize: implement(#initialize, (~chainConfigs=[], ~contractMapping as _, ~envioInfo) => {
         initializeCalls
         ->Array.push({
-          "entities": entities,
           "chainConfigs": chainConfigs,
-          "enums": enums,
           "envioInfo": envioInfo,
         })
         ->ignore
@@ -101,13 +91,9 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
         })
       }),
       readStoredConfig: implement(#readStoredConfig, () => Promise.resolve(stored)),
-      addChain: (~chainConfig as _, ~entities as _, ~contractMapping as _) =>
+      addChain: (~chainConfig as _, ~contractMapping as _) =>
         JsError.throwWithMessage("Not implemented"),
-      resumeInitialState: implement(#resumeInitialState, (
-        ~entities as _,
-        ~chainIds as _,
-        ~contractMapping as _,
-      ) => {
+      resumeInitialState: implement(#resumeInitialState, (~chainIds as _, ~contractMapping as _) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
@@ -137,8 +123,8 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
         })
       },
       ensureQueryIndexes: (~entityConfig as _, ~scope as _, ~filters as _) => Promise.resolve(),
-      ensureSchemaIndexes: (~entities as _, ~chainIds as _) => Promise.resolve(),
-      finalizeBackfill: (~entities as _, ~chainIds as _, ~readyAt as _) => Promise.resolve(),
+      ensureSchemaIndexes: (~chainIds as _) => Promise.resolve(),
+      finalizeBackfill: (~chainIds as _, ~readyAt as _) => Promise.resolve(),
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
@@ -146,7 +132,6 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       getRollbackTargetCheckpoint: (
         ~reorgChainId as _,
         ~lastKnownValidBlockNumber as _,
-        ~sequence as _,
       ) => JsError.throwWithMessage("Not implemented"),
       getRollbackProgressDiff: (~floors as _) => JsError.throwWithMessage("Not implemented"),
       getRollbackData: (~entityConfig as _, ~floors as _) =>
@@ -155,7 +140,6 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
         ~batch as _,
         ~rollback as _,
         ~config as _,
-        ~allEntities as _,
         ~updatedEffectsCache as _,
         ~updatedEntities as _,
         ~registeredAddresses as _,

@@ -570,8 +570,6 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   // so none of these is reached.
   initialize: async (
     ~chainConfigs as _=?,
-    ~entities as _=?,
-    ~enums as _=?,
     ~contractMapping as _,
     ~envioInfo as _,
   ) =>
@@ -582,11 +580,11 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: readStoredConfig should not be called; the initial state is derived from config.",
     ),
-  addChain: async (~chainConfig as _, ~entities as _, ~contractMapping as _) =>
+  addChain: async (~chainConfig as _, ~contractMapping as _) =>
     JsError.throwWithMessage(
       "TestIndexer: addChain should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async (~entities as _, ~chainIds as _, ~contractMapping as _) =>
+  resumeInitialState: async (~chainIds as _, ~contractMapping as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
@@ -596,13 +594,12 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ->(Utils.magic: array<Internal.entity> => array<unknown>),
   // The in-memory storage has no indexes to build, and it's always ready.
   ensureQueryIndexes: async (~entityConfig as _, ~scope as _, ~filters as _) => (),
-  ensureSchemaIndexes: async (~entities as _, ~chainIds as _) => (),
-  finalizeBackfill: async (~entities as _, ~chainIds as _, ~readyAt as _) => (),
+  ensureSchemaIndexes: async (~chainIds as _) => (),
+  finalizeBackfill: async (~chainIds as _, ~readyAt as _) => (),
   writeBatch: async (
     ~batch,
     ~rollback as _,
     ~config,
-    ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
     ~registeredAddresses,
@@ -626,7 +623,6 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   getRollbackTargetCheckpoint: async (
     ~reorgChainId as _,
     ~lastKnownValidBlockNumber as _,
-    ~sequence as _,
   ) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",

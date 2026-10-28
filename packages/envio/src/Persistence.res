@@ -117,8 +117,6 @@ type storage = {
   // carries a matching row — storage doesn't interpret it.
   initialize: (
     ~chainConfigs: array<Config.chain>=?,
-    ~entities: array<Internal.entityConfig>=?,
-    ~enums: array<Table.enumConfig<Table.enum>>=?,
     ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
@@ -129,16 +127,11 @@ type storage = {
   // Brings an initialized storage a chain it doesn't have yet: its row, its
   // partitions and its config addresses, as `initialize` would have created
   // them. The chains already there are left untouched.
-  addChain: (
-    ~chainConfig: Config.chain,
-    ~entities: array<Internal.entityConfig>,
-    ~contractMapping: ContractMapping.t,
-  ) => promise<unit>,
+  addChain: (~chainConfig: Config.chain, ~contractMapping: ContractMapping.t) => promise<unit>,
   // `chainIds` is what this run drives. An isolated run resumes a subset of
   // the stored chains, and ClickHouse's resume trims past each resumed chain's
   // checkpoint, so chains a sibling process is still writing must stay out.
   resumeInitialState: (
-    ~entities: array<Internal.entityConfig>,
     ~chainIds: array<ChainId.t>,
     ~contractMapping: ContractMapping.t,
   ) => promise<initialState>,
@@ -159,19 +152,12 @@ type storage = {
   // never runs `finalizeBackfill`: an index dropped or invalidated while it was
   // down would otherwise never be rebuilt. Best-effort, and safe to run with
   // indexing live.
-  ensureSchemaIndexes: (
-    ~entities: array<Internal.entityConfig>,
-    ~chainIds: array<ChainId.t>,
-  ) => promise<unit>,
+  ensureSchemaIndexes: (~chainIds: array<ChainId.t>) => promise<unit>,
   // Creates every index the schema promises for the given chains, then stamps
   // `ready_at` on them. Called once those chains finish backfill. The indexes
   // are committed one at a time so a failure part way through doesn't undo the
   // ones already built; `ready_at` is only written once they all verify.
-  finalizeBackfill: (
-    ~entities: array<Internal.entityConfig>,
-    ~chainIds: array<ChainId.t>,
-    ~readyAt: Date.t,
-  ) => promise<unit>,
+  finalizeBackfill: (~chainIds: array<ChainId.t>, ~readyAt: Date.t) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
@@ -190,7 +176,6 @@ type storage = {
   getRollbackTargetCheckpoint: (
     ~reorgChainId: ChainId.t,
     ~lastKnownValidBlockNumber: int,
-    ~sequence: CheckpointSequence.t,
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
@@ -214,7 +199,6 @@ type storage = {
     ~batch: Batch.t,
     ~rollback: option<rollback>,
     ~config: Config.t,
-    ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
     // Addresses this batch registered, with the checkpoint that covers them.
@@ -339,8 +323,6 @@ let init = {
             throw(Refused(Config.setUpMeanwhileMessage))
           }
           let initialState = await persistence.storage.initialize(
-            ~entities=persistence.allEntities,
-            ~enums=persistence.allEnums,
             ~chainConfigs,
             ~contractMapping,
             ~envioInfo,
@@ -395,15 +377,10 @@ let init = {
                   ~timing=?sourceTiming,
                 )
               )->Array.getUnsafe(0)
-            await persistence.storage.addChain(
-              ~chainConfig,
-              ~entities=persistence.allEntities,
-              ~contractMapping=stored.contractMapping,
-            )
+            await persistence.storage.addChain(~chainConfig, ~contractMapping=stored.contractMapping)
           }
           if resume {
             let initialState = await persistence.storage.resumeInitialState(
-              ~entities=persistence.allEntities,
               ~chainIds=chainConfigs->Array.map(chain => chain.id),
               ~contractMapping=stored.contractMapping,
             )

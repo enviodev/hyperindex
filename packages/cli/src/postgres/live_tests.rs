@@ -273,6 +273,20 @@ async fn an_array_parameter_survives_its_own_punctuation() {
     );
 }
 
+/// Every column of every row, rendered as its slot says.
+fn plain_params(arena: &Arena) -> Vec<Param> {
+    let sources = arena
+        .columns()
+        .iter()
+        .map(|column| super::write::Source::Staged {
+            column,
+            render: super::write::Render::Plain,
+        })
+        .collect::<Vec<_>>();
+    let rows = (0..arena.rows()).collect::<Vec<_>>();
+    super::write::unnest_params(&sources, &rows).expect("the rows render")
+}
+
 /// A column of text as the literal the write path renders for it, so what goes
 /// to the server here is what an insert would send.
 fn text_literal(values: &[Option<&str>]) -> String {
@@ -284,7 +298,7 @@ fn text_literal(values: &[Option<&str>]) -> String {
         }
     }
     arena.seal(&["value".to_string()]).unwrap();
-    match super::write::unnest_params(&arena).unwrap().remove(0) {
+    match plain_params(&arena).remove(0) {
         Param::Text(literal) => literal,
         Param::Null => unreachable!("a column renders as a literal"),
     }
@@ -616,7 +630,7 @@ async fn a_staged_batch_unnests_into_its_table() {
         .seal(&["t", "n", "b", "d"].map(str::to_string))
         .unwrap();
 
-    let params = super::write::unnest_params(&arena).expect("the rows render");
+    let params = plain_params(&arena);
     transaction
         .execute(
             "INSERT INTO unnested (t, n, b, d) SELECT * FROM unnest($1::text[], $2::int4[], \
@@ -815,29 +829,6 @@ async fn a_server_failure_keeps_its_detail() {
     );
 }
 
-/// A cell-bound insert's short last chunk is a shape of its own. Kept prepared,
-/// every chunk length would hold a plan on the server for the life of the
-/// connection; sent unnamed, the server lets it go once it has run.
-#[tokio::test]
-#[ignore = "needs a Postgres server"]
-async fn a_statement_run_once_leaves_nothing_prepared() {
-    let client = pinned_client();
-    let once = "SELECT $1::int4 + 1";
-    let ran = client
-        .execute_once(once, &[Param::Text("1".to_string())])
-        .await
-        .unwrap();
-    let (rows, _) = client
-        .query(
-            "SELECT count(*)::int4 FROM pg_prepared_statements WHERE statement = $1",
-            &[Param::Text(once.to_string())],
-        )
-        .await
-        .unwrap();
-
-    assert_eq!((ran, rows[0].get::<_, i32>(0)), (1, 0));
-}
-
 /// A process killed while building an index leaves the `CREATE INDEX` running
 /// on the server, which only notices the client is gone once it finishes. The
 /// restarted indexer reads a catalog without that index, creates it again, and
@@ -862,11 +853,15 @@ async fn a_backfill_that_loses_its_index_to_an_orphaned_build_still_finishes() {
         super::storage::Settings {
             pg_schema: schema.to_string(),
             pg_user: "postgres".to_string(),
-            chain_id_mode: super::pg_type::ChainIdMode::Int32,
             numeric_array_as_text: false,
+            isolated: false,
         },
+        std::sync::Arc::new(crate::storage::schema::Schema::empty(
+            super::pg_type::ChainIdMode::Int32,
+        )),
         std::sync::Arc::new(|_| ()),
-    );
+    )
+    .unwrap();
     let definition = IndexDefinition {
         table_name: "t".to_string(),
         columns: vec![IndexColumn {
@@ -950,11 +945,15 @@ async fn a_storage_reused_across_its_reset_reads_the_new_schema() {
         super::storage::Settings {
             pg_schema: "live_reset".to_string(),
             pg_user: "postgres".to_string(),
-            chain_id_mode: super::pg_type::ChainIdMode::Int32,
             numeric_array_as_text: false,
+            isolated: false,
         },
+        std::sync::Arc::new(crate::storage::schema::Schema::empty(
+            super::pg_type::ChainIdMode::Int32,
+        )),
         std::sync::Arc::new(|_| ()),
-    );
+    )
+    .unwrap();
     let create = "CREATE SCHEMA live_reset; \
                   CREATE TYPE live_reset.status AS ENUM ('A', 'B'); \
                   CREATE TABLE live_reset.t (s live_reset.status); \
@@ -1386,6 +1385,144 @@ async fn a_copy_that_fails_part_way_leaves_the_previous_file() {
             Some("division by zero".to_string()),
             "the previous dump\n",
             1
+        )
+    );
+}
+
+/// Every list type a schema can declare goes in through the one `unnest` an
+/// entity's rows are written with, each row's list as its own literal, and
+/// is stored as the values the handler set.
+#[tokio::test]
+#[ignore = "needs a Postgres server"]
+async fn every_list_type_is_written_as_the_handler_set_it() {
+    use crate::storage::changes::test_support::{change_set, Change};
+    use crate::storage::schema::test_support::{entity, id};
+    use crate::storage::schema::{Field, FieldType, Schema};
+    use crate::storage::types::{ChainConfig, Sequence};
+    use crate::storage::{Batch, Handoff, Initialize};
+    use std::sync::Arc;
+
+    let list = |name: &str, field_type: FieldType| Field {
+        is_array: true,
+        ..Field::new(name, field_type)
+    };
+    let holder = entity(
+        "Holder",
+        vec![
+            id(),
+            list("tags", FieldType::String),
+            list("amounts", FieldType::BigInt { precision: None }),
+            list("flags", FieldType::Boolean),
+            list("stamps", FieldType::Date),
+            list("blobs", FieldType::Bytea),
+            list("docs", FieldType::Json),
+            Field::new("at", FieldType::Date),
+        ],
+        None,
+    );
+    let schema = Arc::new(Schema {
+        entities: vec![Arc::new(holder)],
+        enums: Vec::new(),
+        sequence: Sequence::SharedAcrossChains,
+        chain_id_mode: super::pg_type::ChainIdMode::Int32,
+    });
+    let pg_schema = "live_lists";
+    let storage = super::storage::Storage::new(
+        client(),
+        super::storage::Settings {
+            pg_schema: pg_schema.to_string(),
+            pg_user: "postgres".to_string(),
+            numeric_array_as_text: false,
+            isolated: false,
+        },
+        schema.clone(),
+        std::sync::Arc::new(|_| ()),
+    )
+    .unwrap();
+    storage
+        .initialize(
+            &Initialize {
+                chains: vec![ChainConfig {
+                    id: 1,
+                    ecosystem: "evm".to_string(),
+                    start_block: 0,
+                    end_block: None,
+                    max_reorg_depth: 0,
+                }],
+                envio_info: "{}".to_string(),
+                contract_names: Vec::new(),
+                addresses: Default::default(),
+            },
+            "instance",
+            false,
+        )
+        .await
+        .unwrap();
+
+    let changes = change_set(
+        schema.entities[0].clone(),
+        None,
+        false,
+        &[Change::Set(
+            &[
+                Some("a"),
+                Some(r#"["x,\"y\"",null,"{z}"]"#),
+                Some(
+                    r#"["115792089237316195423570985008687907853269984665640564039457584007913129639935","-1"]"#,
+                ),
+                Some("[true,false]"),
+                Some("[1700000000123,0]"),
+                Some("[[222,173],[]]"),
+                Some(r#"["{\"k\":[1,\"\\\\\"]}","null"]"#),
+                Some("1700000000123"),
+            ],
+            1,
+        )],
+    );
+    let written = storage
+        .write_batch(
+            &Batch {
+                changes: vec![Arc::new(changes)],
+                ..Batch::default()
+            },
+            Handoff::default(),
+        )
+        .await;
+    let (rows, _) = client()
+        .query(
+            &format!(
+                "SELECT tags::text, amounts::text, flags::text, \
+                 array(SELECT (extract(epoch FROM s) * 1000)::bigint FROM unnest(stamps) s)::text, \
+                 blobs::text, docs::text, (extract(epoch FROM at) * 1000)::bigint::text \
+                 FROM \"{pg_schema}\".\"Holder\""
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    client()
+        .batch(&format!("DROP SCHEMA \"{pg_schema}\" CASCADE"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (
+            written.is_ok(),
+            (0..7)
+                .map(|column| rows[0].get::<_, String>(column))
+                .collect::<Vec<_>>()
+        ),
+        (
+            true,
+            vec![
+                r#"{"x,\"y\"",NULL,"{z}"}"#.to_string(),
+                "{115792089237316195423570985008687907853269984665640564039457584007913129639935,-1}".to_string(),
+                "{t,f}".to_string(),
+                "{1700000000123,0}".to_string(),
+                r#"{"\\xdead","\\x"}"#.to_string(),
+                r#"{"{\"k\": [1, \"\\\\\"]}","null"}"#.to_string(),
+                "1700000000123".to_string(),
+            ]
         )
     );
 }

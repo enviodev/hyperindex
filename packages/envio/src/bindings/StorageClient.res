@@ -1,8 +1,8 @@
 // Rows cross in arenas both ways. A write stages its rows into memory the addon
-// lends (`beginStage` to `commitStage`); a read lands its rows in a Rust-owned
-// arena that `lendResult` hands over and `releaseResult` takes back. Reading or
-// writing through a buffer after it has been handed back is what detaching
-// prevents — the rules are the ones at the top of
+// lends (`beginChanges`/`beginRows` to `commitStage`); a read lands its rows in
+// a Rust-owned arena that `lendResult` hands over and `releaseResult` takes
+// back. Reading or writing through a buffer after it has been handed back is
+// what detaching prevents — the rules are the ones at the top of
 // `packages/cli/src/columnar/mod.rs`.
 
 type t
@@ -19,6 +19,9 @@ type postgresOptions = {
   applicationName: string,
   pgSchema: string,
   isHasuraEnabled: bool,
+  // An `envio start --chain` process: builds and looks for a per-chain
+  // entity's indexes on its own chains' partitions only.
+  isolated: bool,
 }
 
 type clickHouseOptions = {
@@ -31,7 +34,6 @@ type clickHouseOptions = {
 }
 
 type options = {
-  chainIdMode: string,
   postgres: postgresOptions,
   clickhouse?: clickHouseOptions,
 }
@@ -45,71 +47,31 @@ type queryResult = {
   rows: int,
 }
 
-// A ClickHouse column. The rows read back are keyed by `rowName`, the name the
-// read schemas parse every store's rows by.
-type clickHouseColumn = {
-  name: string,
-  rowName?: string,
-  // The schema field, which `@storage(clickhouse: {...})` expressions name a
-  // column by even when a rename is configured.
-  fieldName?: string,
-  fieldType: string,
-  isNullable: bool,
-  isArray: bool,
-  precision?: int,
-  scale?: int,
-  enumVariants?: array<string>,
-}
-
-type skippingIndex = {
-  name: string,
-  expr: string,
-  indexType: string,
-  granularity?: int,
-}
-
-type clickHouseTable = {
-  name: string,
-  historyTable: string,
-  columns: array<clickHouseColumn>,
-  chainIdColumn?: string,
-  partitionBy?: string,
-  orderBy?: array<string>,
-  ttl?: string,
-  skippingIndexes?: array<skippingIndex>,
-}
-
-// A table described for every store that keeps it: an entity for each store its
-// schema names, the indexer's own tables for Postgres alone.
-type tableInput = {
-  name: string,
-  postgres?: Core.pgTableInput,
-  clickhouse?: clickHouseTable,
-}
-
-type postgresRegistered = {kinds?: array<int>}
-
-type clickHouseRegistered = {
-  names: array<string>,
-  kinds: array<int>,
-  nullable: array<bool>,
-}
-
 type store = Postgres | ClickHouse
 
-// What each store made of a table: present for the stores that keep it.
-type registeredTable = {
-  handle: int,
-  // The store the table is read from.
-  home: store,
-  postgres?: postgresRegistered,
-  clickhouse?: clickHouseRegistered,
+type stagedField = Staging.stagedField
+
+type entityLayout = {
+  name: string,
+  // The store the entity is read from; none when no configured store keeps it.
+  home?: store,
+  fields: array<stagedField>,
 }
 
+// How every batch is laid out: an entity's change set is its fields, then each
+// change's checkpoint and whether it deletes.
+type layouts = {
+  // By entity index.
+  entities: array<entityLayout>,
+  rawEvents: array<stagedField>,
+  effectCache: array<stagedField>,
+}
+
+type stagedTable = RawEvents | EffectCache
+
 type bounds = {
-  sequence: CheckpointSequence.t,
   chainIds: array<ChainId.t>,
-  checkpointIds: array<string>,
+  checkpointIds: array<bigint>,
 }
 
 type progress = {
@@ -146,15 +108,7 @@ type chainConfig = {
   maxReorgDepth: int,
 }
 
-type partition = {table: int, chainId: ChainId.t, name: string}
-
-type enum = {name: string, variants: array<string>}
-
 type initialize = {
-  sequence: CheckpointSequence.t,
-  tables: array<int>,
-  partitions: array<partition>,
-  enums: array<enum>,
   chains: array<chainConfig>,
   envioInfo: string,
   contractNames: array<string>,
@@ -163,16 +117,7 @@ type initialize = {
 
 type addChain = {
   chain: chainConfig,
-  partitions: array<partition>,
   addresses: addresses,
-}
-
-type resume = {
-  sequence: CheckpointSequence.t,
-  // Every entity table.
-  tables: array<int>,
-  // The chains this run drives, which are the only ones trimmed.
-  chainIds: array<ChainId.t>,
 }
 
 type storedChain = {
@@ -203,11 +148,11 @@ type resumedChain = {
   // Unix seconds.
   progressBlockTime?: float,
   sourceBlock: int,
-  checkpointId: string,
+  checkpointId: bigint,
 }
 
 type reorgCheckpoint = {
-  id: string,
+  id: bigint,
   chainId: float,
   blockNumber: int,
   blockHash: string,
@@ -232,52 +177,29 @@ type cacheTable = {tableName: string, rows: int}
 // An optional field is left out rather than null, both ways: the addon refuses
 // a null for one, and leaves out one it has no value for.
 
-// Rows of a batch: staged into an arena, or one rendered parameter per cell,
-// every row's first column first.
-type rows = {
-  staged?: int,
-  cells?: array<Null.t<string>>,
-  rows: int,
-}
-
-type historyWrite = {
-  backfill: array<string>,
-  sets?: rows,
-  setCheckpointIds: array<string>,
-  deleteIds: array<string>,
-  deleteCheckpointIds: array<string>,
-}
-
-type postgresEntityWrite = {
-  sets?: rows,
-  deletes: array<string>,
-  history?: historyWrite,
-}
-
-type entityWrite = {
-  table: int,
+// One entity's changes within one chain scope, staged.
+type changes = {
+  entity: int,
   chainId?: ChainId.t,
-  postgres?: postgresEntityWrite,
-  // Every change as a history row, staged.
-  clickhouse?: int,
+  keepsHistory: bool,
+  changes: int,
 }
 
 type diffCheckpoint = {
   chainId: ChainId.t,
-  checkpointId: string,
+  checkpointId: bigint,
   blockNumber: int,
 }
 
 type rollbackWrite = {
   bounds: bounds,
-  tables: array<int>,
   progress: array<progress>,
   removedAddresses: addresses,
   diffCheckpoints: array<diffCheckpoint>,
 }
 
 type checkpoints = {
-  ids: array<string>,
+  ids: array<bigint>,
   chainIds: array<ChainId.t>,
   blockNumbers: array<int>,
   blockHashes: array<Null.t<string>>,
@@ -285,17 +207,15 @@ type checkpoints = {
   keepsHistory: array<bool>,
 }
 
-type frontier = {chainIds: array<ChainId.t>, checkpointIds: array<string>}
+type frontier = {chainIds: array<ChainId.t>, checkpointIds: array<bigint>}
 
-type tableWrite = {table: int, rows: rows}
-
-type effectCacheWrite = {table: int, create: bool, rows: rows}
+type effectCacheWrite = {table: string, create: bool, rows: int}
 
 type batch = {
   rollback?: rollbackWrite,
   progress: array<progress>,
-  rawEvents?: tableWrite,
-  entities: array<entityWrite>,
+  rawEvents?: int,
+  changes: array<changes>,
   chainMeta: array<chainMeta>,
   addresses: addresses,
   frontier: frontier,
@@ -306,20 +226,30 @@ type batch = {
 type writeTiming = {store: store, seconds: float}
 
 @send
-external classCreate: (Core.storageCtor, options, Logger.native, array<string>) => t = "create"
+external classCreate: (
+  Core.storageCtor,
+  options,
+  Null.t<string>,
+  Logger.native,
+  array<string>,
+) => t = "create"
 
-// The addon logs through `logger` itself, with the fields bound to it.
-let make = (options, ~logger: Logger.t) =>
+// The storage of the entities `configJson` declares — the config the CLI
+// wrote — or of none. The addon logs through `logger` itself, with the fields
+// bound to it.
+let make = (options, ~configJson=?, ~logger: Logger.t) =>
   Core.getAddon().storage->classCreate(
     options,
+    configJson->Null.fromOption,
     logger.output.native,
     logger.boundFieldsJson,
   )
 
-@send external registerTable: (t, tableInput) => registeredTable = "registerTable"
+@send external layouts: t => layouts = "layouts"
 
-@send
-external beginStage: (t, ~table: int, ~store: store, ~rows: int) => Staging.begun = "beginStage"
+@send external beginChanges: (t, ~entity: int, ~rows: int) => Staging.begun = "beginChanges"
+
+@send external beginRows: (t, ~table: stagedTable, ~rows: int) => Staging.begun = "beginRows"
 
 @send
 external growStage: (
@@ -337,8 +267,8 @@ external commitStage: (t, ~handle: int, ~buffers: array<ArrayBuffer.t>) => unit 
 
 @send external discardStaged: (t, array<int>) => unit = "discardStaged"
 
-let arena = (client, ~store): Staging.arena => {
-  beginStage: (~table, ~rows) => client->beginStage(~table, ~store, ~rows),
+let arena = (client, begin): Staging.arena => {
+  beginStage: (~rows) => begin(~rows),
   growStage: (~handle, ~column, ~needed, ~stale) =>
     client->growStage(~handle, ~column, ~needed, ~stale),
   commitStage: (~handle, ~buffers) => client->commitStage(~handle, ~buffers),
@@ -375,13 +305,26 @@ let queryForTests = async (client, sql, ~params=[]) =>
 @send
 external loadWhereRaw: (t, int, array<LoadCondition.t>) => promise<queryResult> = "loadWhere"
 
-let loadWhere = async (client, ~table, ~conditions) =>
-  client->read(await client->loadWhereRaw(table, conditions))
+let loadWhere = async (client, ~entity, ~conditions) =>
+  client->read(await client->loadWhereRaw(entity, conditions))
+
+@send
+external loadEffectCacheRaw: (t, string, array<LoadCondition.t>) => promise<queryResult> =
+  "loadEffectCache"
+
+let loadEffectCache = async (client, ~table, ~conditions) =>
+  client->read(await client->loadEffectCacheRaw(table, conditions))
+
+@send
+external clickHouseRowsForTestsRaw: (t, int) => promise<queryResult> = "clickhouseRowsForTests"
+
+let clickHouseRowsForTests = async (client, ~entity) =>
+  client->read(await client->clickHouseRowsForTestsRaw(entity))
 
 @send external historyForTestsRaw: (t, int) => promise<queryResult> = "historyForTests"
 
-let historyForTests = async (client, ~table) =>
-  client->read(await client->historyForTestsRaw(table))
+let historyForTests = async (client, ~entity) =>
+  client->read(await client->historyForTestsRaw(entity))
 
 // What the storage holds before anything is initialized or resumed.
 type holding =
@@ -403,34 +346,35 @@ type holding =
 
 @send external readStoredConfig: t => promise<storedConfig> = "readStoredConfig"
 
-@send external resume: (t, resume) => promise<resumed> = "resume"
+// Resumes the chains this run drives, the only ones ClickHouse trims.
+@send external resume: (t, array<ChainId.t>) => promise<resumed> = "resume"
 
 @send external setChainMeta: (t, array<chainMeta>) => promise<unit> = "setChainMeta"
 
+// Builds every index the schema promises for the chains, then stamps them
+// ready at the given unix milliseconds.
 @send
-external finalizeBackfill: (t, array<Core.pgIndexInput>, array<ChainId.t>, float) => promise<unit> =
-  "finalizeBackfill"
+external finalizeBackfill: (t, array<ChainId.t>, float) => promise<unit> = "finalizeBackfill"
 
-@send
-external ensureSchemaIndexes: (t, array<Core.pgIndexInput>) => promise<unit> = "ensureSchemaIndexes"
+@send external ensureSchemaIndexes: (t, array<ChainId.t>) => promise<unit> = "ensureSchemaIndexes"
 
 // Null when the indexes are already there, which is every call but the first,
-// and every call for a table no store builds query indexes for.
+// and every call for an entity Postgres doesn't keep.
 @send
-external ensureQueryIndexes: (t, int, string, array<string>) => Null.t<promise<unit>> =
-  "ensureQueryIndexes"
+external ensureQueryIndexes: (
+  t,
+  ~entity: int,
+  ~chainId: Null.t<ChainId.t>,
+  ~columns: array<string>,
+) => Null.t<promise<unit>> = "ensureQueryIndexes"
 
 @send external pruneCheckpoints: (t, bounds) => promise<unit> = "pruneCheckpoints"
 
 @send external pruneHistory: (t, int, bounds) => promise<unit> = "pruneHistory"
 
 @send
-external rollbackTargetCheckpoint: (
-  t,
-  ChainId.t,
-  int,
-  CheckpointSequence.t,
-) => promise<Nullable.t<string>> = "rollbackTargetCheckpoint"
+external rollbackTargetCheckpoint: (t, ChainId.t, int) => promise<Nullable.t<bigint>> =
+  "rollbackTargetCheckpoint"
 
 @send
 external rollbackProgressDiff: (t, bounds) => promise<array<progressDiff>> = "rollbackProgressDiff"
@@ -439,7 +383,7 @@ external rollbackProgressDiff: (t, bounds) => promise<array<progressDiff>> = "ro
 
 @send external effectCacheTables: t => promise<array<cacheTable>> = "effectCacheTables"
 
-type cacheUpload = {table: int, path: string}
+type cacheUpload = {table: string, path: string}
 
 @send external uploadEffectCache: (t, array<cacheUpload>) => promise<unit> = "uploadEffectCache"
 

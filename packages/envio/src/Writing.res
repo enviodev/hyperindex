@@ -153,7 +153,6 @@ let runOneWrite = async (state: IndexerState.t) => {
         ~batch,
         ~rollback,
         ~config,
-        ~allEntities=persistence.allEntities,
         ~updatedEntities,
         ~registeredAddresses,
         ~updatedEffectsCache,

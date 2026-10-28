@@ -7,34 +7,55 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
-use super::types::{Frontier, Progress, Sequence};
-use super::{Batch, EffectCacheWrite, EntityWrite, Holding, Rows, Storage, Table};
+use super::batch::EffectCacheWrite;
+use super::schema::{ClickHouseOptions, Entity, Schema};
+use super::types::{Frontier, Progress};
+use super::{Batch, Holding, Storage};
 use crate::clickhouse;
+use crate::columnar::{Arena, ColumnKind};
 use crate::postgres;
-use crate::postgres::param::Param;
 
 struct Live {
     storage: Storage,
     name: String,
 }
 
+/// An account ClickHouse alone keeps.
+fn account() -> Entity {
+    Entity {
+        postgres: false,
+        ..clickhouse::live_tests::account_input()
+    }
+}
+
 impl Live {
     fn new(name: &str) -> Self {
+        Self::with(name, Vec::new())
+    }
+
+    fn with(name: &str, entities: Vec<Entity>) -> Self {
         let name = format!("envio_composite_{name}_{}", std::process::id());
+        let schema: std::sync::Arc<Schema> = clickhouse::live_tests::schema_of(entities);
         let postgres = postgres::storage::Storage::new(
             postgres::live_tests::client(),
             postgres::storage::Settings {
                 pg_schema: name.clone(),
                 pg_user: "postgres".to_string(),
-                chain_id_mode: postgres::pg_type::ChainIdMode::Int32,
                 numeric_array_as_text: false,
+                isolated: false,
             },
+            schema.clone(),
             Arc::new(|_| ()),
+        )
+        .unwrap();
+        let clickhouse = clickhouse::live_tests::store_on(
+            clickhouse::live_tests::connection(&name),
+            false,
+            schema.clone(),
         );
-        let clickhouse =
-            clickhouse::live_tests::store_on(clickhouse::live_tests::connection(&name), false);
         Self {
             storage: Storage {
+                schema,
                 postgres: Arc::new(postgres),
                 clickhouse: Some(Arc::new(clickhouse)),
             },
@@ -42,15 +63,12 @@ impl Live {
         }
     }
 
-    async fn initialize(&self, tables: Vec<Arc<Table>>) {
+    async fn initialize(&self) {
         self.storage
-            .initialize(clickhouse::live_tests::initialize_input(tables.clone()))
+            .initialize(clickhouse::live_tests::initialize_input())
             .await
             .unwrap();
-        self.storage
-            .resume(Sequence::SharedAcrossChains, tables, vec![1])
-            .await
-            .unwrap();
+        self.storage.resume(&[1]).await.unwrap();
     }
 
     /// Where Postgres and ClickHouse each hold chain 1's frontier.
@@ -100,9 +118,10 @@ impl Live {
 #[ignore = "needs a Postgres and a ClickHouse server"]
 async fn a_clickhouse_built_alongside_another_postgres_schema_has_diverged() {
     let (a, b) = (Live::new("pair_a"), Live::new("pair_b"));
-    a.initialize(Vec::new()).await;
-    b.initialize(Vec::new()).await;
+    a.initialize().await;
+    b.initialize().await;
     let crossed = Storage {
+        schema: a.storage.schema.clone(),
         postgres: a.storage.postgres.clone(),
         clickhouse: b.storage.clickhouse.clone(),
     };
@@ -125,7 +144,7 @@ async fn a_clickhouse_built_alongside_another_postgres_schema_has_diverged() {
 #[ignore = "needs a Postgres and a ClickHouse server"]
 async fn a_clickhouse_without_its_postgres_is_stranded() {
     let live = Live::new("stranded");
-    live.initialize(Vec::new()).await;
+    live.initialize().await;
     live.storage.postgres.reset().await.unwrap();
 
     let holding = live.storage.holding().await;
@@ -142,48 +161,15 @@ async fn a_clickhouse_without_its_postgres_is_stranded() {
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
 async fn clickhouse_commits_what_postgres_committed_whatever_its_caches_do() {
-    let live = Live::new("cache_after_commit");
-    let account = clickhouse::live_tests::table_on(
-        live.storage.clickhouse.as_ref().unwrap(),
-        clickhouse::live_tests::account_input(),
-    );
-    live.initialize(vec![account.clone()]).await;
-    let cache = Arc::new(Table {
-        name: "envio_effect_price".to_string(),
-        postgres: Some(Arc::new(
-            live.storage
-                .postgres
-                .register(postgres::storage::TableRegistration {
-                    spec: postgres::ddl::TableSpec {
-                        table_name: "envio_effect_price".to_string(),
-                        columns: vec![
-                            postgres::ddl::ColumnSpec {
-                                name: "id".to_string(),
-                                field_type: postgres::pg_type::FieldType::String,
-                                is_array: false,
-                                is_nullable: false,
-                                is_primary_key: true,
-                                default_value: None,
-                            },
-                            postgres::ddl::ColumnSpec {
-                                name: "output".to_string(),
-                                field_type: postgres::pg_type::FieldType::Json,
-                                is_array: false,
-                                is_nullable: false,
-                                is_primary_key: false,
-                                default_value: None,
-                            },
-                        ],
-                        partition_by_column: None,
-                    },
-                    write_columns: vec!["id".to_string(), "output".to_string()],
-                    append_only: false,
-                    history: None,
-                })
-                .unwrap(),
-        )),
-        clickhouse: None,
-    });
+    let live = Live::with("cache_after_commit", vec![account()]);
+    live.initialize().await;
+    let account = live.storage.schema.entities[0].clone();
+    let mut cached = Arena::new(1, &[ColumnKind::Text, ColumnKind::Text]).unwrap();
+    cached.set_bytes(0, 0, b"k");
+    cached.set_bytes(1, 0, b"{}");
+    cached
+        .seal_unlent(&["id".to_string(), "output".to_string()])
+        .unwrap();
 
     let written = live
         .storage
@@ -199,24 +185,15 @@ async fn clickhouse_commits_what_postgres_committed_whatever_its_caches_do() {
                 chain_ids: vec![1],
                 checkpoint_ids: vec![1],
             },
-            entities: vec![EntityWrite {
-                table: account,
-                chain_id: None,
-                postgres: None,
-                clickhouse: Some(clickhouse::live_tests::history(&[(
-                    "a",
-                    Some(("alice", "1")),
-                    1,
-                )])),
-            }],
+            changes: vec![Arc::new(clickhouse::live_tests::history(
+                &account,
+                &[("a", Some(("alice", "1")), 1)],
+            ))],
             // Never created, so the insert into it fails.
             effect_caches: vec![EffectCacheWrite {
-                table: cache,
+                table: "envio_effect_price".to_string(),
                 create: false,
-                rows: Rows::Cells {
-                    cells: vec![Param::Text("k".to_string()), Param::Text("{}".to_string())],
-                    rows: 1,
-                },
+                rows: cached,
             }],
             ..Batch::default()
         })
@@ -237,29 +214,20 @@ async fn clickhouse_commits_what_postgres_committed_whatever_its_caches_do() {
 #[tokio::test]
 #[ignore = "needs a Postgres and a ClickHouse server"]
 async fn a_table_clickhouse_refuses_leaves_postgres_unset() {
-    let live = Live::new("refused_table");
-    let refused = live
-        .storage
-        .clickhouse
-        .as_ref()
-        .unwrap()
-        .register(clickhouse::table::ClickHouseTableInput {
-            ttl: Some("no_such_column + INTERVAL 1 DAY".to_string()),
-            ..clickhouse::table::test_support::entity_input(
-                "Account",
-                vec![clickhouse::table::test_support::column("id", "String")],
-            )
-        })
-        .unwrap();
-    let table = Arc::new(Table {
-        name: "Account".to_string(),
-        postgres: None,
-        clickhouse: Some(Arc::new(refused)),
-    });
+    let live = Live::with(
+        "refused_table",
+        vec![Entity {
+            clickhouse: Some(ClickHouseOptions {
+                ttl: Some("no_such_column + INTERVAL 1 DAY".to_string()),
+                ..ClickHouseOptions::default()
+            }),
+            ..account()
+        }],
+    );
 
     let initialized = live
         .storage
-        .initialize(clickhouse::live_tests::initialize_input(vec![table]))
+        .initialize(clickhouse::live_tests::initialize_input())
         .await
         .is_ok();
     let holding = live
@@ -278,7 +246,7 @@ async fn a_table_clickhouse_refuses_leaves_postgres_unset() {
 #[ignore = "needs a Postgres and a ClickHouse server"]
 async fn a_reset_one_store_refuses_touches_neither() {
     let live = Live::new("reset_refused");
-    live.initialize(Vec::new()).await;
+    live.initialize().await;
     live.drop_clickhouse().await;
     live.clickhouse_statement(format!("CREATE DATABASE `{}`", live.name))
         .await;

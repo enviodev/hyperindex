@@ -14,15 +14,16 @@ use pretty_assertions::assert_eq;
 use super::client::{Client, Connection, Tuning};
 use super::storage::{Settings, Storage};
 use super::table::test_support::{column, entity_input};
-use super::table::ClickHouseTableInput;
-use crate::columnar::{Arena, ColumnKind};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::{Condition, Operator, ValueKind};
+use crate::storage::changes::test_support::{change_set, Change as Staged};
+use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{ReadKind, ResultSet};
+use crate::storage::schema::{ClickHouseOptions, Entity, Schema};
 use crate::storage::types::{
     Addresses, Bounds, ChainConfig, Checkpoints, Frontier, Progress, ResumedChain, Sequence,
 };
-use crate::storage::{Batch, EntityWrite, Handoff, Initialize, Resume, Table, WriteError};
+use crate::storage::{Batch, Handoff, Initialize, Resume, WriteError};
 use crate::test_servers;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -36,31 +37,46 @@ pub(crate) fn connection(database: &str) -> Connection {
     }
 }
 
-fn store(database: &str) -> Storage {
-    store_on(connection(database), false)
+/// The entities a test's stores keep, every chain sharing one sequence.
+pub(crate) fn schema_of(entities: Vec<Entity>) -> Arc<Schema> {
+    Arc::new(Schema {
+        entities: entities
+            .into_iter()
+            .enumerate()
+            .map(|(index, entity)| Arc::new(Entity { index, ..entity }))
+            .collect(),
+        enums: Vec::new(),
+        sequence: Sequence::SharedAcrossChains,
+        chain_id_mode: ChainIdMode::Int32,
+    })
 }
 
-pub(crate) fn store_on(connection: Connection, replicated: bool) -> Storage {
+pub(crate) fn store_on(connection: Connection, replicated: bool, schema: Arc<Schema>) -> Storage {
     Storage::new(
         connection,
         Tuning::default(),
         Arc::new(|_: &str| {}),
         Settings {
-            chain_id_mode: ChainIdMode::Int32,
             replicated,
             database_engine: None,
         },
+        schema,
     )
     .unwrap()
 }
 
 struct Live {
     storage: Storage,
+    schema: Arc<Schema>,
     database: String,
 }
 
 impl Live {
     fn new() -> Self {
+        Self::with(vec![account_input()])
+    }
+
+    fn with(entities: Vec<Entity>) -> Self {
         let database = format!(
             "envio_rust_live_{}_{}_{}",
             std::process::id(),
@@ -70,23 +86,30 @@ impl Live {
                 .unwrap()
                 .as_millis()
         );
+        let schema = schema_of(entities);
         Self {
-            storage: store(&database),
+            storage: store_on(connection(&database), false, schema.clone()),
+            schema,
             database,
         }
     }
 
     /// Another process's store on the same database.
     fn another_process(&self) -> Storage {
-        store(&self.database)
+        store_on(connection(&self.database), false, self.schema.clone())
     }
 
-    fn table(&self, input: ClickHouseTableInput) -> Arc<Table> {
-        table_on(&self.storage, input)
+    fn entity(&self, name: &str) -> Arc<Entity> {
+        self.schema
+            .entities
+            .iter()
+            .find(|entity| entity.name == name)
+            .unwrap()
+            .clone()
     }
 
-    fn account(&self) -> Arc<Table> {
-        self.table(account_input())
+    fn account(&self) -> Arc<Entity> {
+        self.entity("Account")
     }
 
     async fn drop_database(&self) {
@@ -103,7 +126,7 @@ impl Live {
             .await
     }
 
-    async fn load(&self, table: &Table, condition: Condition) -> Vec<Vec<String>> {
+    async fn load(&self, table: &Entity, condition: Condition) -> Vec<Vec<String>> {
         rows(
             &self
                 .storage
@@ -124,7 +147,7 @@ impl Live {
 }
 
 /// An `Account` of an id, an owner, and a balance kept as text.
-pub(crate) fn account_input() -> ClickHouseTableInput {
+pub(crate) fn account_input() -> Entity {
     entity_input(
         "Account",
         vec![
@@ -135,21 +158,9 @@ pub(crate) fn account_input() -> ClickHouseTableInput {
     )
 }
 
-pub(crate) fn table_on(storage: &Storage, input: ClickHouseTableInput) -> Arc<Table> {
-    Arc::new(Table {
-        name: input.name.clone(),
-        postgres: None,
-        clickhouse: Some(Arc::new(storage.register(input).unwrap())),
-    })
-}
-
-/// An initialize of chain 1 with `tables`.
-pub(crate) fn initialize_input(tables: Vec<Arc<Table>>) -> Initialize {
+/// An initialize of chain 1.
+pub(crate) fn initialize_input() -> Initialize {
     Initialize {
-        sequence: Sequence::SharedAcrossChains,
-        tables,
-        partitions: Vec::new(),
-        enums: Vec::new(),
         chains: vec![ChainConfig {
             id: 1,
             ecosystem: "evm".to_string(),
@@ -163,25 +174,15 @@ pub(crate) fn initialize_input(tables: Vec<Arc<Table>>) -> Initialize {
     }
 }
 
-async fn initialize(live: &Live, tables: Vec<Arc<Table>>) {
-    live.storage
-        .initialize(&initialize_input(tables))
-        .await
-        .unwrap();
+async fn initialize(live: &Live) {
+    live.storage.initialize(&initialize_input()).await.unwrap();
 }
 
 /// Resumes `storage` to chain 1 as Postgres hands it over having committed
 /// up to `checkpoint_id`, at `progress_block`.
-async fn resume(
-    storage: &Storage,
-    tables: Vec<Arc<Table>>,
-    checkpoint_id: i64,
-    progress_block: i32,
-) {
+async fn resume(storage: &Storage, checkpoint_id: i64, progress_block: i32) {
     storage
         .resume(&Resume {
-            sequence: Sequence::SharedAcrossChains,
-            tables,
             committed: vec![committed(checkpoint_id, progress_block)],
         })
         .await
@@ -208,47 +209,20 @@ fn committed(checkpoint_id: i64, progress_block: i32) -> ResumedChain {
 /// An account history row: set to `(owner, balance)`, or a delete.
 type Change<'a> = (&'a str, Option<(&'a str, &'a str)>, u64);
 
-pub(crate) fn history(changes: &[Change<'_>]) -> Arena {
-    let mut arena = Arena::new(
-        changes.len(),
-        &[
-            ColumnKind::Text,
-            ColumnKind::Text,
-            ColumnKind::Text,
-            ColumnKind::U64,
-            ColumnKind::Text,
-        ],
-    )
-    .unwrap();
-    for (row, (id, value, checkpoint)) in changes.iter().enumerate() {
-        arena.set_bytes(0, row, id.as_bytes());
-        match value {
-            Some((owner, balance)) => {
-                arena.set_bytes(1, row, owner.as_bytes());
-                arena.set_bytes(2, row, balance.as_bytes());
-                arena.set_bytes(4, row, b"SET");
-            }
-            None => {
-                arena.mark_null(1, row);
-                arena.mark_null(2, row);
-                arena.set_bytes(4, row, b"DELETE");
-            }
-        }
-        arena.set_u64(3, row, *checkpoint);
-    }
-    arena
-        .seal_unlent(
-            &[
-                "id",
-                "owner",
-                "balance",
-                "envio_checkpoint_id",
-                "envio_change",
-            ]
-            .map(str::to_string),
-        )
-        .unwrap();
-    arena
+pub(crate) fn history(entity: &Arc<Entity>, changes: &[Change<'_>]) -> ChangeSet {
+    let values = changes
+        .iter()
+        .map(|(id, value, _)| value.map(|(owner, balance)| [Some(*id), Some(owner), Some(balance)]))
+        .collect::<Vec<_>>();
+    let staged = changes
+        .iter()
+        .zip(&values)
+        .map(|((id, _, checkpoint), value)| match value {
+            Some(value) => Staged::Set(value, *checkpoint as i64),
+            None => Staged::Delete(id, *checkpoint as i64),
+        })
+        .collect::<Vec<_>>();
+    change_set(entity.clone(), None, true, &staged)
 }
 
 fn checkpoints(entries: &[(i64, i64, i32)]) -> Checkpoints {
@@ -266,7 +240,7 @@ fn checkpoints(entries: &[(i64, i64, i32)]) -> Checkpoints {
 }
 
 fn batch(
-    table: &Arc<Table>,
+    table: &Arc<Entity>,
     changes: &[Change<'_>],
     checkpoint_entries: &[(i64, i64, i32)],
     frontier: (i64, i64),
@@ -279,12 +253,7 @@ fn batch(
             events_processed: checkpoint_entries.len() as f64,
             source_block: 1000,
         }],
-        entities: vec![EntityWrite {
-            table: table.clone(),
-            chain_id: None,
-            postgres: None,
-            clickhouse: Some(history(changes)),
-        }],
+        changes: vec![Arc::new(history(table, changes))],
         frontier: Frontier {
             chain_ids: vec![frontier.0],
             checkpoint_ids: vec![frontier.1],
@@ -318,7 +287,7 @@ async fn write(live: &Live, batch: Batch) {
 }
 
 async fn write_on(storage: &Storage, batch: Batch) {
-    if let Err(error) = storage.write_batch(batch, Handoff::default()).await {
+    if let Err(error) = storage.write_batch(&batch, Handoff::default()).await {
         match error {
             WriteError::Failed(failure) => panic!("{}: {:#}", failure.context, failure.error),
             WriteError::Gated => panic!("gated"),
@@ -384,12 +353,17 @@ fn row(cells: &[&str]) -> Vec<String> {
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_ttl_never_expires_a_delete_before_the_set_it_cancels() {
-    let live = Live::new();
-    let mut input = account_input();
-    input.ttl =
-        Some("if(owner = '', toDateTime('2000-01-01'), toDateTime('2100-01-01'))".to_string());
-    let account = live.table(input);
-    initialize(&live, vec![account.clone()]).await;
+    let live = Live::with(vec![Entity {
+        clickhouse: Some(ClickHouseOptions {
+            ttl: Some(
+                "if(owner = '', toDateTime('2000-01-01'), toDateTime('2100-01-01'))".to_string(),
+            ),
+            ..ClickHouseOptions::default()
+        }),
+        ..account_input()
+    }]);
+    let account = live.account();
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -480,7 +454,7 @@ async fn a_read_that_fails_partway_is_an_error() {
 async fn the_instance_reads_back_as_it_was_initialized() {
     let live = Live::new();
     let before = live.storage.instance().await.unwrap();
-    initialize(&live, vec![live.account()]).await;
+    initialize(&live).await;
 
     let after = live.storage.instance().await.unwrap();
     live.drop_database().await;
@@ -492,7 +466,7 @@ async fn the_instance_reads_back_as_it_was_initialized() {
 async fn a_load_reads_each_entitys_latest_row() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -559,7 +533,7 @@ async fn a_load_reads_each_entitys_latest_row() {
 async fn a_load_of_more_ids_than_a_statement_holds_reads_them_all() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     let ids = (0..6000)
         .map(|index| format!("0x{index:040x}"))
         .collect::<Vec<_>>();
@@ -597,7 +571,7 @@ async fn a_load_of_more_ids_than_a_statement_holds_reads_them_all() {
 async fn a_load_spelling_a_long_list_of_numbers_reads_what_it_names() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -653,12 +627,12 @@ async fn a_load_spelling_a_long_list_of_numbers_reads_what_it_names() {
 #[tokio::test]
 #[ignore = "needs a ClickHouse server"]
 async fn a_load_spelling_a_long_list_of_timestamps_reads_what_it_names() {
-    let live = Live::new();
-    let event = live.table(entity_input(
+    let live = Live::with(vec![entity_input(
         "Event",
         vec![column("id", "String"), column("at", "Date")],
-    ));
-    initialize(&live, vec![event.clone()]).await;
+    )]);
+    let event = live.entity("Event");
+    initialize(&live).await;
 
     let at = Condition {
         operator: Operator::In,
@@ -686,7 +660,7 @@ async fn a_load_spelling_a_long_list_of_timestamps_reads_what_it_names() {
 async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -709,7 +683,7 @@ async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() 
     ));
     until_running(&live, &query_id).await;
 
-    resume(&live.another_process(), vec![account], 1, 10).await;
+    resume(&live.another_process(), 1, 10).await;
     let _ = late.await;
     let landed = live
         .execute(format!(
@@ -728,8 +702,7 @@ async fn an_insert_a_dead_process_left_running_lands_nothing_after_the_resume() 
 #[ignore = "needs a ClickHouse server"]
 async fn resuming_one_chain_leaves_another_chains_insert_running() {
     let live = Live::new();
-    let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     let query_id = format!(
         "{}sibling",
         super::client::insert_tag(&live.database, &[137])
@@ -745,7 +718,7 @@ async fn resuming_one_chain_leaves_another_chains_insert_running() {
     ));
     until_running(&live, &query_id).await;
 
-    resume(&live.another_process(), vec![account], 0, 0).await;
+    resume(&live.another_process(), 0, 0).await;
     let succeeded = sibling.await.unwrap();
 
     live.drop_database().await;
@@ -759,8 +732,7 @@ async fn resuming_one_chain_leaves_another_chains_insert_running() {
 #[ignore = "needs a ClickHouse server"]
 async fn resuming_leaves_another_databases_insert_running() {
     let live = Live::new();
-    let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     let query_id = format!(
         "{}other",
         super::client::insert_tag(&format!("{}:v2", live.database), &[1])
@@ -776,7 +748,7 @@ async fn resuming_leaves_another_databases_insert_running() {
     ));
     until_running(&live, &query_id).await;
 
-    resume(&live.another_process(), vec![account], 0, 0).await;
+    resume(&live.another_process(), 0, 0).await;
     let succeeded = other.await.unwrap();
 
     live.drop_database().await;
@@ -822,7 +794,7 @@ async fn send_as(query_id: String, statement: String) -> bool {
 async fn a_commit_landing_after_the_next_resume_claims_nothing() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -836,13 +808,14 @@ async fn a_commit_landing_after_the_next_resume_claims_nothing() {
 
     let (landed, rows_landed) = tokio::sync::oneshot::channel();
     let (commit, may_commit) = tokio::sync::oneshot::channel();
+    let staged = batch(
+        &account,
+        &[("a", Some(("alice", "2")), 2)],
+        &[(2, 1, 20)],
+        (1, 2),
+    );
     let dying = live.storage.write_batch(
-        batch(
-            &account,
-            &[("a", Some(("alice", "2")), 2)],
-            &[(2, 1, 20)],
-            (1, 2),
-        ),
+        &staged,
         Handoff {
             landed: Some(landed),
             commit: Some(Box::pin(async move { may_commit.await.unwrap_or(false) })),
@@ -851,7 +824,7 @@ async fn a_commit_landing_after_the_next_resume_claims_nothing() {
     );
     let next = async {
         rows_landed.await.unwrap();
-        resume(&live.another_process(), vec![account.clone()], 1, 10).await;
+        resume(&live.another_process(), 1, 10).await;
         let resumed = live.frontier().await;
         commit.send(true).unwrap();
         resumed
@@ -899,7 +872,7 @@ async fn a_reset_leaves_a_database_with_someone_elses_tables_alone() {
 async fn a_replayed_insert_lands_where_the_engine_deduplicates() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     live.execute(format!(
         "ALTER TABLE `{}`.`envio_history_Account` MODIFY SETTING \
          non_replicated_deduplication_window = 100",
@@ -929,7 +902,7 @@ async fn a_replayed_insert_lands_where_the_engine_deduplicates() {
 async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -940,15 +913,16 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
         ),
     )
     .await;
+    let staged = batch(
+        &account,
+        &[("a", Some(("alice", "2")), 2)],
+        &[(2, 1, 20)],
+        (1, 2),
+    );
     let uncommitted = live
         .storage
         .write_batch(
-            batch(
-                &account,
-                &[("a", Some(("alice", "2")), 2)],
-                &[(2, 1, 20)],
-                (1, 2),
-            ),
+            &staged,
             Handoff {
                 landed: None,
                 commit: Some(Box::pin(async { false })),
@@ -962,7 +936,7 @@ async fn a_resume_trims_what_an_uncommitted_write_left_behind() {
     );
 
     let before = live.load(&account, eq("id", "a")).await;
-    resume(&live.storage, vec![account.clone()], 1, 10).await;
+    resume(&live.storage, 1, 10).await;
     let (history, checkpoints) = (
         live.count("envio_history_Account").await,
         live.count("envio_checkpoints").await,
@@ -999,10 +973,9 @@ async fn initializing_takes_over_a_database_an_older_envio_built() {
     ))
     .await;
 
-    let account = live.account();
     let initialized = live
         .storage
-        .initialize(&initialize_input(vec![account]))
+        .initialize(&initialize_input())
         .await
         .map_err(|error| format!("{error:#}"));
     let frontier = live.frontier().await;
@@ -1018,17 +991,18 @@ async fn initializing_takes_over_a_database_an_older_envio_built() {
 async fn a_commit_landing_after_the_next_initialize_claims_nothing() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
 
     let (landed, rows_landed) = tokio::sync::oneshot::channel();
     let (commit, may_commit) = tokio::sync::oneshot::channel();
+    let staged = batch(
+        &account,
+        &[("a", Some(("alice", "1")), 1)],
+        &[(1, 1, 10)],
+        (1, 1),
+    );
     let dying = live.storage.write_batch(
-        batch(
-            &account,
-            &[("a", Some(("alice", "1")), 1)],
-            &[(1, 1, 10)],
-            (1, 1),
-        ),
+        &staged,
         Handoff {
             landed: Some(landed),
             commit: Some(Box::pin(async move { may_commit.await.unwrap_or(false) })),
@@ -1039,9 +1013,10 @@ async fn a_commit_landing_after_the_next_initialize_claims_nothing() {
         rows_landed.await.unwrap();
         let next = Live {
             storage: live.another_process(),
+            schema: live.schema.clone(),
             database: live.database.clone(),
         };
-        initialize(&next, vec![next.account()]).await;
+        initialize(&next).await;
         commit.send(true).unwrap();
     };
     let (dying, ()) = tokio::join!(dying, next);
@@ -1058,7 +1033,7 @@ async fn a_commit_landing_after_the_next_initialize_claims_nothing() {
 async fn a_resume_trims_back_to_what_postgres_committed() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -1080,7 +1055,7 @@ async fn a_resume_trims_back_to_what_postgres_committed() {
     )
     .await;
 
-    resume(&live.storage, vec![account.clone()], 1, 10).await;
+    resume(&live.storage, 1, 10).await;
     let loaded = live.load(&account, eq("id", "a")).await;
     let (history, frontier) = (
         live.count("envio_history_Account").await,
@@ -1105,7 +1080,7 @@ async fn a_resume_trims_back_to_what_postgres_committed() {
 async fn a_resume_publishes_a_batch_postgres_committed_and_clickhouse_never_recorded() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -1116,15 +1091,16 @@ async fn a_resume_publishes_a_batch_postgres_committed_and_clickhouse_never_reco
         ),
     )
     .await;
+    let staged = batch(
+        &account,
+        &[("a", Some(("alice", "2")), 2)],
+        &[(2, 1, 20)],
+        (1, 2),
+    );
     let unpublished = live
         .storage
         .write_batch(
-            batch(
-                &account,
-                &[("a", Some(("alice", "2")), 2)],
-                &[(2, 1, 20)],
-                (1, 2),
-            ),
+            &staged,
             Handoff {
                 landed: None,
                 commit: Some(Box::pin(async { false })),
@@ -1134,7 +1110,7 @@ async fn a_resume_publishes_a_batch_postgres_committed_and_clickhouse_never_reco
         .await;
 
     let resumed = live.another_process();
-    resume(&resumed, vec![account.clone()], 2, 20).await;
+    resume(&resumed, 2, 20).await;
     let loaded = rows(
         &resumed
             .load_where(&account, vec![eq("id", "a")])
@@ -1159,7 +1135,7 @@ async fn a_resume_publishes_a_batch_postgres_committed_and_clickhouse_never_reco
 async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -1174,8 +1150,6 @@ async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
     let resumed = live
         .storage
         .resume(&Resume {
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![account],
             committed: vec![committed(2, 20)],
         })
         .await
@@ -1203,7 +1177,7 @@ async fn a_resume_refuses_a_database_missing_a_batch_postgres_committed() {
 async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
     let live = Live::new();
     let account = live.account();
-    initialize(&live, vec![account.clone()]).await;
+    initialize(&live).await;
     write(
         &live,
         batch(
@@ -1303,13 +1277,14 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
     );
 }
 
-fn replica(url: &str, database: &str) -> Storage {
+fn replica(url: &str, database: &str, schema: &Arc<Schema>) -> Storage {
     store_on(
         Connection {
             url: url.to_string(),
             ..connection(database)
         },
         true,
+        schema.clone(),
     )
 }
 
@@ -1320,18 +1295,17 @@ fn replica(url: &str, database: &str) -> Storage {
 #[ignore = "needs a ClickHouse server"]
 async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
     let [first, second] = test_servers::clickhouse().replicas.clone();
-    let database = Live::new().database;
-    let (writer, resumer) = (replica(&first, &database), replica(&second, &database));
-    let (written, resumed) = (
-        table_on(&writer, account_input()),
-        table_on(&resumer, account_input()),
+    let Live {
+        database, schema, ..
+    } = Live::new();
+    let (writer, resumer) = (
+        replica(&first, &database, &schema),
+        replica(&second, &database, &schema),
     );
+    let (written, resumed) = (schema.entities[0].clone(), schema.entities[0].clone());
     let history = format!("`{database}`.`envio_history_Account`");
 
-    writer
-        .initialize(&initialize_input(vec![written.clone()]))
-        .await
-        .unwrap();
+    writer.initialize(&initialize_input()).await.unwrap();
     write_on(
         &writer,
         batch(
@@ -1354,14 +1328,15 @@ async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
         ),
     )
     .await;
+    let staged = batch(
+        &written,
+        &[("a", Some(("alice", "3")), 3)],
+        &[(3, 1, 30)],
+        (1, 3),
+    );
     let uncommitted = writer
         .write_batch(
-            batch(
-                &written,
-                &[("a", Some(("alice", "3")), 3)],
-                &[(3, 1, 30)],
-                (1, 3),
-            ),
+            &staged,
             Handoff {
                 landed: None,
                 commit: Some(Box::pin(async { false })),
@@ -1377,7 +1352,7 @@ async fn a_resume_on_a_lagging_replica_waits_for_what_the_others_took() {
             execute_on(&second, format!("SYSTEM START FETCHES {history}")).await;
         })
     };
-    resume(&resumer, vec![resumed.clone()], 2, 20).await;
+    resume(&resumer, 2, 20).await;
     let loaded = rows(
         &resumer
             .load_where(&resumed, vec![eq("id", "a")])

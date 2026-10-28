@@ -44,20 +44,6 @@ type Token @storage(clickhouse: {orderBy: ["id"]}) {
   Drop the \`orderBy\`, or add the columns to sort by alongside \`id\`.`)
   })
 
-  it("Sorts by id alongside another column", t => {
-    let config = parse(`
-type Token @storage(clickhouse: {orderBy: ["id", "timestamp"]}) {
-  id: ID!
-  timestamp: Timestamp!
-}
-`)
-
-    t.expect(
-      ClickHouse.entityTable(config.userEntitiesByName->Dict.getUnsafe("Token")).orderBy,
-      ~message="id leads a sorting key that narrows further",
-    ).toEqual(Some(["id", "timestamp"]))
-  })
-
   it("Rejects an empty list, which would sort by nothing at all", t => {
     t.expect(
       parseError(`
@@ -159,14 +145,4 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
     )
   })
 
-  it("Sorts by a BigInt that fits a Decimal", t => {
-    let config = parse(schema("BigInt", " @config(precision: 38)"))
-
-    let spec = ClickHouse.entityTable(config.userEntitiesByName->Dict.getUnsafe("Token"))
-
-    t.expect(
-      (spec.columns->Array.map(column => (column.fieldType, column.precision)), spec.orderBy),
-      ~message="a bounded BigInt stores as a Decimal, which sorts numerically",
-    ).toEqual(([("String", None), ("BigInt", Some(38))], Some(["amount"])))
-  })
 })

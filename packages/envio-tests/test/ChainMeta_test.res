@@ -41,7 +41,6 @@ let makeStore = () => {
       ~batch as _,
       ~rollback as _,
       ~config as _,
-      ~allEntities as _,
       ~updatedEffectsCache as _,
       ~updatedEntities as _,
       ~registeredAddresses as _,

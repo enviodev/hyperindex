@@ -10,16 +10,6 @@ type kind =
   | @as(3) Text
   | @as(4) Bytes
 
-let kindOfOrdinal = ordinal =>
-  switch ordinal {
-  | 0 => F64
-  | 1 => U64
-  | 2 => I64
-  | 3 => Text
-  | 4 => Bytes
-  | unknown => JsError.throwWithMessage(`Unknown staged column kind ${unknown->Int.toString}`)
-  }
-
 // The replacer closes over nothing but the column's name, so it is built once
 // with the column rather than once per column per batch.
 type column = {name: string, kind: kind, isNullable: bool, replacer?: JSON.replacer}
@@ -28,7 +18,7 @@ type begun = {handle: int, buffers: array<ArrayBuffer.t>}
 
 // What the addon exposes, so this module stays free of the storage's own API.
 type arena = {
-  beginStage: (~table: int, ~rows: int) => begun,
+  beginStage: (~rows: int) => begun,
   growStage: (~handle: int, ~column: int, ~needed: int, ~stale: ArrayBuffer.t) => ArrayBuffer.t,
   commitStage: (~handle: int, ~buffers: array<ArrayBuffer.t>) => unit,
   abortStage: (~handle: int, ~buffers: array<ArrayBuffer.t>) => unit,
@@ -79,8 +69,8 @@ type t = {
   builders: array<builder>,
 }
 
-let begin = (arena, ~table, ~rows, ~columns: array<column>) => {
-  let {handle, buffers} = arena.beginStage(~table, ~rows)
+let begin = (arena, ~rows, ~columns: array<column>) => {
+  let {handle, buffers} = arena.beginStage(~rows)
   let slot = ref(0)
   let take = () => {
     let buffer = buffers->Array.getUnsafe(slot.contents)
@@ -275,7 +265,7 @@ let toText = (value: unknown, ~replacer=?) =>
     }
 )
 
-%%private(let isAbsent = (value: unknown) => value === %raw(`undefined`) || value === %raw(`null`))
+let isAbsent = (value: unknown) => value === %raw(`undefined`) || value === %raw(`null`)
 
 // Writes one value of a row the handler set. `undefined`/`null` marks the row's
 // null bit, which a column that accepts NULL stores as such — and which one that
@@ -317,3 +307,32 @@ let commit = stage => {
 }
 
 let abort = stage => stage.arena.abortStage(~handle=stage.handle, ~buffers=stage.buffers)
+
+// How a staged value has to arrive, as the addon declares it for every field:
+// `storage::schema::Encoding`.
+type encoding =
+  | Number
+  | Bool
+  | Date
+  | Text
+  | Digits
+  | Decimal
+  | Document
+  | Bytes
+  | List
+
+type stagedField = {
+  name: string,
+  encoding: encoding,
+  // What a list's elements are encoded as; the field's own for a scalar.
+  element: encoding,
+  isNullable: bool,
+}
+
+let kindOf = (encoding: encoding) =>
+  switch encoding {
+  | Number | Bool | Date => F64
+  | Text | Digits | Decimal | Document | List => Text
+  | Bytes => Bytes
+  }
+

@@ -3,7 +3,6 @@ use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use anyhow::{bail, Result};
-use napi_derive::napi;
 use regex::{Captures, Regex};
 
 use super::ch_type::{ChType, FieldSpec};
@@ -28,7 +27,6 @@ pub struct ColumnSpec {
     pub field: FieldSpec,
 }
 
-#[napi(object)]
 #[derive(Debug, Clone)]
 pub struct SkippingIndexSpec {
     pub name: String,

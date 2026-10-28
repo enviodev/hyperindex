@@ -55,8 +55,8 @@ describe("A chain metadata snapshot from before the indexer was ready", () => {
             state.beforeReady = Some(meta)
             storage.setChainMeta(meta)
           },
-        finalizeBackfill: async (~entities, ~chainIds, ~readyAt) => {
-          await storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+        finalizeBackfill: async (~chainIds, ~readyAt) => {
+          await storage.finalizeBackfill(~chainIds, ~readyAt)
           switch state.beforeReady {
           | Some(meta) =>
             state.done = true

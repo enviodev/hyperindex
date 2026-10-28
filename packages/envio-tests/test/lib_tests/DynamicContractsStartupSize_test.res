@@ -61,7 +61,6 @@ describe("Dynamic contracts startup size", () => {
                 ~ecosystem=Evm,
               )
               let resumed = await storage.resumeInitialState(
-                ~entities=[],
                 ~chainIds=[chainId],
                 ~contractMapping=ContractMapping.empty,
               )
