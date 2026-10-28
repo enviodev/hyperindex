@@ -1,7 +1,7 @@
 open Vitest
 
 // An indexer that finds an existing storage never runs `initialize` — it takes
-// the `resumeInitialState` path instead. The ClickHouse sink learns its table
+// the `resumeInitialState` path instead. ClickHouse learns its table
 // shapes at registration, so anything that only registers during initialize
 // leaves a resumed indexer unable to write a single row.
 
@@ -64,7 +64,7 @@ let feed = async (
   await indexer.getBatchWritePromise()
 }
 
-describe("ClickHouse sink after a resume", () => {
+describe("ClickHouse after a resume", () => {
   scenario->Scenario.it(
     "writes through a restart that resumes the existing storage",
     ~sources=[{chain: 1}],
@@ -109,7 +109,7 @@ describe("ClickHouse sink after a resume", () => {
     },
   )
 
-  // The sink resolves an entity's current row as the one with the highest
+  // ClickHouse resolves an entity's current row as the one with the highest
   // checkpoint id, so a resume has to continue the sequence where the last run
   // left it — a reissued id ranks a new value no higher than the stale one it
   // replaces. Outside the reorg threshold no checkpoint row backs the ids, so

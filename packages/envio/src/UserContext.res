@@ -105,13 +105,20 @@ let rec callEffect = (
   )
 }
 
-// Reads against ClickHouse-only entities have no Postgres table to hit;
-// surface a friendly error instead of letting the SQL layer fail with
-// "relation does not exist".
-let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) =>
+// A TTL drops an entity's rows whenever ClickHouse merges them, so for one kept
+// there alone a read would turn on merge timing rather than on the events.
+let expiresUnread = (entityConfig: Internal.entityConfig) =>
+  !entityConfig.storage.postgres &&
+  entityConfig.storage.clickhouseOptions
+  ->Option.flatMap(options => options.ttl)
+  ->Option.isSome
+
+let throwExpiresUnread = (entityConfig: Internal.entityConfig, op: string) => {
+  let {name} = entityConfig
   JsError.throwWithMessage(
-    `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
+    `context.${name}.${op}() is unavailable: ${name} is kept in ClickHouse alone with a ttl, which drops its rows whenever ClickHouse merges them, so a handler would read it differently from one run to the next. Keep it in Postgres too, with @storage(postgres: true, clickhouse: {...}), or drop the ttl.`,
   )
+}
 
 type entityContext = {
   get: string => promise<option<Internal.entity>>,
@@ -174,12 +181,12 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
     }
   }
 
-  let entityContext: entityContext = if !entityConfig.storage.postgres {
+  let entityContext: entityContext = if entityConfig->expiresUnread {
     {
-      get: _ => throwClickHouseReadOnly(entityConfig, "get"),
-      getWhere: _ => throwClickHouseReadOnly(entityConfig, "getWhere"),
-      getOrThrow: (_, ~message as _=?) => throwClickHouseReadOnly(entityConfig, "getOrThrow"),
-      getOrCreate: _ => throwClickHouseReadOnly(entityConfig, "getOrCreate"),
+      get: _ => throwExpiresUnread(entityConfig, "get"),
+      getWhere: _ => throwExpiresUnread(entityConfig, "getWhere"),
+      getOrThrow: (_, ~message as _=?) => throwExpiresUnread(entityConfig, "getOrThrow"),
+      getOrCreate: _ => throwExpiresUnread(entityConfig, "getOrCreate"),
       set,
       deleteUnsafe,
     }

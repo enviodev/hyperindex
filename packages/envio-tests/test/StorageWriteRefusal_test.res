@@ -43,26 +43,18 @@ let setTally = (~block, ~logIndex=0, ~id, ~count): MockSource.itemMock => {
 // Past what an `integer` column holds. JavaScript has no trouble with it, so
 // the refusal comes from the server.
 let tooLarge = 2147483648.->(Utils.magic: float => int)
+let tooSmall = -2147483649.->(Utils.magic: float => int)
 
-type stored = {tallies: array<tally>, history: int, checkpoints: string, progress: array<int>}
+type stored = {tallies: array<tally>, history: int, checkpoints: int, progress: array<int>}
 
 let read = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
   let tallies: array<tally> = await indexer.query("Tally")
   let history: array<Change.t<tally>> = await indexer.queryHistory("Tally")
-  let checkpoints: array<{
-    "count": string,
-  }> = await sql->Sql.queryForTests(
-    `SELECT count(*)::text AS "count" FROM "${pgSchema}"."envio_checkpoints";`,
-  )
-  let progress: array<{
-    "progress_block": int,
-  }> = await sql->Sql.queryForTests(`SELECT "progress_block" FROM "${pgSchema}"."envio_chains";`)
   {
     tallies: tallies->Array.toSorted((a, b) => String.compare(a.id, b.id)),
     history: history->Array.length,
-    checkpoints: (checkpoints->Array.getUnsafe(0))["count"],
-    progress: progress->Array.map(row => row["progress_block"]),
+    checkpoints: (await indexer.queryCheckpoints())->Array.length,
+    progress: (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
   }
 }
 
@@ -125,8 +117,36 @@ describe("A batch the server refuses", () => {
       )).toEqual((
         Some(true),
         committed,
-        {tallies: [{id: "kept", count: 2}], history: 2, checkpoints: "2", progress: [2]},
+        {tallies: [{id: "kept", count: 2}], history: 2, checkpoints: 2, progress: [2]},
       ))
+    },
+  )
+})
+
+describe("A value below what an integer column holds", () => {
+  let refusal = Scenario.captureRefusal()
+
+  scenario->Scenario.it(
+    "is refused like one above it",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=refusal.onError,
+    async (~t, ~indexer as _, ~source) => {
+      let sourceMock = source(1337)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [setTally(~block=1, ~id="refused", ~count=tooSmall)],
+            latestFetchedBlockNumber: 1,
+          }),
+        },
+      ])
+      let reason = await refusal.awaitRefusalReason()
+
+      t.expect(reason->Option.map(reason => reason->String.includes("out of range"))).toEqual(
+        Some(true),
+      )
     },
   )
 })

@@ -1,9 +1,7 @@
 open Vitest
 
-// Guards the ClickHouse leg against being a silent no-op: the sink is attached
-// by config, so a scenario can run green on it while writing nothing at all.
-// Reading entity state back through ClickHouse is otherwise out of scope — the
-// other scenarios assert through Postgres.
+// Readers outside the indexer query the current-state view, which the indexer's
+// own reads, `indexer.query` included, don't go through.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -33,42 +31,41 @@ type counter = {id: string, count: bigint}
 type counterOps = {set: counter => unit}
 type counterContext = {@as("Counter") counter: counterOps}
 
-describe("Scenario ClickHouse sink", () => {
-  scenario->Scenario.it("mirrors an indexed entity into ClickHouse", ~sources=[{chain: 1}], async (
-    ~t,
-    ~indexer,
-    ~source,
-  ) => {
-    let source = source(1)
-    source.resolveGetHeightOrThrow(10)
+describe("Scenario ClickHouse", () => {
+  scenario->Scenario.it(
+    "serves an indexed entity through the current-state view",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
 
-    await source.expectItemsQueries([
-      {
-        fromBlock: 0,
-        toBlock: Unbounded,
-        reply: Respond({
-          items: [
-            {
-              blockNumber: 5,
-              logIndex: 0,
-              handler: async args => {
-                let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-                context.counter.set({id: "total", count: 42n})
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 5,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => counterContext)
+                  context.counter.set({id: "total", count: 42n})
+                },
               },
-            },
-          ],
-          latestFetchedBlockNumber: 10,
-        }),
-      },
-    ])
-    await indexer.getBatchWritePromise()
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
 
-    // The current-state view the sink builds over its history table, which is
-    // what mirrors the Postgres row.
-    let database = TestClickHouse.currentDatabase()
-    let rows = await TestClickHouse.query(
-      `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
-    )
-    t.expect(rows->String.trim).toEqual(`{"id":"total","count":"42"}`)
-  })
+      let database = TestClickHouse.currentDatabase()
+      let rows = await TestClickHouse.query(
+        `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
+      )
+      t.expect(rows->String.trim).toEqual(`{"id":"total","count":"42"}`)
+    },
+  )
 })
