@@ -44,7 +44,10 @@ type Probe @entity {
   ~files=Dict.fromArray([("abis/Pool.json", abi)]),
   ~mappings=Dict.fromArray([
     ("subgraph.yaml", manifest),
-    ("subgraph.arbitrum.yaml", manifest->String.replace("network: mainnet", "network: arbitrum-one")),
+    (
+      "subgraph.arbitrum.yaml",
+      manifest->String.replace("network: mainnet", "network: arbitrum-one"),
+    ),
     ("abis/Pool.json", abi),
     (
       "package.json",

@@ -38,7 +38,10 @@ let _ = InternalTestIndexer.fromSubgraph(
   ~mappings=Dict.fromArray([
     ("subgraph.template.yaml", template),
     ("config/base.yaml", "network: base\npool: \"0x1111111111111111111111111111111111111111\"\n"),
-    ("config/mainnet.yaml", "network: mainnet\npool: \"0x2222222222222222222222222222222222222222\"\n"),
+    (
+      "config/mainnet.yaml",
+      "network: mainnet\npool: \"0x2222222222222222222222222222222222222222\"\n",
+    ),
     (".env", "ENVIO_SUBGRAPH_NETWORK=base\n"),
     (
       "schema.graphql",
@@ -62,10 +65,7 @@ type Probe @entity {
     ),
     // The repo's own tools, as its install leaves them: they render the
     // script's default network when NETWORK is unset.
-    (
-      "node_modules/.bin/yaml2json",
-      "#!/bin/sh\ncat \"$1\"\n",
-    ),
+    ("node_modules/.bin/yaml2json", "#!/bin/sh\ncat \"$1\"\n"),
     (
       "node_modules/.bin/mustache",
       "#!/bin/sh\nsed -e 's/{{network}}/mainnet/' -e 's/{{pool}}/0x2222222222222222222222222222222222222222/' \"$2\"\n",

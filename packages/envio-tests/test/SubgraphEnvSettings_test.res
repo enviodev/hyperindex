@@ -80,10 +80,7 @@ describe("ENVIO_SUBGRAPH_BATCH_SIZE and ENVIO_SUBGRAPH_BLOCK_LAG", () => {
 
   it("are read from the environment a subgraph is parsed with", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
-      ~env=Dict.fromArray([
-        ("ENVIO_SUBGRAPH_BATCH_SIZE", "9"),
-        ("ENVIO_SUBGRAPH_BLOCK_LAG", "3"),
-      ]),
+      ~env=Dict.fromArray([("ENVIO_SUBGRAPH_BATCH_SIZE", "9"), ("ENVIO_SUBGRAPH_BLOCK_LAG", "3")]),
       ~manifest,
       ~schema,
       ~files=Dict.fromArray([("abis/Clock.json", abi)]),

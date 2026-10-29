@@ -47,10 +47,7 @@ type Probe @entity {
   ]),
   ~mappings=Dict.fromArray([
     ("subgraph.yaml", manifest),
-    (
-      "package.json",
-      `{"name":"oracle-like","scripts":{"codegen":"yarn && graph codegen"}}`,
-    ),
+    ("package.json", `{"name":"oracle-like","scripts":{"codegen":"yarn && graph codegen"}}`),
     // A `yarn` that fails, as one missing or refusing would.
     ("node_modules/.bin/yarn", "#!/bin/sh\necho installing > installed.txt\nexit 1\n"),
     (

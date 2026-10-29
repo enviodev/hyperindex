@@ -46,8 +46,11 @@ let _ = InternalTestIndexer.fromSubgraph(
     ("subgraph.yaml", manifest),
     ("schema.graphql", schema),
     ("abis/Vest.json", abi),
-    ("src/vest.ts", `export function handleVested(event: any): void {}
-`),
+    (
+      "src/vest.ts",
+      `export function handleVested(event: any): void {}
+`,
+    ),
   ]),
   ~test=`
 import { describe, it } from "vitest";

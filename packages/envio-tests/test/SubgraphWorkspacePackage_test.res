@@ -45,10 +45,7 @@ let _ = InternalTestIndexer.fromSubgraph(
   ~files=Dict.fromArray([("./abis/Factory.json", abi)]),
   ~projectDir="subgraphs/exchange",
   ~mappings=Dict.fromArray([
-    (
-      "package.json",
-      `{"private": true, "workspaces": ["packages/*", "subgraphs/*"]}`,
-    ),
+    ("package.json", `{"private": true, "workspaces": ["packages/*", "subgraphs/*"]}`),
     (
       "packages/constants/package.json",
       `{"name": "@envio-fixture/sushi-const", "main": "index.ts"}`,

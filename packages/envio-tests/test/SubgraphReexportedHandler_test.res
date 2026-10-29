@@ -93,8 +93,11 @@ export function handleValidatorAdded(event: ValidatorAddedEvent): void {
 }
 `,
     ),
-    ("src/mapping.ts", `export { handleValidatorAdded } from "./handlers/validator";
-`),
+    (
+      "src/mapping.ts",
+      `export { handleValidatorAdded } from "./handlers/validator";
+`,
+    ),
   ]),
   ~test=`
 import { describe, it } from "vitest";

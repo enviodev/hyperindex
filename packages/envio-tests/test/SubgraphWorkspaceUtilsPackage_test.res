@@ -55,8 +55,11 @@ let _ = InternalTestIndexer.fromSubgraph(
       "packages/utils/package.json",
       `{"name":"@enzymefinance/subgraph-utils","version":"0.0.0","private":true,"main":"index.ts"}`,
     ),
-    ("packages/utils/index.ts", `export * from "./utils/id";
-`),
+    (
+      "packages/utils/index.ts",
+      `export * from "./utils/id";
+`,
+    ),
     (
       "packages/utils/utils/id.ts",
       `

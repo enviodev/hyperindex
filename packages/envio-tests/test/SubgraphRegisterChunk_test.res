@@ -42,7 +42,11 @@ describe("cutting a response at its register limit", () => {
   it("counts only the items that have a register pass", t => {
     let items = Array.concat(
       Array.make(~length=50, item(~block=1, ~registers=false)),
-      [item(~block=2, ~registers=true), item(~block=3, ~registers=true), item(~block=4, ~registers=true)],
+      [
+        item(~block=2, ~registers=true),
+        item(~block=3, ~registers=true),
+        item(~block=4, ~registers=true),
+      ],
     )
     let (kept, latest) = items->ChainFetching.cutAtRegisterLimit(~latestFetchedBlock=100, ~limit=2)
     t.expect((kept->Array.length, latest)).toEqual((52, 3))
@@ -65,6 +69,12 @@ describe("cutting a response at its register limit", () => {
     Env.subgraphMode := false
     let handlerRun = ChainFetching.registerChunkLimit()
     Env.subgraphMode := before
-    t.expect((unknown, free, dozen, huge, handlerRun)).toEqual((Some(100), None, Some(300), Some(100), None))
+    t.expect((unknown, free, dozen, huge, handlerRun)).toEqual((
+      Some(100),
+      None,
+      Some(300),
+      Some(100),
+      None,
+    ))
   })
 })

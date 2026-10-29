@@ -70,8 +70,11 @@ export default class CodegenCommand {
 }
 `,
     ),
-    ("src/pool.ts", `export { handleCreated } from "./handlers/created";
-`),
+    (
+      "src/pool.ts",
+      `export { handleCreated } from "./handlers/created";
+`,
+    ),
     // Imports its generated code from where \`graph codegen -o src/types\` put it.
     (
       "src/handlers/created.ts",

@@ -42,8 +42,14 @@ type Withdrawal @entity {
     ),
   ]),
   ~mappings=Dict.fromArray([
-    ("node_modules/uuidv4/package.json", `{"name":"uuidv4","version":"6.2.13","main":"build/lib/uuidv4.js"}`),
-    ("node_modules/uuidv4/build/lib/uuidv4.js", `exports.uuid = () => Math.random().toString(16).slice(2);`),
+    (
+      "node_modules/uuidv4/package.json",
+      `{"name":"uuidv4","version":"6.2.13","main":"build/lib/uuidv4.js"}`,
+    ),
+    (
+      "node_modules/uuidv4/build/lib/uuidv4.js",
+      `exports.uuid = () => Math.random().toString(16).slice(2);`,
+    ),
     (
       "src/auction.ts",
       `
