@@ -11,8 +11,11 @@ type t = {
   random: unit => float,
 }
 
+// Monotonic: every reading is only ever compared with another, and a wall
+// clock corrected mid-run would make a connection look like it served for
+// minutes, or a benched source look recovered.
 let real: t = {
-  now: () => Date.now(),
+  now: Performance.now,
   setTimeout: (~label as _, callback, millis) =>
     setTimeout(callback, millis)->(Utils.magic: timeoutId => timer),
   clearTimeout: timer => clearTimeout(timer->(Utils.magic: timer => timeoutId)),
