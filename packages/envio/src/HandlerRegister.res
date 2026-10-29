@@ -697,12 +697,14 @@ type onBlockWhereArgs = {chain: unknown}
 let registerOnBlock = (
   ~name: string,
   ~where: unknown,
+  ~fields: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => {
   withRegistration(registration => {
     let config = registration.config
     let ecosystem = config.ecosystem
+    let blockFieldMask = EventConfigBuilder.resolveOnBlockFieldMask(fields, ~name, ~ecosystem)
     let chainsDict = getChainsObject(config)
     let logger = registration.logger->Logger.withFields({"onBlock": name})
 
@@ -790,6 +792,7 @@ let registerOnBlock = (
               interval: range._every,
               chainId,
               handler,
+              blockFieldMask,
             }: Internal.onBlockRegistration
           ),
         )

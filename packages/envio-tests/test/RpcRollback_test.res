@@ -145,7 +145,7 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
   source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet=sourceAddressStore->AddressStore.makeSet(
@@ -155,6 +155,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
     ~partitionId="0",
     ~selection={
       dependsOnAddresses: true,
+      onBlockRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=None,

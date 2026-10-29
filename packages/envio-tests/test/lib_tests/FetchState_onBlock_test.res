@@ -26,6 +26,7 @@ let makeOnBlockRegistration = (
   endBlock,
   interval,
   handler: Utils.magic("mock handler"),
+  blockFieldMask: None,
 }
 
 let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBlockRegistrations) => {

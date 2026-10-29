@@ -218,10 +218,18 @@ type pendingItemsQuery = {
 // Non-enumerable on the query, so a whole-value `toEqual` snapshot of the
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
-@get external includeAllBlocks: pendingItemsQuery => bool = "includeAllBlocks"
+@get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
+
+// A block the chain has, for the block handlers of the query's selection that
+// run on it. Its number, timestamp and hash are those of `itemMock`'s block.
+type blockMock = {
+  blockNumber: int,
+  blockFields?: dict<unknown>,
+}
 
 type itemsResponse = {
   items: array<itemMock>,
+  blocks?: array<blockMock>,
   // Defaults to the query's toBlock, or its fromBlock when unbounded.
   latestFetchedBlockNumber?: int,
   latestFetchedBlockHash?: string,
@@ -667,8 +675,10 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~knownHeight,
+    ~selection: FetchState.selection,
   ): Source.blockRangeFetchResponse => {
     let items = response.items
+    let blocks = response.blocks->Option.getOr([])
     let latestFetchedBlockNumber =
       response.latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
@@ -719,12 +729,15 @@ let make = (
     // from, so those blocks carry a hash and a timestamp too. Without them the
     // store only ever learns the range's seam and end, and reorg detection
     // never sees the blocks events landed on.
-    items->Array.forEach(item => {
-      if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
+    Array.concat(
+      items->Array.map(item => item.blockNumber),
+      blocks->Array.map(block => block.blockNumber),
+    )->Array.forEach(blockNumber => {
+      if !(observedBlocks->Array.some(b => b.blockNumber === blockNumber)) {
         observedBlocks->Array.push({
-          blockNumber: item.blockNumber,
-          blockHash: mockBlockHash(item.blockNumber),
-          blockTimestamp: item.blockNumber,
+          blockNumber,
+          blockHash: mockBlockHash(blockNumber),
+          blockTimestamp: blockNumber,
         })
       }
     })
@@ -735,7 +748,8 @@ let make = (
     })
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
-      parsedQueueItems: items->Array.flatMap(item => {
+      parsedQueueItems: items
+      ->Array.flatMap(item => {
         let registrations = switch item.event {
         | None => [
             state.onEventRegistrationRef.contents->Option.getOrThrow(
@@ -761,7 +775,24 @@ let make = (
           }
         }
         registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
-      }),
+      })
+      ->Array.concat(
+        blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
+          selection.onBlockRegistrations
+          ->Array.filter(reg => reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0))
+          ->Array.map(onBlockRegistration => Internal.Block({
+            onBlockRegistration,
+            blockNumber,
+            block: Dict.fromArray([
+              ("number", blockNumber->(Utils.magic: int => unknown)),
+              ("timestamp", blockNumber->(Utils.magic: int => unknown)),
+              ("hash", mockBlockHash(blockNumber)->(Utils.magic: string => unknown)),
+            ])
+            ->Dict.assign(blockFields->Option.getOr(Dict.make()))
+            ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+          }))
+        ),
+      ),
       transactionStore: None,
       blockStore: responseBlockStore,
       latestFetchedBlockNumber,
@@ -1005,10 +1036,10 @@ let make = (
           ~fromBlock,
           ~toBlock,
           ~addressSet,
-          ~includeAllBlocks,
+          ~reorgableFrom,
           ~knownHeight,
           ~partitionId,
-          ~selection as _,
+          ~selection,
           ~itemsTarget as _,
           ~retry,
           ~logger as _,
@@ -1045,7 +1076,13 @@ let make = (
             let queryControl = {
               respond: response => {
                 // Built first, so a reply that can't be built leaves the query pending.
-                let built = makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight)
+                let built = makeItemsResponse(
+                  response,
+                  ~fromBlock,
+                  ~toBlock,
+                  ~knownHeight,
+                  ~selection,
+                )
                 settle()
                 resolve(built)
               },
@@ -1061,8 +1098,8 @@ let make = (
               {enumerable: false, value: addresses},
             )
             ->Utils.Object.definePropertyWithValue(
-              "includeAllBlocks",
-              {enumerable: false, value: includeAllBlocks},
+              "reorgableFrom",
+              {enumerable: false, value: reorgableFrom},
             )
             ->Utils.Object.definePropertyWithValue(
               "__control",
