@@ -50,11 +50,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async () => {});
 
 // The default cross-chain Counter keeps this on the global rollback path, where
 // the sibling chain is rolled back along with the reorg chain.
-let scenario = Scenario.make(
-  ~configYaml=configYaml(~name="sibling-rollback"),
-  ~schema,
-  ~handlers,
-)
+let scenario = Scenario.make(~configYaml=configYaml(~name="sibling-rollback"), ~schema, ~handlers)
 
 // The same incident with a per-chain schema, where the rollback stays isolated
 // to the reorg chain: the sibling keeps its progress, and must still carry on
