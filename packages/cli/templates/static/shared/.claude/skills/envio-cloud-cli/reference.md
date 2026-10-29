@@ -78,11 +78,11 @@ Deployment commands take `<indexer> <commit> [org]`; most others take `<indexer>
 - **Auth and context:** `login [--token <t>]`, `logout`, `token`, `config set-org|set-indexer|get-context|clear`
 - **Repos:** `repos [-o json]` (connected repos, with their indexers; JSON is a bare list)
 - **Indexers:** `indexer list [--org <o>]`, `indexer get`, `indexer add`, `indexer commits [--limit <n>]`, `indexer settings get|set`, `indexer env list|set|delete|import`, `indexer security ...`, `indexer delete --yes`
-- **Deployments:** `deployment deploy`, `status`, `logs [--build] [--level <l>] [--since <d>] [--limit <n>] [--follow]`, `metrics`, `endpoint` (bare URL; exit 2 before the deployment is scheduled), `info` (cache, DB exposure), `tags list|set|remove`, `promote --yes`, `restart --yes`, `delete --yes`
+- **Deployments:** `deployment deploy`, `status [--watch-till-synced]`, `logs [--build] [--level <l>] [--since <d>] [--limit <n>] [--follow]`, `endpoint` (bare URL; exit 2 before the deployment is scheduled), `info` (cache, DB exposure), `tags list|set|remove`, `promote --yes`, `restart --yes`, `delete --yes`
 
 ## Scripting
 
 - `-o json` prints `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`. Informational lines go to stderr, so don't merge stderr into JSON you parse (`2>&1`). Check the exit code first: 0 success, 1 user error, 2 server error. Some errors print only to stderr.
 - `indexer get -o json` → `data.deployments[]` with `commit_hash`, `prod_status` (`none`, `pending`, `prod`) and `gql_endpoint`. For an indexer that doesn't exist it returns `{"ok": true}` with no `data`.
-- `deployment status -o json` → one entry per chain with `block_height`, `latest_processed_block` and `timestamp_caught_up_to_head_or_endblock`. An empty list means no metrics yet.
+- `deployment status -o json` → one entry per chain with `block_height`, `latest_processed_block` and `is_ready`. An empty list means no progress yet.
 - Commands that ask for confirmation (`add`, `deploy`, `promote`, `restart`, `delete`, `security api-key ...`) take `--yes`. Without an answer they're cancelled and do nothing.

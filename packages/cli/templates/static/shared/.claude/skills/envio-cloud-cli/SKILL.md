@@ -144,9 +144,9 @@ It prints the commit's status as it changes. `--deploy` runs `deployment deploy`
 node "$CLOUD" wait-synced "$IDX" "$C" "$ORG"
 ```
 
-It prints per-chain progress, and once every chain has caught up it prints the deployment's GraphQL URL and checks that it answers. On exit 75, run it again. Builds take a few minutes, with a 30-minute limit; sync time depends on the start block and event volume. No progress after two rounds → [4. Debug a deployment](#4-debug-a-deployment).
+It prints per-chain progress, and once every chain is ready it prints the deployment's GraphQL URL and checks that it answers. On exit 75, run it again. Builds take a few minutes, with a 30-minute limit; sync time depends on the start block and event volume. No progress after two rounds → [4. Debug a deployment](#4-debug-a-deployment).
 
-Prefer `wait-synced` over `--watch-till-synced` and `metrics --watch` in an agent session: those don't time out.
+Prefer `wait-synced` over `deployment status --watch-till-synced` in an agent session: that doesn't time out.
 
 **3d. Verify the data.** Query one real entity on the URL and compare it with a local run when you have one. When a browser app on another origin will call it, check CORS:
 
@@ -177,7 +177,7 @@ npx -y envio-cloud indexer commits "$IDX" "$ORG" -o json                       #
 npx -y envio-cloud indexer get "$IDX" "$ORG"                                   # which deployments exist
 npx -y envio-cloud deployment logs "$IDX" "$C" "$ORG" --build --level error    # build failed?
 npx -y envio-cloud deployment logs "$IDX" "$C" "$ORG" --level error,warn --since 1h
-npx -y envio-cloud deployment metrics "$IDX" "$C" "$ORG"                        # per-chain progress
+npx -y envio-cloud deployment status "$IDX" "$C" "$ORG"                         # per-chain progress
 ```
 
 | Symptom | Cause | Fix |

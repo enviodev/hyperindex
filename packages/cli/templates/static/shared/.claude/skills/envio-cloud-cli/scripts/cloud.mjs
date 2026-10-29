@@ -181,15 +181,14 @@ async function waitCommit([indexer, commit, org], flags) {
   }
 }
 
-// A chain is synced when the indexer says it's ready. Before it knows the chain
-// head, block_height is 0, so the block comparison only counts once it's set.
+// A chain is synced once the indexer marks it ready. envio-cloud 1.0.0 has no
+// is_ready, but its caught-up timestamp is the same ready mark.
 function chainLine(c) {
-  const ready = c.is_ready ?? Boolean(c.timestamp_caught_up_to_head_or_endblock || c.has_processed_to_end_block);
+  const ready = c.is_ready ?? Boolean(c.timestamp_caught_up_to_head_or_endblock);
   const height = Number(c.block_height);
   const processed = Number(c.latest_processed_block);
-  const caughtUp = ready || (height > 0 && processed >= height);
   const progress = height > 0 ? `${processed}/${height}` : `${processed}/? (chain head not known yet)`;
-  return { caughtUp, text: `chain ${c.chain_id}: ${progress}${caughtUp ? " (caught up)" : ""}` };
+  return { ready, text: `chain ${c.chain_id}: ${progress}${ready ? " (ready)" : ""}` };
 }
 
 async function checkEndpoint(indexer, commit, org) {
@@ -228,7 +227,6 @@ async function waitSynced([indexer, commit, org], flags) {
     if (error) failOnAuth(error);
     if (error?.includes("_meta")) {
       console.log(error);
-      console.log(`Progress without _meta: npx -y envio-cloud deployment metrics ${indexer} ${commit} ${org}`);
       return 1;
     }
     const chains = Array.isArray(data) ? data.map(chainLine) : [];
@@ -236,7 +234,7 @@ async function waitSynced([indexer, commit, org], flags) {
       console.log(error ? `No sync metrics yet: ${error}` : "No sync metrics yet (still building?)");
     } else {
       console.log(chains.map((c) => c.text).join("\n"));
-      if (chains.every((c) => c.caughtUp)) {
+      if (chains.every((c) => c.ready)) {
         console.log("Synced.");
         await checkEndpoint(indexer, commit, org);
         return 0;
