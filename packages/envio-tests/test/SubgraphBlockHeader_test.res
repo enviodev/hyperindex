@@ -1,8 +1,8 @@
 // `block.hash` and `block.parentHash` in a block handler. Live against
-// HyperSync, like SubgraphBlockHandler_test: the header is fetched in the same
-// batched query for every block of a batch, only from below the chain's reorg
-// window. A handler that reads just the timestamp keeps
-// its narrow query and doesn't hold its chain back.
+// HyperSync, like SubgraphBlockHandler_test: a data source's block handler
+// selects the header fields its mapping reads, so the blocks come from the
+// chain's own source with its events, under the same reorg guard, rather than
+// from a query of their own after the batch.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.8
@@ -90,7 +90,7 @@ beforeAll(() => {
 });
 
 describe("block.hash in a block handler", () => {
-  it("reads the header of every block from one batched HyperSync query", async (t) => {
+  it("reads the header of every block from the chain's own source", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({
@@ -119,7 +119,7 @@ describe("block.hash in a block handler", () => {
         timestamp: 0x6558ea47n,
       },
       linked: true,
-      headerQueries: 1,
+      headerQueries: 0,
     });
   });
 });

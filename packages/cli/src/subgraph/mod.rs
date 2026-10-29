@@ -1776,22 +1776,39 @@ pub fn translate(
         ));
     }
 
-    // A block handler gets only the block number from envio; its header is
-    // fetched afterwards, outside the reorg guard that validates event blocks,
-    // so inside the reorg window it may be another fork's. A chain whose block
-    // handlers read the header trails its head by the reorg depth, where envio
-    // itself assumes nothing reorgs. `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the
-    // depth; 0 turns it off.
-    // A `filter: call` handler is exempt: its block arrives whole with the call.
+    // A data source's block handler selects the block fields it reads, so its
+    // blocks come from the chain's source under the reorg guard that validates
+    // event blocks. A template's handler, and one with a register pass, which
+    // only a subgraph with templates has, read their headers afterwards,
+    // outside that guard, so inside the reorg window they may be another
+    // fork's: a chain whose such handlers read the header trails its head by
+    // the reorg depth, where envio itself assumes nothing reorgs.
+    // `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the depth; 0 turns it off. A
+    // `filter: call` handler is exempt: its block arrives whole with the call.
+    // Rollups stamp buckets with the block's time, so a subgraph with
+    // timeseries entities reads it in every handler.
+    let reads_time = !schema.timeseries_entities.is_empty();
+    let has_templates = !manifest.templates.is_empty();
     let mut block_header_lag: BTreeMap<u64, u32> = BTreeMap::new();
-    for source in manifest.all_sources() {
-        let handlers: Vec<String> = source
+    for source in manifest
+        .data_sources
+        .iter_mut()
+        .chain(manifest.templates.iter_mut())
+    {
+        let lazy = source.is_template || has_templates;
+        let mut reads_headers = false;
+        for handler in source
             .block_handlers
-            .iter()
+            .iter_mut()
             .filter(|handler| handler.filter != manifest::BlockFilter::Call)
-            .map(|handler| handler.handler.clone())
-            .collect();
-        if handlers.is_empty() || !usage::block_handlers_read_headers(mapping_sources, &handlers) {
+        {
+            handler.block_fields = usage::block_handler_fields(mapping_sources, &handler.handler);
+            if reads_time && handler.block_fields.is_empty() {
+                handler.block_fields = vec!["timestamp".to_string()];
+            }
+            reads_headers |= handler.block_fields.len() > 1;
+        }
+        if !lazy || !reads_headers {
             continue;
         }
         let chain_ids: Vec<u64> = match source.chain_id {
@@ -2354,16 +2371,21 @@ type Gravatar @entity {
         assert_eq!(with_template.human_config.chains[0].end_block, None);
     }
 
+    // A data source's block handler selects the fields its mapping reads, so
+    // its blocks come from the chain's source under the reorg guard. Where a
+    // template may run it as a register pass instead, which reads the header
+    // afterwards, the chain trails its head by the reorg depth.
     #[test]
-    fn a_block_handler_that_reads_the_header_holds_its_chain_back() {
-        let manifest = MANIFEST.replacen(
+    fn a_block_handler_that_reads_the_header_holds_its_chain_back_only_where_it_reads_it_late() {
+        let with_handler = MANIFEST.replacen(
             "      file: ./src/gravity.ts",
             "      blockHandlers:\n        - handler: handleBlock\n      file: ./src/gravity.ts",
             1,
         );
-        let lag = |source: &str| {
+        let without_templates = with_handler.split("templates:").next().unwrap().to_string();
+        let translated = |manifest: &str, source: &str| {
             let translation = translate(
-                &manifest,
+                manifest,
                 SCHEMA,
                 "gravatar",
                 &HashMap::new(),
@@ -2373,19 +2395,34 @@ type Gravatar @entity {
             )
             .unwrap();
             (
+                translation.runtime.manifest.data_sources[0].block_handlers[0]
+                    .block_fields
+                    .clone(),
                 translation.human_config.chains[0].block_lag,
                 translation.runtime.block_header_lag.get(&1).copied(),
             )
         };
         let depth = Some(DEFAULT_MAX_REORG_DEPTH);
+        let timestamp =
+            "export function handleBlock(block: ethereum.Block): void { block.number; block.timestamp; }";
+        let header =
+            "export function handleBlock(block: ethereum.Block): void { new Block(block.hash); }";
+        let header_fields: Vec<String> = usage::BLOCK_HEADER_FIELDS
+            .iter()
+            .map(|field| field.to_string())
+            .collect();
 
         assert_eq!(
-            lag("export function handleBlock(block: ethereum.Block): void { block.number; block.timestamp; }"),
-            (None, None)
-        );
-        assert_eq!(
-            lag("export function handleBlock(block: ethereum.Block): void { new Block(block.hash); }"),
-            (depth, depth)
+            (
+                translated(&with_handler, timestamp),
+                translated(&with_handler, header),
+                translated(&without_templates, header),
+            ),
+            (
+                (vec!["timestamp".to_string()], None, None),
+                (header_fields.clone(), depth, depth),
+                (header_fields, None, None),
+            )
         );
     }
 

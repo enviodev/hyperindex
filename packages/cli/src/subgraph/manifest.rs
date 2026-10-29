@@ -427,6 +427,10 @@ pub struct BlockHandler {
     /// minted by the translator, empty for every other filter.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub call_event: String,
+    /// The block fields the handler reads, by envio's names. A data source's
+    /// handler selects them, so its blocks come from the chain's source.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub block_fields: Vec<String>,
 }
 
 /// One `callHandlers` entry: the handler runs for a successful call to the data
@@ -1287,6 +1291,7 @@ fn parse_block_handler(
         handler,
         filter,
         call_event: String::new(),
+        block_fields: Vec::new(),
     })
 }
 

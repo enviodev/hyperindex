@@ -335,19 +335,39 @@ pub fn scan(sources: &[String]) -> FieldUsage {
 /// everything but `number` and `timestamp` has to be fetched afterwards.
 const FREE_BLOCK_PROPERTIES: &[&str] = &["number", "timestamp"];
 
-/// Whether any of the named block handlers reads a header field (`hash`,
-/// `parentHash`, `author`, ...) off its block, or hands the block to something
-/// the scan can't follow.
-///
-/// Only the handler's own body is read: a variable called `block` elsewhere in
-/// the file isn't the handler's. Textual and timid like `scan`: a block passed
-/// to a helper counts as a read.
-pub fn block_handlers_read_headers(sources: &[String], handlers: &[String]) -> bool {
-    handlers.iter().any(|handler| {
-        sources
-            .iter()
-            .any(|source| handler_reads_headers(source, handler))
-    })
+/// Every field of an `ethereum.Block`, by the name envio selects it under.
+pub const BLOCK_HEADER_FIELDS: &[&str] = &[
+    "hash",
+    "parentHash",
+    "sha3Uncles",
+    "miner",
+    "stateRoot",
+    "transactionsRoot",
+    "receiptsRoot",
+    "gasUsed",
+    "gasLimit",
+    "timestamp",
+    "difficulty",
+    "totalDifficulty",
+    "size",
+    "baseFeePerGas",
+];
+
+/// The block fields a block handler reads, by envio's names: the whole header
+/// once it reads anything past `number` and `timestamp` (or hands its block
+/// on), else `timestamp` if it reads that, else nothing.
+pub fn block_handler_fields(sources: &[String], handler: &str) -> Vec<String> {
+    let reads = sources
+        .iter()
+        .filter_map(|source| handler_block_reads(source, handler))
+        .fold((false, false), |(timestamp, header), (t, h)| {
+            (timestamp || t, header || h)
+        });
+    match reads {
+        (_, true) => BLOCK_HEADER_FIELDS.iter().map(|f| f.to_string()).collect(),
+        (true, false) => vec!["timestamp".to_string()],
+        (false, false) => Vec::new(),
+    }
 }
 
 /// The code with its string literals and comments emptied: a `"block-"` in an
@@ -360,22 +380,20 @@ fn strip_literals(code: &str) -> String {
     literals.replace_all(code, "\"\"").into_owned()
 }
 
-fn handler_reads_headers(source: &str, handler: &str) -> bool {
+/// Whether the handler reads its block's timestamp, and whether it reads any
+/// other header field. `None` when the source doesn't define the handler.
+fn handler_block_reads(source: &str, handler: &str) -> Option<(bool, bool)> {
     let signature = regex::Regex::new(&format!(
         r"function\s+{}\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)",
         regex::escape(handler)
     ))
     .expect("valid signature pattern");
-    let Some(found) = signature.captures(source) else {
-        return false;
-    };
+    let found = signature.captures(source)?;
     let param = found.get(1).expect("one group").as_str();
     let after_param = found.get(0).expect("whole match").end();
     // The body: from the first `{` after the signature to its closing brace.
     let rest = &source[after_param..];
-    let Some(open) = rest.find('{') else {
-        return false;
-    };
+    let open = rest.find('{')?;
     let mut depth = 0usize;
     let mut end = rest.len();
     for (at, c) in rest[open..].char_indices() {
@@ -398,13 +416,16 @@ fn handler_reads_headers(source: &str, handler: &str) -> bool {
         regex::escape(param)
     ))
     .expect("valid use pattern");
-    let reads = uses
-        .captures_iter(body)
-        .any(|capture| match capture.get(3) {
-            Some(property) => !FREE_BLOCK_PROPERTIES.contains(&property.as_str()),
-            None => true,
-        });
-    reads
+    let mut timestamp = false;
+    let mut header = false;
+    for capture in uses.captures_iter(body) {
+        match capture.get(3).map(|property| property.as_str()) {
+            Some("timestamp") => timestamp = true,
+            Some(property) if FREE_BLOCK_PROPERTIES.contains(&property) => {}
+            _ => header = true,
+        }
+    }
+    Some((timestamp, header))
 }
 
 #[cfg(test)]
@@ -630,47 +651,58 @@ mod tests {
 mod block_handler_tests {
     use super::*;
 
-    fn reads(source: &str) -> bool {
-        block_handlers_read_headers(&[source.to_string()], &["handleBlock".to_string()])
+    fn fields(source: &str) -> Vec<String> {
+        block_handler_fields(&[source.to_string()], "handleBlock")
+    }
+
+    fn header() -> Vec<String> {
+        BLOCK_HEADER_FIELDS.iter().map(|f| f.to_string()).collect()
     }
 
     #[test]
-    fn number_and_timestamp_are_free() {
-        assert!(!reads(
-            "export function handleBlock(block: ethereum.Block): void { let t = block.timestamp; let n = block.number; }"
-        ));
-    }
-
-    #[test]
-    fn a_header_field_is_a_read() {
-        assert!(reads(
-            "export function handleBlock(block: ethereum.Block): void { let e = new Block(block.hash.toHex()); }"
-        ));
-        assert!(reads(
-            "export function handleBlock(b: ethereum.Block): void { x.parent = b.parentHash; }"
-        ));
+    fn selects_what_the_handler_reads() {
+        assert_eq!(
+            (
+                fields("export function handleBlock(block: ethereum.Block): void { let n = block.number; }"),
+                fields(
+                    "export function handleBlock(block: ethereum.Block): void { let t = block.timestamp; let n = block.number; }"
+                ),
+                fields(
+                    "export function handleBlock(block: ethereum.Block): void { let e = new Block(block.hash.toHex()); }"
+                ),
+                fields("export function handleBlock(b: ethereum.Block): void { x.parent = b.parentHash; }"),
+            ),
+            (vec![], vec!["timestamp".to_string()], header(), header())
+        );
     }
 
     #[test]
     fn a_block_named_in_a_string_is_not_a_use() {
-        assert!(!reads(
-            "export function handleBlock(block: ethereum.Block): void { store.set('P', \"block-\" + block.number.toString()); } // block"
-        ));
+        assert_eq!(
+            fields(
+                "export function handleBlock(block: ethereum.Block): void { store.set('P', \"block-\" + block.number.toString()); } // block"
+            ),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
     fn a_block_handed_to_a_helper_is_a_read() {
-        assert!(reads(
-            "export function handleBlock(block: ethereum.Block): void { index(block); }"
-        ));
+        assert_eq!(
+            fields("export function handleBlock(block: ethereum.Block): void { index(block); }"),
+            header()
+        );
     }
 
     #[test]
     fn a_block_variable_elsewhere_is_not_the_handlers() {
-        assert!(!reads(
-            "export function handleBlock(block: ethereum.Block): void { let n = block.number; }\n\
-             export function other(event: Ev): void { let block = event.block; block.hash; }"
-        ));
+        assert_eq!(
+            fields(
+                "export function handleBlock(block: ethereum.Block): void { let n = block.number; }\n\
+                 export function other(event: Ev): void { let block = event.block; block.hash; }"
+            ),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -680,9 +712,6 @@ mod block_handler_tests {
             "export function handleBlock(block: ethereum.Block): void { block.author; }"
                 .to_string(),
         ];
-        assert!(block_handlers_read_headers(
-            &sources,
-            &["handleBlock".to_string()]
-        ));
+        assert_eq!(block_handler_fields(&sources, "handleBlock"), header());
     }
 }

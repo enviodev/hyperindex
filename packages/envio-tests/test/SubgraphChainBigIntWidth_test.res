@@ -11,12 +11,7 @@
 let port = FreePort.pick()
 
 let _ = InternalTestIndexer.fromSubgraph(
-  ~env=Dict.fromArray([
-    ("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`),
-    // The block handler reads its header; a simulated chain has no head for
-    // the resulting lag to trail.
-    ("ENVIO_SUBGRAPH_BLOCK_LAG", "0"),
-  ]),
+  ~env=Dict.fromArray([("ENVIO_SUBGRAPH_RPC", `http://127.0.0.1:${port}`)]),
   ~manifest=`
 specVersion: 0.0.8
 schema:
@@ -293,6 +288,8 @@ describe("BigInts from chain data", () => {
               transaction,
               logIndex: 0,
             },
+            // The block handler's block 259, which no event carries.
+            { block: { ...block, number: 259 } },
           ],
         },
       },

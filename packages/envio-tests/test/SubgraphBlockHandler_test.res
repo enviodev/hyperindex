@@ -1,6 +1,6 @@
 // A block handler's `block.timestamp`. Live against HyperSync, like
-// HyperSyncClient_test: every handler invocation in a batch asks within the
-// same microtask, so one range query answers all of them.
+// HyperSyncClient_test: the handler selects the timestamp, so its blocks come
+// with it from the chain's own source rather than from a query after the batch.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.8
@@ -79,7 +79,7 @@ beforeAll(() => {
 });
 
 describe("block handlers", () => {
-  it("reads timestamps from one batched HyperSync query", async (t) => {
+  it("reads timestamps from the chain's own source", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({
@@ -94,8 +94,7 @@ describe("block handlers", () => {
 
     t.expect({
       ticks: ticks.map((tick) => [tick.id, tick.timestamp]),
-      // Three blocks, one round trip — and the preload pass already had the
-      // answer by the time the execute pass ran.
+      // None of the runtime's own: the source's client isn't JavaScript's fetch.
       hypersyncRequests: g.hypersyncRequests,
     }).toEqual({
       ticks: [
@@ -103,7 +102,7 @@ describe("block handlers", () => {
         ["18600001", 1_700_325_971n],
         ["18600002", 1_700_325_983n],
       ],
-      hypersyncRequests: 1,
+      hypersyncRequests: 0,
     });
   });
 });

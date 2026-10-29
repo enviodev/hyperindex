@@ -1,9 +1,7 @@
-// On a chain HyperSync doesn't serve, a block handler's `block.timestamp` comes
-// from ENVIO_SUBGRAPH_RPC, one eth_getBlockByNumber per block. They were asked
-// one after another: on BlockDAG (evm-1404) a handler on every block took
-// 277 s to commit its first 500 blocks, at the endpoint's latency per block.
-// graph-node fetches a range's blocks concurrently; so does the fallback now,
-// within the RPC client's bound on requests in flight.
+// On a chain HyperSync doesn't serve (BlockDAG, evm-1404), a block handler's
+// `block.timestamp` comes from ENVIO_SUBGRAPH_RPC: the handler selects it, so
+// the chain's RPC source reads the handler's blocks with its logs, and the
+// subgraph runtime asks for none of them itself.
 let port = FreePort.pick()
 
 let _ = InternalTestIndexer.fromSubgraph(
@@ -74,45 +72,51 @@ const hex = (n: number) => "0x" + n.toString(16);
 const ZERO32 = "0x" + "00".repeat(32);
 
 let server: Server;
-let inFlight = 0;
-let mostInFlight = 0;
+let blockRequests = 0;
 let hypersyncRequests = 0;
+
+const blockOf = (number: number) => ({
+  number: hex(number),
+  hash: "0x" + number.toString(16).padStart(64, "0"),
+  parentHash: "0x" + (number - 1).toString(16).padStart(64, "0"),
+  timestamp: hex(1_700_000_000 + number),
+  nonce: "0x0000000000000000",
+  difficulty: "0x0",
+  gasLimit: "0x1c9c380",
+  gasUsed: "0x0",
+  miner: "0x0000000000000000000000000000000000000000",
+  extraData: "0x",
+  logsBloom: "0x" + "00".repeat(256),
+  sha3Uncles: ZERO32,
+  stateRoot: ZERO32,
+  transactionsRoot: ZERO32,
+  receiptsRoot: ZERO32,
+  size: "0x220",
+  transactions: [],
+  uncles: [],
+});
 
 beforeAll(async () => {
   server = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
-      const request = JSON.parse(body);
-      const reply = (result: unknown) =>
-        res.end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
-      if (request.method !== "eth_getBlockByNumber") return reply(hex(1404));
-      const number = Number(request.params[0]);
-      inFlight++;
-      mostInFlight = Math.max(mostInFlight, inFlight);
-      setTimeout(() => {
-        inFlight--;
-        reply({
-          number: hex(number),
-          hash: "0x" + number.toString(16).padStart(64, "0"),
-          parentHash: ZERO32,
-          timestamp: hex(1_700_000_000 + number),
-          nonce: "0x0000000000000000",
-          difficulty: "0x0",
-          gasLimit: "0x1c9c380",
-          gasUsed: "0x0",
-          miner: "0x0000000000000000000000000000000000000000",
-          extraData: "0x",
-          logsBloom: "0x" + "00".repeat(256),
-          sha3Uncles: ZERO32,
-          stateRoot: ZERO32,
-          transactionsRoot: ZERO32,
-          receiptsRoot: ZERO32,
-          size: "0x220",
-          transactions: [],
-          uncles: [],
-        });
-      }, 40);
+      const parsed = JSON.parse(body);
+      const answer = (request: any) => {
+        switch (request.method) {
+          case "eth_blockNumber":
+            return hex(200);
+          case "eth_getLogs":
+            return [];
+          case "eth_getBlockByNumber":
+            blockRequests++;
+            return blockOf(Number(request.params[0]));
+          default:
+            return hex(1404);
+        }
+      };
+      const reply = (request: any) => ({ jsonrpc: "2.0", id: request.id, result: answer(request) });
+      res.end(JSON.stringify(Array.isArray(parsed) ? parsed.map(reply) : reply(parsed)));
     });
   });
   await new Promise<void>((resolve) => server.listen(${port}, "127.0.0.1", resolve));
@@ -133,11 +137,11 @@ beforeAll(async () => {
 afterAll(() => server.close());
 
 describe("block timestamps over RPC", () => {
-  it("are fetched concurrently", async (t) => {
+  it("come from the chain's RPC source", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({
-      chains: { 1404: { startBlock: 100, endBlock: 131, simulate: [] } },
+      chains: { 1404: { startBlock: 100, endBlock: 131 } },
     });
 
     const ticks = await indexer.Tick.getAll();
@@ -145,13 +149,13 @@ describe("block timestamps over RPC", () => {
       ticks: ticks.length,
       first: ticks.find((tick) => tick.id === "100")?.timestamp,
       last: ticks.find((tick) => tick.id === "131")?.timestamp,
-      concurrent: mostInFlight > 1,
+      blocksRead: blockRequests >= 32,
       hypersyncRequests,
     }).toEqual({
       ticks: 32,
       first: 1_700_000_100n,
       last: 1_700_000_131n,
-      concurrent: true,
+      blocksRead: true,
       hypersyncRequests: 0,
     });
   });

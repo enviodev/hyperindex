@@ -4,8 +4,9 @@
 // the process environment alone, so one set in `.env` did nothing.
 open Vitest
 
-// A block handler that reads its block's header makes the chain trail its head
-// by the reorg depth; a mapping that calls no contract gets envio's batch size.
+// A block handler that reads its block's header in a subgraph with templates
+// makes the chain trail its head by the reorg depth; a mapping that calls no
+// contract gets envio's batch size.
 let manifest = `
 specVersion: 0.0.5
 schema:
@@ -32,6 +33,25 @@ dataSources:
           handler: handleTick
       blockHandlers:
         - handler: handleBlock
+      file: ./src/clock.ts
+templates:
+  - kind: ethereum/contract
+    name: Hand
+    network: mainnet
+    source:
+      abi: Clock
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Tick
+      abis:
+        - name: Clock
+          file: ./abis/Clock.json
+      eventHandlers:
+        - event: Tick(uint256)
+          handler: handleTick
       file: ./src/clock.ts
 `
 

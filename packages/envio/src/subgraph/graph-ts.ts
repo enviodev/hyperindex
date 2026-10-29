@@ -3616,21 +3616,34 @@ export function makeCallBlock(raw: unknown): EthereumBlock {
 }
 
 /**
- * graph-ts hands a block handler an `ethereum.Block`. envio hands the handler
- * only the number, so the rest is fetched when the mapping first reads it:
- * `timestamp` on its own, narrowly; any other field as the whole header, once.
- * A header is only served from below the chain's reorg window (blocks.ts).
+ * graph-ts hands a block handler an `ethereum.Block`. A data source's handler
+ * selects the fields its mapping reads, so `selected` already carries them;
+ * any other field is fetched when the mapping first reads it: `timestamp` on
+ * its own, narrowly; any other as the whole header, once. A header fetched
+ * that way is only served from below the chain's reorg window (blocks.ts).
  */
-export function makeBlockHandlerBlock(blockNumber: number, _location: string): EthereumBlock {
+export function makeBlockHandlerBlock(
+  blockNumber: number,
+  _location: string,
+  selected?: Record<string, unknown>,
+): EthereumBlock {
+  // A simulated block carries no fields: they are read as for a template.
+  if (selected?.hash != null) return shaped(blank(EthereumBlock), BLOCK_SHAPE, selected);
   const block = blank(EthereumBlock);
   // graph-node builds it from the header's u64: minimal two's complement
   // bytes, as an event's block number is.
   block.number = new BigInt_(BigInt(blockNumber));
+  const timestamp = selected?.timestamp;
   Object.defineProperty(block, "timestamp", {
     enumerable: true,
     configurable: true,
     // A header fetched for another field already carries it.
-    get: () => (header ? header.timestamp : BigInt_.fromString(hostsOrThrow().blockTimestamp(blockNumber))),
+    get: () =>
+      timestamp != null
+        ? new BigInt_(BigInt(timestamp as number))
+        : header
+          ? header.timestamp
+          : BigInt_.fromString(hostsOrThrow().blockTimestamp(blockNumber)),
   });
   let header: EthereumBlock | undefined;
   const fetched = () =>

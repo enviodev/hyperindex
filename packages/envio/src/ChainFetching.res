@@ -302,8 +302,7 @@ let cutAtRegisterLimit = (items: array<Internal.item>, ~latestFetchedBlock, ~lim
   let cutIdx = ref(-1)
   let idx = ref(0)
   while cutIdx.contents < 0 && idx.contents < items->Array.length {
-    let eventItem = items->Array.getUnsafe(idx.contents)->Internal.castUnsafeEventItem
-    if eventItem.onEventRegistration.contractRegister !== None {
+    if items->Array.getUnsafe(idx.contents)->hasContractRegister {
       seen := seen.contents + 1
       if seen.contents >= limit {
         cutIdx := idx.contents

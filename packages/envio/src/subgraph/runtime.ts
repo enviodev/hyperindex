@@ -145,6 +145,8 @@ type BlockHandler = {
   filter: { every: number } | "once" | "call";
   /** The call trigger a `filter: call` handler runs on. */
   callEvent?: string;
+  /** The block fields the mapping reads, by envio's names. */
+  blockFields?: string[];
 };
 type DataSource = {
   kind: string;
@@ -2014,10 +2016,17 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
             chain.id === source.chainId && { block: { number: blocks } },
           runsFirst: once && !source.isTemplate,
           contractRegister,
+          // A template's handler visits every block for instances it may not
+          // have, and a register pass runs on blocks generated locally: both
+          // read their fields afterwards, only where they run.
+          fields:
+            !source.isTemplate && !contractRegister && (handler.blockFields?.length ?? 0) > 0
+              ? { block: handler.blockFields }
+              : undefined,
         } as any,
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;
-          const graphBlock = makeBlockHandlerBlock(block.number, location);
+          const graphBlock = makeBlockHandlerBlock(block.number, location, block);
           const addresses = source.isTemplate
             ? instancesAt(block.chainId ?? source.chainId, source.name, block.number)
                 .filter((instance) => scheduled(instance.block, block.number))
