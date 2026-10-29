@@ -424,17 +424,7 @@ let blockHashesResponse = (blocks: array<BlockStore.inputBlock>) => {
   requestStats: [],
 }
 
-// Taken at module load, before a test can fake the clock: a deadline on faked
-// timers never fires, and a mismatched expectation would hang the suite instead
-// of failing with what it was waiting for.
-let realSetTimeout: (
-  unit => unit,
-  int,
-) => timeoutId = %raw(`globalThis.setTimeout.bind(globalThis)`)
-let realClearTimeout: timeoutId => unit = %raw(`globalThis.clearTimeout.bind(globalThis)`)
 @val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
-
-let realNow: unit => float = %raw(`Date.now.bind(Date)`)
 
 // The ledger's id for a query, kept off the enumerable fields a test compares.
 @get external queryId: pendingItemsQuery => int = "__id"
@@ -569,13 +559,13 @@ let make = (
   }
   let nextArrival = (~deadline) =>
     Promise.make((resolve, _reject) => {
-      let timer = realSetTimeout(
+      let timer = setTimeout(
         () => resolve(false),
-        Math.max(0., deadline -. realNow())->Float.toInt,
+        Math.max(0., deadline -. Date.now())->Float.toInt,
       )
       arrivalListeners
       ->Array.push(() => {
-        realClearTimeout(timer)
+        clearTimeout(timer)
         resolve(true)
       })
       ->ignore
@@ -745,7 +735,7 @@ let make = (
   }
 
   let expectItemsQueries = async (expected, ~within=2000.) => {
-    let deadline = realNow() +. within
+    let deadline = Date.now() +. within
     let rec awaitMatch = async () => {
       await awaitSettled(~deadline)
       let outcome = ledger->Ledger.matchItemsQueries(expected->toLedgerEntries)
@@ -807,7 +797,7 @@ let make = (
   let countsHeightCalls = ref(false)
 
   let expectHeightCalls = async (count, ~within=2000.) => {
-    let deadline = realNow() +. within
+    let deadline = Date.now() +. within
     let rec awaitCount = async () => {
       await awaitSettled(~deadline)
       let {done, error} = ledger->Ledger.checkHeightCalls(count)
@@ -829,7 +819,7 @@ let make = (
   let expectNewHeightCallsAtLeast = async count => {
     countsHeightCalls := true
     let target = ledger->Ledger.claimedHeightCalls + count
-    let deadline = realNow() +. 2000.
+    let deadline = Date.now() +. 2000.
     let rec awaitCount = async () => {
       await awaitSettled(~deadline)
       if !(ledger->Ledger.checkHeightCallsAtLeast(target)) {
@@ -929,7 +919,7 @@ let make = (
       ->Ledger.settleAllBlockHashLookups("failGetBlockHashes")
       ->settleBlockHashLookups({Source.result: Error(exn), requestStats}),
     expectBlockHashLookup: async ({blockNumbers, reply}, ~within=2000.) => {
-      let deadline = realNow() +. within
+      let deadline = Date.now() +. within
       let rec awaitLookup = async () => {
         await awaitSettled(~deadline)
         let {status, id, message} = ledger->Ledger.matchBlockHashLookup(blockNumbers)

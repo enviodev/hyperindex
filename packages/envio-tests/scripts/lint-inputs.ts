@@ -84,12 +84,10 @@ for (const path of resFiles(testRoot)) {
         });
       }
     }
-    // A poll's condition sits on the same line or the one after it. A loop that
-    // steps a faked clock is moving time, which `expectItemsQueries` can't do.
+    // A poll's condition sits on the same line or the one after it.
     if (pollStart.test(code)) {
       const condition = `${code} ${nextCodeLine(lines, index + 1) ?? ""}`;
-      const body = lines.slice(index, index + 8).join("\n");
-      if (/\bpendingItemsQueries\b/.test(condition) && !/\badvanceTimers/.test(body)) {
+      if (/\bpendingItemsQueries\b/.test(condition)) {
         violations.push({
           file,
           line: index + 1,
@@ -108,7 +106,7 @@ for (const path of resFiles(testRoot)) {
 // before a step stands in for what `expectNewHeightCalls` checks exactly.
 // A zero delay is a turn of the event loop, not time.
 const realDelay = /\bUtils\.delay\((?!0\))([^)]*)\)/;
-const realClock = /\b(?:Date\.now|realNow|realSetTimeout)\(/;
+const realClock = /\bDate\.now\(/;
 // `length - 1` indexes the latest call, which is how a test answers one poll.
 const pollSnapshot = /\bgetHeightOrThrowCalls->Array\.length\b(?!\s*-\s*1)/;
 const scenarioStart = /\bScenario\.(?:it|run)\(/;
@@ -193,6 +191,35 @@ for (const path of resFiles(testRoot)) {
       }
     }
   });
+}
+
+// Faked timers replace the global setTimeout that Clock.real arms, so a test
+// that fakes them freezes the real-time parts of a run (startup, writes, the
+// mock's own deadlines) while leaving the virtual clock where it was.
+const fakeTimers = /\b[vV]i\.(?:useFakeTimers|advanceTimers\w*|runAllTimers\w*|runOnlyPendingTimers\w*|runToLastTimer\w*|setSystemTime)\b/;
+const testSources = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return testSources(path);
+    return entry.isFile() && /\.(?:res|ts)$/.test(entry.name) ? [path] : [];
+  });
+for (const path of testSources(testRoot)) {
+  const file = relative(repoRoot, path);
+  readFileSync(path, "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      const match = line.replace(/\/\/.*$/, "").match(fakeTimers);
+      if (match) {
+        violations.push({
+          file,
+          line: index + 1,
+          title: `${match[0]} fakes vitest's timers`,
+          fix:
+            "Move time on the clock the code was given instead: `~virtualTime=true` and `await indexer.advanceTime(ms)` " +
+            "for a scenario, or a `VirtualClock` passed as the module's clock for a unit test.",
+        });
+      }
+    });
 }
 
 // The source layer's time is whatever its clock says, so a scenario on virtual

@@ -877,9 +877,7 @@ let run = async (
       () =>
         Promise.race([
           stop(),
-          Promise.make((resolve, _reject) =>
-            MockSource.realSetTimeout(() => resolve(), 2000)->ignore
-          ),
+          Promise.make((resolve, _reject) => setTimeout(() => resolve(), 2000)->ignore),
         ])
     | None => stop
     }
