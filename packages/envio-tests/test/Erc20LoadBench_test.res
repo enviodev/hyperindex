@@ -189,6 +189,22 @@ let resumeScenario = Scenario.make(
   ~handlers,
 )
 
+// The token's real history from mainnet HyperSync, over a bounded block range.
+let realFrom = envInt("ENVIO_BENCH_REAL_FROM", 10_861_674)
+let realTo = envInt("ENVIO_BENCH_REAL_TO", 10_950_000)
+let realScenario = Scenario.make(
+  ~supervised=false,
+  ~configYaml=configYaml(
+    ~chains=`
+  - id: 1
+    start_block: ${realFrom->Int.toString}
+    end_block: ${realTo->Int.toString}
+    contracts:${contractsYaml}`,
+  ),
+  ~schema,
+  ~handlers,
+)
+
 let metricNames = [
   "envio_storage_load_seconds",
   "envio_storage_load_total",
@@ -197,6 +213,9 @@ let metricNames = [
   "envio_preload_seconds",
   "envio_processing_seconds",
   "envio_storage_write_seconds",
+  "envio_progress_events",
+  "envio_processing_stalled_on_fetch_seconds",
+  "envio_processing_stalled_on_storage_write_seconds",
 ]
 
 let report = async (indexer: IndexerRunner.t, ~seconds) => {
@@ -283,6 +302,47 @@ describe("erc20 load bench", () => {
         hyperSync->MockHyperSyncServer.setHeight(height)
         await resumed->waitForProgress(~block=height, ~deadline=Date.now() +. 1_200_000.)
         await resumed.waitUntilIdle()
+        await resumed->report(~seconds=startedAt->Performance.secondsSince)
+      },
+    )
+  })
+
+  Async.it_skipIf(mode !== Some("real"))("indexes the token's real history", async _ => {
+    let startedAt = Performance.now()
+    let exited = ref(false)
+    await realScenario->Scenario.run(
+      ~yamlSources=true,
+      ~onExit=() => exited := true,
+      async (~indexer, ~source as _) => {
+        await Scenario.waitUntil(
+          () => exited.contents,
+          ~message="the chain to reach its end block",
+          ~timeoutMs=1_800_000.,
+        )
+        await indexer->report(~seconds=startedAt->Performance.secondsSince)
+      },
+    )
+  })
+
+  // Stopped halfway and restarted, so the second half reads accounts the first
+  // half wrote and the in-memory store no longer holds.
+  Async.it_skipIf(mode !== Some("real-resume"))("resumes the token's real history", async _ => {
+    let exited = ref(false)
+    await realScenario->Scenario.run(
+      ~yamlSources=true,
+      ~onExit=() => exited := true,
+      async (~indexer, ~source as _) => {
+        await indexer->waitForProgress(
+          ~block=(realFrom + realTo) / 2,
+          ~deadline=Date.now() +. 1_800_000.,
+        )
+        let resumed = await indexer.restart()
+        let startedAt = Performance.now()
+        await Scenario.waitUntil(
+          () => exited.contents,
+          ~message="the chain to reach its end block",
+          ~timeoutMs=1_800_000.,
+        )
         await resumed->report(~seconds=startedAt->Performance.secondsSince)
       },
     )
