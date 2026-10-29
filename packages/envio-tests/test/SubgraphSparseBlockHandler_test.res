@@ -1,6 +1,5 @@
-// A sparse block handler's timestamps. Live against HyperSync: the handler
-// selects the timestamp, so the chain's source reads its blocks — each alone,
-// this far apart — and the runtime asks HyperSync for none of them itself.
+// A sparse block handler's timestamps. Live against HyperSync: the blocks a
+// batch asks about are fetched, not every block between the first and the last.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.8
@@ -80,7 +79,7 @@ beforeAll(() => {
 });
 
 describe("a sparse block handler", () => {
-  it("reads the timestamps of the blocks it runs on from the chain's source", async (t) => {
+  it("fetches the timestamps of the blocks it runs on, not the span between them", async (t) => {
     const indexer = createTestIndexer();
 
     await indexer.process({
@@ -93,7 +92,7 @@ describe("a sparse block handler", () => {
       timestampBlocksSpanned: g.timestampBlocksSpanned,
     }).toEqual({
       ticks: ["18600000", "18700000"],
-      timestampBlocksSpanned: 0,
+      timestampBlocksSpanned: 2,
     });
   });
 });

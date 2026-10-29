@@ -145,7 +145,7 @@ type BlockHandler = {
   filter: { every: number } | "once" | "call";
   /** The call trigger a `filter: call` handler runs on. */
   callEvent?: string;
-  /** The block fields the mapping reads, by envio's names. */
+  /** The block fields the chain source reads for the handler, by envio's names. */
   blockFields?: string[];
 };
 type DataSource = {
@@ -2016,13 +2016,9 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
             chain.id === source.chainId && { block: { number: blocks } },
           runsFirst: once && !source.isTemplate,
           contractRegister,
-          // A template's handler visits every block for instances it may not
-          // have, and a register pass runs on blocks generated locally: both
-          // read their fields afterwards, only where they run.
-          fields:
-            !source.isTemplate && !contractRegister && (handler.blockFields?.length ?? 0) > 0
-              ? { block: handler.blockFields }
-              : undefined,
+          // Only where the translator chose it: every other handler reads its
+          // block's fields afterwards, from the blocks it runs on.
+          fields: (handler.blockFields?.length ?? 0) > 0 ? { block: handler.blockFields } : undefined,
         } as any,
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;

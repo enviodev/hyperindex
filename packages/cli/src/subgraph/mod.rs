@@ -46,6 +46,8 @@ use schema::SchemaTranslation;
 pub const RPC_ENV_VAR: &str = "ENVIO_SUBGRAPH_RPC";
 /// envio's `maxReorgDepth` for a chain it has no figure for.
 const DEFAULT_MAX_REORG_DEPTH: u32 = 200;
+/// The sparsest polling block handler whose blocks come from the chain source.
+const SELECTED_BLOCKS_MAX_EVERY: u64 = 2;
 pub const BATCH_SIZE_ENV_VAR: &str = "ENVIO_SUBGRAPH_BATCH_SIZE";
 /// Events per batch for a mapping that calls contracts.
 const CALLING_BATCH_SIZE: u64 = 500;
@@ -1777,13 +1779,17 @@ pub fn translate(
         ));
     }
 
-    // A data source's block handler selects the block fields it reads, so its
-    // blocks come from the chain's source under the reorg guard that validates
-    // event blocks. A template's handler, and one with a register pass, which
-    // only a subgraph with templates has, read their headers afterwards,
-    // outside that guard, so inside the reorg window they may be another
-    // fork's: a chain whose such handlers read the header trails its head by
-    // the reorg depth, where envio itself assumes nothing reorgs.
+    // A data source's block handler on (nearly) every block selects the block
+    // fields it reads, so its blocks come from the chain's source under the
+    // reorg guard that validates event blocks. A sparser one doesn't: the
+    // source reads selected blocks one range at a time, where the runtime's
+    // own query skips straight to the few blocks a batch runs on, several
+    // times faster at `every: 10` and beyond. Those, a template's handler and
+    // one with a register pass, which only a subgraph with templates has, read
+    // their headers afterwards, outside that guard, so inside the reorg window
+    // they may be another fork's: a chain whose such handlers read the header
+    // trails its head by the reorg depth, where envio itself assumes nothing
+    // reorgs.
     // `ENVIO_SUBGRAPH_BLOCK_LAG` overrides the depth; 0 turns it off. A
     // `filter: call` handler is exempt: its block arrives whole with the call.
     // Rollups stamp buckets with the block's time, so a subgraph with
@@ -1796,20 +1802,30 @@ pub fn translate(
         .iter_mut()
         .chain(manifest.templates.iter_mut())
     {
-        let lazy = source.is_template || has_templates;
-        let mut reads_headers = false;
+        let lazy_source = source.is_template || has_templates;
+        let mut lazy_reads_headers = false;
         for handler in source
             .block_handlers
             .iter_mut()
             .filter(|handler| handler.filter != manifest::BlockFilter::Call)
         {
-            handler.block_fields = usage::block_handler_fields(mapping_sources, &handler.handler);
-            if reads_time && handler.block_fields.is_empty() {
-                handler.block_fields = vec!["timestamp".to_string()];
+            let mut fields = usage::block_handler_fields(mapping_sources, &handler.handler);
+            if reads_time && fields.is_empty() {
+                fields = vec!["timestamp".to_string()];
             }
-            reads_headers |= handler.block_fields.len() > 1;
+            let selects = !lazy_source
+                && matches!(
+                    handler.filter,
+                    manifest::BlockFilter::Once
+                        | manifest::BlockFilter::Every(..=SELECTED_BLOCKS_MAX_EVERY)
+                );
+            if selects {
+                handler.block_fields = fields;
+            } else {
+                lazy_reads_headers |= fields.len() > 1;
+            }
         }
-        if !lazy || !reads_headers {
+        if !lazy_reads_headers {
             continue;
         }
         let chain_ids: Vec<u64> = match source.chain_id {
@@ -2372,10 +2388,11 @@ type Gravatar @entity {
         assert_eq!(with_template.human_config.chains[0].end_block, None);
     }
 
-    // A data source's block handler selects the fields its mapping reads, so
-    // its blocks come from the chain's source under the reorg guard. Where a
-    // template may run it as a register pass instead, which reads the header
-    // afterwards, the chain trails its head by the reorg depth.
+    // A data source's block handler on every block selects the fields its
+    // mapping reads, so its blocks come from the chain's source under the
+    // reorg guard. A sparse one, and one a template may run as a register
+    // pass, read the header afterwards: the chain trails its head by the
+    // reorg depth.
     #[test]
     fn a_block_handler_that_reads_the_header_holds_its_chain_back_only_where_it_reads_it_late() {
         let with_handler = MANIFEST.replacen(
@@ -2384,6 +2401,11 @@ type Gravatar @entity {
             1,
         );
         let without_templates = with_handler.split("templates:").next().unwrap().to_string();
+        let sparse = without_templates.replacen(
+            "        - handler: handleBlock\n",
+            "        - handler: handleBlock\n          filter:\n            kind: polling\n            every: 10\n",
+            1,
+        );
         let translated = |manifest: &str, source: &str| {
             let translation = translate(
                 manifest,
@@ -2418,11 +2440,15 @@ type Gravatar @entity {
                 translated(&with_handler, timestamp),
                 translated(&with_handler, header),
                 translated(&without_templates, header),
+                translated(&sparse, timestamp),
+                translated(&sparse, header),
             ),
             (
-                (vec!["timestamp".to_string()], None, None),
-                (header_fields.clone(), depth, depth),
+                (vec![], None, None),
+                (vec![], depth, depth),
                 (header_fields, None, None),
+                (vec![], None, None),
+                (vec![], depth, depth),
             )
         );
     }
