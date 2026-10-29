@@ -114,6 +114,20 @@ const scenarioStart = /\bScenario\.(?:it|run)\(/;
 for (const path of resFiles(testRoot)) {
   const file = relative(repoRoot, path);
   const lines = readFileSync(path, "utf8").split("\n");
+  // Work off the source clock (a handler or effect taking time, events from the
+  // addon's threads, throttled writes) still takes real time, and says so: a
+  // `// Real time:` comment covers the statement it sits on or above, the lines
+  // below it indented at least as deep, up to the next blank line.
+  const indentOf = (line: string) => line.length - line.trimStart().length;
+  const realTimeAt = (index: number) => {
+    for (let at = index; at >= 0 && lines[at].trim() !== ""; at--) {
+      if (/\/\/\s*Real time:/.test(lines[at])) {
+        const indent = indentOf(lines[at]);
+        return lines.slice(at + 1, index + 1).every((line) => indentOf(line) >= indent);
+      }
+    }
+    return false;
+  };
   // Scenarios run on virtual time unless `~virtualTime=false` takes them off it,
   // on `Scenario.make` for every test of that scenario or on one test.
   const realTimeScenarios = new Set<string>();
@@ -121,10 +135,11 @@ for (const path of resFiles(testRoot)) {
   lines.forEach((line, index) => {
     const bound = line.match(/^let (\w+) =/);
     if (!bound) return;
-    const next = lines.findIndex((later, at) => at > index && /^(let|describe)\b/.test(later));
-    const region = lines
-      .slice(index, next === -1 ? lines.length : next)
-      .map((line) => line.replace(/\/\/.*$/, ""));
+    // The binding ends at the first line back at the margin: the call's own
+    // closing paren, or whatever top-level code follows a one-line call.
+    const next = lines.findIndex((later, at) => at > index && /^\S/.test(later));
+    const end = next === -1 ? lines.length : /^\)/.test(lines[next]) ? next + 1 : next;
+    const region = lines.slice(index, end).map((line) => line.replace(/\/\/.*$/, ""));
     if (
       region.some((line) => /\bScenario\.make\(/.test(line)) &&
       region.some((line) => /~virtualTime=false\b/.test(line))
@@ -133,9 +148,15 @@ for (const path of resFiles(testRoot)) {
     }
   });
   lines.forEach((line, index) => {
-    const code = line.replace(/\/\/.*$/, "");
-    // Scenario.res is where the default is set.
-    if (/~virtualTime=true\b/.test(code) && !file.endsWith("helpers/Scenario.res")) {
+    // `//` after a colon is a URL in a string, not a comment.
+    const code = line.replace(/(?<!:)\/\/.*$/, "");
+    // Scenario.res is where the default is set, and a test of a real-time
+    // scenario turns virtual time back on with it.
+    if (
+      /~virtualTime=true\b/.test(code) &&
+      realTimeScenarios.size === 0 &&
+      !file.endsWith("helpers/Scenario.res")
+    ) {
       violations.push({
         file,
         line: index + 1,
@@ -146,7 +167,11 @@ for (const path of resFiles(testRoot)) {
     // Real time is the exception, and the reason is what keeps it from
     // spreading by copy and paste.
     const previous = lines[index - 1] ?? "";
-    if (/~virtualTime=false\b/.test(code) && !/\/\//.test(line) && !/^\s*\/\//.test(previous)) {
+    if (
+      /~virtualTime=false\b/.test(code) &&
+      !/~virtualTime=false\b.*(?<!:)\/\//.test(line) &&
+      !/^\s*\/\//.test(previous)
+    ) {
       violations.push({
         file,
         line: index + 1,
@@ -169,19 +194,14 @@ for (const path of resFiles(testRoot)) {
       .match(/(\w+)\([^()]*\)\s*->\s*Scenario\.(?:it|run)\($/m);
     const name = receiver?.[1] ?? receiver?.[2] ?? factoryCall?.[1];
     const onRealTime =
-      (name !== undefined && realTimeScenarios.has(name)) ||
+      (name !== undefined &&
+        realTimeScenarios.has(name) &&
+        !code.some((line) => /~virtualTime=true\b/.test(line))) ||
       code.some((line) => /~virtualTime=false\b/.test(line));
     if (!onRealTime) {
       code.forEach((line, offset) => {
-        // Work off the source clock (a handler or effect taking time, events
-        // from the addon's threads, throttled writes) still takes real time,
-        // and says so: a `// Real time:` comment covers the lines below it, up
-        // to the next blank line.
-        for (let at = start + offset; at >= 0 && lines[at].trim() !== ""; at--) {
-          if (/\/\/\s*Real time:/.test(lines[at])) return;
-        }
         const delay = line.match(realDelay);
-        if (delay) {
+        if (delay && !realTimeAt(start + offset)) {
           violations.push({
             file,
             line: start + offset + 1,
@@ -189,7 +209,7 @@ for (const path of resFiles(testRoot)) {
             fix: `Replace it with \`await indexer.advanceTime(${delay[1]})\`: the source layer's timers only fire when the test advances the clock.`,
           });
         }
-        if (realClock.test(line)) {
+        if (realClock.test(line) && !realTimeAt(start + offset)) {
           violations.push({
             file,
             line: start + offset + 1,

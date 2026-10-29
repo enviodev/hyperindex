@@ -27,7 +27,6 @@ type t = {
   // reorg-threshold transition itself: the hold deferring that transition is
   // the premise such a body sets up being taken away.
   supervised: bool,
-  // What `run` and `it` default `~virtualTime` to.
   virtualTime: bool,
 }
 

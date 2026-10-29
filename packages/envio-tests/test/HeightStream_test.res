@@ -26,7 +26,6 @@ type harness = {
   drivers: array<HeightStream.driver>,
   closes: ref<int>,
   unsubscribe: unit => unit,
-  // Moves the clock the stream runs on, firing its timers on the way.
   advance: int => promise<unit>,
 }
 

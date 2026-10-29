@@ -664,7 +664,11 @@ let run = async (
             let idle = ref(0)
             let still = ref(0)
             let events = ref(clock.events)
-            while idle.contents < 5 && still.contents < 50 {
+            // A write in flight gets a far longer quiet spell before it counts
+            // as held: a real one on a loaded runner can outlast the short one,
+            // and returning mid-write would let the next step read stale rows.
+            let quietLimit = () => state->IndexerState.writeFiber->Option.isSome ? 500 : 50
+            while idle.contents < 5 && still.contents < quietLimit() {
               idle := if (
                   !(state->IndexerState.isProcessing) &&
                   state->IndexerState.writeFiber->Option.isNone
