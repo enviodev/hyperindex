@@ -213,13 +213,14 @@ impl SvmHyperSyncClient {
             .selection_builder
             .build(&params.on_event_registration_indexes)
             .map_err(map_err)?;
+        let selects_instructions = !params.on_event_registration_indexes.is_empty();
         let block_query = self
             .block_registrations
             .plan(
                 &params.on_block_registration_indexes,
                 params.from_slot,
                 params.to_slot,
-                params.on_event_registration_indexes.is_empty(),
+                !selects_instructions,
                 params.reorgable_from,
                 params.items_target,
             )
@@ -275,7 +276,10 @@ impl SvmHyperSyncClient {
                 .map_err(map_err)?,
             instruction_calls: built.instruction_selections.clone(),
             field_selection,
-            max_num_instructions: params.items_target.and_then(|v| usize::try_from(v).ok()),
+            max_num_instructions: params
+                .items_target
+                .filter(|_| selects_instructions)
+                .and_then(|v| usize::try_from(v).ok()),
             max_num_blocks: block_query.max_blocks.and_then(|b| usize::try_from(b).ok()),
             include_all_blocks: block_query.include_all_blocks(),
             ..Default::default()

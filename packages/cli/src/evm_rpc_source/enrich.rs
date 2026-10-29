@@ -503,7 +503,7 @@ struct TxReadPlan {
 
 /// Which blocks to read. A referenced block is skipped when the store was
 /// already asked for everything this page needs of it; a boundary block never
-/// is. What they are read for is `BlockRead`, the same for every page.
+/// is.
 fn plan_blocks(refs: &PageRefs, from_block: u64, to_block: u64, known: &BlockStore) -> Vec<u64> {
     let boundary = boundary_blocks(from_block, to_block);
     let mut numbers: Vec<u64> = refs

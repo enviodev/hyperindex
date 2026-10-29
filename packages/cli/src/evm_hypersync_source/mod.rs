@@ -387,7 +387,8 @@ pub struct ItemsQuery {
     /// constructed with. Empty selects no logs.
     pub on_event_registration_indexes: Vec<i64>,
     /// The block handlers selecting blocks, by the index the client was
-    /// constructed with. Empty selects no more blocks than the logs come from.
+    /// constructed with. Empty selects no more blocks than the logs come from,
+    /// unless the range reaches `reorgable_from`.
     pub on_block_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty

@@ -136,7 +136,7 @@ Vitest.it("sends the queries the read plan names", t => {
       "account_activity": [],
       "reward": []
     },
-    "max_num_instructions": 10000,
+    "max_num_instructions": null,
     "max_num_transactions": null,
     "logs": [],
     "max_num_blocks": null,
@@ -171,7 +171,7 @@ Vitest.it("sends the queries the read plan names", t => {
       "account_activity": [],
       "reward": []
     },
-    "max_num_instructions": 2,
+    "max_num_instructions": null,
     "max_num_transactions": null,
     "logs": [],
     "max_num_blocks": null,

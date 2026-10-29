@@ -18,8 +18,9 @@ type nextPageParams = {
   onBlockRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
-  // Blocks at or above this one can still be reorged, so a page reaching them
-  // reads its boundary blocks for reorg detection. None when the range is final.
+  // Blocks at or above this one can still be reorged, so a blocks-only page
+  // reaching them is read for the hashes of its boundary blocks even with no
+  // handler block in range. None when the range is final.
   reorgableFrom?: int,
 }
 

@@ -141,9 +141,9 @@ pub struct NextPageParams {
     /// How many times this query has already been retried, which sets how long
     /// a transient miss waits before the next attempt.
     pub retry: i64,
-    /// Blocks at or above this one can still be reorged, so a page reaching
-    /// them reads its boundary blocks for reorg detection. Absent when the
-    /// whole range is final.
+    /// Blocks at or above this one can still be reorged, so a blocks-only page
+    /// reaching them is read for the hashes of its boundary blocks even with no
+    /// handler block in range. Absent when the whole range is final.
     pub reorgable_from: Option<i64>,
 }
 
