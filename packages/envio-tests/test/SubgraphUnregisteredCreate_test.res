@@ -145,7 +145,7 @@ export function handleSync(event: any): void {}
   ~test=`
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createTestIndexer } from "envio";
-import { onLog } from "envio/src/subgraph/log.ts";
+import { onLog } from "envio/src/SubgraphLog.res.mjs";
 
 const admin = "0x1111111111111111111111111111111111111111" as const;
 const factory = "0x5555555555555555555555555555555555555555" as const;

@@ -184,9 +184,11 @@ indexer.onEvent({ contract: "Token", event: "Freeze" }, async ({ context }) => {
   ~test=`
 import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import { createTestIndexer, TestHelpers } from "envio";
-import { subgraphMode } from "envio/src/Env.res.mjs";
 
 // The sync surface is the subgraph runtime's, so it exists in subgraph mode.
+// Env ships no declarations: a specifier that isn't a literal skips its types.
+const envModule: string = "envio/src/Env.res.mjs";
+const { subgraphMode } = await import(envModule);
 beforeAll(() => {
   subgraphMode.contents = true;
 });

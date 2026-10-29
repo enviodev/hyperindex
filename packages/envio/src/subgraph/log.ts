@@ -5,29 +5,14 @@
  */
 
 import { info as loggerInfo, warn as loggerWarn } from "../Logger.res.mjs";
+import { notify } from "../SubgraphLog.res.mjs";
+
+export { notify };
 
 let logger: unknown;
 
 export function setLogger(next: unknown): void {
   logger = next;
-}
-
-type Listener = (level: string, message: string) => void;
-
-const listeners = new Set<Listener>();
-
-/**
- * Every line the runtime logs, and every line a mapping logs through graph-ts
- * (`uinfo`, `uwarn`, ...), as it is logged. A test indexer's own logger is
- * silent, so this is how a test reads them.
- */
-export function onLog(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-export function notify(level: string, message: string): void {
-  for (const listener of listeners) listener(level, message);
 }
 
 export function info(message: string): void {

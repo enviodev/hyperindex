@@ -63,7 +63,7 @@ export function handleTokenStaked(event: TokenStaked): void {
   ~test=`
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createTestIndexer } from "envio";
-import { onLog } from "envio/src/subgraph/log.ts";
+import { onLog } from "envio/src/SubgraphLog.res.mjs";
 
 const lines: string[] = [];
 let stopLogging: () => void;

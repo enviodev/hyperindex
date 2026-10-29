@@ -129,7 +129,7 @@ export function handleSync(event: any): void {
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { createTestIndexer } from "envio";
-import { onLog } from "envio/src/subgraph/log.ts";
+import { onLog } from "envio/src/SubgraphLog.res.mjs";
 
 const lines: string[] = [];
 let stopLogging: () => void;
