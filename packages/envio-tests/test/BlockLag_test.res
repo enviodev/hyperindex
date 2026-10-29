@@ -23,7 +23,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~virtualTime=true,
 )
 
 describe("E2E blockLag tests", () => {

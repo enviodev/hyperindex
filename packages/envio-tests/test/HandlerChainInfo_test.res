@@ -37,7 +37,6 @@ type Seen {
   isRealtime: Boolean!
 }
 `,
-  ~virtualTime=true,
 )
 
 type seen = {id: string, chainId: int, isRealtime: bool}

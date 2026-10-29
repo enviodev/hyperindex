@@ -2,7 +2,6 @@ open Vitest
 
 // Time a chain spent waiting out rate limits, as the metric reports it.
 let scenario = Scenario.make(
-  ~virtualTime=true,
   ~configYaml=`
 name: rate-limit
 rollback_on_reorg: false

@@ -24,7 +24,7 @@ type Gravatar {
   owner: String!
 }
 `
-let scenario = Scenario.make(~configYaml, ~schema, ~virtualTime=true)
+let scenario = Scenario.make(~configYaml, ~schema)
 
 let upTo = toBlock => MockSource.Respond({items: [], latestFetchedBlockNumber: toBlock})
 
@@ -398,7 +398,6 @@ chains:
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 `,
   ~schema,
-  ~virtualTime=true,
 )
 
 describe("Waiting across a sibling's rollback", () => {
@@ -519,7 +518,6 @@ import { indexer } from "envio";
 indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
 indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async () => {});
 `,
-  ~virtualTime=true,
 )
 
 type contractOps = {add: Address.t => unit}

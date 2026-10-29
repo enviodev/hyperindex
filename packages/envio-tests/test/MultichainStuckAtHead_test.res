@@ -44,7 +44,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~virtualTime=true,
 )
 
 describe("Multichain: chain with height subscription stuck at head", () => {

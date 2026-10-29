@@ -23,7 +23,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~virtualTime=true,
 )
 
 describe("Polling-stall loophole", () => {

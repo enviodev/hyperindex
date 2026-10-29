@@ -60,8 +60,9 @@ describe("Index logs", () => {
       ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
-      // Index events cross from the addon's threads on a queue of their own;
-      // nothing marks the end of one that never comes, so this is a lower bound.
+      // Real time: index events cross from the addon's threads on a queue of
+      // their own; nothing marks the end of one that never comes, so this is a
+      // lower bound.
       await Utils.delay(10)
 
       t.expect(

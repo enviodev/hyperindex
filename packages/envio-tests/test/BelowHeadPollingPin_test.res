@@ -36,7 +36,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~virtualTime=true,
 )
 
 describe("PIN: chains keep indexing after entering the reorg threshold", () => {

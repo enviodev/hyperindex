@@ -179,18 +179,17 @@ describe("Resuming a backfill that never finalized", () => {
       // replaced rather than left to time out. A re-parked waiter is one the next
       // head still reaches, so answering the poll that follows the flip has to
       // put the chain back to work on the range it opened up.
-      let heightCallsWhenReady = source.getHeightOrThrowCalls->Array.length
-      await MockSource.waitHeightQuery(source, ~since=heightCallsWhenReady)
+      // Both runs' polls up to the flip.
+      await source.expectNewHeightCallsAtLeast(1)
+      await restarted.advanceTime(1000)
+      await source.expectNewHeightCalls(1)
       source.resolveGetHeightOrThrow(200)
       await source.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
 
       t.expect(
-        (
-          source.pendingItemsQueries,
-          source.getHeightOrThrowCalls->Array.length > heightCallsWhenReady,
-        ),
+        source.pendingItemsQueries,
         ~message="Finalizing on resume re-parks the fetch waiter on the realtime source",
-      ).toEqual(([{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}], true))
+      ).toEqual([{partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}])
     },
   )
 
@@ -223,7 +222,7 @@ describe("Resuming a backfill that never finalized", () => {
       ).toEqual((1, [{id: 1337, progressBlock: 100, isReady: true}]))
 
       let restarted = await indexer.restart()
-      await Utils.delay(50)
+      await restarted.waitUntilIdle()
 
       t.expect(
         (
@@ -572,6 +571,7 @@ describe("Resuming a backfill that never finalized", () => {
         // The repair runs alongside indexing rather than blocking the loop, so it
         // isn't done by the time readiness is observable.
         let attempts = ref(0)
+        // Real time: the repair is a database index build, polled until it lands.
         while !(await hasIndex(aBIdIndex, ~sql, ~pgSchema)) && attempts.contents < 100 {
           attempts := attempts.contents + 1
           await Utils.delay(10)

@@ -67,6 +67,8 @@ describe("A failing scenario body", () => {
     let rejection = await rejectionOf(
       scenario->Scenario.run(
         ~sources=[{chain: 1}],
+        // Pins the report a real-time run gives; the virtual one is pinned below.
+        ~virtualTime=false,
         async (~indexer as _, ~source) => {
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
@@ -92,6 +94,8 @@ Mock source for chain 1 at the failure:
     let rejection = await rejectionOf(
       scenario->Scenario.run(
         ~sources=[{chain: 1}],
+        // Pins the report a real-time run gives; the virtual one is pinned below.
+        ~virtualTime=false,
         async (~indexer as _, ~source) => {
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
@@ -158,7 +162,6 @@ Mock source for chain 1 at the failure:
     let rejection = await rejectionOf(
       scenario->Scenario.run(
         ~sources=[{chain: 1}],
-        ~virtualTime=true,
         ~seed=1,
         async (~indexer as _, ~source) => {
           let mock = source(1)

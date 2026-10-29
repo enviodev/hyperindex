@@ -54,7 +54,6 @@ let scenario = Scenario.make(
   ~configYaml=configYaml(~name="sibling-rollback"),
   ~schema,
   ~handlers,
-  ~virtualTime=true,
 )
 
 // The same incident with a per-chain schema, where the rollback stays isolated
@@ -67,7 +66,6 @@ let perChainScenario = Scenario.make(
   ),
   ~schema,
   ~handlers,
-  ~virtualTime=true,
 )
 
 type counterOps = {set: {"id": string, "count": bigint} => unit}

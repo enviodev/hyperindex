@@ -1110,25 +1110,3 @@ let make = (
     },
   }
 }
-
-// Bounded, so a call that never arrives fails saying what it was waiting for
-// rather than as a suite-level timeout.
-let waitForCall = async (~arrived, ~message) => {
-  let attempts = ref(0)
-  while !arrived() && attempts.contents < 3000 {
-    attempts := attempts.contents + 1
-    await Utils.delay(1)
-  }
-  if !arrived() {
-    JsError.throwWithMessage(`Timed out waiting for ${message}`)
-  }
-}
-
-// Wait until the source takes a height call beyond the `since`th, for a test
-// that can't know how many polls a feed makes while it sleeps out its interval.
-// Where the count is known, `expectHeightCalls` checks it exactly.
-let waitHeightQuery = (sourceMock: t, ~since) =>
-  waitForCall(
-    ~arrived=() => sourceMock.getHeightOrThrowCalls->Array.length > since,
-    ~message=`a getHeightOrThrow call beyond ${since->Int.toString}`,
-  )

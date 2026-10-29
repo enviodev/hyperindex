@@ -28,7 +28,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~virtualTime=true,
 )
 
 describe("Height subscription push metrics", () => {

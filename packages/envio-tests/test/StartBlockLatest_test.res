@@ -44,7 +44,6 @@ let scenario = Scenario.make(
   ~configYaml=`
 name: start-block-latest${contractsYaml}chains:${chainYaml(~chainId=1337, ~startBlock="latest")}`,
   ~schema,
-  ~virtualTime=true,
 )
 
 let mixedScenario = Scenario.make(
@@ -54,7 +53,6 @@ name: start-block-latest-mixed${contractsYaml}chains:${chainYaml(
       ~startBlock="5",
     )}${chainYaml(~chainId=1337, ~startBlock="latest")}`,
   ~schema,
-  ~virtualTime=true,
 )
 
 // A `where` predicate runs while handlers register. On a first `latest` deploy
@@ -87,7 +85,6 @@ indexer.onBlock({
   context.Seen.set({ id: "only", seenStartBlock: seenAtRegistration });
 });
 `,
-  ~virtualTime=true,
 )
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]

@@ -656,10 +656,11 @@ let run = async (
           // Lets whatever a timer started run to where it waits on the test or
           // on another timer. Weaker than `waitUntilIdle`: a chain mid-rollback,
           // or left waiting on a query, is settled without being idle. So is a
-          // batch a test keeps from finishing, once nothing has touched the
-          // clock or the sources for a while.
+          // batch or write a test keeps from finishing, once nothing has touched
+          // the clock or the sources for a while — which is why pending writes
+          // are only started here, not awaited.
           let settle = async () => {
-            await state->Writing.flush
+            state->Writing.schedule
             let idle = ref(0)
             let still = ref(0)
             let events = ref(clock.events)
@@ -680,7 +681,7 @@ let run = async (
           clock->VirtualClock.advance(millis, ~settle)
         | None =>
           JsError.throwWithMessage(
-            "advanceTime needs a run on virtual time. Pass `~virtualTime=true` to Scenario.it.",
+            "advanceTime needs a run on virtual time, and this one opted out of it.",
           )
         },
       releaseRealtime: () => state->IndexerState.releaseRealtime,

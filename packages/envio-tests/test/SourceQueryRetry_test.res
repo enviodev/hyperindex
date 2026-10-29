@@ -25,7 +25,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~virtualTime=true,
 )
 
 let withBackoff = Source.GetItemsError(

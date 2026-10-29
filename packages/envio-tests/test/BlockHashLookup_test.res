@@ -26,7 +26,6 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~virtualTime=true,
 )
 
 let sources: array<Scenario.sourceMock> = [

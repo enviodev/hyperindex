@@ -351,7 +351,7 @@ Pending:
     await mock.expectItemsQueries([
       {fromBlock: 1, reply: Fail(Source.SourceBehindHead({blockNumber: 50, requestStats: []}))},
     ])
-    // The retry comes after a backoff; the wait covers it without knowing how long.
+    await indexer.advanceTime(100)
     await mock.expectItemsQueries([{retryCount: 1, reply: LeavePending}])
     t.expect(mock.pendingItemsQueries).toEqual([
       {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 1},

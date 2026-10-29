@@ -114,9 +114,9 @@ const scenarioStart = /\bScenario\.(?:it|run)\(/;
 for (const path of resFiles(testRoot)) {
   const file = relative(repoRoot, path);
   const lines = readFileSync(path, "utf8").split("\n");
-  // A scenario made with `~virtualTime=true` puts every test run on it on
-  // virtual time, unless the test says `~virtualTime=false`.
-  const virtualScenarios = new Set<string>();
+  // Scenarios run on virtual time unless `~virtualTime=false` takes them off it,
+  // on `Scenario.make` for every test of that scenario or on one test.
+  const realTimeScenarios = new Set<string>();
   // Scenarios a file makes through a function of its own count the same way.
   lines.forEach((line, index) => {
     const bound = line.match(/^let (\w+) =/);
@@ -127,9 +127,32 @@ for (const path of resFiles(testRoot)) {
       .map((line) => line.replace(/\/\/.*$/, ""));
     if (
       region.some((line) => /\bScenario\.make\(/.test(line)) &&
-      region.some((line) => /~virtualTime=true\b/.test(line))
+      region.some((line) => /~virtualTime=false\b/.test(line))
     ) {
-      virtualScenarios.add(bound[1]);
+      realTimeScenarios.add(bound[1]);
+    }
+  });
+  lines.forEach((line, index) => {
+    const code = line.replace(/\/\/.*$/, "");
+    // Scenario.res is where the default is set.
+    if (/~virtualTime=true\b/.test(code) && !file.endsWith("helpers/Scenario.res")) {
+      violations.push({
+        file,
+        line: index + 1,
+        title: "~virtualTime=true is the default",
+        fix: "Delete it: scenarios run on virtual time unless they opt out.",
+      });
+    }
+    // Real time is the exception, and the reason is what keeps it from
+    // spreading by copy and paste.
+    const previous = lines[index - 1] ?? "";
+    if (/~virtualTime=false\b/.test(code) && !/\/\//.test(line) && !/^\s*\/\//.test(previous)) {
+      violations.push({
+        file,
+        line: index + 1,
+        title: "~virtualTime=false without a reason",
+        fix: "Say on the line above why this test needs real time, such as a source talking to a real server.",
+      });
     }
   });
   const starts = lines.flatMap((line, index) => (scenarioStart.test(line) ? [index] : []));
@@ -145,12 +168,18 @@ for (const path of resFiles(testRoot)) {
       .join("\n")
       .match(/(\w+)\([^()]*\)\s*->\s*Scenario\.(?:it|run)\($/m);
     const name = receiver?.[1] ?? receiver?.[2] ?? factoryCall?.[1];
-    const onVirtualScenario =
-      name !== undefined &&
-      virtualScenarios.has(name) &&
-      !code.some((line) => /~virtualTime=false\b/.test(line));
-    if (onVirtualScenario || code.some((line) => /~virtualTime=true\b/.test(line))) {
+    const onRealTime =
+      (name !== undefined && realTimeScenarios.has(name)) ||
+      code.some((line) => /~virtualTime=false\b/.test(line));
+    if (!onRealTime) {
       code.forEach((line, offset) => {
+        // Work off the source clock (a handler or effect taking time, events
+        // from the addon's threads, throttled writes) still takes real time,
+        // and says so: a `// Real time:` comment covers the lines below it, up
+        // to the next blank line.
+        for (let at = start + offset; at >= 0 && lines[at].trim() !== ""; at--) {
+          if (/\/\/\s*Real time:/.test(lines[at])) return;
+        }
         const delay = line.match(realDelay);
         if (delay) {
           violations.push({
@@ -186,7 +215,7 @@ for (const path of resFiles(testRoot)) {
           file,
           line: start + timing + 1,
           title: "~sourceTiming on real time",
-          fix: "Add `~virtualTime=true` to the scenario, or to `Scenario.make` for the whole file, and drive its timers with `await indexer.advanceTime(ms)`.",
+          fix: "Drop `~virtualTime=false` and drive its timers with `await indexer.advanceTime(ms)`.",
         });
       }
     }
@@ -215,7 +244,7 @@ for (const path of testSources(testRoot)) {
           line: index + 1,
           title: `${match[0]} fakes vitest's timers`,
           fix:
-            "Move time on the clock the code was given instead: `~virtualTime=true` and `await indexer.advanceTime(ms)` " +
+            "Move time on the clock the code was given instead: `await indexer.advanceTime(ms)` " +
             "for a scenario, or a `VirtualClock` passed as the module's clock for a unit test.",
         });
       }

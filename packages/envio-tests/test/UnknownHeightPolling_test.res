@@ -24,7 +24,6 @@ type Gravatar {
   owner: String!
 }
 `,
-    ~virtualTime=true,
   )
 
 // Answers every height call with a height that leaves the wait unsatisfied, so

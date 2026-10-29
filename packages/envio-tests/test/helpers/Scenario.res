@@ -27,8 +27,7 @@ type t = {
   // reorg-threshold transition itself: the hold deferring that transition is
   // the premise such a body sets up being taken away.
   supervised: bool,
-  // What `run` and `it` default `~virtualTime` to, for a file whose scenarios
-  // all depend on the source layer's timers.
+  // What `run` and `it` default `~virtualTime` to.
   virtualTime: bool,
 }
 
@@ -79,7 +78,7 @@ let make = (
   ~handlers=?,
   ~unsupported=[],
   ~supervised=true,
-  ~virtualTime=false,
+  ~virtualTime=true,
 ): t => {
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
@@ -201,8 +200,9 @@ let run = async (
   ~yamlSources=false,
   ~sourceTiming=?,
   // Runs the source layer's timers on a virtual clock that only the test moves,
-  // with `indexer.advanceTime`, and fails the run on a height call no
-  // expectation accounted for. Defaults to the scenario's.
+  // with `indexer.advanceTime`. Defaults to the scenario's, which is on unless
+  // `Scenario.make` turned it off; the lint wants a reason beside every
+  // `~virtualTime=false`.
   ~virtualTime=?,
   // The virtual clock's seed. `ENVIO_TEST_SEED`, or a fresh one per run, when
   // left out.
