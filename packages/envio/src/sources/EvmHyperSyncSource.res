@@ -5,6 +5,7 @@ type options = {
   endpointUrl: string,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   apiToken: option<string>,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
@@ -21,6 +22,7 @@ let make = (
     chainId,
     endpointUrl,
     onEventRegistrations,
+    ?onBlockRegistrations,
     apiToken,
     clientTimeoutMillis,
     lowercaseAddresses,
@@ -32,6 +34,7 @@ let make = (
   }: options,
 ): t => {
   let name = "HyperSync"
+  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   // Per source, so one rejected token is reported once rather than on every
   // height retry for the life of the process.
@@ -44,6 +47,7 @@ let make = (
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~onBlockRegistrations,
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
@@ -62,7 +66,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks,
+    ~reorgableFrom,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -77,19 +81,22 @@ let make = (
     let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
 
     //fetch batch
-    let pageUnsafe = try await HyperSync.GetLogs.query(
+    let pageUnsafe = try await HyperSync.GetItems.query(
       ~client,
-      ~fromBlock,
-      ~toBlock,
-      ~maxNumLogs=itemsTarget,
-      ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
+      ~query={
+        fromBlock,
+        toBlock: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
+        ?itemsTarget,
+        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
+        clientFilteredContracts: selection.clientFilteredContracts,
+        ?reorgableFrom,
+      },
       ~addressSet,
-      ~clientFilteredContracts=selection.clientFilteredContracts,
-      ~includeAllBlocks,
     ) catch {
-    | HyperSync.GetLogs.Error(WrongInstance) =>
+    | HyperSync.GetItems.Error(WrongInstance) =>
       throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
-    | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
+    | HyperSync.GetItems.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -139,7 +146,9 @@ let make = (
     let parsingTimeRef = Performance.now()
 
     let parsedQueueItems =
-      pageUnsafe.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      pageUnsafe.eventItems
+      ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      ->Array.concat(pageUnsafe.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 

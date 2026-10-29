@@ -91,6 +91,7 @@ let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Fact
 
 let makeSelection = (): FetchState.selection => {
   onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
+  onBlockRegistrations: [],
   dependsOnAddresses: true,
 }
 
@@ -124,7 +125,7 @@ let makeRpcSource = () =>
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   try await source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet=factorySet,

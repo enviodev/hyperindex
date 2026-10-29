@@ -169,7 +169,7 @@ describe("RpcSource - field selection end to end", () => {
       ~stores=(blockStore, transactionStore),
     )
     let response = await source.getItemsOrThrow(
-      ~includeAllBlocks=false,
+      ~reorgableFrom=None,
       ~fromBlock=100,
       ~toBlock=Some(100),
       ~addressSet=addressStore->AddressStore.makeSet(
@@ -179,6 +179,7 @@ describe("RpcSource - field selection end to end", () => {
       ~partitionId="0",
       ~selection={
         dependsOnAddresses: true,
+        onBlockRegistrations: [],
         onEventRegistrations: [(registration :> Internal.onEventRegistration)],
       },
       ~itemsTarget=Some(5000),
@@ -624,13 +625,13 @@ describe("RpcSource - empty selection", () => {
 
     let caught = try {
       let _ = await source.getItemsOrThrow(
-        ~includeAllBlocks=false,
+        ~reorgableFrom=None,
         ~fromBlock=0,
         ~toBlock=Some(1),
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
         ~knownHeight=1,
         ~partitionId="0",
-        ~selection={dependsOnAddresses: true, onEventRegistrations: []},
+        ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: []},
         ~itemsTarget=Some(5000),
         ~retry=0,
         ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource empty selection"}),
@@ -710,7 +711,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let call = async () =>
         try {
           let _ = await source.getItemsOrThrow(
-            ~includeAllBlocks=false,
+            ~reorgableFrom=None,
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
             ~addressSet=addressStore->AddressStore.makeSet(
@@ -720,6 +721,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~partitionId="0",
             ~selection={
               dependsOnAddresses: true,
+              onBlockRegistrations: [],
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
             ~itemsTarget=Some(5000),
@@ -836,7 +838,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
     let retry = try {
       let result = try {
         let _ = await source.getItemsOrThrow(
-          ~includeAllBlocks=false,
+          ~reorgableFrom=None,
           ~fromBlock=0,
           ~toBlock=Some(1_000_000),
           ~addressSet=addressStore->AddressStore.makeSet(
@@ -846,6 +848,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
+            onBlockRegistrations: [],
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
           ~itemsTarget=Some(5000),
@@ -957,7 +960,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
 
     let (page, filters) = try {
       let page = await source.getItemsOrThrow(
-        ~includeAllBlocks=false,
+        ~reorgableFrom=None,
         ~fromBlock=0,
         ~toBlock=Some(100),
         ~addressSet=addressStore->AddressStore.makeSet(
@@ -967,6 +970,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~partitionId="selection-e2e",
         ~selection={
           dependsOnAddresses: true,
+          onBlockRegistrations: [],
           onEventRegistrations: selectedRegistrations->Array.map(
             reg => (reg :> Internal.onEventRegistration),
           ),
