@@ -3624,34 +3624,56 @@ export function makeBlockHandlerBlock(
 ): EthereumBlock {
   // A simulated block carries no fields: they are read as for a template.
   if (selected?.hash != null) return shaped(blank(EthereumBlock), BLOCK_SHAPE, selected);
-  const block = blank(EthereumBlock);
-  // graph-node builds it from the header's u64: minimal two's complement
-  // bytes, as an event's block number is.
-  block.number = new BigInt_(BigInt(blockNumber));
-  const timestamp = selected?.timestamp;
-  Object.defineProperty(block, "timestamp", {
-    enumerable: true,
-    configurable: true,
-    // A header fetched for another field already carries it.
-    get: () =>
-      timestamp != null
-        ? new BigInt_(BigInt(timestamp as number))
-        : header
-          ? header.timestamp
-          : BigInt_.fromString(hostsOrThrow().blockTimestamp(blockNumber)),
-  });
-  let header: EthereumBlock | undefined;
-  const fetched = () =>
-    (header ??= shaped(blank(EthereumBlock), BLOCK_SHAPE, JSON.parse(hostsOrThrow().blockHeader(blockNumber))));
-  for (const field of Object.keys(BLOCK_SHAPE) as (keyof EthereumBlock)[]) {
-    if (field === "number" || field === "timestamp") continue;
-    Object.defineProperty(block, field, {
-      enumerable: true,
-      configurable: true,
-      get: () => fetched()[field],
-    });
+  return new LazyBlock(blockNumber, selected?.timestamp);
+}
+
+// The getters live on the prototype: a sparse handler builds one of these per
+// block, and defining them on each instance cost more than the handler did.
+class LazyBlock extends EthereumBlock {
+  #blockNumber: number;
+  #timestamp: unknown;
+  #header: EthereumBlock | undefined;
+
+  constructor(blockNumber: number, timestamp: unknown) {
+    // No arguments skips the constructor's fields, as `blank` does.
+    super(...([] as unknown as ConstructorParameters<typeof EthereumBlock>));
+    this.#blockNumber = blockNumber;
+    this.#timestamp = timestamp;
+    // graph-node builds it from the header's u64: minimal two's complement
+    // bytes, as an event's block number is.
+    this.number = new BigInt_(BigInt(blockNumber));
   }
-  return block;
+
+  #fetched(): EthereumBlock {
+    return (this.#header ??= shaped(
+      blank(EthereumBlock),
+      BLOCK_SHAPE,
+      JSON.parse(hostsOrThrow().blockHeader(this.#blockNumber)),
+    ));
+  }
+
+  static {
+    Object.defineProperty(this.prototype, "timestamp", {
+      configurable: true,
+      // A header fetched for another field already carries it.
+      get(this: LazyBlock) {
+        return this.#timestamp != null
+          ? new BigInt_(BigInt(this.#timestamp as number))
+          : this.#header
+            ? this.#header.timestamp
+            : BigInt_.fromString(hostsOrThrow().blockTimestamp(this.#blockNumber));
+      },
+    });
+    for (const field of Object.keys(BLOCK_SHAPE) as (keyof EthereumBlock)[]) {
+      if (field === "number" || field === "timestamp") continue;
+      Object.defineProperty(this.prototype, field, {
+        configurable: true,
+        get(this: LazyBlock) {
+          return this.#fetched()[field];
+        },
+      });
+    }
+  }
 }
 
 /**
