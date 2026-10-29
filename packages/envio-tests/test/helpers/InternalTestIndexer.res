@@ -152,6 +152,7 @@ let fromSubgraph = (
     let dest = pathJoin([workspace, relativePath])
     mkdirSync(pathDirname(dest), {"recursive": true})
     writeFileSync(dest, source)
+
     // A package manager links bins executable.
     if relativePath->String.includes("node_modules/.bin/") {
       chmodSync(dest, 0o755)
@@ -163,7 +164,7 @@ let fromSubgraph = (
     if fromProjectFiles {
       Core.getConfigJson(~directory=root)
     } else {
-      (Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)).config
+      Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root).config
     }
   } catch {
   | exn =>
@@ -197,7 +198,7 @@ let fromSubgraph = (
     let setup = try {
       claimProcess(~site)
       Config.prime(publicConfigJson)
-      HandlerRegister.startRegistration(~config)
+      HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
       mkdirSync(tmpDir, {"recursive": true})
       Ok(writeModule(~kind="test", ~site, ~source=test))
     } catch {
@@ -298,7 +299,7 @@ let fromUserApi = (
     let site = callSite()
     claimProcess(~site)
     HandlerRegister.resetOnEventRegistrations()
-    HandlerRegister.startRegistration(~config)
+    HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
     mkdirSync(tmpDir, {"recursive": true})
     let handlersFile = writeModule(~kind="handlers", ~site, ~source=handlers)
     let collected = ref(false)
@@ -326,7 +327,7 @@ let fromUserApi = (
       // Makes `Config.load()` resolve to this fixture, which is what lets the
       // real `createTestIndexer` from "envio" run with no project on disk.
       Config.prime(publicConfigJson)
-      HandlerRegister.startRegistration(~config)
+      HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
 
       mkdirSync(tmpDir, {"recursive": true})
       Ok((

@@ -89,7 +89,6 @@ import { expectType, type TypeEqual } from "ts-expect";
 
 type NewGreeting = FuelEvent<"Greeter", "NewGreeting">;
 
-// Fuel has no indexed params, so the eventFilters lookup resolves to {}.
 expectType<
   TypeEqual<
     FuelOnEventOptions<NewGreeting>,
@@ -97,7 +96,7 @@ expectType<
       readonly contract: "Greeter";
       readonly event: "NewGreeting";
       readonly wildcard?: boolean;
-      readonly where?: FuelOnEventWhere<{}, "Greeter">;
+      readonly where?: FuelOnEventWhere<"Greeter">;
     }
   >
 >(true);
@@ -185,8 +184,8 @@ expectType<
     readonly Address[]
   >
 >(true);
-const _fFilter: FuelOnEventWhereFilter<{}> = { block: { height: { _gte: 1 } } };
-expectType<FuelOnEventWhereFilter<{}>>(_fFilter);
+const _fFilter: FuelOnEventWhereFilter = { block: { height: { _gte: 1 } } };
+expectType<FuelOnEventWhereFilter>(_fFilter);
 expectType<
   TypeEqual<FuelOnBlockHandlerArgs["block"], { readonly height: number }>
 >(true);
@@ -203,15 +202,15 @@ const _ok: FuelOnBlockFilter = {
 expectType<FuelOnBlockFilter>(_ok);
 
 // Fuel event filters narrow block.height with _gte only.
-const _where: FuelOnEventWhere<{}, "Greeter"> = {
+const _where: FuelOnEventWhere<"Greeter"> = {
   block: { height: { _gte: 1 } },
 };
-expectType<FuelOnEventWhere<{}, "Greeter">>(_where);
+expectType<FuelOnEventWhere<"Greeter">>(_where);
 
 // The dynamic callback form returns a filter or a boolean.
-const _whereCb: FuelOnEventWhere<{}, "Greeter"> = ({ chain }) =>
+const _whereCb: FuelOnEventWhere<"Greeter"> = ({ chain }) =>
   chain.id === 0 ? true : { block: { height: { _gte: 1 } } };
-expectType<FuelOnEventWhere<{}, "Greeter">>(_whereCb);
+expectType<FuelOnEventWhere<"Greeter">>(_whereCb);
 `)
   )
 
@@ -293,7 +292,7 @@ expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
     let config = InternalTestIndexer.fromUserApi(~files, ~configYaml).config
     let message = try {
       HandlerRegister.resetOnEventRegistrations()
-      HandlerRegister.startRegistration(~config)
+      HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
       HandlerRegister.setHandler(
         ~contractName="Greeter",
         ~eventName="NewGreeting",

@@ -1,7 +1,7 @@
 // Thrown by a sync op that can't be served from memory. Owned by envio so the
 // subgraph runtime's replay loop can tell it apart from a real handler error.
-// User code never swallows it: AssemblyScript has no try/catch, and the traps
-// keep re-throwing it while the context stays aborted.
+// User code never swallows it: AssemblyScript has no try/catch, and the ops
+// keep re-throwing it while the round stays aborted.
 exception Suspend
 
 let isSuspend = exn =>
@@ -10,82 +10,64 @@ let isSuspend = exn =>
   | _ => false
   }
 
-type contextStatus =
-  | Active
-  // Set by a suspended sync op. Every trap access and every op closure
-  // re-throws the stored error, so even a caught suspend stops the handler
-  // at its next context interaction.
-  | Aborted(exn)
-  | Resolved
-
-// Held by reference so the entity sub-proxies, which copy the rest of the
-// params by value, observe the same lifecycle as the handler context.
-type syncState = {
-  mutable status: contextStatus,
-  // Ops scheduled by this round's suspended reads, awaited before the replay.
-  mutable pending: option<array<promise<unit>>>,
-  // Effect outputs read from the in-memory table during this handler
-  // invocation, reused by its later replay rounds.
-  mutable memo: option<dict<Internal.effectOutput>>,
-  // Only while a synchronous round runs: its writes, held until it completes.
-  mutable writes: option<SyncWrites.t>,
-  // Preload reads this round answered as absent while their load was in flight.
-  mutable speculated: int,
-}
-
-let makeSyncState = () => {status: Active, pending: None, memo: None, writes: None, speculated: 0}
-
-type contextParams = {
-  item: Internal.item,
-  checkpointId: Internal.checkpointId,
-  indexerState: IndexerState.t,
-  loadManager: LoadManager.t,
-  persistence: Persistence.t,
-  isPreload: bool,
-  chains: Internal.chains,
-  config: Config.t,
-  sync: syncState,
-}
-
-let getPending = (sync: syncState) =>
-  switch sync.pending {
-  | Some(pending) => pending
-  | None =>
-    let pending = []
-    sync.pending = Some(pending)
-    pending
-  }
-
-let getMemo = (sync: syncState) =>
-  switch sync.memo {
-  | Some(memo) => memo
-  | None =>
-    let memo = Dict.make()
-    sync.memo = Some(memo)
-    memo
-  }
-
-let checkStatusOrThrow = (params: contextParams, ~access: string) =>
-  switch params.sync.status {
-  | Active => ()
-  | Aborted(exn) => throw(exn)
-  | Resolved =>
-    Utils.Error.make(
-      `Impossible to access ${access} after the handler is resolved. Make sure you didn't miss an await in the handler.`,
-    )->ErrorHandling.mkLogAndRaise(
-      ~logger=Ecosystem.getItemLogger(params.item, ~ecosystem=params.config.ecosystem),
-    )
-  }
-
 // Every suspend throws this one value: `throw(Suspend)` builds a fresh Error,
 // stack trace and all, and a mapping suspends several times per event.
 let suspend: exn = Suspend
 
-// Fires the async op behind a sync miss, records it for the replay loop and
-// aborts the context.
-let scheduleAndSuspend = (params: contextParams, promise: promise<'a>): 'b => {
-  params.sync->getPending->Array.push(promise->Utils.Promise.ignoreValue)
-  params.sync.status = Aborted(suspend)
+type roundStatus =
+  | Active
+  // Set by a suspended sync op. Every context access re-throws the stored
+  // error, so even a caught suspend stops the round at its next one.
+  | Aborted(exn)
+
+// One `context.runSync` call. Its body is replayed from the top each time it
+// suspends on a read that wasn't in memory yet.
+type syncRun = {
+  run: RunScope.handlerRun,
+  mutable status: roundStatus,
+  // Ops scheduled by this round's suspended reads, awaited before the replay.
+  mutable pending: array<promise<unit>>,
+  // Effect outputs read from the in-memory table during this call, reused by
+  // its later rounds.
+  memo: dict<Internal.effectOutput>,
+  // This round's writes, held until it completes.
+  mutable writes: SyncWrites.t,
+  // Preload reads this round answered as absent while their load was in flight.
+  mutable speculated: int,
+}
+
+// The round running right now. A round's body runs synchronously from start to
+// end, so no other run's code can observe it.
+let currentSync: ref<option<syncRun>> = ref(None)
+
+let syncOf = (run: RunScope.handlerRun) =>
+  switch currentSync.contents {
+  | Some(sync) if sync.run === run => Some(sync)
+  | _ => None
+  }
+
+// The handler run a `context.${prop}` access belongs to, refused while its
+// round is aborted.
+let currentRunOrThrow = (~prop) => {
+  let run = RunScope.currentHandlerRunOrThrow(~prop)
+  switch run->syncOf {
+  | Some({status: Aborted(exn)}) => throw(exn)
+  | _ => ()
+  }
+  run
+}
+
+let syncOrThrow = (run, ~prop) =>
+  switch run->syncOf {
+  | Some(sync) => sync
+  | None => JsError.throwWithMessage(`context.${prop} is only available inside context.runSync.`)
+  }
+
+// Fires the async op behind a sync miss, records it for the replay and aborts
+// the round.
+let scheduleAndSuspend = (sync: syncRun, promise: promise<'a>): 'b => {
+  sync.pending->Array.push(promise->Utils.Promise.ignoreValue)
+  sync.status = Aborted(suspend)
   throw(suspend)
 }
 
@@ -95,19 +77,27 @@ let scheduleAndSuspend = (params: contextParams, promise: promise<'a>): 'b => {
 // replayed once its reads land. Bounded, for a mapping that loops on a read.
 let maxSpeculatedReads = 32
 
-let missOrSuspend = (params: contextParams, promise: promise<'a>, ~absent: 'b): 'b =>
-  if params.isPreload && params.sync.speculated < maxSpeculatedReads {
-    params.sync->getPending->Array.push(promise->Utils.Promise.ignoreValue)
-    params.sync.speculated = params.sync.speculated + 1
+let missOrSuspend = (sync: syncRun, promise: promise<'a>, ~absent: 'b): 'b =>
+  if sync.run.isPreload && sync.speculated < maxSpeculatedReads {
+    sync.pending->Array.push(promise->Utils.Promise.ignoreValue)
+    sync.speculated = sync.speculated + 1
     absent
   } else {
-    params->scheduleAndSuspend(promise)
+    sync->scheduleAndSuspend(promise)
   }
 
-// We don't want to expose the params to the user
-// so instead of storing _params on the context object,
-// we use an external WeakMap
-let paramsByThis: Utils.WeakMap.t<unknown, contextParams> = Utils.WeakMap.make()
+// What every handler run of an indexer shares. The run itself — its item,
+// checkpoint and whether it's a preload — is read from the RunScope it was
+// entered with, so one context object serves every run, concurrent ones and
+// both passes included.
+type params = {
+  indexerState: IndexerState.t,
+  loadManager: LoadManager.t,
+  persistence: Persistence.t,
+  config: Config.t,
+  // Refreshed by HandlerRuntime when a batch changes it.
+  mutable chains: Internal.chains,
+}
 
 let effectContextPrototype = %raw(`Object.create(null)`)
 Utils.Object.defineProperty(
@@ -115,10 +105,9 @@ Utils.Object.defineProperty(
   "log",
   {
     // Wrap with toMethod so `this` binds to the EffectContext instance.
-    get: Utils.toMethod(() => {
-      let params = paramsByThis->Utils.WeakMap.unsafeGet(%raw(`this`))
-      Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
-    }),
+    get: Utils.toMethod(() =>
+      %raw(`this`)->RunScope.effectRunOf->RunScope.effectLogger->Logger.asContextLog
+    ),
   },
 )
 %%raw(`
@@ -128,8 +117,7 @@ function throwCrossChainChainAccess() {
   throw new Error('context.chain is not available on the cross-chain effect "' + this._effectName + '". Set \`crossChain: false\` in its options to scope the effect to a single chain, then read context.chain.id.');
 }
 var crossChainChainDescriptor = { get: throwCrossChainChainAccess, enumerable: true };
-var EffectContext = function(params, chainId, effectName, defaultShouldCache, callEffect) {
-  paramsByThis.set(this, params);
+var EffectContext = function(chainId, effectName, defaultShouldCache, callEffect) {
   this.effect = callEffect;
   this.cache = defaultShouldCache;
   if (chainId === undefined) {
@@ -145,36 +133,31 @@ EffectContext.prototype = effectContextPrototype;
 
 @new
 external makeEffectContext: (
-  contextParams,
   ~chainId: option<ChainId.t>,
   ~effectName: string,
   ~defaultShouldCache: bool,
   ~callEffect: (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>,
 ) => Internal.effectContext = "EffectContext"
 
-// Builds the scope and args a call to `effect` resolves against. Split out of
-// `initEffect` so the sync caller derives the same cache key and scope without
-// duplicating the nested-caller rules.
-let rec prepareEffectCall = (
-  params: contextParams,
-  ~effect: Internal.effect,
-  ~input: Internal.effectInput,
-  ~caller: option<Internal.effect>,
-) => {
-  // An effect that didn't state a scope follows the config: cross-chain by
-  // default, per-chain under `disable_default_cross_chain`.
-  let isCrossChain = (effect: Internal.effect) =>
-    effect.crossChain->Option.getOr(params.config.defaultCrossChain)
-  // A chain-scoped effect always resolves against the chain of the handler that
-  // triggered the call, even several effects deep, so the chain id is captured
-  // once from the item and reused for the whole nested-call tree.
-  let scope =
-    effect->isCrossChain
-      ? Internal.CrossChain
-      : Internal.Chain(params.item->Internal.getItemChainId)
+// An effect that didn't state a scope follows the config: cross-chain by
+// default, per-chain under `disable_default_cross_chain`.
+let isCrossChain = (params: params, effect: Internal.effect) =>
+  effect.crossChain->Option.getOr(params.config.defaultCrossChain)
 
-  switch caller {
-  | Some(callerEffect) if callerEffect->isCrossChain && !(effect->isCrossChain) =>
+// A chain-scoped effect always resolves against the chain of the handler run
+// that triggered the call, even several effects deep.
+let rec prepareEffectCall = (
+  params: params,
+  ~run: RunScope.handlerRun,
+  ~caller: option<Internal.effect>,
+  effect: Internal.effect,
+  input: Internal.effectInput,
+) => {
+  let handlerChainId = run.item->Internal.getItemChainId
+  let scope = params->isCrossChain(effect) ? Internal.CrossChain : Internal.Chain(handlerChainId)
+
+  switch (caller, scope) {
+  | (Some(callerEffect), Chain(_)) if params->isCrossChain(callerEffect) =>
     // A cross-chain effect isn't tied to a single chain, so it has no chain
     // to resolve a chain-scoped child against. Reject before any cache work.
     JsError.throwWithMessage(
@@ -184,18 +167,15 @@ let rec prepareEffectCall = (
   }
 
   let effectContext = makeEffectContext(
-    params,
     ~chainId=switch scope {
     | Internal.Chain(chainId) => Some(chainId)
     | Internal.CrossChain => None
     },
     ~effectName=effect.name,
     ~defaultShouldCache=effect.defaultShouldCache,
-    // Nested calls made by the effect handler itself stay async: only the
-    // handler that started the sync run needs a sync answer.
-    ~callEffect=(nested, nestedInput) =>
-      params->callEffectAsync(~effect=nested, ~input=nestedInput, ~caller=Some(effect)),
+    ~callEffect=(child, input) => params->callEffect(~run, ~caller=Some(effect), child, input),
   )
+  effectContext->RunScope.attachEffectRun({caller: run, effectName: effect.name})
   let effectArgs: Internal.effectArgs = {
     input,
     context: effectContext,
@@ -203,14 +183,14 @@ let rec prepareEffectCall = (
     ->S.reverseConvertOrThrow(effect.input)
     ->Utils.Hash.makeOrThrow
     ->Utils.Hash.boundCacheKey,
-    chainId: params.item->Internal.getItemChainId,
-    checkpointId: params.checkpointId,
+    chainId: handlerChainId,
+    checkpointId: run.checkpointId,
   }
   (scope, effectArgs)
 }
 
-and callEffectAsync = (params: contextParams, ~effect, ~input, ~caller) => {
-  let (scope, effectArgs) = params->prepareEffectCall(~effect, ~input, ~caller)
+and callEffect = (params: params, ~run: RunScope.handlerRun, ~caller, effect, input) => {
+  let (scope, effectArgs) = params->prepareEffectCall(~run, ~caller, effect, input)
   LoadLayer.loadEffect(
     ~loadManager=params.loadManager,
     ~persistence=params.persistence,
@@ -218,17 +198,8 @@ and callEffectAsync = (params: contextParams, ~effect, ~input, ~caller) => {
     ~effectArgs,
     ~scope,
     ~indexerState=params.indexerState,
-    ~shouldGroup=params.isPreload,
-    ~item=params.item,
-    ~ecosystem=params.config.ecosystem,
+    ~shouldGroup=run.isPreload,
   )
-}
-
-let initEffect = (params: contextParams) => {
-  (effect: Internal.effect, input: Internal.effectInput) => {
-    params->checkStatusOrThrow(~access="context.effect")
-    params->callEffectAsync(~effect, ~input, ~caller=None)
-  }
 }
 
 let effectMemoKey = (~effect: Internal.effect, ~scope: Internal.chainScope, ~cacheKey) =>
@@ -237,408 +208,323 @@ let effectMemoKey = (~effect: Internal.effect, ~scope: Internal.chainScope, ~cac
   | Chain(chainId) => `${effect.name}.${chainId->ChainId.toString}.${cacheKey}`
   }
 
-let initEffectSync = (params: contextParams) => {
-  (effect: Internal.effect, input: Internal.effectInput) => {
-    params->checkStatusOrThrow(~access="context.effectSync")
-    let (scope, effectArgs) = params->prepareEffectCall(~effect, ~input, ~caller=None)
-    let memo = params.sync->getMemo
-    let memoKey = effectMemoKey(~effect, ~scope, ~cacheKey=effectArgs.cacheKey)
-    switch memo->Utils.Dict.dangerouslyGetNonOption(memoKey) {
-    | Some(output) => output
-    | None =>
-      let inMemTable = params.indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
-      if inMemTable->InMemoryStore.hasEffectOutput(effectArgs.cacheKey) {
-        let output = inMemTable->InMemoryStore.getEffectOutputUnsafe(effectArgs.cacheKey)
-        memo->Dict.set(memoKey, output)
-        output
-      } else if params.sync.speculated > 0 {
-        // The input may be computed from a speculated read: an effect can
-        // cost an RPC call, so it waits to be asked with the real values.
-        params.sync.status = Aborted(suspend)
-        throw(suspend)
-      } else {
-        params->scheduleAndSuspend(
-          LoadLayer.loadEffect(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~effect,
-            ~effectArgs,
-            ~scope,
-            ~indexerState=params.indexerState,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~ecosystem=params.config.ecosystem,
-          ),
-        )
-      }
+// An effect's output when it's in memory; otherwise the round suspends on it.
+let effectSync = (params: params, effect: Internal.effect, input: Internal.effectInput) => {
+  let run = currentRunOrThrow(~prop="effectSync")
+  let sync = run->syncOrThrow(~prop="effectSync")
+  let (scope, effectArgs) = params->prepareEffectCall(~run, ~caller=None, effect, input)
+  let memoKey = effectMemoKey(~effect, ~scope, ~cacheKey=effectArgs.cacheKey)
+  switch sync.memo->Utils.Dict.dangerouslyGetNonOption(memoKey) {
+  | Some(output) => output
+  | None =>
+    let inMemTable = params.indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
+    if inMemTable->InMemoryStore.hasEffectOutput(effectArgs.cacheKey) {
+      let output = inMemTable->InMemoryStore.getEffectOutputUnsafe(effectArgs.cacheKey)
+      sync.memo->Dict.set(memoKey, output)
+      output
+    } else if sync.speculated > 0 {
+      // The input may be computed from a speculated read: an effect can cost
+      // an RPC call, so it waits to be asked with the real values.
+      sync.status = Aborted(suspend)
+      throw(suspend)
+    } else {
+      sync->scheduleAndSuspend(
+        LoadLayer.loadEffect(
+          ~loadManager=params.loadManager,
+          ~persistence=params.persistence,
+          ~effect,
+          ~effectArgs,
+          ~scope,
+          ~indexerState=params.indexerState,
+          ~shouldGroup=run.isPreload,
+        ),
+      )
     }
   }
 }
 
-type entityContextParams = {
-  ...contextParams,
-  entityConfig: Internal.entityConfig,
-}
+// A TTL drops an entity's rows whenever ClickHouse merges them, so for one kept
+// there alone a read would turn on merge timing rather than on the events.
+let expiresUnread = (entityConfig: Internal.entityConfig) =>
+  !entityConfig.storage.postgres &&
+  entityConfig.storage.clickhouseOptions
+  ->Option.flatMap(options => options.ttl)
+  ->Option.isSome
 
-// The handler context is always chain-scoped, so a per-chain entity resolves to
-// the chain the handler runs on and a cross-chain one to the shared partition.
-let entityScope = (params: entityContextParams) =>
-  params.entityConfig->InMemoryStore.entityScope(~chainId=params.item->Internal.getItemChainId)
-
-let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) =>
-  LoadLayer.loadByFilter(
-    ~loadManager=params.loadManager,
-    ~persistence=params.persistence,
-    ~entityConfig=params.entityConfig,
-    ~scope=params->entityScope,
-    ~indexerState=params.indexerState,
-    ~shouldGroup=params.isPreload,
-    ~item=params.item,
-    ~ecosystem=params.config.ecosystem,
-    ~filter,
-  )
-
-let noopSet = (_entity: Internal.entity) => ()
-let noopDeleteUnsafe = (_entityId: EntityId.t) => ()
-
-// Reads against ClickHouse-only entities have no Postgres table to hit;
-// surface a friendly error instead of letting the SQL layer fail with
-// "relation does not exist".
-let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) =>
+let throwExpiresUnread = (entityConfig: Internal.entityConfig, op: string) => {
+  let {name} = entityConfig
   JsError.throwWithMessage(
-    `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
+    `context.${name}.${op}() is unavailable: ${name} is kept in ClickHouse alone with a ttl, which drops its rows whenever ClickHouse merges them, so a handler would read it differently from one run to the next. Keep it in Postgres too, with @storage(postgres: true, clickhouse: {...}), or drop the ttl.`,
   )
-
-let writeChange = (params: entityContextParams, change) => {
-  let scope = params->entityScope
-  switch params.sync.writes {
-  | Some(writes) => writes->SyncWrites.record(~entityConfig=params.entityConfig, ~scope, change)
-  | None => params.indexerState->SyncWrites.write(~entityConfig=params.entityConfig, ~scope, change)
-  }
 }
 
-let getRoundWrite = (params: entityContextParams, entityId) =>
-  switch params.sync.writes {
-  | Some(writes) => writes->SyncWrites.getById(~entityConfig=params.entityConfig, ~entityId)
-  | None => None
+type entityContext = {
+  get: string => promise<option<Internal.entity>>,
+  getWhere: dict<dict<unknown>> => promise<array<Internal.entity>>,
+  getOrThrow: (string, ~message: string=?) => promise<Internal.entity>,
+  getOrCreate: Internal.entity => promise<Internal.entity>,
+  set: Internal.entity => unit,
+  deleteUnsafe: EntityId.t => unit,
+}
+
+type syncEntityContext = {
+  getSync: string => option<Internal.entity>,
+  getWhereSync: dict<dict<unknown>> => array<Internal.entity>,
+  getInBlockSync: string => option<Internal.entity>,
+}
+
+let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) => {
+  let prop = entityConfig.name
+  let entityName = entityConfig.name
+  // The handler context is always chain-scoped, so a per-chain entity resolves
+  // to the chain the handler runs on and a cross-chain one to the shared
+  // partition.
+  let scopeOf = (run: RunScope.handlerRun) =>
+    entityConfig->InMemoryStore.entityScope(~chainId=run.item->Internal.getItemChainId)
+
+  let loadById = entityId => {
+    let run = currentRunOrThrow(~prop)
+    LoadLayer.loadById(
+      ~loadManager=params.loadManager,
+      ~persistence=params.persistence,
+      ~entityConfig,
+      ~scope=run->scopeOf,
+      ~indexerState=params.indexerState,
+      ~shouldGroup=run.isPreload,
+      ~entityId,
+    )
   }
 
-let getSyncHandler = (params: entityContextParams, entityId: string) =>
-  switch params->getRoundWrite(entityId) {
-  | Some(entity) => entity
-  | None =>
-    switch params.isPreload
-      ? PreloadLookahead.overlayGet(
-          ~item=params.item,
-          ~entityName=params.entityConfig.name,
-          ~scope=params->entityScope,
-          ~entityId,
+  // A preload run's writes are no-ops: its run proper makes them. Inside a sync
+  // round they are held until the round completes, a preload's only for the
+  // batch's later preloads to read (PreloadLookahead), never in the store.
+  let write = (run: RunScope.handlerRun, change: Change.t<Internal.entity>) =>
+    switch (run->syncOf, run.isPreload) {
+    | (Some(sync), false) =>
+      sync.writes->SyncWrites.record(~entityConfig, ~scope=run->scopeOf, change)
+    | (Some(sync), true) if PreloadLookahead.isActive() =>
+      sync.writes->SyncWrites.record(~entityConfig, ~scope=run->scopeOf, change)
+    | (None, false) =>
+      params.indexerState->SyncWrites.write(~entityConfig, ~scope=run->scopeOf, change)
+    | (_, true) => ()
+    }
+
+  let set = (entity: Internal.entity) => {
+    let run = currentRunOrThrow(~prop)
+    run->write(
+      Set({
+        entityId: entity.id->EntityId.unsafeOfString,
+        checkpointId: run.checkpointId,
+        entity,
+      }),
+    )
+  }
+
+  let deleteUnsafe = entityId => {
+    let run = currentRunOrThrow(~prop)
+    run->write(Delete({entityId, checkpointId: run.checkpointId}))
+  }
+
+  let entityContext: entityContext = if entityConfig->expiresUnread {
+    {
+      get: _ => throwExpiresUnread(entityConfig, "get"),
+      getWhere: _ => throwExpiresUnread(entityConfig, "getWhere"),
+      getOrThrow: (_, ~message as _=?) => throwExpiresUnread(entityConfig, "getOrThrow"),
+      getOrCreate: _ => throwExpiresUnread(entityConfig, "getOrCreate"),
+      set,
+      deleteUnsafe,
+    }
+  } else {
+    {
+      get: loadById,
+      getWhere: filter => {
+        let run = currentRunOrThrow(~prop)
+        LoadLayer.loadByFilter(
+          ~loadManager=params.loadManager,
+          ~persistence=params.persistence,
+          ~entityConfig,
+          ~scope=run->scopeOf,
+          ~indexerState=params.indexerState,
+          ~shouldGroup=run.isPreload,
+          ~filter,
         )
-      : None {
-    | Some(entity) => entity
-    | None =>
-      switch LoadLayer.getByIdInMemory(
-        ~entityConfig=params.entityConfig,
-        ~scope=params->entityScope,
-        ~indexerState=params.indexerState,
-        ~entityId,
-      ) {
-      | Some(entity) =>
-        if params.isPreload && entity->Option.isNone {
-          PreloadLookahead.recordAbsent(
-            ~item=params.item,
-            ~entityName=params.entityConfig.name,
-            ~scope=params->entityScope,
-            ~entityId,
-          )
-        }
-        entity
-      | None =>
-        (params :> contextParams)->missOrSuspend(
-          ~absent=None,
-          LoadLayer.loadById(
-            ~loadManager=params.loadManager,
-            ~persistence=params.persistence,
-            ~entityConfig=params.entityConfig,
-            ~scope=params->entityScope,
-            ~indexerState=params.indexerState,
-            ~shouldGroup=params.isPreload,
-            ~item=params.item,
-            ~ecosystem=params.config.ecosystem,
-            ~entityId,
-          ),
-        )
-      }
+      },
+      getOrThrow: (entityId, ~message=?) =>
+        loadById(entityId)->Promise.thenResolve(entity =>
+          switch entity {
+          | Some(entity) => entity
+          | None =>
+            JsError.throwWithMessage(
+              message->Option.getOr(
+                `Entity '${entityConfig.name}' with ID '${entityId}' is expected to exist.`,
+              ),
+            )
+          }
+        ),
+      getOrCreate: entity =>
+        loadById(entity.id)->Promise.thenResolve(storageEntity =>
+          switch storageEntity {
+          | Some(entity) => entity
+          | None =>
+            set(entity)
+            entity
+          }
+        ),
+      set,
+      deleteUnsafe,
     }
   }
 
-let getWhereSyncHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
-  let entityConfig = params.entityConfig
-  let filter =
-    filter->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
-  switch LoadLayer.getByFilterInMemory(
-    ~entityConfig,
-    ~scope=params->entityScope,
-    ~indexerState=params.indexerState,
-    ~filter,
-  ) {
-  | Some(entities) =>
-    switch params.sync.writes {
-    | Some(writes) => writes->SyncWrites.overlayFilter(entities, ~entityConfig, ~filter)
-    | None => entities
-    }
-  | None =>
-    (params :> contextParams)->missOrSuspend(
-      ~absent=[],
-      LoadLayer.loadByParsedFilter(
-        ~loadManager=params.loadManager,
-        ~persistence=params.persistence,
-        ~entityConfig,
-        ~scope=params->entityScope,
-        ~indexerState=params.indexerState,
-        ~shouldGroup=params.isPreload,
-        ~item=params.item,
-        ~ecosystem=params.config.ecosystem,
-        ~filter,
+  let object =
+    Utils.StrictObject.make(
+      Utils.StrictObject.makePrototype(op =>
+        JsError.throwWithMessage(`Invalid context.${entityConfig.name}.${op} operation.`)
       ),
-    )
-  }
-}
+    )->Utils.StrictObject.assign(entityContext)
 
-// Never suspends: the in-memory table spans the whole batch, so a change only
-// counts as "in this block" when it was written at this handler's checkpoint.
-let getInBlockSyncHandler = (params: entityContextParams, entityId: string) =>
-  switch params->getRoundWrite(entityId) {
-  | Some(entity) => entity
-  | None =>
-    let inMemTable =
-      params.indexerState->InMemoryStore.getInMemTable(
-        ~entityConfig=params.entityConfig,
-        ~scope=params->entityScope,
-      )
-    switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
-    | Some(change) if change->Change.getCheckpointId == params.checkpointId =>
-      change->InMemoryTable.Entity.mapChangeToEntity
-    | _ => None
-    }
-  }
-
-let entityTraps: Utils.Proxy.traps<entityContextParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-
-    (params :> contextParams)->checkStatusOrThrow(
-      ~access=`context.${params.entityConfig.name}.${prop}`,
-    )
-
-    let isClickHouseOnly = !params.entityConfig.storage.postgres
-
-    // Preload's writes are kept only within a round, for the batch's later
-    // preloads to read (PreloadLookahead); never in the store.
-    let set = params.isPreload
-      ? (entity: Internal.entity) =>
-          switch params.sync.writes {
-          | Some(writes) if PreloadLookahead.isActive() =>
-            writes->SyncWrites.record(
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              Set({
-                entityId: entity.id->EntityId.unsafeOfString,
-                checkpointId: params.checkpointId,
-                entity,
-              }),
-            )
-          | _ => noopSet(entity)
+  // The subgraph runtime's synchronous reads: answered from memory, or the
+  // round suspends on the load and is replayed once it lands.
+  if Env.subgraphMode.contents {
+    let syncEntityContext: syncEntityContext = {
+      getSync: entityId => {
+        let run = currentRunOrThrow(~prop)
+        let sync = run->syncOrThrow(~prop=`${prop}.getSync`)
+        let scope = run->scopeOf
+        switch sync.writes->SyncWrites.getById(~entityConfig, ~entityId) {
+        | Some(entity) => entity
+        | None =>
+          switch run.isPreload
+            ? PreloadLookahead.overlayGet(~item=run.item, ~entityName, ~scope, ~entityId)
+            : None {
+          | Some(entity) => entity
+          | None =>
+            switch LoadLayer.getByIdInMemory(
+              ~entityConfig,
+              ~scope,
+              ~indexerState=params.indexerState,
+              ~entityId,
+            ) {
+            | Some(entity) =>
+              if run.isPreload && entity->Option.isNone {
+                PreloadLookahead.recordAbsent(~item=run.item, ~entityName, ~scope, ~entityId)
+              }
+              entity
+            | None =>
+              sync->missOrSuspend(
+                ~absent=None,
+                LoadLayer.loadById(
+                  ~loadManager=params.loadManager,
+                  ~persistence=params.persistence,
+                  ~entityConfig,
+                  ~scope,
+                  ~indexerState=params.indexerState,
+                  ~shouldGroup=run.isPreload,
+                  ~entityId,
+                ),
+              )
+            }
           }
-      : (entity: Internal.entity) => {
-          // The check lives inside the closure too: a handler that grabbed
-          // `context.X.set` before a suspend must not keep writing.
-          (params :> contextParams)->checkStatusOrThrow(
-            ~access=`context.${params.entityConfig.name}.set`,
-          )
-          params->writeChange(
-            Set({
-              entityId: entity.id->EntityId.unsafeOfString,
-              checkpointId: params.checkpointId,
-              entity,
-            }),
+        }
+      },
+      getWhereSync: filter => {
+        let run = currentRunOrThrow(~prop)
+        let sync = run->syncOrThrow(~prop=`${prop}.getWhereSync`)
+        let scope = run->scopeOf
+        let filter = filter->EntityFilter.parseOrThrow(~entityName, ~table=entityConfig.table)
+        switch LoadLayer.getByFilterInMemory(
+          ~entityConfig,
+          ~scope,
+          ~indexerState=params.indexerState,
+          ~filter,
+        ) {
+        | Some(entities) => sync.writes->SyncWrites.overlayFilter(entities, ~entityConfig, ~filter)
+        | None =>
+          sync->missOrSuspend(
+            ~absent=[],
+            LoadLayer.loadByParsedFilter(
+              ~loadManager=params.loadManager,
+              ~persistence=params.persistence,
+              ~entityConfig,
+              ~scope,
+              ~indexerState=params.indexerState,
+              ~shouldGroup=run.isPreload,
+              ~filter,
+            ),
           )
         }
-
-    switch prop {
-    | "getSync" =>
-      (entityId => params->getSyncHandler(entityId))->(
-        Utils.magic: (string => option<Internal.entity>) => unknown
-      )
-
-    | "getWhereSync" =>
-      (
-        filter => params->getWhereSyncHandler(filter->(Utils.magic: unknown => dict<dict<unknown>>))
-      )->(Utils.magic: (unknown => array<Internal.entity>) => unknown)
-    | "getInBlockSync" =>
-      (entityId => params->getInBlockSyncHandler(entityId))->(
-        Utils.magic: (string => option<Internal.entity>) => unknown
-      )
-
-    | "get" =>
-      if isClickHouseOnly {
-        ((_entityId: string) => throwClickHouseReadOnly(params.entityConfig, "get"))->(
-          Utils.magic: (string => promise<option<Internal.entity>>) => unknown
-        )
-      } else {
-        (
-          entityId =>
-            LoadLayer.loadById(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              ~indexerState=params.indexerState,
-              ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~ecosystem=params.config.ecosystem,
-              ~entityId,
-            )
-        )->(Utils.magic: (string => promise<option<Internal.entity>>) => unknown)
-      }
-    | "getWhere" =>
-      if isClickHouseOnly {
-        ((_filter: unknown) => throwClickHouseReadOnly(params.entityConfig, "getWhere"))->(
-          Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown
-        )
-      } else {
-        (
-          filter => getWhereHandler(params, filter->(Utils.magic: unknown => dict<dict<unknown>>))
-        )->(Utils.magic: (unknown => promise<array<Internal.entity>>) => unknown)
-      }
-
-    | "getOrThrow" =>
-      if isClickHouseOnly {
-        (
-          (_entityId: string, ~message as _=?) =>
-            throwClickHouseReadOnly(params.entityConfig, "getOrThrow")
-        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
-      } else {
-        (
-          (entityId, ~message=?) =>
-            LoadLayer.loadById(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              ~indexerState=params.indexerState,
-              ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~ecosystem=params.config.ecosystem,
-              ~entityId,
-            )->Promise.thenResolve(entity => {
-              switch entity {
-              | Some(entity) => entity
-              | None =>
-                JsError.throwWithMessage(
-                  message->Option.getOr(
-                    `Entity '${params.entityConfig.name}' with ID '${entityId}' is expected to exist.`,
-                  ),
-                )
-              }
-            })
-        )->(Utils.magic: ((string, ~message: string=?) => promise<Internal.entity>) => unknown)
-      }
-    | "getOrCreate" =>
-      if isClickHouseOnly {
-        (
-          (_entity: Internal.entity) => throwClickHouseReadOnly(params.entityConfig, "getOrCreate")
-        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
-      } else {
-        (
-          (entity: Internal.entity) =>
-            LoadLayer.loadById(
-              ~loadManager=params.loadManager,
-              ~persistence=params.persistence,
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              ~indexerState=params.indexerState,
-              ~shouldGroup=params.isPreload,
-              ~item=params.item,
-              ~ecosystem=params.config.ecosystem,
-              ~entityId=entity.id,
-            )->Promise.thenResolve(storageEntity => {
-              switch storageEntity {
-              | Some(entity) => entity
-              | None => {
-                  set(entity)
-                  entity
-                }
-              }
-            })
-        )->(Utils.magic: (Internal.entity => promise<Internal.entity>) => unknown)
-      }
-    | "set" => set->(Utils.magic: (Internal.entity => unit) => unknown)
-    | "deleteUnsafe" =>
-      if params.isPreload {
-        entityId =>
-          switch params.sync.writes {
-          | Some(writes) if PreloadLookahead.isActive() =>
-            writes->SyncWrites.record(
-              ~entityConfig=params.entityConfig,
-              ~scope=params->entityScope,
-              Delete({entityId, checkpointId: params.checkpointId}),
-            )
-          | _ => noopDeleteUnsafe(entityId)
+      },
+      // Never suspends: the in-memory table spans the whole batch, so a change
+      // only counts as "in this block" when it was written at this run's
+      // checkpoint.
+      getInBlockSync: entityId => {
+        let run = currentRunOrThrow(~prop)
+        let sync = run->syncOrThrow(~prop=`${prop}.getInBlockSync`)
+        switch sync.writes->SyncWrites.getById(~entityConfig, ~entityId) {
+        | Some(entity) => entity
+        | None =>
+          let inMemTable =
+            params.indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope=run->scopeOf)
+          switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+          | Some(change) if change->Change.getCheckpointId == run.checkpointId =>
+            change->InMemoryTable.Entity.mapChangeToEntity
+          | _ => None
           }
-      } else {
-        entityId => {
-          (params :> contextParams)->checkStatusOrThrow(
-            ~access=`context.${params.entityConfig.name}.deleteUnsafe`,
-          )
-          params->writeChange(
-            Delete({
-              entityId,
-              checkpointId: params.checkpointId,
-            }),
-          )
         }
-      }->(Utils.magic: (EntityId.t => unit) => unknown)
-    | _ =>
-      JsError.throwWithMessage(`Invalid context.${params.entityConfig.name}.${prop} operation.`)
+      },
     }
-  },
+    object->Utils.StrictObject.assign(
+      syncEntityContext->(Utils.magic: syncEntityContext => entityContext),
+    )
+  } else {
+    object
+  }
 }
 
 // Deterministic mappings always make progress, so the cap only exists to turn
 // a non-deterministic one into a clear error instead of a hang.
 let maxSyncRounds = 10000
 
-// Runs a synchronous body, replaying it from the top each time it suspends on
-// a read that wasn't in memory yet.
-let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) => {
+let rec runSyncRound = async (params: params, sync: syncRun, fn: unit => unit, ~round) => {
   if round > maxSyncRounds {
     JsError.throwWithMessage(
       `The handler suspended on a synchronous read too many times: gave up after ${maxSyncRounds->Int.toString} rounds. This usually means the code isn't deterministic across reruns.`,
     )
   }
-  params.sync.status = Active
-  params.sync.pending = None
-  params.sync.speculated = 0
-  let writes = SyncWrites.make()
-  params.sync.writes = Some(writes)
-  let startedAt = PreloadLookahead.roundStarted(~isPreload=params.isPreload)
+  let run = sync.run
+  sync.status = Active
+  sync.pending = []
+  sync.speculated = 0
+  sync.writes = SyncWrites.make()
+  let startedAt = PreloadLookahead.roundStarted(~isPreload=run.isPreload)
 
-  let suspended = switch fn() {
-  | () =>
-    PreloadLookahead.roundEnded(~item=params.item, ~startedAt)
-    params.sync.writes = None
-    switch params.sync.status {
+  let previous = currentSync.contents
+  currentSync := Some(sync)
+  let outcome = try {
+    fn()
+    Ok()
+  } catch {
+  | exn => Error(exn)
+  }
+  currentSync := previous
+  PreloadLookahead.roundEnded(~item=run.item, ~startedAt)
+  let writes = sync.writes
+
+  // Neither a suspended round nor a failed one keeps what it wrote.
+  sync.writes = SyncWrites.make()
+
+  let suspended = switch outcome {
+  | Ok() =>
+    switch sync.status {
     // The body caught the suspend and returned anyway, so it didn't see the
     // reads it asked for: it is replayed like any other suspended round.
     | Aborted(_) => true
     // Ran on reads it was told were absent.
-    | Active | Resolved if params.sync.speculated > 0 => true
-    | Active | Resolved =>
-      if params.isPreload {
+    | Active if sync.speculated > 0 => true
+    | Active =>
+      if run.isPreload {
         writes->SyncWrites.forEachChange((~entityConfig, ~scope, change) =>
           PreloadLookahead.overlaySet(
-            ~item=params.item,
+            ~item=run.item,
             ~entityName=entityConfig.name,
             ~scope,
             ~entityId=change->Change.getEntityId->EntityId.toKey,
@@ -650,35 +536,22 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
       }
       false
     }
-  | exception exn =>
-    PreloadLookahead.roundEnded(~item=params.item, ~startedAt)
-
-    // Neither a suspended round nor a failed one keeps what it wrote.
-    params.sync.writes = None
-
-    // A round handed a speculated absence may well throw on it: the replay
-    // that sees the real value decides whether the error is the handler's.
-    if exn->isSuspend || params.sync.speculated > 0 {
-      true
-    } else {
-      // The body threw its own error after scheduling a read. Those ops are
-      // nobody's result now, and an unhandled rejection would replace the
-      // error the handler actually raised.
-      switch params.sync.pending {
-      | None => ()
-      | Some(pending) => {
-          params.sync.pending = None
-          pending->Array.forEach(promise => promise->Utils.Promise.silentCatch->ignore)
-        }
-      }
-      throw(exn)
-    }
+  // A round handed a speculated absence may well throw on it: the replay that
+  // sees the real value decides whether the error is the handler's.
+  | Error(exn) if exn->isSuspend || sync.speculated > 0 => true
+  | Error(exn) =>
+    // The body threw its own error after scheduling a read. Those ops are
+    // nobody's result now, and an unhandled rejection would replace the error
+    // the handler actually raised.
+    sync.pending->Array.forEach(promise => promise->Utils.Promise.catchResolve(_ => ())->ignore)
+    sync.pending = []
+    throw(exn)
   }
 
   if suspended {
     // A round only suspends by scheduling the read it missed.
-    let pending = params.sync.pending->Option.getOr([])
-    params.sync.pending = None
+    let pending = sync.pending
+    sync.pending = []
     let errors = []
     let _ = await pending
     ->Array.map(promise =>
@@ -692,71 +565,97 @@ let rec runSyncRound = async (params: contextParams, fn: unit => unit, ~round) =
     | Some(exn) => throw(exn)
     | None => ()
     }
-    await params->runSyncRound(fn, ~round=round + 1)
+    await params->runSyncRound(sync, fn, ~round=round + 1)
   }
 }
 
-let handlerTraps: Utils.Proxy.traps<contextParams> = {
-  get: (~target as params, ~prop: unknown) => {
-    let prop = prop->(Utils.magic: unknown => string)
-    params->checkStatusOrThrow(~access=`context.${prop}`)
-    switch prop {
-    | "effectSync" =>
-      initEffectSync((params :> contextParams))->(
-        Utils.magic: ((Internal.effect, Internal.effectInput) => Internal.effectOutput) => unknown
+// One context for every handler run of an indexer.
+let makeHandlerContext = (params: params): Internal.handlerContext => {
+  let context = Utils.StrictObject.make(
+    Utils.StrictObject.makePrototype(prop =>
+      JsError.throwWithMessage(
+        `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
       )
+    ),
+  )
+  let define = (name, get) =>
+    context
+    ->Utils.Object.defineProperty(
+      name,
+      {enumerable: true, get: () => get(currentRunOrThrow(~prop=name))},
+    )
+    ->ignore
 
-    | "runSync" =>
-      (fn => params->runSyncRound(fn, ~round=1))->(
-        Utils.magic: ((unit => unit) => promise<unit>) => unknown
-      )
-
-    | "log" =>
-      (
-        params.isPreload
-          ? Logging.noopLogger
-          : Ecosystem.getItemUserLogger(params.item, ~ecosystem=params.config.ecosystem)
-      )->(Utils.magic: Envio.logger => unknown)
-
-    | "effect" =>
-      initEffect((params :> contextParams))->(
+  define("log", (run: RunScope.handlerRun) =>
+    (run.isPreload ? Logger.silentContextLog : run->RunScope.handlerLogger->Logger.asContextLog)->(
+      Utils.magic: Envio.logger => unknown
+    )
+  )
+  // Reads the run when called, so a kept `context.effect` is refused once its
+  // handler resolved, like a kept entity accessor.
+  let effect = (effect, input) =>
+    params->callEffect(~run=currentRunOrThrow(~prop="effect"), ~caller=None, effect, input)
+  context
+  ->Utils.Object.definePropertyWithValue(
+    "effect",
+    {
+      enumerable: true,
+      value: effect->(
         Utils.magic: (
           (Internal.effect, Internal.effectInput) => promise<Internal.effectOutput>
         ) => unknown
-      )
-
-    | "isPreload" => params.isPreload->(Utils.magic: bool => unknown)
-    | "chain" =>
-      let chainId = params.item->Internal.getItemChainId
-      params.chains
-      ->ChainId.Dict.dangerouslyGetNonOption(chainId)
-      ->(Utils.magic: option<Internal.chainInfo> => unknown)
-    | _ =>
-      switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityConfig) =>
-        {
-          item: params.item,
-          isPreload: params.isPreload,
-          indexerState: params.indexerState,
-          loadManager: params.loadManager,
-          persistence: params.persistence,
-          checkpointId: params.checkpointId,
-          chains: params.chains,
-          sync: params.sync,
-          config: params.config,
-          entityConfig,
-        }
-        ->Utils.Proxy.make(entityTraps)
-        ->(Utils.magic: entityContextParams => unknown)
-      | None =>
-        JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
-        )
-      }
-    }
-  },
-}
-
-let getHandlerContext = (params: contextParams): Internal.handlerContext => {
-  params->Utils.Proxy.make(handlerTraps)->(Utils.magic: contextParams => Internal.handlerContext)
+      ),
+    },
+  )
+  ->ignore
+  if Env.subgraphMode.contents {
+    context
+    ->Utils.Object.definePropertyWithValue(
+      "effectSync",
+      {
+        enumerable: true,
+        value: ((effect, input) => params->effectSync(effect, input))->(
+          Utils.magic: ((Internal.effect, Internal.effectInput) => Internal.effectOutput) => unknown
+        ),
+      },
+    )
+    ->ignore
+    context
+    ->Utils.Object.definePropertyWithValue(
+      "runSync",
+      {
+        enumerable: true,
+        value: (
+          fn => {
+            let run = currentRunOrThrow(~prop="runSync")
+            params->runSyncRound(
+              {
+                run,
+                status: Active,
+                pending: [],
+                memo: Dict.make(),
+                writes: SyncWrites.make(),
+                speculated: 0,
+              },
+              fn,
+              ~round=1,
+            )
+          }
+        )->(Utils.magic: ((unit => unit) => promise<unit>) => unknown),
+      },
+    )
+    ->ignore
+  }
+  define("isPreload", run => run.isPreload->(Utils.magic: bool => unknown))
+  define("chain", run =>
+    params.chains
+    ->ChainId.Dict.dangerouslyGetNonOption(run.item->Internal.getItemChainId)
+    ->(Utils.magic: option<Internal.chainInfo> => unknown)
+  )
+  params.config.userEntitiesByName->Utils.Dict.forEachWithKey((entityConfig, name) => {
+    let entityContext =
+      params->makeEntityContext(~entityConfig)->(Utils.magic: entityContext => unknown)
+    define(name, _ => entityContext)
+  })
+  context
 }

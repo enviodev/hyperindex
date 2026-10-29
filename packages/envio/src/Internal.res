@@ -326,15 +326,17 @@ type eventPayload
 // Generic access to the payload's `block`: written/enriched at batch prep for
 // store-backed ecosystems (EVM/SVM HyperSync) and present inline otherwise.
 @get external getPayloadBlock: eventPayload => Nullable.t<eventBlock> = "block"
-@set external setPayloadBlock: (eventPayload, eventBlock) => unit = "block"
+
+// Whatever a materialised block is written onto: an event's payload, or a block
+// item. Both keep it under `block`.
+type blockHolder
+external payloadBlockHolder: eventPayload => blockHolder = "%identity"
+@set external setHolderBlock: (blockHolder, eventBlock) => unit = "block"
 
 // The log's emitting address (EVM/Fuel; the program id carries it for SVM).
 @get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
 
-// The decoded params, read by name for the address-valued ones a `where`
-// filters on. Only those names are ever looked up, so the address type is
-// accurate at every use site.
-@get external getPayloadAddressParams: eventPayload => dict<Address.t> = "params"
+@get external getPayloadParams: eventPayload => dict<unknown> = "params"
 
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
@@ -477,7 +479,6 @@ let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection
 // ecosystem variant (fields never overwritten), which lets sources cast the
 // base back down to evm/fuel/svm safely.
 type eventConfig = private {
-  id: string,
   name: string,
   contractName: string,
   paramsRawEventSchema: S.schema<eventParams>,
@@ -489,6 +490,14 @@ type eventConfig = private {
   // effective.
   fieldSelection: fieldSelection,
 }
+
+// The contract and event names of a line about one of this event's items, as
+// JSON object members: built once, since a logger is made per item.
+let contractAndEventJson = Utils.WeakMap.memoize((eventConfig: eventConfig) =>
+  `"contract":${JSON.stringify(JSON.String(eventConfig.contractName))},"event":${JSON.stringify(
+      JSON.String(eventConfig.name),
+    )}`
+)
 
 type fuelEventKind =
   | LogData({logId: string, abi: JSON.t})
@@ -505,32 +514,29 @@ type fuelContractConfig = {
   events: array<fuelEventConfig>,
 }
 
-type topicSelection = {
-  topic0: array<EvmTypes.Hex.t>,
-  topic1: array<EvmTypes.Hex.t>,
-  topic2: array<EvmTypes.Hex.t>,
-  topic3: array<EvmTypes.Hex.t>,
-}
-
-// A single topic position of a resolved `where`: either static pre-encoded
-// values, or a marker for "the currently registered addresses of this
-// contract", expanded to topic values when a source query is built.
-type topicFilter =
+// A single topic position of a resolved `where`: any value, static
+// pre-encoded values (never empty), or a marker for "the currently registered
+// addresses of this contract", expanded to topic values when a source query is
+// built.
+type topicConstraint =
+  | Any
   | Values(array<EvmTypes.Hex.t>)
   | ContractAddresses({contractName: string})
 
-type resolvedTopicSelection = {
-  topic0: array<EvmTypes.Hex.t>,
-  topic1: topicFilter,
-  topic2: topicFilter,
-  topic3: topicFilter,
+// topic0 is the event signature, or for an anonymous event its first indexed
+// param.
+type topicFilter = {
+  topic0: topicConstraint,
+  topic1: topicConstraint,
+  topic2: topicConstraint,
+  topic3: topicConstraint,
 }
 
 // The registered `where` fully resolved at registration time for one chain.
-// `topicSelections` is in disjunctive normal form (outer array is OR);
+// `topicFilters` is in disjunctive normal form (outer array is OR);
 // an empty array means the `where` returned `false` for this chain.
 type resolvedWhere = {
-  topicSelections: array<resolvedTopicSelection>,
+  topicFilters: array<topicFilter>,
   startBlock: option<int>,
 }
 
@@ -542,7 +548,8 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type evmEventConfig = {
   ...eventConfig,
-  sighash: string,
+  // `None` for an anonymous event.
+  sighash: option<string>,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
 }
@@ -604,11 +611,9 @@ type svmInstructionEventConfig = {
 // Per-(event, chain) registration produced when user handler code registers an
 // event (`onEvent`) or a dynamic contract registers. References its definition
 // by value as `.eventConfig` and adds the handler binding plus the
-// registration/`where`-derived fetch state. Not `private`: Fuel registrations
-// add no ecosystem-specific fields (so the alias must stay directly
-// constructable), and the ecosystem→base casts in sources are sound by
-// ecosystem homogeneity — an EVM chain only ever holds
-// `evmOnEventRegistration`s.
+// registration/`where`-derived fetch state. Not `private`: the
+// ecosystem→base casts in sources are sound by ecosystem homogeneity — an EVM
+// chain only ever holds `evmOnEventRegistration`s.
 type onEventRegistration = {
   // Chain-scoped sequential index — the registration's position in the
   // chain's onEventRegistrations array, assigned when registration finishes
@@ -616,7 +621,11 @@ type onEventRegistration = {
   // index across the napi boundary; sources resolve it before creating an item.
   index: int,
   eventConfig: eventConfig,
-  handler: option<handler>,
+  // Keep at least one field optional: with every field required, ReScript
+  // compiles a `{...registration, ...}` spread into an explicit field-by-field
+  // copy, which drops the ecosystem-only fields an `evmOnEventRegistration`
+  // carries.
+  handler?: handler,
   contractRegister: option<contractRegister>,
   isWildcard: bool,
   // Whether the event has an event filter which uses addresses.
@@ -624,15 +633,6 @@ type onEventRegistration = {
   // Usually always false for wildcard events, but might be true for a wildcard
   // event with a dynamic event filter by addresses.
   dependsOnAddresses: bool,
-  // Indexed address params this event filters on, in disjunctive normal form
-  // (OR of AND-groups), from `where: {params: {to: chain.C.addresses}}`. Every
-  // source applies this natively while routing; it's carried here for the
-  // simulate source, which has no native query boundary. Absent otherwise.
-  //
-  // Keep it optional: with every field required, ReScript compiles a
-  // `{...registration, ...}` spread into an explicit field-by-field copy, which
-  // drops the ecosystem-only fields an `evmOnEventRegistration` carries.
-  addressFilterParamGroups?: array<array<string>>,
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
@@ -647,9 +647,12 @@ type evmOnEventRegistration = {
   resolvedWhere: resolvedWhere,
 }
 
-// Fuel registrations add no ecosystem-specific fetch state, so it's a bare
-// alias of the base registration.
-type fuelOnEventRegistration = onEventRegistration
+type fuelOnEventRegistration = {
+  ...onEventRegistration,
+  // The `where` is `false` for this chain. Kept until
+  // registration finishes so the event still counts as registered, then dropped.
+  skippedByWhere: bool,
+}
 
 type svmOnEventRegistration = {
   ...onEventRegistration,
@@ -690,6 +693,13 @@ type eventItem = private {
   payload: eventPayload,
 }
 
+// The fields of a line about an event item, as a JSON object. `address` is the
+// event's source address, which simulate input can set to any string.
+let eventItemFieldsJson = (eventItem: eventItem, ~address: Address.t) =>
+  `{${eventItem.onEventRegistration.eventConfig->contractAndEventJson},"block":${eventItem.blockNumber->Int.toString},"logIndex":${eventItem.logIndex->Int.toString},"address":${JSON.stringify(
+      JSON.String(address->Address.toString),
+    )}}`
+
 // Row shape for the `raw_events` table. Defined here (rather than in
 // `InternalTable`) so the ecosystem's `toRawEvent` can reference it without
 // pulling in `InternalTable`'s dependency on `Config`.
@@ -708,18 +718,15 @@ type rawEvent = {
   params: JSON.t,
 }
 
-// Opaque type to support both EVM and other ecosystems
-type blockEvent
-
 type onBlockArgs = {
   slot?: int,
-  block?: blockEvent,
+  block?: eventBlock,
   context: handlerContext,
 }
 
 type onBlockContractRegisterArgs = {
   slot?: int,
-  block?: blockEvent,
+  block?: eventBlock,
   context: contractRegisterContext,
 }
 
@@ -733,6 +740,10 @@ type onBlockRegistration = {
   endBlock: option<int>,
   interval: int,
   handler: onBlockArgs => promise<unit>,
+  // The selected block fields as the block store's bitmask, key included.
+  // `None` when the handler reads only the block's key, which needs nothing
+  // from a source: its items are generated locally, block by block.
+  blockFieldMask: option<float>,
   // Subgraph mode only: a `once` block handler, whose trigger graph-node runs
   // ahead of everything else in its block (`EthereumBlockTriggerType::Start`).
   runsFirst?: bool,
@@ -760,9 +771,21 @@ type item =
       transactionIndex: int,
       payload: eventPayload,
     })
-  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int})
+  | @as(1)
+  Block({
+      onBlockRegistration: onBlockRegistration,
+      blockNumber: int,
+      // The registration's selected fields: inline from a simulate source,
+      // otherwise written at batch prep from the chain's block store. Absent
+      // for a registration that selects none.
+      block?: eventBlock,
+      // The chain produced no block here (an SVM skipped slot), so there is
+      // none to materialise and the handler runs without one.
+      skipped?: bool,
+    })
 
 external castUnsafeEventItem: item => eventItem = "%identity"
+external itemBlockHolder: item => blockHolder = "%identity"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"
@@ -1042,6 +1065,10 @@ module EffectCache = {
 }
 
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)
+let cacheItemSchema = S.schema((s): effectCacheItem => {
+  id: s.matches(S.string),
+  output: s.matches(cacheOutputSchema),
+})
 let makeCacheTable = (~effectName, ~scope) => {
   Table.mkTable(
     EffectCache.toTableName(~effectName, ~scope),

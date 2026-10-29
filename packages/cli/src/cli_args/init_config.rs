@@ -62,7 +62,6 @@ pub mod evm {
                         event: EvmAbi::event_signature_from_abi_event(&event),
                         name: None,
                         field_selection: None,
-                        topic0: None,
                     })
                     .collect();
 
@@ -182,6 +181,7 @@ pub mod evm {
                 field_selection: None,
                 raw_events: None,
                 bytes_type: None,
+                strict_hex_type: Some(true),
                 address_format: None,
             })
         }
@@ -323,6 +323,7 @@ pub mod fuel {
                 contracts: None,
                 raw_events: None,
                 bytes_type: None,
+                strict_hex_type: Some(true),
                 chains: network_configs,
             }
         }
@@ -521,4 +522,39 @@ pub struct InitConfig {
     pub language: Language,
     pub api_token: Option<String>,
     pub package_manager: PackageManager,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{evm, fuel, Ecosystem, InitConfig, Language, PackageManager};
+
+    #[test]
+    fn contract_import_opts_into_strict_hex_type() {
+        let init_config = |ecosystem| InitConfig {
+            name: "t".to_string(),
+            directory: ".".to_string(),
+            ecosystem,
+            language: Language::TypeScript,
+            api_token: None,
+            package_manager: PackageManager::Pnpm,
+        };
+        let evm_selection = evm::ContractImportSelection {
+            selected_contracts: vec![],
+        };
+        let fuel_selection = fuel::ContractImportSelection { contracts: vec![] };
+
+        let evm_config = evm_selection
+            .to_human_config(&init_config(Ecosystem::Evm {
+                init_flow: evm::InitFlow::ContractImport(evm_selection.clone()),
+            }))
+            .unwrap();
+        let fuel_config = fuel_selection.to_human_config(&init_config(Ecosystem::Fuel {
+            init_flow: fuel::InitFlow::ContractImport(fuel_selection.clone()),
+        }));
+
+        assert_eq!(
+            (evm_config.strict_hex_type, fuel_config.strict_hex_type),
+            (Some(true), Some(true))
+        );
+    }
 }

@@ -73,9 +73,9 @@ let name = (worker: worker) => worker.chainIds->Array.map(ChainId.toString)->Arr
 
 let label = (worker: worker) => `[chain ${worker->name}]`
 
-// Workers append to files of their own. Pino writes a line per call, and
-// several processes appending to one file can still tear a long line apart.
-let logFilePath = (~workerIndex, ~path=Env.logFilePath) => {
+// Workers append to files of their own: several processes appending to one file
+// can tear a long write apart.
+let workerLogFilePath = (~workerIndex, ~path=Env.Logger.file) => {
   let suffix = `.worker-${workerIndex->Int.toString}`
   // A dot in a directory name isn't an extension, and a path with no dot at
   // all has none either: `./logs/envio` takes the suffix at the end.
@@ -126,8 +126,8 @@ let memoryBudgets = (~workerCount) =>
     Pervasives.max(1, budget / workerCount)->Int.toString,
   ))
 
-// `pino-pretty` colorizes on this test, and a piped worker would fail it for a
-// run the operator is watching in colour.
+// The pretty log format colorizes on this test, and a piped worker would fail it
+// for a run the operator is watching in colour.
 @val external stdoutIsTty: Nullable.t<bool> = "process.stdout.isTTY"
 
 let fork = (
@@ -148,8 +148,8 @@ let fork = (
   // A run that draws a display reads its workers' output instead of letting
   // them write to the terminal behind the frame's back.
   ~pipeOutput=false,
-  ~onOutput=Console.log,
-  ~onErrorOutput=Console.error,
+  ~onOutput=line => Core.getAddon().writeStdoutLine(line),
+  ~onErrorOutput=line => Core.getAddon().writeStderrLine(line),
   ~onSnapshot=() => (),
 ) => {
   let env = NodeJs.Process.process.env->Dict.copy
@@ -165,7 +165,7 @@ let fork = (
   // loads, which is why they ride in the spawn environment rather than a message.
   env->Dict.set("ENVIO_PG_MAX_CONNECTIONS", worker.maxConnections->Int.toString)
   memoryBudgets(~workerCount)->Array.forEach(((name, share)) => env->Dict.set(name, share))
-  env->Dict.set("LOG_FILE", logFilePath(~workerIndex))
+  env->Dict.set("LOG_FILE", workerLogFilePath(~workerIndex))
   if pipeOutput && stdoutIsTty->Nullable.toOption->Option.getOr(false) {
     env->Dict.set("FORCE_COLOR", "1")
   }
@@ -182,10 +182,9 @@ let fork = (
     },
   )
   if pipeOutput {
-    // The supervisor writes a worker's lines the way it writes its own, which is
-    // the only way the display can print them above its frame. Each stream keeps the one
-    // it was written to, so a worker's errors stay on stderr for whoever is
-    // redirecting it.
+    // A worker's lines are already written by its logger, so they're passed on
+    // as they are, above the display. Each stream keeps the one it was written
+    // to, so a worker's errors stay on stderr for whoever is redirecting it.
     [
       (child->NodeJs.ChildProcess.Child.stdout, onOutput),
       (child->NodeJs.ChildProcess.Child.stderr, onErrorOutput),
@@ -250,8 +249,8 @@ let syncCache = {
 // its own and puts the run one connection over its budget — deliberately: only
 // `envio dev` asks for a dump, and the alternative is pausing the indexing to
 // free one.
-let dumpCache = (~config) => {
-  let storage = PgStorage.makeStorageFromEnv(~config, ~sql=PgStorage.makeClient(~maxConnections=1))
+let dumpCache = (~config, ~logger) => {
+  let storage = Storage.makeStorageFromEnv(~config, ~logger, ~maxConnections=1)
   storage.dumpEffectCache()->Promise.finally(() => storage.close()->Promise.ignore)
 }
 
@@ -294,7 +293,7 @@ let classifyExit = (~code: Null.t<int>, ~signal: Null.t<string>, ~stopping) =>
 // the supervisor didn't ask for, having first taken the rest down: one worker
 // short leaves its chains unindexed, and a run that kept the others going would
 // look healthy while falling behind.
-let awaitExit = async (group): outcome => {
+let awaitExit = async (group, ~logger): outcome => {
   let failed = ref(false)
   let alive = ref(group.running->Array.length)
 
@@ -319,12 +318,21 @@ let awaitExit = async (group): outcome => {
       }
 
     group.running->Array.forEach(r => {
+      // A worker's last lines are still in its pipe when it exits, so its exit
+      // counts once the pipe closes. A process the worker started can hold the
+      // pipe open past that, so the wait is cut short.
+      let closeDeadline = ref(None)
+      let onEnd = (code, signal) => {
+        closeDeadline->Utils.clearTimeoutRef
+        r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping))
+      }
+      r.child->NodeJs.ChildProcess.Child.onClose(onEnd)
       r.child->NodeJs.ChildProcess.Child.onExit(
-        (code, signal) => r->onGone(~ending=classifyExit(~code, ~signal, ~stopping=group.stopping)),
+        (code, signal) => closeDeadline := Some(setTimeout(() => onEnd(code, signal), 1000)),
       )
       r.child->NodeJs.ChildProcess.Child.onError(
         exn => {
-          Logging.errorWithExn(exn, `${r.worker->label} failed to start`)
+          logger->Logger.errorWithExn(`${r.worker->label} failed to start`, exn)
           r->onGone(~ending=Failed)
         },
       )
@@ -367,9 +375,8 @@ let releaseIfAtHead = group =>
   }
 
 // The run's chains as an unsplit indexer reports them before it has fetched
-// anything: at their configured blocks, with nothing indexed. A display that
-// hasn't heard from a worker yet draws these, rather than the indexer with no
-// chains at all that an empty merge would render.
+// anything: at their configured blocks, with nothing indexed. A display draws
+// these for a worker it hasn't heard from yet.
 let configuredChains = (config: Config.t): array<Metrics.chainMetrics> =>
   config.chainMap
   ->ChainMap.values
@@ -420,21 +427,37 @@ let configuredChains = (config: Config.t): array<Metrics.chainMetrics> =>
     rateLimitResetInMs: None,
   })
 
+// Per worker rather than all or nothing: a worker done within its first report
+// interval is heard from only as it exits, and a display holding just its
+// siblings' finished chains would read as synced while it still indexes.
+let displayedSnapshots = (running: array<running>, ~config, ~empty: Metrics.t) => {
+  let configured = configuredChains(config)
+  running->Array.map(r =>
+    switch r.snapshot {
+    | Some(snapshot) => snapshot
+    | None => {
+        ...empty,
+        chains: configured->Array.filter(chain => r.worker.chainIds->Array.includes(chain.chainId)),
+      }
+    }
+  )
+}
+
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
 // report. Returns once every worker has exited; throws if any of them failed.
-let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
+let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) => {
   // Every chain's state has to exist before a worker resumes it: an isolated
   // run refuses to initialize, precisely so it can't create rows for its own
   // chains and leave the chains it skipped with nothing to resume. It is the
   // same initialization an unsplit run does, and the supervisor hands the
   // connections it used to its workers.
-  let persistence = PgStorage.makePersistenceFromConfig(~config)
+  let persistence = Storage.makePersistenceFromConfig(~config, ~logger)
   // Checked here once, so the workers don't each check the same handlers.
   let autoLoadFiles = await HandlerLoader.getAutoLoadFiles(~config)
   let _ = await Promise.all2((
-    persistence->Persistence.initForRun(~config, ~reset, ~isDevelopmentMode=config.isDev),
-    HandlerLoader.typeCheck(~config, ~autoLoadFiles),
+    persistence->Persistence.initForRun(~logger, ~config, ~reset, ~isDevelopmentMode=config.isDev),
+    HandlerLoader.typeCheck(~config, ~logger, ~autoLoadFiles),
   ))
   await persistence.storage.close()
 
@@ -444,12 +467,14 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // The counts ride as fields rather than in the sentence: the connection limit
   // is the only setting that decides any of this, and a reader who wants to
   // change it has nothing else to go on.
-  Logging.info({
-    "msg": "Indexing will be split across multiple processes for faster and more reliable indexing.",
-    "chains": config.chainMap->ChainMap.values->Array.length,
-    "processes": workers->Array.length,
-    "maxConnections": Env.Db.maxConnections,
-  })
+  logger->Logger.info(
+    "Indexing will be split across multiple processes for faster and more reliable indexing.",
+    ~params={
+      "chains": config.chainMap->ChainMap.values->Array.length,
+      "processes": workers->Array.length,
+      "maxConnections": Env.Db.maxConnections,
+    },
+  )
 
   // Decided before the first fork: it is what makes a worker's output the
   // supervisor's to print.
@@ -487,6 +512,7 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
     )
 
   Server.startServer(
+    ~logger,
     // Nothing to report until a worker has: the run reads as initializing
     // rather than as an indexer with no chains.
     ~getMetrics=() =>
@@ -504,15 +530,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
         ),
       ),
     ~isDevelopmentMode=config.isDev,
-    ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config)),
+    ~onSyncCache=() => syncCache(~dump=() => dumpCache(~config, ~logger)),
   )
 
   if shouldUseTui {
-    Tui.start(~config, ~getMetrics=() =>
-      switch reported() {
-      | [] => {...[]->merge, chains: configuredChains(config)}
-      | snapshots => snapshots->merge
-      }
+    Tui.start(~config, ~logger, ~getMetrics=() =>
+      group.running->displayedSnapshots(~config, ~empty=[]->merge)->merge
     )
   }
 
@@ -526,12 +549,12 @@ let run = async (~config: Config.t, ~workers: array<worker>, ~reset) => {
   // last worker is gone, so the group's end has to end the process. A display
   // is the exception, as it is for a single process: it keeps the final state
   // on screen until the terminal closes it.
-  let outcome = await group->awaitExit
+  let outcome = await group->awaitExit(~logger)
 
   switch outcome {
   | Stopped => NodeJs.process->NodeJs.exitWithCode(Success)
   | Finished if !shouldUseTui =>
-    Logging.info("Exiting with success")
+    logger->Logger.info("Exiting with success")
     NodeJs.process->NodeJs.exitWithCode(Success)
   | Finished =>
     // With nothing left to stop, the stop signals end the display instead.

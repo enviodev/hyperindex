@@ -7,6 +7,13 @@ type backend = IndexerRunner.backend
 // skip message — an opt-out nobody can explain is an opt-out nobody revisits.
 type unsupported = {backend: backend, reason: string}
 
+let configuresOwnStorage = [#postgres, #both]->Array.map((backend): unsupported => {
+  backend,
+  reason: "configures its own storage, so it runs the same on the ClickHouse leg",
+})
+let noClickHouse = (reason): array<unsupported> =>
+  [#clickhouse, #both]->Array.map(backend => {backend, reason})
+
 type t = {
   config: Config.t,
   publicConfigJson: JSON.t,
@@ -35,20 +42,30 @@ type sourceMock = {
   // resolving a `latest` start block), which a test body can't reach in time
   // via `setAutoHeight` since it only runs once startup has already awaited.
   autoHeight?: int,
+  // Answers for the first height calls, ahead of `autoHeight`, for a startup
+  // height call that has to fail first.
+  startupHeights?: array<MockSource.startupHeight>,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
-// The ClickHouse leg indexes the same scenario with the sink switched on. It's
-// a config choice a user makes in YAML, so it's made there rather than by
-// patching the parsed config — that way the entities pick up their ClickHouse
-// storage flags through the same parse a user's would.
-let withClickHouseStorage = configYaml =>
+// The ClickHouse leg indexes the same scenario with every entity kept in
+// ClickHouse alone, so every handler read, getWhere and rollback reads it there.
+// The both leg keeps every entity in Postgres and ClickHouse, so every batch
+// writes the two together. It's a config choice a user makes in YAML, so it's
+// made there rather than by patching the parsed config — that way the entities
+// pick up their storage flags through the same parse a user's would.
+let withLegStorage = configYaml =>
   if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
-    configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    switch IndexerRunner.selectedBackend {
+    | #postgres => configYaml
+    | #clickhouse => configYaml ++ "\nstorage:\n  clickhouse:\n    default: true\n"
+    | #both =>
+      configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    }
   }
 
 let make = (
@@ -63,14 +80,11 @@ let make = (
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
 
-  // A scenario that can't run on ClickHouse doesn't get shaped for it: some
-  // schemas the other backends accept (an unbounded BigInt id, say) fail the
-  // parse outright once ClickHouse storage is on, which would take the whole
-  // file down before the skip could apply.
-  let configYaml = switch IndexerRunner.selectedBackend {
-  | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #postgres => configYaml
-  }
+  // A scenario that can't run on a leg doesn't get shaped for it: some
+  // schemas Postgres accepts (an unbounded BigInt id, say) fail the parse
+  // outright once ClickHouse storage is on, which would take the whole file
+  // down before the skip could apply.
+  let configYaml = isUnsupported ? configYaml : configYaml->withLegStorage
 
   let withIndexerTypes = handlers->Option.isSome
   let {config: configJson, indexerTypes} = Core.fromUserApi(
@@ -177,8 +191,13 @@ let withInternalOverrides = (
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Leaves every chain on the source its YAML names, for a scenario whose YAML
+  // points each chain at a local server the test runs.
+  ~yamlSources=false,
+  ~sourceTiming=?,
+  // How long startup keeps asking for a `latest` start block. `Once` is what
+  // `envio local db-migrate` runs with.
+  ~startBlockRetry=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -188,7 +207,8 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
+  ~provideClickHouse=?,
+  ~chains=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
@@ -199,6 +219,7 @@ let run = async (
       ?pollingInterval,
       ?isWildcard,
       ?autoHeight,
+      ?startupHeights,
     }) => (
       chain,
       MockSource.make(
@@ -208,13 +229,14 @@ let run = async (
         ~pollingInterval?,
         ~isWildcard?,
         ~autoHeight?,
+        ~startupHeights?,
       ),
     ))
 
   let config =
-    scenario.config
-    ->withMockSources(~sources=mocks)
-    ->withInternalOverrides(
+    (
+      yamlSources ? scenario.config : scenario.config->withMockSources(~sources=mocks)
+    )->withInternalOverrides(
       ~maxAddrInPartition,
       ~clientFilterAddressThreshold,
       ~reorgThresholdReadyTolerance,
@@ -236,11 +258,13 @@ let run = async (
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
   // already cached.
-  let registration = HandlerRegister.makeRegistration(~config)
+  let logger = Logger.makeInMemory()
+  let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
 
   await IndexerRunner.run(
     ~config,
+    ~logger,
     ~resolveRegistrations=(~config) =>
       registration->HandlerRegister.useRegistration(async () => {
         switch (scenario.handlers, imported.contents) {
@@ -253,18 +277,33 @@ let run = async (
         }
         HandlerRegister.finishRegistration(~config)
       }),
-    ~reducedPollingInterval?,
-    ~newBlockStallTimeoutRealtime?,
+    ~sourceTiming?,
+    ~startBlockRetry?,
     ~targetBufferSize?,
     ~holdRealtime?,
     ~superviseRun?,
     ~onError?,
     ~onExit?,
     ~mapStorage?,
-    ~captureLogs?,
+    ~provideClickHouse?,
+    ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
-      await body(~indexer, ~source)
+      switch await body(~indexer, ~source) {
+      | () => ()
+      // A failure says what the mocks were left holding, so finding out what
+      // the indexer asked for doesn't take a probe of its own.
+      | exception exn if mocks->Array.length > 0 =>
+        exn->IndexerRunner.appendToFailureMessage(
+          mocks
+          ->Array.map(((_, mock)) => "\n\n" ++ mock.describeState())
+          ->Array.join(""),
+        )
+        switch exn {
+        | JsExn(error) => JsExn.throw(error)
+        | exn => throw(exn)
+        }
+      }
       // Only after the body passed: a failing body has its own error to report,
       // and answers it never got to were never going to be claimed anyway.
       mocks->Array.forEach(((_, mock)) => mock.validateAnswersClaimed())
@@ -272,20 +311,23 @@ let run = async (
   )
 }
 
-let skipReason = (scenario: t) =>
-  scenario.unsupported
+let skipReason = (unsupported: array<unsupported>) =>
+  unsupported
   ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
   ->Option.map(({reason}) => reason)
 
 // Registers a vitest test that runs `body` against this scenario. A backend the
-// scenario declares unsupported is skipped by name and reason, so the reporter
-// says which coverage the run is missing instead of quietly passing.
+// scenario, or this one case of it, declares unsupported is skipped by name and
+// reason, so the reporter says which coverage the run is missing instead of
+// quietly passing.
 let it = (
   scenario: t,
   name,
+  ~unsupported=[],
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Shortens the stall, recovery and polling windows a test would otherwise
+  // have to wait out in real time.
+  ~sourceTiming=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -298,7 +340,6 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   ~timeout=?,
   ~retry=?,
   body: (
@@ -307,7 +348,7 @@ let it = (
     ~source: (int, ~index: int=?) => MockSource.t,
   ) => promise<unit>,
 ) => {
-  switch scenario->skipReason {
+  switch scenario.unsupported->Array.concat(unsupported)->skipReason {
   | Some(reason) =>
     Vitest.Async.it_skip(
       `${name} [no ${IndexerRunner.selectedBackend->IndexerRunner.backendName}: ${reason}]`,
@@ -318,8 +359,7 @@ let it = (
       async (t: Vitest.testContext) =>
         await scenario->run(
           ~sources,
-          ~reducedPollingInterval?,
-          ~newBlockStallTimeoutRealtime?,
+          ~sourceTiming?,
           ~targetBufferSize?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,
@@ -329,7 +369,6 @@ let it = (
           ~onError?,
           ~onExit?,
           ~mapStorage?,
-          ~captureLogs?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>
@@ -350,15 +389,9 @@ let it = (
   }
 }
 
-let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
+let resolveInitialHeight = async (~source: MockSource.t, ~head) => {
+  await source.expectHeightCalls(1)
   source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
 }
 
 // Drives a chain through the reorg-threshold transition: the first query stops
@@ -366,20 +399,22 @@ let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t,
 // post-threshold range opens up. Several scenarios need to be past this point
 // before the behaviour they test is reachable.
 let enterReorgThreshold = async (
-  ~t: Vitest.testContext,
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
   ~head=300,
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
-  await resolveInitialHeight(~t, ~source, ~head)
-
-  t.expect(
-    source.getItemsOrThrowCalls->Array.map(call => call.payload),
-    ~message="Should request items until reorg threshold",
-  ).toEqual([{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}])
-  source.resolveGetItemsOrThrow([])
+  await resolveInitialHeight(~source, ~head)
+  await source.expectItemsQueries([
+    {
+      partitionId: "0",
+      fromBlock,
+      toBlock: Bounded(preThresholdTo),
+      retryCount: 0,
+      reply: Respond({items: []}),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
@@ -434,4 +469,61 @@ let captureRefusal = () => {
     awaitRefusalReason: async () =>
       (await awaitStorageError())->Option.map(((_, reason)) => reason),
   }
+}
+
+// Answers whatever the reorg resolution asks for: block hashes for the depth
+// search (blocks past `validUpTo` come back re-orged), and empty responses for
+// the re-fetch queries the rollback schedules.
+let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetched=[]) => {
+  let refetched = ref(refetched)
+  for _ in 0 to 300 {
+    if source.getBlockHashesCalls->Array.length > 0 {
+      let requested = source.getBlockHashesCalls->Array.copy
+      source.resolveGetBlockHashes(
+        requested
+        ->Array.flat
+        ->Array.map((blockNumber): BlockStore.inputBlock => {
+          blockNumber,
+          // Past `validUpTo` the chain is orphaned, so the hash the source
+          // reports differs from the one the store recorded.
+          blockHash: blockNumber <= validUpTo
+            ? `0x${blockNumber->Int.toString}`
+            : `0x${blockNumber->Int.toString}a`,
+          blockTimestamp: blockNumber,
+        }),
+      )
+      source.getBlockHashesCalls->Utils.Array.clearInPlace
+    }
+    if source.pendingItemsQueries->Array.length > 0 {
+      await source.expectItemsQueries([
+        {reply: Respond({items: refetched.contents, latestFetchedBlockNumber: head})},
+      ])
+      refetched := []
+    }
+    await Utils.delay(0)
+  }
+}
+
+// Reorgs the chain above `validUpTo`: the next response arrives with block
+// `head` re-orged, and the rollback that follows is driven to completion. The
+// first refetch after it answers with `refetched`.
+let reorgAbove = async (
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~head,
+  ~validUpTo,
+  ~refetched=?,
+) => {
+  source.resolveGetHeightOrThrow(head + 1)
+  await source.expectItemsQueries([
+    {
+      reply: Respond({
+        items: [],
+        latestFetchedBlockNumber: head + 1,
+        prevRangeLastBlock: {blockNumber: head, blockHash: `0x${head->Int.toString}a`},
+      }),
+    },
+  ])
+  await driveRollback(~source, ~validUpTo, ~head=head + 1, ~refetched?)
+  await indexer.waitUntilIdle()
 }

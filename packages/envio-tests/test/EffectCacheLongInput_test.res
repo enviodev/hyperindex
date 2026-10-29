@@ -54,77 +54,85 @@ describe("An effect with a cached input of several kB", () => {
     "is cached and read back across a restart",
     ~sources=[{chain: 1337, methods}],
     ~onError=error =>
-      failure := Some((error.exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]),
-    async (
-    ~t,
-    ~indexer,
-    ~source,
-  ) => {
-    let sourceMock = source(1337)
-    await Utils.delay(0)
+      failure :=
+        Some((error.exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]),
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
 
-    let calls = ref(0)
-    let longEffect = Envio.createEffect(
-      {
-        name: "longInputEffect",
-        input: S.string,
-        output: S.string,
-        rateLimit: Disable,
-        cache: true,
-      },
-      async ({input}) => {
-        calls := calls.contents + 1
-        `${input->String.length->Int.toString} chars`
-      },
-    )
-    // Calldata doesn't compress the way a repeated string does, and Postgres
-    // compresses an index entry before measuring it.
-    let seed = ref(7)
-    let longInput =
-      "0x" ++
-      Array.fromInitializer(~length=3000, _ => {
-        seed := mod(seed.contents * 75 + 74, 65537)
-        mod(seed.contents, 256)->Int.toString(~radix=16)->String.padStart(2, "0")
-      })->Array.join("")
-
-    sourceMock.resolveGetHeightOrThrow(300)
-    sourceMock.resolveGetItemsOrThrow(
-      [
+      let calls = ref(0)
+      let longEffect = Envio.createEffect(
         {
-          blockNumber: 100,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-            let _ = await context.effect(longEffect, longInput)
-          },
+          name: "longInputEffect",
+          input: S.string,
+          output: S.string,
+          rateLimit: Disable,
+          cache: true,
         },
-      ],
-      ~latestFetchedBlockNumber=100,
-    )
-    await written(indexer)
+        async ({input}) => {
+          calls := calls.contents + 1
+          `${input->String.length->Int.toString} chars`
+        },
+      )
+      // Calldata doesn't compress the way a repeated string does, and Postgres
+      // compresses an index entry before measuring it.
+      let seed = ref(7)
+      let longInput =
+        "0x" ++
+        Array.fromInitializer(~length=3000, _ => {
+          seed := mod(seed.contents * 75 + 74, 65537)
+          mod(seed.contents, 256)->Int.toString(~radix=16)->String.padStart(2, "0")
+        })->Array.join("")
 
-    let restarted = await indexer.restart()
-    await Utils.delay(0)
-    let restartedSource = source(1337)
-    let output = ref("")
-    restartedSource.resolveGetHeightOrThrow(300)
-    restartedSource.resolveGetItemsOrThrow(
-      [
+      sourceMock.resolveGetHeightOrThrow(300)
+      await sourceMock.expectItemsQueries([
         {
-          blockNumber: 101,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-            output := (await context.effect(longEffect, longInput))
-          },
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  let _ = await context.effect(longEffect, longInput)
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
         },
-      ],
-      ~latestFetchedBlockNumber=101,
-    )
-    if failure.contents->Option.isNone {
-      await written(restarted)
-    }
+      ])
+      await written(indexer)
 
-    t.expect((failure.contents, output.contents, calls.contents)).toEqual((None, "6002 chars", 1))
-  })
+      let restarted = await indexer.restart()
+      await Utils.delay(0)
+      let restartedSource = source(1337)
+      let output = ref("")
+      restartedSource.resolveGetHeightOrThrow(300)
+      await restartedSource.expectItemsQueries([
+        {
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 101,
+                logIndex: 0,
+                handler: async args => {
+                  let context =
+                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  output := (await context.effect(longEffect, longInput))
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 101,
+          }),
+        },
+      ])
+      if failure.contents->Option.isNone {
+        await written(restarted)
+      }
+
+      t.expect((failure.contents, output.contents, calls.contents)).toEqual((None, "6002 chars", 1))
+    },
+  )
 })

@@ -989,7 +989,6 @@ fn call_event_config(name: &str) -> EventConfig {
             transaction_fields: Some(vec![]),
             block_fields: Some(vec![]),
         }),
-        topic0: None,
     }
 }
 
@@ -1052,7 +1051,19 @@ fn contract_config(
             .iter()
             .filter(|input| input.indexed)
             .count();
-        if indexed > 3 {
+        let anonymous = abi::is_anonymous(&handler.event, abi_json.as_deref());
+        // An anonymous event's logs are matched on its first indexed param,
+        // which sits in topic0, so one without any has no topic to match.
+        if anonymous && indexed == 0 {
+            notices.push(format!(
+                "Envio Subgraph: data source \"{source_name}\" → \"{}\" never runs: its event {} \
+                 is anonymous and declares no indexed parameters, so no log carries a topic0 to \
+                 match it on.",
+                handler.handler, handler.event
+            ));
+            return false;
+        }
+        if indexed > if anonymous { 4 } else { 3 } {
             notices.push(format!(
                 "Envio Subgraph: data source \"{source_name}\" → \"{}\" never runs: its event {} \
                  declares {indexed} indexed parameters, more than the three a log has topics for, \
@@ -1085,12 +1096,12 @@ fn contract_config(
     // An overloaded name needs a unique envio name as well as a spelled-out
     // signature: the generated routing keys off the name, and the runtime has
     // to register the handler under the same one.
-    let mut resolved: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+    let mut resolved: Vec<(String, Option<String>)> = Vec::new();
     let mut ordinals: HashMap<String, usize> = HashMap::new();
     // graph-node runs every handler whose event matches a log, in manifest
     // order (`handlers_for_log`); envio runs every registration on an event,
     // so a second handler of the same event registers on the first's.
-    let mut by_event: HashMap<(String, Option<String>), (String, usize)> = HashMap::new();
+    let mut by_event: HashMap<String, (String, usize)> = HashMap::new();
     for handler in source.event_handlers.iter_mut() {
         if handler.name.is_empty() {
             continue;
@@ -1106,16 +1117,20 @@ fn contract_config(
             report,
         );
         handler.inputs = abi::event_inputs(&handler.event, abi_json.as_deref());
-        if handler.topic0.is_some() && !handler.topics.is_empty() {
-            report.unsupported(
-                "topic1-3 filters on an anonymous event matched on topic0",
-                format!(
-                    "data source \"{source_name}\" → eventHandlers → \"{}\" → topic0",
-                    handler.handler
-                ),
-            );
+        // graph-node matches a log on topic0 — the manifest's, else the
+        // signature's hash — and an anonymous event decodes topic0 as its
+        // first indexed param, so that match is a filter on the param.
+        if abi::is_anonymous(&handler.event, abi_json.as_deref()) {
+            handler.anonymous = true;
+            if let Some(topic0) = handler
+                .topic0
+                .take()
+                .or_else(|| manifest::canonical_event_hash(&handler.event))
+            {
+                handler.topics.insert(0, vec![topic0]);
+            }
         }
-        let key = (event.clone(), handler.topic0.clone());
+        let key = event.clone();
         if let Some((name, _)) = by_event.get(&key) {
             handler.name = name.clone();
             continue;
@@ -1133,7 +1148,7 @@ fn contract_config(
         // minted for an overload: the runtime registers under the name the
         // config carries.
         let renamed = unique != base;
-        resolved.push((event, renamed.then_some(unique), handler.topic0.clone()));
+        resolved.push((event, renamed.then_some(unique)));
     }
 
     let mut receipts = vec![false; resolved.len()];
@@ -1152,12 +1167,19 @@ fn contract_config(
             .iter()
             .filter(|input| input.indexed)
             .collect();
-        for position in handler.topics.keys() {
+        for (position, words) in handler.topics.iter() {
             let location = format!(
                 "data source \"{}\" → eventHandlers → \"{}\" → topic{position}",
                 source.name, handler.handler
             );
-            match indexed.get(position - 1) {
+            // An anonymous event has no signature topic: topic N is its Nth
+            // indexed param, counting from 0.
+            let param = if handler.anonymous {
+                Some(*position)
+            } else {
+                position.checked_sub(1)
+            };
+            match param.and_then(|param| indexed.get(param)) {
                 None => report.unknown(
                     format!(
                         "which indexed parameter of \"{}\" topic{position} filters",
@@ -1172,7 +1194,20 @@ fn contract_config(
                     ),
                     location,
                 ),
-                Some(_) => {}
+                // A filter compares the decoded value, so a word that no
+                // value encodes to can't be matched as graph-node matches the
+                // raw topic.
+                Some(input) => {
+                    if let Some(word) = words.iter().find(|word| !input.encodes_topic(word)) {
+                        report.unsupported(
+                            format!(
+                                "the topic{position} value {word}, which no {} value encodes to",
+                                input.abi_type
+                            ),
+                            location,
+                        );
+                    }
+                }
             }
         }
     }
@@ -1180,11 +1215,10 @@ fn contract_config(
     let mut events: Vec<EventConfig> = resolved
         .into_iter()
         .zip(receipts)
-        .map(|((event, name, topic0), receipt)| EventConfig {
+        .map(|((event, name), receipt)| EventConfig {
             event,
             name,
             field_selection: Some(field_selection_for(receipt, usage)),
-            topic0,
         })
         .collect();
 
@@ -1810,6 +1844,7 @@ pub fn translate(
         // graph-ts `Bytes` is a `Uint8Array`, so a `Bytes` column holds the
         // bytes themselves rather than a hex rendering of them.
         bytes_type: Some(BytesType::Uint8Array),
+        strict_hex_type: None,
     };
 
     let accessor = |name: &String| (name.clone(), name.capitalize());
@@ -2487,6 +2522,104 @@ type Gravatar @entity {
                      reason."
                 )]
             )
+        );
+    }
+
+    // Balancer v1's anonymous `LOG_CALL(bytes4 indexed sig, address indexed
+    // caller, bytes data)`, one handler per selector in topic0. An anonymous
+    // event decodes topic0 as its first indexed param, so every handler is a
+    // filter on `sig` of one event, and topic1 (the caller) narrows the second
+    // param. A topic0 with bytes past the selector is no bytes4 value: no `sig`
+    // filter can match it.
+    #[test]
+    fn matches_an_anonymous_event_on_topic0_as_its_first_indexed_param() {
+        let selector = |hex: &str| format!("0x{hex}{}", "00".repeat(28));
+        let caller = format!("0x{}{}", "00".repeat(12), "cc".repeat(20));
+        let with = |handlers: &str| {
+            let manifest = MANIFEST.split("templates:").next().unwrap().replace(
+                "        - event: NewGravatar(uint256,address,string,string)\n          handler: handleNewGravatar\n        - event: UpdatedGravatar(uint256,address,string,string)\n          handler: handleUpdatedGravatar\n          receipt: true\n",
+                handlers,
+            );
+            let files = HashMap::from([(
+                "./abis/Gravity.json".to_string(),
+                r#"[{"type":"event","name":"LOG_CALL","anonymous":true,"inputs":[
+                  {"name":"sig","type":"bytes4","indexed":true},
+                  {"name":"caller","type":"address","indexed":true},
+                  {"name":"data","type":"bytes","indexed":false}]}]"#
+                    .to_string(),
+            )]);
+            translate(
+                &manifest,
+                SCHEMA,
+                "gravatar",
+                &HashMap::new(),
+                ".",
+                &files,
+                &ambiguous(),
+            )
+        };
+        let translation = with(&format!(
+            "        - event: LOG_CALL(indexed bytes4,indexed address,bytes)\n          topic0: \"{}\"\n          topic1: [\"{caller}\"]\n          handler: handleSetSwapFee\n        - event: LOG_CALL(indexed bytes4,indexed address,bytes)\n          topic0: \"{}\"\n          handler: handleFinalize\n",
+            selector("34e19907"),
+            selector("4bb278f3"),
+        ))
+        .unwrap();
+        let events: Vec<String> = translation.human_config.contracts.as_ref().unwrap()[0]
+            .config
+            .events
+            .iter()
+            .map(|event| event.event.clone())
+            .collect();
+        let handlers: Vec<_> = translation.runtime.manifest.data_sources[0]
+            .event_handlers
+            .iter()
+            .map(|handler| {
+                (
+                    handler.handler.clone(),
+                    handler.name.clone(),
+                    handler.anonymous,
+                    handler.topics.clone(),
+                )
+            })
+            .collect();
+        let refused = with(&format!(
+            "        - event: LOG_CALL(indexed bytes4,indexed address,bytes)\n          topic0: \"0x34e19907{}01\"\n          handler: handleSetSwapFee\n",
+            "00".repeat(27)
+        ))
+        .err()
+        .map(|err| format!("{err:#}"))
+        .unwrap_or_default();
+        assert_eq!(
+            (
+                events,
+                handlers,
+                refused.contains(&format!(
+                    "the topic0 value 0x34e19907{}01, which no bytes4 value encodes to",
+                    "00".repeat(27)
+                ))
+            ),
+            (
+                vec!["LOG_CALL".to_string()],
+                vec![
+                    (
+                        "handleSetSwapFee".to_string(),
+                        "LOG_CALL".to_string(),
+                        true,
+                        BTreeMap::from([
+                            (0, vec![selector("34e19907")]),
+                            (1, vec![caller.clone()])
+                        ]),
+                    ),
+                    (
+                        "handleFinalize".to_string(),
+                        "LOG_CALL".to_string(),
+                        true,
+                        BTreeMap::from([(0, vec![selector("4bb278f3")])]),
+                    ),
+                ],
+                true
+            ),
+            "{refused}"
         );
     }
 
@@ -3890,7 +4023,7 @@ type Renewal implements Event @entity {
             (
                 42161,
                 crate::config_parsing::human_config::StartBlock::Number(416469410),
-                vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()],
+                vec!["0x00000000000014aa86c5d3c41765bb24e11bd701".to_string()],
             )
         );
     }
@@ -3954,7 +4087,7 @@ type Renewal implements Event @entity {
             (chain_of(&inferred).1, chain_of(&named).1),
             (
                 vec!["0x1111111111111111111111111111111111111111".to_string()],
-                vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()]
+                vec!["0x2e645469f354bb4f5c8a05b3b30a929361cf77ec".to_string()]
             )
         );
     }
@@ -4537,12 +4670,12 @@ type Renewal implements Event @entity {
             (
                 (
                     1,
-                    vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()]
+                    vec!["0x2e645469f354bb4f5c8a05b3b30a929361cf77ec".to_string()]
                 ),
                 ("gen-yaml-config", "mainnet", "config/mainnet.yaml"),
                 (
                     42161,
-                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                    vec!["0x00000000000014aa86c5d3c41765bb24e11bd701".to_string()]
                 ),
                 true,
                 "export const chainid = 42161;\n".to_string(),
@@ -4610,7 +4743,7 @@ type Renewal implements Event @entity {
                     .to_string(),
                 (
                     137,
-                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                    vec!["0x00000000000014aa86c5d3c41765bb24e11bd701".to_string()]
                 ),
             )
         );
@@ -5679,7 +5812,7 @@ type Renewal implements Event @entity {
             (
                 (
                     8453,
-                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                    vec!["0x00000000000014aa86c5d3c41765bb24e11bd701".to_string()]
                 ),
                 vec![
                     "mustache config/$NETWORK.js subgraph.template.yaml > subgraph.yaml"
@@ -5978,7 +6111,7 @@ type Renewal implements Event @entity {
                 true,
                 (
                     42161,
-                    vec!["0x00000000000014aA86C5d3c41765bb24e11bd701".to_string()]
+                    vec!["0x00000000000014aa86c5d3c41765bb24e11bd701".to_string()]
                 ),
                 true,
             )

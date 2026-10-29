@@ -24,7 +24,7 @@ import {
   parseAbiParameters,
 } from "viem";
 import { subgraphKeccak256 } from "../Core.res.mjs";
-import { warn } from "../Logging.res.mjs";
+import { notify as notifyLog, warn } from "./log.ts";
 import { operators } from "./assemblyscript.ts";
 import { currentScope, type Scope } from "./scope.ts";
 import { timeseriesId } from "./rollup.ts";
@@ -3355,7 +3355,10 @@ function interpolate(message: string, args: string[]): string {
 function userLog(level: "debug" | "info" | "warn" | "error", message: string, args: string[]) {
   const scope = currentScope();
   if (scope.mode === "register") return;
-  scope.context.log?.[level](interpolate(message, args));
+  const line = interpolate(message, args);
+  // A preload run is silent: its run proper logs.
+  if (!scope.context.isPreload) notifyLog(`u${level}`, line);
+  scope.context.log?.[level](line);
 }
 
 const logImpl = {

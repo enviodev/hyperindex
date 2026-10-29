@@ -206,7 +206,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~blockFields=[],
   ): HyperSyncClient.Registration.input => {
     index,
-    sighash: transferSighash,
+    sighash: Some(transferSighash),
     topicCount,
     eventName: "Transfer",
     contractName: "ERC20",
@@ -214,9 +214,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     dependsOnAddresses,
     startBlock,
     params,
-    topicSelections: [
+    topicFilters: [
       {
-        topic0: [transferSighash],
+        topic0: Some([transferSighash]),
         topic1: Some([]),
         topic2: Some([]),
         topic3: Some([]),
@@ -259,7 +259,8 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         fromBlock,
         toBlockCeiling,
         partitionId: "0",
-        registrationIndexes: indexes,
+        onEventRegistrationIndexes: indexes,
+        onBlockRegistrationIndexes: [],
         clientFilteredContracts: None,
         retry: 0,
       },
@@ -313,7 +314,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~indexes=[3],
           ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
-        let {EvmRpcClient.items: items, toBlock} = result
+        let {EvmRpcClient.eventItems: items, toBlock} = result
         (
           toBlock,
           items->Array.map(
@@ -384,7 +385,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let ({EvmRpcClient.items: items}, _, _) = await client->callNextPage(
+        let ({EvmRpcClient.eventItems: items}, _, _) = await client->callNextPage(
           ~fromBlock=1,
           ~toBlockCeiling=1,
           ~indexes=[3],
@@ -493,7 +494,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~indexes=[3],
           ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
-        (result.kind, result.items->Array.length)
+        (result.kind, result.eventItems->Array.length)
       },
     )
 
@@ -626,70 +627,69 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     "Holds the block reads a page fans out to at the configured limit",
     {retry: 3},
     async t => {
-    // How many requests a page makes follows from how many logs the range
-    // holds, which no block interval bounds: a selection over ten blocks plans
-    // ten block reads at once. The client is what keeps that burst from
-    // reaching the provider all at once.
-    let blockCount = 10
-    let maxConcurrentRequests = 3
-    let firstBlock = 100
+      // How many requests a page makes follows from how many logs the range
+      // holds, which no block interval bounds: a selection over ten blocks plans
+      // ten block reads at once. The client is what keeps that burst from
+      // reaching the provider all at once.
+      let blockCount = 10
+      let maxConcurrentRequests = 3
+      let firstBlock = 100
 
-    let inFlight = ref(0)
-    let peakInFlight = ref(0)
+      let inFlight = ref(0)
+      let peakInFlight = ref(0)
 
-
-    let peak = await MockRpcServer.withScenario(
-      ~name="page block reads held at the request limit",
-      ~calls=[
-        MockRpcServer.expectCall(
-          ~method="eth_getLogs",
-          ~reply=RpcResult(
-            JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=blockCount) ++ "]"),
+      let peak = await MockRpcServer.withScenario(
+        ~name="page block reads held at the request limit",
+        ~calls=[
+          MockRpcServer.expectCall(
+            ~method="eth_getLogs",
+            ~reply=RpcResult(
+              JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=blockCount) ++ "]"),
+            ),
           ),
-        ),
-        MockRpcServer.expectCall(
-          ~method="eth_getBlockByNumber",
-          ~times=blockCount,
-          // Counted as the request arrives and released as its answer is
-          // written, so what this observes can only lag the client's own
-          // count of what it holds open - never overstate it.
-          ~reply=Dynamic(
-            request => {
-              inFlight := inFlight.contents + 1
-              peakInFlight := Pervasives.max(peakInFlight.contents, inFlight.contents)
-              Delayed({
-                millis: 150,
-                reply: Dynamic(
-                  _ => {
-                    inFlight := inFlight.contents - 1
-                    RpcResult(blockResult(~number=requestedBlock(request)))
-                  },
-                ),
-              })
-            },
+          MockRpcServer.expectCall(
+            ~method="eth_getBlockByNumber",
+            ~times=blockCount,
+            // Counted as the request arrives and released as its answer is
+            // written, so what this observes can only lag the client's own
+            // count of what it holds open - never overstate it.
+            ~reply=Dynamic(
+              request => {
+                inFlight := inFlight.contents + 1
+                peakInFlight := Pervasives.max(peakInFlight.contents, inFlight.contents)
+                Delayed({
+                  millis: 150,
+                  reply: Dynamic(
+                    _ => {
+                      inFlight := inFlight.contents - 1
+                      RpcResult(blockResult(~number=requestedBlock(request)))
+                    },
+                  ),
+                })
+              },
+            ),
           ),
-        ),
-      ],
-      async mock => {
-        let addressStore = makeAddressStore()
-        let client = makeClient(
-          ~url=mock.url,
-          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
-          ~addressStore,
-          ~maxConcurrentRequests,
-        )
+        ],
+        async mock => {
+          let addressStore = makeAddressStore()
+          let client = makeClient(
+            ~url=mock.url,
+            ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+            ~addressStore,
+            ~maxConcurrentRequests,
+          )
 
-        let (result, _, _) = await client->callNextPage(
-          ~fromBlock=firstBlock,
-          ~toBlockCeiling=firstBlock + blockCount - 1,
-          ~indexes=[3],
-          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
-        )
-        (result.kind, result.items->Array.length, peakInFlight.contents)
-      },
-    )
+          let (result, _, _) = await client->callNextPage(
+            ~fromBlock=firstBlock,
+            ~toBlockCeiling=firstBlock + blockCount - 1,
+            ~indexes=[3],
+            ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          )
+          (result.kind, result.eventItems->Array.length, peakInFlight.contents)
+        },
+      )
 
-    t.expect(peak).toEqual((EvmRpcClient.Ok, blockCount, maxConcurrentRequests))
+      t.expect(peak).toEqual((EvmRpcClient.Ok, blockCount, maxConcurrentRequests))
     },
   )
 })

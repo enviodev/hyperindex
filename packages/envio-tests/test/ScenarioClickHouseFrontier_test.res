@@ -1,10 +1,10 @@
 open Vitest
 
-// A batch reaches ClickHouse as entity rows first and their checkpoints last,
-// so a checkpoint row is what makes the rows it covers readable. Where each
-// chain counts its own checkpoints, the ids of two chains are not comparable:
-// a sibling's higher id must not make another chain's not-yet-checkpointed rows
-// readable.
+// A batch reaches ClickHouse as entity rows first and their chains' frontier
+// last, so a chain's frontier is what makes the rows it covers readable. Where
+// each chain counts its own checkpoints, the ids of two chains are not
+// comparable: a sibling's higher id must not make another chain's rows past its
+// own frontier readable.
 
 let chainYaml = chainId =>
   `
@@ -46,11 +46,24 @@ let setCounter = (~count) =>
     context.counter.set({id: "total", count})
   }
 
-let feed = async (indexer: IndexerRunner.t, ~source: MockSource.t, ~blockNumber, ~count) => {
-  source.resolveGetItemsOrThrow(
-    [{blockNumber, logIndex: 0, handler: setCounter(~count)}],
-    ~filter=MockSource.coveringBlock(blockNumber),
-    ~latestFetchedBlockNumber=blockNumber,
+let feed = async (
+  indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~blockNumber,
+  ~count,
+  ~leaveLaterPending=false,
+) => {
+  let reply: MockSource.expectedItemsQuery = {
+    coversBlock: blockNumber,
+    reply: Respond({
+      items: [{blockNumber, logIndex: 0, handler: setCounter(~count)}],
+      latestFetchedBlockNumber: blockNumber,
+    }),
+  }
+  await source.expectItemsQueries(
+    leaveLaterPending
+      ? [reply, {where: query => query.fromBlock > blockNumber, reply: LeavePending}]
+      : [reply],
   )
   await indexer.getBatchWritePromise()
 }
@@ -65,7 +78,9 @@ describe("ClickHouse view under per-chain checkpoints", () => {
       // Chain 1 takes ids 1..3; chain 137 takes id 1 of its own sequence.
       await feed(indexer, ~source=source(1), ~blockNumber=5, ~count=1n)
       await feed(indexer, ~source=source(1), ~blockNumber=12, ~count=2n)
-      await feed(indexer, ~source=source(1), ~blockNumber=14, ~count=3n)
+      // By now chain 1 is fetching ahead in parallel, past anything this test
+      // answers.
+      await feed(indexer, ~source=source(1), ~blockNumber=14, ~count=3n, ~leaveLaterPending=true)
       await feed(indexer, ~source=source(137), ~blockNumber=5, ~count=10n)
 
       // Chain 137's next batch, caught between its entity insert and its

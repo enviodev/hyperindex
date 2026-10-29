@@ -16,6 +16,7 @@ alloy-primitives = "1.5"
 alloy-json-abi = "1.5"
 alloy-dyn-abi = "1.5"
 bytes = "1.10"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 graphql-parser = "0.4.1"
 include_dir = "0.7.4"
 inquire = "0.6.1"
@@ -65,6 +66,14 @@ convert_case = "0.6.0"
 bollard = "0.20"
 futures-util = "0.3"
 tar = "0.4"
+tokio-postgres = "0.7"
+deadpool-postgres = "0.14"
+# ring rather than rustls's default aws-lc-rs: the provider reqwest already
+# builds on every release target, with no C toolchain beyond a compiler.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+webpki-roots = "1"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 oxc = { version = "0.144.0", features = ["ast_visit", "transformer", "codegen", "semantic"] }
@@ -74,14 +83,9 @@ base64 = "0.22.1"
 ratatui = { version = "0.30.2", default-features = false }
 unicode-width = "0.2.2"
 libc = "0.2"
-# `envio subgraph diff` reads the indexer's own Postgres to compare it with a
-# graph-node endpoint.
-tokio-postgres = "0.7.13"
-postgres-native-tls = "0.5.1"
 # graph-node names collection fields with exactly this version's plural rules
 # (graph/src/data/graphql/ext.rs `camel_cased_names`).
 Inflector = "=0.11.4"
-native-tls = "0.2"
 
 # Severity lives here rather than in the CI command line, so `cargo clippy`
 # locally and in CI agree on what is fatal.
@@ -112,6 +116,7 @@ pretty_assertions = "1.4.1"
 insta = "1.48.0"
 vt100 = "0.16.2"
 proptest = "1"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 
 # NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored

@@ -165,11 +165,11 @@ pub struct BaseConfig {
     pub full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Storage backends the indexer writes data to. Defaults to Postgres when \
-                       omitted. Set `clickhouse: true` to additionally sync the indexed data to \
-                       ClickHouse. Mark a backend with `default: true` to store entities that \
-                       don't have an @storage directive in the schema, e.g. `clickhouse: \
-                       {default: true}`."
+        description = "Where the indexer keeps entities. Postgres is always enabled and keeps \
+                       them by default. Set `clickhouse: true` and mark an entity \
+                       `@storage(clickhouse: true)` in the schema to keep it in ClickHouse, or \
+                       set `clickhouse: {default: true}` to keep every unmarked entity there. \
+                       Entities kept only in ClickHouse aren't served over GraphQL."
     )]
     pub storage: Option<StorageConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,9 +301,9 @@ impl StorageBackendConfig {
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
-// constraints Storage::resolve enforces at codegen time: ClickHouse requires
-// Postgres, and at least one backend must be enabled. Without this, an IDE
-// validating against the schema would accept configs the CLI later rejects.
+// constraint Storage::resolve enforces at codegen time: Postgres can't be
+// disabled. Without this, an IDE validating against the schema would accept
+// configs the CLI later rejects.
 impl JsonSchema for StorageConfig {
     fn schema_name() -> Cow<'static, str> {
         "StorageConfig".into()
@@ -337,61 +337,29 @@ impl JsonSchema for StorageConfig {
                 ]
             })
         };
-        // Matches a backend in any of its enabled spellings (the object
-        // form implies enabled).
-        let enabled = serde_json::json!({
-            "anyOf": [{ "const": true }, { "type": "object" }]
-        });
         json_schema!({
             "type": "object",
             "properties": {
                 "postgres": (backend(
-                    "Whether to use Postgres as a storage backend (default: true). Accepts a \
-                     boolean or an options object (the object form implies the backend is \
-                     enabled).",
-                    "Whether entities without an @storage directive are stored in this backend \
-                     (default: true when Postgres is the only enabled backend, false otherwise)."
+                    "Always enabled. Accepts `true` or an options object.",
+                    "Whether entities without an @storage directive are kept here (default: \
+                     true, unless `clickhouse: {default: true}` is set)."
                 )),
                 "clickhouse": (backend(
-                    "Whether to additionally sync the indexed data to ClickHouse. Requires \
-                     Postgres to be enabled (default: false). Accepts a boolean or an options \
-                     object (the object form implies the backend is enabled).",
-                    "Whether entities without an @storage directive are stored in this backend \
-                     (default: false)."
+                    "Whether to enable ClickHouse (default: false). Accepts a boolean or an \
+                     options object.",
+                    "Whether entities without an @storage directive are kept here (default: \
+                     false). Set it together with `postgres: {default: true}` to keep them in \
+                     both."
                 ))
             },
             "additionalProperties": false,
-            // Storage::resolve rejects two shapes:
-            //   1. `postgres: false` (with any clickhouse value) — either
-            //      fails as "ClickHouse not supported as a single storage
-            //      yet" or resolves to all-backends-disabled.
-            //   2. ClickHouse enabled without an explicitly enabled
-            //      postgres — the user must opt in to Postgres alongside
-            //      ClickHouse.
-            "allOf": [
-                {
-                    "not": {
-                        "properties": {
-                            "postgres": { "const": false }
-                        },
-                        "required": ["postgres"]
-                    }
+            "not": {
+                "properties": {
+                    "postgres": { "const": false }
                 },
-                {
-                    "if": {
-                        "properties": {
-                            "clickhouse": (enabled.clone())
-                        },
-                        "required": ["clickhouse"]
-                    },
-                    "then": {
-                        "properties": {
-                            "postgres": (enabled)
-                        },
-                        "required": ["postgres"]
-                    }
-                }
-            ]
+                "required": ["postgres"]
+            }
         })
     }
 }
@@ -508,6 +476,14 @@ impl HumanConfig {
             HumanConfig::Svm(_) => BytesType::Uint8Array,
         }
     }
+
+    pub fn strict_hex_type(&self) -> bool {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.strict_hex_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.strict_hex_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => false,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -596,6 +572,13 @@ pub mod evm {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If true, the `Hex` type of bytes params, block and transaction hashes \
+                           and `Bytes` fields is `0x${string}` instead of `string` (default: \
+                           false)"
+        )]
+        pub strict_hex_type: Option<bool>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -767,10 +750,24 @@ pub mod evm {
         Realtime,
     }
 
+    // `url: ${RPC_URL:-}` with the variable unset leaves an empty YAML value,
+    // which is null rather than an empty string. Accept it so the entry can be
+    // dropped during resolution instead of failing to deserialize.
+    fn deserialize_null_as_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Option::<String>::deserialize(deserializer).map(Option::unwrap_or_default)
+    }
+
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Rpc {
-        #[schemars(description = "The RPC endpoint URL.")]
+        #[schemars(
+            description = "The RPC endpoint URL. An entry whose url is empty, for example \
+                           `${RPC_URL:-}` with the variable unset, is ignored."
+        )]
+        #[serde(deserialize_with = "deserialize_null_as_empty")]
         pub url: String,
         #[schemars(
             description = "Determines if this RPC is for historical sync, real-time chain \
@@ -930,12 +927,6 @@ pub mod evm {
                            event"
         )]
         pub field_selection: Option<FieldSelection>,
-        /// The first topic an anonymous event is matched on, which it carries
-        /// in place of a signature hash. Set by subgraph translation (a
-        /// manifest handler's `topic0`), not part of config.yaml's schema.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(skip)]
-        pub topic0: Option<String>,
     }
 }
 
@@ -987,6 +978,13 @@ pub mod fuel {
                            Postgres, String in ClickHouse). (default: hex)"
         )]
         pub bytes_type: Option<BytesType>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If true, the `Hex` type of bytes params, block and transaction hashes \
+                           and `Bytes` fields is `0x${string}` instead of `string` (default: \
+                           false)"
+        )]
+        pub strict_hex_type: Option<bool>,
     }
 
     impl Display for HumanConfig {
@@ -1958,6 +1956,52 @@ mod tests {
     }
 
     #[test]
+    fn strict_hex_type_is_off_unless_evm_or_fuel_opt_in() {
+        let evm = |extra: &str| {
+            serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                .map(super::HumanConfig::Evm)
+                .map(|config| config.strict_hex_type())
+                .map_err(|error| error.to_string())
+        };
+        let fuel = |extra: &str| {
+            serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                "name: t\necosystem: fuel\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Fuel)
+            .map(|config| config.strict_hex_type())
+            .map_err(|error| error.to_string())
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config| config.strict_hex_type())
+            .map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            [
+                evm(""),
+                evm("strict_hex_type: false"),
+                evm("strict_hex_type: true"),
+                fuel(""),
+                fuel("strict_hex_type: true"),
+                svm(""),
+                svm("strict_hex_type: true"),
+            ],
+            [
+                Ok(false),
+                Ok(false),
+                Ok(true),
+                Ok(false),
+                Ok(true),
+                Ok(false),
+                Err("unknown field `strict_hex_type`".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn test_flatten_deserialize_local_contract() {
         let yaml = r#"
 name: Contract1
@@ -2164,6 +2208,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            strict_hex_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -2218,6 +2263,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             contracts: None,
             raw_events: None,
             bytes_type: None,
+            strict_hex_type: None,
             chains: vec![],
         };
 

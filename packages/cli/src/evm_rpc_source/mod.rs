@@ -15,8 +15,12 @@ mod interval;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
+use crate::block_selection::{
+    BlockItem, BlockRegistrations, BlockSelection, OnBlockRegistrationInput,
+};
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
+use crate::evm_hypersync_source::query::BlockField;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput,
@@ -124,10 +128,12 @@ pub struct NextPageParams {
     /// on `NextPageResponse`.
     pub to_block_ceiling: i64,
     pub partition_id: String,
-    /// The partition's registration selection, by chain-scoped id. Log
+    /// The event registrations selecting logs, by chain-scoped id. Log
     /// selections and the routing index are derived internally from the
-    /// registrations passed at construction.
-    pub registration_indexes: Vec<i64>,
+    /// registrations passed at construction. Empty selects no logs.
+    pub on_event_registration_indexes: Vec<i64>,
+    /// The block handlers selecting blocks, by chain-scoped id.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
@@ -135,6 +141,10 @@ pub struct NextPageParams {
     /// How many times this query has already been retried, which sets how long
     /// a transient miss waits before the next attempt.
     pub retry: i64,
+    /// Blocks at or above this one can still be reorged, so a blocks-only page
+    /// reaching them is read for the hashes of its boundary blocks even with no
+    /// handler block in range. Absent when the whole range is final.
+    pub reorgable_from: Option<i64>,
 }
 
 /// What a page read came back as, and so which of `NextPageResult`'s optional
@@ -151,6 +161,8 @@ pub enum PageOutcome {
     Backoff,
     /// The provider cannot serve the selected fields.
     FieldSelection,
+    /// The node that answered has not reached `block_number` yet.
+    BehindHead,
 }
 
 /// The outcome of a page read.
@@ -163,15 +175,16 @@ pub struct NextPageResult {
     /// The block this attempt targeted: the page's own `toBlock` when it
     /// succeeded, the block it got as far as otherwise.
     pub to_block: i64,
-    pub items: Vec<EventItem>,
+    pub event_items: Vec<EventItem>,
+    pub block_items: Vec<BlockItem>,
     /// What to say about a failure: on `Backoff` the line the retry logs, on
     /// `FieldSelection` why the selection cannot be served.
     pub message: Option<String>,
     /// The cause logged beside `message`, where there is one distinct from it:
     /// the provider's own words, or the transport's.
     pub provider_message: Option<String>,
-    /// `FieldSelection` only: the block it happened on, which is the one thing
-    /// that makes an unservable selection diagnosable.
+    /// `FieldSelection` and `BehindHead` only: the block it happened on, which
+    /// is the one thing that makes an unservable selection diagnosable.
     pub block_number: Option<i64>,
     /// `SuggestedToBlock` only: the narrower end to ask for instead.
     pub retry_to_block: Option<i64>,
@@ -179,9 +192,9 @@ pub struct NextPageResult {
     pub backoff_millis: Option<i64>,
 }
 
-/// A drifting node catches up in its own time, so a transient miss waits longer
-/// with every attempt rather than the configured backoff, which is tuned for a
-/// provider erroring outright.
+/// A node that answered badly once may not again, so a transient miss waits
+/// longer with every attempt rather than the configured backoff, which is tuned
+/// for a provider erroring outright.
 const TRANSIENT_BACKOFF_STEP_MILLIS: i64 = 500;
 const TRANSIENT_BACKOFF_MIN_MILLIS: i64 = 100;
 
@@ -213,7 +226,8 @@ impl NextPageResult {
             kind,
             request_stats,
             to_block: to_block as i64,
-            items: Vec::new(),
+            event_items: Vec::new(),
+            block_items: Vec::new(),
             message: None,
             provider_message: None,
             block_number: None,
@@ -252,6 +266,9 @@ impl NextPageResult {
 #[napi(object)]
 pub struct BlockHashResult {
     pub message: Option<String>,
+    /// Set alongside `message` when the node that answered has not reached
+    /// this block yet.
+    pub behind_head_block: Option<i64>,
     pub request_stats: Vec<RequestStat>,
 }
 
@@ -276,7 +293,12 @@ pub struct EvmRpcClient {
     /// stores rather than refetched.
     block_read: BlockRead,
     chain_tx_mask: u64,
+    block_registrations: BlockRegistrations,
 }
+
+/// How many blocks a page reads for its block handlers at most: each costs an
+/// `eth_getBlockByNumber`, which the log range's size says nothing about.
+const MAX_HANDLER_BLOCKS_PER_PAGE: usize = 100;
 
 /// Everything one page read works from: the range it covers, the queries to run
 /// over it, the stores whose contents decide what still has to be fetched, and
@@ -288,6 +310,8 @@ struct PageQuery<'a> {
     selections: &'a [BuiltLogSelection],
     set_cache: &'a Arc<SetCache>,
     decoder: &'a Arc<SelectionDecoder>,
+    block_selection: &'a BlockSelection,
+    block_read: &'a BlockRead,
     known_blocks: &'a BlockStore,
     known_transactions: &'a TransactionStore,
 }
@@ -298,6 +322,7 @@ impl EvmRpcClient {
     pub fn new(
         cfg: EvmRpcClientConfig,
         event_registrations: Vec<OnEventRegistrationInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         checksum_addresses: bool,
         address_store: &AddressStore,
     ) -> napi::Result<EvmRpcClient> {
@@ -362,7 +387,7 @@ impl EvmRpcClient {
                 (
                     reg.index,
                     SelectedFields {
-                        block_mask: fields::block_mask(&reg.block_fields),
+                        block_mask: BlockField::store_mask(&reg.block_fields),
                         tx_mask: fields::tx_mask(&reg.transaction_fields),
                     },
                 )
@@ -387,6 +412,7 @@ impl EvmRpcClient {
             registration_fields,
             block_read: BlockRead::for_chain(chain_fields.block_mask),
             chain_tx_mask: chain_fields.tx_mask,
+            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
         })
     }
 
@@ -419,6 +445,7 @@ impl EvmRpcClient {
             Ok(blocks) => Ok((
                 BlockHashResult {
                     message: None,
+                    behind_head_block: None,
                     request_stats: self.inner.take_stats(),
                 },
                 blocks,
@@ -428,6 +455,10 @@ impl EvmRpcClient {
             Err(err) => Ok((
                 BlockHashResult {
                     message: Some(err.to_string()),
+                    behind_head_block: match err {
+                        EnrichError::BehindHead { block_number, .. } => Some(block_number as i64),
+                        _ => None,
+                    },
                     request_stats: self.inner.take_stats(),
                 },
                 self.empty_stores().0,
@@ -489,20 +520,64 @@ impl EvmRpcClient {
         let (suggested_interval, source_max) = self
             .intervals
             .suggested_interval(&params.partition_id, &self.sync_config);
-        let to_block = (from_block + suggested_interval - 1).min(to_block_ceiling);
+        let interval_end = (from_block + suggested_interval - 1).min(to_block_ceiling);
+        let block_selection = self
+            .block_registrations
+            .select(
+                &params.on_block_registration_indexes,
+                from_block,
+                Some(interval_end),
+            )
+            .map_err(map_err)?;
+        // A page selecting only blocks, where no handler runs, reads nothing:
+        // over a final range it has no reorg observation to make either, so it
+        // answers without a request up to the next block a handler runs on.
+        if params.on_event_registration_indexes.is_empty() && block_selection.is_empty() {
+            let next_handler_block = self
+                .block_registrations
+                .select(
+                    &params.on_block_registration_indexes,
+                    from_block,
+                    Some(to_block_ceiling),
+                )
+                .map_err(map_err)?
+                .first_from(from_block);
+            let claimed_to = next_handler_block.map_or(to_block_ceiling, |block| block - 1);
+            if params
+                .reorgable_from
+                .is_none_or(|reorgable_from| (claimed_to as i64) < reorgable_from)
+            {
+                let (blocks, transactions) = self.empty_stores();
+                return Ok((
+                    NextPageResult::new(PageOutcome::Ok, claimed_to, self.inner.take_stats()),
+                    blocks,
+                    transactions,
+                ));
+            }
+        }
+        let to_block =
+            block_selection.range_end(from_block, interval_end, MAX_HANDLER_BLOCKS_PER_PAGE);
+        // A block handler can select fields no event registration does, so a
+        // page reading blocks for one reads them for its fields too.
+        let block_read = (!block_selection.is_empty())
+            .then(|| BlockRead::for_chain(self.block_read.covering | block_selection.mask()));
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, address_set, &client_filtered)
+            .build(
+                &params.on_event_registration_indexes,
+                address_set,
+                &client_filtered,
+            )
             .map_err(map_err)?;
         let set_cache = address_set.cache().clone();
         let selection_decoder = Arc::new(
             self.decoder
                 .selection(
-                    &params.registration_indexes,
+                    &params.on_event_registration_indexes,
                     &client_filtered,
                     set_cache.clone(),
                 )
@@ -516,6 +591,8 @@ impl EvmRpcClient {
             selections: &built.log_selections,
             set_cache: &set_cache,
             decoder: &selection_decoder,
+            block_selection: &block_selection,
+            block_read: block_read.as_ref().unwrap_or(&self.block_read),
             known_blocks,
             known_transactions,
         };
@@ -525,7 +602,7 @@ impl EvmRpcClient {
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
         let (result, page) = match outcome {
-            Ok((items, page)) => {
+            Ok((event_items, block_items, page)) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -541,7 +618,8 @@ impl EvmRpcClient {
                 }
                 (
                     NextPageResult {
-                        items,
+                        event_items,
+                        block_items,
                         ..NextPageResult::new(PageOutcome::Ok, to_block, request_stats)
                     },
                     Some(page),
@@ -566,6 +644,13 @@ impl EvmRpcClient {
                     message: Some(format!("{error:#}")),
                     block_number: Some(block_number as i64),
                     ..NextPageResult::new(PageOutcome::FieldSelection, to_block, request_stats)
+                },
+                None,
+            ),
+            Err(PageError::Enrich(EnrichError::BehindHead { block_number, .. })) => (
+                NextPageResult {
+                    block_number: Some(block_number as i64),
+                    ..NextPageResult::new(PageOutcome::BehindHead, to_block, request_stats)
                 },
                 None,
             ),
@@ -614,7 +699,7 @@ impl EvmRpcClient {
     async fn read_page(
         &self,
         query: &PageQuery<'_>,
-    ) -> Result<(Vec<EventItem>, enrich::EnrichedPage), PageError> {
+    ) -> Result<(Vec<EventItem>, Vec<BlockItem>, enrich::EnrichedPage), PageError> {
         let decoded = self.fetch_page(query).await.map_err(PageError::Logs)?;
 
         let mut refs = PageRefs::default();
@@ -664,6 +749,15 @@ impl EvmRpcClient {
             }
         }
 
+        // The page reads every block a handler runs on, so none can be missing.
+        let block_items = query
+            .block_selection
+            .route(query.from_block..query.to_block + 1);
+        let mask = query.block_selection.mask();
+        for item in &block_items {
+            refs.add_block(item.block_number as u64, mask);
+        }
+
         let page = enrich::page(
             &self.inner,
             &self.fetches,
@@ -673,12 +767,12 @@ impl EvmRpcClient {
                 refs,
                 known_blocks: query.known_blocks,
                 known_transactions: query.known_transactions,
-                block_read: &self.block_read,
+                block_read: query.block_read,
                 chain_tx_mask: self.chain_tx_mask,
             },
         )
         .await?;
-        Ok((items, page))
+        Ok((items, block_items, page))
     }
 
     /// Builds the retry decision for a page that could not be read, updating

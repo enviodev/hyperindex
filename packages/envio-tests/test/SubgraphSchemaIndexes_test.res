@@ -60,46 +60,32 @@ type Account @entity {
   ~mappings=Dict.fromArray([("src/registry.ts", `export function handleNewOwner(): void {}`)]),
 )
 
-let sql = PgStorage.makeClient()
-let pgSchema = TestPgSchema.make()
-
-Async.afterAll(async () => {
-  await sql->TestPgSchema.drop(~pgSchema)
-  await sql->Postgres.endSql
-})
-
 describe("A subgraph's schema indexes", () => {
   Async.it("Exist on every relation as soon as the tables do", async t => {
-    let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
+    let pgSchema = TestPgSchema.make()
+    let logger = Logger.makeInMemory()
+    let storage = Storage.makeStorageFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
+    let sql = Storage.clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
     let _ = await storage.initialize(
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~contractMapping=config.contractMapping,
       ~entities=config.userEntities,
-      ~enums=config.allEnums->Array.concat([
-        EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
-      ]),
+      ~enums=config.allEnums,
       ~envioInfo=JSON.Encode.object(Dict.make()),
     )
-
-    let rows: array<{
-      "tablename": string,
-      "indexdef": string,
-    }> = await sql->Postgres.unsafe(
-      `SELECT tablename, indexdef FROM pg_indexes
-       WHERE schemaname = '${pgSchema}'
-         AND tablename IN ('Domain', 'Registration', 'Account')
-         AND indexname NOT LIKE '%_pkey'
-       ORDER BY tablename, indexdef`,
-    )
+    let indexes = await sql->PgCatalog.indexes(~pgSchema)
+    await sql->TestPgSchema.drop(~pgSchema)
+    await storage.close()
+    await sql->StorageClient.close
 
     t.expect(
-      rows->Array.map(
-        row => (row["tablename"], row["indexdef"]->String.replaceRegExp(/^.*\(([^)]*)\)$/, "$1")),
-      ),
-    ).toEqual([
-      ("Domain", "parent_id"),
-      ("Registration", "domain_id"),
-      ("Registration", "registrant_id"),
-    ])
+      indexes
+      ->Array.filter(
+        index =>
+          ["Domain", "Registration", "Account"]->Array.includes(index.tableName) && !index.isUnique,
+      )
+      ->Array.map(index => `${index.tableName}(${index.columns->Array.join(",")})`)
+      ->Array.toSorted(String.compare),
+    ).toEqual(["Domain(parent_id)", "Registration(domain_id)", "Registration(registrant_id)"])
   })
 })

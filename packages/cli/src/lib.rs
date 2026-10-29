@@ -1,10 +1,12 @@
 mod address_store;
 mod block_hash_pagination;
+mod block_selection;
 mod block_store;
 mod cli_args;
 mod clickhouse;
 mod client_filtered_contracts;
 mod columnar;
+mod entity_filter;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
 mod commands;
@@ -22,19 +24,25 @@ mod fuel_hypersync_source;
 mod hbs_templating;
 mod hex;
 mod js_value;
+mod logger;
 mod mock_http;
 mod mock_hypersync_server;
+mod mock_source;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
+mod postgres;
 mod project_paths;
 mod registration_start_block;
 mod request_stats;
 pub mod scripts;
 mod service_health;
+mod storage;
 pub mod subgraph;
 mod svm;
 mod svm_hypersync_source;
 mod template_dirs;
+#[cfg(test)]
+mod test_servers;
 mod text_position;
 mod transaction_store;
 mod ts_loader;

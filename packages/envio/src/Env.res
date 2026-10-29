@@ -29,13 +29,15 @@ let maxChainConcurrency = 100
 // Switch a single contract to client-side address filtering
 // once its registered address count crosses this threshold. Keeping addresses
 // server-side spreads the contract across ceil(count / maxAddrInPartition)
-// partitions, each holding an in-flight query slot; capping a contract at half
-// the chain's concurrency budget stops one busy contract from monopolising them.
+// partitions, each holding an in-flight query slot and sending its whole
+// address list with every query. Capping a contract at a fifth of the chain's
+// concurrency budget keeps one busy contract from monopolising the slots
+// whatever the partition size.
 let clientFilterAddressThreshold =
   envSafe->EnvSafe.get(
     "ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD",
     S.int,
-    ~fallback=maxAddrInPartition * maxChainConcurrency / 2,
+    ~fallback=maxAddrInPartition * maxChainConcurrency / 5,
   )
 
 // Target number of in-memory objects (uncommitted entity/effect changes plus
@@ -57,23 +59,6 @@ let serverPort =
 
 let tuiEnvVar = envSafe->EnvSafe.get("ENVIO_TUI", S.option(S.bool))
 
-let logLevelSchema = S.enum([
-  #trace,
-  #debug,
-  #info,
-  #warn,
-  #error,
-  #fatal,
-  #udebug,
-  #uinfo,
-  #uwarn,
-  #uerror,
-  #silent,
-])
-let logFilePath = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/envio.log")
-let userLogLevel = envSafe->EnvSafe.get("LOG_LEVEL", S.option(logLevelSchema))
-let defaultFileLogLevel = envSafe->EnvSafe.get("FILE_LOG_LEVEL", logLevelSchema, ~fallback=#trace)
-
 let prodEnvioAppUrl = "https://envio.dev"
 let envioAppUrl = envSafe->EnvSafe.get("ENVIO_APP", S.string, ~fallback=prodEnvioAppUrl)
 let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
@@ -93,29 +78,28 @@ let hypersyncClientEnableQueryCaching =
 let hypersyncLogLevel =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
 
-let logStrategy =
-  envSafe->EnvSafe.get(
-    "LOG_STRATEGY",
-    S.enum([
-      Logging.EcsFile,
-      EcsConsole,
-      EcsConsoleMultistream,
-      FileOnly,
-      ConsoleRaw,
-      ConsolePretty,
-      Both,
-    ]),
-    ~fallback=ConsolePretty,
-  )
-
-Logging.setLogger(
-  Logging.makeLogger(
-    ~logStrategy,
-    ~logFilePath,
-    ~defaultFileLogLevel,
-    ~userLogLevel=userLogLevel->Option.getOr(#info),
-  ),
-)
+module Logger = {
+  let levelSchema: S.t<Logger.level> = S.enum([
+    #trace,
+    #debug,
+    #info,
+    #warn,
+    #error,
+    #fatal,
+    #udebug,
+    #uinfo,
+    #uwarn,
+    #uerror,
+    #silent,
+  ])
+  // Checked by the Rust logger, which knows what each value means.
+  let strategy = envSafe->EnvSafe.get("LOG_STRATEGY", S.string, ~fallback="console-pretty")
+  let file = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/envio.log")
+  // Unset means the entry point's own default: info for a run, silent for a
+  // test indexer.
+  let level = envSafe->EnvSafe.get("LOG_LEVEL", S.option(levelSchema))
+  let fileLevel = envSafe->EnvSafe.get("FILE_LOG_LEVEL", levelSchema, ~fallback=#trace)
+}
 
 module Db = {
   let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")
@@ -138,7 +122,7 @@ module Db = {
   )
   let ssl = envSafe->EnvSafe.get(
     "ENVIO_PG_SSL_MODE",
-    Postgres.sslOptionsSchema,
+    Sql.sslModeSchema,
     //this is a dev fallback option for local deployments, shouldn't run in the prod env
     //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
     ~devFallback=Bool(false),
@@ -150,9 +134,6 @@ module Db = {
   let maxConnections = envSafe->EnvSafe.get("ENVIO_PG_MAX_CONNECTIONS", S.int, ~fallback=2)
 }
 
-// Required env vars are validated lazily in PgStorage when the user
-// opts into ClickHouse via `storage.clickhouse: true` in config.yaml.
-//
 // Reads run at call time instead of module load. `envio dev` injects these
 // vars into `process.env` after booting its ClickHouse container, and that
 // happens strictly after this module has already been evaluated — caching

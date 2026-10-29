@@ -1,5 +1,3 @@
-@scope("JSON") @val external jsonStringify: unknown => string = "stringify"
-
 let nullish: unknown => bool = %raw(`v => v === undefined || v === null`)
 
 let asArray = (v: unknown) => v->(Utils.magic: unknown => array<unknown>)
@@ -76,12 +74,13 @@ let throwUnsupportedGetWhereValue = (~valueName, ~entityName, ~filterDisplay, ~h
 
 let isDate: unknown => bool = %raw(`v => v instanceof Date`)
 
-// Columns whose comparison needs a specific object shape. The rest compare
-// natively, so whatever they're handed is already safe.
+// Columns whose comparison needs a specific shape: a Date, bytes, or a list.
+// The rest compare natively, so whatever they're handed is already safe.
 let expectedValueType = (field: Table.field) =>
   switch field.fieldType {
   | Date => Some(field.isArray ? "an array of Date" : "a Date")
   | Bytea => Some(field.isArray ? "an array of Uint8Array" : "a Uint8Array")
+  | _ if field.isArray => Some("an array")
   | _ => None
   }
 
@@ -404,7 +403,7 @@ let json = nullSafe({
   eq: (a: unknown, b: unknown) => a == b,
   gt: (a, b) => a > b,
   lt: (a, b) => a < b,
-  key: v => v->jsonStringify->(Utils.magic: string => unknown),
+  key: v => v->Sql.sortedDocument->(Utils.magic: string => unknown),
 })
 
 let asBytes = (v: unknown) => v->(Utils.magic: unknown => Uint8Array.t)

@@ -1,5 +1,66 @@
+let indexedParamAt = (eventConfig: Internal.evmEventConfig, position) => {
+  let index = switch eventConfig.sighash {
+  | Some(_) => position - 1
+  | None => position
+  }
+  eventConfig.paramsMetadata->Array.filter(param => param.indexed)->Array.get(index)
+}
+
+// The topic a log of this event carries at `position`, encoded from the
+// simulated item's params with the same encoder a `where` value goes through.
+// A value that doesn't encode has no topic, so it matches no filter value.
+let topicAt = (eventConfig: Internal.evmEventConfig, ~params: dict<unknown>, position) =>
+  switch eventConfig.sighash {
+  | Some(sighash) if position === 0 => Some(sighash->EvmTypes.Hex.fromStringUnsafe)
+  | _ =>
+    eventConfig
+    ->indexedParamAt(position)
+    ->Option.flatMap(param =>
+      try Some(
+        EventConfigBuilder.getTopicEncoder(param.abiType)(params->Dict.getUnsafe(param.name)),
+      ) catch {
+      | _ => None
+      }
+    )
+  }
+
+// A block item for every block in [fromBlock, toBlock] a selected registration
+// runs on, each carrying its block inline — the way `block_selection.rs` routes
+// a native source's blocks. One the simulated chain has no block for is skipped.
+let blockItems = (
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+  ~fromBlock,
+  ~toBlock,
+  ~getBlock,
+) => {
+  let items = []
+  if onBlockRegistrations->Utils.Array.notEmpty {
+    for blockNumber in fromBlock to toBlock {
+      let running =
+        onBlockRegistrations->Array.filter(reg =>
+          reg->BlockItem.runsOn(~blockNumber, ~chainStartBlock=0)
+        )
+      if running->Utils.Array.notEmpty {
+        let block = getBlock(blockNumber)
+        running->Array.forEach(onBlockRegistration =>
+          items->Array.push(
+            Internal.Block({
+              onBlockRegistration,
+              blockNumber,
+              ?block,
+              skipped: ?(block->Option.isNone ? Some(true) : None),
+            }),
+          )
+        )
+      }
+    }
+  }
+  items
+}
+
 let make = (
   ~items: array<Internal.item>,
+  ~getBlock: int => option<Internal.eventBlock>,
   ~endBlock: int,
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,
@@ -29,7 +90,7 @@ let make = (
       ~fromBlock,
       ~toBlock,
       ~addressSet,
-      ~includeAllBlocks as _,
+      ~reorgableFrom as _,
       ~knownHeight as _,
       ~partitionId as _,
       ~selection: FetchState.selection,
@@ -39,19 +100,17 @@ let make = (
     ) => {
       // Mirror a real backend: return only the items this query would match —
       // in the block range, part of the selection, at or after the
-      // registration's own start block, and passing the same address gates a
-      // real source applies natively while routing (the emitter must be
-      // registered for the event's contract at or before the item's block, and
-      // any address-valued param filter must hold). Overlapping queries may
-      // return the same item more than once; the buffer dedups it.
+      // registration's own start block, matching one of its `where.params`
+      // alternatives, and emitted by an address registered for the event's
+      // contract at or before the item's block. Overlapping queries may return
+      // the same item more than once; the buffer dedups it.
       let toBlockQueried = switch toBlock {
       | Some(toBlock) => toBlock
       | None => reportedHeight
       }
-      // By registration index, not `eventConfig.id`: two registrations of the
-      // same event are independent and may sit in different partitions, so
-      // matching on the shared event id would let a sibling's items leak into
-      // this query.
+      // By registration index, not by event: two registrations of the same
+      // event are independent and may sit in different partitions, so matching
+      // on the shared event would let a sibling's items leak into this query.
       let selectionRegistrationIndexes = Utils.Set.make()
       selection.onEventRegistrations->Array.forEach(reg =>
         selectionRegistrationIndexes->Utils.Set.add(reg.index)->ignore
@@ -75,6 +134,46 @@ let make = (
         | None => true
         }
 
+      // Real sources select logs by topic, so an item must match one of the
+      // `where.params` alternatives: a static value by its encoding, and
+      // `chain.<Contract>.addresses` by the contract's registered addresses.
+      let topicFiltersMatch = (eventItem: Internal.eventItem) =>
+        switch ecosystem {
+        | Evm =>
+          let registration =
+            eventItem.onEventRegistration->(
+              Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration
+            )
+          let eventConfig =
+            registration.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+          let params = eventItem.payload->Internal.getPayloadParams
+          let matchesAt = (topicConstraint: Internal.topicConstraint, position) =>
+            switch topicConstraint {
+            | Any => true
+            | ContractAddresses({contractName}) =>
+              switch eventConfig->indexedParamAt(position) {
+              | Some(param) =>
+                params
+                ->Dict.getUnsafe(param.name)
+                ->(Utils.magic: unknown => Address.t)
+                ->isAddressAllowed(~contractName, ~blockNumber=eventItem.blockNumber)
+              | None => false
+              }
+            | Values(values) =>
+              switch eventConfig->topicAt(~params, position) {
+              | Some(topic) => values->Array.includes(topic)
+              | None => false
+              }
+            }
+          registration.resolvedWhere.topicFilters->Array.some(filter =>
+            filter.topic0->matchesAt(0) &&
+            filter.topic1->matchesAt(1) &&
+            filter.topic2->matchesAt(2) &&
+            filter.topic3->matchesAt(3)
+          )
+        | Fuel | Svm => true
+        }
+
       let parsedQueueItems = items->Array.filter(item => {
         let eventItem = item->Internal.castUnsafeEventItem
         let {blockNumber, onEventRegistration} = eventItem
@@ -84,31 +183,28 @@ let make = (
           false
         } else if !(onEventRegistration->hasStarted(~blockNumber)) {
           false
+        } else if !topicFiltersMatch(eventItem) {
+          false
         } else {
-          let contractName = onEventRegistration.eventConfig.contractName
-          let emitterAllowed =
-            onEventRegistration.isWildcard ||
-            eventItem.payload
-            ->Internal.getPayloadSrcAddress
-            ->isAddressAllowed(~contractName, ~blockNumber)
-          emitterAllowed &&
-          switch onEventRegistration.addressFilterParamGroups {
-          | None
-          | Some([]) => true
-          | Some(groups) =>
-            let params = eventItem.payload->Internal.getPayloadAddressParams
-            groups->Array.some(group =>
-              group->Array.every(
-                name => params->Dict.getUnsafe(name)->isAddressAllowed(~contractName, ~blockNumber),
-              )
-            )
-          }
+          onEventRegistration.isWildcard ||
+          eventItem.payload
+          ->Internal.getPayloadSrcAddress
+          ->isAddressAllowed(
+            ~contractName=onEventRegistration.eventConfig.contractName,
+            ~blockNumber,
+          )
         }
       })
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        parsedQueueItems,
+        parsedQueueItems: parsedQueueItems->Array.concat(
+          selection.onBlockRegistrations->blockItems(
+            ~fromBlock,
+            ~toBlock=toBlockQueried,
+            ~getBlock,
+          ),
+        ),
         // EVM/Fuel keep transaction and block inline. SVM simulate returns a
         // store page so materialize + activity attach run the same path as HyperSync.
         transactionStore,

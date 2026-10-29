@@ -64,6 +64,61 @@ chains:
     }
   })
 
+  it("omits RPC entries whose url interpolates to nothing, quoted or not", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~env=dict{},
+      ~configYaml=`
+name: optional-rpc
+chains:
+  - id: 1
+    rpc:
+      - url: \${ENVIO_RPC_URL_1:-}
+        for: realtime
+        ws: \${ENVIO_WS_URL_1:-}
+      - url: "\${ENVIO_RPC_URL_2:-}"
+        for: fallback
+    start_block: 0
+`,
+    )
+
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.sourceConfig).toEqual(
+      Config.EvmSourceConfig({hypersync: Some("https://1.hypersync.xyz"), rpcs: []}),
+    )
+  })
+
+  it("keeps an RPC entry whose quoted ws interpolates to nothing, without the ws", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~env=dict{"ENVIO_RPC_URL_1": "https://rpc.example.test"},
+      ~configYaml=`
+name: optional-ws
+chains:
+  - id: 1
+    rpc:
+      - url: \${ENVIO_RPC_URL_1:-}
+        for: realtime
+        ws: "\${ENVIO_WS_URL_1:-}"
+    start_block: 0
+`,
+    )
+
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.sourceConfig).toEqual(
+      Config.EvmSourceConfig({
+        hypersync: Some("https://1.hypersync.xyz"),
+        rpcs: [
+          {
+            url: "https://rpc.example.test",
+            sourceFor: Source.Realtime,
+            syncConfig: None,
+            ws: None,
+            headers: None,
+          },
+        ],
+      }),
+    )
+  })
+
   it("resolves ABI paths from caller-provided virtual files", t => {
     let files = dict{
       "abis/token.json": `[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]`,
@@ -120,6 +175,9 @@ describe("EVM config YAML", () => {
     ("checksum", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
     ("lowercase", "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"),
     ("lowercase", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
+    ("lowercase", "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"),
+    ("checksum", "0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"),
+    ("lowercase", "0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"),
   ]->Array.forEach(((addressFormat, address)) => {
     it(
       `normalizes ${address} with address_format: ${addressFormat}`,
@@ -137,12 +195,20 @@ describe("EVM config YAML", () => {
   })
 
   ["checksum", "lowercase"]->Array.forEach(addressFormat => {
-    it(
-      `rejects invalid addresses with address_format: ${addressFormat}`,
-      t => {
-        t->toThrowErrorEqual(
-          () => parseAddressConfig(~addressFormat, "0xfoo")->ignore,
-          `Contract "ERC20" on chain 1 has invalid address "0xfoo". Expected a 20-byte hex string starting with 0x.`,
+    [
+      "0xfoo",
+      "0Xa2f6e6029638ccb484a2ccb6414499ad3e825cac",
+      "a2f6e6029638ccb484a2ccb6414499ad3e825cac",
+    ]->Array.forEach(
+      address => {
+        it(
+          `rejects ${address} with address_format: ${addressFormat}`,
+          t => {
+            t->toThrowErrorEqual(
+              () => parseAddressConfig(~addressFormat, address)->ignore,
+              `Contract "ERC20" on chain 1 has invalid address "${address}". Expected a 20-byte hex string starting with 0x.`,
+            )
+          },
         )
       },
     )
@@ -337,6 +403,25 @@ chains:
       {Internal.postgres: true, clickhouse: true},
       {Internal.postgres: false, clickhouse: true},
     ))
+  })
+
+  it("keeps every entity in ClickHouse alone when it is the default", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~schema=`type User { id: ID! }`,
+      ~configYaml=`
+name: clickhouse-entities
+storage:
+  clickhouse:
+    default: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+    )
+    t.expect((
+      (config.storage.postgres, config.storage.clickhouse),
+      (config.userEntitiesByName->Dict.getUnsafe("User")).storage,
+    )).toEqual(((true, true), {Internal.postgres: false, clickhouse: true}))
   })
 
   it("preserves per-backend column names across the public config boundary", t => {
@@ -643,6 +728,103 @@ chains:
     },
   )
 
+  it("rejects an anonymous event without indexed params", t => {
+    expectParseError(
+      t,
+      `
+name: anonymous-event
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 sig, uint256 wad) anonymous
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Failed parsing globally defined contract: Contract Vat has the anonymous event "LogNote" with no indexed parameters. An anonymous event's logs are selected by its first indexed parameter, which takes the place of the signature topic, so it needs at least one.`,
+    )
+  })
+
+  it("rejects an anonymous event with more indexed params than a log has topics", t => {
+    expectParseError(
+      t,
+      `
+name: anonymous-event
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed a, bytes4 indexed b, bytes4 indexed c, bytes4 indexed d, bytes4 indexed e) anonymous
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Failed parsing globally defined contract: Contract Vat has the anonymous event "LogNote" with 5 indexed parameters, but a log holds at most 4 topics.`,
+    )
+  })
+
+  it("rejects a non-anonymous event with four indexed params", t => {
+    expectParseError(
+      t,
+      `
+name: too-many-indexed
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 indexed value, uint256 indexed nonce)
+chains:
+  - id: 1
+    start_block: 0
+`,
+      `Failed parsing globally defined contract: Contract Token has the event "Transfer" with 4 indexed parameters, but a log holds at most 4 topics and the first is the event signature, so an event can index at most 3. Mark it anonymous if it is declared anonymous in Solidity.`,
+    )
+  })
+
+  it(
+    "rejects two anonymous events with the same name but different signatures, suggesting the name alias",
+    t => {
+      expectParseError(
+        t,
+        `
+name: overloaded-anonymous-event
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed sig, uint256 wad) anonymous
+      - event: LogNote(bytes4 indexed sig, address indexed guy) anonymous
+chains:
+  - id: 1
+    start_block: 0
+`,
+        `Failed parsing globally defined contract: Contract Vat has two events named "LogNote". Give one of them a unique name with the "name" field so the generated code and the indexer's routing can tell them apart.`,
+      )
+    },
+  )
+
+  // Their registrations' `where` filters tell their logs apart.
+  it("accepts anonymous events that share a signature", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: anonymous-events
+contracts:
+  - name: Vat
+    events:
+      - event: LogNote(bytes4 indexed sig, uint256 wad) anonymous
+      - event: LogNote(bytes4 indexed sig, uint256 wad) anonymous
+        name: OtherNote
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Vat
+        address: "0x1111111111111111111111111111111111111111"
+`,
+    )
+    t.expect((config->firstContract).events->Array.map(event => event.name)).toEqual([
+      "LogNote",
+      "OtherNote",
+    ])
+  })
+
   it("preserves the root cause from nested Rust error contexts", t => {
     expectParseError(
       t,
@@ -679,29 +861,17 @@ chains:
 
   [
     (
-      "rejects ClickHouse without Postgres",
+      "rejects disabling Postgres",
       `
-name: clickhouse-only
+name: clickhouse-without-postgres
 storage:
+  postgres: false
   clickhouse: true
 chains:
   - id: 1
     start_block: 0
 `,
-      "ClickHouse is not supported as a single storage yet. Please enable Postgres alongside ClickHouse in the \`storage\` config.",
-    ),
-    (
-      "rejects a config with every storage disabled",
-      `
-name: no-storage
-storage:
-  postgres: false
-  clickhouse: false
-chains:
-  - id: 1
-    start_block: 0
-`,
-      "At least one storage backend must be enabled. Please set \`postgres: true\` in the \`storage\` config (or omit the \`storage\` section entirely to use the default).",
+      "Postgres can't be disabled: it keeps the indexer's own state. To keep the entities in ClickHouse alone, set \`clickhouse: {default: true}\` in the \`storage\` config.",
     ),
     (
       "rejects end_block before start_block",
@@ -1417,8 +1587,7 @@ programs:
   // generated TypeScript can carry.
   it("accepts program and instruction names that ReScript reserves", t => {
     let {config} = InternalTestIndexer.fromUserApi(
-      ~configYaml=prefix ++
-      `        - name: type
+      ~configYaml=prefix ++ `        - name: type
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions:
             - {name: switch, discriminator: "0x0f"}
@@ -1822,20 +1991,11 @@ type hasOwnProperty { id: ID! }
 `,
       "Schema contains the following reserved keywords: hasOwnProperty",
     ),
-    (
-      // `Enum` is already exported by the `envio` module, and every entity is
-      // re-exported there under its capitalized name.
-      "rejects an entity whose capitalized name collides with an envio export",
-      `
-type enum { id: ID! }
-`,
-      "Schema contains the following reserved keywords: enum",
-    ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))
   })
 
-  it("rejects entities without a storage route when multiple backends have no default", t => {
+  it("rejects entities without a storage route when no backend is a default", t => {
     expectParseError(
       t,
       ~schema=`
@@ -1846,7 +2006,8 @@ type Mango { id: ID! }
       `
 name: missing-storage-route
 storage:
-  postgres: true
+  postgres:
+    default: false
   clickhouse: true
 chains:
   - id: 1
@@ -2077,7 +2238,9 @@ chains:
   it("reports events missing from an ABI", t => {
     expectParseError(
       t,
-      ~files=dict{"abis/Token.json": `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`},
+      ~files=dict{
+        "abis/Token.json": `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`,
+      },
       evmYaml,
       "Failed parsing abi types for events in contract Token on network 1: Event Transfer not found in ABI file",
     )
@@ -2125,10 +2288,12 @@ programs:
 `,
     )
     t.expect(
-      firstContract(config).events->Array.map(event => {
-        let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-        (svm.name, svm.accounts, svm.args)
-      }),
+      firstContract(config).events->Array.map(
+        event => {
+          let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+          (svm.name, svm.accounts, svm.args)
+        },
+      ),
     ).toEqual([
       ("namesOnly", [Internal.Required("source")], JSON.Null),
       ("argsOnly", [], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
@@ -2215,12 +2380,7 @@ indexer.onInstruction(
 `,
     )
     t.expect(catalog(config)).toEqual([
-      (
-        `say\"hi`,
-        Some("0x07"),
-        ["payer"],
-        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
-      ),
+      (`say\"hi`, Some("0x07"), ["payer"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
     ])
   })
 
@@ -2287,7 +2447,12 @@ indexer.onInstruction(
     )
     t.expect(catalog(config)).toEqual([
       ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
-      ("swap", Some("0x01"), ["payer", "pool"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
+      (
+        "swap",
+        Some("0x01"),
+        ["payer", "pool"],
+        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
+      ),
       ("anyCall", None, [], JSON.Null),
     ])
   })

@@ -129,10 +129,10 @@ export function handleSync(event: any): void {
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { createTestIndexer } from "envio";
-import { getLogger, setLogger } from "envio/src/Logging.res.mjs";
+import { onLog } from "envio/src/subgraph/log.ts";
 
 const lines: string[] = [];
-let installed: unknown;
+let stopLogging: () => void;
 
 const factory = "0x1111111111111111111111111111111111111111" as const;
 const pair = "0x2222222222222222222222222222222222222222" as const;
@@ -148,14 +148,9 @@ let ethCalls = 0;
 
 beforeAll(async () => {
   process.env.ENVIO_SUBGRAPH_PROGRESS_LOG_MS = "50";
-  installed = getLogger();
-  const capture: any = { level: "info", child: () => capture, isLevelEnabled: () => true };
-  for (const level of ["trace", "debug", "info", "warn", "error", "fatal", "udebug", "uinfo", "uwarn", "uerror"]) {
-    capture[level] = (params: unknown, message?: string) => {
-      lines.push(typeof params === "string" ? params : (message ?? JSON.stringify(params)));
-    };
-  }
-  setLogger(capture);
+  stopLogging = onLog((level, message) => {
+    lines.push(message);
+  });
   server = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
@@ -175,7 +170,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  setLogger(installed);
+  stopLogging();
   delete process.env.ENVIO_SUBGRAPH_PROGRESS_LOG_MS;
   await new Promise((resolve) => server.close(resolve));
 });

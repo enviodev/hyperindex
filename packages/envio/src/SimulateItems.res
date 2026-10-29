@@ -176,6 +176,7 @@ type rawSimulateItem
 @get external getEvent: rawSimulateItem => option<string> = "event"
 @get external getProgram: rawSimulateItem => option<string> = "program"
 @get external getInstruction: rawSimulateItem => option<string> = "instruction"
+@get external getBlock: rawSimulateItem => option<JSON.t> = "block"
 
 let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: string) => {
   let found = ref(None)
@@ -244,6 +245,7 @@ let deriveSrcAddress = (
 
 type parseResult = {
   items: array<Internal.item>,
+  getBlock: int => option<Internal.eventBlock>,
   transactionStore: option<TransactionStore.t>,
   blockStore: option<BlockStore.t>,
 }
@@ -287,10 +289,31 @@ let liveRegistrationsFor = (
     ~config,
     ~chainId,
     ~eventConfig,
-  )->Array.filter(reg =>
-    (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
-      !HandlerRegister.isDroppedByWhere(~config, reg)
-  )
+  )->Array.filter(reg => !HandlerRegister.isDroppedByWhere(~config, reg))
+
+// A simulated block with the defaults filled in, and its number. An SVM slot
+// has no defaults to fill beyond the slot itself: every other field is one a
+// slot that produced no block lacks too.
+let parseBlock = (~ecosystem: Ecosystem.name, ~defaultBlockNumber, ~blockJson) =>
+  switch ecosystem {
+  | Fuel =>
+    let block = parseFuelSimulateBlock(~defaultBlockNumber, ~blockJson)
+    (block, (block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)).height)
+  | Evm =>
+    let block = parseEvmSimulateBlock(~defaultBlockNumber, ~blockJson)
+    (block, (block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)).number)
+  | Svm =>
+    let block = switch blockJson {
+    | Some(json) => json->(Utils.magic: JSON.t => dict<unknown>)->Dict.copy
+    | None => Dict.make()
+    }
+    let slot = switch block->Dict.get("slot") {
+    | Some(slot) => slot->(Utils.magic: unknown => int)
+    | None => defaultBlockNumber
+    }
+    block->Dict.set("slot", slot->(Utils.magic: int => unknown))
+    (block->(Utils.magic: dict<unknown> => Internal.eventBlock), slot)
+  }
 
 let parse = (
   ~simulateItems: array<JSON.t>,
@@ -304,6 +327,16 @@ let parse = (
   let currentLogIndex = ref(0)
 
   let items = []
+  // One block per number, which the block handlers that select fields read: a
+  // block given on its own, otherwise the first one an item carried.
+  let blocks: dict<Internal.eventBlock> = Dict.make()
+  let ownBlockNumbers = Utils.Set.make()
+  let addCarriedBlock = (block, ~blockNumber) => {
+    let key = blockNumber->Int.toString
+    if blocks->Dict.get(key)->Option.isNone {
+      blocks->Dict.set(key, block)
+    }
+  }
   let svmTxs: array<TransactionStore.svmTxInput> = []
   let svmActivities: array<TransactionStore.svmActivityInput> = []
   let svmBlocks: array<BlockStore.inputBlock> = []
@@ -315,6 +348,24 @@ let parse = (
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
     switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
+    | (Evm | Svm, None, None)
+      if raw->getContract->Option.isNone &&
+      raw->getEvent->Option.isNone &&
+      raw->getBlock->Option.isSome =>
+      let (block, blockNumber) = parseBlock(
+        ~ecosystem=config.ecosystem.name,
+        ~defaultBlockNumber=currentBlock.contents,
+        ~blockJson=raw->getBlock,
+      )
+      if ownBlockNumbers->Utils.Set.has(blockNumber) {
+        JsError.throwWithMessage(
+          `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is a second block ${blockNumber->Int.toString}. Give each block's fields in one item.`,
+        )
+      }
+      ownBlockNumbers->Utils.Set.add(blockNumber)->ignore
+      blocks->Dict.set(blockNumber->Int.toString, block)
+      currentBlock := blockNumber
+
     | (Svm, Some(programName), Some(instructionName)) =>
       let eventConfig = switch findEventConfig(
         ~config,
@@ -391,9 +442,9 @@ let parse = (
       let args = item.args->Option.getOr(Dict.make()->(Utils.magic: dict<unknown> => unknown))
       let logs = item.logs->Option.map(logs =>
         logs->Array.map(
-          (log): SvmHyperSyncClient.EventItems.log => {
-            kind: log.kind->Null.fromOption,
-            message: log.message->Null.fromOption,
+          (log): SvmHyperSyncClient.Items.log => {
+            kind: log.kind->Nullable.fromOption,
+            message: log.message->Nullable.fromOption,
           },
         )
       )
@@ -452,6 +503,13 @@ let parse = (
       | Some(block) => block.hash
       | None => None
       }
+      let (block, blockSlot) = parseBlock(~ecosystem=Svm, ~defaultBlockNumber=slot, ~blockJson)
+      if blockSlot !== slot {
+        JsError.throwWithMessage(
+          `simulate: item at index ${itemIndex->Int.toString} on chain ${chainId->ChainId.toString} is at slot ${slot->Int.toString} but its block is slot ${blockSlot->Int.toString}. Give the slot once.`,
+        )
+      }
+      block->addCarriedBlock(~blockNumber=slot)
       svmBlocks
       ->Array.push({
         blockNumber: slot,
@@ -477,9 +535,9 @@ let parse = (
             // As the Rust client does: present exactly when this registration
             // selected `args`.
             args: onEventRegistration.fieldSelection.instructionFields->Utils.Set.has("args")
-              ? Null.make(args)
-              : Null.null,
-            logs: logs->Null.fromOption,
+              ? Nullable.make(args)
+              : Nullable.undefined,
+            logs: logs->Nullable.fromOption,
           },
           ~programName,
           ~instructionName,
@@ -504,13 +562,18 @@ let parse = (
       })
 
     | (Svm, _, _) =>
-      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "program" and "instruction" fields.`)
+      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "program" and "instruction" fields, or be a "block" on its own.`)
 
     | (_, _, _) =>
       let (contractName, eventName) = switch (raw->getContract, raw->getEvent) {
       | (Some(c), Some(e)) => (c, e)
       | _ =>
-        JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)
+        JsError.throwWithMessage(
+          `simulate: Invalid item. Each item must have "contract" and "event" fields${config.ecosystem.name ===
+              Evm
+              ? `, or be a "block" on its own`
+              : ""}.`,
+        )
       }
       // Event simulate item
       let eventConfig = switch findEventConfig(~config, ~contractName, ~eventName) {
@@ -557,17 +620,12 @@ let parse = (
         rawItem["block"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
       let transactionJson: option<JSON.t> =
         rawItem["transaction"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
-      let (block, blockNumber) = switch config.ecosystem.name {
-      | Fuel =>
-        let block = parseFuelSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
-        let blockFields = block->(Utils.magic: Internal.eventBlock => fuelSimulateBlock)
-        (block, blockFields.height)
-      | Evm =>
-        let block = parseEvmSimulateBlock(~defaultBlockNumber=currentBlock.contents, ~blockJson)
-        let blockFields = block->(Utils.magic: Internal.eventBlock => evmSimulateBlock)
-        (block, blockFields.number)
-      | Svm => JsError.throwWithMessage("simulate is not supported for SVM ecosystem")
-      }
+      let (block, blockNumber) = parseBlock(
+        ~ecosystem=config.ecosystem.name,
+        ~defaultBlockNumber=currentBlock.contents,
+        ~blockJson,
+      )
+      block->addCarriedBlock(~blockNumber)
       let transaction = switch config.ecosystem.name {
       | Fuel => parseFuelSimulateTransaction(~transactionJson)
       | Evm => parseEvmSimulateTransaction(~transactionJson)
@@ -604,18 +662,9 @@ let parse = (
       // does at startup (not stubs), so the address filter and `where` behave
       // identically to real indexing — the dead-input tracker relies on the
       // source's address gate actually dropping unrouted items. Drop registrations
-      // whose `where` excludes this chain (they wouldn't be fetched live), and
-      // ignore the bare handler-less fallback so a missing handler surfaces below
-      // instead of silently running nothing.
-      let liveRegistrations =
-        HandlerRegister.getSimulateOnEventRegistrations(
-          ~config,
-          ~chainId,
-          ~eventConfig,
-        )->Array.filter(reg =>
-          (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
-            !HandlerRegister.isDroppedByWhere(~config, reg)
-        )
+      // whose `where` excludes this chain (they wouldn't be fetched live), so a
+      // missing handler surfaces below instead of silently running nothing.
+      let liveRegistrations = liveRegistrationsFor(~config, ~chainId, ~eventConfig)
       if liveRegistrations->Utils.Array.isEmpty {
         JsError.throwWithMessage(
           `simulate: no handler runs for event "${eventName}" on contract "${contractName}"${switch config.chainMap
@@ -669,14 +718,31 @@ let parse = (
     }
   })
 
+  // A slot the chain skipped has no block, so on SVM a slot nothing simulated
+  // a block for has none either, where an EVM or Fuel block takes defaults.
+  let getBlock = blockNumber =>
+    switch (blocks->Dict.get(blockNumber->Int.toString), config.ecosystem.name) {
+    | (Some(_) as block, _) => block
+    | (None, Svm) => None
+    | (None, Evm | Fuel) =>
+      let (block, _) = parseBlock(
+        ~ecosystem=config.ecosystem.name,
+        ~defaultBlockNumber=blockNumber,
+        ~blockJson=None,
+      )
+      Some(block)
+    }
+
   switch config.ecosystem.name {
   | Svm => {
       items,
+      getBlock,
       transactionStore: Some(TransactionStore.fromSvmJs(svmTxs, svmActivities)),
       blockStore: Some(BlockStore.fromJs(svmBlocks, ~ecosystem=Svm)),
     }
   | _ => {
       items,
+      getBlock,
       transactionStore: None,
       blockStore: None,
     }
@@ -719,7 +785,7 @@ let patchConfig = (
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
           let chainConfig = {...chainConfig, startBlock: Config.Block(startBlock), endBlock}
-          let {items, transactionStore, blockStore} = parse(
+          let {items, getBlock, transactionStore, blockStore} = parse(
             ~simulateItems,
             ~config,
             ~chainConfig,
@@ -729,6 +795,7 @@ let patchConfig = (
             ...chainConfig,
             sourceConfig: Config.SimulateSourceConfig({
               items,
+              getBlock,
               endBlock,
               ?transactionStore,
               ?blockStore,

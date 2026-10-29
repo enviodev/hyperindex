@@ -37,7 +37,7 @@ let make: (
   ~shouldChecksum: bool=?,
   ~reorgThresholdReadyTolerance: int=?,
   ~perChainEntities: array<Internal.entityConfig>=?,
-  ~logger: Pino.t,
+  ~logger: Logger.t,
 ) => t
 
 let makeFromDbState: (
@@ -49,12 +49,12 @@ let makeFromDbState: (
   ~config: Config.t,
   ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
-  ~reducedPollingInterval: int=?,
-  ~newBlockStallTimeoutRealtime: int=?,
+  ~logger: Logger.t,
+  ~sourceTiming: SourceManager.timing=?,
 ) => t
 
 // Accessors.
-let logger: t => Pino.t
+let logger: t => Logger.t
 let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
 let shouldChecksum: t => bool
@@ -125,7 +125,6 @@ let drainAddressesForWrite: (
 let hasAddressesToWrite: t => bool
 let bufferSize: t => int
 let bufferReadyCount: t => int
-let getProgressPercentage: t => float
 let chainDensity: t => option<float>
 let effectiveDensity: t => option<float>
 let hasReadyItem: t => bool
@@ -159,7 +158,6 @@ let reorgThresholdEntryMessage: string
 let hasProcessedToEndblock: t => bool
 let hasCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
-let isActivelyIndexing: t => bool
 let isReady: t => bool
 let isFetchingAtHead: t => bool
 let isAtHeadWithoutEndBlock: t => bool
@@ -195,6 +193,7 @@ let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let isInReorgThreshold: t => bool
+let reorgableFrom: (t, ~isRealtime: bool) => option<int>
 let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit

@@ -38,7 +38,6 @@ import { indexer, createEffect, S } from "envio";
 const g = globalThis as any;
 g.rounds = [];
 g.effectCalls = 0;
-g.caught = [];
 g.freezeRound = 0;
 g.thawRounds = [];
 g.pairRounds = [];
@@ -154,13 +153,8 @@ indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ context }) =>
   if (context.isPreload) {
     return;
   }
-  const set = ctx.Account.set;
-  try {
-    ctx.Account.getSync("approval-never-loaded");
-  } catch (e) {
-    g.caught.push("suspend");
-  }
-  set({ id: "approval-should-not-land", balance: 1n });
+  ctx.Account.getSync("approval-never-loaded");
+  ctx.Account.set({ id: "approval-should-not-land", balance: 1n });
 });
 
 indexer.onEvent({ contract: "Token", event: "Thaw" }, async ({ context }) => {
@@ -188,8 +182,17 @@ indexer.onEvent({ contract: "Token", event: "Freeze" }, async ({ context }) => {
 });
 `,
   ~test=`
-import { describe, it, expect } from "vitest";
+import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import { createTestIndexer, TestHelpers } from "envio";
+import { subgraphMode } from "envio/src/Env.res.mjs";
+
+// The sync surface is the subgraph runtime's, so it exists in subgraph mode.
+beforeAll(() => {
+  subgraphMode.contents = true;
+});
+afterAll(() => {
+  subgraphMode.contents = false;
+});
 
 const { Addresses } = TestHelpers;
 const g = globalThis as any;
@@ -313,9 +316,9 @@ describe("sync context", () => {
     t.expect(g.effectCalls).toBe(1);
   });
 
-  it("aborts the context after a swallowed suspend", async (t) => {
+  // A sync read has a round to suspend and replay only inside runSync.
+  it("refuses a sync read outside runSync", async (t) => {
     const indexer = createTestIndexer();
-    g.caught = [];
 
     await expect(
       indexer.process({
@@ -327,9 +330,8 @@ describe("sync context", () => {
           },
         },
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("context.Account.getSync is only available inside context.runSync.");
 
-    t.expect(g.caught).toEqual(["suspend"]);
     t.expect(await indexer.Account.get("approval-should-not-land")).toBe(undefined);
   });
 

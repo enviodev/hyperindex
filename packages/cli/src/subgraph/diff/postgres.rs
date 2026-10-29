@@ -8,6 +8,8 @@ use serde_json::Value;
 use tokio_postgres::config::SslMode;
 
 use super::model::{Entity, FieldKind};
+use crate::postgres::client::SslSetting;
+use crate::postgres::tls::MakeRustlsConnect;
 use crate::utils::project_env::ProjectEnv;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,17 +20,7 @@ pub struct PgConfig {
     pub password: String,
     pub database: String,
     pub schema: String,
-    pub ssl: Ssl,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ssl {
-    Disable,
-    /// TLS when the server offers it, unverified.
-    Prefer,
-    /// TLS, unverified — what `ENVIO_PG_SSL_MODE=require` means to the runtime.
-    Require,
-    VerifyFull,
+    pub ssl: SslSetting,
 }
 
 impl PgConfig {
@@ -39,16 +31,9 @@ impl PgConfig {
         let var = |name: &str, default: &str| env.var(name).unwrap_or_else(|| default.to_string());
         let port = var("ENVIO_PG_PORT", "5433");
         let ssl = match env.var("ENVIO_PG_SSL_MODE").as_deref() {
-            None | Some("false") | Some("") => Ssl::Disable,
-            Some("allow") | Some("prefer") => Ssl::Prefer,
-            Some("require") => Ssl::Require,
-            Some("true") | Some("verify-full") => Ssl::VerifyFull,
-            Some(other) => {
-                return Err(anyhow!(
-                    "ENVIO_PG_SSL_MODE={other:?} isn't one of true, false, require, allow, \
-                     prefer, verify-full."
-                ))
-            }
+            None | Some("") => SslSetting::Disable,
+            Some(mode) => SslSetting::parse(mode)
+                .map_err(|err| anyhow!("ENVIO_PG_SSL_MODE={mode:?}: {err}"))?,
         };
         Ok(PgConfig {
             host: var("ENVIO_PG_HOST", "localhost"),
@@ -125,34 +110,25 @@ impl PgSide {
             .application_name("envio subgraph diff")
             .connect_timeout(std::time::Duration::from_secs(10));
         let context = || format!("Failed to connect to {}", config.describe());
-        let client = match config.ssl {
-            Ssl::Disable => {
-                pg.ssl_mode(SslMode::Disable);
-                let (client, connection) = pg
-                    .connect(tokio_postgres::NoTls)
-                    .await
-                    .with_context(context)?;
-                tokio::spawn(connection);
-                client
-            }
-            ssl => {
-                pg.ssl_mode(if ssl == Ssl::Prefer {
-                    SslMode::Prefer
-                } else {
-                    SslMode::Require
-                });
-                let connector = native_tls::TlsConnector::builder()
-                    .danger_accept_invalid_certs(ssl != Ssl::VerifyFull)
-                    .danger_accept_invalid_hostnames(ssl != Ssl::VerifyFull)
-                    .build()
-                    .context("Failed to set up TLS for Postgres")?;
-                let (client, connection) = pg
-                    .connect(postgres_native_tls::MakeTlsConnector::new(connector))
-                    .await
-                    .with_context(context)?;
-                tokio::spawn(connection);
-                client
-            }
+        let client = if config.ssl == SslSetting::Disable {
+            pg.ssl_mode(SslMode::Disable);
+            let (client, connection) = pg
+                .connect(tokio_postgres::NoTls)
+                .await
+                .with_context(context)?;
+            tokio::spawn(connection);
+            client
+        } else {
+            pg.ssl_mode(if config.ssl == SslSetting::PreferNoVerify {
+                SslMode::Prefer
+            } else {
+                SslMode::Require
+            });
+            let connector = MakeRustlsConnect::new(config.ssl == SslSetting::Verify, None)
+                .context("Failed to set up TLS for Postgres")?;
+            let (client, connection) = pg.connect(connector).await.with_context(context)?;
+            tokio::spawn(connection);
+            client
         };
         // Every later read goes through this one connection, so they all see
         // the snapshot this opens — the batch the progress block belongs to.

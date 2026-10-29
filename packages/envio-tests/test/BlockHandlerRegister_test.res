@@ -84,16 +84,16 @@ let drive = async (~source: MockSource.t, ~head, ~validUpTo, ~until) => {
       )
       source.getBlockHashesCalls->Utils.Array.clearInPlace
     }
-    source.getItemsOrThrowCalls
+    source.pendingItemsQueries
     ->Array.copy
-    ->Array.forEach(call =>
-      call.resolve(
-        [],
-        ~latestFetchedBlockNumber=switch call.payload["toBlock"] {
-        | Some(toBlock) => Pervasives.min(toBlock, head)
-        | None => head
+    ->Array.forEach(query =>
+      (query->MockSource.control).respond({
+        items: [],
+        latestFetchedBlockNumber: switch query.toBlock {
+        | Bounded(toBlock) => Pervasives.min(toBlock, head)
+        | Unbounded => head
         },
-      )
+      })
     )
     await Utils.delay(1)
   }
@@ -133,18 +133,18 @@ describe("a data source a block handler creates", () => {
       setFork(true)
       source.resolveGetHeightOrThrow(301)
       let headQueries = () =>
-        source.getItemsOrThrowCalls->Array.filter(call => call.payload["fromBlock"] === 301)
+        source.pendingItemsQueries->Array.filter(query => query.fromBlock === 301)
       await Scenario.waitUntil(
         () => headQueries()->Utils.Array.notEmpty,
         ~message="the chain queries the new head",
       )
       headQueries()->Array.forEach(
-        call =>
-          call.resolve(
-            [],
-            ~latestFetchedBlockNumber=301,
-            ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
-          ),
+        query =>
+          (query->MockSource.control).respond({
+            items: [],
+            latestFetchedBlockNumber: 301,
+            prevRangeLastBlock: {blockNumber: 300, blockHash: "0x300a"},
+          }),
       )
       await drive(
         ~source,
@@ -230,20 +230,25 @@ describe("a response of a chain with an unfiltered block handler's register pass
   everyBlock->Scenario.it(
     "carries at most 50,000 block passes, and the rest of its range is fetched again",
     ~sources=[{chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer as _, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(200_000)
-      await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200_000)
-      await Scenario.waitUntil(
-        () => source.getItemsOrThrowCalls->Array.some(call => call.payload["fromBlock"] > 1),
-        ~message="the next query",
-        ~timeoutMs=20_000.,
-      )
-      t.expect(
-        source.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-        ~message="the response was cut after the block of its 50,001st pass",
-      ).toEqual([50_002])
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: RespondWith(
+            query => {
+              items: [],
+              latestFetchedBlockNumber: switch query.toBlock {
+              | Bounded(toBlock) => toBlock
+              | Unbounded => 200_000
+              },
+            },
+          ),
+        },
+      ])
+      // The response was cut after the block of its 50,001st pass.
+      await source.expectItemsQueries([{fromBlock: 50_002, reply: LeavePending}])
     },
   )
 })

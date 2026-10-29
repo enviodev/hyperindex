@@ -14,9 +14,14 @@ type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
   partitionId: string,
-  registrationIndexes: array<int>,
+  onEventRegistrationIndexes: array<int>,
+  onBlockRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
+  // Blocks at or above this one can still be reorged, so a blocks-only page
+  // reaching them is read for the hashes of its boundary blocks even with no
+  // handler block in range. None when the range is final.
+  reorgableFrom?: int,
 }
 
 // Rust reports what to do about a page it could not read rather than throwing
@@ -28,12 +33,14 @@ type pageOutcome =
   | @as("SuggestedToBlock") SuggestedToBlock
   | @as("Backoff") Backoff
   | @as("FieldSelection") FieldSelection
+  | @as("BehindHead") BehindHead
 
 type nextPageResult = {
   kind: pageOutcome,
   requestStats: array<Source.requestStat>,
   toBlock: int,
-  items: array<EvmEventItem.t>,
+  eventItems: array<EvmEventItem.t>,
+  blockItems: array<BlockItem.t>,
   message: option<string>,
   providerMessage: option<string>,
   blockNumber: option<int>,
@@ -45,6 +52,7 @@ type nextPageResult = {
 // alongside it is empty.
 type blockHashResult = {
   message: option<string>,
+  behindHeadBlock: option<int>,
   requestStats: array<Source.requestStat>,
 }
 
@@ -66,6 +74,7 @@ external classNew: (
   Core.evmRpcClientCtor,
   cfg,
   array<HyperSyncClient.Registration.input>,
+  array<BlockItem.registrationInput>,
   ~checksumAddresses: bool,
   ~addressStore: AddressStore.t,
 ) => t = "new"
@@ -77,6 +86,7 @@ let make = (
   ~maxConcurrentRequests=?,
   ~headers=?,
   ~eventRegistrations=[],
+  ~onBlockRegistrations=[],
   ~addressStore,
 ) =>
   Core.getAddon().evmRpcClient->classNew(
@@ -92,6 +102,7 @@ let make = (
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
     },
     eventRegistrations,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
     ~checksumAddresses,
     ~addressStore,
   )

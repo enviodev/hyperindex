@@ -16,19 +16,18 @@ let registration = (
   ~contractName,
   ~isWildcard=false,
   ~startBlock=?,
-  ~addressFilterParamGroups=?,
+  ~paramsMetadata=?,
+  ~eventFilters=?,
 ) => {
   let base = (EventRegistration.evmOnEventRegistration(
     ~id=index->Int.toString,
     ~contractName,
     ~isWildcard,
     ~startBlock?,
+    ~paramsMetadata?,
+    ~eventFilters?,
   ) :> Internal.onEventRegistration)
-  {
-    ...base,
-    index,
-    addressFilterParamGroups: addressFilterParamGroups->Option.getOr([]),
-  }
+  {...base, index}
 }
 
 let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexingAddress => {
@@ -37,17 +36,21 @@ let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexi
   registrationBlock,
 }
 
-let item = (~registration: Internal.onEventRegistration, ~blockNumber, ~srcAddress, ~params=?) =>
-  Internal.Event({
-    chainId,
-    blockNumber,
-    logIndex: 0,
-    transactionIndex: 0,
-    onEventRegistration: registration,
-    payload: {"srcAddress": srcAddress, "params": params->Option.getOr(Dict.make())}->(
-      Utils.magic: {"srcAddress": Address.t, "params": dict<Address.t>} => Internal.eventPayload
-    ),
-  })
+let item = (
+  ~registration: Internal.onEventRegistration,
+  ~blockNumber,
+  ~srcAddress,
+  ~params=?,
+) => Internal.Event({
+  chainId,
+  blockNumber,
+  logIndex: 0,
+  transactionIndex: 0,
+  onEventRegistration: registration,
+  payload: {"srcAddress": srcAddress, "params": params->Option.getOr(Dict.make())}->(
+    Utils.magic: {"srcAddress": Address.t, "params": dict<Address.t>} => Internal.eventPayload
+  ),
+})
 
 let getItems = async (
   ~items,
@@ -57,9 +60,15 @@ let getItems = async (
   ~fromBlock=0,
   ~toBlock=1000,
 ) => {
-  let source = SimulateSource.make(~items, ~endBlock=1000, ~chainId, ~addressStore=store)
+  let source = SimulateSource.make(
+    ~items,
+    ~getBlock=_ => None,
+    ~endBlock=1000,
+    ~chainId,
+    ~addressStore=store,
+  )
   let response = await source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet,
@@ -68,7 +77,7 @@ let getItems = async (
     ~selection,
     ~itemsTarget=None,
     ~retry=0,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
   response.parsedQueueItems->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem
@@ -93,6 +102,7 @@ describe("SimulateSource routing", () => {
     let selection: FetchState.selection = {
       dependsOnAddresses: true,
       onEventRegistrations: [regA],
+      onBlockRegistrations: [],
     }
     let items = [
       item(~registration=regA, ~blockNumber=10, ~srcAddress=addr(0)),
@@ -127,6 +137,7 @@ describe("SimulateSource routing", () => {
     let selection: FetchState.selection = {
       dependsOnAddresses: true,
       onEventRegistrations: [regA],
+      onBlockRegistrations: [],
     }
 
     let routed = await getItems(
@@ -164,6 +175,7 @@ describe("SimulateSource routing", () => {
       ~selection={
         dependsOnAddresses: true,
         onEventRegistrations: [regA],
+        onBlockRegistrations: [],
         clientFilteredContracts: ["A"],
       },
     )
@@ -173,7 +185,7 @@ describe("SimulateSource routing", () => {
       ~items,
       ~store,
       ~addressSet,
-      ~selection={dependsOnAddresses: true, onEventRegistrations: [regA]},
+      ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: [regA]},
     )
 
     t.expect({"clientFiltered": clientFiltered, "normal": normal}).toEqual({
@@ -187,7 +199,15 @@ describe("SimulateSource routing", () => {
       ~index=0,
       ~contractName="A",
       ~isWildcard=true,
-      ~addressFilterParamGroups=[["to"]],
+      ~paramsMetadata=[{name: "to", abiType: "address", indexed: true}],
+      ~eventFilters=[
+        {
+          topic0: Values(["0"->EvmTypes.Hex.fromStringUnsafe]),
+          topic1: ContractAddresses({contractName: "A"}),
+          topic2: Any,
+          topic3: Any,
+        },
+      ],
     )
     let store = TestAddresses.makeStore(
       ~onEventRegistrations=[regWildcard],
@@ -199,6 +219,7 @@ describe("SimulateSource routing", () => {
     let selection: FetchState.selection = {
       dependsOnAddresses: true,
       onEventRegistrations: [regWildcard],
+      onBlockRegistrations: [],
     }
     let items = [
       item(
@@ -255,7 +276,11 @@ describe("SimulateSource routing", () => {
         item(~registration=regRestricted, ~blockNumber=100, ~srcAddress=addr(0)),
       ],
       ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
-      ~selection={dependsOnAddresses: true, onEventRegistrations: [regOpen, regRestricted]},
+      ~selection={
+        dependsOnAddresses: true,
+        onBlockRegistrations: [],
+        onEventRegistrations: [regOpen, regRestricted],
+      },
     )
 
     t.expect(routed).toEqual([(0, 99, addr(0)), (0, 100, addr(0)), (1, 100, addr(0))])
@@ -280,13 +305,21 @@ describe("SimulateSource routing", () => {
       ~items,
       ~store,
       ~addressSet,
-      ~selection={dependsOnAddresses: true, onEventRegistrations: [regFirst]},
+      ~selection={
+        dependsOnAddresses: true,
+        onBlockRegistrations: [],
+        onEventRegistrations: [regFirst],
+      },
     )
     let both = await getItems(
       ~items,
       ~store,
       ~addressSet,
-      ~selection={dependsOnAddresses: true, onEventRegistrations: [regFirst, regSecond]},
+      ~selection={
+        dependsOnAddresses: true,
+        onBlockRegistrations: [],
+        onEventRegistrations: [regFirst, regSecond],
+      },
     )
 
     t.expect({"first": first, "both": both}).toEqual({

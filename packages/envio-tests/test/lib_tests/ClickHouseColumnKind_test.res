@@ -65,25 +65,26 @@ let fieldTypes =
 let everyColumn =
   fieldTypes->Array.flatMap(fieldType =>
     [(false, false), (true, false), (false, true)]->Array.map(((isNullable, isArray)) =>
-      ClickHouse.makeColumnSpec(~name="c", ~fieldType, ~isNullable, ~isArray)
+      ClickHouse.column(~name="c", ~fieldType, ~isNullable, ~isArray)
     )
   )
 
-let sink = ClickHouse.makeSink(
-  ~host="http://127.0.0.1:1",
-  ~username="default",
-  ~password="",
-  ~database="unused",
-  ~chainIdMode=Int32,
-)
+let client = TestClickHouse.offlineClient()
 
-let register = (columns: array<ClickHouseSink.columnSpec>) =>
-  sink->ClickHouseSink.registerCheckpointsTable(
-    columns->Array.mapWithIndex((column, index) => {
-      ...column,
-      name: `c${index->Int.toString}`,
-    }),
-  )
+// An entity's history row, which stages its columns and then the checkpoint
+// and the change.
+let register = (columns: array<StorageClient.clickHouseColumn>) =>
+  client->TestClickHouse.registered({
+    name: "t",
+    clickhouse: {
+      name: "t",
+      historyTable: "envio_history_t",
+      columns: columns->Array.mapWithIndex((column, index) => {
+        ...column,
+        name: `c${index->Int.toString}`,
+      }),
+    },
+  })
 
 describe("ClickHouse column type contract", () => {
   it("Rust derives a column type for every field type envio can declare", t => {
@@ -103,7 +104,7 @@ describe("ClickHouse column type contract", () => {
   it("refuses a nullable list, which ClickHouse has no type for", t => {
     let message = try {
       let _ = register([
-        ClickHouse.makeColumnSpec(~name="c", ~fieldType=String, ~isNullable=true, ~isArray=true),
+        ClickHouse.column(~name="c", ~fieldType=String, ~isNullable=true, ~isArray=true),
       ])
       "registered without complaint"
     } catch {
@@ -115,15 +116,17 @@ describe("ClickHouse column type contract", () => {
   // Pins all four ordinals: each names the typed array the builder allocates,
   // so a shift in Rust's enum would send a column as the wrong kind.
   it("resolves the wire kind each typed array depends on", t => {
-    let {kinds} = register(
+    let {columns} = register(
       [Table.Int32, UInt64, BigSerial, String]->Array.map(
-        fieldType => ClickHouse.makeColumnSpec(~name="c", ~fieldType),
+        fieldType => ClickHouse.column(~name="c", ~fieldType),
       ),
     )
-    t.expect(kinds->Array.map(Staging.kindOfOrdinal)).toEqual([
+    t.expect(columns->Array.map(column => column.kind)).toEqual([
       Staging.F64,
       U64,
       I64,
+      Text,
+      U64,
       Text,
     ])
   })

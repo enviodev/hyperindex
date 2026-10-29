@@ -13,7 +13,7 @@ import { missingRpcMessage } from "./errors.ts";
 import { rpcClient } from "./rpc.ts";
 import { parseSignature } from "./abi-types.ts";
 import { untilAnswered } from "./transient.ts";
-import { info } from "../Logging.res.mjs";
+import { info } from "./log.ts";
 
 export function abiItemFor(signature: string): Abi {
   const { name, inputs, outputs } = parseSignature(signature);

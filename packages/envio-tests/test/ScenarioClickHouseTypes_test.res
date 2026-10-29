@@ -7,7 +7,7 @@ open Vitest
 // accepts whatever it is handed, so a wrong Decimal scale, enum number or
 // DateTime64 tick is stored silently and shows up nowhere but the stored value.
 // Going through a real run also covers what a unit test cannot: the table
-// registration the sink does at startup, the checkpoint ordering the view reads
+// registration the store does at startup, the checkpoint ordering the view reads
 // through, and the entity serializers.
 
 let scenario = Scenario.make(
@@ -102,10 +102,12 @@ let timestamp = Date.fromTime(1234567890123.0)
 
 // Not ASCII on purpose: RowBinary prefixes a string with its length in UTF-8
 // bytes, which is not the length JS reports for anything outside Latin-1. "é"
-// is one UTF-16 unit over two bytes, "😀" is two units over four.
+// is one UTF-16 unit over two bytes, "😀" is two units over four. Both values
+// also run past the length where staging copies a string in bulk instead of
+// character by character, which is where a mis-sized reservation would show.
 let entity = {
-  id: "every-1",
-  string: "héllo 😀",
+  id: "0x5c4f2e1d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
+  string: "héllo 😀 and the quick brown fox jumps over the lazy dog",
   optString: None,
   arrayOfStrings: ["a", "日本"],
   int_: -7,
@@ -145,19 +147,25 @@ describe("ClickHouse stores every schema type", () => {
     let source = source(1)
     source.resolveGetHeightOrThrow(10)
 
-    source.resolveGetItemsOrThrow(
-      [
-        {
-          blockNumber: 5,
-          logIndex: 0,
-          handler: async args => {
-            let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-            context.everyType.set(entity)
-          },
-        },
-      ],
-      ~latestFetchedBlockNumber=10,
-    )
+    await source.expectItemsQueries([
+      {
+        fromBlock: 0,
+        toBlock: Unbounded,
+        reply: Respond({
+          items: [
+            {
+              blockNumber: 5,
+              logIndex: 0,
+              handler: async args => {
+                let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                context.everyType.set(entity)
+              },
+            },
+          ],
+          latestFetchedBlockNumber: 10,
+        }),
+      },
+    ])
     await indexer.getBatchWritePromise()
 
     let database = TestClickHouse.currentDatabase()
@@ -167,8 +175,8 @@ describe("ClickHouse stores every schema type", () => {
 
     t.expect(rows->String.trim->JSON.parseOrThrow).toStrictEqual(
       %raw(`{
-          id: "every-1",
-          string: "héllo 😀",
+          id: "0x5c4f2e1d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
+          string: "héllo 😀 and the quick brown fox jumps over the lazy dog",
           optString: null,
           arrayOfStrings: ["a", "日本"],
           int_: -7,
@@ -198,8 +206,9 @@ describe("ClickHouse stores every schema type", () => {
           // back as the text of JSON null rather than as an absent value.
           optJson: "null",
           optJsonNull: "null",
-          // A String element holds whatever text it is given.
-          arrayOfJson: ['{"a":1}', "2", "true", "s"],
+          // Each element is its document's text, so one that is a string
+          // keeps its quotes and parses back to the string it was.
+          arrayOfJson: ['{"a":1}', "2", "true", '"s"'],
           enumField: "ADMIN",
           optEnumField: null,
         }`),

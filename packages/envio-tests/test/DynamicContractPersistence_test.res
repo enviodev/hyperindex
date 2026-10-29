@@ -46,14 +46,10 @@ let queryAddresses = (indexer: IndexerRunner.t) =>
     ->Array.map(r => (r.address, r.contractName, r.registrationBlock))
   )
 
-let dcAddress = "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow
-let lateDcAddress = "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow
+let dcAddress = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
+let lateDcAddress = "0x2222222222222222222222222222222222222222"->Address.unsafeFromString
 
-let row = (address, contractName, registrationBlock) => (
-  address,
-  contractName,
-  registrationBlock,
-)
+let row = (address, contractName, registrationBlock) => (address, contractName, registrationBlock)
 
 type contractOps = {add: Address.t => unit}
 type registerContext = {chain: {"Gravatar": contractOps, "NftFactory": contractOps}}
@@ -67,6 +63,12 @@ let registeringItem = (~blockNumber, ~register): MockSource.itemMock => {
     register(args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)),
 }
 
+let firstQuery = (items): MockSource.expectedItemsQuery => {
+  partitionId: "0",
+  fromBlock: 1,
+  reply: Respond({items, latestFetchedBlockNumber: 200}),
+}
+
 let withIndexer = body =>
   scenario->Scenario.run(
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
@@ -74,8 +76,6 @@ let withIndexer = body =>
       let sourceMock = source(1337)
 
       sourceMock.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       await body(sourceMock, indexer)
     },
@@ -87,8 +87,8 @@ describe("Dynamic contract persistence", () => {
       async (sourceMock, indexer) => {
         // Two events in different blocks register the same address. The second is a
         // duplicate the store rejects, so only the first is ever written.
-        sourceMock.resolveGetItemsOrThrow(
-          [
+        await sourceMock.expectItemsQueries([
+          firstQuery([
             registeringItem(
               ~blockNumber=10,
               ~register=context => context.chain["Gravatar"].add(dcAddress),
@@ -97,13 +97,12 @@ describe("Dynamic contract persistence", () => {
               ~blockNumber=11,
               ~register=context => context.chain["Gravatar"].add(dcAddress),
             ),
-          ],
-          ~latestFetchedBlockNumber=200,
-        )
+          ]),
+        ])
         await indexer.getBatchWritePromise()
         // Registering spawns a partition for the new address, and the chain can't
         // progress past the registering block until it has fetched.
-        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=200)
+        sourceMock.drainPendingItemsQueries(~latestFetchedBlockNumber=200)
         await indexer.getBatchWritePromise()
 
         t.expect(
@@ -120,8 +119,8 @@ describe("Dynamic contract persistence", () => {
       async (sourceMock, indexer) => {
         // One address indexed by two contracts: each registration is its own
         // row, so a resume restores both.
-        sourceMock.resolveGetItemsOrThrow(
-          [
+        await sourceMock.expectItemsQueries([
+          firstQuery([
             registeringItem(
               ~blockNumber=10,
               ~register=context => context.chain["Gravatar"].add(dcAddress),
@@ -130,13 +129,12 @@ describe("Dynamic contract persistence", () => {
               ~blockNumber=11,
               ~register=context => context.chain["NftFactory"].add(dcAddress),
             ),
-          ],
-          ~latestFetchedBlockNumber=200,
-        )
+          ]),
+        ])
         await indexer.getBatchWritePromise()
         // Registering spawns a partition for the new address, and the chain can't
         // progress past the registering block until it has fetched.
-        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=200)
+        sourceMock.drainPendingItemsQueries(~latestFetchedBlockNumber=200)
         await indexer.getBatchWritePromise()
 
         t.expect(
@@ -154,8 +152,8 @@ describe("Dynamic contract persistence", () => {
         // address spawns a partition that hasn't fetched yet — so the first batch
         // can't progress past block 10, and the block 150 registration has to stay
         // pending until a later batch covers it.
-        sourceMock.resolveGetItemsOrThrow(
-          [
+        await sourceMock.expectItemsQueries([
+          firstQuery([
             registeringItem(
               ~blockNumber=10,
               ~register=context => context.chain["Gravatar"].add(dcAddress),
@@ -164,9 +162,8 @@ describe("Dynamic contract persistence", () => {
               ~blockNumber=150,
               ~register=context => context.chain["Gravatar"].add(lateDcAddress),
             ),
-          ],
-          ~latestFetchedBlockNumber=200,
-        )
+          ]),
+        ])
         await indexer.getBatchWritePromise()
         // Nothing is written yet: the chain hasn't progressed to block 10, so both
         // registrations sit pending across this write.
@@ -175,11 +172,11 @@ describe("Dynamic contract persistence", () => {
         // Let the new partition fetch only to block 50. Progress lands between the
         // two registration blocks, so the drain has to split the queue: block 10 is
         // covered, block 150 stays pending.
-        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=50)
+        sourceMock.drainPendingItemsQueries(~latestFetchedBlockNumber=50)
         await indexer.getBatchWritePromise()
         let afterPartialDrain = await queryAddresses(indexer)
 
-        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=200)
+        sourceMock.drainPendingItemsQueries(~latestFetchedBlockNumber=200)
         await indexer.getBatchWritePromise()
 
         t.expect(

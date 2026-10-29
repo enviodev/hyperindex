@@ -4,6 +4,10 @@
 
 @val external pid: int = "process.pid"
 
+// A storage with Postgres alone, for what a test reads or sets up itself.
+let client = (~logger=Logger.makeInMemory(), ~pgSchema=?, ~maxConnections=?) =>
+  Storage.makeClient(~logger, ~postgres=Storage.postgresOptions(~pgSchema?, ~maxConnections?))
+
 let prefix = "envio_test_"
 
 let counter = ref(0)
@@ -28,7 +32,7 @@ let parseCreatedAt = name =>
   }
 
 let drop = async (sql, ~pgSchema) => {
-  let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+  let _ = await sql->Sql.queryForTests(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
 }
 
 let staleAfterMs = 60. *. 60. *. 1000.
@@ -36,10 +40,11 @@ let staleAfterMs = 60. *. 60. *. 1000.
 // Collects schemas left behind by workers that died before their cleanup ran.
 // Only touches schemas older than an hour, so it can't race a live test.
 let sweep = async sql => {
-  let rows: array<{"schema_name": string}> =
-    await sql->Postgres.unsafe(
-      `SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE '${prefix}%';`,
-    )
+  let rows: array<{
+    "schema_name": string,
+  }> = await sql->Sql.queryForTests(
+    `SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE '${prefix}%';`,
+  )
   let now = Date.now()
   let stale = rows->Array.filterMap(row => {
     let name = row["schema_name"]

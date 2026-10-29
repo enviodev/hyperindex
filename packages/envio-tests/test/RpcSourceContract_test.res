@@ -11,50 +11,42 @@ let minerAddress = "0x00000000000000000000000000000000000000CC"
 let normalizedMinerAddress = minerAddress->String.toLowerCase
 let address = normalizedContractAddress->Address.unsafeFromString
 
-let topicSelection: Internal.resolvedTopicSelection = {
-  topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-  topic1: Values([]),
-  topic2: Values([]),
-  topic3: Values([]),
-}
-
-let withPinIdentity = (registration: Internal.evmOnEventRegistration, ~index) => {
-  let eventConfig =
-    registration.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
-  {
-    ...registration,
-    index,
-    eventConfig: ({...eventConfig, id: `${sighash}_1`, sighash} :> Internal.eventConfig),
-  }
+let topicFilter: Internal.topicFilter = {
+  topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
+  topic1: Any,
+  topic2: Any,
+  topic3: Any,
 }
 
 let makeRegistration = (~index=0, ~receiptOnly=false) => {
-  EventRegistration.evmOnEventRegistration(
+  ...EventRegistration.evmOnEventRegistration(
     ~id=sighash,
     ~blockFieldNames=[Number, Timestamp, Hash, ParentHash, GasUsed, Miner],
     ~transactionFieldNames=receiptOnly
       ? [GasUsed]
       : [Hash, TransactionIndex, From, Gas, GasUsed, Status],
-    ~eventFilters=[topicSelection],
-  )->withPinIdentity(~index)
+    ~eventFilters=[topicFilter],
+  ),
+  index,
 }
 
 let makeRoutingRegistration = (
   ~index=0,
   ~contractName="ERC20",
   ~isWildcard=false,
-  ~eventFilters=[topicSelection],
+  ~eventFilters=[topicFilter],
   // topicCount is derived from paramsMetadata inside evmOnEventRegistration.
   ~paramsMetadata: array<Internal.paramMeta>=[],
 ) => {
-  EventRegistration.evmOnEventRegistration(
+  ...EventRegistration.evmOnEventRegistration(
     ~id=sighash,
     ~contractName,
     ~blockFieldNames=[Number],
     ~isWildcard,
     ~eventFilters,
     ~paramsMetadata,
-  )->withPinIdentity(~index)
+  ),
+  index,
 }
 
 let syncConfig = EvmChain.getSyncConfig({
@@ -104,7 +96,7 @@ let invoke = (
   ~retry=0,
 ) => {
   source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock=100,
     ~toBlock=Some(100),
     ~addressSet=addressStore->AddressStore.makeSet(
@@ -114,11 +106,12 @@ let invoke = (
     ~partitionId="pin-partition",
     ~selection={
       dependsOnAddresses: true,
+      onBlockRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=Some(5_000),
     ~retry,
-    ~logger=Logging.createChild(~params={"test": "RPC source contract pin"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC source contract pin"}),
   )
 }
 
@@ -198,7 +191,7 @@ let eventSummary = (event: RpcSourcePins.pinnedEvent) => {
     ->Option.getOrThrow
     ->(Utils.magic: Internal.eventTransaction => transactionView)
   {
-    "registrationId": event.registrationId,
+    "registrationIndex": event.registrationIndex,
     "blockNumber": event.blockNumber,
     "logIndex": event.logIndex,
     "transactionIndex": event.transactionIndex,
@@ -251,7 +244,7 @@ describe("RPC source public contract", () => {
       "latestFetchedBlockNumber": 100,
       "events": [
         {
-          "registrationId": `${sighash}_1`,
+          "registrationIndex": 0,
           "blockNumber": 100,
           "logIndex": 2,
           "transactionIndex": 1,
@@ -277,7 +270,7 @@ describe("RPC source public contract", () => {
           },
         },
         {
-          "registrationId": `${sighash}_1`,
+          "registrationIndex": 0,
           "blockNumber": 100,
           "logIndex": 3,
           "transactionIndex": 1,
@@ -388,7 +381,7 @@ describe("RPC source public contract", () => {
     t.expect(ranges).toEqual([ranges->Array.getUnsafe(0), ranges->Array.getUnsafe(0)])
   })
 
-  Async.it("pins missing receipt data as a retryable source error", async t => {
+  Async.it("pins missing receipt data as a source behind the head", async t => {
     let error = await MockRpcServer.withScenario(
       ~name="missing receipt",
       ~calls=[
@@ -421,21 +414,42 @@ describe("RPC source public contract", () => {
           | Error(error) => error
           | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
           }
-        // The wait ramps with the attempt, so the two are read together.
         (await call(~retry=0), await call(~retry=2))
       },
     )
 
-    // A null receipt is the load-balancing symptom, so the source asks for a
-    // retry and says which receipt was missing. The symptom is the whole
-    // story, so it is the retry's message and there is no separate cause.
-    let notFoundMessage = `The RPC returned null for the receipt of transaction ${transactionHash}. The provider may be load-balanced between nodes that drift from the head independently; indexing continues correctly once the query is retried.`
-    let expected = backoffMillis => RpcSourcePins.FailedGettingItems({
-      attemptedToBlock: 100,
-      providerMessage: None,
-      retry: Backoff({message: notFoundMessage, backoffMillis}),
-    })
-    t.expect(error).toEqual((expected(100), expected(1_000)))
+    // A null receipt is a load-balanced provider answering from a node that
+    // hasn't reached the transaction's block yet. SourceManager owns that retry
+    // schedule, so the source names the block and adds no wait of its own.
+    let expected = RpcSourcePins.BehindHead({blockNumber: 100})
+    t.expect(error).toEqual((expected, expected))
+  })
+
+  Async.it("pins a null block in a block-hash query as a source behind the head", async t => {
+    let result = await MockRpcServer.withScenario(
+      ~name="null block hash",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(JSON.Null),
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration()
+        let (source, _) = makeSource(~url=mock.url, ~registration)
+        let {result} = await source.getBlockHashes(
+          ~blockNumbers=[100],
+          ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC source contract pin"}),
+        )
+        switch result {
+        | Error(Source.SourceBehindHead({blockNumber})) => Some(blockNumber)
+        | _ => None
+        }
+      },
+    )
+
+    t.expect(result).toEqual(Some(100))
   })
 
   // A page reads its blocks and its transactions at once, and they can fail
@@ -484,10 +498,48 @@ describe("RPC source public contract", () => {
       switch error {
       | RpcSourcePins.FailedGettingFieldSelection({message}) =>
         message->String.includes("gasUsed") ? "unservable" : message
-      | FailedGettingItems(_) => "reported the transient miss instead"
+      | FailedGettingItems(_) | BehindHead(_) => "reported the transient miss instead"
       | UnsupportedSelection(message) => message
       },
     ).toEqual("unservable")
+  })
+
+  // A node that hasn't reached the block explains every other bad answer on the
+  // same page, so it is what decides the retry schedule whichever settles last.
+  Async.it("pins a null block winning over a concurrent unusable receipt", async t => {
+    let error = await MockRpcServer.withScenario(
+      ~name="null block alongside a malformed receipt",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=getLogsParams(),
+          ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(JSON.Null),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getTransactionReceipt",
+          ~params=JSON.Array([JSON.String(transactionHash)]),
+          ~reply=Delayed({
+            millis: 50,
+            reply: RpcResult(JSON.parseOrThrow(`{"gasUsed":"not a quantity"}`)),
+          }),
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration(~receiptOnly=true)
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        | Error(error) => error
+        | Ok(_) => JsError.throwWithMessage("Expected the page to fail")
+        }
+      },
+    )
+
+    t.expect(error).toEqual(RpcSourcePins.BehindHead({blockNumber: 100}))
   })
 
   Async.it("pins consecutive response-too-large interval shrinking", async t => {
@@ -531,7 +583,7 @@ describe("RPC source public contract", () => {
           RpcSourcePins.capture(
             () =>
               source.getItemsOrThrow(
-                ~includeAllBlocks=false,
+                ~reorgableFrom=None,
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
                 ~addressSet=addressStore->AddressStore.makeSet(
@@ -541,11 +593,12 @@ describe("RPC source public contract", () => {
                 ~partitionId="pin-partition",
                 ~selection={
                   dependsOnAddresses: true,
+                  onBlockRegistrations: [],
                   onEventRegistrations: [(registration :> Internal.onEventRegistration)],
                 },
                 ~itemsTarget=Some(5_000),
                 ~retry=0,
-                ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
+                ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC interval pin"}),
               ),
           )
         (await call(), await call())
@@ -582,16 +635,16 @@ describe("RPC source public contract", () => {
       ],
       ~eventFilters=[
         {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+          Internal.topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
           topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
-          topic2: Values([]),
-          topic3: Values([]),
+          topic2: Any,
+          topic3: Any,
         },
         {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([]),
+          Internal.topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
+          topic1: Any,
           topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
-          topic3: Values([]),
+          topic3: Any,
         },
       ],
     )
@@ -666,7 +719,7 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItemsOrThrow(
-              ~includeAllBlocks=false,
+              ~reorgableFrom=None,
               ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressSet=addressStore->AddressStore.emptySet,
@@ -674,11 +727,12 @@ describe("RPC source public contract", () => {
               ~partitionId="skip-all",
               ~selection={
                 dependsOnAddresses: false,
+                onBlockRegistrations: [],
                 onEventRegistrations: [(registration :> Internal.onEventRegistration)],
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
+              ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC skip-all pin"}),
             ),
         ) {
         | Ok(page) => page
@@ -706,10 +760,10 @@ describe("RPC source public contract", () => {
     let filterA = "0x000000000000000000000000000000000000000000000000000000000000000a"
     let selectionFor = filter => [
       {
-        Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+        Internal.topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
         topic1: Values([filter->EvmTypes.Hex.fromStringUnsafe]),
-        topic2: Values([]),
-        topic3: Values([]),
+        topic2: Any,
+        topic3: Any,
       },
     ]
     // One indexed param so each contract's topic1-filtered log decodes.
@@ -727,7 +781,7 @@ describe("RPC source public contract", () => {
       ~index=1,
       ~contractName="ContractB",
       ~paramsMetadata=addressParam,
-      ~eventFilters=[topicSelection],
+      ~eventFilters=[topicFilter],
     )
     // A real provider's log for a topic1-filtered request carries that
     // contract's filtered topic1 value; routing re-checks it per registration.
@@ -774,7 +828,7 @@ describe("RPC source public contract", () => {
           ~addresses=[
             {address: addressA, contractName: "ContractA", registrationBlock: -1},
             {address: addressB, contractName: "ContractB", registrationBlock: -1},
-          ]
+          ],
         )
         let options: RpcSource.options = {
           url: mock.url,
@@ -791,7 +845,7 @@ describe("RPC source public contract", () => {
         switch await RpcSourcePins.capture(
           () =>
             source.getItemsOrThrow(
-              ~includeAllBlocks=false,
+              ~reorgableFrom=None,
               ~fromBlock=100,
               ~toBlock=Some(100),
               ~addressSet=addressStore
@@ -801,6 +855,7 @@ describe("RPC source public contract", () => {
               ~partitionId="contract-scope",
               ~selection={
                 dependsOnAddresses: true,
+                onBlockRegistrations: [],
                 onEventRegistrations: [
                   (eventA :> Internal.onEventRegistration),
                   (eventB :> Internal.onEventRegistration),
@@ -808,7 +863,9 @@ describe("RPC source public contract", () => {
               },
               ~itemsTarget=Some(5_000),
               ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
+              ~logger=Logger.makeInMemory()->Logger.withFields({
+                "test": "RPC contract scoping pin",
+              }),
             ),
         ) {
         | Ok(page) => page

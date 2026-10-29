@@ -1,7 +1,13 @@
 type indexingAddress = Internal.indexingContract
 
+// What a partition fetches, one list per table a source can query: event
+// registrations select logs, block registrations select blocks. Either may be
+// empty, not both.
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
+  // Only the registrations that select block fields: a block handler reading
+  // just the number is generated locally and never reaches a source.
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
   // Whether the partition's queries are built from its own address list
   // (server-side address filtering). This is the *partition* property; not to
   // be confused with the per-registration `Internal.onEventRegistration.dependsOnAddresses`.
@@ -25,12 +31,12 @@ type selection = {
 
 // The earliest block any of the registrations can produce an item at, or `None`
 // when one of them is unrestricted. Nothing below it is worth querying.
-let deriveSelectionStartBlock = (onEventRegistrations: array<Internal.onEventRegistration>) => {
+let deriveSelectionStartBlock = (startBlocks: array<option<int>>) => {
   let earliest = ref(None)
   let idx = ref(0)
-  let unrestricted = ref(onEventRegistrations->Utils.Array.isEmpty)
-  while !unrestricted.contents && idx.contents < onEventRegistrations->Array.length {
-    switch (onEventRegistrations->Array.getUnsafe(idx.contents)).startBlock {
+  let unrestricted = ref(startBlocks->Utils.Array.isEmpty)
+  while !unrestricted.contents && idx.contents < startBlocks->Array.length {
+    switch startBlocks->Array.getUnsafe(idx.contents) {
     | None => unrestricted := true
     | Some(startBlock) =>
       switch earliest.contents {
@@ -43,12 +49,32 @@ let deriveSelectionStartBlock = (onEventRegistrations: array<Internal.onEventReg
   unrestricted.contents ? None : earliest.contents
 }
 
-let makeSelection = (~onEventRegistrations, ~dependsOnAddresses, ~clientFilteredContracts=?) => {
+let makeSelection = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
+  ~dependsOnAddresses,
+  ~clientFilteredContracts=?,
+) => {
   onEventRegistrations,
+  onBlockRegistrations,
   dependsOnAddresses,
   ?clientFilteredContracts,
-  startBlock: ?deriveSelectionStartBlock(onEventRegistrations),
+  startBlock: ?deriveSelectionStartBlock(
+    Array.concat(
+      onEventRegistrations->Array.map(reg => reg.startBlock),
+      onBlockRegistrations->Array.map(reg => reg.startBlock),
+    ),
+  ),
 }
+
+// A query for blocks alone reads no further than the height the chain knows:
+// the source picks the blocks to read within its range and answers for the
+// gaps between them, which can't run past the head.
+let sourceToBlock = (selection: selection, ~toBlock, ~knownHeight) =>
+  switch selection.onEventRegistrations {
+  | [] => Some(toBlock->Option.mapOr(knownHeight, toBlock => Pervasives.min(toBlock, knownHeight)))
+  | _ => toBlock
+  }
 
 // A partition's frontier never sits below the block before its selection can
 // first match: the blocks below hold nothing for it, so they count as fetched
@@ -176,6 +202,7 @@ let narrowSelectionToRange = (selection: selection, ~toBlock) =>
     | _ =>
       makeSelection(
         ~onEventRegistrations=inRange,
+        ~onBlockRegistrations=selection.onBlockRegistrations,
         ~dependsOnAddresses=selection.dependsOnAddresses,
         ~clientFilteredContracts=?selection.clientFilteredContracts,
       )
@@ -863,6 +890,8 @@ type t = {
   // size). Event fetch depth is bounded separately, by CrossChainState's
   // cross-chain admission against the indexer-wide buffer pool.
   maxOnBlockBufferSize: int,
+  // The block handlers whose items are generated here, block by block. Those
+  // selecting block fields are fetched instead, through a partition's selection.
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
@@ -874,12 +903,12 @@ type t = {
   // registered in, keyed by contract and lowercase address, until fetching
   // passes it. Its events in that block run after the rest of the block, as
   // graph-node runs a new data source's creation-block triggers.
-  creationBlocks: option<dict<creationBlock>>,
+  creationBlocks?: dict<creationBlock>,
   // Set when an onBlock registration has a contractRegister: the last block
   // whose block-handler register passes have run and whose registrations are
   // applied. No block item past it is generated, so none is processed before
   // the data sources its block created are fetched.
-  blockRegisterThrough: option<int>,
+  blockRegisterThrough?: int,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -1177,20 +1206,7 @@ let appendOnBlockItems = (
 
     for configIdx in 0 to onBlockRegistrations->Array.length - 1 {
       let onBlockRegistration = onBlockRegistrations->Array.getUnsafe(configIdx)
-
-      let handlerStartBlock = switch onBlockRegistration.startBlock {
-      | Some(startBlock) => startBlock
-      | None => indexerStartBlock
-      }
-
-      if (
-        blockNumber >= handlerStartBlock &&
-        switch onBlockRegistration.endBlock {
-        | Some(endBlock) => blockNumber <= endBlock
-        | None => true
-        } &&
-        (blockNumber - handlerStartBlock)->Pervasives.mod(onBlockRegistration.interval) === 0
-      ) {
+      if onBlockRegistration->BlockItem.runsOn(~blockNumber, ~chainStartBlock=indexerStartBlock) {
         mutItems->Array.push(
           Block({
             onBlockRegistration,
@@ -1283,37 +1299,50 @@ let updateInternal = (
     },
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterAddressThreshold: fetchState.clientFilterAddressThreshold,
-    creationBlocks: fetchState.creationBlocks,
-    blockRegisterThrough: fetchState.blockRegisterThrough,
+    creationBlocks: ?fetchState.creationBlocks,
+    blockRegisterThrough: ?fetchState.blockRegisterThrough,
   }
 
   updatedFetchState
 }
 
+// What fetch state has to tell an operator. It decides nothing from these; the
+// chain that owns it turns them into log lines.
+type notice =
+  | SwitchedToClientSideFiltering({contractName: string, addressCount: int, threshold: int})
+  // The address is already registered for the contract from a later block, and
+  // a registration never moves an address's start block earlier.
+  | SkippedReRegistration({
+      contractName: string,
+      contractAddress: Address.t,
+      registeredFromBlock: int,
+      requestedFromBlock: int,
+    })
+  | SkippedInvalidAddress({contractName: string, contractAddress: Address.t})
+  // A stored address (from the config or a resume) the address store refused
+  // because the contract already has it.
+  | SkippedStoredDuplicate({
+      contractName: string,
+      contractAddress: Address.t,
+      registeredFromBlock: int,
+      requestedFromBlock: int,
+    })
+
 // Move a contract to client-side address filtering, recording why.
 let addClientFilteredContract = (
   clientFilteredContracts: Utils.Set.t<string>,
   ~contractName,
-  ~chainId,
+  ~onNotice,
   ~addressCount,
   ~threshold,
   // A resumed fetch state re-derives the switch from the persisted addresses,
-  // but it already happened - and was logged - in the run that crossed the
+  // but it already happened - and was reported - in the run that crossed the
   // threshold.
-  ~shouldLog=true,
+  ~isAlreadyReported=false,
 ) => {
   clientFilteredContracts->Utils.Set.add(contractName)->ignore
-  if shouldLog {
-    Logging.createChild(
-      ~params={
-        "chainId": chainId,
-        "contractName": contractName,
-        "addressCount": addressCount,
-        "threshold": threshold,
-      },
-    )->Logging.childTrace(
-      "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
-    )
+  if !isAlreadyReported {
+    onNotice(SwitchedToClientSideFiltering({contractName, addressCount, threshold}))
   }
 }
 
@@ -1404,6 +1433,9 @@ let collapseClientFilteredContracts = (
 
     partitions->Array.forEach(p =>
       switch p {
+      // The block partition reads no logs, so no client filtering touches it.
+      | {selection: {onBlockRegistrations}} if onBlockRegistrations->Utils.Array.notEmpty =>
+        kept->Array.push(p)->ignore
       | {selection: {dependsOnAddresses: false}, mergeBlock: None}
         if standingRef.contents->Option.isNone =>
         standingRef := Some(p)
@@ -1578,49 +1610,27 @@ let collapseClientFilteredContracts = (
   }
 }
 
-let warnAddressRegistration = (
-  ~chainId: ChainId.t,
-  ~contractAddress: Address.t,
-  ~params,
-  message,
-) =>
-  Logging.createChild(
-    ~params={
-      "chainId": chainId,
-      "contractAddress": contractAddress->Address.toString,
-      "details": params,
-    },
-  )->Logging.childWarn(message)
-
 // A rejected registration is simply absent from every partition, so without a
-// warning the user sees a contract that never indexes and nothing saying why.
-let warnRejectedRegistration = (
+// notice the user sees a contract that never indexes and nothing saying why.
+let reportRejectedRegistration = (
   verdict: AddressStore.verdict,
-  ~chainId: ChainId.t,
+  ~onNotice,
   ~contractAddress: Address.t,
   ~contractName: string,
 ) =>
   switch verdict {
-  | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
-    if existingEffectiveStartBlock > effectiveStartBlock {
-      warnAddressRegistration(
-        ~chainId,
-        ~contractAddress,
-        ~params={
-          "existingBlockNumber": existingEffectiveStartBlock,
-          "newBlockNumber": effectiveStartBlock,
-        },
-        `Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.`,
-      )
-    }
-  | Invalid =>
-    warnAddressRegistration(
-      ~chainId,
-      ~contractAddress,
-      ~params={"contractName": contractName},
-      `Skipping contract registration: Not a valid address for this chain's ecosystem.`,
+  | Duplicate({effectiveStartBlock, existingEffectiveStartBlock})
+    if existingEffectiveStartBlock > effectiveStartBlock =>
+    onNotice(
+      SkippedReRegistration({
+        contractName,
+        contractAddress,
+        registeredFromBlock: existingEffectiveStartBlock,
+        requestedFromBlock: effectiveStartBlock,
+      }),
     )
-  | Added(_) => ()
+  | Invalid => onNotice(SkippedInvalidAddress({contractName, contractAddress}))
+  | Duplicate(_) | Added(_) => ()
   }
 
 /**
@@ -1860,6 +1870,7 @@ let creationRoundOfRegistration = (fetchState: t, ~item: Internal.item) =>
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
+  ~onNotice: notice => unit,
   // How far an in-flight open-ended query may end up claiming. These
   // registrations usually come out of a response that is applied right after
   // this call, and an unbounded query can reach past the height known when it
@@ -1913,8 +1924,8 @@ let registerDynamicContracts = (
     // config that later adds address-dependent events picks it up on restart.
     | Added({fetchable: false}) => ()
     | Duplicate(_) | Invalid =>
-      verdict->warnRejectedRegistration(
-        ~chainId=fetchState.chainId,
+      verdict->reportRejectedRegistration(
+        ~onNotice,
         ~contractAddress=registration.address,
         ~contractName=registration.contractName,
       )
@@ -2025,7 +2036,7 @@ let registerDynamicContracts = (
           if !(clientFilteredContracts->Utils.Set.has(contractName)) && addressCount > threshold {
             clientFilteredContracts->addClientFilteredContract(
               ~contractName,
-              ~chainId=fetchState.chainId,
+              ~onNotice,
               ~addressCount,
               ~threshold,
             )
@@ -2144,7 +2155,7 @@ let nextBlockRegisterItems = (fetchState: t, ~through, ~limit) =>
 let setBlockRegisterThrough = (fetchState: t, ~through) =>
   switch fetchState.blockRegisterThrough {
   | Some(current) if through > current =>
-    {...fetchState, blockRegisterThrough: Some(through)}->updateInternal
+    {...fetchState, blockRegisterThrough: through}->updateInternal
   | _ => fetchState
   }
 
@@ -2853,6 +2864,7 @@ let make = (
   ~addressRows: AddressRows.seedRows,
   ~maxAddrInPartition,
   ~chainId: ChainId.t,
+  ~onNotice: notice => unit,
   ~maxOnBlockBufferSize,
   ~knownHeight,
   ~progressBlockNumber=startBlock - 1,
@@ -2878,16 +2890,15 @@ let make = (
     }
   })
 
-  let partitions = []
+  let (fetchedOnBlockRegistrations, onBlockRegistrations) =
+    onBlockRegistrations->Belt.Array.partition(BlockItem.isFetched)
 
-  if notDependingOnAddresses->Array.length > 0 {
+  let partitions = []
+  let pushAddressFreePartition = selection =>
     partitions->Array.push({
       id: partitions->Array.length->Int.toString,
       latestFetchedBlock,
-      selection: makeSelection(
-        ~dependsOnAddresses=false,
-        ~onEventRegistrations=notDependingOnAddresses,
-      ),
+      selection,
       addresses: addressStore->AddressStore.emptySet,
       mergeBlock: None,
       dynamicContract: None,
@@ -2897,6 +2908,23 @@ let make = (
       eventDensity: None,
       latestSourceRangeCapacityUpdateBlock: 0,
     })
+
+  if notDependingOnAddresses->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=notDependingOnAddresses),
+    )
+  }
+
+  // Apart from the wildcard events: a source reads blocks at a pace of its own
+  // (RPC pays a request per block), which would hold the log pages to it.
+  if fetchedOnBlockRegistrations->Utils.Array.notEmpty {
+    pushAddressFreePartition(
+      makeSelection(
+        ~dependsOnAddresses=false,
+        ~onEventRegistrations=[],
+        ~onBlockRegistrations=fetchedOnBlockRegistrations,
+      ),
+    )
   }
 
   let normalSelection = makeSelection(
@@ -2914,15 +2942,13 @@ let make = (
   addressStore
   ->AddressStore.seedRows(addressRows)
   ->Array.forEach(rejected => {
-    warnAddressRegistration(
-      ~chainId,
-      ~contractAddress=rejected.address,
-      ~params={
-        "contractName": rejected.contractName,
-        "existingBlockNumber": rejected.existingEffectiveStartBlock,
-        "newBlockNumber": rejected.effectiveStartBlock,
-      },
-      `Skipping a stored address: it is already registered for this contract.`,
+    onNotice(
+      SkippedStoredDuplicate({
+        contractName: rejected.contractName,
+        contractAddress: rejected.address,
+        registeredFromBlock: rejected.existingEffectiveStartBlock,
+        requestedFromBlock: rejected.effectiveStartBlock,
+      }),
     )
   })
 
@@ -2961,10 +2987,10 @@ let make = (
       if addressCount > threshold {
         clientFilteredContracts->addClientFilteredContract(
           ~contractName,
-          ~chainId,
+          ~onNotice,
           ~addressCount,
           ~threshold,
-          ~shouldLog=!isResumed,
+          ~isAlreadyReported=isResumed,
         )
       }
     })
@@ -3052,8 +3078,8 @@ let make = (
     buffer,
     firstEventBlock,
     clientFilterAddressThreshold,
-    creationBlocks: deferCreationBlockEvents ? Some(Dict.make()) : None,
-    blockRegisterThrough,
+    creationBlocks: ?(deferCreationBlockEvents ? Some(Dict.make()) : None),
+    ?blockRegisterThrough,
   }
 
   fetchState
@@ -3207,8 +3233,10 @@ let rollback = (
     ),
     // The passes past the target run again on the refetched blocks: what they
     // registered was pruned from the store above.
-    blockRegisterThrough: fetchState.blockRegisterThrough->Option.map(through =>
-      Pervasives.min(through, targetBlockNumber)
+    blockRegisterThrough: ?(
+      fetchState.blockRegisterThrough->Option.map(through =>
+        Pervasives.min(through, targetBlockNumber)
+      )
     ),
   }->updateInternal(
     ~optimizedPartitions,

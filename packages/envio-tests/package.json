@@ -20,6 +20,7 @@
     "rescript-schema": "9.5.1",
     "ts-expect": "1.3.0",
     "typescript": "6.0.3",
+    "viem": "2.54.0",
     "vitest": "4.1.0",
     "ws": "8.21.3"
   },

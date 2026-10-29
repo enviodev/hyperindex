@@ -39,6 +39,15 @@ module Util = {
   @module("util") external inspect: ('a, inspectOptions) => string = "inspect"
 
   let inspectObj = a => inspect(a, {showHidden: false, depth: Null, colors: true})
+
+  @module("util") external stripVTControlCharacters: string => string = "stripVTControlCharacters"
+}
+
+module Module = {
+  type require
+
+  @module("module") external createRequire: string => require = "createRequire"
+  @send external resolve: (require, string) => string = "resolve"
 }
 
 module Process = {
@@ -165,6 +174,23 @@ module ChildProcess = {
   @module("child_process")
   external execWithOptions: (string, execOptions, callback) => unit = "exec"
 
+  type execFileOptions = {
+    cwd?: string,
+    timeout?: int,
+    maxBuffer?: float,
+  }
+
+  // `killed` is set when the timeout stopped the child.
+  type execFileError = {killed: bool}
+
+  @module("child_process")
+  external execFile: (
+    string,
+    array<string>,
+    execFileOptions,
+    (Null.t<execFileError>, string, string) => unit,
+  ) => unit = "execFile"
+
   // One of a child's stdio slots, present only for a slot the parent asked to
   // pipe rather than inherit.
   module Stream = {
@@ -178,6 +204,10 @@ module ChildProcess = {
     type t
     @send external send: (t, 'msg) => bool = "send"
     @send external onMessage: (t, @as("message") _, 'msg => unit) => unit = "on"
+    // Once the child has exited and its piped output has all been read, which
+    // `exit` doesn't wait for.
+    @send
+    external onClose: (t, @as("close") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
     @send
     external onExit: (t, @as("exit") _, (Null.t<int>, Null.t<string>) => unit) => unit = "on"
     @send external onError: (t, @as("error") _, exn => unit) => unit = "on"
@@ -225,6 +255,8 @@ module Path = {
 
   @module("path") external join: (t, string) => t = "join"
   @module("path") external dirname: string => t = "dirname"
+  @module("path") external relative: (string, string) => string = "relative"
+  @module("path") external isAbsolute: string => bool = "isAbsolute"
 
   external toString: t => string = "%identity"
 
@@ -275,6 +307,9 @@ module Fs = {
     mode?: int,
   }
 
+  @module("fs") external existsSync: string => bool = "existsSync"
+  @module("fs") external readFileSync: (string, @as("utf8") _) => string = "readFileSync"
+
   module Promises = {
     @module("fs") @scope("promises")
     external writeFile: (
@@ -303,6 +338,10 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readdir: Path.t => promise<array<string>> = "readdir"
+
+    type rmOptions = {recursive?: bool, force?: bool}
+    @module("fs") @scope("promises")
+    external rm: (Path.t, ~options: rmOptions=?) => promise<unit> = "rm"
 
     type stats
     @module("fs") @scope("promises")

@@ -258,70 +258,32 @@ type Tally @crossChain {
   })
 })
 
-describe("Per-chain entity DDL", () => {
-  it("Puts the chain id in the entity table's primary key", t => {
-    t.expect(
-      PgStorage.makeCreateTableQuery(
-        counter.table,
-        ~pgSchema="public",
-        ~isNumericArrayAsText=false,
-      ),
-    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chainId" INTEGER NOT NULL, PRIMARY KEY("id", "chainId"));`)
-  })
+describe("Per-chain entity columns", () => {
+  let primaryKey = (entityConfig: Internal.entityConfig) =>
+    entityConfig.table
+    ->Table.getFields
+    ->Array.map(Storage.pgColumnInput)
+    ->Array.filter(column => column.isPrimaryKey)
+    ->Array.map(column => column.name)
 
-  it("Keeps a cross-chain entity's primary key on the id alone", t => {
-    t.expect(
-      PgStorage.makeCreateTableQuery(
-        globalCounter.table,
-        ~pgSchema="public",
-        ~isNumericArrayAsText=false,
-      ),
-    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."GlobalCounter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, PRIMARY KEY("id"));`)
-  })
-
-  it("Carries the chain id into the history table's primary key, not nullable", t => {
-    let historyTable = PgStorage.getEntityHistory(~entityConfig=counter).table
-    t.expect(historyTable->Table.getPgPrimaryKeyFieldNames).toEqual([
-      "id",
-      "chainId",
-      "envio_checkpoint_id",
-    ])
+  it("Puts the chain id in a per-chain entity's primary key, and only there", t => {
+    t.expect((counter->primaryKey, globalCounter->primaryKey)).toEqual((["id", "chainId"], ["id"]))
   })
 })
 
-let globalFloors = RollbackFloors.make(
-  ~sequence=SharedAcrossChains,
-  ~chainIds=[1->ChainId.fromInt],
-  ~floorCheckpointId=1n,
-  ~reorgChainId=1->ChainId.fromInt,
-  ~forkBlockNumber=0,
-)
-
-// The checkpoints key follows the sequence: ids are only unique within a chain
-// where each chain counts its own, and under one shared sequence every bound a
-// rollback or a prune applies is an id range the chain would only get in the way
-// of.
-describe("Checkpoints primary key", () => {
-  let checkpointsDdl = (~schema) => {
-    let config = InternalTestIndexer.fromUserApi(
+// The sequence decides the checkpoints table's key: ids are only unique within
+// a chain where each chain counts its own, and under one shared sequence every
+// bound a rollback or a prune applies is an id range.
+describe("Checkpoint sequence", () => {
+  let sequenceOf = (~schema) =>
+    InternalTestIndexer.fromUserApi(
       ~configYaml=configYaml(~disableDefaultCrossChain=true),
       ~schema,
-    ).config
-    PgStorage.makeInitializeTransaction(
-      ~pgSchema="public",
-      ~pgUser="postgres",
-      ~isHasuraEnabled=false,
-      ~checkpointSequence=config.checkpointSequence,
-      ~entities=config.userEntities,
-    )
-    ->Array.flatMap(query => query->String.split("\n"))
-    ->Array.find(query => query->String.includes(`"envio_checkpoints"`))
-    ->Option.getOrThrow
-  }
+    ).config.checkpointSequence
 
-  it("Keys on the chain and the id when each chain counts its own", t => {
+  it("Counts each chain on its own when every entity is per-chain", t => {
     t.expect(
-      checkpointsDdl(
+      sequenceOf(
         ~schema=`
 type Counter {
   id: ID!
@@ -329,12 +291,12 @@ type Counter {
 }
 `,
       ),
-    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("chain_id", "id"));`)
+    ).toBe(PerChain)
   })
 
-  it("Keys on the id alone once a cross-chain entity makes the sequence shared", t => {
+  it("Shares one count once a cross-chain entity is in the schema", t => {
     t.expect(
-      checkpointsDdl(
+      sequenceOf(
         ~schema=`
 type Counter {
   id: ID!
@@ -346,100 +308,7 @@ type Total @crossChain {
 }
 `,
       ),
-    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));`)
-  })
-})
-
-describe("Per-chain rollback and delete SQL", () => {
-  it("Keys the removed-ids query on (id, chain id)", t => {
-    t.expect(
-      PgStorage.makeGetRollbackRemovedIdsQuery(
-        ~entityConfig=counter,
-        ~pgSchema="public",
-        ~floors=globalFloors,
-      ),
-    ).toBe(`SELECT DISTINCT "envio_history_Counter"."id", "envio_history_Counter"."chainId"
-  FROM "public"."envio_history_Counter"
-  WHERE "envio_history_Counter"."envio_checkpoint_id" > $1
-    AND NOT EXISTS (
-      SELECT 1
-      FROM "public"."envio_history_Counter" h
-      WHERE h."id" = "envio_history_Counter"."id" AND h."chainId" = "envio_history_Counter"."chainId"
-        AND h."envio_checkpoint_id" <= $1
-    )`)
-  })
-
-  it("Dedups the pre-target restore per (id, chain id)", t => {
-    let query = PgStorage.makeGetRollbackPreTargetRowsQuery(
-      ~entityConfig=counter,
-      ~pgSchema="public",
-      ~floors=globalFloors,
-    )
-    t.expect((
-      query->String.includes(`SELECT DISTINCT ON ("envio_history_Counter"."id", "envio_history_Counter"."chainId")`),
-      query->String.includes(`ORDER BY "envio_history_Counter"."id", "envio_history_Counter"."chainId", "envio_history_Counter"."envio_checkpoint_id" DESC`),
-    )).toEqual((true, true))
-  })
-
-  it("Narrows a delete to the flush group's chain", t => {
-    t.expect(
-      PgStorage.makeDeleteByIdQuery(
-        ~pgSchema="public",
-        ~tableName="Counter",
-        ~chainIdCondition=PgStorage.makeChainIdCondition(
-          ~table=counter.table,
-          ~chainId=Some(137->ChainId.fromInt),
-        ),
-      ),
-    ).toBe(`DELETE FROM "public"."Counter" WHERE id = $1 AND "chainId" = 137;`)
-  })
-
-  it("Leaves a cross-chain entity's delete unfiltered", t => {
-    t.expect(
-      PgStorage.makeChainIdCondition(
-        ~table=globalCounter.table,
-        ~chainId=Some(137->ChainId.fromInt),
-      ),
-    ).toBe("")
-  })
-
-  it("Prunes history per (id, chain id)", t => {
-    let makeQuery = safeCheckpoints =>
-      EntityHistory.makePruneStaleEntityHistoryQuery(
-        ~entityName="Counter",
-        ~entityIndex=0,
-        ~pgSchema="public",
-        ~chainIdColumn=Some("chainId"),
-        ~safeCheckpoints,
-      )
-    let query = makeQuery({
-      CheckpointSequence.sequence: SharedAcrossChains,
-      byChain: Frontier.fromEntries([(1->ChainId.fromInt, 10n)]),
-    })
-    let perChain = makeQuery({
-      CheckpointSequence.sequence: PerChain,
-      byChain: Frontier.fromEntries([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
-    })
-    t.expect((
-      query->String.includes(`GROUP BY t.id, t."chainId"`),
-      query->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"`),
-      query->String.includes(`envio_bounds`),
-      perChain->String.includes(`JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chainId"`),
-      perChain->String.includes(`AND d.envio_checkpoint_id <= a.safe_checkpoint_id`),
-    )).toEqual((true, true, false, true, true))
-  })
-
-  it("Pins the backfill to the flush group's chain", t => {
-    t.expect(
-      EntityHistory.makeBackfillHistoryQuery(
-        ~pgSchema="public",
-        ~entityName="Counter",
-        ~entityIndex=0,
-        ~idPgType="TEXT",
-        ~chainIdColumn=Some("chainId"),
-        ~chainId=Some(1->ChainId.fromInt),
-      )->String.includes(`JOIN target_ids t ON e.id = t.id AND e."chainId" = 1`),
-    ).toBe(true)
+    ).toBe(SharedAcrossChains)
   })
 })
 
@@ -461,31 +330,12 @@ describe("Per-chain entities under snake_case columns", () => {
     t.expect((field.fieldName, field->Table.getPgDbFieldName)).toEqual(("chainId", "chain_id"))
   })
 
-  it("Uses the column name in the DDL and the row-level predicates", t => {
-    t.expect((
-      PgStorage.makeCreateTableQuery(
-        snakeCounter.table,
-        ~pgSchema="public",
-        ~isNumericArrayAsText=false,
-      ),
-      PgStorage.makeChainIdCondition(
-        ~table=snakeCounter.table,
-        ~chainId=Some(137->ChainId.fromInt),
-      ),
-      PgStorage.makeGetRollbackRemovedIdsQuery(
-        ~entityConfig=snakeCounter,
-        ~pgSchema="public",
-        ~floors=globalFloors,
-      )->String.includes(`SELECT DISTINCT "envio_history_Counter"."id", "envio_history_Counter"."chain_id"`),
-    )).toEqual((
-      `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
-      ` AND "chain_id" = 137`,
-      true,
-    ))
+  it("Names the column the addon partitions and keys history by", t => {
+    t.expect(snakeCounter.table->Table.getPgChainIdColumn).toEqual(Some("chain_id"))
   })
 
   it("Keys the row schema and the getWhere filter by the API name", t => {
-    let locations = switch (PgStorage.getRowSchema(snakeCounter)->S.classify: S.tagged) {
+    let locations = switch (Storage.getRowSchema(snakeCounter)->S.classify: S.tagged) {
     | Object({items}) => items->Array.map(item => item.location)
     | _ => []
     }
@@ -505,52 +355,36 @@ describe("Per-chain ClickHouse view", () => {
     // The chain id column is what makes the view dedup on (id, chain id)
     // instead of id alone; a global entity carries none.
     t.expect((
-      ClickHouse.entitySpec(~entityConfig=counter).chainIdColumn,
-      ClickHouse.entitySpec(~entityConfig=globalCounter).chainIdColumn,
+      ClickHouse.entityTable(counter).chainIdColumn,
+      ClickHouse.entityTable(globalCounter).chainIdColumn,
     )).toEqual((Some("chainId"), None))
   })
 })
 
-// The ClickHouse sink caches a compiled serializer per (entity, scope) because
-// a DELETE row carries no entity to stamp — the chain id is baked into the
-// schema instead. A cache keyed only by entity would serve chain 1's schema to
-// chain 137.
+// The ClickHouse cells are compiled once per (entity, scope) because a DELETE
+// row carries no entity to stamp — the chain id is baked into the cells
+// instead. Cells keyed only by entity would serve chain 1's to chain 137.
 describe("Per-chain ClickHouse writes", () => {
   // Registers the table for real — that needs no server, and it is what
-  // resolves each column's wire kind — then mocks the sink at the `stage`
-  // boundary to read back the chain-id column, a Float64Array in the default
-  // Int32 chain-id mode.
-  let columnSpecs = entityConfig => ClickHouse.entitySpec(~entityConfig).columns
-
+  // resolves each column's wire kind — then mocks the arena to read back the
+  // chain-id column, a Float64Array in the default Int32 chain-id mode.
   let stagedChainIds = (
     ~changes,
     ~entityConfig: Internal.entityConfig,
     ~scope,
-    ~registry: ClickHouse.registry,
+    ~table: ClickHouse.table,
   ) => {
-    let table = registry.entities->Dict.getUnsafe(entityConfig.name)
-    let chainIdIndex = columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
-    let (mock, sink) = MockArena.make(~columns=table.columns)
-    let _ = ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope)
+    let chainIdIndex = table.columns->Array.findIndex(({name}) => name === "chainId")
+    let (mock, arena) = MockArena.make(~columns=table.columns)
+    let _ = arena->ClickHouse.stageChangesOrThrow(table, ~entityConfig, ~scope, ~changes)
     switch mock->MockArena.staged->Array.get(chainIdIndex) {
     | Some({values: Numbers(numbers)}) => numbers->Array.map(number => Some(number))
     | _ => changes->Array.map(_ => None)
     }
   }
 
-  // Registration only parses the column types, so it never reaches this host.
-  let registryFor = (entityConfig: Internal.entityConfig) => {
-    let registry = ClickHouse.makeRegistry()
-    let sink = ClickHouse.makeSink(
-      ~host="http://127.0.0.1:1",
-      ~username="default",
-      ~password="",
-      ~database="unused",
-      ~chainIdMode=Int32,
-    )
-    let _ = sink->ClickHouse.entityTable(~registry, ~entityConfig)
-    registry
-  }
+  let tableFor = entityConfig =>
+    TestClickHouse.offlineClient()->TestClickHouse.entityTable(entityConfig)
 
   let set = (~id, ~count): Change.t<Internal.entity> => Set({
     entityId: id->EntityId.unsafeOfString,
@@ -564,20 +398,20 @@ describe("Per-chain ClickHouse writes", () => {
   })
 
   it("Stamps set rows and tags delete rows with the flush group's chain", t => {
-    let registry = registryFor(counter)
+    let table = tableFor(counter)
     let chain1 = stagedChainIds(
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(1->ChainId.fromInt),
-      ~registry,
+      ~table,
     )
-    // Same cache, different scope: a per-entity cache would reuse chain 1's
-    // schema and tag the delete row with chain 1.
+    // Same table, different scope: cells kept per entity would reuse chain 1's
+    // and tag the delete row with chain 1.
     let chain137 = stagedChainIds(
       ~changes=[set(~id="a", ~count=2n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(137->ChainId.fromInt),
-      ~registry,
+      ~table,
     )
 
     t.expect((chain1, chain137)).toEqual(([Some(1.), Some(1.)], [Some(137.), Some(137.)]))
@@ -588,7 +422,7 @@ describe("Per-chain ClickHouse writes", () => {
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=globalCounter,
       ~scope=CrossChain,
-      ~registry=registryFor(globalCounter),
+      ~table=tableFor(globalCounter),
     )
     t.expect(captured).toEqual([None, None])
   })
@@ -645,7 +479,7 @@ describe("Chain-id stamping", () => {
 
   it("Adds the chain id to the row schema of a per-chain entity only", t => {
     let locations = entityConfig =>
-      switch (PgStorage.getRowSchema(entityConfig)->S.classify: S.tagged) {
+      switch (Storage.getRowSchema(entityConfig)->S.classify: S.tagged) {
       | Object({items}) => items->Array.map(item => item.location)
       | _ => []
       }

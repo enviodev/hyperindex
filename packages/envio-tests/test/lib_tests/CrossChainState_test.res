@@ -27,6 +27,7 @@ let makeChainState = (
   let addresses = []
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let base = FetchState.make(
+    ~onNotice=ignore,
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
     ~onEventRegistrations,
@@ -40,6 +41,7 @@ let makeChainState = (
         startBlock: None,
         endBlock: None,
         interval: 1,
+        blockFieldMask: None,
         handler: "mock onBlock handler"->(
           Utils.magic: string => Internal.onBlockArgs => promise<unit>
         ),
@@ -58,8 +60,6 @@ let makeChainState = (
     latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
     clientFilterAddressThreshold: None,
-    creationBlocks: None,
-    blockRegisterThrough: None,
     buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
   }
   let mockSource = MockSource.make([], ~chainId=1)
@@ -68,12 +68,16 @@ let makeChainState = (
     ~fetchState,
     ~onEventRegistrations,
     ~addressStore,
-    ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(
+      ~logger=Logger.makeInMemory(),
+      ~sources=[mockSource.source],
+      ~isRealtime=false,
+    ),
     ~maxReorgDepth=200,
     ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~isProgressAtHead,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 
@@ -92,7 +96,10 @@ let makeFetchingChainState = (
   ~firstEventBlock=Some(0),
   ~blockLag=0,
 ) => {
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
     id: "0",
@@ -132,21 +139,23 @@ let makeFetchingChainState = (
     knownHeight,
     firstEventBlock,
     clientFilterAddressThreshold: None,
-    creationBlocks: None,
-    blockRegisterThrough: None,
   }
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
     ~addressStore,
-    ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(
+      ~logger=Logger.makeInMemory(),
+      ~sources=[mockSource.source],
+      ~isRealtime=false,
+    ),
     ~maxReorgDepth=200,
     ~shouldRollbackOnReorg=false,
     ~committedProgressBlockNumber=-1,
     ~chainDensity,
     ~timestampCaughtUpToHeadOrEndblock=caughtUpOnce ? Some(Date.make()) : None,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 
@@ -498,7 +507,10 @@ describe("CrossChainState fetch control", () => {
   // 3000-item pool the waterfall would otherwise hand it. Returns each
   // chain's dispatched itemsEst total and pendingBudget.
   let runShortRangeWaterfall = async (~isRealtime) => {
-    let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+    let normalSelection = FetchState.makeSelection(
+      ~dependsOnAddresses=false,
+      ~onEventRegistrations=[],
+    )
     let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
     let partition1: FetchState.partition = {
       id: "0",
@@ -538,19 +550,21 @@ describe("CrossChainState fetch control", () => {
       knownHeight: 1000,
       firstEventBlock: Some(0),
       clientFilterAddressThreshold: None,
-      creationBlocks: None,
-      blockRegisterThrough: None,
     }
     let mockSource1 = MockSource.make([], ~chainId=1)
     let a = ChainState.make(
       ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
       ~fetchState=fetchState1,
       ~addressStore=addressStore1,
-      ~sourceManager=SourceManager.make(~sources=[mockSource1.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(
+        ~logger=Logger.makeInMemory(),
+        ~sources=[mockSource1.source],
+        ~isRealtime=false,
+      ),
       ~maxReorgDepth=200,
       ~shouldRollbackOnReorg=false,
       ~committedProgressBlockNumber=-1,
-      ~logger=Logging.getLogger(),
+      ~logger=Logger.makeInMemory(),
     )
 
     // Chain 2 (less behind, visited second): its density-bearing partition

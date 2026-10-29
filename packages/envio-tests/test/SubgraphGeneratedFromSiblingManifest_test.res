@@ -77,23 +77,18 @@ export function handleSepoliaCreated(event: SepoliaCreated): void {}
   ~test=`
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createTestIndexer } from "envio";
-import { getLogger, setLogger } from "envio/src/Logging.res.mjs";
+import { onLog } from "envio/src/subgraph/log.ts";
 
 const lines: string[] = [];
-let installed: unknown;
+let stopLogging: () => void;
 
 beforeAll(() => {
-  installed = getLogger();
-  const capture: any = { level: "info", child: () => capture, isLevelEnabled: () => true };
-  for (const level of ["trace", "debug", "info", "warn", "error", "fatal", "udebug", "uinfo", "uwarn", "uerror"]) {
-    capture[level] = (params: unknown, message?: string) => {
-      lines.push(level + " " + (message ?? (typeof params === "string" ? params : JSON.stringify(params))));
-    };
-  }
-  setLogger(capture);
+  stopLogging = onLog((level, message) => {
+    lines.push(level + " " + message);
+  });
 });
 
-afterAll(() => setLogger(installed));
+afterAll(() => stopLogging());
 
 describe("generated code only another manifest of the project declares", () => {
   it("is written from that manifest, with a warning", async (t) => {

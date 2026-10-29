@@ -61,6 +61,25 @@ fn shown_address_string(ecosystem: Ecosystem, should_checksum: bool, key: &[u8])
     }
 }
 
+/// A user-supplied EVM address: `0x` and 40 hex digits. Any digit casing is
+/// accepted — a checksum is recomputed, never verified — but unlike
+/// `hex::decode_fixed` an uppercase `0X` prefix is not.
+pub(crate) fn parse_evm_address(address: &str) -> Option<[u8; 20]> {
+    let digits = address.strip_prefix("0x")?;
+    if digits.len() != 40 {
+        return None;
+    }
+    let mut key = [0u8; 20];
+    faster_hex::hex_decode(digits.as_bytes(), &mut key).ok()?;
+    Some(key)
+}
+
+#[napi]
+pub fn normalize_evm_address(address: String, should_checksum: bool) -> Option<String> {
+    parse_evm_address(&address)
+        .map(|key| shown_address_string(Ecosystem::Evm, should_checksum, &key))
+}
+
 /// Left-pad an EVM address to its 32-byte indexed-topic form, as lowercase hex.
 fn address_topic(key: &[u8]) -> String {
     let mut topic = [0u8; 32];

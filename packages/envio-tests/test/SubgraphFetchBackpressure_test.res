@@ -10,7 +10,7 @@ open Vitest
 describe("fetch buffer back-pressure for subgraph runs", () => {
   let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
-  let makeChainState = (()) => {
+  let makeChainState = () => {
     let addressStore = AddressStore.make(~ecosystem=Evm, ~contracts=[])
     let base = FetchState.make(
       ~onEventRegistrations=[],
@@ -24,6 +24,7 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
           startBlock: None,
           endBlock: None,
           interval: 1,
+          blockFieldMask: None,
           handler: "mock onBlock handler"->(
             Utils.magic: string => Internal.onBlockArgs => promise<unit>
           ),
@@ -35,6 +36,7 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
       ~maxOnBlockBufferSize=10000,
       ~chainId=baseChainConfig.id,
       ~knownHeight=0,
+      ~onNotice=_ => (),
     )
     let blockStore = BlockStore.make(~ecosystem=Svm)
     let fetchState = {...base, FetchState.knownHeight: 500}
@@ -43,12 +45,16 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
       ~chainConfig=baseChainConfig,
       ~fetchState,
       ~addressStore,
-      ~sourceManager=SourceManager.make(~sources=[mockSource.source], ~isRealtime=false),
+      ~sourceManager=SourceManager.make(
+        ~sources=[mockSource.source],
+        ~logger=Logger.makeInMemory(),
+        ~isRealtime=false,
+      ),
       ~shouldRollbackOnReorg=true,
       ~maxReorgDepth=200,
       ~committedProgressBlockNumber=-1,
       ~blockStore,
-      ~logger=Logging.getLogger(),
+      ~logger=Logger.makeInMemory(),
     )
     (cs, fetchState)
   }

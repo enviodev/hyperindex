@@ -48,12 +48,21 @@ let chain = (
 `
 }
 
-let deployment = (~name="migration", ~chains, ~contracts=["Token"], ~schema=schema) =>
+let deployment = (
+  ~name="migration",
+  ~chains,
+  ~contracts=["Token"],
+  ~schema=schema,
+  ~addressFormat="checksum",
+  ~storage="",
+) =>
   Scenario.make(
     ~schema,
+    ~unsupported=storage === "" ? [] : Scenario.configuresOwnStorage,
     ~configYaml=`
 name: ${name}
 disable_default_cross_chain: true
+address_format: ${addressFormat}
 contracts:${contracts
       ->Array.map(contract =>
         `
@@ -62,16 +71,56 @@ contracts:${contracts
       - event: Transfer()`
       )
       ->Array.join("")}
-chains:${chains->Array.join("")}`,
+chains:${chains->Array.join("")}${storage}`,
   )
 
 let deployed = deployment(~chains=[chain(1)])
+
+let postgresAlone = `
+storage:
+  postgres:
+    default: true
+`
+let clickHouseBesidePostgres = `
+storage:
+  postgres:
+    default: true
+  clickhouse: true
+`
+let paired = deployment(~chains=[chain(1)], ~storage=clickHouseBesidePostgres)
 
 describe("Resuming a chain against the stored config", () => {
   Migration.it(
     "Resumes an unchanged config",
     ~deployed,
     ~edited=deployment(~chains=[chain(1)]),
+    ~expected=Resumed([1]),
+  )
+
+  // config.yaml's spelling of an address is normalized before it's compared
+  // with the stored one, so a recased or wrongly checksummed address is the
+  // same address.
+  Migration.it(
+    "Resumes when only an address's casing changed",
+    ~deployed=deployment(
+      ~chains=[chain(1, ~addresses=["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"])],
+    ),
+    ~edited=deployment(
+      ~chains=[chain(1, ~addresses=["0xA2f6e6029638ccb484a2ccb6414499ad3e825CAC"])],
+    ),
+    ~expected=Resumed([1]),
+  )
+
+  Migration.it(
+    "Resumes when address_format: lowercase config switches an address to its checksum",
+    ~deployed=deployment(
+      ~addressFormat="lowercase",
+      ~chains=[chain(1, ~addresses=["0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"])],
+    ),
+    ~edited=deployment(
+      ~addressFormat="lowercase",
+      ~chains=[chain(1, ~addresses=["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"])],
+    ),
     ~expected=Resumed([1]),
   )
 
@@ -240,35 +289,114 @@ describe("Changing the chains of a deployment", () => {
   )
 })
 
+let refusalAfterLosing = async (~indexer: IndexerRunner.t, ~source: MockSource.t, lose) => {
+  source.resolveGetHeightOrThrow(100)
+  await source.respondEmptyUpTo(100)
+  await indexer.waitUntilReady()
+  await indexer.waitUntilIdle()
+  await lose()
+  switch await indexer.restart() {
+  | _ => None
+  | exception JsExn(e) => e->JsExn.message
+  }
+}
+
+describe("Changing which stores keep the data", () => {
+  Migration.it(
+    "Refuses ClickHouse added beside a Postgres deployment",
+    ~deployed=deployment(~chains=[chain(1)], ~storage=postgresAlone),
+    ~edited=paired,
+    ~expected=Refused(["storage.clickhouse"]),
+  )
+
+  // As when ENVIO_CLICKHOUSE_DATABASE names another database, or ClickHouse's
+  // setup died before it finished.
+  paired->Scenario.it(
+    "Refuses a Postgres whose ClickHouse lost what it was indexed alongside",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let refusal = await refusalAfterLosing(
+        ~indexer,
+        ~source=source(1),
+        () => TestClickHouse.drop(~database=TestClickHouse.currentDatabase()),
+      )
+
+      t.expect(refusal).toEqual(
+        Some(`ClickHouse doesn't hold the indexed data that Postgres does: ENVIO_CLICKHOUSE_DATABASE names another database than the one indexed alongside this ENVIO_PG_SCHEMA, or setting it up didn't finish.
+
+Pick one:
+  1. Point ENVIO_CLICKHOUSE_DATABASE at the database indexed alongside it  # resume indexing where it left off
+  2. envio dev -r                                                          # delete all indexed data and start over`),
+      )
+    },
+  )
+
+  // As when ENVIO_PG_SCHEMA names another schema, or the schema was dropped.
+  paired->Scenario.it(
+    "Refuses a ClickHouse whose Postgres is gone",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let refusal = await refusalAfterLosing(
+        ~indexer,
+        ~source=source(1),
+        () =>
+          indexer.usePostgresSql(
+            async sql => {
+              let _ = await sql->Sql.queryForTests(`DROP SCHEMA "${indexer.pgSchema}" CASCADE;`)
+            },
+          ),
+      )
+
+      t.expect(refusal).toEqual(
+        Some(`ClickHouse holds indexed data that Postgres has none of: ENVIO_PG_SCHEMA names another schema than the one it was indexed alongside, or that schema was dropped.
+
+Pick one:
+  1. Point ENVIO_PG_SCHEMA at the schema it was indexed alongside  # resume indexing where it left off
+  2. envio dev -r                                                  # delete what ClickHouse holds, whichever indexer wrote it, and start over
+  3. Point ENVIO_CLICKHOUSE_DATABASE at a new database             # keep the existing data and index from scratch`),
+      )
+    },
+  )
+})
+
+let storageLines = switch IndexerRunner.selectedBackend {
+| #postgres => "       ENVIO_PG_SCHEMA=<new_schema> \\"
+| #clickhouse
+| #both => "       ENVIO_PG_SCHEMA=<new_schema> \\\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
+}
+
 describe("What a refused restart tells the operator", () => {
   deployed->Scenario.it(
     "Names every change and the ways forward, and logs nothing else about it",
     ~sources=[{chain: 1}],
     ~supervised=false,
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
       let config =
         deployment(
           ~chains=[chain(1, ~endBlock=1000, ~maxReorgDepth=10)],
         ).config->Scenario.withMockSources(~sources=[(1, source)])
-      let logged = indexer.logs()->Array.length
+      let logged = indexer.infoAndAboveLogs()->Array.length
 
       let refusal = switch await indexer.restart(~config, ()) {
       | _ => None
       | exception JsExn(e) => e->JsExn.message
       }
 
-      let clickHouseLine = switch IndexerRunner.selectedBackend {
-      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      | #postgres => ""
-      }
       t.expect(
-        (refusal, indexer.logs()->Array.slice(~start=logged)),
+        (refusal, indexer.infoAndAboveLogs()->Array.slice(~start=logged)),
         ~message="The refusal is the whole of what the operator reads: it isn't also logged as a storage failure",
       ).toEqual((
         Some(
@@ -281,7 +409,7 @@ Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
-       ENVIO_PG_SCHEMA=<new_schema> \\${clickHouseLine}
+${storageLines}
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`,
         ),
@@ -306,7 +434,13 @@ Pick one:
     async (~t, ~indexer, ~source) => {
       let source = source(1)
       source.resolveGetHeightOrThrow(100)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({items: [], latestFetchedBlockNumber: 100}),
+        },
+      ])
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
       let config = {
@@ -321,10 +455,6 @@ Pick one:
       | exception JsExn(e) => e->JsExn.message
       }
 
-      let clickHouseLine = switch IndexerRunner.selectedBackend {
-      | #clickhouse => "\n       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"
-      | #postgres => ""
-      }
       t.expect(refusal).toEqual(
         Some(
           `The following config changes are incompatible with the existing indexer data:
@@ -335,7 +465,7 @@ Pick one:
   1. Revert the changes above                           # resume indexing where it left off
   2. envio dev -r -d indexer --config config.head.yaml  # delete all indexed data and start over
   3. Run a second indexer alongside this one — keep both datasets:
-       ENVIO_PG_SCHEMA=<new_schema> \\${clickHouseLine}
+${storageLines}
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev -d indexer --config config.head.yaml`,
         ),

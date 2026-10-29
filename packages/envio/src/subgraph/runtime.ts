@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { indexer } from "../Api.res.mjs";
 import { Db, Hasura, serverPort } from "../Env.res.mjs";
-import { info, warn } from "../Logging.res.mjs";
+import { info, setLogger, warn } from "./log.ts";
 import { cached as storedEffectOutput, resetStartupTables } from "../EffectCacheLookup.res.mjs";
 import {
   subgraphFileToJavascript,
@@ -127,6 +127,8 @@ type EventHandler = {
   receipt: boolean;
   inputs?: EventInput[];
   /** `topic1`–`topic3`, keyed by position among the indexed parameters. */
+  /** The ABI declares the event anonymous: topic N is its Nth indexed param, from 0. */
+  anonymous?: boolean;
   topics?: Record<string, string[]>;
 };
 type CallHandler = {
@@ -515,9 +517,11 @@ function installResolveHook(root: string) {
 }
 
 /**
- * `topicN` narrows the Nth indexed parameter to the logs whose topic is one of
- * the listed words; as a `where`, it narrows to that parameter's decoded
- * values. The translator has refused a parameter hashed into its topic.
+ * `topicN` narrows the indexed parameter in that topic to the logs whose topic
+ * is one of the listed words; as a `where`, it narrows to that parameter's
+ * decoded values. An anonymous event has no signature topic, so topic0 is its
+ * first indexed parameter, which the translator always narrows. It has refused
+ * a parameter hashed into its topic, and a word no value encodes to.
  */
 function topicFilter(handler: EventHandler): { params: Record<string, unknown[]> } | undefined {
   const topics = Object.entries(handler.topics ?? {});
@@ -525,7 +529,7 @@ function topicFilter(handler: EventHandler): { params: Record<string, unknown[]>
   const indexed = (handler.inputs ?? []).filter((input) => input.indexed);
   const params: Record<string, unknown[]> = {};
   for (const [position, words] of topics) {
-    const input = indexed[Number(position) - 1];
+    const input = indexed[handler.anonymous ? Number(position) : Number(position) - 1];
     params[input.key] = words.map((word) => fromTopic(input.type, word));
   }
   return { params };
@@ -1202,7 +1206,8 @@ function makeFileRunner(
   };
 }
 
-export async function registerSubgraph(config: SubgraphConfig): Promise<void> {
+export async function registerSubgraph(config: SubgraphConfig, logger: unknown): Promise<void> {
+  setLogger(logger);
   legacyNulls = [...config.dataSources, ...config.templates].some((source) => {
     const [major, minor, patch] = (source.apiVersion ?? "").split(".").map(Number);
     return major === 0 && minor === 0 && patch < 5;

@@ -55,7 +55,7 @@ type Wearer @entity {
 describe("A derived lookup over a stored entity list", () => {
   it("is indexed with GIN, as graph-node indexes list attributes", t => {
     t.expect(
-      PgStorage.getSchemaIndexes(~entities=config.userEntities)->Array.map(IndexDefinition.describe),
+      Storage.getSchemaIndexes(~entities=config.userEntities)->Array.map(IndexDefinition.describe),
     ).toEqual(["Hat(wearers) using gin"])
   })
 })

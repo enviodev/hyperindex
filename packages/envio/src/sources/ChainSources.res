@@ -4,10 +4,12 @@
 let make = (
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
   ~addressStore: AddressStore.t,
   ~lowercaseAddresses: bool,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
+  ~logger: Logger.t,
 ): array<Source.t> => {
   let chainId = chainConfig.id
   switch chainConfig.sourceConfig {
@@ -29,12 +31,14 @@ let make = (
       ~onEventRegistrations=onEventRegistrations->(
         Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
       ),
+      ~onBlockRegistrations,
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
       ~addressStore,
       ~blockStore,
       ~transactionStore,
+      ~logger,
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
@@ -43,6 +47,7 @@ let make = (
         apiToken: Env.envioApiToken,
         onEventRegistrations,
         addressStore,
+        logger,
       }),
     ]
   | Config.SvmSourceConfig({hypersync}) => [
@@ -51,17 +56,17 @@ let make = (
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
         onEventRegistrations: onEventRegistrations->(
-          Utils.magic: array<Internal.onEventRegistration> => array<
-            Internal.svmOnEventRegistration,
-          >
+          Utils.magic: array<Internal.onEventRegistration> => array<Internal.svmOnEventRegistration>
         ),
+        onBlockRegistrations,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         addressStore,
       }),
     ]
-  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
+  | Config.SimulateSourceConfig({items, getBlock, endBlock, ?transactionStore, ?blockStore}) => [
       SimulateSource.make(
         ~items,
+        ~getBlock,
         ~endBlock,
         ~chainId,
         ~addressStore,

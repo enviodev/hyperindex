@@ -145,7 +145,7 @@ export function handleSync(event: any): void {}
   ~test=`
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createTestIndexer } from "envio";
-import { getLogger, setLogger } from "envio/src/Logging.res.mjs";
+import { onLog } from "envio/src/subgraph/log.ts";
 
 const admin = "0x1111111111111111111111111111111111111111" as const;
 const factory = "0x5555555555555555555555555555555555555555" as const;
@@ -154,21 +154,16 @@ const lost = "0x3333333333333333333333333333333333333333" as const;
 const direct = "0x4444444444444444444444444444444444444444" as const;
 
 const lines: string[] = [];
-let installed: unknown;
+let stopLogging: () => void;
 
 beforeAll(() => {
-  installed = getLogger();
-  const capture: any = { level: "info", child: () => capture, isLevelEnabled: () => true };
-  for (const level of ["trace", "debug", "info", "warn", "error", "fatal", "udebug", "uinfo", "uwarn", "uerror"]) {
-    capture[level] = (params: unknown, message?: string) => {
-      lines.push(typeof params === "string" ? params : (message ?? JSON.stringify(params)));
-    };
-  }
-  setLogger(capture);
+  stopLogging = onLog((level, message) => {
+    lines.push(message);
+  });
 });
 
 afterAll(() => {
-  setLogger(installed);
+  stopLogging();
 });
 
 describe("a template a handler creates and no register pass did", () => {

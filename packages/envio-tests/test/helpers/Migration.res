@@ -9,7 +9,8 @@ type outcome =
 
 let incompatibleHeader = "The following config changes are incompatible with the existing indexer data:"
 
-let outcomeOfRefusal = message =>
+let outcomeOfRefusal = message => {
+  let message = message->IndexerRunner.stripLogsLink
   if message->String.startsWith(incompatibleHeader) {
     Refused(
       message
@@ -21,14 +22,10 @@ let outcomeOfRefusal = message =>
   } else {
     Failed(message)
   }
-
-let storedChainIds = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "id": ChainId.t,
-  }> = await sql->Postgres.unsafe(`SELECT "id" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`)
-  rows->Array.map(row => row["id"]->ChainId.normalizeOrThrow->ChainId.toInt)
 }
+
+let storedChainIds = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => row.id->ChainId.toInt)
 
 // `~chains` restarts as `envio start --chain` naming those chains; without it,
 // as a plain `envio start`.
@@ -45,11 +42,15 @@ let it = (
     ~sources=deployedChains->Array.map((chain): Scenario.sourceMock => {chain: chain}),
     ~supervised=false,
     async (~t, ~indexer, ~source) => {
-      deployedChains->Array.forEach(chain => {
+      let _ = await deployedChains
+      ->Array.map(async chain => {
         let source = source(chain)
         source.resolveGetHeightOrThrow(100)
-        source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+        await source.expectItemsQueries([
+          {reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+        ])
       })
+      ->Promise.all
       await indexer.waitUntilReady()
       await indexer.waitUntilIdle()
 

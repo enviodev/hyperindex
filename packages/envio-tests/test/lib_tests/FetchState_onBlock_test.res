@@ -4,22 +4,8 @@ let chainId = 0->ChainId.fromInt
 
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
-let defaultQuery: FetchState.query = {
-  partitionId: "0",
-  fromBlock: 0,
-  toBlock: None,
-  isChunk: false,
-  itemsTarget: Some(0),
-  itemsEst: 0,
-  selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addresses: TestAddresses.setOf([]),
-}
 
 let mockAddress0 = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
-
-let getTimestamp = (~blockNumber) => blockNumber * 15
-
-let getBlockData = (~blockNumber): int => blockNumber
 
 let baseEventConfig = (EventRegistration.evmOnEventRegistration(
   ~id="0",
@@ -40,6 +26,7 @@ let makeOnBlockRegistration = (
   endBlock,
   interval,
   handler: Utils.magic("mock handler"),
+  blockFieldMask: None,
 }
 
 let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBlockRegistrations) => {
@@ -53,6 +40,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBloc
   ]
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   FetchState.make(
+    ~onNotice=ignore,
     ~onEventRegistrations,
     ~addressStore,
     ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
@@ -69,7 +57,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~maxOnBlockBufferSize=5000, ~onBloc
 }
 
 let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
-  chainId: chainId,
+  chainId,
   blockNumber,
   // Carries an `index` so the buffer's dedup key (blockNumber, logIndex, index)
   // resolves; the rest of the registration is unused by these tests.
@@ -122,11 +110,12 @@ describe("FetchState onBlock functionality", () => {
 
     let lastBlockItem =
       updatedFetchState.buffer
-      ->Array.filter(item =>
-        switch item {
-        | Block(_) => true
-        | Event(_) => false
-        }
+      ->Array.filter(
+        item =>
+          switch item {
+          | Block(_) => true
+          | Event(_) => false
+          },
       )
       ->Array.last
       ->Option.map(Internal.getItemBlockNumber)
@@ -287,7 +276,9 @@ describe("FetchState onBlock functionality", () => {
     // Create two onBlock configs with different intervals
     let onBlockRegistration1 = makeOnBlockRegistration(~name="config1", ~index=0, ~interval=2)
     let onBlockRegistration2 = makeOnBlockRegistration(~name="config2", ~index=1, ~interval=3)
-    let fetchState = makeInitialWithOnBlock(~onBlockRegistrations=Some([onBlockRegistration1, onBlockRegistration2]))
+    let fetchState = makeInitialWithOnBlock(
+      ~onBlockRegistrations=Some([onBlockRegistration1, onBlockRegistration2]),
+    )
 
     // Process a batch
     let query: FetchState.query = {

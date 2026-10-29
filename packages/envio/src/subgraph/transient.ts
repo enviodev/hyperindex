@@ -8,7 +8,7 @@
  * value, a revert, a definite miss — may reach the mapping or end the run.
  */
 
-import { warn } from "../Logging.res.mjs";
+import { warn } from "./log.ts";
 
 const MAX_BACKOFF_MS = 30_000;
 

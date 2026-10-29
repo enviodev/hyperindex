@@ -92,27 +92,18 @@ export function handlePairCreated(event: any): void {
   ~test=`
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { createTestIndexer } from "envio";
-import { getLogger, setLogger } from "envio/src/Logging.res.mjs";
+import { onLog } from "envio/src/subgraph/log.ts";
 
 const lines: string[] = [];
-let installed: unknown;
+let stopLogging: () => void;
 
 beforeAll(() => {
-  installed = getLogger();
-  const capture: any = {
-    level: "info",
-    child: () => capture,
-    isLevelEnabled: () => true,
-  };
-  for (const level of ["trace", "debug", "info", "warn", "error", "fatal", "udebug", "uinfo", "uwarn", "uerror"]) {
-    capture[level] = (params: unknown, message?: string) => {
-      if (level.startsWith("u")) lines.push(level + " " + (message ?? String(params)));
-    };
-  }
-  setLogger(capture);
+  stopLogging = onLog((level, message) => {
+    if (level.startsWith("u")) lines.push(level + " " + message);
+  });
 });
 
-afterAll(() => setLogger(installed));
+afterAll(() => stopLogging());
 
 const token = "0x2222222222222222222222222222222222222222";
 const pair = "0x3333333333333333333333333333333333333333";

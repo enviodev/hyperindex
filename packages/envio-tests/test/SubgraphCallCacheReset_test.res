@@ -39,74 +39,83 @@ type handlerContext = {
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 describe("A reset", () => {
-  scenario->Scenario.it("keeps the cached contract calls and drops other effects' caches", ~sources=[{chain: 1337, methods}], async (
-    ~t,
-    ~indexer,
-    ~source,
-  ) => {
-    let calls = ref(0)
-    let others = ref(0)
-    // The subgraph runtime's contract-call effect (subgraph/calls.ts).
-    let callEffect = Envio.createEffect(
-      {
-        name: "envio_subgraph_eth_call",
-        input: S.string,
-        output: S.string,
-        rateLimit: Disable,
-        cache: true,
-      },
-      async ({input}) => {
-        calls := calls.contents + 1
-        input ++ "-answer"
-      },
-    )
-    let otherEffect = Envio.createEffect(
-      {
-        name: "userEffect",
-        input: S.string,
-        output: S.string,
-        rateLimit: Disable,
-        cache: true,
-      },
-      async ({input}) => {
-        others := others.contents + 1
-        input ++ "-other"
-      },
-    )
-    let run = async (indexer: IndexerRunner.t, ~blockNumber) => {
-      let sourceMock = source(1337)
-      await Utils.delay(0)
-      let answers = ref(("", ""))
-      sourceMock.resolveGetHeightOrThrow(300)
-      sourceMock.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              answers := (
-                  await context.effect(callEffect, "call@100"),
-                  await context.effect(otherEffect, "x"),
-                )
-            },
-          },
-        ],
-        ~latestFetchedBlockNumber=blockNumber,
+  beforeAll(() => Env.subgraphMode := true)
+  afterAll(() => Env.subgraphMode := false)
+
+  scenario->Scenario.it(
+    "keeps the cached contract calls and drops other effects' caches",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let calls = ref(0)
+      let others = ref(0)
+      // The subgraph runtime's contract-call effect (subgraph/calls.ts).
+      let callEffect = Envio.createEffect(
+        {
+          name: "envio_subgraph_eth_call",
+          input: S.string,
+          output: S.string,
+          rateLimit: Disable,
+          cache: true,
+        },
+        async ({input}) => {
+          calls := calls.contents + 1
+          input ++ "-answer"
+        },
       )
-      await indexer.getBatchWritePromise()
-      answers.contents
-    }
+      let otherEffect = Envio.createEffect(
+        {
+          name: "userEffect",
+          input: S.string,
+          output: S.string,
+          rateLimit: Disable,
+          cache: true,
+        },
+        async ({input}) => {
+          others := others.contents + 1
+          input ++ "-other"
+        },
+      )
+      let run = async (indexer: IndexerRunner.t, ~blockNumber) => {
+        let sourceMock = source(1337)
+        await Utils.delay(0)
+        let answers = ref(("", ""))
+        sourceMock.resolveGetHeightOrThrow(300)
+        await sourceMock.expectItemsQueries([
+          {
+            reply: Respond({
+              items: [
+                {
+                  blockNumber,
+                  logIndex: 0,
+                  handler: async args => {
+                    let context =
+                      args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                    answers :=
+                      (
+                        await context.effect(callEffect, "call@100"),
+                        await context.effect(otherEffect, "x"),
+                      )
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: blockNumber,
+            }),
+          },
+        ])
+        await indexer.getBatchWritePromise()
+        answers.contents
+      }
 
-    let first = await run(indexer, ~blockNumber=100)
-    let reset = await indexer.restart(~reset=true, ())
-    let second = await run(reset, ~blockNumber=100)
+      let first = await run(indexer, ~blockNumber=100)
+      let reset = await indexer.restart(~reset=true, ())
+      let second = await run(reset, ~blockNumber=100)
 
-    t.expect((first, second, calls.contents, others.contents)).toEqual((
-      ("call@100-answer", "x-other"),
-      ("call@100-answer", "x-other"),
-      1,
-      2,
-    ))
-  })
+      t.expect((first, second, calls.contents, others.contents)).toEqual((
+        ("call@100-answer", "x-other"),
+        ("call@100-answer", "x-other"),
+        1,
+        2,
+      ))
+    },
+  )
 })

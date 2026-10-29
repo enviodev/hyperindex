@@ -81,19 +81,26 @@ describe("Scenario isolation", () => {
         let source = source(1337)
         source.resolveGetHeightOrThrow(10)
 
-        source.resolveGetItemsOrThrow(
-          [
-            {
-              blockNumber: 5,
-              logIndex: 0,
-              handler: async args => {
-                let context = args.context->(Utils.magic: Internal.handlerContext => accountContext)
-                context.account.set({id: "token-1", balance: 7n})
-              },
-            },
-          ],
-          ~latestFetchedBlockNumber=10,
-        )
+        await source.expectItemsQueries([
+          {
+            fromBlock: 0,
+            toBlock: Unbounded,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 5,
+                  logIndex: 0,
+                  handler: async args => {
+                    let context =
+                      args.context->(Utils.magic: Internal.handlerContext => accountContext)
+                    context.account.set({id: "token-1", balance: 7n})
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: 10,
+            }),
+          },
+        ])
         await indexer.getBatchWritePromise()
 
         let accounts: array<account> = await indexer.query("Account")
@@ -112,19 +119,26 @@ describe("Scenario isolation", () => {
         let source = source(4242)
         source.resolveGetHeightOrThrow(10)
 
-        source.resolveGetItemsOrThrow(
-          [
-            {
-              blockNumber: 5,
-              logIndex: 0,
-              handler: async args => {
-                let context = args.context->(Utils.magic: Internal.handlerContext => ownerContext)
-                context.owner.set({id: "owner-1", count: 3n})
-              },
-            },
-          ],
-          ~latestFetchedBlockNumber=10,
-        )
+        await source.expectItemsQueries([
+          {
+            fromBlock: 0,
+            toBlock: Unbounded,
+            reply: Respond({
+              items: [
+                {
+                  blockNumber: 5,
+                  logIndex: 0,
+                  handler: async args => {
+                    let context =
+                      args.context->(Utils.magic: Internal.handlerContext => ownerContext)
+                    context.owner.set({id: "owner-1", count: 3n})
+                  },
+                },
+              ],
+              latestFetchedBlockNumber: 10,
+            }),
+          },
+        ])
         await indexer.getBatchWritePromise()
 
         let owners: array<owner> = await indexer.query("Owner")

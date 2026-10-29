@@ -17,6 +17,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::address_store::normalize_evm_address;
 use crate::clickhouse::ch_type;
 use crate::utils::project_env::ProjectEnv;
 use crate::{
@@ -310,7 +311,7 @@ impl ChainIdMode {
     }
 
     /// Reads the mode back out of the form it is serialized in, which is how it
-    /// reaches the ClickHouse sink: through the generated config and the JS
+    /// reaches the storage: through the generated config and the JS
     /// runtime, both of which carry it as that string.
     pub fn parse(mode: &str) -> Result<Self> {
         serde_json::from_value(serde_json::Value::String(mode.to_string()))
@@ -349,15 +350,15 @@ pub struct SystemConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageBackend {
     // Whether entities without an @storage directive are stored in the
-    // backend. A single enabled backend is implicitly the default; with
-    // multiple backends none is, unless opted in via `default: true`.
+    // backend. Postgres is, unless ClickHouse is made the default; ClickHouse
+    // only with `default: true`.
     pub entity_default: bool,
     pub column_name_format: human_config::ColumnNameFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Storage {
-    pub postgres: Option<StorageBackend>,
+    pub postgres: StorageBackend,
     pub clickhouse: Option<StorageBackend>,
 }
 
@@ -368,35 +369,29 @@ impl Storage {
             Some(s) => (s.postgres.as_ref(), s.clickhouse.as_ref()),
         };
         let clickhouse_enabled = clickhouse_config.is_some_and(|c| c.is_enabled());
-        // When clickhouse is enabled, postgres must be set explicitly
-        // so that the validation below catches a clickhouse-only config
-        // instead of silently defaulting postgres to true.
-        let postgres_enabled = postgres_config.map_or(!clickhouse_enabled, |c| c.is_enabled());
-        if clickhouse_enabled && !postgres_enabled {
+        if postgres_config.is_some_and(|c| !c.is_enabled()) {
             return Err(anyhow!(
-                "ClickHouse is not supported as a single storage yet. Please enable Postgres \
-                 alongside ClickHouse in the `storage` config."
+                "Postgres can't be disabled: it keeps the indexer's own state. To keep the \
+                 entities in ClickHouse alone, set `clickhouse: {{default: true}}` in the \
+                 `storage` config."
             ));
         }
-        if !postgres_enabled && !clickhouse_enabled {
-            return Err(anyhow!(
-                "At least one storage backend must be enabled. Please set `postgres: true` in the \
-                 `storage` config (or omit the `storage` section entirely to use the default)."
-            ));
-        }
+        let clickhouse_default = clickhouse_config
+            .and_then(|c| c.entity_default())
+            .unwrap_or(false);
         Ok(Self {
-            postgres: postgres_enabled.then(|| StorageBackend {
+            postgres: StorageBackend {
+                // Entities stay in Postgres unless ClickHouse is made their
+                // default: enabling it alone keeps only those that opt in.
                 entity_default: postgres_config
                     .and_then(|c| c.entity_default())
-                    .unwrap_or(!clickhouse_enabled),
+                    .unwrap_or(!clickhouse_default),
                 column_name_format: postgres_config
                     .and_then(|c| c.column_name_format())
                     .unwrap_or(human_config::ColumnNameFormat::Original),
-            }),
+            },
             clickhouse: clickhouse_enabled.then(|| StorageBackend {
-                entity_default: clickhouse_config
-                    .and_then(|c| c.entity_default())
-                    .unwrap_or(false),
+                entity_default: clickhouse_default,
                 column_name_format: clickhouse_config
                     .and_then(|c| c.column_name_format())
                     .unwrap_or(human_config::ColumnNameFormat::Original),
@@ -413,7 +408,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     // Entities without @storage fall back to the backends marked `default`
     // in config.yaml. When no backend is a default, such entities would end
     // up with no storage at all.
-    let postgres_default = storage.postgres.is_some_and(|b| b.entity_default);
+    let postgres_default = storage.postgres.entity_default;
     let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
     if !postgres_default && !clickhouse_default {
         let missing: Vec<&str> = entities
@@ -441,30 +436,23 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
-    let unsupported: Vec<(&str, &'static str)> = entities
+    if storage.clickhouse.is_some() {
+        return Ok(());
+    }
+    let unsupported: Vec<String> = entities
         .iter()
-        .flat_map(|e| {
-            let mut out: Vec<(&str, &'static str)> = Vec::new();
-            if e.postgres == Some(true) && storage.postgres.is_none() {
-                out.push((e.name.as_str(), "postgres"));
-            }
-            if e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()) && storage.clickhouse.is_none()
-            {
-                out.push((e.name.as_str(), "clickhouse"));
-            }
-            out
+        .filter(|e| e.clickhouse.as_ref().is_some_and(|c| c.is_enabled()))
+        .map(|e| {
+            format!(
+                "  - `{}` uses `clickhouse`, but `clickhouse` is not enabled.",
+                e.name
+            )
         })
         .collect();
     if unsupported.is_empty() {
         return Ok(());
     }
-    let listed = unsupported
-        .iter()
-        .map(|(name, backend)| {
-            format!("  - `{name}` uses `{backend}`, but `{backend}` is not enabled.")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let listed = unsupported.join("\n");
     Err(anyhow!(
         "Schema validation failed:\n\nEntities using storages not enabled in \
          config.yaml:\n{listed}\n\nFixes:\n  - Remove the unsupported storage from @storage on \
@@ -479,7 +467,7 @@ fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
     if entity.has_storage_directive() {
         entity.postgres == Some(true)
     } else {
-        storage.postgres.is_some_and(|b| b.entity_default)
+        storage.postgres.entity_default
     }
 }
 
@@ -532,7 +520,7 @@ pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyh
 /// instead of failing on table creation.
 pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
     let mut formats: Vec<human_config::ColumnNameFormat> = vec![];
-    for backend in [storage.postgres, storage.clickhouse].iter().flatten() {
+    for backend in std::iter::once(&storage.postgres).chain(&storage.clickhouse) {
         if !formats.contains(&backend.column_name_format) {
             formats.push(backend.column_name_format);
         }
@@ -541,7 +529,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     // The identifier length limit is Postgres-specific (ClickHouse has no
     // comparable limit), so only names that become Postgres columns are
     // checked against it.
-    let pg_format = storage.postgres.map(|b| b.column_name_format);
+    let pg_format = storage.postgres.column_name_format;
 
     let mut empty: Vec<String> = vec![];
     let mut reserved: Vec<String> = vec![];
@@ -574,7 +562,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
                             reserved.push(line);
                         }
                     }
-                    if Some(*format) == pg_format && column.len() > MAX_PG_IDENTIFIER_LENGTH {
+                    if *format == pg_format && column.len() > MAX_PG_IDENTIFIER_LENGTH {
                         let line = format!(
                             "  - `{}.{}` maps to the \"{column}\" column ({} characters).",
                             entity.name,
@@ -1076,6 +1064,12 @@ impl SystemConfig {
                     }
                 }
 
+                let lowercase_addresses = matches!(
+                    evm_config.address_format,
+                    Some(super::human_config::evm::AddressFormat::Lowercase)
+                );
+                let should_checksum = !lowercase_addresses;
+
                 for network in &evm_config.chains {
                     for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
@@ -1140,12 +1134,22 @@ impl SystemConfig {
                         .unwrap_or(&vec![])
                         .iter()
                         .cloned()
-                        .map(|c| ChainContract {
-                            name: c.name,
-                            addresses: c.address.into(),
-                            start_block: c.start_block,
+                        .map(|c| {
+                            let addresses = c
+                                .address
+                                .into_iter()
+                                .map(|address| {
+                                    normalize_evm_address(address.clone(), should_checksum)
+                                        .ok_or_else(|| anyhow!("Invalid address {address:?}"))
+                                })
+                                .collect::<Result<_>>()?;
+                            Ok(ChainContract {
+                                name: c.name,
+                                addresses,
+                                start_block: c.start_block,
+                            })
                         })
-                        .collect();
+                        .collect::<Result<_>>()?;
 
                     let chain = Chain {
                         id: network.id,
@@ -1192,10 +1196,7 @@ impl SystemConfig {
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
                     storage,
-                    lowercase_addresses: matches!(
-                        evm_config.address_format,
-                        Some(super::human_config::evm::AddressFormat::Lowercase)
-                    ),
+                    lowercase_addresses,
                     handlers: base_config.handlers.clone(),
                     human_config,
                     is_rescript,
@@ -1378,10 +1379,9 @@ impl SystemConfig {
                                     accounts,
                                     args,
                                 }),
-                                sighash: normalized_discriminator.unwrap_or_default(),
+                                sighash: Some(normalized_discriminator.unwrap_or_default()),
                                 event_signature: String::new(),
                                 field_selection: None,
-                                anonymous: false,
                             }
                         })
                         .collect();
@@ -2100,11 +2100,13 @@ impl DataSource {
 
         let mut rpcs = vec![];
         for rpc in raw_rpcs.iter() {
+            if rpc.url.is_empty() {
+                continue;
+            }
             match parse_url(rpc.url.as_str()) {
               None => return Err(anyhow!("The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", rpc.url)),
               Some(url) => {
-                // Validate ws URL protocol if provided
-                let ws = match &rpc.ws {
+                let ws = match rpc.ws.as_deref().filter(|ws_url| !ws_url.is_empty()) {
                     Some(ws_url) => {
                         if ws_url.starts_with("wss://") || ws_url.starts_with("ws://") {
                             Some(ws_url.trim_end_matches('/').to_string())
@@ -2619,7 +2621,12 @@ impl Contract {
         let mut seen_by_name: HashMap<&str, &Event> = HashMap::new();
         for event in &events {
             if let Some(existing) = seen_by_name.insert(&event.name, event) {
-                if existing.sighash == event.sighash {
+                let is_duplicate = match (&existing.sighash, &event.sighash) {
+                    // Anonymous events have no sighash to tell overloads apart by.
+                    (None, None) => existing.event_signature == event.event_signature,
+                    (existing_sighash, sighash) => existing_sighash == sighash,
+                };
+                if is_duplicate {
                     return Err(anyhow!(
                         "Contract {name} defines the event \"{}\" more than once. Please remove \
                          the duplicate.",
@@ -2635,25 +2642,65 @@ impl Contract {
             }
         }
 
+        // A log holds at most 4 topics. A regular event spends the first on its
+        // signature; an anonymous one is selected by its first indexed param,
+        // so it needs one.
+        for event in &events {
+            if let EventKind::Params(params) = &event.kind {
+                let indexed_count = params.iter().filter(|p| p.indexed).count();
+                match &event.sighash {
+                    None if indexed_count == 0 => {
+                        return Err(anyhow!(
+                            "Contract {name} has the anonymous event \"{}\" with no indexed \
+                             parameters. An anonymous event's logs are selected by its first \
+                             indexed parameter, which takes the place of the signature topic, \
+                             so it needs at least one.",
+                            event.name,
+                        ));
+                    }
+                    None if indexed_count > 4 => {
+                        return Err(anyhow!(
+                            "Contract {name} has the anonymous event \"{}\" with \
+                             {indexed_count} indexed parameters, but a log holds at most 4 \
+                             topics.",
+                            event.name,
+                        ));
+                    }
+                    Some(_) if indexed_count > 3 => {
+                        return Err(anyhow!(
+                            "Contract {name} has the event \"{}\" with {indexed_count} indexed \
+                             parameters, but a log holds at most 4 topics and the first is the \
+                             event signature, so an event can index at most 3. Mark it \
+                             anonymous if it is declared anonymous in Solidity.",
+                            event.name,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Two events on one contract that share a dispatch key are
         // indistinguishable at routing time — one log would decode to both —
-        // so reject them here. The key mirrors the runtime `eventId`: sighash
-        // plus indexed-topic count for EVM, the sighash for Fuel (a `LogData`
+        // so reject them here. Routing keys on the sighash plus indexed-topic
+        // count for EVM, and on the sighash for Fuel (a `LogData`
         // logId or a fixed `mint`/`burn`/…). SVM instructions are exempt: a
         // call routes to every instruction whose prefix it carries, each
         // decoding with its own layout and dropped on its own when the layout
         // rejects the data, so two instructions sharing a prefix are two
-        // instructions, not an ambiguity. Names are unique by the check above,
-        // so a collision here is always between two differently-named events.
+        // instructions, not an ambiguity. So are anonymous events: every
+        // registration of one names its topic0 values in `where`, and those
+        // decide which logs it gets. Names are unique by the check above, so a
+        // collision here is always between two differently-named events.
         let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
         for event in &events {
-            let dispatch_key = match &event.kind {
-                EventKind::Params(params) => {
+            let dispatch_key = match (&event.kind, &event.sighash) {
+                (EventKind::Params(params), Some(sighash)) => {
                     let indexed_count = params.iter().filter(|p| p.indexed).count();
-                    Some(format!("{}_{}", event.sighash, indexed_count))
+                    Some(format!("{sighash}_{indexed_count}"))
                 }
-                EventKind::Svm(_) => None,
-                EventKind::Fuel(_) => Some(event.sighash.clone()),
+                (EventKind::Fuel(_), Some(sighash)) => Some(sighash.clone()),
+                (EventKind::Svm(_), _) | (_, None) => None,
             };
             if let Some(dispatch_key) = dispatch_key {
                 if let Some(existing) =
@@ -2729,14 +2776,13 @@ pub enum EventKind {
 pub struct Event {
     pub kind: EventKind,
     pub name: String,
-    pub sighash: String,
+    /// `None` only for an anonymous EVM event: its logs carry no signature
+    /// topic, topic0 holds its first indexed param.
+    pub sighash: Option<String>,
     /// Full event signature (e.g. "Transfer(address indexed from, address indexed to, uint256 value)")
     /// Only set for EVM events; empty for Fuel events.
     pub event_signature: String,
     pub field_selection: Option<FieldSelection>,
-    /// An anonymous EVM event matched on its first topic: `sighash` is that
-    /// topic's value, and every topic is an indexed param.
-    pub anonymous: bool,
 }
 
 impl Event {
@@ -2842,19 +2888,9 @@ impl Event {
 
         for event_config in events_config.iter() {
             let alloy_event = Event::get_abi_event(&event_config.event, &abi_from_file)?;
-            // Use alloy's selector() method which computes keccak256 of the signature
-            // Note: selector() returns B256 which formats as lowercase hex with 0x prefix
-            let (sighash, anonymous) = match &event_config.topic0 {
-                None => (alloy_event.selector().to_string(), false),
-                Some(topic0) if alloy_event.anonymous => (topic0.to_lowercase(), true),
-                Some(_) => {
-                    return Err(anyhow!(
-                        "The event \"{}\" is matched on a topic0 of its own, which only an \
-                         anonymous event carries in place of its signature hash.",
-                        event_config.event
-                    ))
-                }
-            };
+            // selector() is keccak256 of the signature, a B256 formatted as
+            // lowercase 0x-prefixed hex.
+            let sighash = (!alloy_event.anonymous).then(|| alloy_event.selector().to_string());
 
             let abi_name = alloy_event.name.clone();
             let name = event_config.name.clone().unwrap_or(abi_name.clone());
@@ -2881,7 +2917,6 @@ impl Event {
                     ),
                     None => None,
                 },
-                anonymous,
             })
         }
 
@@ -2958,43 +2993,38 @@ impl Event {
                     Event {
                         name: event_config.name.clone(),
                         kind: EventKind::Fuel(FuelEventKind::LogData(log.data_type)),
-                        sighash: log.id,
+                        sighash: Some(log.id),
                         event_signature: String::new(),
                         field_selection: None,
-                        anonymous: false,
                     }
                 }
                 EventType::Mint => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Mint),
-                    sighash: "mint".to_string(),
+                    sighash: Some("mint".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
-                    anonymous: false,
                 },
                 EventType::Burn => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Burn),
-                    sighash: "burn".to_string(),
+                    sighash: Some("burn".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
-                    anonymous: false,
                 },
                 EventType::Transfer => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Transfer),
-                    sighash: "transfer".to_string(),
+                    sighash: Some("transfer".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
-                    anonymous: false,
                 },
                 EventType::Call => Event {
                     name: event_config.name.clone(),
                     kind: EventKind::Fuel(FuelEventKind::Call),
-                    sighash: "call".to_string(),
+                    sighash: Some("call".to_string()),
                     event_signature: String::new(),
                     field_selection: None,
-                    anonymous: false,
                 },
             };
 
@@ -3046,12 +3076,12 @@ impl FieldSelection {
         Self::new(
             vec![SelectedField {
                 name: "id".to_string(),
-                data_type: TypeIdent::String,
+                data_type: TypeIdent::Hex,
             }],
             vec![
                 SelectedField {
                     name: "id".to_string(),
-                    data_type: TypeIdent::String,
+                    data_type: TypeIdent::Hex,
                 },
                 SelectedField {
                     name: "height".to_string(),
@@ -3094,99 +3124,111 @@ impl FieldSelection {
         use human_config::evm::{BlockField, TransactionField};
         use strum::IntoEnumIterator;
 
-        let block_fields: Vec<SelectedField> = BlockField::iter()
-            .map(|field| {
-                let data_type = match field {
-                    BlockField::ParentHash => TypeIdent::String,
-                    BlockField::Nonce => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::Sha3Uncles => TypeIdent::String,
-                    BlockField::LogsBloom => TypeIdent::String,
-                    BlockField::TransactionsRoot => TypeIdent::String,
-                    BlockField::StateRoot => TypeIdent::String,
-                    BlockField::ReceiptsRoot => TypeIdent::String,
-                    BlockField::Miner => TypeIdent::Address,
-                    BlockField::Difficulty => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::TotalDifficulty => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::ExtraData => TypeIdent::String,
-                    BlockField::Size => TypeIdent::BigInt,
-                    BlockField::GasLimit => TypeIdent::BigInt,
-                    BlockField::GasUsed => TypeIdent::BigInt,
-                    BlockField::Uncles => TypeIdent::option(TypeIdent::array(TypeIdent::String)),
-                    BlockField::BaseFeePerGas => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::BlobGasUsed => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::ExcessBlobGas => TypeIdent::option(TypeIdent::BigInt),
-                    BlockField::ParentBeaconBlockRoot => TypeIdent::option(TypeIdent::String),
-                    BlockField::WithdrawalsRoot => TypeIdent::option(TypeIdent::String),
-                    BlockField::L1BlockNumber => TypeIdent::option(TypeIdent::Int),
-                    BlockField::SendCount => TypeIdent::option(TypeIdent::String),
-                    BlockField::SendRoot => TypeIdent::option(TypeIdent::String),
-                    BlockField::MixHash => TypeIdent::option(TypeIdent::String),
-                };
-                SelectedField {
-                    name: field.to_string(),
-                    data_type,
-                }
+        let block_fields = BlockField::iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: Self::evm_block_field_type(&field),
             })
             .collect();
 
-        let transaction_fields: Vec<SelectedField> = TransactionField::iter()
-            .map(|field| {
-                let data_type = match field {
-                    TransactionField::TransactionIndex => TypeIdent::Int,
-                    TransactionField::Hash => TypeIdent::String,
-                    TransactionField::From => TypeIdent::option(TypeIdent::Address),
-                    TransactionField::To => TypeIdent::option(TypeIdent::Address),
-                    TransactionField::Gas => TypeIdent::BigInt,
-                    TransactionField::GasPrice => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::MaxPriorityFeePerGas => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::MaxFeePerGas => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::CumulativeGasUsed => TypeIdent::BigInt,
-                    TransactionField::EffectiveGasPrice => TypeIdent::BigInt,
-                    TransactionField::GasUsed => TypeIdent::BigInt,
-                    TransactionField::Input => TypeIdent::String,
-                    TransactionField::Nonce => TypeIdent::BigInt,
-                    TransactionField::Value => TypeIdent::BigInt,
-                    TransactionField::V => TypeIdent::option(TypeIdent::String),
-                    TransactionField::R => TypeIdent::option(TypeIdent::String),
-                    TransactionField::S => TypeIdent::option(TypeIdent::String),
-                    TransactionField::ContractAddress => TypeIdent::option(TypeIdent::Address),
-                    TransactionField::LogsBloom => TypeIdent::String,
-                    TransactionField::Root => TypeIdent::option(TypeIdent::String),
-                    TransactionField::Status => TypeIdent::option(TypeIdent::Int),
-                    TransactionField::YParity => TypeIdent::option(TypeIdent::String),
-                    TransactionField::MaxFeePerBlobGas => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::BlobVersionedHashes => {
-                        TypeIdent::option(TypeIdent::array(TypeIdent::String))
-                    }
-                    TransactionField::Type => TypeIdent::option(TypeIdent::Int),
-                    TransactionField::L1Fee => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::L1GasPrice => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::L1GasUsed => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::L1FeeScalar => TypeIdent::option(TypeIdent::Float),
-                    TransactionField::GasUsedForL1 => TypeIdent::option(TypeIdent::BigInt),
-                    TransactionField::AccessList => {
+        let transaction_fields = TransactionField::iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: match field {
+                    // The ReScript response types these name have no
+                    // TypeScript counterpart.
+                    TransactionField::AccessList | TransactionField::AuthorizationList => {
                         TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
                     }
-                    TransactionField::AuthorizationList => {
-                        TypeIdent::option(TypeIdent::array(TypeIdent::Unknown))
-                    }
-                };
-                SelectedField {
-                    name: field.to_string(),
-                    data_type,
-                }
+                    _ => Self::evm_transaction_field_type(&field),
+                },
             })
             .collect();
 
         Self::new(transaction_fields, block_fields)
     }
 
+    fn evm_block_field_type(field: &human_config::evm::BlockField) -> TypeIdent {
+        use human_config::evm::BlockField as Block;
+        type Res = TypeIdent;
+
+        match field {
+            Block::ParentHash => Res::Hex,
+            Block::Nonce => Res::option(Res::BigInt),
+            Block::Sha3Uncles => Res::Hex,
+            Block::LogsBloom => Res::Hex,
+            Block::TransactionsRoot => Res::Hex,
+            Block::StateRoot => Res::Hex,
+            Block::ReceiptsRoot => Res::Hex,
+            Block::Miner => Res::Address,
+            Block::Difficulty => Res::option(Res::BigInt),
+            Block::TotalDifficulty => Res::option(Res::BigInt),
+            Block::ExtraData => Res::Hex,
+            Block::Size => Res::BigInt,
+            Block::GasLimit => Res::BigInt,
+            Block::GasUsed => Res::BigInt,
+            Block::Uncles => Res::option(Res::array(Res::Hex)),
+            Block::BaseFeePerGas => Res::option(Res::BigInt),
+            Block::BlobGasUsed => Res::option(Res::BigInt),
+            Block::ExcessBlobGas => Res::option(Res::BigInt),
+            Block::ParentBeaconBlockRoot => Res::option(Res::Hex),
+            Block::WithdrawalsRoot => Res::option(Res::Hex),
+            Block::L1BlockNumber => Res::option(Res::Int),
+            Block::SendCount => Res::option(Res::Hex),
+            Block::SendRoot => Res::option(Res::Hex),
+            Block::MixHash => Res::option(Res::Hex),
+        }
+    }
+
+    fn evm_transaction_field_type(field: &human_config::evm::TransactionField) -> TypeIdent {
+        use human_config::evm::TransactionField as Tx;
+        type Res = TypeIdent;
+
+        match field {
+            Tx::TransactionIndex => Res::Int,
+            Tx::Hash => Res::Hex,
+            Tx::From => Res::option(Res::Address),
+            Tx::To => Res::option(Res::Address),
+            Tx::Gas => Res::BigInt,
+            Tx::GasPrice => Res::option(Res::BigInt),
+            Tx::MaxPriorityFeePerGas => Res::option(Res::BigInt),
+            Tx::MaxFeePerGas => Res::option(Res::BigInt),
+            Tx::CumulativeGasUsed => Res::BigInt,
+            Tx::EffectiveGasPrice => Res::BigInt,
+            Tx::GasUsed => Res::BigInt,
+            Tx::Input => Res::Hex,
+            Tx::Nonce => Res::BigInt,
+            Tx::Value => Res::BigInt,
+            Tx::V => Res::option(Res::Hex),
+            Tx::R => Res::option(Res::Hex),
+            Tx::S => Res::option(Res::Hex),
+            Tx::ContractAddress => Res::option(Res::Address),
+            Tx::LogsBloom => Res::Hex,
+            Tx::Root => Res::option(Res::Hex),
+            Tx::Status => Res::option(Res::Int),
+            Tx::YParity => Res::option(Res::Hex),
+            Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
+            Tx::BlobVersionedHashes => Res::option(Res::array(Res::Hex)),
+            Tx::Type => Res::option(Res::Int),
+            Tx::L1Fee => Res::option(Res::BigInt),
+            Tx::L1GasPrice => Res::option(Res::BigInt),
+            Tx::L1GasUsed => Res::option(Res::BigInt),
+            Tx::L1FeeScalar => Res::option(Res::Float),
+            Tx::GasUsedForL1 => Res::option(Res::BigInt),
+            Tx::AccessList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                name: "HyperSyncClient.ResponseTypes.accessList".to_string(),
+                type_params: vec![],
+            }))),
+            Tx::AuthorizationList => Res::option(Res::Array(Box::new(Res::TypeApplication {
+                name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
+                type_params: vec![],
+            }))),
+        }
+    }
+
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
     ) -> Result<Self> {
-        use human_config::evm::BlockField;
-        use human_config::evm::TransactionField;
-
         let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or_default();
         let block_fields = field_selection_cfg.block_fields.unwrap_or_default();
 
@@ -3209,94 +3251,21 @@ impl FieldSelection {
             ));
         }
 
-        let mut selected_block_fields = vec![];
-
-        type Res = TypeIdent;
-        type Block = BlockField;
-        type Tx = TransactionField;
-
-        for block_field in block_fields {
-            let data_type = match block_field {
-                Block::ParentHash => Res::String,
-                Block::Nonce => Res::option(Res::BigInt),
-                Block::Sha3Uncles => Res::String,
-                Block::LogsBloom => Res::String,
-                Block::TransactionsRoot => Res::String,
-                Block::StateRoot => Res::String,
-                Block::ReceiptsRoot => Res::String,
-                Block::Miner => Res::Address,
-                Block::Difficulty => Res::option(Res::BigInt),
-                Block::TotalDifficulty => Res::option(Res::BigInt),
-                Block::ExtraData => Res::String,
-                Block::Size => Res::BigInt,
-                Block::GasLimit => Res::BigInt,
-                Block::GasUsed => Res::BigInt,
-                Block::Uncles => Res::option(Res::array(Res::String)),
-                Block::BaseFeePerGas => Res::option(Res::BigInt),
-                Block::BlobGasUsed => Res::option(Res::BigInt),
-                Block::ExcessBlobGas => Res::option(Res::BigInt),
-                Block::ParentBeaconBlockRoot => Res::option(Res::String),
-                Block::WithdrawalsRoot => Res::option(Res::String),
-                // Block::Withdrawals => todo!(), //should be array of withdrawal record
-                Block::L1BlockNumber => Res::option(Res::Int),
-                Block::SendCount => Res::option(Res::String),
-                Block::SendRoot => Res::option(Res::String),
-                Block::MixHash => Res::option(Res::String),
-            };
-            selected_block_fields.push(SelectedField {
-                name: block_field.to_string(),
-                data_type,
+        let selected_block_fields = block_fields
+            .iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: Self::evm_block_field_type(field),
             })
-        }
+            .collect();
 
-        let mut selected_transaction_fields = vec![];
-
-        for transaction_field in transaction_fields {
-            let data_type = match transaction_field {
-                Tx::TransactionIndex => Res::Int,
-                Tx::Hash => Res::String,
-                Tx::From => Res::option(Res::Address),
-                Tx::To => Res::option(Res::Address),
-                Tx::Gas => Res::BigInt,
-                Tx::GasPrice => Res::option(Res::BigInt),
-                Tx::MaxPriorityFeePerGas => Res::option(Res::BigInt),
-                Tx::MaxFeePerGas => Res::option(Res::BigInt),
-                Tx::CumulativeGasUsed => Res::BigInt,
-                Tx::EffectiveGasPrice => Res::BigInt,
-                Tx::GasUsed => Res::BigInt,
-                Tx::Input => Res::String,
-                Tx::Nonce => Res::BigInt,
-                Tx::Value => Res::BigInt,
-                Tx::V => Res::option(Res::String),
-                Tx::R => Res::option(Res::String),
-                Tx::S => Res::option(Res::String),
-                Tx::ContractAddress => Res::option(Res::Address),
-                Tx::LogsBloom => Res::String,
-                Tx::Root => Res::option(Res::String),
-                Tx::Status => Res::option(Res::Int),
-                Tx::YParity => Res::option(Res::String),
-                Tx::MaxFeePerBlobGas => Res::option(Res::BigInt),
-                Tx::BlobVersionedHashes => Res::option(Res::array(Res::String)),
-                Tx::Type => Res::option(Res::Int),
-                Tx::L1Fee => Res::option(Res::BigInt),
-                Tx::L1GasPrice => Res::option(Res::BigInt),
-                Tx::L1GasUsed => Res::option(Res::BigInt),
-                Tx::L1FeeScalar => Res::option(Res::Float),
-                Tx::GasUsedForL1 => Res::option(Res::BigInt),
-                Tx::AccessList => Res::option(Res::Array(Box::new(Res::TypeApplication {
-                    name: "HyperSyncClient.ResponseTypes.accessList".to_string(),
-                    type_params: vec![],
-                }))),
-                Tx::AuthorizationList => Res::option(Res::Array(Box::new(Res::TypeApplication {
-                    name: "HyperSyncClient.ResponseTypes.authorizationList".to_string(),
-                    type_params: vec![],
-                }))),
-            };
-            selected_transaction_fields.push(SelectedField {
-                name: transaction_field.to_string(),
-                data_type,
+        let selected_transaction_fields = transaction_fields
+            .iter()
+            .map(|field| SelectedField {
+                name: field.to_string(),
+                data_type: Self::evm_transaction_field_type(field),
             })
-        }
+            .collect();
 
         Ok(Self::new(
             selected_transaction_fields,
@@ -3778,12 +3747,11 @@ chains:
                 column_name_format,
             }))
         };
-        let backend = |entity_default: bool, column_name_format: ColumnNameFormat| {
-            Some(super::StorageBackend {
+        let backend =
+            |entity_default: bool, column_name_format: ColumnNameFormat| super::StorageBackend {
                 entity_default,
                 column_name_format,
-            })
-        };
+            };
 
         // Default (None) -> postgres only, postgres is the entity default
         assert_eq!(
@@ -3807,8 +3775,8 @@ chains:
             }
         );
 
-        // Both enabled -> ok; with multiple backends none is an implicit
-        // entity default
+        // ClickHouse enabled keeps the entities that opt in with @storage;
+        // the rest stay in Postgres
         assert_eq!(
             super::Storage::resolve(Some(&StorageConfig {
                 postgres: enabled(true),
@@ -3816,8 +3784,19 @@ chains:
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Original),
-                clickhouse: backend(false, ColumnNameFormat::Original),
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(false, ColumnNameFormat::Original)),
+            }
+        );
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: None,
+                clickhouse: enabled(true),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(false, ColumnNameFormat::Original)),
             }
         );
 
@@ -3831,7 +3810,20 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(false, ColumnNameFormat::Original),
-                clickhouse: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(true, ColumnNameFormat::Original)),
+            }
+        );
+
+        // Postgres left unsaid stays enabled: it keeps the indexer's state
+        assert_eq!(
+            super::Storage::resolve(Some(&StorageConfig {
+                postgres: None,
+                clickhouse: options(Some(true)),
+            }))
+            .unwrap(),
+            super::Storage {
+                postgres: backend(false, ColumnNameFormat::Original),
+                clickhouse: Some(backend(true, ColumnNameFormat::Original)),
             }
         );
 
@@ -3844,7 +3836,7 @@ chains:
             .unwrap(),
             super::Storage {
                 postgres: backend(true, ColumnNameFormat::Original),
-                clickhouse: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(true, ColumnNameFormat::Original)),
             }
         );
 
@@ -3896,8 +3888,8 @@ chains:
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::Original),
-                clickhouse: backend(false, ColumnNameFormat::SnakeCase),
+                postgres: backend(true, ColumnNameFormat::Original),
+                clickhouse: Some(backend(false, ColumnNameFormat::SnakeCase)),
             }
         );
 
@@ -3909,8 +3901,8 @@ chains:
             }))
             .unwrap(),
             super::Storage {
-                postgres: backend(false, ColumnNameFormat::SnakeCase),
-                clickhouse: backend(false, ColumnNameFormat::Original),
+                postgres: backend(true, ColumnNameFormat::SnakeCase),
+                clickhouse: Some(backend(false, ColumnNameFormat::Original)),
             }
         );
     }
@@ -3946,11 +3938,11 @@ chains:
             }
         }
 
-        fn backend(entity_default: bool) -> Option<super::super::StorageBackend> {
-            Some(super::super::StorageBackend {
+        fn backend(entity_default: bool) -> super::super::StorageBackend {
+            super::super::StorageBackend {
                 entity_default,
                 column_name_format: ColumnNameFormat::Original,
-            })
+            }
         }
 
         fn postgres_only() -> Storage {
@@ -3963,7 +3955,7 @@ chains:
         fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
             Storage {
                 postgres: backend(postgres_default),
-                clickhouse: backend(clickhouse_default),
+                clickhouse: Some(backend(clickhouse_default)),
             }
         }
 
@@ -4169,10 +4161,10 @@ type SecretB @internal {
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
             Storage {
-                postgres: Some(super::super::StorageBackend {
+                postgres: super::super::StorageBackend {
                     entity_default: true,
                     column_name_format,
-                }),
+                },
                 clickhouse: None,
             }
         }
@@ -4208,10 +4200,10 @@ type Token {{
             // 62 characters as written, 64 once snake_case inserts separators
             assert_eq!(long_field.len(), 62);
             let pg_original_ch_snake = Storage {
-                postgres: Some(super::super::StorageBackend {
+                postgres: super::super::StorageBackend {
                     entity_default: true,
                     column_name_format: ColumnNameFormat::Original,
-                }),
+                },
                 clickhouse: Some(super::super::StorageBackend {
                     entity_default: false,
                     column_name_format: ColumnNameFormat::SnakeCase,
@@ -4255,17 +4247,17 @@ type Transfer {
             human_config::{BytesType, ColumnNameFormat},
         };
 
-        fn backend(entity_default: bool) -> Option<StorageBackend> {
-            Some(StorageBackend {
+        fn backend(entity_default: bool) -> StorageBackend {
+            StorageBackend {
                 entity_default,
                 column_name_format: ColumnNameFormat::Original,
-            })
+            }
         }
 
         fn multi(postgres_default: bool, clickhouse_default: bool) -> Storage {
             Storage {
                 postgres: backend(postgres_default),
-                clickhouse: backend(clickhouse_default),
+                clickhouse: Some(backend(clickhouse_default)),
             }
         }
 

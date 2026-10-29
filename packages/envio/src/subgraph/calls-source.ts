@@ -14,7 +14,7 @@
 
 import { rpcClient } from "./rpc.ts";
 import { HttpStatusError, untilAnswered } from "./transient.ts";
-import { warn } from "../Logging.res.mjs";
+import { warn } from "./log.ts";
 
 /** The chains HyperSync serves traces for, at `<chainId>-traces.hypersync.xyz`. */
 export const HYPERSYNC_TRACE_CHAINS = new Set([1, 100, 143, 8453, 42161]);

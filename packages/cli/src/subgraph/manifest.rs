@@ -348,7 +348,11 @@ pub struct EventHandler {
     /// A `topic0` other than the signature's hash, lowercase.
     #[serde(skip)]
     pub topic0: Option<String>,
-    /// `topic1`/`topic2`/`topic3` values, keyed by indexed-parameter position.
+    /// The ABI declares the event anonymous: it has no signature topic, and
+    /// `topics` holds the value topic0 matches its first indexed param on.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub anonymous: bool,
+    /// `topicN` values, keyed by the topic's position in the log.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub topics: BTreeMap<usize, Vec<String>>,
     /// The event's parameters in ABI order, which is what `event.parameters`
@@ -378,6 +382,39 @@ impl EventInput {
             || self.abi_type == "bytes"
             || self.abi_type.ends_with(']')
             || self.abi_type.starts_with('(')
+    }
+
+    /// Whether `topic` is the word some value of this type is indexed as.
+    pub fn encodes_topic(&self, topic: &str) -> bool {
+        let hex = topic.trim_start_matches("0x").to_lowercase();
+        if hex.len() > 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return false;
+        }
+        let word = format!("{hex:0>64}");
+        let zeros = |range: &str| range.bytes().all(|b| b == b'0');
+        let ty = self.abi_type.as_str();
+        if ty == "address" {
+            zeros(&word[..24])
+        } else if ty == "bool" {
+            zeros(&word[..63]) && matches!(&word[63..], "0" | "1")
+        } else if let Some(size) = ty
+            .strip_prefix("bytes")
+            .and_then(|n| n.parse::<usize>().ok())
+        {
+            zeros(&word[size * 2..])
+        } else if let Some(bits) = ty.strip_prefix("uint") {
+            let bits = bits.parse::<usize>().unwrap_or(256);
+            zeros(&word[..(256 - bits) / 4])
+        } else if let Some(bits) = ty.strip_prefix("int") {
+            let bits = bits.parse::<usize>().unwrap_or(256);
+            let high = &word[..(256 - bits) / 4 + 1];
+            let negative = u8::from_str_radix(&word[(256 - bits) / 4..][..1], 16)
+                .is_ok_and(|nibble| nibble >= 8);
+            let fill = if negative { b'f' } else { b'0' };
+            high[..high.len() - 1].bytes().all(|b| b == fill)
+        } else {
+            true
+        }
     }
 }
 
@@ -910,6 +947,7 @@ fn parse_data_source(
                     handler,
                     receipt: false,
                     topic0: None,
+                    anonymous: false,
                     topics: BTreeMap::new(),
                     inputs: Vec::new(),
                 });
@@ -1139,6 +1177,7 @@ fn parse_event_handler(
         handler,
         receipt,
         topic0: custom_topic0,
+        anonymous: false,
         topics,
         inputs: Vec::new(),
     })

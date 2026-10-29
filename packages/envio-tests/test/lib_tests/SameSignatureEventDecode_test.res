@@ -18,7 +18,7 @@ let makeReg = (~name, ~params): Internal.evmOnEventRegistration =>
     ~eventConfig=EventConfigBuilder.buildEvmEventConfig(
       ~contractName=name,
       ~eventName="Transfer",
-      ~sighash=transferSighash,
+      ~sighash=Some(transferSighash),
       ~params,
     ),
     ~isWildcard=false,
@@ -26,25 +26,29 @@ let makeReg = (~name, ~params): Internal.evmOnEventRegistration =>
     ~contractRegister=None,
     ~where=None,
     ~chainId=1->ChainId.fromInt,
-    ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
+    ~onEventBlockFilterSchema=Evm.make().onEventBlockFilterSchema,
   )
 
 let tokenA = makeReg(
   ~name="TokenA",
-  ~params=([
-    {name: "from", abiType: "address", indexed: true},
-    {name: "to", abiType: "address", indexed: true},
-    {name: "value", abiType: "uint256", indexed: false},
-  ]: array<Internal.paramMeta>),
+  ~params=(
+    [
+      {name: "from", abiType: "address", indexed: true},
+      {name: "to", abiType: "address", indexed: true},
+      {name: "value", abiType: "uint256", indexed: false},
+    ]: array<Internal.paramMeta>
+  ),
 )
 
 let tokenB = makeReg(
   ~name="TokenB",
-  ~params=([
-    {name: "src", abiType: "address", indexed: true},
-    {name: "dst", abiType: "address", indexed: true},
-    {name: "wad", abiType: "uint256", indexed: false},
-  ]: array<Internal.paramMeta>),
+  ~params=(
+    [
+      {name: "src", abiType: "address", indexed: true},
+      {name: "dst", abiType: "address", indexed: true},
+      {name: "wad", abiType: "uint256", indexed: false},
+    ]: array<Internal.paramMeta>
+  ),
 )
 
 let fromAddr = "0x000000000000000000000000000000000000aaaa"
@@ -64,7 +68,10 @@ describe("Same-signature event across contracts with different param names", () 
     // under its own names instead of the first-registered contract's.
     let tokenA = {...tokenA, index: 0}
     let tokenB = {...tokenB, index: 1}
-    let allEventRegistrations = HyperSyncClient.Registration.fromOnEventRegistrations([tokenA, tokenB])
+    let allEventRegistrations = HyperSyncClient.Registration.fromOnEventRegistrations([
+      tokenA,
+      tokenB,
+    ])
 
     let decodeAs = async contractName => {
       let decoded = await NativeDecoder.decodeLogs(
@@ -76,9 +83,7 @@ describe("Same-signature event across contracts with different param names", () 
       (item.onEventRegistrationIndex, item.params)
     }
 
-    t
-    .expect((await decodeAs("TokenA"), await decodeAs("TokenB")))
-    .toEqual((
+    t.expect((await decodeAs("TokenA"), await decodeAs("TokenB"))).toEqual((
       (0, {"from": fromAddr, "to": toAddr, "value": value}->Utils.magic),
       (1, {"src": fromAddr, "dst": toAddr, "wad": value}->Utils.magic),
     ))

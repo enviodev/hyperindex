@@ -11,16 +11,14 @@ let chainId = 1->ChainId.fromInt
 // Uniswap V2 Factory's PairCreated event (topic0 = keccak("PairCreated(address,address,address,uint256)"))
 // 2 indexed args (token0, token1) ⇒ topicCount = 3.
 let pairCreatedTopic0 = "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
-let pairCreatedEventId = pairCreatedTopic0 ++ "_3"
 
 // Lowercase address so routing lookups match regardless of whether the
 // source returns checksummed or lowercase addresses.
-let uniswapV2FactoryAddress =
-  "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
+let uniswapV2FactoryAddress = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f"->Address.unsafeFromString
 
-// Build the event config by hand so topic0 stays the bare sighash. MockIndexer's
-// evmEventConfig embeds its `id` (sighash_topicCount) directly as topic0, which
-// is fine for unit tests against mocked sources but breaks real HyperSync queries.
+// Build the event config by hand so topic0 stays the bare sighash. The shared
+// `EventRegistration` helper defaults topic0 to a placeholder that isn't a real
+// sighash, which is fine against mocked sources but breaks real HyperSync queries.
 // Block number and hash are needed so HyperSync returns block data for each item;
 // otherwise blockHashes harvested from items would crash on undefined `block`.
 let pairCreatedSelectedBlockFields = Utils.Set.fromArray(
@@ -38,7 +36,6 @@ let pairCreatedAbi: array<Internal.paramMeta> = [
 ]
 
 let pairCreatedEventConfig: Internal.evmEventConfig = {
-  id: pairCreatedEventId,
   contractName: "UniswapV2Factory",
   name: "PairCreated",
   paramsRawEventSchema: S.literal(%raw(`null`))
@@ -55,7 +52,7 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
     ~blockMaskFn=Evm.eventBlockFieldMask,
     ~transactionMaskFn=Evm.eventTransactionFieldMask,
   ),
-  sighash: pairCreatedTopic0,
+  sighash: Some(pairCreatedTopic0),
   topicCount: 3,
   paramsMetadata: pairCreatedAbi,
 }
@@ -66,18 +63,16 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   isWildcard: false,
   filterByAddresses: false,
   dependsOnAddresses: true,
-  addressFilterParamGroups: [],
   startBlock: None,
-  handler: None,
   contractRegister: None,
   fieldSelection: pairCreatedEventConfig.fieldSelection,
   resolvedWhere: {
-    topicSelections: [
+    topicFilters: [
       {
-        topic0: [pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe],
-        topic1: Values([]),
-        topic2: Values([]),
-        topic3: Values([]),
+        topic0: Values([pairCreatedTopic0->EvmTypes.Hex.fromStringUnsafe]),
+        topic1: Any,
+        topic2: Any,
+        topic3: Any,
       },
     ],
     startBlock: None,
@@ -96,6 +91,7 @@ let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Fact
 
 let makeSelection = (): FetchState.selection => {
   onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
+  onBlockRegistrations: [],
   dependsOnAddresses: true,
 }
 
@@ -111,6 +107,7 @@ let makeHyperSyncSource = () =>
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
     addressStore,
+    logger: Logger.makeInMemory(),
   })
 
 let makeRpcSource = () =>
@@ -128,7 +125,7 @@ let makeRpcSource = () =>
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   try await source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet=factorySet,
@@ -137,7 +134,7 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
     ~selection=makeSelection(),
     ~itemsTarget=Some(5000),
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SourceBlockHashes"}),
   ) catch {
   | Source.GetItemsError(err) =>
     let detail = switch err {
@@ -224,10 +221,8 @@ describe("Source.blockHashes integration - single-log range", () => {
   // the Uniswap V2 Factory. Confirmed by hand against eth.rpc.hypersync.xyz.
   let fromBlock = 17915919
   let toBlock = 17915919
-  let expectedBlockHash =
-    "0xfae821f07390dab171f9487d9c25e7289c5d363fcc24f03b98de295aa621dca5"
-  let expectedParentHash =
-    "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
+  let expectedBlockHash = "0xfae821f07390dab171f9487d9c25e7289c5d363fcc24f03b98de295aa621dca5"
+  let expectedParentHash = "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
 
   Async.itWithOptions(
     "HyperSync: returns exactly one parsed item and a block-page entry for the matching block",

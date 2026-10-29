@@ -1,7 +1,7 @@
 open Vitest
 
 // An indexer that finds an existing storage never runs `initialize` — it takes
-// the `resumeInitialState` path instead. The ClickHouse sink learns its table
+// the `resumeInitialState` path instead. ClickHouse learns its table
 // shapes at registration, so anything that only registers during initialize
 // leaves a resumed indexer unable to write a single row.
 
@@ -53,14 +53,18 @@ let feed = async (
   | Some(height) => source.resolveGetHeightOrThrow(height)
   | None => ()
   }
-  source.resolveGetItemsOrThrow(
-    [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
-    ~latestFetchedBlockNumber=blockNumber + 5,
-  )
+  await source.expectItemsQueries([
+    {
+      reply: Respond({
+        items: [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
+        latestFetchedBlockNumber: blockNumber + 5,
+      }),
+    },
+  ])
   await indexer.getBatchWritePromise()
 }
 
-describe("ClickHouse sink after a resume", () => {
+describe("ClickHouse after a resume", () => {
   scenario->Scenario.it(
     "writes through a restart that resumes the existing storage",
     ~sources=[{chain: 1}],
@@ -105,7 +109,7 @@ describe("ClickHouse sink after a resume", () => {
     },
   )
 
-  // The sink resolves an entity's current row as the one with the highest
+  // ClickHouse resolves an entity's current row as the one with the highest
   // checkpoint id, so a resume has to continue the sequence where the last run
   // left it — a reissued id ranks a new value no higher than the stale one it
   // replaces. Outside the reorg threshold no checkpoint row backs the ids, so
@@ -115,7 +119,7 @@ describe("ClickHouse sink after a resume", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       await feed(indexer, ~source=source(1), ~blockNumber=5, ~height=100000, ~count=1n)
-      await feed(indexer, ~source=source(1), ~blockNumber=6, ~count=2n)
+      await feed(indexer, ~source=source(1), ~blockNumber=12, ~count=2n)
 
       let resumed = await indexer.restart()
       await feed(resumed, ~source=source(1), ~blockNumber=20, ~count=3n)

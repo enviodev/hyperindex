@@ -7,6 +7,7 @@ type options = {
   chainId: ChainId.t,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   lowercaseAddresses: bool,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
@@ -25,6 +26,7 @@ let make = (
     url,
     chainId,
     onEventRegistrations,
+    ?onBlockRegistrations,
     lowercaseAddresses,
     addressStore,
     blockStore,
@@ -41,10 +43,12 @@ let make = (
   | Some(host) => host
   }
   let name = `RPC (${urlHost})`
+  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   let rpcClient = EvmRpcClient.make(
     ~url,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~onBlockRegistrations,
     ~checksumAddresses=!lowercaseAddresses,
     ~syncConfig,
     ~headers?,
@@ -55,7 +59,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks as _,
+    ~reorgableFrom,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -71,7 +75,10 @@ let make = (
     | None => knownHeight
     }
 
-    if selection.onEventRegistrations->Utils.Array.isEmpty {
+    if (
+      selection.onEventRegistrations->Utils.Array.isEmpty &&
+        selection.onBlockRegistrations->Utils.Array.isEmpty
+    ) {
       throw(
         Source.GetItemsError(
           UnsupportedSelection({
@@ -87,9 +94,11 @@ let make = (
         fromBlock,
         toBlockCeiling: toBlock,
         partitionId,
-        registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
+        ?reorgableFrom,
       },
       addressSet,
       blockStore,
@@ -99,7 +108,8 @@ let make = (
 
     // The cause travels as a real error so it reaches the logs the way every
     // other source's does. Absent where the message is the whole story.
-    let exn = result.providerMessage->Option.map(message => JsError.make(message)->JsExn.anyToExnInternal)
+    let exn =
+      result.providerMessage->Option.map(message => JsError.make(message)->JsExn.anyToExnInternal)
 
     let failedGettingItems = (decision): exn => Source.GetItemsError(
       FailedGettingItems({
@@ -134,6 +144,16 @@ let make = (
           }),
         ),
       )
+    | BehindHead =>
+      throw(
+        Source.SourceBehindHead({
+          blockNumber: switch result.blockNumber {
+          | Some(blockNumber) => blockNumber
+          | None => missing("blockNumber")
+          },
+          requestStats: result.requestStats,
+        }),
+      )
     | SuggestedToBlock =>
       throw(
         failedGettingItems(
@@ -164,7 +184,9 @@ let make = (
 
     let parsingTimeRef = Performance.now()
     let parsedQueueItems =
-      result.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      result.eventItems
+      ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
+      ->Array.concat(result.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
     {
@@ -185,9 +207,11 @@ let make = (
   let getBlockHashes = async (~blockNumbers, ~logger as _) => {
     let (result, pageBlockStore) = await rpcClient.getBlockHashes(blockNumbers)
     {
-      Source.result: switch result.message {
-      | None => Ok(pageBlockStore)
-      | Some(message) => Error(JsError.make(message)->JsExn.anyToExnInternal)
+      Source.result: switch (result.message, result.behindHeadBlock) {
+      | (None, _) => Ok(pageBlockStore)
+      | (Some(_), Some(blockNumber)) =>
+        Error(Source.SourceBehindHead({blockNumber, requestStats: result.requestStats}))
+      | (Some(message), None) => Error(JsError.make(message)->JsExn.anyToExnInternal)
       },
       requestStats: result.requestStats,
     }

@@ -8,120 +8,11 @@ use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
 use crate::address_store::{AddressStore, Emitter, SetCache, StoreInner};
-use crate::evm_hypersync_source::selection::TopicSelectionInput;
+use crate::evm_hypersync_source::topic_filter::TopicFilters;
 use crate::evm_hypersync_source::types::{
     event_params_tape, Log, OnEventRegistrationInput, ParamMeta,
 };
 use crate::js_value::JsTape;
-
-/// One topic position's constraint, resolved from a registration's `where`.
-enum TopicConstraint {
-    /// Unfiltered — matches any value.
-    Any,
-    /// Matches when the log's topic is one of these values.
-    Values(Vec<[u8; 32]>),
-    /// A `ContractAddresses` marker: the topic must be the padded form of an
-    /// address this partition holds for the registration's own contract, at or
-    /// before the log's block. Ownership is the partition set's answer — the
-    /// query materialised this position from that same set, so a sibling
-    /// selection's log carrying another partition's address must not fan out
-    /// here. The store answers only the temporal half, dropping a value
-    /// registered after the log's block that a merged partition over-fetched.
-    ContractAddresses,
-}
-
-/// The 20 address bytes of a padded indexed topic, or `None` when the topic's
-/// upper bytes aren't zero — then it isn't an address at all.
-fn topic_address(topic: &LogArgument) -> Option<&[u8]> {
-    let bytes: &[u8; 32] = topic;
-    bytes[..12].iter().all(|b| *b == 0).then(|| &bytes[12..])
-}
-
-/// A registration's static topic constraints — its resolved `where` in DNF:
-/// the outer Vec is an OR of alternatives, each alternative constrains the
-/// four topic positions. A registration with no `where` carries one all-`Any`
-/// alternative. (A `where: false` registration resolves to an empty DNF, but
-/// it's dropped at registration and never reaches routing — see
-/// `HandlerRegister`; an empty DNF here would just match nothing.)
-struct TopicFilters(Vec<[TopicConstraint; 4]>);
-
-impl TopicFilters {
-    fn parse(topic_selections: &[TopicSelectionInput]) -> Result<Self> {
-        let parse_values = |values: &[String]| -> Result<Vec<[u8; 32]>> {
-            values
-                .iter()
-                .map(|v| {
-                    LogArgument::decode_hex(v)
-                        .map(|arg| **arg)
-                        .with_context(|| format!("decode topic filter value {v}"))
-                })
-                .collect()
-        };
-        // topic1..3 cross the boundary as `Option<Vec<String>>`: `None` is a
-        // `ContractAddresses` marker, `Some([])` is unfiltered, and a non-empty
-        // list is a static value set. topic0 is always a concrete value set.
-        let parse_position = |input: Option<&Vec<String>>| -> Result<TopicConstraint> {
-            match input {
-                None => Ok(TopicConstraint::ContractAddresses),
-                Some(values) if values.is_empty() => Ok(TopicConstraint::Any),
-                Some(values) => Ok(TopicConstraint::Values(parse_values(values)?)),
-            }
-        };
-        let alternatives = topic_selections
-            .iter()
-            .map(|ts| {
-                Ok([
-                    parse_position(Some(&ts.topic0))?,
-                    parse_position(ts.topic1.as_ref())?,
-                    parse_position(ts.topic2.as_ref())?,
-                    parse_position(ts.topic3.as_ref())?,
-                ])
-            })
-            .collect::<Result<_>>()?;
-        Ok(Self(alternatives))
-    }
-
-    /// Whether a log's topics satisfy any DNF alternative. `ContractAddresses`
-    /// markers resolve against the partition's set under `contract_name`, then
-    /// against the store for the `effectiveStartBlock` gate. A client-filtered
-    /// contract (`force_wildcard`) has no addresses in the set, so there the
-    /// store answers ownership too.
-    fn matches(
-        &self,
-        topics: &[Option<LogArgument>],
-        contract_idx: u32,
-        block_number: i64,
-        force_wildcard: bool,
-        cache: &SetCache,
-        store: &StoreInner,
-    ) -> bool {
-        // No explicit empty-DNF guard: `any` over zero alternatives is already
-        // `false`. (An empty DNF is `where: false`, which is dropped at
-        // registration and never reaches here.)
-        self.0.iter().any(|alternative| {
-            alternative
-                .iter()
-                .enumerate()
-                .all(|(position, constraint)| {
-                    let topic = match topics.get(position).and_then(Option::as_ref) {
-                        Some(topic) => topic,
-                        // An absent topic satisfies only an unconstrained position.
-                        None => return matches!(constraint, TopicConstraint::Any),
-                    };
-                    match constraint {
-                        TopicConstraint::Any => true,
-                        TopicConstraint::Values(values) => values.iter().any(|v| v == &***topic),
-                        TopicConstraint::ContractAddresses => {
-                            topic_address(topic).is_some_and(|key| {
-                                (force_wildcard || cache.owns(key, contract_idx))
-                                    && store.is_indexed_at(key, contract_idx, block_number)
-                            })
-                        }
-                    }
-                })
-        })
-    }
-}
 
 /// Everything needed to match a log against one registration and decode it
 /// under that registration's own ABI declaration. Registrations sharing an
@@ -130,7 +21,6 @@ impl TopicFilters {
 /// differently.
 struct OnEventRegistration {
     index: i64,
-    sighash: [u8; 32],
     topic_count: u8,
     contract_name: String,
     /// This registration's contract in the chain's address store, resolved once
@@ -146,7 +36,12 @@ struct OnEventRegistration {
 
 impl OnEventRegistration {
     fn parse(ep: &OnEventRegistrationInput, store: &StoreInner) -> Result<Self> {
-        let sighash = LogArgument::decode_hex(&ep.sighash).context("decode sighash hex")?;
+        let sighash = ep
+            .sighash
+            .as_ref()
+            .map(|sighash| LogArgument::decode_hex(sighash).map(|sighash| **sighash))
+            .transpose()
+            .context("decode sighash hex")?;
         let topic_count: u8 =
             u8::try_from(ep.topic_count).context("topic_count out of u8 range")?;
         anyhow::ensure!(
@@ -161,23 +56,21 @@ impl OnEventRegistration {
         })?;
         Ok(Self {
             index: ep.index,
-            sighash: **sighash,
             topic_count,
             contract_name: ep.contract_name.clone(),
             contract_idx,
             is_wildcard: ep.is_wildcard,
             start_block: ep.start_block,
-            topic_filters: TopicFilters::parse(&ep.topic_selections)
-                .context("parse topic filters")?,
+            topic_filters: TopicFilters::parse(ep)?,
             params: ep.params.clone(),
-            decoder: build_event_decoder(**sighash, topic_count, &ep.params)
-                .context("build decoder")?,
+            decoder: build_event_decoder(sighash, &ep.params).context("build decoder")?,
         })
     }
 
-    /// Whether a log belongs to this registration: same event signature
-    /// (topic0 + topic count), at or after the registration's own start block,
-    /// an allowed emitter, and the registration's topic filters.
+    /// Whether a log belongs to this registration: the event's topic count, at
+    /// or after the registration's own start block, an allowed emitter, and
+    /// the registration's topic filters — topic0 among them, pinned to the
+    /// signature unless the event is anonymous.
     ///
     /// Emitter rules. A wildcard registration accepts any address. A
     /// contract-bound one accepts only an address this partition's set holds for
@@ -188,7 +81,6 @@ impl OnEventRegistration {
     /// addresses in the query, so there the store answers ownership on its own.
     fn matches(
         &self,
-        topic0: &[u8; 32],
         topic_count: u8,
         topics: &[Option<LogArgument>],
         address: &Emitter,
@@ -196,15 +88,9 @@ impl OnEventRegistration {
         cache: &SetCache,
         store: &StoreInner,
     ) -> bool {
-        self.sighash == *topic0
-            && self.topic_count == topic_count
-            && address.matches_registration(
-                store,
-                self.contract_idx,
-                self.is_wildcard,
-                self.start_block,
-                force_wildcard,
-            )
+        // Topic filters before the emitter: topic0 rejects most of a
+        // selection's registrations with one comparison.
+        self.topic_count == topic_count
             && self.topic_filters.matches(
                 topics,
                 self.contract_idx,
@@ -212,6 +98,13 @@ impl OnEventRegistration {
                 force_wildcard,
                 cache,
                 store,
+            )
+            && address.matches_registration(
+                store,
+                self.contract_idx,
+                self.is_wildcard,
+                self.start_block,
+                force_wildcard,
             )
     }
 }
@@ -373,8 +266,8 @@ impl SelectionDecoder {
     /// happens to decode: a wildcard registration routinely fetches foreign
     /// same-signature logs whose indexed split its own declaration can't read,
     /// so those are dropped, not surfaced. Only a structurally malformed log
-    /// (missing topic0, more topics than fit) is an error. An empty result
-    /// means the log routes nowhere and is dropped by the caller.
+    /// (more topics than fit) is an error. An empty result means the log routes
+    /// nowhere and is dropped by the caller.
     fn route_and_decode(
         &self,
         topics: &[Option<LogArgument>],
@@ -382,11 +275,6 @@ impl SelectionDecoder {
         address: &Emitter,
         store: &StoreInner,
     ) -> Result<Vec<RoutedEvent>> {
-        let topic0 = topics
-            .first()
-            .context("get topic0")?
-            .as_ref()
-            .context("topic0 is null")?;
         let topic_count: u8 = topics
             .iter()
             .rposition(|t| t.is_some())
@@ -398,7 +286,6 @@ impl SelectionDecoder {
         for sel in &self.registrations {
             let reg = &sel.registration;
             if !reg.matches(
-                topic0,
                 topic_count,
                 topics,
                 address,
@@ -439,13 +326,9 @@ pub(crate) struct RoutedEvent {
 /// from a signature string, so an event surfaced to handlers under a different
 /// `name:` (display name != on-chain name) still matches its real log (issue
 /// #1285). The event name plays no part in decoding — only the param types do.
-/// An anonymous event has no signature topic, only one per indexed param, and
-/// its `sighash` is the value its first indexed param is matched on.
-fn build_event_decoder(
-    sighash: [u8; 32],
-    topic_count: u8,
-    params: &[ParamMeta],
-) -> Result<DynSolEvent> {
+/// Without a sighash the event is anonymous and topic0 decodes as its first
+/// indexed param.
+fn build_event_decoder(sighash: Option<[u8; 32]>, params: &[ParamMeta]) -> Result<DynSolEvent> {
     let mut indexed = Vec::new();
     let mut body = Vec::new();
     for param in params {
@@ -457,8 +340,8 @@ fn build_event_decoder(
             body.push(ty);
         }
     }
-    let topic0 = (usize::from(topic_count) != indexed.len()).then(|| B256::from(sighash));
-    DynSolEvent::new(topic0, indexed, DynSolType::Tuple(body)).context("construct event decoder")
+    DynSolEvent::new(sighash.map(B256::from), indexed, DynSolType::Tuple(body))
+        .context("construct event decoder")
 }
 
 #[cfg(test)]
@@ -466,6 +349,7 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::evm_store;
     use crate::address_store::Owners;
+    use crate::evm_hypersync_source::topic_filter::TopicFilterInput;
     use crate::js_value::test_value::JsValue;
 
     const VALID_SIGHASH: &str =
@@ -529,13 +413,13 @@ mod tests {
         }
     }
 
-    // A no-`where` selection for `sighash`: one alternative that pins topic0
-    // and leaves the rest unconstrained (the shape `LogSelection` builds for a
-    // registration without a `where`). An empty `topic_selections` would mean
+    // The topic filters of a registration without a `where`: one alternative
+    // that pins topic0 to `sighash` and leaves the rest unconstrained (the
+    // shape `LogSelection` builds). An empty `topic_filters` would mean
     // `where: false` (match nothing), so tests that expect a match use this.
-    fn no_filter_selection(sighash: &str) -> Vec<TopicSelectionInput> {
-        vec![TopicSelectionInput {
-            topic0: vec![sighash.to_string()],
+    fn no_where_filters(sighash: &str) -> Vec<TopicFilterInput> {
+        vec![TopicFilterInput {
+            topic0: Some(vec![sighash.to_string()]),
             topic1: Some(vec![]),
             topic2: Some(vec![]),
             topic3: Some(vec![]),
@@ -552,14 +436,14 @@ mod tests {
     ) -> OnEventRegistrationInput {
         OnEventRegistrationInput {
             index,
-            sighash: sighash.to_string(),
+            sighash: Some(sighash.to_string()),
             topic_count: 1,
             event_name: "E".to_string(),
             contract_name: contract_name.to_string(),
             is_wildcard,
             depends_on_addresses: false,
             start_block: None,
-            topic_selections: no_filter_selection(sighash),
+            topic_filters: no_where_filters(sighash),
             block_fields: vec![],
             transaction_fields: vec![],
             params: vec![pm("value", "uint256", false)],
@@ -672,14 +556,14 @@ mod tests {
         let core = Decoder::from_registrations(
             &[OnEventRegistrationInput {
                 index: 7,
-                sighash: real_sighash.clone(),
+                sighash: Some(real_sighash.clone()),
                 topic_count: 1,
                 event_name: "ApprovalRenamed".to_string(),
                 contract_name: "TestContract".to_string(),
                 is_wildcard: false,
                 depends_on_addresses: false,
                 start_block: None,
-                topic_selections: no_filter_selection(&real_sighash),
+                topic_filters: no_where_filters(&real_sighash),
                 block_fields: vec![],
                 transaction_fields: vec![],
                 params: vec![pm("owner", "address", false), pm("value", "uint256", false)],
@@ -722,68 +606,97 @@ mod tests {
         );
     }
 
-    // Balancer's anonymous `LOG_CALL(bytes4 indexed sig, address indexed
-    // caller, bytes data)`: no signature topic, so its first indexed param is
-    // topic0 and a registration matches it on that value. One topic per
-    // indexed param is what marks it anonymous.
-    #[test]
-    fn decodes_an_anonymous_event_from_all_of_its_topics() {
-        use alloy_dyn_abi::DynSolValue;
-        use alloy_primitives::hex;
+    /// `Note(bytes4 indexed sig, address indexed guy, uint256 wad) anonymous`,
+    /// registered for the logs whose `sig` is `sig`.
+    fn anonymous_note_reg(index: i64, sig: &str) -> OnEventRegistrationInput {
+        let mut reg = value_reg(index, "C", true, sig);
+        reg.sighash = None;
+        reg.topic_count = 2;
+        reg.params = vec![
+            pm("sig", "bytes4", true),
+            pm("guy", "address", true),
+            pm("wad", "uint256", false),
+        ];
+        reg
+    }
 
-        let selector = format!("0x34e19907{}", "00".repeat(28));
-        let caller = format!("0x{}{}", "00".repeat(12), "cc".repeat(20));
+    #[test]
+    fn anonymous_event_routes_by_its_topic0_filter_and_decodes_it_as_the_first_param() {
+        let file_sig = format!("0x29ae8114{}", "0".repeat(56));
+        let slip_sig = format!("0x7cdd3fde{}", "0".repeat(56));
+        // A regular event with as many topics, whose signature no filter names.
+        let mut regular = value_reg(2, "C", true, VALID_SIGHASH);
+        regular.topic_count = 2;
+        regular.params = indexed_address_params();
         let core = Decoder::from_registrations(
-            &[OnEventRegistrationInput {
-                index: 3,
-                sighash: selector.clone(),
-                topic_count: 2,
-                event_name: "LOG_CALL_34e19907".to_string(),
-                contract_name: "Pool".to_string(),
-                is_wildcard: false,
-                depends_on_addresses: false,
-                start_block: None,
-                topic_selections: no_filter_selection(&selector),
-                block_fields: vec![],
-                transaction_fields: vec![],
-                params: vec![
-                    pm("sig", "bytes4", true),
-                    pm("caller", "address", true),
-                    pm("data", "bytes", false),
-                ],
-            }],
+            &[
+                anonymous_note_reg(0, &file_sig),
+                anonymous_note_reg(1, &slip_sig),
+                regular,
+            ],
             false,
-            &store(&["Pool"], Some("Pool")),
+            &store(&["C"], None),
         )
         .unwrap();
-        let data =
-            DynSolValue::Tuple(vec![DynSolValue::Bytes(vec![0x12, 0x34])]).abi_encode_params();
-        let log = Log {
-            topics: vec![Some(selector.clone()), Some(caller)],
-            data: Some(format!("0x{}", hex::encode(data))),
-            ..Default::default()
+        let decoder = selection_of(&core, &[0, 1, 2], &Default::default()).unwrap();
+        let routed = |topic0: &str| {
+            route(
+                &decoder,
+                &Log {
+                    topics: vec![Some(topic0.to_string()), Some(addr_topic("aa"))],
+                    data: value_log(VALID_SIGHASH).data,
+                    ..Default::default()
+                },
+                &unowned(),
+            )
+            .iter()
+            .map(|routed| (routed.index, JsValue::of(&routed.params)))
+            .collect::<Vec<_>>()
         };
-
-        let decoder = selection_of(&core, &[3], &Default::default()).unwrap();
-        let routed: Vec<_> = route(&decoder, &log, &owned(0))
-            .into_iter()
-            .map(|r| (r.index, JsValue::of(&r.params)))
-            .collect();
         assert_eq!(
-            routed,
-            vec![(
-                3,
-                JsValue::obj([
-                    // A fixed-size value crosses as its whole word, as any
-                    // indexed bytesN does.
-                    ("sig", JsValue::str(&selector)),
-                    (
-                        "caller",
-                        JsValue::str("0xcccccccccccccccccccccccccccccccccccccccc")
-                    ),
-                    ("data", JsValue::str("0x1234")),
-                ])
-            )]
+            (
+                routed(&file_sig),
+                routed(VALID_SIGHASH),
+                routed(&format!("0xdeadbeef{}", "0".repeat(56))),
+            ),
+            (
+                vec![(
+                    0,
+                    JsValue::obj([
+                        ("sig", JsValue::str("0x29ae8114")),
+                        (
+                            "guy",
+                            JsValue::str("0x00000000000000000000000000000000000000aa")
+                        ),
+                        ("wad", JsValue::uint(1u64)),
+                    ])
+                )],
+                vec![(
+                    2,
+                    JsValue::obj([
+                        (
+                            "who",
+                            JsValue::str("0x00000000000000000000000000000000000000aa")
+                        ),
+                        ("value", JsValue::uint(1u64)),
+                    ])
+                )],
+                vec![],
+            )
+        );
+    }
+
+    #[test]
+    fn anonymous_registration_must_filter_topic0_by_values() {
+        let mut reg = anonymous_note_reg(0, VALID_SIGHASH);
+        reg.topic_filters[0].topic0 = Some(vec![]);
+        let err = Decoder::from_registrations(&[reg], false, &store(&["C"], None))
+            .err()
+            .unwrap();
+        assert_eq!(
+            format!("{err:#}"),
+            "parse registration for E: Registration 0 of the anonymous event E must filter \
+             topic0 by values in every alternative"
         );
     }
 
@@ -947,7 +860,7 @@ mod tests {
         // sharing a signature with a broad sibling that fetches the log — it
         // must match nothing rather than everything.
         let mut disabled = value_reg(0, "Disabled", true, VALID_SIGHASH);
-        disabled.topic_selections = vec![];
+        disabled.topic_filters = vec![];
         let sibling = value_reg(1, "Live", true, VALID_SIGHASH);
 
         let core = Decoder::from_registrations(
@@ -977,8 +890,8 @@ mod tests {
     fn static_topic_filters_reapplied_per_registration() {
         let topic1_a = addr_topic("aa");
         let topic1_b = addr_topic("bb");
-        let selection = |topic1| TopicSelectionInput {
-            topic0: vec![VALID_SIGHASH.to_string()],
+        let selection = |topic1| TopicFilterInput {
+            topic0: Some(vec![VALID_SIGHASH.to_string()]),
             topic1,
             topic2: Some(vec![]),
             topic3: Some(vec![]),
@@ -988,11 +901,11 @@ mod tests {
         let mut filtered_a = value_reg(0, "WA", true, VALID_SIGHASH);
         filtered_a.topic_count = 2;
         filtered_a.params = indexed_address_params();
-        filtered_a.topic_selections = vec![selection(Some(vec![topic1_a.clone()]))];
+        filtered_a.topic_filters = vec![selection(Some(vec![topic1_a.clone()]))];
         let mut filtered_b = value_reg(1, "WB", true, VALID_SIGHASH);
         filtered_b.topic_count = 2;
         filtered_b.params = indexed_address_params();
-        filtered_b.topic_selections = vec![selection(Some(vec![topic1_b]))];
+        filtered_b.topic_filters = vec![selection(Some(vec![topic1_b]))];
 
         let core = Decoder::from_registrations(
             &[filtered_a, filtered_b],
@@ -1015,8 +928,8 @@ mod tests {
         let mut reg = value_reg(index, contract, true, VALID_SIGHASH);
         reg.topic_count = 2;
         reg.params = indexed_address_params();
-        reg.topic_selections = vec![TopicSelectionInput {
-            topic0: vec![VALID_SIGHASH.to_string()],
+        reg.topic_filters = vec![TopicFilterInput {
+            topic0: Some(vec![VALID_SIGHASH.to_string()]),
             topic1: None,
             topic2: Some(vec![]),
             topic3: Some(vec![]),
@@ -1047,9 +960,9 @@ mod tests {
             pm("to", "address", true),
             pm("value", "uint256", false),
         ];
-        let sighash = || vec![VALID_SIGHASH.to_string()];
-        reg.topic_selections = if and_group {
-            vec![TopicSelectionInput {
+        let sighash = || Some(vec![VALID_SIGHASH.to_string()]);
+        reg.topic_filters = if and_group {
+            vec![TopicFilterInput {
                 topic0: sighash(),
                 topic1: None,
                 topic2: None,
@@ -1057,13 +970,13 @@ mod tests {
             }]
         } else {
             vec![
-                TopicSelectionInput {
+                TopicFilterInput {
                     topic0: sighash(),
                     topic1: None,
                     topic2: Some(vec![]),
                     topic3: Some(vec![]),
                 },
-                TopicSelectionInput {
+                TopicFilterInput {
                     topic0: sighash(),
                     topic1: Some(vec![]),
                     topic2: None,

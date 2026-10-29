@@ -8,9 +8,49 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
+let hasContractRegister = (item: Internal.item) =>
+  switch item {
+  | Event({onEventRegistration: {contractRegister: Some(_)}}) => true
+  | Block({onBlockRegistration: {contractRegister: ?Some(_)}}) => true
+  | Event(_) | Block(_) => false
+  }
+
+let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) =>
+  switch item {
+  | Event({onEventRegistration}) =>
+    let contractRegister = switch onEventRegistration {
+    | {contractRegister: Some(contractRegister)} => contractRegister
+    | {contractRegister: None, eventConfig: {name: eventName}} =>
+      // Unexpected case, since we should pass only events with contract register to this function
+      JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
+    }
+    contractRegister({
+      event: item->Ecosystem.getItemEvent(~ecosystem=runtime->HandlerRuntime.ecosystem),
+      context: runtime.contractRegisterContext,
+    })
+  | Block({blockNumber, onBlockRegistration, ?block}) =>
+    let contractRegister = switch onBlockRegistration {
+    | {contractRegister: ?Some(contractRegister)} => contractRegister
+    | {name} => JsError.throwWithMessage("Contract register is not set for block handler " ++ name)
+    }
+    let ecosystem = runtime->HandlerRuntime.ecosystem
+    let context = runtime.contractRegisterContext
+    // A block handler's register pass gets what its handler gets, the block (or
+    // slot), with the register context in place of the handler's.
+    contractRegister(
+      switch ecosystem.name {
+      | Svm => {slot: blockNumber, ?block, context}
+      | Evm | Fuel => {
+          block: block->Option.getOr(Ecosystem.makeKeyOnlyBlock(~blockNumber, ~ecosystem)),
+          context,
+        }
+      },
+    )
+  }
+
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
-  ~config: Config.t,
+  ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
   // contractRegister handlers can read event.transaction and event.block, so
@@ -24,86 +64,52 @@ let runContractRegistersOrThrow = async (
     ~shouldChecksum=chainState->ChainState.shouldChecksum,
   )
 
+  // Every run of the response adds into the same registrations, in call order.
   let registrations: array<AddressStore.registration> = []
+  let chainLogger = chainState->ChainState.logger
+  let ecosystem = runtime->HandlerRuntime.ecosystem
+  let isSubgraph = Env.subgraphMode.contents
 
-  let onRegister = (~item: Internal.item, ~contractAddress, ~contractName) => {
-    registrations->Array.push({
-      address: contractAddress,
-      contractName,
-      registrationBlock: item->Internal.getItemBlockNumber,
-      creationRound: switch item {
-      // A block handler is one of its block's own triggers.
-      | Block(_) => 1
-      | Event(_) => chainState->ChainState.fetchState->FetchState.creationRoundOfRegistration(~item)
-      },
-    })
-  }
-
-  let promises = []
-  for idx in 0 to itemsWithContractRegister->Array.length - 1 {
-    let item = itemsWithContractRegister->Array.getUnsafe(idx)
-    let (run, errorMessage) = switch item {
-    | Event({onEventRegistration}) =>
-      let contractRegister = switch onEventRegistration {
-      | {contractRegister: Some(contractRegister)} => contractRegister
-      | {contractRegister: None, eventConfig: {name: eventName}} =>
-        // Unexpected case, since we should pass only events with contract register to this function
-        JsError.throwWithMessage("Contract register is not set for event " ++ eventName)
-      }
-      (
-        params => contractRegister(ContractRegisterContext.getContractRegisterArgs(params)),
-        "Event contractRegister failed, please fix the error to keep the indexer running smoothly",
-      )
-    | Block({onBlockRegistration: {contractRegister}}) => (
-        params => contractRegister(ContractRegisterContext.getBlockContractRegisterArgs(params)),
-        "Block handler contractRegister failed, please fix the error to keep the indexer running smoothly",
-      )
-    | Block({onBlockRegistration: {name}}) =>
-      JsError.throwWithMessage("Contract register is not set for block handler " ++ name)
-    }
-
-    // Catch sync and async errors
-    try {
-      let params: ContractRegisterContext.contractRegisterParams = {
-        item,
-        onRegister,
-        config,
-        isResolved: false,
-      }
-      let result = run(params)
-
-      // Even though `contractRegister` always returns a promise,
-      // in the ReScript type, but it might return a non-promise value for TS API.
-      if result->Utils.Promise.isCatchable {
-        promises->Array.push(
-          result
-          ->Promise.thenResolve(r => {
-            params.isResolved = true
-            r
-          })
-          ->Promise.catch(exn => {
-            params.isResolved = true
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg=errorMessage,
-              ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
+  let _ = await itemsWithContractRegister
+  ->Array.map(async item => {
+    let run: RunScope.contractRegisterRun = {
+      item,
+      isResolved: false,
+      chainLogger,
+      ecosystem,
+      registrations,
+      creationRound: ?(
+        isSubgraph
+          ? Some(
+              switch item {
+              // A block handler is one of its block's own triggers.
+              | Block(_) => 1
+              | Event(_) =>
+                chainState->ChainState.fetchState->FetchState.creationRoundOfRegistration(~item)
+              },
             )
-          }),
-        )
-      } else {
-        params.isResolved = true
-      }
-    } catch {
-    | exn =>
-      exn->ErrorHandling.mkLogAndRaise(
-        ~msg=errorMessage,
-        ~logger=Ecosystem.getItemLogger(item, ~ecosystem=config.ecosystem),
-      )
+          : None
+      ),
     }
-  }
-
-  if promises->Utils.Array.notEmpty {
-    let _ = await Promise.all(promises)
-  }
+    let scope = RunScope.ContractRegister(run)
+    switch await RunScope.enter(scope, invokeContractRegister, runtime, item) {
+    | exception exn =>
+      scope->RunScope.resolve
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg=switch item {
+        | Event(
+            _,
+          ) => "Event contractRegister failed, please fix the error to keep the indexer running smoothly"
+        | Block(
+            _,
+          ) => "Block handler contractRegister failed, please fix the error to keep the indexer running smoothly"
+        },
+        ~logger=run->RunScope.contractRegisterLogger,
+      )
+    | () => scope->RunScope.resolve
+    }
+  })
+  ->Promise.all
 
   registrations
 }
@@ -148,7 +154,7 @@ let maxResponseBlockPasses = 50_000
 let runRegisterPassesOrThrow = async (
   ~eventItems: array<Internal.item>,
   ~blockItems: array<Internal.item>,
-  ~config: Config.t,
+  ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
   let items = mergeRegisterItems(~eventItems, ~blockItems)
@@ -158,7 +164,7 @@ let runRegisterPassesOrThrow = async (
     let chunk = items->Array.slice(~start=start.contents, ~end=start.contents + blockRegisterChunk)
     registrations
     ->Array.pushMany(
-      await runContractRegistersOrThrow(~itemsWithContractRegister=chunk, ~config, ~chainState),
+      await runContractRegistersOrThrow(~itemsWithContractRegister=chunk, ~runtime, ~chainState),
     )
     ->ignore
     start := start.contents + blockRegisterChunk
@@ -182,7 +188,7 @@ let sortRegistrations = (registrations: array<AddressStore.registration>) =>
 let runResponsePassesOrThrow = async (
   ~eventItems: array<Internal.item>,
   ~through,
-  ~config: Config.t,
+  ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
   let registrations = []
@@ -217,18 +223,22 @@ let runResponsePassesOrThrow = async (
     let windowRegistrations = await runRegisterPassesOrThrow(
       ~eventItems=eventItems->Array.slice(~start=eventIdx.contents, ~end=eventEnd),
       ~blockItems,
-      ~config,
+      ~runtime,
       ~chainState,
     )
-    Logging.trace({
-      "msg": "Ran register passes with block passes",
-      "after": after.contents,
-      "through": covered,
-      "blockPasses": blockItems->Array.length,
-      "eventPasses": eventEnd - eventIdx.contents,
-      "registrations": windowRegistrations->Array.length,
-      "ms": Date.now() -. startedAt,
-    })
+    chainState
+    ->ChainState.logger
+    ->Logger.trace(
+      "Ran register passes with block passes",
+      ~params={
+        "after": after.contents,
+        "through": covered,
+        "blockPasses": blockItems->Array.length,
+        "eventPasses": eventEnd - eventIdx.contents,
+        "registrations": windowRegistrations->Array.length,
+        "ms": Date.now() -. startedAt,
+      },
+    )
     registrations->Array.pushMany(windowRegistrations)->ignore
     eventIdx := eventEnd
     switch covered {
@@ -323,6 +333,7 @@ let cutAtRegisterLimit = (items: array<Internal.item>, ~latestFetchedBlock, ~lim
 let rec onQueryResponse = async (
   state: IndexerState.t,
   {chainId, response, query}: partitionQueryResponse,
+  ~runtime,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -353,51 +364,60 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
-    let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
-      let eventItem = item->Internal.castUnsafeEventItem
-      eventItem.onEventRegistration.contractRegister !== None ? count + 1 : count
-    })
+    let numContractRegisterEvents =
+      parsedQueueItems->Array.reduce(0, (count, item) =>
+        item->hasContractRegister ? count + 1 : count
+      )
     if numContractRegisterEvents === 0 {
-      Logging.trace({
-        "msg": "Finished querying",
-        "chainId": chainId,
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": parsedQueueItems->Array.length,
-      })
+      chainState
+      ->ChainState.logger
+      ->Logger.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": parsedQueueItems->Array.length,
+        },
+      )
     } else {
-      Logging.trace({
-        "msg": "Finished querying",
-        "chainId": chainId,
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": parsedQueueItems->Array.length,
-        "numContractRegisterEvents": numContractRegisterEvents,
-      })
+      chainState
+      ->ChainState.logger
+      ->Logger.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": parsedQueueItems->Array.length,
+          "numContractRegisterEvents": numContractRegisterEvents,
+        },
+      )
     }
 
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockStore, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
-    | ReorgDetected(reorgDetected) => {
+    | ReorgDetected({scannedBlock, receivedBlock}) => {
         chainState
         ->ChainState.logger
-        ->Logging.childInfo(
-          reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-            ~shouldRollbackOnReorg=chainState->ChainState.shouldRollbackOnReorg,
-          ),
+        ->Logger.info(
+          `Blockchain reorg detected. ${chainState->ChainState.shouldRollbackOnReorg
+              ? "Initiating indexer rollback"
+              : "NOT initiating indexer rollback due to configuration"}.`,
+          ~params={
+            "blockNumber": scannedBlock.blockNumber,
+            "indexedBlockHash": scannedBlock.blockHash,
+            "receivedBlockHash": receivedBlock.blockHash,
+          },
         )
-        chainState->ChainState.recordReorgDetected(
-          ~blockNumber=reorgDetected.scannedBlock.blockNumber,
-        )
+        chainState->ChainState.recordReorgDetected(~blockNumber=scannedBlock.blockNumber)
 
         // Must agree with the `reportOnly` flag registerReorgGuard passed to
         // the merge: a discarded page (rollback mode) needs the rollback to
         // actually happen, or the stale stored hash re-reports forever.
         if chainState->ChainState.shouldRollbackOnReorg {
-          Some(reorgDetected.scannedBlock.blockNumber)
+          Some(scannedBlock.blockNumber)
         } else {
           None
         }
@@ -451,8 +471,7 @@ let rec onQueryResponse = async (
       let itemsWithContractRegister = []
       for idx in 0 to newItems->Array.length - 1 {
         let item = newItems->Array.getUnsafe(idx)
-        let eventItem = item->Internal.castUnsafeEventItem
-        if eventItem.onEventRegistration.contractRegister !== None {
+        if item->hasContractRegister {
           itemsWithContractRegister->Array.push(item)
         }
       }
@@ -533,15 +552,13 @@ let rec onQueryResponse = async (
           } else {
             (newItems, itemsWithContractRegister, latestFetchedBlockNumber)
           }
-          switch await runResponsePassesOrThrow(
-            ~eventItems,
-            ~through,
-            ~config=state->IndexerState.config,
-            ~chainState,
-          ) {
+          switch await runResponsePassesOrThrow(~eventItems, ~through, ~runtime, ~chainState) {
           | exception exn =>
             finish()
-            IndexerState.errorExit(state, exn->ErrorHandling.make)
+            IndexerState.errorExit(
+              state,
+              exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
+            )
           | (newRegistrations, blockRegisterThrough) =>
             chainState->ChainState.releaseExtraBudget(~items=extra)
             proceed(~newRegistrations, ~blockRegisterThrough?, ~newItems, ~latestFetchedBlock)
@@ -555,10 +572,14 @@ let rec onQueryResponse = async (
         chainState->ChainState.holdExtraBudget(~items=extra)
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
-          ~config=state->IndexerState.config,
+          ~runtime,
           ~chainState,
         ) {
-        | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+        | exception exn =>
+          IndexerState.errorExit(
+            state,
+            exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
+          )
         | newRegistrations =>
           chainState->ChainState.releaseExtraBudget(~items=extra)
           proceed(~newRegistrations)
@@ -602,10 +623,17 @@ and applyQueryResponse = (
   }
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
-  if state->IndexerState.exitAfterFirstEventBlock && newItems->Array.length > 0 {
-    chainState->ChainState.setEndBlockToFirstEvent(
-      ~blockNumber=newItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
-    )
+  if state->IndexerState.exitAfterFirstEventBlock {
+    switch newItems->Array.find(item =>
+      switch item {
+      | Internal.Event(_) => true
+      | Block(_) => false
+      }
+    ) {
+    | Some(item) =>
+      chainState->ChainState.setEndBlockToFirstEvent(~blockNumber=item->Internal.getItemBlockNumber)
+    | None => ()
+    }
   }
 }
 
@@ -635,6 +663,7 @@ let finishWaitingForNewBlock = (
 let catchUpBlockRegisters = async (
   state: IndexerState.t,
   ~chainId,
+  ~runtime,
   ~stateId,
   ~scheduleFetch,
   ~scheduleProcessing,
@@ -649,26 +678,27 @@ let catchUpBlockRegisters = async (
     | Some((blockItems, through)) =>
       let (_, finish) = chainState->ChainState.queueBlockRegisterRun
       let startedAt = Date.now()
-      switch await runRegisterPassesOrThrow(
-        ~eventItems=[],
-        ~blockItems,
-        ~config=state->IndexerState.config,
-        ~chainState,
-      ) {
+      switch await runRegisterPassesOrThrow(~eventItems=[], ~blockItems, ~runtime, ~chainState) {
       | exception exn =>
         finish()
-        IndexerState.errorExit(state, exn->ErrorHandling.make)
+        IndexerState.errorExit(
+          state,
+          exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
+        )
       | registrations =>
         let isStale = state->IndexerState.isStale(~stateId)
-        Logging.trace({
-          "msg": "Ran block passes",
-          "chainId": chainId,
-          "through": through,
-          "blockPasses": blockItems->Array.length,
-          "registrations": registrations->Array.length,
-          "stale": isStale,
-          "ms": Date.now() -. startedAt,
-        })
+        chainState
+        ->ChainState.logger
+        ->Logger.trace(
+          "Ran block passes",
+          ~params={
+            "through": through,
+            "blockPasses": blockItems->Array.length,
+            "registrations": registrations->Array.length,
+            "stale": isStale,
+            "ms": Date.now() -. startedAt,
+          },
+        )
         if !isStale {
           chainState->ChainState.applyBlockRegisters(
             ~registrations=registrations->sortRegistrations,
@@ -692,6 +722,7 @@ let catchUpBlockRegisters = async (
 let fetchChain = async (
   state: IndexerState.t,
   chainId,
+  ~runtime,
   ~action,
   ~stateId,
   ~scheduleFetch,
@@ -704,6 +735,7 @@ let fetchChain = async (
       catchUpBlockRegisters(
         state,
         ~chainId,
+        ~runtime,
         ~stateId,
         ~scheduleFetch,
         ~scheduleProcessing,
@@ -744,17 +776,23 @@ let fetchChain = async (
               ~query,
               ~knownHeight=chainState->ChainState.knownHeight,
               ~isRealtime,
+              ~reorgableFrom=chainState->ChainState.reorgableFrom(~isRealtime),
             )
             await onQueryResponse(
               state,
               {chainId, response, query},
+              ~runtime,
               ~stateId,
               ~scheduleFetch,
               ~scheduleProcessing,
               ~scheduleRollback,
             )
           } catch {
-          | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+          | exn =>
+            IndexerState.errorExit(
+              state,
+              exn->ErrorHandling.make(~logger=state->IndexerState.logger),
+            )
           }
         },
         ~action,
@@ -762,7 +800,13 @@ let fetchChain = async (
       )
     } catch {
     | exn =>
-      IndexerState.errorExit(state, exn->ErrorHandling.make(~msg=IndexerState.unexpectedErrorMsg))
+      IndexerState.errorExit(
+        state,
+        exn->ErrorHandling.make(
+          ~logger=state->IndexerState.logger,
+          ~msg=IndexerState.unexpectedErrorMsg,
+        ),
+      )
     }
   }
 }

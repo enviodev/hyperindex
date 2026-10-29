@@ -12,7 +12,7 @@ import { configureBlockTimestamps, requestBlockHeader, requestBlockTimestamp } f
 import { configureReceiptLogs, requestReceiptLogs } from "./receipts.ts";
 import { missingRpcMessage } from "./errors.ts";
 import { HttpStatusError, isTransient, untilAnswered, withDeadline } from "./transient.ts";
-import { warn } from "../Logging.res.mjs";
+import { warn } from "./log.ts";
 
 /**
  * Public IPFS gateways, in the order they are asked. The Graph's own node holds

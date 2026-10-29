@@ -13,7 +13,7 @@ import type {
 
 // Filter-shape invariant: Fuel's block key is `height`, EVM's is `number`.
 // Catches a field rename / swap in `index.d.ts`.
-type _FuelBlockKeys = keyof NonNullable<FuelOnEventWhereFilter<{}>["block"]>;
+type _FuelBlockKeys = keyof NonNullable<FuelOnEventWhereFilter["block"]>;
 type _EvmBlockKeys = keyof NonNullable<EvmOnEventWhereFilter<{}>["block"]>;
 const _fuelHeight: "height" extends _FuelBlockKeys ? true : false = true;
 const _fuelNoNumber: "number" extends _FuelBlockKeys ? false : true = true;
@@ -25,8 +25,8 @@ void _fuelHeight; void _fuelNoNumber; void _evmNumber; void _evmNoHeight;
 // assignable. If `FuelOnEventWhere = EvmOnEventWhere` sneaks back in,
 // their component filters collapse to the same structural type and this
 // asymmetry check flips to `true`.
-type _FuelAssignableToEvm = FuelOnEventWhere<{}, "C"> extends EvmOnEventWhere<{}, "C"> ? true : false;
-type _EvmAssignableToFuel = EvmOnEventWhere<{}, "C"> extends FuelOnEventWhere<{}, "C"> ? true : false;
+type _FuelAssignableToEvm = FuelOnEventWhere<"C"> extends EvmOnEventWhere<{}, "C"> ? true : false;
+type _EvmAssignableToFuel = EvmOnEventWhere<{}, "C"> extends FuelOnEventWhere<"C"> ? true : false;
 const _fuelNotEvm: _FuelAssignableToEvm = false;
 const _evmNotFuel: _EvmAssignableToFuel = false;
 void _fuelNotEvm; void _evmNotFuel;
@@ -38,7 +38,7 @@ void _fuelNotEvm; void _evmNotFuel;
 // (never is the bottom type), so a one-way check would silently pass if
 // `_gte` were accidentally removed. `_ExactlyGte` requires the keyset
 // to be exactly `"_gte"`, rejecting both `never` and any wider union.
-type _FuelRangeKeys = keyof NonNullable<NonNullable<FuelOnEventWhereFilter<{}>["block"]>["height"]>;
+type _FuelRangeKeys = keyof NonNullable<NonNullable<FuelOnEventWhereFilter["block"]>["height"]>;
 type _EvmRangeKeys = keyof NonNullable<NonNullable<EvmOnEventWhereFilter<{}>["block"]>["number"]>;
 type _ExactlyGte<T> = [T] extends ["_gte"] ? (["_gte"] extends [T] ? true : false) : false;
 const _fuelGteOnly: _ExactlyGte<_FuelRangeKeys> = true;

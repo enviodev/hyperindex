@@ -24,7 +24,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, r
 import { builtinModules } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
-import { info, warn } from "../Logging.res.mjs";
+import { info, warn } from "./log.ts";
 
 /** Where fetched packages live: `ENVIO_SUBGRAPH_CACHE_DIR`, else the user's cache. */
 export function cacheDir(): string {

@@ -77,7 +77,7 @@ let wrap = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks,
+    ~reorgableFrom,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
@@ -94,7 +94,7 @@ let wrap = (
         ~fromBlock,
         ~toBlock,
         ~addressSet,
-        ~includeAllBlocks,
+        ~reorgableFrom,
         ~knownHeight,
         ~partitionId,
         ~selection,
@@ -107,7 +107,9 @@ let wrap = (
         selection.onEventRegistrations->Array.filter(registration =>
           registration->callRankOf->Option.isNone
         )
-      let logs = if logRegistrations->Utils.Array.isEmpty {
+      let logs = if (
+        logRegistrations->Utils.Array.isEmpty && selection.onBlockRegistrations->Utils.Array.isEmpty
+      ) {
         None
       } else {
         Some(
@@ -115,7 +117,7 @@ let wrap = (
             ~fromBlock,
             ~toBlock,
             ~addressSet,
-            ~includeAllBlocks,
+            ~reorgableFrom,
             ~knownHeight,
             ~partitionId,
             ~selection={...selection, onEventRegistrations: logRegistrations},

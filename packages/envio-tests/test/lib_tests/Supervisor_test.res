@@ -207,11 +207,11 @@ describe("Supervisor worker plumbing", () => {
 
   it("Gives every worker a log file of its own", t => {
     t.expect([
-      Supervisor.logFilePath(~workerIndex=0, ~path="logs/envio.log"),
-      Supervisor.logFilePath(~workerIndex=1, ~path="logs/envio.log"),
+      Supervisor.workerLogFilePath(~workerIndex=0, ~path="logs/envio.log"),
+      Supervisor.workerLogFilePath(~workerIndex=1, ~path="logs/envio.log"),
       // A dot in a directory name is not an extension.
-      Supervisor.logFilePath(~workerIndex=1, ~path="./logs/envio"),
-      Supervisor.logFilePath(~workerIndex=2, ~path="envio"),
+      Supervisor.workerLogFilePath(~workerIndex=1, ~path="./logs/envio"),
+      Supervisor.workerLogFilePath(~workerIndex=2, ~path="envio"),
     ]).toStrictEqual([
       "logs/envio.worker-0.log",
       "logs/envio.worker-1.log",
@@ -348,5 +348,42 @@ chains:
       ("1", 100, Some(500), true, -1, 0., false),
       ("137", 0, None, false, -1, 0., false),
     ])
+  })
+})
+
+describe("Supervisor.displayedSnapshots", () => {
+  it("Draws a worker that hasn't reported yet at its configured chains", t => {
+    let config = config(~schema=perChain)
+    let empty = Metrics.merge(
+      [],
+      ~startTime=Date.make(),
+      ~metricTime=Date.make(),
+      ~elapsedSeconds=0.,
+      ~targetBufferSize=0,
+    )
+    let worker = (chainId, ~snapshot): Supervisor.running => {
+      worker: {chainIds: [chainId->ChainId.fromInt], maxConnections: 2},
+      // Never touched: the display reads only what a worker reported.
+      child: Null.null->(Utils.magic: Null.t<unit> => NodeJs.ChildProcess.Child.t),
+      snapshot,
+      runtime: None,
+      settled: false,
+    }
+    let synced =
+      Supervisor.configuredChains(config)
+      ->Array.filter(chain => chain.chainId == 1->ChainId.fromInt)
+      ->Array.map(chain => {...chain, timestampCaughtUpToHeadOrEndblock: Some(Date.make())})
+
+    t.expect(
+      [worker(1, ~snapshot=Some({...empty, chains: synced})), worker(137, ~snapshot=None)]
+      ->Supervisor.displayedSnapshots(~config, ~empty)
+      ->Array.flatMap(snapshot => snapshot.chains)
+      ->Array.map(
+        chain => (
+          chain.chainId->ChainId.toString,
+          chain.timestampCaughtUpToHeadOrEndblock->Option.isSome,
+        ),
+      ),
+    ).toStrictEqual([("1", true), ("137", false)])
   })
 })

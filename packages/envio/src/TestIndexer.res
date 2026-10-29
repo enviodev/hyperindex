@@ -563,7 +563,8 @@ type entityOperations = {
 // JSON serialization round-trip.
 let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   name: "test-inmemory",
-  isInitialized: async () => true,
+  entityStoreName: _ => "test-inmemory",
+  holding: async () => Persistence.Initialized,
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
   // so none of these is reached.
@@ -621,13 +622,12 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
-  pruneStaleEntityHistory: async (
-    ~entityName as _,
-    ~entityIndex as _,
-    ~chainIdColumn as _,
-    ~safeCheckpoints as _,
-  ) => (),
-  getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
+  pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
+  getRollbackTargetCheckpoint: async (
+    ~reorgChainId as _,
+    ~lastKnownValidBlockNumber as _,
+    ~sequence as _,
+  ) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
@@ -669,20 +669,33 @@ let cloneRegistrations = (
 // module-cached anyway) and reuse them across every createTestIndexer run, so
 // the global registration cycle runs a single time and never races.
 let registrationsRef: ref<option<promise<HandlerRegister.registrationsByChainId>>> = ref(None)
-let getRegistrations = (~config) =>
+let getRegistrations = (~config, ~logger) =>
   switch registrationsRef.contents {
   | Some(promise) => promise
   | None =>
     let promise =
       HandlerLoader.getAutoLoadFiles(~config)->Promise.then(autoLoadFiles =>
-        HandlerLoader.registerAllHandlers(~config, ~autoLoadFiles)
+        HandlerLoader.registerAllHandlers(~config, ~logger, ~autoLoadFiles)
       )
     registrationsRef := Some(promise)
     promise
   }
 
+// One per process: a file strategy opens its file once, not per test indexer.
+// Silent everywhere unless LOG_LEVEL asks otherwise: a test's output is its
+// assertions.
+let logger = Lazy.make(() =>
+  Logger.make({
+    strategy: Env.Logger.strategy,
+    logFile: Env.Logger.file,
+    level: Env.Logger.level->Option.getOr(#silent),
+    fileLevel: Env.Logger.level->Option.mapOr(#silent, _ => Env.Logger.fileLevel),
+  })
+)
+
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
+  let logger = logger->Lazy.get
   let allEntities = config.userEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()
@@ -716,12 +729,6 @@ let createTestIndexer = (): t<'processConfig> => {
     ~allEnums=config.allEnums,
     ~storage,
   )
-
-  // Silence logs by default in test mode unless LOG_LEVEL is explicitly set.
-  switch Env.userLogLevel {
-  | None => Logging.setLogLevel(#silent)
-  | Some(_) => ()
-  }
 
   // Build entity operations for each user entity
   let entityOpsDict: dict<entityOperations> = Dict.make()
@@ -916,7 +923,7 @@ let createTestIndexer = (): t<'processConfig> => {
 
           // Each run gets its own copy of the shared base registration so the
           // simulate-source registration it appends stays isolated.
-          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config))
+          let registrationsByChainId = cloneRegistrations(await getRegistrations(~config, ~logger))
           let patchedConfig: Config.t = SimulateItems.patchConfig(
             ~config,
             ~processConfig=processConfigJson,
@@ -955,6 +962,7 @@ let createTestIndexer = (): t<'processConfig> => {
             await Promise.make((resolve, reject) => {
               let indexerState = IndexerState.makeFromDbState(
                 ~config=runConfig,
+                ~logger,
                 ~persistence,
                 ~initialState,
                 ~registrationsByChainId,

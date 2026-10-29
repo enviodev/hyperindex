@@ -3,7 +3,7 @@
 // topic0, the called function's selector, one handler per function. graph-node
 // keys a handler on `topic0` when the manifest gives one
 // (`MappingEventHandler::topic0`) and decodes the anonymous event from all of
-// its topics. The translation refused it.
+// its topics, so a handler's topic0 is a filter on the first indexed param.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
@@ -94,8 +94,8 @@ describe("anonymous events matched on topic0", () => {
       chains: {
         1: {
           simulate: [
-            call("LOG_CALL", "0x34e1990700000000000000000000000000000000000000000000000000000000"),
-            call("LOG_CALL_1", "0x4bb278f300000000000000000000000000000000000000000000000000000000"),
+            call("LOG_CALL", "0x34e19907"),
+            call("LOG_CALL", "0x4bb278f3"),
           ],
         },
       },

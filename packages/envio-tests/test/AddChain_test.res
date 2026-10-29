@@ -60,7 +60,7 @@ let bump = (count: bigint): MockSource.itemMock => {
 
 let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~items) => {
   source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow(items, ~latestFetchedBlockNumber=100)
+  await source.expectItemsQueries([{reply: Respond({items, latestFetchedBlockNumber: 100})}])
   await indexer.waitUntilReady()
   await indexer.waitUntilIdle()
 }
@@ -90,33 +90,16 @@ let edited = (
 let sourceOf = (sources: array<(int, MockSource.t)>, chain) =>
   sources->Array.find(((mocked, _)) => mocked === chain)->Option.getOrThrow->Pair.second
 
-let chainRows = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "id": ChainId.t,
-    "progress_block": int,
-  }> = await sql->Postgres.unsafe(
-    `SELECT "id", "progress_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"]->ChainId.toString, row["progress_block"]))
-}
+let chainRows = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.progressBlock))
 
-let startBlocks = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
-  let rows: array<{
-    "id": ChainId.t,
-    "start_block": int,
-  }> = await sql->Postgres.unsafe(
-    `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"]->ChainId.toString, row["start_block"]))
-}
+let startBlocks = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toString, row.startBlock))
 
-let counterPartitions = async (indexer: IndexerRunner.t) => {
-  let {sql, pgSchema} = indexer.pg
+let counterPartitions = async (sql, ~pgSchema) => {
   let rows: array<{
     "name": string,
-  }> = await sql->Postgres.unsafe(
+  }> = await sql->Sql.queryForTests(
     `SELECT c.relname AS "name"
      FROM pg_inherits inh
      JOIN pg_class c ON c.oid = inh.inhrelid
@@ -132,7 +115,6 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
   deployed->Scenario.it(
     "Adds the chain and indexes it, leaving the deployed chain as it was",
     ~sources=[{chain: 1}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
 
@@ -143,22 +125,25 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
       // Named again, the chain is already there: a plain resume.
       let resumed = await added.restart(~chains=[ChainId.fromInt(137)], ())
 
-      let rows: array<counterRow> = await resumed.query("Counter")
+      // A ClickHouse read stops at the progress its own run knew of, and a
+      // `--chain` run knows only its own chains', so the rows are read by a run
+      // of every chain.
+      let rows: array<counterRow> = await (await resumed.restart()).query("Counter")
       t.expect(
         (
           rows->Array.toSorted((a, b) => Int.compare(a.chainId, b.chainId)),
           await chainRows(resumed),
-          await counterPartitions(resumed),
           (await resumed.queryAddresses())->Array.map(
             row => (row.chainId->ChainId.toString, row.contractName),
           ),
-          resumed.logs()->Array.filter(entry => entry.msg->String.startsWith("Adding the chain")),
+          resumed.infoAndAboveLogs()->Array.filter(
+            entry => entry.msg->String.startsWith("Adding the chain"),
+          ),
         ),
-        ~message="Chain 137 gets a row, a partition and its config addresses, and indexes into them. Chain 1 keeps what it had, and the operator is told once",
+        ~message="Chain 137 gets a row and its config addresses, and indexes into them. Chain 1 keeps what it had, and the operator is told once",
       ).toEqual((
         [{id: "total", count: 1n, chainId: 1}, {id: "total", count: 10n, chainId: 137}],
         [("1", 100), ("137", 100)],
-        ["Counter$1", "Counter$137"],
         [("1", "Token"), ("137", "Token")],
         [
           (
@@ -169,6 +154,13 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
           ),
         ],
       ))
+      await resumed.usePostgresSql(
+        async sql =>
+          t.expect(
+            await sql->counterPartitions(~pgSchema=resumed.pgSchema),
+            ~message="Chain 137 gets a partition beside chain 1's",
+          ).toEqual(["Counter$1", "Counter$137"]),
+      )
     },
   )
 
@@ -180,7 +172,7 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     ~configYaml=configYaml(~chains=[chainYaml(1)]),
     ~unsupported=clickHouseOnly,
   )->Scenario.it(
-    "Mirrors the added chain into ClickHouse alongside the deployed one",
+    "Writes the added chain to ClickHouse alongside the deployed one",
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       await catchUp(~indexer, ~source=source(1), ~items=[bump(1n)])
@@ -234,25 +226,20 @@ describe("envio start --chain with a chain the database doesn't have yet", () =>
     },
   )
 
-  deployed->Scenario.it(
-    "Asks for a set-up database before any --chain process starts",
-    ~sources=[{chain: 1}],
-    async (~t, ~indexer, ~source) => {
-      await catchUp(~indexer, ~source=source(1), ~items=[])
-      await indexer.stop()
-      let {sql, pgSchema} = indexer.pg
-      let _ = await sql->Postgres.unsafe(`DROP SCHEMA "${pgSchema}" CASCADE;`)
+  Async.it("Asks for a set-up database before any --chain process starts", async t => {
+    let outcome = switch await deployed->Scenario.run(
+      ~sources=[{chain: 1}],
+      ~chains=[ChainId.fromInt(1)],
+      async (~indexer as _, ~source as _) => (),
+    ) {
+    | () => Migration.Failed("the start to be refused, but it went ahead")
+    | exception JsExn(e) => Migration.outcomeOfRefusal(e->JsExn.message->Option.getOr(""))
+    }
 
-      let outcome = switch await indexer.restart(~chains=[ChainId.fromInt(1)], ()) {
-      | restarted => Migration.Resumed(await Migration.storedChainIds(restarted))
-      | exception JsExn(e) => Migration.outcomeOfRefusal(e->JsExn.message->Option.getOr(""))
-      }
-
-      t.expect(outcome).toEqual(
-        Failed(
-          "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
-        ),
-      )
-    },
-  )
+    t.expect(outcome).toEqual(
+      Failed(
+        "`envio start --chain` needs a database that is already set up. Run `envio local db-migrate up` once with the full config, then start a process per chain.",
+      ),
+    )
+  })
 })

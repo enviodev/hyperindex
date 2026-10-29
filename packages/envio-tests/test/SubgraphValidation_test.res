@@ -668,15 +668,13 @@ describe("subgraph translation: reporting", () => {
       ~manifest=manifestWith(`      eventHandlers:
         - event: LOG_CALL(indexed bytes4,indexed address,bytes)
           topic0: "0x0000000000000000000000000000000000000000000000000000000000000001"
-          topic1:
-            - "0x0000000000000000000000000000000000000000000000000000000000000002"
           handler: handleLogCall`),
       ~schema=baseSchema,
       ~extraAbi=`{"type":"event","name":"LOG_CALL","anonymous":true,"inputs":[{"name":"sig","type":"bytes4","indexed":true},{"name":"caller","type":"address","indexed":true},{"name":"data","type":"bytes","indexed":false}]}`,
     )
     t.expect(
       message,
-    ).toEqual(`Envio Subgraph doesn't support topic1-3 filters on an anonymous event matched on topic0 yet.
+    ).toEqual(`Envio Subgraph doesn't support the topic0 value 0x0000000000000000000000000000000000000000000000000000000000000001, which no bytes4 value encodes to yet.
   Found in data source "Token" → eventHandlers → "handleLogCall" → topic0.
 First, make sure you're on the newest Envio Subgraph release — support may have landed:
   pnpm add -D envio@subgraph
@@ -750,7 +748,10 @@ describe("subgraph translation: overloaded events", () => {
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let contract = chain.contracts->Array.getUnsafe(0)
     let names = contract.events->Array.map(event => event.name)
-    let ids = contract.events->Array.map(event => event.id)
+    let ids =
+      contract.events->Array.map(
+        event => (event->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)).sighash,
+      )
     // Distinct topic0s: the two overloads resolved to different ABI entries.
     t.expect((names, ids->Array.getUnsafe(0) === ids->Array.getUnsafe(1))).toEqual((
       ["Transfer", "Transfer_1"],

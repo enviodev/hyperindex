@@ -1181,6 +1181,18 @@ impl Entity {
     /// not exist on the schema.
     fn validate_field_types(&self, schema: &Schema) -> anyhow::Result<()> {
         for field in self.get_fields() {
+            // Postgres would take a list of lists only as a rectangular
+            // multidimensional array, and a subgraph refuses every one on save.
+            let field_type = field.field_type.to_user_defined_field_type();
+            if field_type.is_list_of_lists() {
+                return Err(anyhow!(
+                    "The field \"{}\" on \"{}\" has the type {field_type}, a list of lists, \
+                     which is not supported. Store it as Json, or as a list of a type of its \
+                     own.",
+                    field.name,
+                    self.name
+                ));
+            }
             field.validate_field_type(schema)?;
         }
         Ok(())
@@ -2086,10 +2098,7 @@ impl UserDefinedFieldType {
                      after your '{}' scalar",
                     gql_scalar
                 )),
-                Self::ListType(_) => Err(anyhow!(
-                    "Nullable multidimensional lists types are unsupported, please include \
-                     a '!' for your inner list type eg. [[Int!]!]"
-                )),
+                Self::ListType(_) => Err(anyhow!("Lists of lists are not supported.")),
             },
             Self::NonNullType(field_type) => match field_type.as_ref() {
                 Self::NonNullType(_) => Err(anyhow!(
@@ -2118,6 +2127,14 @@ impl UserDefinedFieldType {
         match self {
             Self::ListType(_) => true,
             Self::NonNullType(field_type) => field_type.is_array(),
+            Self::Single(_) => false,
+        }
+    }
+
+    pub fn is_list_of_lists(&self) -> bool {
+        match self {
+            Self::ListType(item) => item.strip_non_null().is_array(),
+            Self::NonNullType(field_type) => field_type.is_list_of_lists(),
             Self::Single(_) => false,
         }
     }
@@ -2532,7 +2549,7 @@ impl GqlScalar {
             GqlScalar::BigDecimal(_) => TypeIdent::BigDecimal,
             GqlScalar::Float => TypeIdent::Float,
             GqlScalar::Bytes => match schema.bytes_type {
-                BytesType::Hex => TypeIdent::String,
+                BytesType::Hex => TypeIdent::Hex,
                 BytesType::Uint8Array => TypeIdent::Bytes,
             },
             GqlScalar::Json => TypeIdent::Json,
@@ -2877,34 +2894,9 @@ type Blob {
     }
 
     #[test]
-    fn gql_multi_not_null_array_to_pgprimitive() {
-        let gql_type = "[[Int!]!]!";
-        let field_type = get_field_type_helper(gql_type);
-        let empty_schema = Schema::empty();
-        let pg_primitive = field_type
-            .to_user_defined_field_type()
-            .to_underlying_postgres_primitive(&empty_schema)
-            .expect("unable to get postgres primitive");
-        assert_eq!(pg_primitive, PGPrimitive::Int32);
-        assert!(field_type.to_user_defined_field_type().is_array());
-    }
-
-    #[test]
     #[should_panic]
     fn gql_single_nullable_array_to_pgprimitive_should_panic() {
         let gql_type = "[Int]!"; // Nested lists need to be not nullable
-        let field_type = get_field_type_helper(gql_type);
-        let empty_schema = Schema::empty();
-        let _pg_primitive = field_type
-            .to_user_defined_field_type()
-            .to_underlying_postgres_primitive(&empty_schema)
-            .expect("should panic due to validation error");
-    }
-
-    #[test]
-    #[should_panic]
-    fn gql_multi_nullable_array_to_pgprimitive_should_panic() {
-        let gql_type = "[[Int!]]!"; // Nested lists need to be not nullable
         let field_type = get_field_type_helper(gql_type);
         let empty_schema = Schema::empty();
         let _pg_primitive = field_type
@@ -3791,7 +3783,7 @@ type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
 
     // --- @storage(clickhouse: {...}) table options ---
     // The full partitionBy/orderBy/ttl options object is exercised end-to-end
-    // (YAML + schema -> parser -> Config.res -> DDL) in `ClickHouse_test.res`.
+    // (YAML + schema -> parser -> Config.res) in `UserApiValidation_test.res`.
 
     #[test]
     fn storage_directive_clickhouse_options_are_each_optional() {

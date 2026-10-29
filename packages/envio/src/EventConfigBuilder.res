@@ -234,19 +234,18 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
   }
 }
 
-// ============== Build topic filter getters ==============
+// ============== Indexed param topic encoders ==============
 
 let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) =>
   value => Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
-let buildTopicGetter = (p: paramMeta) => {
+let buildIndexedParam = (p: paramMeta): LogSelection.indexedParam => {
   let encoder = getTopicEncoder(p.abiType)
   let isTuple = p.abiType->String.startsWith("(")
-  (eventFilter: dict<JSON.t>) =>
-    eventFilter
-    ->Utils.Dict.dangerouslyGetNonOption(p.name)
-    ->Option.mapOr([], topicFilters => {
-      let raw = topicFilters->(Utils.magic: JSON.t => unknown)
+  {
+    name: p.name,
+    toTopics: value => {
+      let raw = value->(Utils.magic: JSON.t => unknown)
 
       // A tuple filter value is itself an array, so a directly-passed tuple is
       // indistinguishable from an OR-list by shape alone. A single tuple is
@@ -260,7 +259,8 @@ let buildTopicGetter = (p: paramMeta) => {
       } else {
         raw->normalizeOrThrow->Array.map(encoder)
       }
-    })
+    },
+  }
 }
 
 // ============== Field selection ==============
@@ -430,25 +430,53 @@ let resolveInlineFieldSelection = (
   )
 }
 
+// Resolve a block handler's `fields` option, the same shape `onEvent` takes but
+// with the block table alone to select from. The block's key comes with every
+// selection, so a selection of nothing else is no selection.
+let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t): option<float> =>
+  if typeof(fields) === #undefined {
+    None
+  } else {
+    let registration = `\`indexer.${ecosystem.onBlockMethodName}("${name}")\``
+    switch ecosystem.onBlockFields {
+    | None =>
+      JsError.throwWithMessage(
+        `Fuel block handlers can't select block fields. Remove the fields option of ${registration}.`,
+      )
+    | Some({fields: validFields, keyField, mask}) =>
+      validateFieldsShapeOrThrow(fields, ~registration, ~validKeys=["block"], ~shapeNoun="block")
+      let blockFields = parseFieldsOrThrow(
+        selectionList(fields, "block"),
+        ~valid=Utils.Set.fromArray(validFields),
+        ~kind="block",
+        ~registration,
+      )
+      blockFields->Utils.Set.delete(keyField)->ignore
+      if blockFields->Utils.Set.size === 0 {
+        None
+      } else {
+        blockFields->Utils.Set.add(keyField)->ignore
+        Some(mask(blockFields))
+      }
+    }
+  }
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (
   ~contractName: string,
   ~eventName: string,
-  ~sighash: string,
-  ~anonymous=false,
+  ~sighash: option<string>,
   ~params: array<paramMeta>,
   ~blockFields: option<array<Internal.evmBlockField>>=?,
   ~transactionFields: option<array<Internal.evmTransactionField>>=?,
   ~globalBlockFieldsSet: Utils.Set.t<Internal.evmBlockField>=Utils.Set.make(),
   ~globalTransactionFieldsSet: Utils.Set.t<Internal.evmTransactionField>=Utils.Set.make(),
 ): Internal.evmEventConfig => {
-  // An anonymous event has no signature topic: `sighash` is the value of its
-  // first indexed param, and that topic count is how the decoder tells.
-  let topicCount = params->Array.reduce(anonymous ? 0 : 1, (acc, p) => p.indexed ? acc + 1 : acc)
+  let topicCount =
+    params->Array.reduce(sighash->Option.isSome ? 1 : 0, (acc, p) => p.indexed ? acc + 1 : acc)
 
   {
-    id: sighash ++ "_" ++ topicCount->Int.toString,
     name: eventName,
     contractName,
     paramsRawEventSchema: buildParamsSchema(params),
@@ -481,18 +509,16 @@ let buildEvmOnEventRegistration = (
   ~fieldSelection: option<Internal.fieldSelection>=?,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
-  let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)
-
-  let {resolvedWhere, filterByAddresses, addressFilterParamGroups} = LogSelection.parseWhereOrThrow(
+  let {resolvedWhere, filterByAddresses} = LogSelection.parseWhereOrThrow(
     ~where,
     ~sighash=eventConfig.sighash,
-    ~params=indexedParams->Array.map(p => p.name),
+    ~indexedParams=eventConfig.paramsMetadata->Array.filterMap(p =>
+      p.indexed ? Some(buildIndexedParam(p)) : None
+    ),
     ~contractName=eventConfig.contractName,
+    ~eventName=eventConfig.name,
     ~chainId,
     ~onEventBlockFilterSchema,
-    ~topic1=?indexedParams->Array.get(0)->Option.map(buildTopicGetter),
-    ~topic2=?indexedParams->Array.get(1)->Option.map(buildTopicGetter),
-    ~topic3=?indexedParams->Array.get(2)->Option.map(buildTopicGetter),
   )
 
   // `where.block.number._gte` overrides the contract-level startBlock when
@@ -507,11 +533,10 @@ let buildEvmOnEventRegistration = (
     index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
     isWildcard,
-    handler,
+    ?handler,
     contractRegister,
     resolvedWhere,
     filterByAddresses,
-    addressFilterParamGroups,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     startBlock: resolvedStartBlock,
     fieldSelection: switch fieldSelection {
@@ -654,10 +679,6 @@ let buildSvmInstructionEventConfig = (
     ~transactionMaskFn=Svm.eventTransactionFieldMask,
   )
   {
-    id: switch discriminator {
-    | Some(d) => d
-    | None => "none"
-    },
     name: instructionName,
     contractName,
     paramsRawEventSchema: paramsSchema,
@@ -831,7 +852,7 @@ let buildSvmOnEventRegistration = (
   {
     index: -1,
     eventConfig: (eventConfig :> Internal.eventConfig),
-    handler,
+    ?handler,
     contractRegister,
     isWildcard,
     filterByAddresses: false,
@@ -886,10 +907,6 @@ let buildFuelEventConfig = (
   | other => JsError.throwWithMessage(`Unsupported Fuel event kind: ${other}`)
   }
   {
-    id: switch kind {
-    | "logData" => sighash
-    | other => other
-    },
     name: eventName,
     contractName,
     paramsRawEventSchema: paramsSchema,
@@ -909,20 +926,48 @@ let buildFuelEventConfig = (
 
 // Enrich a Fuel definition into a registration (handler binding +
 // wildcard-derived address gate; Fuel never filters by addresses).
+// `where.block.height._gte` overrides the contract-level startBlock.
 let buildFuelOnEventRegistration = (
   ~eventConfig: Internal.fuelEventConfig,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
+  ~where: option<JSON.t>,
+  ~chainId: ChainId.t,
+  ~onEventBlockFilterSchema: S.t<option<unknown>>,
   ~startBlock: option<int>=?,
 ): Internal.fuelOnEventRegistration => {
-  index: -1,
-  eventConfig: (eventConfig :> Internal.eventConfig),
-  handler,
-  contractRegister,
-  isWildcard,
-  filterByAddresses: false,
-  dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  startBlock,
-  fieldSelection: eventConfig.fieldSelection,
+  let contractName = eventConfig.contractName
+  let whereValue = where->Option.map(LogSelection.evaluateWhere(_, ~contractName, ~chainId))
+  switch whereValue {
+  | Some(Object(obj)) =>
+    obj->Utils.Dict.forEachWithKey((_, key) =>
+      if key !== "block" {
+        JsError.throwWithMessage(
+          `Invalid where configuration for ${contractName}. Unknown field "${key}". Fuel events can only be filtered by \`block\`.`,
+        )
+      }
+    )
+  | _ => ()
+  }
+  let whereStartBlock =
+    whereValue->Option.flatMap(
+      LogSelection.extractStartBlock(_, ~onEventBlockFilterSchema, ~contractName),
+    )
+
+  {
+    index: -1,
+    eventConfig: (eventConfig :> Internal.eventConfig),
+    ?handler,
+    contractRegister,
+    isWildcard,
+    filterByAddresses: false,
+    dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
+    startBlock: whereStartBlock->Option.orElse(startBlock),
+    fieldSelection: eventConfig.fieldSelection,
+    skippedByWhere: switch whereValue {
+    | Some(Boolean(false)) => true
+    | _ => false
+    },
+  }
 }

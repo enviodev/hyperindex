@@ -27,7 +27,7 @@ import {
   subgraphFillGenerated,
   subgraphMissingGraphCliMessage,
 } from "../Core.res.mjs";
-import { info, warn } from "../Logging.res.mjs";
+import { info, warn } from "./log.ts";
 import { fetchGraphCli, graphCliVersions } from "./toolchain.ts";
 
 const WORKER = new URL("./graph-cli-worker.mjs", import.meta.url);

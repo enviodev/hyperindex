@@ -28,11 +28,11 @@ let blockHash = (~blockNumber, ~fork) =>
 
 let hex = n => "0x" ++ n->Int.toString(~radix=16)
 
-let topicSelection: Internal.resolvedTopicSelection = {
-  topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-  topic1: Values([]),
-  topic2: Values([]),
-  topic3: Values([]),
+let topicFilter: Internal.topicFilter = {
+  topic0: Values([sighash->EvmTypes.Hex.fromStringUnsafe]),
+  topic1: Any,
+  topic2: Any,
+  topic3: Any,
 }
 
 let registration: Internal.evmOnEventRegistration = {
@@ -42,7 +42,7 @@ let registration: Internal.evmOnEventRegistration = {
     // anyway, so it is what a later range can be served from the store.
     ~blockFieldNames=[Number, Timestamp, Hash, ParentHash, GasUsed],
     ~transactionFieldNames=[],
-    ~eventFilters=[topicSelection],
+    ~eventFilters=[topicFilter],
   ),
   index: 0,
 }
@@ -56,9 +56,7 @@ let indexedAddresses: array<Internal.indexingAddress> = [
 ]
 
 let addressStore = () =>
-  TestAddresses.makeStore(
-    ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-  )
+  TestAddresses.makeStore(~onEventRegistrations=[(registration :> Internal.onEventRegistration)])
 
 // The store the source routes against, and the one a query's address set is cut
 // from. It has to be seeded: an unseeded store matches none of the logs the mock
@@ -67,7 +65,7 @@ let addressStore = () =>
 // store instead and lets `FetchState.make` seed it, as production does.
 let sourceAddressStore = TestAddresses.makeStore(
   ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-  ~addresses=indexedAddresses
+  ~addresses=indexedAddresses,
 )
 
 // The chain the mock server currently serves. `forkFrom` is the first block
@@ -147,7 +145,7 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
   source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),
     ~addressSet=sourceAddressStore->AddressStore.makeSet(
@@ -157,17 +155,19 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
     ~partitionId="0",
     ~selection={
       dependsOnAddresses: true,
+      onBlockRegistrations: [],
       onEventRegistrations: [(registration :> Internal.onEventRegistration)],
     },
     ~itemsTarget=None,
     ~retry=0,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 
 let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
   let chainConfig = TestConfig.make(~chainId=1337).chainMap->ChainMap.get(chainId)
   let store = addressStore()
   let fetchState = FetchState.make(
+    ~onNotice=ignore,
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
     ~addressStore=store,
     ~addressRows=TestAddresses.addressRows(
@@ -186,12 +186,16 @@ let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
     ~chainConfig,
     ~fetchState={...fetchState, FetchState.knownHeight},
     ~addressStore=store,
-    ~sourceManager=SourceManager.make(~sources=[source], ~isRealtime=false),
+    ~sourceManager=SourceManager.make(
+      ~logger=Logger.makeInMemory(),
+      ~sources=[source],
+      ~isRealtime=false,
+    ),
     ~shouldRollbackOnReorg=true,
     ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
     ~blockStore,
-    ~logger=Logging.getLogger(),
+    ~logger=Logger.makeInMemory(),
   )
 }
 

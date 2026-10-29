@@ -546,35 +546,6 @@ module Bytes = {
 
   @get_index external byteAt: (Uint8Array.t, int) => int = ""
 
-  // A bytea[] parameter as the array literal Postgres parses itself. postgres.js
-  // serializes an array parameter with the element serializer of the type the
-  // server describes, and the bytea one expects a Uint8Array — yet it types the
-  // array after its first element, so an array of Uint8Arrays binds as a single
-  // bytea. Text binds untyped and reaches the server's array parser as it is.
-  //
-  // Nests, since an `in` filter over a list column carries one array per
-  // candidate value. A sub-array is written unquoted, which is how Postgres
-  // spells a dimension rather than an element.
-  let rec toPgArrayLiteral = (values: array<unknown>) =>
-    "{" ++
-    values
-    ->Array.map(value =>
-      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
-      | None => "NULL"
-      | Some(value) =>
-        switch value->asUint8Array {
-        | Some(bytes) => `"\\\\x${bytes->toHex}"`
-        | None =>
-          if value->Array.isArray {
-            value->(magic: unknown => array<unknown>)->toPgArrayLiteral
-          } else {
-            JsError.throwWithMessage("Expected Uint8Array")
-          }
-        }
-      }
-    )
-    ->Array.join(",") ++ "}"
-
   // Bytewise, the order Postgres sorts a bytea in.
   let compare = (a: Uint8Array.t, b: Uint8Array.t) => {
     let aLength = a->TypedArray.length
@@ -609,9 +580,8 @@ module Schema = {
       serializer: value => value->(magic: option<'a> => Nullable.t<'a>)->Nullable.toOption,
     })
 
-  // Postgres hands a bytea back as a Buffer, while handlers are promised the
-  // plain Uint8Array of the entity type — Buffer's `slice` and `toString` behave
-  // differently.
+  // Handlers are promised a plain Uint8Array: a Node Buffer is one too, but its
+  // `slice` and `toString` behave differently.
   let bytes = S.custom("Bytes", s => {
     parser: unknown =>
       switch unknown->Bytes.asUint8Array {
@@ -621,10 +591,8 @@ module Schema = {
     serializer: (bytes: Uint8Array.t) => bytes,
   })
 
-  // A bytea[] value: a list column, or the values an `in` filter compares
-  // against — one array per candidate when the column is itself a list, which
-  // the literal writer nests. Only a column is ever read back, so the parser
-  // takes the one level a bytea[] column returns.
+  // A bytea[] column's value. The parser takes the one level a bytea[] column
+  // returns.
   let bytesArray = S.custom("BytesArray", s => {
     parser: unknown =>
       if unknown->Array.isArray {
@@ -639,8 +607,7 @@ module Schema = {
       } else {
         s.fail("Expected array of Uint8Array")
       },
-    serializer: (values: array<Uint8Array.t>) =>
-      values->(magic: array<Uint8Array.t> => array<unknown>)->Bytes.toPgArrayLiteral,
+    serializer: (values: array<Uint8Array.t>) => values,
   })
 
   // Don't use S.unknown, since it's not serializable to json
@@ -649,19 +616,6 @@ module Schema = {
     S.json(~validate=false)
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
-
-  // JSON `null` is a document, and Postgres stores it as one. Reaching the
-  // ClickHouse sink as a JS `null` it would instead read as a field the handler
-  // never set, which a String column has no way to hold — so it travels as the
-  // text it would have been serialized to. Every other document is left for the
-  // sink to serialize.
-  let clickHouseJson = S.json(~validate=false)->S.preprocess(_ => {
-    serializer: value =>
-      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
-      | None => "null"->magic
-      | Some(json) => json
-      },
-  })
 
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
   let clickHouseDate =
@@ -833,6 +787,25 @@ module Map = {
   @send external delete: (t<'k, 'v>, 'k) => bool = "delete"
 }
 
+// An object that names the property it doesn't have, for user-facing APIs
+// where `undefined` would only surface later as a confusing error. The check
+// lives on the prototype, so reading a property the object has costs nothing.
+module StrictObject = {
+  type prototype
+
+  let makePrototype: (string => unit) => prototype = %raw(`function (onUnknown) {
+    return new Proxy(Object.create(null), {
+      get(_target, prop) {
+        if (typeof prop === "string") onUnknown(prop);
+        return undefined;
+      },
+    });
+  }`)
+
+  @val @scope("Object") external make: prototype => 'a = "create"
+  @val @scope("Object") external assign: ('a, 'a) => 'a = "assign"
+}
+
 module Proxy = {
   type propertyDescriptor = {
     value: unknown,
@@ -962,14 +935,6 @@ module EnvioPackage = {
 }
 
 module BigInt = {
-  let arrayToStringArray: array<bigint> => array<string> = %raw(`(arr) => {
-    const res = new Array(arr.length);
-    for (let i = 0; i < arr.length; i++) {
-      res[i] = arr[i].toString();
-    }
-    return res;
-  }`)
-
   let schema =
     S.string
     ->S.setName("BigInt")
@@ -990,13 +955,6 @@ module Promise = {
   external makeAsync: ((@uncurry ('a => unit), 'e => unit) => promise<unit>) => promise<'a> =
     "Promise"
 
-  // `catch` that swallows rejections silently. Handy for fire-and-forget
-  // promises that must not take the process down on failure.
-  %%private(let noop = (() => ())->Obj.magic)
-  let silentCatch = (promise: promise<'a>): promise<'a> => {
-    promise->Promise.catch(_ => noop())
-  }
-
   // Like `catch`, but the callback returns a plain value instead of a new
   // promise. Used when the fallback is a ready-made default.
   @send
@@ -1011,7 +969,13 @@ module Promise = {
   // interoperate with raw JS values.
   external unsafe_async: 'a => promise<'a> = "%identity"
   external unsafe_await: promise<'a> => 'a = "?await"
-
-  // Detects Thenable-like values at runtime (anything with a `.catch` method).
-  let isCatchable: 'any => bool = %raw(`value => value && typeof value.catch === 'function'`)
 }
+
+// `JSON.stringify` writes half a surrogate pair as a `\udXXX` escape, which no
+// JSON parser that decodes to UTF-8 accepts. It becomes the replacement
+// character a text encoder writes for it, as the character rather than its
+// escape: that is how `JSON.stringify` spells the document read back, so a
+// store comparing documents as text finds it. An escape only after an even run
+// of backslashes.
+let replaceLoneSurrogateEscapes = (json: string) =>
+  json->String.replaceRegExp(/(?<=(?:^|[^\\])(?:\\\\)*)\\ud[89a-f][0-9a-f]{2}/g, "�")

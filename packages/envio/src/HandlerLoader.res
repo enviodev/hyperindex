@@ -34,7 +34,7 @@ let importHandler = async file => {
   await Utils.importPath(toAbsolutePath(file)->NodeJs.Url.pathToFileURL->NodeJs.Url.toString)
 }
 
-let registerContractHandlers = async (~contractName, ~handler: option<string>) => {
+let registerContractHandlers = async (~logger, ~contractName, ~handler: option<string>) => {
   switch handler {
   | None => ()
   | Some(handlerPath) =>
@@ -43,9 +43,9 @@ let registerContractHandlers = async (~contractName, ~handler: option<string>) =
     } catch {
     | exn =>
       let cause = exn->Utils.prettifyExn->Obj.magic
-      Logging.errorWithExn(
-        exn,
+      logger->Logger.errorWithExn(
         `Failed to load handler file for contract ${contractName}: ${handlerPath}`,
+        exn,
       )
       JsError.throwWithMessage(
         `Failed to load handler file for contract ${contractName}: ${handlerPath}. Cause: ${cause}`,
@@ -85,16 +85,7 @@ let getAutoLoadFiles = async (~config: Config.t) =>
   | None => await globAutoLoadFiles(~handlers=config.handlers)
   }
 
-type typeCheckResult = {
-  skipped?: string,
-  errors?: string,
-}
-
-@module("./HandlerTypeCheck.mjs")
-external checkTypesInWorker: (~cwd: string, ~files: array<string>) => promise<typeCheckResult> =
-  "check"
-
-let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
+let typeCheck = async (~config: Config.t, ~logger, ~autoLoadFiles) => {
   // A contract's `handler:` may also be an auto-loaded file.
   let files =
     autoLoadFiles
@@ -104,10 +95,13 @@ let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
     ->Utils.Set.fromArray
     ->Utils.Set.toArray
   if files->Array.length > 0 {
-    switch await checkTypesInWorker(~cwd=NodeJs.Process.cwd(), ~files) {
-    | {errors} => JsError.throwWithMessage(`Handler files have type errors:\n\n${errors}`)
-    | {skipped} => Logging.warn(skipped)
-    | _ => ()
+    switch await HandlerTypeCheck.check(~cwd=NodeJs.Process.cwd(), ~files) {
+    | TypeErrors(errors) =>
+      JsError.throwWithMessage(
+        `The handler type check found errors. Fix them to start the indexer:\n\n${errors}`,
+      )
+    | Skipped(warning) => logger->Logger.warn(warning)
+    | Passed => ()
     }
   }
 }
@@ -120,26 +114,31 @@ let typeCheck = async (~config: Config.t, ~autoLoadFiles) => {
 // The subgraph runtime lives in this package but is never exported: it's
 // reached only from here, when the resolved config carries a translated
 // manifest.
-let registerSubgraph: (JSON.t, ~isDev: bool) => promise<unit> = %raw(`(subgraph, isDev) =>
-  import("./subgraph/runtime.ts").then((m) => m.registerSubgraph({ ...subgraph, isDev }))`)
+let registerSubgraph: (
+  JSON.t,
+  ~isDev: bool,
+  ~logger: Logger.t,
+) => promise<unit> = %raw(`(subgraph, isDev, logger) =>
+  import("./subgraph/runtime.ts").then((m) => m.registerSubgraph({ ...subgraph, isDev }, logger))`)
 
 let registerAllHandlers = async (
   ~config: Config.t,
+  ~logger,
   ~autoLoadFiles,
 ): HandlerRegister.registrationsByChainId => {
-  HandlerRegister.startRegistration(~config)
+  HandlerRegister.startRegistration(~config, ~logger)
   registerTsHooks()
 
   switch config.subgraph {
   // Registered after the TypeScript hooks, so the subgraph runtime's own hooks
   // see a mapping first.
-  | Some(subgraph) => await registerSubgraph(subgraph, ~isDev=config.isDev)
+  | Some(subgraph) => await registerSubgraph(subgraph, ~isDev=config.isDev, ~logger)
   | None =>
     let _ = await autoLoadFiles
     ->Array.map(file => {
       importHandler(file)->Promise.catch(exn => {
         let cause = exn->Utils.prettifyExn->Obj.magic
-        Logging.errorWithExn(exn, `Failed to auto-load handler file: ${file}`)
+        logger->Logger.errorWithExn(`Failed to auto-load handler file: ${file}`, exn)
         JsError.throwWithMessage(`Failed to auto-load handler file: ${file}. Cause: ${cause}`)
       })
     })
@@ -147,7 +146,7 @@ let registerAllHandlers = async (
 
     let _ = await config.contractHandlers
     ->Array.map(({name, handler}) => {
-      registerContractHandlers(~contractName=name, ~handler)
+      registerContractHandlers(~logger, ~contractName=name, ~handler)
     })
     ->Promise.all
   }

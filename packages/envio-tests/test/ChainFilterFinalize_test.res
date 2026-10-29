@@ -47,33 +47,23 @@ chains:${chainYaml(1, "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}${chainYaml(
 // The tables carrying an index on `A.b`, which is one partition per chain. The
 // table name is what distinguishes them, so the assertion reads as the set of
 // chains whose rows are indexed.
-let indexedTables = async (~sql, ~pgSchema) => {
-  let rows =
-    (await sql->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema)))->S.parseOrThrow(
-      IndexCatalog.rowsSchema,
-    )
-  rows
-  ->Array.filter((row: IndexCatalog.row) => row.columns == ["b_id"])
-  ->Array.map((row: IndexCatalog.row) => row.tableName)
+let indexedTables = async (~sql, ~pgSchema) =>
+  (await sql->PgCatalog.indexes(~pgSchema))
+  ->Array.filter(index => index.columns == ["b_id"])
+  ->Array.map(index => index.tableName)
   ->Array.toSorted(String.compare)
-}
 
-let readyByChainId = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": ChainId.t,
-    "ready_at": Null.t<Date.t>,
-  }> = await sql->Postgres.unsafe(
-    `SELECT "id", "ready_at" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (
-    row["id"]->ChainId.toString,
-    row["ready_at"]->Null.toOption->Option.isSome,
+let readyByChainId = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(chain => (
+    chain.id->ChainId.toString,
+    chain.readyAt->Option.isSome,
   ))
-}
 
 let catchUp = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
   source.resolveGetHeightOrThrow(100)
-  source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
+  await source.expectItemsQueries([
+    {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
+  ])
   await indexer.waitUntilReady()
 }
 
@@ -83,29 +73,34 @@ describe("envio start --chain", () => {
     ~sources=[{chain: 1}, {chain: 137}],
     async (~t, ~indexer, ~source) => {
       let first = await indexer.restart(~chains=[ChainId.fromInt(1)], ())
-      let {sql, pgSchema} = first.pg
       await catchUp(~indexer=first, ~source=source(1))
 
       t.expect(
-        (
-          await indexedTables(~sql, ~pgSchema),
-          await readyByChainId(~sql, ~pgSchema),
-          await first.metric("envio_progress_ready"),
-        ),
-        ~message="Chain 1 indexes its own partition and reports itself ready. Chain 137 has never been started, and holds nothing back",
-      ).toEqual((
-        ["A$1"],
-        [("1", true), ("137", false)],
-        [{value: "1", labels: dict{"chainId": "1"}}],
-      ))
+        (await readyByChainId(first), await first.metric("envio_progress_ready")),
+        ~message="Chain 1 reports itself ready. Chain 137 has never been started, and holds nothing back",
+      ).toEqual(([("1", true), ("137", false)], [{value: "1", labels: dict{"chainId": "1"}}]))
+      await first.usePostgresSql(
+        async sql =>
+          t.expect(
+            await indexedTables(~sql, ~pgSchema=first.pgSchema),
+            ~message="Chain 1 indexes its own partition",
+          ).toEqual(["A$1"]),
+      )
 
       let second = await first.restart(~chains=[ChainId.fromInt(137)], ())
       await catchUp(~indexer=second, ~source=source(137))
 
       t.expect(
-        (await indexedTables(~sql, ~pgSchema), await readyByChainId(~sql, ~pgSchema)),
-        ~message="Chain 137's process adds its own partition's index and stamps only its own row",
-      ).toEqual((["A$1", "A$137"], [("1", true), ("137", true)]))
+        await readyByChainId(second),
+        ~message="Chain 137's process stamps only its own row",
+      ).toEqual([("1", true), ("137", true)])
+      await second.usePostgresSql(
+        async sql =>
+          t.expect(
+            await indexedTables(~sql, ~pgSchema=second.pgSchema),
+            ~message="Chain 137's process adds its own partition's index",
+          ).toEqual(["A$1", "A$137"]),
+      )
     },
   )
 })

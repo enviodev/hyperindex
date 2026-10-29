@@ -26,7 +26,7 @@ use serde_json::{json, Value as Json};
 
 use super::client::{JsonRpcClient, RpcError};
 use super::fields::{
-    block_fields_in, tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
+    tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
     TX_EAGER_EXCLUDED_MASK,
 };
 use super::inflight::Inflight;
@@ -73,28 +73,19 @@ impl FetchKey {
             }
         }
     }
-
-    fn describe(&self) -> String {
-        match self {
-            FetchKey::Block(number) => format!("block {number}"),
-            FetchKey::Transaction(hash) => {
-                format!("transaction {}", format::Hash::from(*hash).encode_hex())
-            }
-            FetchKey::Receipt(hash) => format!(
-                "the receipt of transaction {}",
-                format::Hash::from(*hash).encode_hex()
-            ),
-        }
-    }
 }
 
 pub(crate) enum EnrichError {
-    /// The provider's answer is unusable, but the next one may not be: a null
-    /// row for something the chain has, a response for a block other than the
-    /// one asked for, a value that will not decode. Providers load-balance
-    /// across nodes that drift from each other near the head, and a node can
-    /// answer badly once without answering badly again, so the caller waits and
-    /// retries rather than failing the sync.
+    /// A null row for something the chain has: the provider load-balances
+    /// across nodes that drift from each other near the head, and the one that
+    /// answered has not reached this block yet. Reported as the block it
+    /// belongs to, so SourceManager retries it on the same schedule as any
+    /// other source behind the head.
+    BehindHead { block_number: u64 },
+    /// The provider's answer is unusable, but the next one may not be: a
+    /// response for a block other than the one asked for, a value that will not
+    /// decode. A node can answer badly once without answering badly again, so
+    /// the caller waits and retries rather than failing the sync.
     Transient(String),
     /// Transport or JSON-RPC failure. Shared, because every waiter on one
     /// request receives it.
@@ -111,6 +102,9 @@ pub(crate) enum EnrichError {
 impl std::fmt::Display for EnrichError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            EnrichError::BehindHead { block_number } => {
+                write!(f, "The RPC node hasn't reached block {block_number} yet.")
+            }
             EnrichError::Transient(message) => write!(f, "{message}"),
             EnrichError::FieldSelection { error, .. } => write!(f, "{error:#}"),
             EnrichError::Rpc(err) => write!(f, "{err}"),
@@ -125,8 +119,11 @@ impl EnrichError {
     fn severity(&self) -> u8 {
         match self {
             EnrichError::Transient(_) => 0,
-            EnrichError::Rpc(_) => 1,
-            EnrichError::FieldSelection { .. } => 2,
+            // A node that hasn't reached the block explains any bad answer it
+            // gave beside it, and its retry is the one built for that.
+            EnrichError::BehindHead { .. } => 1,
+            EnrichError::Rpc(_) => 2,
+            EnrichError::FieldSelection { .. } => 3,
         }
     }
 
@@ -238,6 +235,18 @@ impl PageRefs {
             });
         transaction.mask |= fields.tx_mask;
     }
+
+    /// A block a block handler runs on, which no log of the page has to have
+    /// landed on.
+    pub(crate) fn add_block(&mut self, block_number: u64, block_mask: u64) {
+        self.blocks
+            .entry(block_number)
+            .or_insert_with(|| ReferencedBlock {
+                mask: 0,
+                log_hashes: Vec::new(),
+            })
+            .mask |= block_mask;
+    }
 }
 
 pub(crate) struct EnrichRequest<'a> {
@@ -259,11 +268,12 @@ pub(crate) struct EnrichedPage {
 
 /// Read one JSON-RPC result, sharing an identical request already in flight.
 /// Everything read here is something the chain must have, so a null answer is
-/// `Transient` rather than an absence to be handled.
+/// the node being behind `block_number` rather than an absence to be handled.
 async fn require(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     key: FetchKey,
+    block_number: u64,
 ) -> Result<Arc<Json>, EnrichError> {
     let result = fetches
         .get(key, || {
@@ -281,12 +291,7 @@ async fn require(
 
     let value = result.map_err(EnrichError::Rpc)?;
     if value.is_null() {
-        return Err(EnrichError::Transient(format!(
-            "The RPC returned null for {}. The provider may be load-balanced between nodes that \
-             drift from the head independently; indexing continues correctly once the query is \
-             retried.",
-            key.describe()
-        )));
+        return Err(EnrichError::BehindHead { block_number });
     }
     Ok(value)
 }
@@ -452,13 +457,10 @@ fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
     blocks
 }
 
-/// The blocks to read and the fields to read them for. One response carries
-/// every block field, so the whole page reads the same ones and merges into the
-/// store in a single batch.
-/// What every block this chain reads is decoded for. One response carries the
-/// whole header, so this depends on the chain's registrations and not on the
-/// page — which is why it is resolved once, when the client is built, rather
-/// than per page.
+/// What a page's blocks are decoded for: the chain's registrations, widened by
+/// the block handlers the page runs. One response carries the whole header, so
+/// every block of the page reads the same fields and merges into the store in a
+/// single batch.
 pub(crate) struct BlockRead {
     pub covering: u64,
     fields: Vec<BlockField>,
@@ -473,8 +475,8 @@ impl BlockRead {
         let covering = chain_mask | BLOCK_OBSERVATION_MASK;
         BlockRead {
             covering,
-            fields: block_fields_in(covering),
-            selected: block_fields_in(chain_mask & !BLOCK_OBSERVATION_MASK),
+            fields: BlockField::in_store_mask(covering),
+            selected: BlockField::in_store_mask(chain_mask & !BLOCK_OBSERVATION_MASK),
         }
     }
 
@@ -482,7 +484,7 @@ impl BlockRead {
     fn observations_only() -> Self {
         BlockRead {
             covering: BLOCK_OBSERVATION_MASK,
-            fields: block_fields_in(BLOCK_OBSERVATION_MASK),
+            fields: BlockField::in_store_mask(BLOCK_OBSERVATION_MASK),
             selected: Vec::new(),
         }
     }
@@ -501,7 +503,7 @@ struct TxReadPlan {
 
 /// Which blocks to read. A referenced block is skipped when the store was
 /// already asked for everything this page needs of it; a boundary block never
-/// is. What they are read for is `BlockRead`, the same for every page.
+/// is.
 fn plan_blocks(refs: &PageRefs, from_block: u64, to_block: u64, known: &BlockStore) -> Vec<u64> {
     let boundary = boundary_blocks(from_block, to_block);
     let mut numbers: Vec<u64> = refs
@@ -601,7 +603,7 @@ async fn fetch_blocks(
     numbers: &[u64],
 ) -> Result<Vec<Block>, EnrichError> {
     let blocks = join_all(numbers.iter().map(|&number| async move {
-        let response = require(client, fetches, FetchKey::Block(number)).await?;
+        let response = require(client, fetches, FetchKey::Block(number), number).await?;
         responses::build_block(&response, number, &read.fields, &read.selected)
             .map_err(|error| EnrichError::from_response(number, error))
     }))
@@ -627,11 +629,13 @@ async fn fetch_transactions(
                                 .reads
                                 .transaction
                                 .then_some(FetchKey::Transaction(key)),
+                            *block_number,
                         ),
                         read_opt(
                             client,
                             fetches,
                             group.reads.receipt.then_some(FetchKey::Receipt(key)),
+                            *block_number,
                         ),
                     )
                     .await?;
@@ -653,7 +657,10 @@ async fn fetch_transactions(
                         // pays for a request here.
                         let transaction = match transaction {
                             Some(transaction) => transaction,
-                            None => require(client, fetches, FetchKey::Transaction(key)).await?,
+                            None => {
+                                require(client, fetches, FetchKey::Transaction(key), *block_number)
+                                    .await?
+                            }
                         };
                         responses::fill_effective_gas_price(&mut tx, &transaction)
                             .map_err(|error| EnrichError::from_response(*block_number, error))?;
@@ -677,10 +684,11 @@ async fn read_opt(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     key: Option<FetchKey>,
+    block_number: u64,
 ) -> Result<Option<Arc<Json>>, EnrichError> {
     match key {
         None => Ok(None),
-        Some(key) => require(client, fetches, key).await.map(Some),
+        Some(key) => require(client, fetches, key, block_number).await.map(Some),
     }
 }
 
@@ -945,8 +953,8 @@ mod tests {
             (read.covering, read.fields, read.selected),
             (
                 miner | gas_used | BLOCK_OBSERVATION_MASK,
-                block_fields_in(miner | gas_used | BLOCK_OBSERVATION_MASK),
-                block_fields_in(miner | gas_used),
+                BlockField::in_store_mask(miner | gas_used | BLOCK_OBSERVATION_MASK),
+                BlockField::in_store_mask(miner | gas_used),
             )
         );
     }
@@ -1138,8 +1146,8 @@ mod shared_read_tests {
         let client = client(rpc_server(Duration::from_millis(30), served.clone()).await);
         let fetches = Fetches::default();
         let (first, second) = tokio::join!(
-            require(&client, &fetches, FetchKey::Block(1)),
-            require(&client, &fetches, FetchKey::Block(1)),
+            require(&client, &fetches, FetchKey::Block(1), 1),
+            require(&client, &fetches, FetchKey::Block(1), 1),
         );
         assert_eq!(
             (
@@ -1162,11 +1170,11 @@ mod shared_read_tests {
         let fetches = Fetches::default();
         let cancelled = tokio::time::timeout(
             Duration::from_millis(30),
-            require(&client, &fetches, FetchKey::Block(1)),
+            require(&client, &fetches, FetchKey::Block(1), 1),
         );
         let joined = async {
             tokio::time::sleep(Duration::from_millis(1)).await;
-            require(&client, &fetches, FetchKey::Block(1)).await
+            require(&client, &fetches, FetchKey::Block(1), 1).await
         };
         let (cancelled, joined) = tokio::join!(cancelled, joined);
         assert_eq!(

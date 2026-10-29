@@ -13,3 +13,5 @@ logs/
 
 # Subgraph runtime state the test indexers write into the working directory
 .envio/
+# A failed run's logs, which its failure message links to
+.test-logs/
