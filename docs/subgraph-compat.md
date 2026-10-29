@@ -402,25 +402,21 @@ graph-ts host ops are synchronous; envio's are async. Bridge:
    (~10k) turns non-determinism into a clear error. Resolved values are
    memoized in the scope against in-memory eviction between rounds.
 
-**Abort hardening.** The context's lifecycle collapses into a single status
-field on the internal per-event context params, replacing the existing
-`isResolved` boolean:
+**Abort hardening.** envio has one handler context per indexer, and each
+access reads the run it belongs to from its async scope (`RunScope`). A
+`runSync` call is a round state on top of that run, held while the round's
+synchronous body runs (nothing else can run then):
 
 ```rescript
-type contextStatus = Active | Aborted(exn) | Resolved
+type roundStatus = Active | Aborted(exn)
 ```
 
-Suspending sets `Aborted(suspendError)`. While aborted, every context trap
-access *and* every op closure (including ones grabbed before the abort)
-re-throws the stored suspend error — so even a caught suspend stops the
-handler at its next context interaction. `Resolved` keeps today's
-"access after the handler resolved" error. The replay loop resets
-`Aborted → Active` each round; the engine sets `Resolved` where it sets
-`isResolved` today. The status must be shared by reference with entity
-sub-proxies *and actually checked in their traps* — today
-`entityContextParams` copies `isResolved` by value and the entity traps
-never read it (the copy is dead code), so this is new enforcement, not just
-a plumbing fix.
+Suspending sets `Aborted(suspendError)`. While aborted, every context access
+of that run — `context.X`, and every op closure, including ones grabbed
+before the abort — re-throws the stored suspend error, so even a caught
+suspend stops the round at its next context interaction. A run accessed after
+it resolved fails as any envio handler's does. The replay loop resets
+`Aborted → Active` each round.
 
 **Why it's fast:** envio runs handlers twice. The preload pass runs all
 wrappers concurrently (`shouldGroup: true`), so first-round misses across the
@@ -437,8 +433,8 @@ reserved for the subgraph runtime — free to change between releases since
 the runtime ships in the same package (§8).
 
 - an identifiable suspend error;
-- sync siblings in `UserContext.res` traps — `getSync`, `getWhereSync`, a
-  sync effect caller: `hasInMemory ? getUnsafeInMemory : (schedule; push
+- sync siblings on `UserContext.res`'s entity contexts, in subgraph mode
+  only — `getSync`, `getWhereSync`, a sync effect caller: `hasInMemory ? getUnsafeInMemory : (schedule; push
   pending; abort; throw)`. Effect cache keys are already computed
   synchronously;
 - the replay loop itself as an internal `runSync(context, fn)` so core owns
@@ -449,13 +445,15 @@ the runtime ships in the same package (§8).
   needed): a progress check (suspending on an already-resolved key →
   clear error naming the handler and key).
 
-## 6. AsyncLocalStorage scope
+## 6. Mapping scope
 
-One `AsyncLocalStorage<{ context, event, mode, pending, logs }>` entered by
-every wrapper. Entity classes, `dataSource.*`, `log.*`, and the suspend
-machinery all read it — no context parameter anywhere in user-visible API,
-matching graph-ts exactly. Execute is sequential today, but ALS keeps the
-design valid under concurrent preload and any future parallelism.
+A wrapper sets the scope (`{ context, event, mode, ... }`, `scope.ts`) for the
+synchronous round it runs. Entity classes, `dataSource.*`, `log.*`, and the
+suspend machinery all read it — no context parameter anywhere in
+user-visible API, matching graph-ts exactly. A round never yields, so the
+scope is a plain variable rather than an AsyncLocalStorage; which envio run
+the round's context accesses belong to comes from envio's own async scope
+(`RunScope`), so concurrent preload runs stay apart.
 
 ## 6a. Generated code runs as-is (type safety by construction)
 
@@ -1122,8 +1120,8 @@ refuse instead, so behavior never silently diverges:
   schema-defined raise the unknown error. Unknown directives are dropped
   (§3 accepted divergence).
 - *Runtime*: every shim surface is strict, via two mechanisms picked by
-  path heat (precedent:
-  `UserContext.res` already Proxy-traps invalid context access):
+  path heat (precedent: envio's handler context already throws on invalid
+  access):
   1. **Full Proxy** on the graph-ts namespace objects (`store`, `ethereum`,
      `dataSource`, `json`, `crypto`, `ipfs`, `ens`, `arweave`, `log`) —
      future graph-ts APIs are unenumerable, so only a `get` trap can catch
@@ -1164,14 +1162,13 @@ refuse instead, so behavior never silently diverges:
 ## 8. Implementation plan
 
 **A. Envio core** (`packages/envio`) — independent, start here.
-1. Suspend error type; replace `isResolved` with the `status` field
-   (`Active | Aborted(exn) | Resolved`) on `contextParams`, shared by
-   reference with entity sub-proxies; `pending` list per handler invocation.
+1. Suspend error type; a round status (`Active | Aborted(exn)`) per
+   `runSync` call over the handler run, with its `pending` list.
 2. Sync ops: `LoadLayer` sync try-entry-points; `getSync` / `getWhereSync` /
-   sync effect caller traps in `UserContext.res`; a checkpoint-scoped sync
-   read (change record + its checkpoint) for `getInBlock`; status check in
-   every op closure and trap. Internal-only — kept out of `index.d.ts` and
-   docs.
+   a sync effect caller on `UserContext.res`'s contexts; a checkpoint-scoped
+   sync read (change record + its checkpoint) for `getInBlock`; the status
+   checked on every context access. Internal-only, present in subgraph mode
+   only — kept out of `index.d.ts` and docs.
 3. Internal `runSync` replay loop (round reset, allSettled; 10,000-round
    backstop).
 4. Tests (rung 1, `packages/envio-tests`, `fromUserApi`): sync hit after
