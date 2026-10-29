@@ -105,7 +105,7 @@ describe("onSlot fields over live HyperSync", () => {
 
 // The source's own queries, as the server received them: a slot-by-slot read
 // of each sparse slot, the first of them skipped, then the dense window's range
-// to the end. Account activity is selected out, as nothing reads it.
+// to the end. Nothing reads account activity, so none is selected.
 Vitest.it("sends the queries the read plan names", t => {
   t.expect(JSON.Array(proxy().queries)).toEqual(
     JSON.parseOrThrow(`[
@@ -141,22 +141,7 @@ Vitest.it("sends the queries the read plan names", t => {
     "logs": [],
     "max_num_blocks": null,
     "max_num_logs": null,
-    "account_activity": [
-      {
-        "kind": [],
-        "account": [],
-        "transaction_id": [
-          "1111111111111111111111111111111111111111111111111111111111111111"
-        ],
-        "mint": [],
-        "owner": [],
-        "program_id": [],
-        "is_signer": null,
-        "is_writable": null,
-        "is_fee_payer": null,
-        "from_lookup_table": null
-      }
-    ],
+    "account_activity": [],
     "max_num_account_activity": null
   },
   {
@@ -191,22 +176,7 @@ Vitest.it("sends the queries the read plan names", t => {
     "logs": [],
     "max_num_blocks": null,
     "max_num_logs": null,
-    "account_activity": [
-      {
-        "kind": [],
-        "account": [],
-        "transaction_id": [
-          "1111111111111111111111111111111111111111111111111111111111111111"
-        ],
-        "mint": [],
-        "owner": [],
-        "program_id": [],
-        "is_signer": null,
-        "is_writable": null,
-        "is_fee_payer": null,
-        "from_lookup_table": null
-      }
-    ],
+    "account_activity": [],
     "max_num_account_activity": null
   },
   {
@@ -241,22 +211,7 @@ Vitest.it("sends the queries the read plan names", t => {
     "logs": [],
     "max_num_blocks": null,
     "max_num_logs": null,
-    "account_activity": [
-      {
-        "kind": [],
-        "account": [],
-        "transaction_id": [
-          "1111111111111111111111111111111111111111111111111111111111111111"
-        ],
-        "mint": [],
-        "owner": [],
-        "program_id": [],
-        "is_signer": null,
-        "is_writable": null,
-        "is_fee_payer": null,
-        "from_lookup_table": null
-      }
-    ],
+    "account_activity": [],
     "max_num_account_activity": null
   }
 ]`),
