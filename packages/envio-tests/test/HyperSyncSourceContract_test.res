@@ -446,6 +446,7 @@ describe("HyperSync source contract", () => {
             ~message="HyperSync source must push heights",
           )
         let unsubscribe = subscribe(
+          ~clock=Clock.real,
           ~onHeight=height => heights->Array.push(height)->ignore,
           ~onStatus=_ => (),
         )

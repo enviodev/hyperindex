@@ -58,6 +58,7 @@ let truncateDetail = detail =>
     : detail
 
 let subscribe = (
+  ~clock: Clock.t,
   ~staleTimeout: int,
   ~onHeight: int => unit,
   ~onStatus: Source.heightSubscriptionStatus => unit,
@@ -85,7 +86,7 @@ let subscribe = (
   let liveAt = ref(None)
   let minProvenMillis = staleTimeout / provenStaleFraction
 
-  let clearPendingTimeout = () => timeoutId->Utils.clearTimeoutRef
+  let clearPendingTimeout = () => clock->Clock.clearRef(timeoutId)
 
   // A transport that throws while closing must not be able to stop the retry
   // that follows, nor escape a timer callback and take the process down. Every
@@ -106,15 +107,22 @@ let subscribe = (
 
   let rec armStaleTimeout = () => {
     clearPendingTimeout()
-    timeoutId := Some(setTimeout(() => {
-          timeoutId := None
-          // Distinguishes a provider whose message shape we don't understand
-          // from a chain that simply has nothing to report.
-          switch unreadableDetail.contents {
-          | Some(detail) => fail(~reason=Source.Unreadable, ~detail)
-          | None => fail(~reason=Source.Stale)
-          }
-        }, staleTimeout))
+    timeoutId :=
+      Some(
+        clock.setTimeout(
+          ~label="height stream stale",
+          () => {
+            timeoutId := None
+            // Distinguishes a provider whose message shape we don't understand
+            // from a chain that simply has nothing to report.
+            switch unreadableDetail.contents {
+            | Some(detail) => fail(~reason=Source.Unreadable, ~detail)
+            | None => fail(~reason=Source.Stale)
+            }
+          },
+          staleTimeout,
+        ),
+      )
   }
   and fail = (~reason: Source.heightSubscriptionDownReason, ~detail=?) => {
     generation := generation.contents + 1
@@ -128,7 +136,7 @@ let subscribe = (
     // bar rises with the backoff, so an endpoint that always dies at the same
     // age keeps escalating rather than settling into a loop at a fixed delay.
     let servedMillis = switch liveAt.contents {
-    | Some(since) => (Performance.now() -. since)->Float.toInt
+    | Some(since) => (clock.now() -. since)->Float.toInt
     | None => 0
     }
     // Against the schedule, not against the jittered wait actually served. The
@@ -143,7 +151,7 @@ let subscribe = (
         failureCount.contents + 1
       }
 
-    let retryMillis = Clock.real->Clock.jitter(retryDelayFor(failureCount.contents))
+    let retryMillis = clock->Clock.jitter(retryDelayFor(failureCount.contents))
 
     // A clean end to a connection that had proven itself is a rotation: routine,
     // and worth telling apart from the same clean end arriving early, which is a
@@ -157,10 +165,17 @@ let subscribe = (
 
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
-    timeoutId := Some(setTimeout(() => {
-          timeoutId := None
-          start()
-        }, retryMillis))
+    timeoutId :=
+      Some(
+        clock.setTimeout(
+          ~label="height stream retry",
+          () => {
+            timeoutId := None
+            start()
+          },
+          retryMillis,
+        ),
+      )
 
     onStatus(Down({reason, detail: ?(detail->Option.map(truncateDetail))}))
   }
@@ -183,7 +198,7 @@ let subscribe = (
     let goLive = () => {
       armStaleTimeout()
       if liveAt.contents->Option.isNone {
-        liveAt := Some(Performance.now())
+        liveAt := Some(clock.now())
         onStatus(Live)
       }
     }

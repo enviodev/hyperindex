@@ -199,10 +199,6 @@ for (const path of resFiles(testRoot)) {
 // time sees every timer it arms. One armed on the real clock fires on its own
 // schedule, between a test's steps, with nothing in the test to say so.
 const sourcesRoot = fileURLToPath(new URL("../../envio/src/sources", import.meta.url));
-const realTimeSources: Record<string, string> = {
-  "HeightStream.res":
-    "the RPC and HyperSync sources build it without a clock, and its own tests fake the timers",
-};
 // `Performance.now()` stays: it measures how long real work took, for request
 // stats, and a virtual clock would report every request as instant.
 const realTime = [
@@ -216,8 +212,6 @@ const realTime = [
 ];
 const sourceViolations: violation[] = [];
 for (const path of resFiles(sourcesRoot)) {
-  const name = relative(sourcesRoot, path);
-  if (name in realTimeSources) continue;
   const file = relative(repoRoot, path);
   readFileSync(path, "utf8")
     .split("\n")

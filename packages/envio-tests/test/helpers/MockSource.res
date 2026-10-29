@@ -1101,7 +1101,7 @@ let make = (
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
         | true =>
           Some(
-            (~onHeight, ~onStatus) => {
+            (~clock as _, ~onHeight, ~onStatus) => {
               heightSubscriptionCalls->Array.push(true)->ignore
               heightSubscriptionCallbacks->Array.push(onHeight)->ignore
               heightSubscriptionStatusCallbacks->Array.push(onStatus)->ignore

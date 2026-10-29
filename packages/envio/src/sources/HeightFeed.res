@@ -541,6 +541,7 @@ let enableStream = (feed: t) =>
     }
     feed.closeStream = Some(
       createSubscription(
+        ~clock=feed.clock,
         ~onHeight=height => feed->handlePushedHeight(height),
         ~onStatus=status => feed->handleStatus(status),
       ),

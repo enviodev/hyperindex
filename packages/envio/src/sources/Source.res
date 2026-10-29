@@ -240,6 +240,9 @@ type t = {
     ~logger: Logger.t,
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (
+    // The stream's staleness and reconnect timers run on the clock of the
+    // manager that subscribes, not one the source was built with.
+    ~clock: Clock.t,
     ~onHeight: int => unit,
     ~onStatus: heightSubscriptionStatus => unit,
   ) => unit => unit,

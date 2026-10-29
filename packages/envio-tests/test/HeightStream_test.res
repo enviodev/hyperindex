@@ -26,6 +26,8 @@ type harness = {
   drivers: array<HeightStream.driver>,
   closes: ref<int>,
   unsubscribe: unit => unit,
+  // Moves the clock the stream runs on, firing its timers on the way.
+  advance: int => promise<unit>,
 }
 
 let makeHarness = (
@@ -38,7 +40,9 @@ let makeHarness = (
   let heights = []
   let drivers = []
   let closes = ref(0)
+  let clock = VirtualClock.make()
   let unsubscribe = HeightStream.subscribe(
+    ~clock=clock->VirtualClock.toClock,
     ~staleTimeout,
     ~onHeight=height => heights->Array.push(height)->ignore,
     ~onStatus=status => statuses->Array.push(status->statusLabel)->ignore,
@@ -59,7 +63,14 @@ let makeHarness = (
       }
     },
   )
-  {statuses, heights, drivers, closes, unsubscribe}
+  {
+    statuses,
+    heights,
+    drivers,
+    closes,
+    unsubscribe,
+    advance: millis => clock->VirtualClock.advance(millis, ~settle=() => Promise.resolve()),
+  }
 }
 
 let driverAt = (harness, index): HeightStream.driver => harness.drivers->Array.getUnsafe(index)
@@ -69,7 +80,7 @@ let driverAt = (harness, index): HeightStream.driver => harness.drivers->Array.g
 // something has by the last one.
 let advanceThroughRetryWindow = async (harness, ~delay) => {
   let earliest = delay / 2
-  await Vi.advanceTimersByTimeAsync(earliest - 1)
+  await harness.advance(earliest - 1)
   let beforeEarliest = harness.drivers->Array.length
   // Walk the rest of the window rather than jumping it, and stop as soon as the
   // reconnect lands. The connection it makes is live from that instant, so
@@ -78,7 +89,7 @@ let advanceThroughRetryWindow = async (harness, ~delay) => {
   let remaining = ref(delay - earliest)
   while remaining.contents > 0 && harness.drivers->Array.length === beforeEarliest {
     let step = Pervasives.min(remaining.contents, 500)
-    await Vi.advanceTimersByTimeAsync(step)
+    await harness.advance(step)
     remaining := remaining.contents - step
   }
   (beforeEarliest, harness.drivers->Array.length)
@@ -102,9 +113,6 @@ describe("Clock.jitter", () => {
 })
 
 describe("HeightStream reconnect driver", () => {
-  beforeEach(() => Vi.useFakeTimers())
-  afterEach(() => Vi.useRealTimers())
-
   Async.it("Backs off exponentially to a 60s cap and never gives up", async t => {
     let harness = makeHarness()
     // Long enough that a cap on the number of retries would fail here rather
@@ -133,13 +141,13 @@ describe("HeightStream reconnect driver", () => {
     // delivered must not be what decides this.
     let harness = makeHarness(~staleTimeout=60_000)
     (harness->driverAt(0)).onFailure(~reason=Source.Closed)
-    await Vi.advanceTimersByTimeAsync(250)
+    await harness.advance(250)
     (harness->driverAt(1)).onFailure(~reason=Source.Closed)
-    await Vi.advanceTimersByTimeAsync(500)
+    await harness.advance(500)
 
     let rotated = harness->driverAt(2)
     rotated.onConnected()
-    await Vi.advanceTimersByTimeAsync(20_000)
+    await harness.advance(20_000)
     rotated.onHeight(101)
     rotated.onFailure(~reason=Source.Closed)
 
@@ -162,7 +170,7 @@ describe("HeightStream reconnect driver", () => {
       let driver = harness->driverAt(attempt)
       driver.onConnected()
       driver.onHeight(100 + attempt)
-      await Vi.advanceTimersByTimeAsync(300)
+      await harness.advance(300)
       driver.onFailure(~reason=Source.Closed)
       connectsAroundRetry
       ->Array.push(
@@ -186,7 +194,7 @@ describe("HeightStream reconnect driver", () => {
 
     let connectsAroundRetry = []
     for attempt in 0 to schedule->Array.length - 1 {
-      await Vi.advanceTimersByTimeAsync(2_000)
+      await harness.advance(2_000)
       (harness->driverAt(attempt)).onFailure(~reason=Source.Http(502))
       connectsAroundRetry
       ->Array.push(
@@ -212,7 +220,7 @@ describe("HeightStream reconnect driver", () => {
     for attempt in 0 to schedule->Array.length - 1 {
       let driver = harness->driverAt(attempt)
       driver.onConnected()
-      await Vi.advanceTimersByTimeAsync(3_000)
+      await harness.advance(3_000)
       driver.onFailure(~reason=Source.Closed)
       connectsAroundRetry
       ->Array.push(
@@ -237,15 +245,15 @@ describe("HeightStream reconnect driver", () => {
     // rotation.
     let young = harness->driverAt(0)
     young.onConnected()
-    await Vi.advanceTimersByTimeAsync(10_000)
+    await harness.advance(10_000)
     young.onFailure(~reason=Source.Closed)
-    await Vi.advanceTimersByTimeAsync(250)
+    await harness.advance(250)
 
     // Served well past it, then the stream ended without an error, which is
     // what a load balancer rotating connections looks like from here.
     let rotated = harness->driverAt(1)
     rotated.onConnected()
-    await Vi.advanceTimersByTimeAsync(30_000)
+    await harness.advance(30_000)
     rotated.onFailure(~reason=Source.Closed)
     harness.unsubscribe()
 
@@ -257,7 +265,7 @@ describe("HeightStream reconnect driver", () => {
 
     let driver = harness->driverAt(0)
     driver.onConnected()
-    await Vi.advanceTimersByTimeAsync(30_000)
+    await harness.advance(30_000)
     // Staleness and errors are named after what happened, so only an end with
     // nothing wrong with it can become a rotation.
     driver.onFailure(~reason=Source.TransportError)
@@ -273,7 +281,7 @@ describe("HeightStream reconnect driver", () => {
       ~detail=String.repeat("y", 500),
     )
 
-    await Vi.advanceTimersByTimeAsync(250)
+    await harness.advance(250)
     harness.unsubscribe()
 
     t.expect(harness.statuses).toStrictEqual([
@@ -288,7 +296,7 @@ describe("HeightStream reconnect driver", () => {
     driver.onFailure(~reason=Source.TransportError)
     driver.onFailure(~reason=Source.Closed)
 
-    await Vi.advanceTimersByTimeAsync(250)
+    await harness.advance(250)
     harness.unsubscribe()
 
     t.expect((
@@ -307,9 +315,9 @@ describe("HeightStream reconnect driver", () => {
     let harness = makeHarness()
     (harness->driverAt(0)).onConnected()
 
-    await Vi.advanceTimersByTimeAsync(14_999)
+    await harness.advance(14_999)
     let beforeStale = harness.statuses->Array.copy
-    await Vi.advanceTimersByTimeAsync(1)
+    await harness.advance(1)
     harness.unsubscribe()
 
     t.expect((beforeStale, harness.statuses)).toStrictEqual((["live"], ["live", "down:stale"]))
@@ -327,10 +335,10 @@ describe("HeightStream reconnect driver", () => {
     // has arrived: on a stream whose heights are all malformed, the pings
     // between them are the only other traffic, and they would otherwise keep it
     // alive forever without it ever reporting anything.
-    await Vi.advanceTimersByTimeAsync(14_000)
+    await harness.advance(14_000)
     driver.onKeepAlive()
-    await Vi.advanceTimersByTimeAsync(1_000)
-    await Vi.advanceTimersByTimeAsync(250)
+    await harness.advance(1_000)
+    await harness.advance(250)
 
     // A height read off the same connection says the shape is fine after all,
     // so one stray message must not go on naming later failures.
@@ -338,7 +346,7 @@ describe("HeightStream reconnect driver", () => {
     reconnected.onConnected()
     reconnected.onUnreadable(~detail="garbled")
     reconnected.onHeight(101)
-    await Vi.advanceTimersByTimeAsync(15_000)
+    await harness.advance(15_000)
     harness.unsubscribe()
 
     t.expect((harness.statuses, harness.heights)).toStrictEqual((
@@ -353,7 +361,7 @@ describe("HeightStream reconnect driver", () => {
     driver.onConnected()
     driver.onUnreadable(~detail=String.repeat("x", 500))
 
-    await Vi.advanceTimersByTimeAsync(15_000)
+    await harness.advance(15_000)
     harness.unsubscribe()
 
     t.expect(harness.statuses).toStrictEqual([
@@ -381,13 +389,13 @@ describe("HeightStream reconnect driver", () => {
     let driver = harness->driverAt(0)
     driver.onConnected()
 
-    await Vi.advanceTimersByTimeAsync(14_000)
+    await harness.advance(14_000)
     driver.onKeepAlive()
-    await Vi.advanceTimersByTimeAsync(14_000)
+    await harness.advance(14_000)
     driver.onHeight(42)
-    await Vi.advanceTimersByTimeAsync(14_000)
+    await harness.advance(14_000)
     let beforeStale = harness.statuses->Array.copy
-    await Vi.advanceTimersByTimeAsync(1_000)
+    await harness.advance(1_000)
     harness.unsubscribe()
 
     t.expect((beforeStale, harness.statuses, harness.heights)).toStrictEqual((
@@ -403,7 +411,7 @@ describe("HeightStream reconnect driver", () => {
     driver.onConnected()
     driver.onFailure(~reason=Source.Closed)
 
-    await Vi.advanceTimersByTimeAsync(250)
+    await harness.advance(250)
     harness.unsubscribe()
 
     t.expect((harness.drivers->Array.length, harness.statuses)).toStrictEqual((
@@ -418,7 +426,7 @@ describe("HeightStream reconnect driver", () => {
     // retry timer, so a throw on that path is an uncaught exception.
     let harness = makeHarness(~failOnConnect=Source.Closed, ~throwOnClose=true)
 
-    await Vi.advanceTimersByTimeAsync(250)
+    await harness.advance(250)
     harness.unsubscribe()
 
     t.expect((harness.drivers->Array.length, harness.statuses)).toStrictEqual((
@@ -436,7 +444,7 @@ describe("HeightStream reconnect driver", () => {
     driver.onHeight(7)
     driver.onFailure(~reason=Source.Closed)
     driver.onConnected()
-    await Vi.advanceTimersByTimeAsync(60_000)
+    await harness.advance(60_000)
 
     t.expect((
       harness.statuses,
@@ -454,7 +462,7 @@ describe("HeightStream reconnect driver", () => {
     let connectsAroundRetry = []
     for attempt in 0 to 3 {
       (harness->driverAt(attempt)).onConnected()
-      await Vi.advanceTimersByTimeAsync(15_000)
+      await harness.advance(15_000)
       connectsAroundRetry->Array.push(await harness->advanceThroughRetryWindow(~delay=250))->ignore
     }
     harness.unsubscribe()
@@ -540,6 +548,7 @@ describe("HyperSyncSSE", () => {
     // this was, so the transport has to carry its message out too.
     let detailed = []
     let unsubscribe = HyperSyncSSE.subscribe(
+      ~clock=Clock.real,
       ~hyperSyncUrl=url,
       ~apiToken="bad-token",
       ~onHeight=_ => (),
@@ -575,6 +584,7 @@ describe("HyperSyncSSE", () => {
     let statuses = []
     let heights = []
     let unsubscribe = HyperSyncSSE.subscribe(
+      ~clock=Clock.real,
       ~hyperSyncUrl=url,
       ~apiToken="test-token",
       ~onHeight=height => heights->Array.push(height)->ignore,
@@ -608,6 +618,7 @@ describe("EvmRpcWs", () => {
     let statuses = []
     let heights = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=height => heights->Array.push(height)->ignore,
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -628,6 +639,7 @@ describe("EvmRpcWs", () => {
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -651,6 +663,7 @@ describe("EvmRpcWs", () => {
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -680,6 +693,7 @@ describe("EvmRpcWs", () => {
     let statuses = []
     let heights = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=height => heights->Array.push(height)->ignore,
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -702,6 +716,7 @@ describe("EvmRpcWs", () => {
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -728,6 +743,7 @@ describe("EvmRpcWs", () => {
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -762,6 +778,7 @@ describe("EvmRpcWs", () => {
     let statuses = []
     let heights = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=height => heights->Array.push(height)->ignore,
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -787,6 +804,7 @@ describe("EvmRpcWs", () => {
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -813,6 +831,7 @@ describe("EvmRpcWs", () => {
     let statuses = []
     let heights = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=height => heights->Array.push(height)->ignore,
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -836,6 +855,7 @@ describe("EvmRpcWs", () => {
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
