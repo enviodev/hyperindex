@@ -11,7 +11,7 @@ export type ParsedSignature = {
 
 /**
  * graph codegen emits `"balanceOf(address):(uint256)"`. Types only, no names —
- * which is all `parseAbiParameters` needs.
+ * which is all the ABI codec needs.
  */
 export function parseSignature(signature: string): ParsedSignature {
   const open = signature.indexOf("(");

@@ -291,10 +291,10 @@ const timestamps = makeBatcher<bigint>(
     const client = rpcClient(rpcUrls);
     const block = await untilAnswered(
       `block ${blockNumber} from RPC`,
-      () => client.getBlock({ blockNumber: BigInt(blockNumber) }),
+      () => client.getBlock({ blockNumber }),
       { deadline: false },
     );
-    return block.timestamp;
+    return BigInt(block.timestamp);
   },
 );
 
@@ -386,10 +386,10 @@ const headers = makeBatcher<BlockHeader>(
     const client = rpcClient(rpcUrls);
     const block = await untilAnswered(
       `block ${blockNumber} from RPC`,
-      () => client.getBlock({ blockNumber: BigInt(blockNumber) }),
+      () => client.getBlock({ blockNumber }),
       { deadline: false },
     );
-    return headerFromRpc(block as unknown as Record<string, unknown>);
+    return headerFromRpc(block);
   },
 );
 

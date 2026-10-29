@@ -16,14 +16,7 @@ import BigNumber from "bignumber.js";
 import { type Document, isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type * as GraphTsTypes from "./graph-ts-types/index.js";
 import * as GraphNodeDecimal from "./graph-node-decimal.ts";
-import {
-  keccak256 as viemKeccak256,
-  toHex,
-  hexToBytes,
-  decodeAbiParameters,
-  parseAbiParameters,
-} from "viem";
-import { subgraphKeccak256 } from "../Core.res.mjs";
+import { subgraphAbiDecode, subgraphKeccak256 } from "../Core.res.mjs";
 import { notify as notifyLog, warn } from "./log.ts";
 import { operators } from "./assemblyscript.ts";
 import { currentScope, type Scope } from "./scope.ts";
@@ -36,6 +29,13 @@ import {
   unsupported,
   unknown,
 } from "./errors.ts";
+
+const toHex = (bytes: Uint8Array): string =>
+  "0x" + Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("hex");
+const hexToBytes = (hex: string): Uint8Array => new Uint8Array(Buffer.from(hex.replace(/^0x/, ""), "hex"));
+/** `ty` decoded with the addon (alloy, as graph-node decodes it). */
+const abiDecode = (ty: string, data: Uint8Array, params: boolean): unknown =>
+  subgraphAbiDecode(ty, data, params);
 
 // ---------------------------------------------------------------------------
 // Byte values
@@ -2174,7 +2174,11 @@ export function ethereumValueToJs(value: EthereumValue): unknown {
 type EncodedToken = { dynamic: boolean; bytes: Uint8Array };
 
 const WORD = 32;
-const wordOf = (value: bigint): Uint8Array => hexToBytes(toHex(value, { size: WORD }));
+const wordOf = (value: bigint): Uint8Array => {
+  const digits = value.toString(16);
+  if (value < 0n || digits.length > WORD * 2) throw new Error(`${value} doesn't fit a word`);
+  return hexToBytes(digits.padStart(WORD * 2, "0"));
+};
 const padded = (bytes: Uint8Array, left: boolean): Uint8Array => {
   const out = new Uint8Array(Math.ceil(bytes.length / WORD) * WORD || (left ? WORD : 0));
   out.set(bytes, left ? out.length - bytes.length : 0);
@@ -2616,8 +2620,8 @@ function decodeCallValues(
   isInput: boolean,
 ): EthereumEventParam[] {
   if (params.length === 0) return [];
-  const bytes = (isInput ? `0x${data.slice(10)}` : data) as `0x${string}`;
-  const decoded = decodeAbiParameters(parseAbiParameters(params.map((param) => param.type).join(",")), bytes);
+  const bytes = hexToBytes(isInput ? data.slice(10) : data);
+  const decoded = abiDecode(`(${params.map((param) => param.type).join(",")})`, bytes, true) as unknown[];
   return params.map(
     (param, index) => new EthereumEventParam(param.name, ethereumConverter(param.type)(decoded[index])),
   );
@@ -2810,7 +2814,7 @@ const ethereumConverter: (type: string) => Converter<EthereumValue> = memoised((
     const components = tupleComponents(type).map(ethereumConverter);
     return (raw) => {
       // envio's decoder keys a tuple by its components' names when the ABI
-      // gives them, in ABI order; viem and unnamed ABIs give an array.
+      // gives them, in ABI order; the addon and unnamed ABIs give an array.
       const values = Array.isArray(raw) ? raw : Object.values(raw as object);
       return EthereumValue.fromTuple(components.map((component, index) => component(values[index])));
     };
@@ -2823,7 +2827,7 @@ const ethereumConverter: (type: string) => Converter<EthereumValue> = memoised((
     const bytes = fixedBytes(type);
     return (raw) => EthereumValue.fromFixedBytes(bytes(raw));
   }
-  // viem decodes the narrow integer types to numbers.
+  // envio's event decoder hands the narrow integer types over as numbers.
   const fromInt = type.startsWith("uint") ? EthereumValue.fromUnsignedBigInt : EthereumValue.fromSignedBigInt;
   return (raw) => fromInt(new BigInt_(BigInt(raw as bigint | number | string)));
 });
@@ -3038,13 +3042,10 @@ const ethereumImpl = {
       ? null
       : (result as CallResult<EthereumValue[]>).value;
   },
+  // graph-node's `ethereum_decode`: alloy's `abi_decode` of the one type.
   decode(types: string, data: Bytes): EthereumValue | null {
     try {
-      const decoded = decodeAbiParameters(
-        parseAbiParameters(types),
-        data.toHexString() as `0x${string}`,
-      );
-      return ethereumConverter(types)(decoded[0]);
+      return ethereumConverter(types)(abiDecode(types, data, false));
     } catch {
       return null;
     }
@@ -3054,13 +3055,7 @@ const ethereumImpl = {
   // of parameters, as calldata holds them, with no offset word before them.
   decodeParams(types: string, data: Bytes): EthereumValue | null {
     try {
-      const parameters = parseAbiParameters(types);
-      const [only] = parameters;
-      if (parameters.length !== 1 || only.type !== "tuple" || !("components" in only)) {
-        return ethereumImpl.decode(types, data);
-      }
-      const decoded = decodeAbiParameters(only.components, data.toHexString() as `0x${string}`);
-      return ethereumConverter(types)([...decoded]);
+      return ethereumConverter(types)(abiDecode(types, data, true));
     } catch {
       return null;
     }
@@ -3413,7 +3408,7 @@ const ethereumUtilsImpl = {
       salt.toHexString().slice(2) +
       initCodeHash.toHexString().slice(2);
     return Bytes.fromHexString(
-      "0x" + viemKeccak256(hexToBytes(preimage as `0x${string}`)).slice(26),
+      toHex(subgraphKeccak256(hexToBytes(preimage))).slice(26),
     );
   },
 };

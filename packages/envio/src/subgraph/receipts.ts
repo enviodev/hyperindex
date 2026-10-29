@@ -148,12 +148,12 @@ async function fromRpc(request: ReceiptRequest): Promise<ReceiptLog[]> {
   const client = rpcClient(rpcUrls);
   const receipt = await untilAnswered(
     `the receipt of ${request.transactionHash} from RPC`,
-    () => client.getTransactionReceipt({ hash: request.transactionHash as `0x${string}` }),
+    () => client.getTransactionReceipt({ hash: request.transactionHash }),
     { deadline: false },
   );
-  return receipt.logs.map((log) => ({
+  return (receipt.logs as Record<string, any>[]).map((log) => ({
     address: log.address,
-    topics: [...((log as unknown as { topics: string[] }).topics)],
+    topics: [...log.topics],
     data: log.data,
     logIndex: Number(log.logIndex),
     transactionIndex: Number(log.transactionIndex),

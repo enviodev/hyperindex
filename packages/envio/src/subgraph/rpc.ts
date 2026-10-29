@@ -9,9 +9,7 @@
  * short, and a queue drains far faster than a refused connection retries.
  */
 
-import { createPublicClient, createTransport, fallback, RpcRequestError, type Transport } from "viem";
-import { getHttpRpcClient } from "viem/utils";
-import { isRateLimit, requestTimeoutMs, withDeadline } from "./transient.ts";
+import { HttpStatusError, isRateLimit, requestTimeoutMs, withDeadline } from "./transient.ts";
 
 /**
  * Requests in flight at once, per set of endpoints. A handler's calls run one
@@ -64,7 +62,38 @@ export function gate(maxInFlight = maxInFlightFromEnv()) {
 }
 
 type Body = { method: string; params?: unknown };
-type Answer = { result?: unknown; error?: { code: number; message: string; data?: unknown } };
+type RpcErrorBody = { code: number; message: string; data?: unknown };
+type Answer = { result?: unknown; error?: RpcErrorBody };
+
+/** A JSON-RPC error the endpoint answered with: the request's own outcome. */
+export class RpcError extends Error {
+  readonly code: number;
+  readonly data: unknown;
+  constructor(
+    readonly url: string,
+    method: string,
+    error: RpcErrorBody,
+  ) {
+    super(`${method} on ${url} failed: ${error.message}`);
+    this.code = error.code;
+    this.data = error.data;
+  }
+}
+
+/** One HTTP request to the endpoint, bounded by the request deadline. */
+async function post(url: string, body: unknown): Promise<unknown> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(requestTimeoutMs()),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new HttpStatusError(url, response.status, text.slice(0, 200));
+  }
+  return response.json();
+}
 type Waiting = { body: Body; resolve: (answer: Answer) => void; reject: (error: unknown) => void; missing: number };
 
 /**
@@ -104,8 +133,7 @@ const MAX_MISSING = 3;
  * grow back by one per full round of answers (a batch: per answered batch), up
  * to `maxInFlight` and the batch size the endpoint takes.
  */
-function batchingTransport(url: string, maxInFlight: number, maxBatch: number): Transport {
-  const client = getHttpRpcClient(url, { timeout: requestTimeoutMs() });
+function batchingTransport(url: string, maxInFlight: number, maxBatch: number): (body: Body) => Promise<unknown> {
   // What the endpoint takes in one batch, and what is sent for now.
   let batchCap = maxBatch;
   let batchSize = maxBatch;
@@ -142,7 +170,7 @@ function batchingTransport(url: string, maxInFlight: number, maxBatch: number): 
     if (items.length === 1) {
       const [item] = items;
       try {
-        const answer = (await client.request({ body: item.body as any })) as Answer;
+        const answer = (await post(url, { jsonrpc: "2.0", id: nextId++, ...item.body })) as Answer;
         if (answer.error && isRateLimit(answer.error)) slowDown(sentIn);
         else answered();
         item.resolve(answer);
@@ -155,7 +183,10 @@ function batchingTransport(url: string, maxInFlight: number, maxBatch: number): 
     const ids = items.map(() => nextId++);
     let data: unknown;
     try {
-      data = await client.request({ body: items.map((item, i) => ({ ...item.body, id: ids[i] })) as any });
+      data = await post(
+        url,
+        items.map((item, i) => ({ jsonrpc: "2.0", id: ids[i], ...item.body })),
+      );
     } catch (error) {
       if (isRateLimit(error)) slowDown(sentIn);
       const status = (error as { status?: unknown }).status;
@@ -216,43 +247,85 @@ function batchingTransport(url: string, maxInFlight: number, maxBatch: number): 
     }
   };
 
-  return () =>
-    createTransport({
-      key: "http",
-      name: "HTTP JSON-RPC",
-      type: "http",
-      retryCount: 0,
-      timeout: requestTimeoutMs(),
-      request: (async ({ method, params }: Body) => {
-        const body = { method, params };
-        const answer = await new Promise<Answer>((resolve, reject) => {
-          queue.push({ body, resolve, reject, missing: 0 });
-          // Requests made in the same turn — preload's calls, a batch's
-          // timestamps — leave together.
-          schedule();
-        });
-        if (answer.error) throw new RpcRequestError({ body, error: answer.error, url });
-        return answer.result;
-      }) as any,
+  return async (body: Body) => {
+    const answer = await new Promise<Answer>((resolve, reject) => {
+      queue.push({ body, resolve, reject, missing: 0 });
+      // Requests made in the same turn — preload's calls, a batch's
+      // timestamps — leave together.
+      schedule();
     });
+    if (answer.error) throw new RpcError(url, body.method, answer.error);
+    return answer.result;
+  };
 }
 
-const clients = new Map<string, ReturnType<typeof createPublicClient>>();
+const toHex = (value: number | bigint) => `0x${BigInt(value).toString(16)}`;
 
-export function rpcClient(rpcUrls: string[]) {
+/** The reads the runtime makes, over the endpoints in the order given. */
+export type RpcClient = {
+  request(body: Body): Promise<any>;
+  /** The call's return data. */
+  call(args: { to: string; data: string; blockNumber: number | bigint }): Promise<string>;
+  getBalance(args: { address: string; blockNumber: number | bigint }): Promise<bigint>;
+  getCode(args: { address: string; blockNumber: number | bigint }): Promise<string>;
+  /** The block as the endpoint spells it, its numbers hex. */
+  getBlock(args: { blockNumber: number | bigint }): Promise<Record<string, any>>;
+  getTransactionReceipt(args: { hash: string }): Promise<Record<string, any>>;
+};
+
+function makeClient(transports: ((body: Body) => Promise<unknown>)[]): RpcClient {
+  // The next endpoint is asked whatever the first answered, except a revert:
+  // every node gives that one the same.
+  const request = async (body: Body): Promise<any> => {
+    let failure: unknown;
+    for (const transport of transports) {
+      try {
+        return await transport(body);
+      } catch (error) {
+        if (error instanceof RpcError && /revert/i.test(error.message)) throw error;
+        failure = error;
+      }
+    }
+    throw failure;
+  };
+  return {
+    request,
+    call: ({ to, data, blockNumber }) =>
+      request({ method: "eth_call", params: [{ to, data }, toHex(blockNumber)] }).then(
+        (result) => (result ?? "0x") as string,
+      ),
+    getBalance: ({ address, blockNumber }) =>
+      request({ method: "eth_getBalance", params: [address, toHex(blockNumber)] }).then((result) =>
+        BigInt(result),
+      ),
+    getCode: ({ address, blockNumber }) =>
+      request({ method: "eth_getCode", params: [address, toHex(blockNumber)] }).then(
+        (result) => (result ?? "0x") as string,
+      ),
+    getBlock: async ({ blockNumber }) => {
+      const block = await request({ method: "eth_getBlockByNumber", params: [toHex(blockNumber), false] });
+      if (!block) throw new Error(`Block at number ${blockNumber} could not be found.`);
+      return block;
+    },
+    getTransactionReceipt: async ({ hash }) => {
+      const receipt = await request({ method: "eth_getTransactionReceipt", params: [hash] });
+      if (!receipt) throw new Error(`The receipt of transaction ${hash} could not be found.`);
+      return receipt;
+    },
+  };
+}
+
+const clients = new Map<string, RpcClient>();
+
+export function rpcClient(rpcUrls: string[]): RpcClient {
   const key = rpcUrls.join("|");
   let client = clients.get(key);
   if (!client) {
     const maxInFlight = maxInFlightFromEnv();
     const maxBatch = maxBatchFromEnv();
-    client = createPublicClient({
-      // Retrying is `untilAnswered`'s job, with a backoff that outlasts a rate
-      // limit; viem's own would give up within a second.
-      transport: fallback(
-        rpcUrls.map((url) => batchingTransport(url, maxInFlight, maxBatch)),
-        { retryCount: 0 },
-      ),
-    });
+    // Retrying is `untilAnswered`'s job, with a backoff that outlasts a rate
+    // limit.
+    client = makeClient(rpcUrls.map((url) => batchingTransport(url, maxInFlight, maxBatch)));
     clients.set(key, client);
   }
   return client;

@@ -26,7 +26,7 @@ function firstBackoffMs(): number {
   return positive("ENVIO_SUBGRAPH_RETRY_BACKOFF_MS", 500);
 }
 
-/** A response status, on our own fetch errors as on viem's. */
+/** A response status the endpoint answered with. */
 export class HttpStatusError extends Error {
   constructor(
     readonly url: string,

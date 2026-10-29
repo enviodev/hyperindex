@@ -66,9 +66,6 @@ importers:
       rescript-schema:
         specifier: 9.5.1
         version: 9.5.1(rescript@12.2.0)
-      viem:
-        specifier: 2.54.0
-        version: 2.54.0(typescript@6.0.3)
       yaml:
         specifier: 2.8.1
         version: 2.8.1
@@ -209,7 +206,7 @@ importers:
     dependencies:
       envio:
         specifier: file:../../packages/envio
-        version: file:packages/envio(rescript@12.2.0)(typescript@7.0.2)
+        version: link:../../packages/envio
     devDependencies:
       '@graphprotocol/graph-ts':
         specifier: 0.38.1
@@ -1239,11 +1236,6 @@ packages:
   encodeurl@1.0.2:
     resolution: {integrity: sha512-TPJXq8JqFaVYm2CWmPvnP2Iyo4ZSM7/QKcSmuMLDObfpH5fi7RUGmd/rTDf+rut/saiDiQEeVTNgAmJEdAOx0w==}
     engines: {node: '>= 0.8'}
-
-  envio@file:packages/envio:
-    resolution: {directory: packages/envio, type: directory}
-    engines: {node: '>=22.15.0'}
-    hasBin: true
 
   error-ex@1.3.4:
     resolution: {integrity: sha512-sqQamAnR14VgCr1A618A3sGrygcpK+HEbenA/HiEAkkUwcZIIB/tgWqHFxWgOyDh4nB4JCRimh79dR5Ywc9MDQ==}
@@ -3182,10 +3174,6 @@ snapshots:
     optionalDependencies:
       typescript: 6.0.3
 
-  abitype@1.2.3(typescript@7.0.2):
-    optionalDependencies:
-      typescript: 7.0.2
-
   accepts@1.3.8:
     dependencies:
       mime-types: 2.1.35
@@ -3482,24 +3470,6 @@ snapshots:
   emoji-regex@8.0.0: {}
 
   encodeurl@1.0.2: {}
-
-  envio@file:packages/envio(rescript@12.2.0)(typescript@7.0.2):
-    dependencies:
-      '@rescript/runtime': 12.2.0
-      bignumber.js: 9.3.1
-      dotenv: 16.4.5
-      eventsource: 4.1.0
-      express: 4.19.2
-      rescript-schema: 9.5.1(rescript@12.2.0)
-      viem: 2.54.0(typescript@7.0.2)
-      yaml: 2.8.1
-    transitivePeerDependencies:
-      - bufferutil
-      - rescript
-      - supports-color
-      - typescript
-      - utf-8-validate
-      - zod
 
   error-ex@1.3.4:
     dependencies:
@@ -4391,21 +4361,6 @@ snapshots:
     transitivePeerDependencies:
       - zod
 
-  ox@0.14.29(typescript@7.0.2):
-    dependencies:
-      '@adraffy/ens-normalize': 1.11.1
-      '@noble/ciphers': 1.3.0
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@7.0.2)
-      eventemitter3: 5.0.1
-    optionalDependencies:
-      typescript: 7.0.2
-    transitivePeerDependencies:
-      - zod
-
   p-limit@2.3.0:
     dependencies:
       p-try: 2.2.0
@@ -4830,23 +4785,6 @@ snapshots:
       ws: 8.20.1
     optionalDependencies:
       typescript: 6.0.3
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-      - zod
-
-  viem@2.54.0(typescript@7.0.2):
-    dependencies:
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@7.0.2)
-      isows: 1.0.7(ws@8.20.1)
-      ox: 0.14.29(typescript@7.0.2)
-      ws: 8.20.1
-    optionalDependencies:
-      typescript: 7.0.2
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate

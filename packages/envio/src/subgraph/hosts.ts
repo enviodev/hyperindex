@@ -472,7 +472,7 @@ export function makeHostEffects(
       const client = clientOrThrow("ethereum.getBalance");
       const balance = await untilAnswered(
         `the balance of ${address} at block ${blockNumber}`,
-        () => client.getBalance({ address, blockNumber: BigInt(blockNumber) }),
+        () => client.getBalance({ address, blockNumber }),
         { deadline: false },
       );
       return balance.toString();
@@ -493,7 +493,7 @@ export function makeHostEffects(
       const client = clientOrThrow("ethereum.hasCode");
       const code = await untilAnswered(
         `the code of ${address} at block ${blockNumber}`,
-        () => client.getCode({ address, blockNumber: BigInt(blockNumber) }),
+        () => client.getCode({ address, blockNumber }),
         { deadline: false },
       );
       return code !== undefined && code !== "0x";

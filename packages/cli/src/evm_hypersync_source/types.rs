@@ -345,7 +345,7 @@ pub(crate) fn event_params_tape(
 
 /// A tuple with `components` becomes an object keyed by component name; an
 /// array passes them on to its elements. Without them a tuple is an array.
-fn write_sol_value(
+pub(crate) fn write_sol_value(
     tape: &mut JsTape,
     value: &DynSolValue,
     components: Option<&[ParamMeta]>,

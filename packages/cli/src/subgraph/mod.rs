@@ -6,6 +6,7 @@
 
 pub mod abi;
 pub mod assemblyscript;
+pub mod codec;
 pub mod codegen;
 pub mod creates;
 pub mod diff;

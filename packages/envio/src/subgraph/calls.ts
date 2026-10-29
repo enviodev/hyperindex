@@ -1,32 +1,20 @@
 /**
- * `Contract.bind(x).foo()` -> an envio effect over viem.
+ * `Contract.bind(x).foo()` -> an envio effect, encoded and decoded with
+ * alloy, as graph-node does.
  *
  * graph-node evaluates a mapping's contract calls against the block the event
  * came from, so the block number is part of the effect's input — and therefore
  * of its cache key, which is what makes a cached call safe to reuse.
  */
 
-import { decodeFunctionResult, encodeFunctionData, parseAbiParameters, type Abi } from "viem";
 import * as Sury from "rescript-schema";
+import { subgraphAbiDecode, subgraphAbiEncodeCall } from "../Core.res.mjs";
 import { createEffect } from "../Envio.res.mjs";
 import { missingRpcMessage } from "./errors.ts";
 import { rpcClient } from "./rpc.ts";
 import { parseSignature } from "./abi-types.ts";
 import { untilAnswered } from "./transient.ts";
 import { info } from "./log.ts";
-
-export function abiItemFor(signature: string): Abi {
-  const { name, inputs, outputs } = parseSignature(signature);
-  return [
-    {
-      type: "function",
-      name,
-      stateMutability: "view",
-      inputs: inputs.trim() === "" ? [] : [...parseAbiParameters(inputs)],
-      outputs: outputs.trim() === "" ? [] : [...parseAbiParameters(outputs)],
-    },
-  ] as Abi;
-}
 
 /**
  * A revert is data: the mapping's `try_` sees `{reverted: true}`. A transport
@@ -42,7 +30,7 @@ export function isRevert(error: unknown): boolean {
   }
   const text = parts.filter(Boolean).join(" | ");
 
-  if (/revert|ContractFunctionZeroDataError|invalid opcode|out of gas/i.test(text)) {
+  if (/revert|invalid opcode|out of gas/i.test(text)) {
     return true;
   }
   return false;
@@ -199,25 +187,25 @@ export async function shareAcrossBlocks(input: CallInput, ask: () => Promise<str
   }
 }
 
+/** An argument as the addon reads it: an integer as its decimal string. */
+function jsonArg(value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (Array.isArray(value)) return value.map(jsonArg);
+  return value;
+}
+
+const hexBytes = (hex: string) => Buffer.from(hex.replace(/^0x/, ""), "hex");
+
 async function askNode(rpcUrls: string[], input: CallInput): Promise<string> {
-  const abi = abiItemFor(input.signature);
-  const { name } = parseSignature(input.signature);
-  const data = encodeFunctionData({
-    abi,
-    functionName: name,
-    args: input.args.map(decodeArg),
-  });
+  const { name, inputs, outputs } = parseSignature(input.signature);
+  const data = subgraphAbiEncodeCall(name, `(${inputs})`, input.args.map(decodeArg).map(jsonArg));
 
   const result = await trackCall(
     untilAnswered(
       `${input.signature} on ${input.address} at block ${input.blockNumber}`,
       async () => {
         try {
-          return await rpcClient(rpcUrls).call({
-            to: input.address as `0x${string}`,
-            data,
-            blockNumber: BigInt(input.blockNumber),
-          });
+          return await rpcClient(rpcUrls).call({ to: input.address, data, blockNumber: input.blockNumber });
         } catch (error) {
           if (isRevert(error)) return null;
           throw error;
@@ -231,21 +219,16 @@ async function askNode(rpcUrls: string[], input: CallInput): Promise<string> {
   }
 
   try {
-    const decoded = decodeFunctionResult({
-      abi,
-      functionName: name,
-      data: (result.data ?? "0x") as `0x${string}`,
-    });
     // graph-ts returns one `ethereum.Value` per ABI output. A single
     // tuple/struct is therefore `[tuple]`, not the flattened fields —
     // generated bindings call `result[0].toTuple()`.
-    const outputs = (abi[0] as { outputs?: unknown[] }).outputs ?? [];
-    const values = outputs.length === 1 ? [decoded] : Array.isArray(decoded) ? decoded : [decoded];
+    const values = subgraphAbiDecode(`(${outputs})`, hexBytes(result), true) as unknown[];
     return JSON.stringify({ reverted: false, values: values.map(encodeArg) });
   } catch {
     // Output the declared signature can't decode counts as a failed call,
     // which is what lets a mapping retry through a different ABI — the
-    // bytes32-vs-string ERC20 name is the case every token subgraph hits.
+    // bytes32-vs-string ERC20 name is the case every token subgraph hits. A
+    // function answering no bytes at all is the same: the account has no code.
     return JSON.stringify({ reverted: true, values: null });
   }
 }

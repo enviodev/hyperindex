@@ -99,6 +99,8 @@ type addon = {
   subgraphRegisterHandlers: (array<string>, array<array<string>>) => array<array<string>>,
   subgraphSureCreates: (string, array<string>, array<string>) => array<array<string>>,
   subgraphKeccak256: Uint8Array.t => Uint8Array.t,
+  subgraphAbiDecode: (string, Uint8Array.t, bool) => unknown,
+  subgraphAbiEncodeCall: (string, string, JSON.t) => string,
   subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
   subgraphBundledCodegenCurrent: (string, string) => bool,
   subgraphMissingGraphCliMessage: string => string,
@@ -423,6 +425,11 @@ let subgraphSureCreates = (~mappingFile, ~handlers, ~templates) =>
   getAddon().subgraphSureCreates(mappingFile, handlers, templates)
 
 let subgraphKeccak256 = bytes => getAddon().subgraphKeccak256(bytes)
+
+let subgraphAbiDecode = (ty, data, params) => getAddon().subgraphAbiDecode(ty, data, params)
+
+let subgraphAbiEncodeCall = (name, inputs, args) =>
+  getAddon().subgraphAbiEncodeCall(name, inputs, args)
 
 let subgraphBundledCodegen = (~manifestFile, ~outputDir: option<string>) => {
   let addon = getAddon()

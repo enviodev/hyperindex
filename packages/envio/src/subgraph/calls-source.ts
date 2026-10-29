@@ -302,7 +302,7 @@ function makeRpcRequest(rpcUrls: string[]): RpcRequest {
   }
   const client = rpcClient(rpcUrls);
   return (method, params, options) =>
-    untilAnswered(`The ${method} request`, () => (client as any).request({ method, params }), {
+    untilAnswered(`The ${method} request`, () => client.request({ method, params }), {
       deadline: false,
       ...options,
     });
