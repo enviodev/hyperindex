@@ -19,7 +19,7 @@ use tokio::time::Duration;
 
 const POSTGRES_IMAGE: &str = "postgres:18.6";
 const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
-const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
+const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.8.36.3";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;
 
