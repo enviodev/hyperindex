@@ -528,12 +528,11 @@ let stagedFor = (staged, ~store, stage) => {
     })
 )
 
-// Ids as the text their column reads them from.
-let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
-  table
-  ->Table.encodeIdsToJson(ids)
-  ->(Utils.magic: JSON.t => array<unknown>)
-  ->Array.map(Sql.render)
+// Ids as the text their column reads them from. An id is already the raw
+// scalar its column stores (string, int, bigint or Uint8Array), so it renders
+// as is.
+let renderIds = (ids: array<EntityId.t>) =>
+  ids->(Utils.magic: array<EntityId.t> => array<unknown>)->Array.map(Sql.render)
 
 let bounds = (
   {sequence, byChain}: CheckpointSequence.checkpointBoundsByChain,
@@ -1197,9 +1196,10 @@ let make = (
       // with the id column's type.
       let latestChangeById = Dict.make()
       let orderedIds = []
+      let {entityIdToKey} = entityConfig.table
       stamped->Array.forEach(change => {
         let entityId = change->Change.getEntityId
-        let entityKey = entityId->EntityId.toKey
+        let entityKey = entityIdToKey(entityId)
         if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey)->Option.isNone {
           orderedIds->Array.push(entityId)
         }
@@ -1224,7 +1224,7 @@ let make = (
       let deletes = []
       let backfill = []
       orderedIds->Array.forEach(entityId => {
-        let entityKey = entityId->EntityId.toKey
+        let entityKey = entityIdToKey(entityId)
         switch latestChangeById->Dict.getUnsafe(entityKey) {
         | Set({entity}) => sets->Array.push(entity)
         | Delete({entityId}) => deletes->Array.push(entityId)
@@ -1249,16 +1249,16 @@ let make = (
           : None
       {
         sets: ?rowsOf(sets),
-        deletes: entityConfig.table->renderIds(deletes),
+        deletes: renderIds(deletes),
         history: ?(
           shouldSaveHistory
             ? Some(
                 (
                   {
-                    backfill: entityConfig.table->renderIds(backfill),
+                    backfill: renderIds(backfill),
                     sets: ?rowsOf(historySets),
                     setCheckpointIds: historySetCheckpointIds,
-                    deleteIds: entityConfig.table->renderIds(historyDeleteIds),
+                    deleteIds: renderIds(historyDeleteIds),
                     deleteCheckpointIds: historyDeleteCheckpointIds,
                   }: StorageClient.historyWrite
                 ),

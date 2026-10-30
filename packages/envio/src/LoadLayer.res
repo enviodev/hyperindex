@@ -16,7 +16,12 @@ let loadById = (
   ~entityId,
 ) => {
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
-  switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+  // The ids here are typed as strings but hold whatever scalar the id is.
+  let entityIdToKey =
+    inMemTable.entityIdToKey->(Utils.magic: (EntityId.t => string) => string => string)
+  switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(
+    entityIdToKey(entityId),
+  ) {
   // A row already in memory is final, so even a grouped call skips the load
   // manager: grouping it would only resolve it a tick later to the same value.
   | Some(change) => Promise.resolve(change->InMemoryTable.Entity.mapChangeToEntity)
@@ -53,14 +58,14 @@ let loadById = (
       //Set the entity in the in memory store
       for idx in 0 to dbEntities->Array.length - 1 {
         let entity = dbEntities->Array.getUnsafe(idx)
-        entitiesMap->Dict.set(entity.id, entity)
+        entitiesMap->Dict.set(entityIdToKey(entity.id), entity)
       }
       let committedCheckpointId = indexerState->IndexerState.committedCheckpointIdFor(~scope)
       idsToLoad->Array.forEach(entityId => {
         inMemTable->InMemoryTable.Entity.initValue(
           ~committedCheckpointId,
-          ~key=entityId,
-          ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
+          ~entityId=entityId->EntityId.unsafeOfString,
+          ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityIdToKey(entityId)),
         )
       })
 
@@ -77,7 +82,7 @@ let loadById = (
       ~key,
       ~load,
       ~shouldGroup,
-      ~hasher=LoadManager.noopHasher,
+      ~hasher=entityIdToKey,
       ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
       ~hasInMemory=hash => inMemTable.latestEntityChangeById->Dict.has(hash),
       ~input=entityId,
@@ -387,7 +392,7 @@ let loadByParsedFilter = (
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
             ~committedCheckpointId,
-            ~key=entity.id,
+            ~entityId=entity.id->EntityId.unsafeOfString,
             ~entity=Some(entity),
           )
         })

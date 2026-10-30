@@ -422,7 +422,7 @@ let run = async (
         entityConfig.table->Table.getChainIdField->Option.map(field => field.fieldName)
       let keyOf = row => {
         let row = row->(Utils.magic: unknown => dict<unknown>)
-        let id = row->Dict.getUnsafe("id")->Utils.Hash.makeOrThrow
+        let id = entityConfig.table.entityIdToKey(row->Dict.getUnsafe("id")->EntityId.unsafeOfAny)
         switch chainField {
         | Some(field) => `${id}|${row->Dict.getUnsafe(field)->Utils.Hash.makeOrThrow}`
         | None => id
@@ -509,6 +509,7 @@ let run = async (
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
       let chainIdOfRow = chainIdOfRow(entityConfig)
+      let {entityIdToKey} = entityConfig.table
       historyRows(entityConfig)->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
@@ -539,8 +540,8 @@ let run = async (
         ))
         ->Array.toSorted(((a, aChain), (b, bChain)) => {
           switch String.compare(
-            a->Change.getEntityId->EntityId.toKey,
-            b->Change.getEntityId->EntityId.toKey,
+            entityIdToKey(a->Change.getEntityId),
+            entityIdToKey(b->Change.getEntityId),
           ) {
           | 0. =>
             // Compared as bigints: checkpoint ids are unbounded, and past 2^53

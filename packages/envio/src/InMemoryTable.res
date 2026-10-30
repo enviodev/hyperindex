@@ -22,6 +22,8 @@ module Entity = {
   }
 
   type t = {
+    // Keys every id dict and Set below; see Table.table.
+    entityIdToKey: EntityId.t => string,
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
     // Recorded changes (new latest ids + prevEntityChanges pushes), tracked
     // manually so InMemoryStore can gauge size without scanning every dict.
@@ -45,12 +47,9 @@ module Entity = {
     mutable hasIndexes: bool,
   }
 
-  // Helper to extract an entity's id as a dict key. The raw id may be a
-  // string/int/bigint, so it's stringified to a stable key for in-memory
-  // indexing.
-  let getEntityIdUnsafe = (entity: Internal.entity): string =>
+  let getEntityKeyUnsafe = (self: t, entity: Internal.entity): string =>
     switch (entity->(Utils.magic: Internal.entity => {"id": option<EntityId.t>}))["id"] {
-    | Some(id) => id->EntityId.toKey
+    | Some(id) => self.entityIdToKey(id)
     | None => JsError.throwWithMessage("Property 'id' does not exist on expected entity object")
     }
 
@@ -62,7 +61,8 @@ module Entity = {
     }
   }
 
-  let make = (): t => {
+  let make = (~entityIdToKey): t => {
+    entityIdToKey,
     latestEntityChangeById: Dict.make(),
     changesCount: 0.,
     dirtyIds: Utils.Set.make(),
@@ -141,10 +141,8 @@ module Entity = {
     self.hasIndexes = false
   }
 
-  let updateIndexes = (self: t, ~entity: Internal.entity) =>
+  let updateIndexes = (self: t, ~entityId: string, ~entity: Internal.entity) =>
     if self.hasIndexes {
-      let entityId = entity->getEntityIdUnsafe
-
       switch self.indexesByEntityId->Utils.Dict.dangerouslyGetNonOption(entityId) {
       | None => ()
       | Some(indexes) =>
@@ -185,7 +183,7 @@ module Entity = {
     }
 
   let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
-    let entityKey = change->Change.getEntityId->EntityId.toKey
+    let entityKey = inMemTable.entityIdToKey(change->Change.getEntityId)
     switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey) {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
@@ -200,8 +198,8 @@ module Entity = {
     }
 
     switch change {
-    | Set({entity}) => inMemTable->updateIndexes(~entity)
-    | Delete({entityId}) => inMemTable->deleteEntityFromIndexes(~entityId=entityId->EntityId.toKey)
+    | Set({entity}) => inMemTable->updateIndexes(~entityId=entityKey, ~entity)
+    | Delete(_) => inMemTable->deleteEntityFromIndexes(~entityId=entityKey)
     }
     inMemTable.latestEntityChangeById->Dict.set(entityKey, change)
     if change->Change.getCheckpointId > committedCheckpointId {
@@ -214,11 +212,14 @@ module Entity = {
   let initValue = (
     inMemTable: t,
     ~committedCheckpointId,
-    ~key: string,
+    ~entityId: EntityId.t,
     ~entity: option<Internal.entity>,
   ) =>
-    if inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone {
-      let entityId = key->EntityId.unsafeOfString
+    if (
+      inMemTable.latestEntityChangeById
+      ->Utils.Dict.dangerouslyGetNonOption(inMemTable.entityIdToKey(entityId))
+      ->Option.isNone
+    ) {
       let change: Change.t<Internal.entity> = switch entity {
       | Some(entity) => Set({entityId, entity, checkpointId: Internal.loadedFromDbCheckpointId})
       | None => Delete({entityId, checkpointId: Internal.loadedFromDbCheckpointId})
@@ -312,7 +313,7 @@ module Entity = {
         switch change->mapChangeToEntity {
         | Some(entity) =>
           if index.matcher(entity) {
-            inMemTable->addToIndex(~index, ~entityId=entity->getEntityIdUnsafe)
+            inMemTable->addToIndex(~index, ~entityId=inMemTable->getEntityKeyUnsafe(entity))
           }
         | None => ()
         }
