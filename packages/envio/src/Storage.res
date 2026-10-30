@@ -1196,10 +1196,10 @@ let make = (
       // with the id column's type.
       let latestChangeById = Dict.make()
       let orderedIds = []
-      let idKey = entityConfig.table->Table.idKey
+      let {entityIdToKey} = entityConfig.table
       stamped->Array.forEach(change => {
         let entityId = change->Change.getEntityId
-        let entityKey = idKey(entityId)
+        let entityKey = entityIdToKey(entityId)
         if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey)->Option.isNone {
           orderedIds->Array.push(entityId)
         }
@@ -1224,7 +1224,7 @@ let make = (
       let deletes = []
       let backfill = []
       orderedIds->Array.forEach(entityId => {
-        let entityKey = idKey(entityId)
+        let entityKey = entityIdToKey(entityId)
         switch latestChangeById->Dict.getUnsafe(entityKey) {
         | Set({entity}) => sets->Array.push(entity)
         | Delete({entityId}) => deletes->Array.push(entityId)

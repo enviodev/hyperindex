@@ -2,6 +2,10 @@
 - Edit `.res`/`.resi` and Rust files with Write/Edit, never a Bash heredoc or `sed`. The formatter runs on what those tools write; a push carrying an unformatted file is refused.
 - Always use single assert to check the whole value instead of multiple asserts for every field.
 
+## Naming
+
+- Name a function for what it does, spelled out: `entityIdToKey`, not `idKey`. No abbreviations, no noun-only names that hide the input and output.
+
 ## Comments
 
 - Default to writing no comments. A comment earns its place only when it explains something the code itself cannot show.

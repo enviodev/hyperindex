@@ -54,10 +54,10 @@ let renderRows = (rows: array<AddressRows.row>, ~config: Config.t) =>
 // Rows of a per-chain entity are keyed per (chain, id): the same id exists
 // independently on every chain.
 let rowKey = (~table: Table.table, ~scope: Internal.chainScope, ~entityId: EntityId.t) => {
-  let idKey = (table->Table.idKey)(entityId)
+  let entityKey = table.entityIdToKey(entityId)
   switch scope {
-  | CrossChain => idKey
-  | Chain(chainId) => `${chainId->ChainId.toString}|${idKey}`
+  | CrossChain => entityKey
+  | Chain(chainId) => `${chainId->ChainId.toString}|${entityKey}`
   }
 }
 
@@ -434,15 +434,15 @@ let getEntityFromState = (
     )
   }
   let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-  let idKey = entityConfig.table->Table.idKey
-  let key = idKey(entityId->EntityId.unsafeOfString)
+  let {entityIdToKey} = entityConfig.table
+  let key = entityIdToKey(entityId->EntityId.unsafeOfString)
   switch entityConfig.table->Table.getChainIdField {
   | None => entityDict->Dict.get(key)->Option.map(copyEntity)
   | Some(field) =>
     let matches =
       entityDict
       ->Dict.valuesToArray
-      ->Array.filter(entity => idKey(entity.id->EntityId.unsafeOfString) === key)
+      ->Array.filter(entity => entityIdToKey(entity.id->EntityId.unsafeOfString) === key)
     switch matches {
     | [] => None
     | [entity] => Some(copyEntity(entity))

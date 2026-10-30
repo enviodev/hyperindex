@@ -8,7 +8,7 @@ let make = (entities: array<Internal.entityConfig>): t => {
   entities->Array.forEach(entityConfig => {
     init->Dict.set(
       (entityConfig.name :> string),
-      InMemoryTable.Entity.make(~idKey=entityConfig.table->Table.idKey),
+      InMemoryTable.Entity.make(~entityIdToKey=entityConfig.table.entityIdToKey),
     )
   })
   init

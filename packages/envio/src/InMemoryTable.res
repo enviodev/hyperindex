@@ -22,8 +22,8 @@ module Entity = {
   }
 
   type t = {
-    // Keys every id dict and Set below; see Table.idKey.
-    idKey: EntityId.t => string,
+    // Keys every id dict and Set below; see Table.table.
+    entityIdToKey: EntityId.t => string,
     latestEntityChangeById: dict<Change.t<Internal.entity>>,
     // Recorded changes (new latest ids + prevEntityChanges pushes), tracked
     // manually so InMemoryStore can gauge size without scanning every dict.
@@ -49,7 +49,7 @@ module Entity = {
 
   let getEntityKeyUnsafe = (self: t, entity: Internal.entity): string =>
     switch (entity->(Utils.magic: Internal.entity => {"id": option<EntityId.t>}))["id"] {
-    | Some(id) => self.idKey(id)
+    | Some(id) => self.entityIdToKey(id)
     | None => JsError.throwWithMessage("Property 'id' does not exist on expected entity object")
     }
 
@@ -61,8 +61,8 @@ module Entity = {
     }
   }
 
-  let make = (~idKey): t => {
-    idKey,
+  let make = (~entityIdToKey): t => {
+    entityIdToKey,
     latestEntityChangeById: Dict.make(),
     changesCount: 0.,
     dirtyIds: Utils.Set.make(),
@@ -183,7 +183,7 @@ module Entity = {
     }
 
   let set = (inMemTable: t, ~committedCheckpointId, change: Change.t<Internal.entity>) => {
-    let entityKey = inMemTable.idKey(change->Change.getEntityId)
+    let entityKey = inMemTable.entityIdToKey(change->Change.getEntityId)
     switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey) {
     | Some(prev) =>
       let prevCheckpointId = prev->Change.getCheckpointId
@@ -217,7 +217,7 @@ module Entity = {
   ) =>
     if (
       inMemTable.latestEntityChangeById
-      ->Utils.Dict.dangerouslyGetNonOption(inMemTable.idKey(entityId))
+      ->Utils.Dict.dangerouslyGetNonOption(inMemTable.entityIdToKey(entityId))
       ->Option.isNone
     ) {
       let change: Change.t<Internal.entity> = switch entity {

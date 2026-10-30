@@ -11,16 +11,16 @@ type Holder {
 }
 `
 
-let configYaml = (~bytesType, ~startBlock=0, ~reorg="") =>
+let configYaml = (~bytesType, ~rollback=false) =>
   `
 name: bytes-id
-bytes_type: ${bytesType}${reorg}
+bytes_type: ${bytesType}${rollback ? "\nrollback_on_reorg: true" : ""}
 chains:
   - id: 1
     rpc:
       url: https://rpc.example.test
       for: sync
-    start_block: ${startBlock->Int.toString}${reorg === "" ? "" : "\n    max_reorg_depth: 200"}
+    start_block: 0${rollback ? "\n    max_reorg_depth: 200" : ""}
     contracts:
       - name: Token
         address: "0x0000000000000000000000000000000000000001"
@@ -115,11 +115,7 @@ let run = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~kept: 'id, ~
 }
 
 let rollbackScenario = (~bytesType) =>
-  Scenario.make(
-    ~supervised=false,
-    ~schema,
-    ~configYaml=configYaml(~bytesType, ~startBlock=1, ~reorg="\nrollback_on_reorg: true"),
-  )
+  Scenario.make(~supervised=false, ~schema, ~configYaml=configYaml(~bytesType, ~rollback=true))
 
 let tokenItem = (~block, handler): MockSource.itemMock => {
   blockNumber: block,
@@ -137,7 +133,7 @@ let rollback = async (
   ~restored: 'id,
   ~removed: 'id,
 ) => {
-  await Scenario.enterReorgThreshold(~indexer, ~source)
+  await Scenario.enterReorgThreshold(~indexer, ~source, ~fromBlock=0)
   await source.expectItemsQueries([
     {
       fromBlock: 101,

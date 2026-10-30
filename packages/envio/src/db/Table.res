@@ -200,13 +200,37 @@ type table = {
   fields: array<fieldOrDerived>,
   compositeIndexes: array<array<compositeIndexField>>,
   description: option<string>,
+  // The string an id keys a dict or Set by, picked from the id column's type
+  // so a string id, the common case, is its own key.
+  entityIdToKey: EntityId.t => string,
 }
+
+let stringEntityIdToKey = (Utils.magic: EntityId.t => string)
+// Always a string, never the raw number: a Set tells 7 from "7".
+let numericEntityIdToKey = (String.make: EntityId.t => string)
+// Hex rather than `String`, which decodes a Buffer as UTF-8 and so collides
+// distinct byte sequences.
+let bytesEntityIdToKey =
+  Utils.Bytes.toHex->(Utils.magic: (Uint8Array.t => string) => EntityId.t => string)
+
+let entityIdToKeyFor = (fields: array<fieldOrDerived>) =>
+  switch fields->Array.findMap(field =>
+    switch field {
+    | Field({fieldName, fieldType}) if fieldName === idFieldName => Some(fieldType)
+    | _ => None
+    }
+  ) {
+  | Some(Bytea) => bytesEntityIdToKey
+  | Some(String) | None => stringEntityIdToKey
+  | Some(_) => numericEntityIdToKey
+  }
 
 let mkTable = (tableName, ~compositeIndexes=[], ~fields, ~description=?) => {
   tableName,
   fields,
   compositeIndexes,
   description,
+  entityIdToKey: entityIdToKeyFor(fields),
 }
 
 let getFields = table =>
@@ -274,23 +298,6 @@ let getIdFieldOrThrow = (table): field =>
 // ids regardless of the underlying scalar.
 let getIdSchema = (table): S.t<EntityId.t> =>
   (table->getIdFieldOrThrow).fieldSchema->(Utils.magic: S.t<unknown> => S.t<EntityId.t>)
-
-let stringIdKey = (id: EntityId.t) => id->(Utils.magic: EntityId.t => string)
-let numericIdKey = (id: EntityId.t) => id->(Utils.magic: EntityId.t => unknown)->String.make
-let bytesIdKey = (id: EntityId.t) =>
-  id->(Utils.magic: EntityId.t => Uint8Array.t)->Utils.Bytes.toHex
-
-// The string an id keys a dict or Set by, picked once per table so a string id,
-// the common case, is its own key. Always a string, never the raw number: a
-// Set tells 7 from "7". A Bytea id keys by hex rather than `String`, which
-// decodes a Buffer as UTF-8 and so collides distinct byte sequences.
-let idKey: table => EntityId.t => string = Utils.WeakMap.memoize(table =>
-  switch (table->getIdFieldOrThrow).fieldType {
-  | String => stringIdKey
-  | Bytea => bytesIdKey
-  | _ => numericIdKey
-  }
-)
 
 // TODO: Test whether it should be passed via args and match the column type
 
