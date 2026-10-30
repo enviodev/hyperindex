@@ -42,7 +42,12 @@ trap cleanup EXIT
 
 compose up -d
 cp -r "$here/contracts" "$work/contracts"
-until cast block-number >/dev/null 2>&1; do sleep 1; done
+wait_for() {
+  for _ in $(seq 1 120); do "$@" >/dev/null 2>&1 && return 0; sleep 1; done
+  echo "Timed out waiting for: $*" >&2
+  exit 1
+}
+wait_for cast block-number
 
 foundry forge build --quiet
 factory="$(foundry forge create src/Factory.sol:Factory --broadcast --rpc-url "$RPC" \
@@ -65,7 +70,7 @@ cp -r "$scenario"/{subgraph.yaml,schema.graphql,abis,src,generated,package.json}
 ln -s "$scenario/node_modules" "$project/node_modules"
 sed -i "s/address: \".*\"/address: \"$factory\"/; s/startBlock: .*/startBlock: 0/" "$project/subgraph.yaml"
 
-until curl -s -o /dev/null http://localhost:8020; do sleep 1; done
+wait_for curl -s -o /dev/null http://localhost:8020
 (
   cd "$project"
   pnpm dlx "$GRAPH_CLI" build --skip-migrations >/dev/null

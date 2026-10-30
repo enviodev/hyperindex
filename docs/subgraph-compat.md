@@ -628,7 +628,7 @@ classes call `DataSource.create`. Consequences:
   without a signature calls the ABI's first function of that name, as
   graph-node does.
 - **Conformance is tested two ways:** (a) golden fixtures — `generated/`
-  outputs of real `graph codegen` across pinned graph-cli versions, executed
+  outputs of real `graph codegen` from a pinned graph-cli (0.97.1), executed
   against the shim in `envio-tests`, since users' local versions vary; (b) a
   type-level walk of the shim against the real graph-ts type declarations
   (`conformance.ts`)
@@ -1234,7 +1234,7 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    import mappings, register `onEvent`/`onBlock`/`contractRegister` wrappers
    around `runSync`; per-round log buffering.
 4. Tests: rung 1 with real mapping sources + golden `generated/` fixtures
-   (real `graph codegen` output across pinned graph-cli versions) executed
+   (real `graph codegen` output from a pinned graph-cli) executed
    through the shim; the type conformance walk (`conformance.ts`) over every
    export, static and instance member of the real graph-ts declarations, with
    each remaining gap listed and asserted both ways; value-class unit tests against graph-ts
@@ -1254,16 +1254,17 @@ no peer-dep pinning, nothing extra to install in a subgraph project whose
    entity field, unknown event property).
 
 **D. End to end.** `scenarios/subgraph_test`: a real small subgraph project
-(e.g. gravatar) with factory + template + eth_call + block handler; run via
-`envio dev` path in CI; plus one fixture per §7 error asserting the message.
-On every PR (`.github/workflows/subgraph-compat.yml`), two harnesses that need
-Docker and the network: `scenarios/subgraph_test/differential` indexes the
+(a Factory creating Pair templates, with an eth_call and a polling block
+handler) and real `graph codegen` output, indexed through `createTestIndexer`.
+On every PR (`.github/workflows/subgraph-compat.yml`), with the graph-ts
+conformance walk, the codegen goldens and the replay-stress run, and two
+harnesses that need Docker and the network: `scenarios/subgraph_test/differential` indexes the
 scenario with graph-node and with envio over one anvil chain and diffs every
 stored field; `scenarios/subgraph_corpus` installs real subgraphs at pinned
 commits the way their authors do and indexes a window of blocks from their
 start. Their contract calls are answered from fixtures of an archive
-node's answers (`CORPUS_RPC_RECORD=1` records them), or, for an entry with
-none, with synthetic values valid for each function's ABI outputs, so CI asks
+node's answers (`CORPUS_RPC_RECORD=1` records them; none are committed yet),
+or, for an entry with none, with synthetic values valid for each function's ABI outputs, so CI asks
 no RPC; such an entry's pass means its mappings run, not that they compute
 graph-node's values.
 Additionally, add an **"Envio Subgraph"** tool to

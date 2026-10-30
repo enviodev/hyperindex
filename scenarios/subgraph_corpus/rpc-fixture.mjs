@@ -48,8 +48,9 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
     }
     const key = JSON.stringify([request.method, request.params ?? []]);
     if (upstream) {
-      const reply = await forward(request);
+      const reply = await forward(request).catch(() => undefined);
       if (reply) answers[key] = reply;
+      else misses.push(key);
       return reply;
     }
     if (key in answers) return answers[key];
@@ -66,7 +67,13 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
     req.on("end", async () => {
-      const parsed = JSON.parse(body);
+      let parsed;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        res.writeHead(400).end();
+        return;
+      }
       const requests = Array.isArray(parsed) ? parsed : [parsed];
       const replies = await Promise.all(requests.map(answer));
       // A miss or an upstream failure answers like a failing node, which the

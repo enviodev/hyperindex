@@ -54,6 +54,9 @@ describe("the scenario on graph-node and on envio", () => {
         sortById(rows),
       ]),
     );
+    // run.sh creates two pairs and swaps three times: an empty graph-node
+    // store would otherwise match an envio one that indexed nothing.
+    expect({ pairs: graphNode.pairs.length, swaps: graphNode.swaps.length }).toEqual({ pairs: 2, swaps: 3 });
     expect({
       pairs: sortById((await indexer.Pair.getAll()).map(asGraphNode)),
       pairMetadatas: sortById((await indexer.PairMetadata.getAll()).map(asGraphNode)),
