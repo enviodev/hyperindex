@@ -96,7 +96,7 @@ jobs:
       # TEMPORARY: a real corpus entry on graph-node and on envio, diffed.
       - name: graph-node diff of a real subgraph
         if: matrix.suite == 'graph-node-real' && steps.token.outputs.present == 'true'
-        run: scenarios/subgraph_corpus/graph-node-diff.sh cryptopunks
+        run: scenarios/subgraph_corpus/graph-node-diff.sh uniswap-v2
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
           RPC_URL: https://mainnet.gateway.tenderly.co
