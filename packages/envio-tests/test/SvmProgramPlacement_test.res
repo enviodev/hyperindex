@@ -363,7 +363,7 @@ programs:
     program_id: ${mainnetPk}
     instructions: []
 `,
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0]: unknown field \`start_block\`, expected one of \`id\`, \`skip\`, \`rpc\`, \`start_slot\`, \`end_slot\`, \`block_lag\`, \`hypersync_config\` at line 6 column 5",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0]: unknown field \`start_block\`, expected one of \`id\`, \`skip\`, \`rpc\`, \`start_slot\`, \`end_slot\`, \`block_lag\`, \`block_throttle\`, \`hypersync_config\` at line 6 column 5",
     )
   })
 
