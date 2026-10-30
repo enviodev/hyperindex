@@ -134,6 +134,13 @@ for (const entry of corpus) {
     } finally {
       await rpc?.close();
     }
+    // A CI job can't commit what it recorded, so it shows it.
+    const fixture = path.join(here, "fixtures", `${entry.name}.json`);
+    if (record && process.env.CI && existsSync(fixture)) {
+      console.log(`::group::fixture ${entry.name}`);
+      console.log(`FIXTURE-BEGIN ${entry.name}\n${readFileSync(fixture, "utf8")}FIXTURE-END ${entry.name}`);
+      console.log("::endgroup::");
+    }
     results.push({ name: entry.name, ok: true, changes, fake: rpc?.synthesized?.() ?? 0 });
   } catch (error) {
     results.push({ name: entry.name, ok: false, error: String(error.message).split("\n")[0] });
