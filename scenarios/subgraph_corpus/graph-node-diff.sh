@@ -48,12 +48,11 @@ else
   (cd "$project" && corepack yarn install --frozen-lockfile --ignore-scripts)
 fi
 
-# Both index the same data sources: one that starts after the window writes
-# nothing in it, and some repos no longer build theirs (missing mapping files).
-# One without a startBlock starts where the others do, so graph-node doesn't
-# scan from genesis over a rate-limited RPC. envio's copy also ends every
-# source at the window's last block, which stops its chain only when nothing
-# is created from a template: those stay open, as graph-node's do.
+# A data source without a startBlock starts where the others do, on both
+# sides, so graph-node doesn't scan from genesis over a rate-limited RPC.
+# envio's copy also ends every source at the window's last block, which stops
+# its chain only when nothing is created from a template: those stay open, as
+# graph-node's do. A source starting after the window is never reached.
 window() {
   node --input-type=module -e '
     import { readFileSync, writeFileSync } from "node:fs";
@@ -67,7 +66,6 @@ window() {
     const first = Math.min(...manifest.dataSources.map((source) => source.source.startBlock ?? Infinity));
     manifest.dataSources = manifest.dataSources
       .map((source) => ({ ...source, source: { startBlock: first, ...source.source } }))
-      .filter((source) => source.source.startBlock <= end)
       .map((source) => (ends ? { ...source, source: { ...source.source, endBlock: end } } : source));
     writeFileSync(file, YAML.stringify(manifest));
   ' "$project/subgraph.yaml" "$end_block" "${1:-}"
