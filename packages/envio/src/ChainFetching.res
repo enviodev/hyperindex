@@ -305,6 +305,36 @@ let finishWaitingForNewBlock = (
     scheduleProcessing()
   }
 
+// Waits block by block rather than for the far height directly, so each block
+// restarts the stall window and only a head that really went quiet reports a
+// stall. A chain with no known height takes its first one as is: a head below
+// `blockThrottle` would otherwise never start fetching. A wait the epoch has
+// moved past stops at its next block instead of polling out the throttle on
+// sources the indexer no longer waits on.
+let waitForThrottledBlock = (
+  state: IndexerState.t,
+  sourceManager,
+  ~knownHeight,
+  ~blockThrottle,
+  ~stateId,
+  ~isRealtime,
+  ~reducedPolling,
+) => {
+  let rec waitAbove = async height => {
+    let newHeight = await sourceManager->SourceManager.waitForNewBlock(
+      ~knownHeight=height,
+      ~isRealtime,
+      ~reducedPolling,
+    )
+    knownHeight === 0 ||
+    newHeight >= knownHeight + blockThrottle ||
+    state->IndexerState.isStale(~stateId)
+      ? newHeight
+      : await waitAbove(newHeight)
+  }
+  waitAbove(knownHeight)
+}
+
 let fetchChain = async (
   state: IndexerState.t,
   chainId,
@@ -333,11 +363,13 @@ let fetchChain = async (
     try {
       await chainState->ChainState.dispatch(
         ~waitForNewBlock=(~knownHeight) =>
-          sourceManager->SourceManager.waitForNewBlock(
+          state->waitForThrottledBlock(
+            sourceManager,
             ~knownHeight,
+            ~blockThrottle=(chainState->ChainState.chainConfig).blockThrottle,
+            ~stateId,
             ~isRealtime,
             ~reducedPolling,
-            ~blockThrottle=(chainState->ChainState.chainConfig).blockThrottle,
           ),
         ~onNewBlock=(~knownHeight) =>
           finishWaitingForNewBlock(
