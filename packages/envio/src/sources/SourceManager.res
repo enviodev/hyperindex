@@ -808,7 +808,7 @@ Resolves at the first height above `knownHeight` that any eligible source
 reports. A waiter is registered per source and the first one to fire wins,
 cancelling the rest.
 */
-let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
+let waitForHeightAbove = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
   let logger = sourceManager.logger->Logger.withFields({
@@ -995,6 +995,32 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       armStallTimeout()
     }
   })
+}
+
+// Waits block by block rather than for the far height directly, so each block
+// restarts the stall window and only a head that really went quiet reports a
+// stall. A chain with no known height takes its first one as is: a head below
+// `blockThrottle` would otherwise never start fetching.
+let waitForNewBlock = (
+  sourceManager: t,
+  ~knownHeight,
+  ~isRealtime,
+  ~reducedPolling,
+  ~blockThrottle=0,
+) => {
+  if knownHeight === 0 || blockThrottle <= 1 {
+    sourceManager->waitForHeightAbove(~knownHeight, ~isRealtime, ~reducedPolling)
+  } else {
+    let rec waitAbove = async height => {
+      let newHeight = await sourceManager->waitForHeightAbove(
+        ~knownHeight=height,
+        ~isRealtime,
+        ~reducedPolling,
+      )
+      newHeight < knownHeight + blockThrottle ? await waitAbove(newHeight) : newHeight
+    }
+    waitAbove(knownHeight)
+  }
 }
 
 let executeQuery = async (
