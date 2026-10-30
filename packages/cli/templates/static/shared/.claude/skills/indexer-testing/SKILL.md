@@ -38,6 +38,8 @@ describe("Indexer Testing", () => {
 
 Run `pnpm test` — Vitest auto-fills the snapshots on first run. Review and commit.
 
+Auto-exit and block-range tests fetch real blocks from HyperSync, so they need `ENVIO_API_TOKEN` in `.env` or the shell. `simulate` tests don't touch the network and run without it.
+
 ## Process API
 
 ### Auto-exit (recommended for getting started)
@@ -142,7 +144,7 @@ t.expect(indexer.chains[1].MyContract.addresses).toContain("0x1234...");
 
 ```bash
 pnpm test              # Run all tests
-pnpm test -- -u        # Update snapshots
+pnpm test -u           # Update snapshots
 ```
 
 ## Advanced: Finding Block Ranges with HyperSync
