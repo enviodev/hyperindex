@@ -13,7 +13,9 @@
 // and none are needed to ask a backend how far it has got. These are not the
 // sources the chain goes on to index with; those are built later, once
 // registrations exist.
-let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<Source.t> => {
+let makeProbeSources = (chainConfig: Config.chain, ~logger, ~lowercaseAddresses): array<
+  Source.t,
+> => {
   let addressStore = AddressStore.make(~ecosystem=chainConfig.ecosystem, ~contracts=[])
   ChainSources.make(
     ~chainConfig,
@@ -22,6 +24,7 @@ let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<S
     ~lowercaseAddresses,
     ~blockStore=BlockStore.make(~ecosystem=chainConfig.ecosystem),
     ~transactionStore=TransactionStore.make(~ecosystem=chainConfig.ecosystem),
+    ~logger,
   )
 }
 
@@ -99,21 +102,16 @@ let readHeadOnceOrThrow = async (chainConfig: Config.chain, ~sources): int => {
 // live poll loop that nothing can reach to stop.
 let resolveHeadOrThrow = async (
   chainConfig: Config.chain,
+  ~logger,
   ~lowercaseAddresses,
   ~retry,
-  ~getHeightRetryInterval=?,
-  ~newBlockStallTimeout=?,
+  ~timing=?,
 ): int => {
-  let sources = chainConfig->makeProbeSources(~lowercaseAddresses)
+  let sources = chainConfig->makeProbeSources(~logger, ~lowercaseAddresses)
   switch retry {
   | Once => await chainConfig->readHeadOnceOrThrow(~sources)
   | UntilItAnswers =>
-    let sourceManager = SourceManager.make(
-      ~sources,
-      ~isRealtime=false,
-      ~getHeightRetryInterval?,
-      ~newBlockStallTimeout?,
-    )
+    let sourceManager = SourceManager.make(~sources, ~logger, ~isRealtime=false, ~timing?)
     await sourceManager->SourceManager.waitForNewBlock(
       ~knownHeight=0,
       ~isRealtime=false,
@@ -126,10 +124,10 @@ let resolveHeadOrThrow = async (
 // leave sibling chains' height polling running behind the rejection.
 let resolveAllOrThrow = async (
   chainConfigs: array<Config.chain>,
+  ~logger,
   ~lowercaseAddresses,
   ~retry=UntilItAnswers,
-  ~getHeightRetryInterval=?,
-  ~newBlockStallTimeout=?,
+  ~timing=?,
 ): array<Config.chain> => {
   let resolved = []
   for i in 0 to chainConfigs->Array.length - 1 {
@@ -137,11 +135,12 @@ let resolveAllOrThrow = async (
     let chainConfig = switch chainConfig.startBlock {
     | Config.Block(_) => chainConfig
     | Config.Latest =>
+      let logger = logger->Logger.withChainId(chainConfig.id)
       let head = await chainConfig->resolveHeadOrThrow(
+        ~logger,
         ~lowercaseAddresses,
         ~retry,
-        ~getHeightRetryInterval?,
-        ~newBlockStallTimeout?,
+        ~timing?,
       )
       let chainId = chainConfig.id->ChainId.toString
       switch chainConfig.endBlock {
@@ -163,11 +162,10 @@ let resolveAllOrThrow = async (
         | _ => ()
         }
       )
-      Logging.info({
-        "msg": `Resolved the "latest" start block for chain ${chainId} to block ${head->Int.toString}.`,
-        "chainId": chainConfig.id,
-        "startBlock": head,
-      })
+      logger->Logger.info(
+        `Resolved the "latest" start block for chain ${chainId} to block ${head->Int.toString}.`,
+        ~params={"startBlock": head},
+      )
       {...chainConfig, startBlock: Config.Block(head)}
     }
     resolved->Array.push(chainConfig)->ignore

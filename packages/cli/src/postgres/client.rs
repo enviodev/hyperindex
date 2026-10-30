@@ -401,48 +401,16 @@ impl PgClient {
         Ok(Transaction::on(connection))
     }
 
-    /// Runs a `COPY ... TO STDOUT` and writes what it produces to `path`.
-    ///
-    /// The rows never pass through JavaScript: the server streams them and this
-    /// writes them out as they arrive, so a cache of any size costs one buffer
-    /// rather than its own length in memory.
-    ///
-    /// They go to a file of their own beside `path`, which replaces it only once
-    /// the copy has finished: a copy the server gives up on part way would
-    /// otherwise leave a file holding its first rows, and the next start would
-    /// load that as the cache. The name is unique per call, so two dumps of the
-    /// same table cannot write into each other's.
-    pub async fn copy_out(&self, sql: &str, path: &str) -> Result<()> {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let partial = format!(
-            "{path}.{}.{}.partial",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let outcome = self.copy_out_into(sql, &partial).await;
-        let outcome = match outcome {
-            Ok(()) => tokio::fs::rename(&partial, path)
-                .await
-                .with_context(|| format!("Failed replacing {path}")),
-            Err(error) => Err(error),
-        };
-        if outcome.is_err() {
-            let _ = tokio::fs::remove_file(&partial).await;
-        }
-        outcome
-    }
-
-    async fn copy_out_into(&self, sql: &str, path: &str) -> Result<()> {
+    /// Runs a `COPY ... TO STDOUT` and writes what it produces to `file` as it
+    /// arrives, so a cache of any size costs one buffer rather than its own
+    /// length in memory.
+    pub async fn copy_out(&self, sql: &str, file: &mut tokio::fs::File) -> Result<()> {
         let client = self.client().await?;
-        let mut file = tokio::fs::File::create(path)
-            .await
-            .with_context(|| format!("Failed creating {path}"))?;
         let stream = client.copy_out(sql).await?;
         pin_mut!(stream);
         while let Some(chunk) = stream.next().await {
             file.write_all(&chunk?).await?;
         }
-        file.flush().await?;
         Ok(())
     }
 

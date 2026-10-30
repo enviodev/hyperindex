@@ -55,5 +55,7 @@ let schema =
       | Some(bigDecimal) => bigDecimal
       | None => s.fail("The string is not valid BigDecimal")
       },
-    serializer: bigDecimal => bigDecimal.toString(),
+    // `toString` switches to exponent notation past 1e-7 and 1e21, which a
+    // ClickHouse text column keeps as written; Postgres renders plain digits.
+    serializer: bigDecimal => bigDecimal->toFixed,
   })

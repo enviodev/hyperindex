@@ -75,17 +75,9 @@ describe("A chain id past int32", () => {
 
       source.setAutoHeight(400)
       let restarted = await indexer.restart()
-      let {sql, pgSchema} = restarted.pg
-      let chains: array<{
-        "id": string,
-      }> = await sql->Sql.queryForTests(
-        `SELECT "id"::text AS "id" FROM "${pgSchema}"."envio_chains";`,
-      )
+      let chains = (await restarted.queryChains())->Array.map(row => row.id->ChainId.toString)
 
-      t.expect((rolledBack, chains)).toEqual((
-        [{id: "tally", count: 1}],
-        [{"id": chainId->Float.toString}],
-      ))
+      t.expect((rolledBack, chains)).toEqual(([{id: "tally", count: 1}], [chainId->Float.toString]))
     },
   )
 })

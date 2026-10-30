@@ -72,9 +72,13 @@ type pollOutcome =
 
 type t = {
   source: Source.t,
-  logger: Pino.t,
+  logger: Logger.t,
   recordRequestStats: array<Source.requestStat> => unit,
   getHeightRetryInterval: (~retry: int) => int,
+  // A source that has not answered in this long is not going to. Far longer
+  // than any healthy getHeight, so a merely slow endpoint answers first and
+  // nothing here fires in normal running.
+  pollTimeoutMillis: int,
   mutable knownHeight: int,
   mutable waiters: array<waiter>,
   mutable stream: streamState,
@@ -100,11 +104,18 @@ type t = {
   mutable subscribeRejectedWarned: bool,
 }
 
-let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t => {
+let make = (
+  ~source: Source.t,
+  ~logger,
+  ~recordRequestStats,
+  ~getHeightRetryInterval,
+  ~pollTimeoutMillis,
+): t => {
   source,
-  logger: Logging.createChild(~params={"chainId": source.chainId, "source": source.name}),
+  logger: logger->Logger.withFields({"source": source.name}),
   recordRequestStats,
   getHeightRetryInterval,
+  pollTimeoutMillis,
   knownHeight: 0,
   waiters: [],
   stream: NeverEnabled,
@@ -185,10 +196,10 @@ let fireWaiters = (feed: t, height) => {
     satisfied->Array.forEach(waiter =>
       try waiter.onHeight(height) catch {
       | exn =>
-        feed.logger->Logging.childError({
-          "msg": "A height waiter threw. Dropping it rather than losing the height for the others.",
-          "err": exn->Utils.prettifyExn,
-        })
+        feed.logger->Logger.error(
+          "A height waiter threw. Dropping it rather than losing the height for the others.",
+          ~params={"err": exn->Utils.prettifyExn},
+        )
       }
     )
     // Answering the last waiter is one of the ways the loop stops being needed,
@@ -240,11 +251,6 @@ let recordLateAnswer = (feed: t, res: Source.getHeightResponse) => {
   feed->recordHeight(res.height)
 }
 
-// A source that has not answered in this long is not going to. Far longer than
-// any healthy getHeight, so a merely slow endpoint answers first and nothing
-// here fires in normal running.
-let pollTimeoutMillis = 60_000
-
 // One height request, with a bound on how long the caller waits for it. The
 // request itself is not cancelled and a late answer is not thrown away: it is
 // still the head the endpoint had. Only the waiting is bounded, so an endpoint
@@ -272,7 +278,7 @@ let heightWithin = (feed: t): promise<pollOutcome> => {
     Promise.make((resolve, _reject) => timeoutId := Some(setTimeout(() => {
             timedOut := true
             resolve(TimedOut)
-          }, pollTimeoutMillis))),
+          }, feed.pollTimeoutMillis))),
   ])->Promise.thenResolve(outcome => {
     timeoutId->Utils.clearTimeoutRef
     outcome
@@ -316,10 +322,10 @@ let nextRetryInterval = (feed: t) => {
 // said about it stay one thing.
 let backOff = (feed: t, ~what, ~exn=?) => {
   let retryInterval = feed->nextRetryInterval
-  feed.logger->Logging.childTrace({
-    "msg": `Height retrieval from ${feed.source.name} source ${what}. Retrying in ${retryInterval->Int.toString}ms.`,
-    "err": exn->Option.map(Utils.prettifyExn),
-  })
+  feed.logger->Logger.trace(
+    `Height retrieval from ${feed.source.name} source ${what}. Retrying in ${retryInterval->Int.toString}ms.`,
+    ~params={"err": exn->Option.map(Utils.prettifyExn)},
+  )
   (retryInterval, Backoff)
 }
 
@@ -334,7 +340,7 @@ let pollOnce = async (feed: t) => {
     feed->recordAnswer(~generation, res)
     (feed->currentInterval, Cadence)
   | TimedOut =>
-    feed->backOff(~what=`did not answer within ${(pollTimeoutMillis / 1000)->Int.toString}s`)
+    feed->backOff(~what=`did not answer within ${(feed.pollTimeoutMillis / 1000)->Int.toString}s`)
   | Failed(exn) =>
     // The request reached the endpoint and is billed whether or not it
     // answered, so it counts; unwrapping also keeps the log the provider's own
@@ -354,10 +360,10 @@ let runPollLoop = async (feed: t) => {
     // it calls to be total.
     let (interval, kind) = try await feed->pollOnce catch {
     | exn =>
-      feed.logger->Logging.childError({
-        "msg": "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.",
-        "err": exn->Utils.prettifyExn,
-      })
+      feed.logger->Logger.error(
+        "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.",
+        ~params={"err": exn->Utils.prettifyExn},
+      )
       (feed->nextRetryInterval, Backoff)
     }
     if feed->shouldPoll {
@@ -479,24 +485,24 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
     // never heal on their own: silently polling forever against a stream that
     // could be working is worth one line an operator can see. Once each: both
     // conditions repeat on every retry for as long as their cause is there.
-    let log = switch reason {
+    let level = switch reason {
     | Unreadable if !feed.unreadableWarned =>
       feed.unreadableWarned = true
-      Logging.childWarn
+      #warn
     // Refused without this feed ever having had a connection accepted, which
     // makes it the endpoint's answer about itself rather than a bad moment: the
     // url cannot serve heights, and no amount of retrying will change that.
     | SubscribeRejected if !feed.subscribeRejectedWarned && feed.connects === 0 =>
       feed.subscribeRejectedWarned = true
-      Logging.childWarn
-    | _ => Logging.childTrace
+      #warn
+    | _ => #trace
     }
     let label = reason->Source.downReasonLabel
-    feed.logger->log({
-      "msg": `Height subscription for ${feed.source.name} source went down (${label}). Polling for the height until it reconnects.`,
-      "reason": label,
-      "detail": down.detail,
-    })
+    feed.logger->Logger.logAt(
+      level,
+      `Height subscription for ${feed.source.name} source went down (${label}). Polling for the height until it reconnects.`,
+      ~params={"reason": label, "detail": down.detail},
+    )
   }
 
 // Explicit and lazy: the caller subscribes when it starts wanting heights in

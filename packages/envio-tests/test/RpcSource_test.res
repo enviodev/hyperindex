@@ -30,8 +30,7 @@ let makeSource = (
   ~lowercaseAddresses=false,
   ~stores=?,
 ) => {
-  let (blockStore, transactionStore) =
-    stores->Option.getOr(RpcSourcePins.makeStores())
+  let (blockStore, transactionStore) = stores->Option.getOr(RpcSourcePins.makeStores())
   RpcSource.make({
     url,
     chainId,
@@ -161,8 +160,7 @@ describe("RpcSource - field selection end to end", () => {
         },
       ],
     )
-    let (blockStore, transactionStore) =
-      stores->Option.getOr(RpcSourcePins.makeStores())
+    let (blockStore, transactionStore) = stores->Option.getOr(RpcSourcePins.makeStores())
     let source = makeSource(
       ~url=mock.url,
       ~onEventRegistrations=[registration],
@@ -171,7 +169,7 @@ describe("RpcSource - field selection end to end", () => {
       ~stores=(blockStore, transactionStore),
     )
     let response = await source.getItemsOrThrow(
-      ~includeAllBlocks=false,
+      ~reorgableFrom=None,
       ~fromBlock=100,
       ~toBlock=Some(100),
       ~addressSet=addressStore->AddressStore.makeSet(
@@ -181,11 +179,12 @@ describe("RpcSource - field selection end to end", () => {
       ~partitionId="0",
       ~selection={
         dependsOnAddresses: true,
+        onBlockRegistrations: [],
         onEventRegistrations: [(registration :> Internal.onEventRegistration)],
       },
       ~itemsTarget=Some(5000),
       ~retry=0,
-      ~logger=Logging.createChild(~params={"test": "RpcSource field selection"}),
+      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource field selection"}),
     )
     // The spelling is the chain's, read where the stores are materialised —
     // which is `ChainState.shouldChecksum` in production.
@@ -358,11 +357,7 @@ describe("RpcSource - field selection end to end", () => {
       seen->Utils.Set.toArray->Array.toSorted(String.compare)
     }
     mock.close()
-    t.expect(methods).toEqual([
-      "eth_getBlockByNumber",
-      "eth_getLogs",
-      "eth_getTransactionByHash",
-    ])
+    t.expect(methods).toEqual(["eth_getBlockByNumber", "eth_getLogs", "eth_getTransactionByHash"])
   })
 
   Async.it("Retries rather than disabling the source on a value it cannot decode", async t => {
@@ -630,16 +625,16 @@ describe("RpcSource - empty selection", () => {
 
     let caught = try {
       let _ = await source.getItemsOrThrow(
-        ~includeAllBlocks=false,
+        ~reorgableFrom=None,
         ~fromBlock=0,
         ~toBlock=Some(1),
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
         ~knownHeight=1,
         ~partitionId="0",
-        ~selection={dependsOnAddresses: true, onEventRegistrations: []},
+        ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: []},
         ~itemsTarget=Some(5000),
         ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "RpcSource empty selection"}),
+        ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource empty selection"}),
       )
       None
     } catch {
@@ -716,7 +711,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       let call = async () =>
         try {
           let _ = await source.getItemsOrThrow(
-            ~includeAllBlocks=false,
+            ~reorgableFrom=None,
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
             ~addressSet=addressStore->AddressStore.makeSet(
@@ -726,11 +721,12 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~partitionId="0",
             ~selection={
               dependsOnAddresses: true,
+              onBlockRegistrations: [],
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
             ~itemsTarget=Some(5000),
             ~retry=0,
-            ~logger=Logging.createChild(~params={"test": "RpcSource re-grow"}),
+            ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource re-grow"}),
           )
         } catch {
         | Source.GetItemsError(_) => ()
@@ -842,7 +838,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
     let retry = try {
       let result = try {
         let _ = await source.getItemsOrThrow(
-          ~includeAllBlocks=false,
+          ~reorgableFrom=None,
           ~fromBlock=0,
           ~toBlock=Some(1_000_000),
           ~addressSet=addressStore->AddressStore.makeSet(
@@ -852,11 +848,12 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
+            onBlockRegistrations: [],
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
           ~itemsTarget=Some(5000),
           ~retry=0,
-          ~logger=Logging.createChild(~params={"test": "RpcSource classify"}),
+          ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource classify"}),
         )
         None
       } catch {
@@ -963,7 +960,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
 
     let (page, filters) = try {
       let page = await source.getItemsOrThrow(
-        ~includeAllBlocks=false,
+        ~reorgableFrom=None,
         ~fromBlock=0,
         ~toBlock=Some(100),
         ~addressSet=addressStore->AddressStore.makeSet(
@@ -973,13 +970,14 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~partitionId="selection-e2e",
         ~selection={
           dependsOnAddresses: true,
+          onBlockRegistrations: [],
           onEventRegistrations: selectedRegistrations->Array.map(
             reg => (reg :> Internal.onEventRegistration),
           ),
         },
         ~itemsTarget=Some(5000),
         ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "RpcSource selection e2e"}),
+        ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RpcSource selection e2e"}),
       )
       let filters =
         mock.requests
@@ -1037,46 +1035,5 @@ describe("RpcSource - height subscription", () => {
         ~ws="wss://rpc.example.test/ws",
       ).createHeightSubscription->Option.isSome,
     )).toEqual((false, true))
-  })
-
-  Async.it("Advances by polling when no ws url is configured", async t => {
-    let height = ref(100)
-    let blockNumberCalls = ref(0)
-    let mock = await MockRpcServer.make(~getResult=method =>
-      switch method {
-      | "eth_blockNumber" =>
-        blockNumberCalls := blockNumberCalls.contents + 1
-        // Stays at the known height until the wait has polled more than once,
-        // so a pass can't come from the single poll that precedes subscribing.
-        if blockNumberCalls.contents > 2 {
-          height := 101
-        }
-        JSON.String(`0x${height.contents->Int.toString(~radix=16)}`)
-      | _ => JSON.Null
-      }
-    )
-
-    let source = makeSource(~url=mock.url)
-    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[source])
-
-    let newHeight = try await sourceManager->SourceManager.waitForNewBlock(
-      ~knownHeight=100,
-      ~isRealtime=true,
-      ~reducedPolling=false,
-    ) catch {
-    | exn =>
-      mock.close()
-      throw(exn)
-    }
-    mock.close()
-
-    // Nothing pushes heights on this source, so the wait has to have polled its
-    // way to the new one, and the height stream families have to stay off a
-    // scrape for a chain that has no stream to report on.
-    t.expect((
-      newHeight,
-      blockNumberCalls.contents > 2,
-      sourceManager->SourceManager.getHeightStreamSamples,
-    )).toEqual((101, true, []))
   })
 })

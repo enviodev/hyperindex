@@ -1,5 +1,6 @@
-type logsQueryPage = {
-  items: array<HyperSyncClient.EventItems.item>,
+type itemsPage = {
+  eventItems: array<EvmEventItem.t>,
+  blockItems: array<BlockItem.t>,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,
@@ -25,7 +26,7 @@ let isUnauthorizedError: string => bool
 // Rethrows every failure unchanged, adding one loud line the first time a source
 // sees a 401. Never swallows it: the caller's retry ramp has to keep asking,
 // because a token can be replaced without restarting the indexer.
-let rethrowLoggingUnauthorized: (exn, ~warned: ref<bool>, ~product: string) => 'a
+let rethrowLoggingUnauthorized: (exn, ~logger: Logger.t, ~warned: ref<bool>, ~product: string) => 'a
 
 // Map a native client's `PREFIX:<int>` failure marker onto the exception
 // SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
@@ -38,9 +39,9 @@ let reraiseIfRecoverable: exn => unit
 // keeping the request timings whether it succeeds or fails.
 let makeGetBlockHashes: (
   ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
-) => (~blockNumbers: array<int>, ~logger: Pino.t) => promise<Source.getBlockHashesResponse>
+) => (~blockNumbers: array<int>, ~logger: Logger.t) => promise<Source.getBlockHashesResponse>
 
-module GetLogs: {
+module GetItems: {
   type error =
     | UnexpectedMissingParams({missingParams: array<string>})
     | WrongInstance
@@ -51,12 +52,7 @@ module GetLogs: {
 
   let query: (
     ~client: HyperSyncClient.t,
-    ~fromBlock: int,
-    ~toBlock: option<int>,
-    ~maxNumLogs: option<int>,
-    ~registrationIndexes: array<int>,
+    ~query: HyperSyncClient.Items.query,
     ~addressSet: AddressSet.t,
-    ~clientFilteredContracts: option<array<string>>,
-    ~includeAllBlocks: bool,
-  ) => promise<logsQueryPage>
+  ) => promise<itemsPage>
 }

@@ -7,6 +7,7 @@ use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
+use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -15,6 +16,7 @@ mod config;
 pub(crate) mod decode;
 pub(crate) mod query;
 pub(crate) mod selection;
+pub(crate) mod topic_filter;
 pub(crate) mod types;
 
 use crate::js_value::JsTape;
@@ -52,6 +54,7 @@ pub struct EvmHyperSyncClient {
     enable_checksum_addresses: bool,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
+    block_registrations: BlockRegistrations,
 }
 
 impl EvmHyperSyncClient {
@@ -79,9 +82,11 @@ impl EvmHyperSyncClient {
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
+        block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
     ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
+        let block_registrations = BlockRegistrations::new(&block_registrations).map_err(map_err)?;
 
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
 
@@ -106,6 +111,7 @@ impl EvmHyperSyncClient {
             enable_checksum_addresses,
             decoder,
             selection_builder,
+            block_registrations,
         })
     }
 
@@ -170,27 +176,59 @@ impl EvmHyperSyncClient {
     }
 
     #[napi]
-    pub async fn get_event_items(
+    pub async fn get_items(
         &self,
-        params: EventItemsQuery,
+        params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(EventItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
+        let selects_logs = !params.on_event_registration_indexes.is_empty();
         let built = self
             .selection_builder
-            .build(&params.registration_indexes, address_set, &client_filtered)
+            .build(
+                &params.on_event_registration_indexes,
+                address_set,
+                &client_filtered,
+            )
             .map_err(map_err)?;
         let set_cache = address_set.cache().clone();
         let selection_decoder = self
             .decoder
             .selection(
-                &params.registration_indexes,
+                &params.on_event_registration_indexes,
                 &client_filtered,
                 set_cache.clone(),
             )
             .map_err(map_err)?;
+        let block_query = self
+            .block_registrations
+            .plan(
+                &params.on_block_registration_indexes,
+                params.from_block,
+                params.to_block,
+                !selects_logs,
+                params.reorgable_from,
+                params.items_target,
+            )
+            .map_err(map_err)?;
+        let block_selection = &block_query.selection;
+        if let Some(next_block) = block_query.unread_until() {
+            let next_block = next_block as i64;
+            return Ok((
+                ItemsResponse {
+                    // No request was made, so the source learned no height.
+                    archive_height: None,
+                    next_block,
+                    event_items: Vec::new(),
+                    block_items: Vec::new(),
+                    response_blocks: 0,
+                },
+                TransactionStore::new_evm(),
+                BlockStore::new_evm(),
+            ));
+        }
 
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
@@ -198,7 +236,10 @@ impl EvmHyperSyncClient {
         // set. Validating the forced fields (not just the selection's) is what
         // guarantees the consumer's unconditional number/timestamp/hash reads
         // — the presence check, not the request, is the guarantee.
-        for &field in REQUIRED_BLOCK_FIELDS {
+        for field in BlockField::in_store_mask(block_selection.mask())
+            .into_iter()
+            .chain(REQUIRED_BLOCK_FIELDS.iter().copied())
+        {
             if !block_fields.contains(&field) {
                 block_fields.push(field);
             }
@@ -221,34 +262,37 @@ impl EvmHyperSyncClient {
         }
 
         let query = Query {
-            from_block: params.from_block,
-            to_block: params.to_block.map(|b| b + 1),
-            logs: Some(
+            from_block: block_query.from_block as i64,
+            to_block: block_query.to_block.map(|b| b as i64 + 1),
+            logs: selects_logs.then(|| {
                 built
                     .log_selections
                     .into_iter()
                     .map(log_selection_from_built)
-                    .collect(),
-            ),
-            max_num_logs: params.max_num_logs,
+                    .collect()
+            }),
+            max_num_logs: params.items_target.filter(|_| selects_logs),
+            max_num_blocks: block_query.max_blocks.map(|b| b as i64),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
-                transaction: Some(transaction_fields),
-                // Everything get_event_items reads off the log: decode inputs,
-                // the flattened item fields, and the transaction-store keys.
-                log: Some(vec![
-                    LogField::Address,
-                    LogField::Data,
-                    LogField::LogIndex,
-                    LogField::Topic0,
-                    LogField::Topic1,
-                    LogField::Topic2,
-                    LogField::Topic3,
-                    LogField::BlockNumber,
-                    LogField::TransactionIndex,
-                ]),
+                transaction: selects_logs.then_some(transaction_fields),
+                // Everything get_items reads off the log: decode inputs, the
+                // flattened item fields, and the transaction-store keys.
+                log: selects_logs.then(|| {
+                    vec![
+                        LogField::Address,
+                        LogField::Data,
+                        LogField::LogIndex,
+                        LogField::Topic0,
+                        LogField::Topic1,
+                        LogField::Topic2,
+                        LogField::Topic3,
+                        LogField::BlockNumber,
+                        LogField::TransactionIndex,
+                    ]
+                }),
             },
-            include_all_blocks: params.include_all_blocks,
+            include_all_blocks: Some(block_query.include_all_blocks()),
             ..Default::default()
         };
 
@@ -267,9 +311,16 @@ impl EvmHyperSyncClient {
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
+        let next_block: i64 = response
+            .next_block
+            .try_into()
+            .context("convert next_block")
+            .map_err(map_err)?;
         let transaction_store = TransactionStore::new_evm();
         let block_store = BlockStore::new_evm();
-        let items = tokio::task::block_in_place(|| {
+        // The range the page covered: `include_all_blocks` leaves no gaps in it.
+        let block_items = block_selection.route(block_query.from_block..(next_block as u64));
+        let event_items = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
                 response.data.transactions,
@@ -281,6 +332,7 @@ impl EvmHyperSyncClient {
                 &transaction_store,
                 &block_store,
                 &set_cache,
+                &block_items,
             )
         })
         .map_err(convert_error_to_napi)?;
@@ -303,44 +355,50 @@ impl EvmHyperSyncClient {
                 .map_err(map_err)?;
         }
 
-        let event_items = EventItemsResponse {
+        let items = ItemsResponse {
             archive_height: response
                 .archive_height
                 .map(|h| h.try_into())
                 .transpose()
                 .context("convert archive_height")
                 .map_err(map_err)?,
-            next_block: response
-                .next_block
-                .try_into()
-                .context("convert next_block")
-                .map_err(map_err)?,
-            items,
+            next_block: block_query.fetched_until(next_block as u64) as i64,
+            event_items,
+            block_items,
             response_blocks,
         };
-        Ok((event_items, transaction_store, block_store))
+        Ok((items, transaction_store, block_store))
     }
 }
 
-/// The whole per-query input for `get_event_items` beside the partition's
-/// address set: the block range and its registration selection (by id). Log
-/// selections, field selection, and the routing index are all derived
-/// internally from the registrations passed at construction and the set.
+/// The whole per-query input for `get_items` beside the partition's address
+/// set: the block range and what it selects from each table. Log selections,
+/// field selection, and the routing index are all derived internally from the
+/// registrations passed at construction and the set.
 #[napi(object)]
-pub struct EventItemsQuery {
+pub struct ItemsQuery {
     pub from_block: i64,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
-    /// `None` sends no server-side cap on the number of logs returned.
-    pub max_num_logs: Option<i64>,
-    pub registration_indexes: Vec<i64>,
+    /// Soft cap on the page's items: the logs it selects, or for a query
+    /// selecting blocks alone, its block handlers' runs. `None` sends no cap.
+    pub items_target: Option<i64>,
+    /// The event registrations selecting logs, by the index the client was
+    /// constructed with. Empty selects no logs.
+    pub on_event_registration_indexes: Vec<i64>,
+    /// The block handlers selecting blocks, by the index the client was
+    /// constructed with. Empty selects no more blocks than the logs come from,
+    /// unless the range reaches `reorgable_from`.
+    pub on_block_registration_indexes: Vec<i64>,
     /// Contract names to fetch address-free even though their registrations
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
-    /// Return a header for every block in the range, not only the ones a log
-    /// landed on. Absent means only the blocks logs came from.
-    pub include_all_blocks: Option<bool>,
+    /// Blocks at or above this number can still be reorged on the chain. A
+    /// page reaching them must link to the page before it for reorg
+    /// detection, so it reads every block of its range. Absent when the whole
+    /// range is final.
+    pub reorgable_from: Option<i64>,
 }
 
 fn log_selection_from_built(
@@ -384,13 +442,14 @@ pub struct EventItem {
     pub params: JsTape,
 }
 
-/// The always-needed block fields, surfaced per block number so the consumer can
-/// set each item's `timestamp`/`blockHash`, feed reorg detection, and stamp
+/// One page of items routed from the query's tables. The rows they join to are
+/// in the stores returned beside it.
 #[napi(object, object_from_js = false)]
-pub struct EventItemsResponse {
+pub struct ItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub items: Vec<EventItem>,
+    pub event_items: Vec<EventItem>,
+    pub block_items: Vec<BlockItem>,
     /// Blocks the server returned for this query, before routing drops the ones
     /// no item joins to. The server returns one block per number, so this is a
     /// distinct count.
@@ -471,6 +530,7 @@ fn process_response(
     transaction_store: &TransactionStore,
     block_store: &BlockStore,
     set_cache: &SetCache,
+    handler_blocks: &[BlockItem],
 ) -> std::result::Result<Vec<EventItem>, ConvertError> {
     let mut missing: Vec<String> = Vec::new();
 
@@ -557,6 +617,11 @@ fn process_response(
     let returned_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
     let present_block_numbers: HashSet<u64> =
         returned_blocks.iter().filter_map(|b| b.number).collect();
+
+    // A block a block handler runs on is referenced like one a log routed
+    // from. The page asked for every block of the range it covered, so the
+    // coverage check below rejects one missing rather than skipping it.
+    referenced_blocks.extend(handler_blocks.iter().map(|item| item.block_number as u64));
 
     // Validate the requested block fields once per distinct block. The
     // always-required number/timestamp/hash back every header, so they are
@@ -845,18 +910,18 @@ mod tests {
             &[
                 crate::evm_hypersync_source::types::OnEventRegistrationInput {
                     index: 0,
-                    sighash: format!("0x{}", "00".repeat(32)),
+                    sighash: Some(format!("0x{}", "00".repeat(32))),
                     topic_count: 1,
                     event_name: "Zero".to_string(),
                     contract_name: "Zero".to_string(),
                     is_wildcard: true,
                     depends_on_addresses: false,
                     start_block: None,
-                    // One no-filter selection pinning topic0 (an empty list would
-                    // be `where: false` and match nothing).
-                    topic_selections: vec![
-                        crate::evm_hypersync_source::selection::TopicSelectionInput {
-                            topic0: vec![format!("0x{}", "00".repeat(32))],
+                    // One no-filter alternative pinning topic0 (an empty list
+                    // would be `where: false` and match nothing).
+                    topic_filters: vec![
+                        crate::evm_hypersync_source::topic_filter::TopicFilterInput {
+                            topic0: Some(vec![format!("0x{}", "00".repeat(32))]),
                             topic1: Some(vec![]),
                             topic2: Some(vec![]),
                             topic3: Some(vec![]),
@@ -914,6 +979,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .err()
         .expect("expected MissingFields error");
@@ -943,6 +1009,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .err()
         .expect("expected MissingFields error");
@@ -957,7 +1024,7 @@ mod tests {
 
     #[test]
     fn forced_block_fields_validated_even_when_user_requested_none() {
-        // get_event_items force-adds REQUIRED_BLOCK_FIELDS and validates that
+        // get_items force-adds REQUIRED_BLOCK_FIELDS and validates that
         // forced set, so number/timestamp/hash are guaranteed present even when
         // the user's config selected no block fields. Here the user requested
         // nothing yet a missing timestamp is still reported.
@@ -977,6 +1044,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .err()
         .expect("expected MissingFields error");
@@ -1016,6 +1084,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .expect("expected success when only nullable fields are absent");
         assert_eq!(items.len(), 1);
@@ -1047,6 +1116,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .err()
         .expect("expected MissingFields error");
@@ -1080,6 +1150,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .err()
         .expect("expected MissingFields error");
@@ -1122,6 +1193,7 @@ mod tests {
             &store,
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .expect("expected success when block and transaction join");
 
@@ -1164,6 +1236,7 @@ mod tests {
             &transaction_store,
             &block_store,
             empty_set().cache(),
+            &[],
         )
         .expect("expected success");
 
@@ -1220,6 +1293,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .expect("an unrouted log's absent block and transaction are not missing fields");
 
@@ -1254,6 +1328,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .expect("an unreferenced block's absent selected field is not a missing field");
 
@@ -1296,6 +1371,7 @@ mod tests {
             &TransactionStore::new_evm(),
             &BlockStore::new_evm(),
             empty_set().cache(),
+            &[],
         )
         .expect("a keyless transaction's absent field is not a missing field");
 

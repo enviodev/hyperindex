@@ -78,7 +78,7 @@ let rawBodyRoute = Rest.route(() => {
   responses,
 })
 
-let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
+let sendOperation = async (~logger, ~endpoint, ~auth, ~operation: JSON.t) => {
   let maxRetries = 3
   let rec retry = async (~attempt) => {
     try {
@@ -96,34 +96,34 @@ let sendOperation = async (~endpoint, ~auth, ~operation: JSON.t) => {
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMs)
         await retry(~attempt=attempt + 1)
       } else {
-        Logging.warn({
-          "msg": "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
-          "err": exn->Utils.prettifyExn,
-        })
+        logger->Logger.warn(
+          "Hasura configuration request failed. Indexing will still work - but you may have issues querying data via GraphQL.",
+          ~params={"err": exn->Utils.prettifyExn},
+        )
       }
     }
   }
   await retry(~attempt=0)
 }
 
-let clearHasuraMetadata = async (~endpoint, ~auth) => {
+let clearHasuraMetadata = async (~logger, ~endpoint, ~auth) => {
   try {
     let result = await clearMetadataRoute->Rest.fetch(auth, ~client=Rest.client(endpoint))
     let msg = switch result {
     | QuerySucceeded => "Hasura metadata cleared"
     | AlreadyDone => "Hasura metadata already cleared"
     }
-    Logging.trace(msg)
+    logger->Logger.trace(msg)
   } catch {
   | exn =>
-    Logging.error({
-      "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-      "err": exn->Utils.prettifyExn,
-    })
+    logger->Logger.error(
+      `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      ~params={"err": exn->Utils.prettifyExn},
+    )
   }
 }
 
-let reloadHasuraMetadata = async (~endpoint, ~auth) => {
+let reloadHasuraMetadata = async (~logger, ~endpoint, ~auth) => {
   try {
     let result = await reloadMetadataRoute->Rest.fetch(
       {
@@ -138,13 +138,13 @@ let reloadHasuraMetadata = async (~endpoint, ~auth) => {
     | QuerySucceeded => "Hasura metadata reloaded"
     | AlreadyDone => "Hasura metadata reload acknowledged"
     }
-    Logging.trace(msg)
+    logger->Logger.trace(msg)
   } catch {
   | exn =>
-    Logging.error({
-      "msg": `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
-      "err": exn->Utils.prettifyExn,
-    })
+    logger->Logger.error(
+      `There was an issue reloading hasura metadata - table tracking may race with schema creation.`,
+      ~params={"err": exn->Utils.prettifyExn},
+    )
   }
 }
 
@@ -182,7 +182,13 @@ let makeColumnConfigs = (table: Table.table): dict<columnConfig> => {
   columnConfigs
 }
 
-let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<trackTableConfig>) => {
+let trackTables = async (
+  ~logger,
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~tableConfigs: array<trackTableConfig>,
+) => {
   try {
     let result = await trackTablesRoute->Rest.fetch(
       {
@@ -236,21 +242,21 @@ let trackTables = async (~endpoint, ~auth, ~pgSchema, ~tableConfigs: array<track
     | QuerySucceeded => "Hasura finished tracking tables"
     | AlreadyDone => "Hasura tables already tracked"
     }
-    Logging.trace({
-      "msg": msg,
-      "tableNames": tableConfigs->Array.map(c => c.tableName),
-    })
+    logger->Logger.trace(msg, ~params={"tableNames": tableConfigs->Array.map(c => c.tableName)})
   } catch {
   | exn =>
-    Logging.error({
-      "msg": `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
-      "tableNames": tableConfigs->Array.map(c => c.tableName),
-      "err": exn->Utils.prettifyExn,
-    })
+    logger->Logger.error(
+      `There was an issue tracking tables in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      ~params={
+        "tableNames": tableConfigs->Array.map(c => c.tableName),
+        "err": exn->Utils.prettifyExn,
+      },
+    )
   }
 }
 
 let createSelectPermission = async (
+  ~logger,
   ~endpoint,
   ~auth,
   ~tableName: string,
@@ -259,6 +265,7 @@ let createSelectPermission = async (
   ~aggregateEntities,
 ) => {
   await sendOperation(
+    ~logger,
     ~endpoint,
     ~auth,
     ~operation={
@@ -294,18 +301,31 @@ let makeColumnMapping = (~relationalKey, ~isDerivedFrom, ~chainIdColumn) => {
   `{${pairs->Array.joinUnsafe(", ")}}`
 }
 
+type relationship = {
+  tableName: string,
+  // An array relationship when true, an object one otherwise.
+  isDerivedFrom: bool,
+  objectName: string,
+  relationalKey: string,
+  mappedEntity: string,
+  chainIdColumn: option<string>,
+  comment: option<string>,
+}
+
 let createEntityRelationship = async (
+  ~logger,
   ~endpoint,
   ~auth,
   ~pgSchema,
-  ~tableName: string,
-  ~relationshipType: string,
-  ~relationalKey: string,
-  ~objectName: string,
-  ~mappedEntity: string,
-  ~isDerivedFrom: bool,
-  ~chainIdColumn: option<string>,
-  ~comment: option<string>=?,
+  {
+    tableName,
+    relationalKey,
+    objectName,
+    mappedEntity,
+    isDerivedFrom,
+    chainIdColumn,
+    comment,
+  }: relationship,
 ) => {
   let tableJson = {
     "schema": pgSchema,
@@ -335,10 +355,11 @@ let createEntityRelationship = async (
   }
 
   await sendOperation(
+    ~logger,
     ~endpoint,
     ~auth,
     ~operation={
-      "type": `pg_create_${relationshipType}_relationship`,
+      "type": `pg_create_${isDerivedFrom ? "array" : "object"}_relationship`,
       "args": args,
     }->(Utils.magic: 'a => JSON.t),
   )
@@ -373,7 +394,69 @@ let makeTableConfigs = (~userEntities: array<Internal.entityConfig>) => {
   [exposedInternalTableConfigs, userTableConfigs]->Array.flat
 }
 
+// The relationships between the entities Hasura tracks. Relationships to an
+// @internal entity can't exist here: codegen rejects a reference from an
+// exposed entity to an @internal one.
+let makeRelationships = (~userEntities: array<Internal.entityConfig>, ~schema) => {
+  let tracked = (entityName: string) =>
+    userEntities->Array.find((e: Internal.entityConfig) => e.name === entityName)
+
+  // Both sides of a relationship must be per-chain for the chain to be part of
+  // the join; a per-chain entity referencing a cross-chain one resolves by id
+  // alone. The reverse (cross-chain referencing per-chain) is rejected at
+  // codegen, so it can't reach here.
+  let chainIdColumnOf = (entityName: string) =>
+    tracked(entityName)
+    ->Option.flatMap(e => e.table->Table.getChainIdField)
+    ->Option.map(Table.getPgDbFieldName)
+
+  userEntities
+  ->Array.filter(e => !e.internal)
+  ->Array.flatMap(entityConfig => {
+    let {tableName} = entityConfig.table
+    let ownChainIdColumn =
+      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+    let sharedChainIdColumn = mappedEntity =>
+      switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
+      | (Some(column), Some(_)) => Some(column)
+      | _ => None
+      }
+
+    let arrays =
+      entityConfig.table
+      ->Table.getDerivedFromFields
+      ->Array.map(derivedFromField => {
+        tableName,
+        isDerivedFrom: true,
+        objectName: derivedFromField.fieldName,
+        //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
+        relationalKey: schema
+        ->Schema.getDerivedFromPgFieldName(derivedFromField)
+        ->Utils.unwrapResultExn,
+        mappedEntity: derivedFromField.derivedFromEntity,
+        chainIdColumn: sharedChainIdColumn(derivedFromField.derivedFromEntity),
+        comment: derivedFromField.description,
+      })
+    // An entity kept in ClickHouse alone has no table here to point at.
+    let objects =
+      entityConfig.table
+      ->Table.getLinkedEntityFields
+      ->Array.filter(((_, linkedEntityName)) => tracked(linkedEntityName)->Option.isSome)
+      ->Array.map(((field, linkedEntityName)) => {
+        tableName,
+        isDerivedFrom: false,
+        objectName: field.fieldName,
+        relationalKey: field->Table.getPgDbFieldName,
+        mappedEntity: linkedEntityName,
+        chainIdColumn: sharedChainIdColumn(linkedEntityName),
+        comment: field.description,
+      })
+    arrays->Array.concat(objects)
+  })
+}
+
 let trackDatabase = async (
+  ~logger,
   ~endpoint,
   ~auth,
   ~pgSchema,
@@ -385,20 +468,21 @@ let trackDatabase = async (
   let tableConfigs = makeTableConfigs(~userEntities)
   let tableNames = tableConfigs->Array.map(c => c.tableName)
 
-  Logging.info("Tracking tables in Hasura")
+  logger->Logger.info("Tracking tables in Hasura")
 
-  let _ = await clearHasuraMetadata(~endpoint, ~auth)
+  let _ = await clearHasuraMetadata(~logger, ~endpoint, ~auth)
 
   // Force Hasura to re-introspect the source schema before tracking, otherwise
   // freshly-created user tables may be invisible to pg_track_tables and the call
   // returns `metadata-warnings` (HTTP 400), leaving tracking permanently broken.
-  await reloadHasuraMetadata(~endpoint, ~auth)
+  await reloadHasuraMetadata(~logger, ~endpoint, ~auth)
 
-  await trackTables(~endpoint, ~auth, ~pgSchema, ~tableConfigs)
+  await trackTables(~logger, ~endpoint, ~auth, ~pgSchema, ~tableConfigs)
 
   for i in 0 to tableNames->Array.length - 1 {
     let tableName = tableNames->Array.getUnsafe(i)
     await createSelectPermission(
+      ~logger,
       ~endpoint,
       ~auth,
       ~tableName,
@@ -408,72 +492,9 @@ let trackDatabase = async (
     )
   }
 
-  // Both sides of a relationship must be per-chain for the chain to be part of
-  // the join; a per-chain entity referencing a cross-chain one resolves by id
-  // alone. The reverse (cross-chain referencing per-chain) is rejected at
-  // codegen, so it can't reach here.
-  let chainIdColumnOf = (entityName: string) =>
-    userEntities
-    ->Array.find((e: Internal.entityConfig) => e.name === entityName)
-    ->Option.flatMap(e => e.table->Table.getChainIdField)
-    ->Option.map(Table.getPgDbFieldName)
+  await makeRelationships(~userEntities, ~schema)->Utils.Array.awaitEach(relationship =>
+    createEntityRelationship(~logger, ~endpoint, ~auth, ~pgSchema, relationship)
+  )
 
-  // Relationships to an @internal entity can't exist here: codegen rejects a
-  // reference from an exposed entity to an @internal one.
-  let exposedEntities = userEntities->Array.filter(e => !e.internal)
-  for i in 0 to exposedEntities->Array.length - 1 {
-    let entityConfig = exposedEntities->Array.getUnsafe(i)
-    let {tableName} = entityConfig.table
-    let ownChainIdColumn =
-      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
-    let sharedChainIdColumn = mappedEntity =>
-      switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
-      | (Some(column), Some(_)) => Some(column)
-      | _ => None
-      }
-
-    //Set array relationships
-    let derivedFromFields = entityConfig.table->Table.getDerivedFromFields
-    for j in 0 to derivedFromFields->Array.length - 1 {
-      let derivedFromField = derivedFromFields->Array.getUnsafe(j)
-      //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
-      let relationalFieldName =
-        schema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
-
-      await createEntityRelationship(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~tableName,
-        ~relationshipType="array",
-        ~isDerivedFrom=true,
-        ~objectName=derivedFromField.fieldName,
-        ~relationalKey=relationalFieldName,
-        ~mappedEntity=derivedFromField.derivedFromEntity,
-        ~chainIdColumn=sharedChainIdColumn(derivedFromField.derivedFromEntity),
-        ~comment=?derivedFromField.description,
-      )
-    }
-
-    //Set object relationships
-    let linkedEntityFields = entityConfig.table->Table.getLinkedEntityFields
-    for j in 0 to linkedEntityFields->Array.length - 1 {
-      let (field, linkedEntityName) = linkedEntityFields->Array.getUnsafe(j)
-      await createEntityRelationship(
-        ~endpoint,
-        ~auth,
-        ~pgSchema,
-        ~tableName,
-        ~relationshipType="object",
-        ~isDerivedFrom=false,
-        ~objectName=field.fieldName,
-        ~relationalKey=field->Table.getPgDbFieldName,
-        ~mappedEntity=linkedEntityName,
-        ~chainIdColumn=sharedChainIdColumn(linkedEntityName),
-        ~comment=?field.description,
-      )
-    }
-  }
-
-  Logging.info("Hasura configuration completed")
+  logger->Logger.info("Hasura configuration completed")
 }

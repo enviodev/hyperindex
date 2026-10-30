@@ -7,6 +7,13 @@ type backend = IndexerRunner.backend
 // skip message — an opt-out nobody can explain is an opt-out nobody revisits.
 type unsupported = {backend: backend, reason: string}
 
+let configuresOwnStorage = [#postgres, #both]->Array.map((backend): unsupported => {
+  backend,
+  reason: "configures its own storage, so it runs the same on the ClickHouse leg",
+})
+let noClickHouse = (reason): array<unsupported> =>
+  [#clickhouse, #both]->Array.map(backend => {backend, reason})
+
 type t = {
   config: Config.t,
   publicConfigJson: JSON.t,
@@ -35,20 +42,30 @@ type sourceMock = {
   // resolving a `latest` start block), which a test body can't reach in time
   // via `setAutoHeight` since it only runs once startup has already awaited.
   autoHeight?: int,
+  // Answers for the first height calls, ahead of `autoHeight`, for a startup
+  // height call that has to fail first.
+  startupHeights?: array<MockSource.startupHeight>,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
-// The ClickHouse leg indexes the same scenario with the sink switched on. It's
-// a config choice a user makes in YAML, so it's made there rather than by
-// patching the parsed config — that way the entities pick up their ClickHouse
-// storage flags through the same parse a user's would.
-let withClickHouseStorage = configYaml =>
+// The ClickHouse leg indexes the same scenario with every entity kept in
+// ClickHouse alone, so every handler read, getWhere and rollback reads it there.
+// The both leg keeps every entity in Postgres and ClickHouse, so every batch
+// writes the two together. It's a config choice a user makes in YAML, so it's
+// made there rather than by patching the parsed config — that way the entities
+// pick up their storage flags through the same parse a user's would.
+let withLegStorage = configYaml =>
   if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
-    configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    switch IndexerRunner.selectedBackend {
+    | #postgres => configYaml
+    | #clickhouse => configYaml ++ "\nstorage:\n  clickhouse:\n    default: true\n"
+    | #both =>
+      configYaml ++ "\nstorage:\n  postgres:\n    default: true\n  clickhouse:\n    default: true\n"
+    }
   }
 
 let make = (
@@ -63,14 +80,11 @@ let make = (
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
 
-  // A scenario that can't run on ClickHouse doesn't get shaped for it: some
-  // schemas the other backends accept (an unbounded BigInt id, say) fail the
-  // parse outright once ClickHouse storage is on, which would take the whole
-  // file down before the skip could apply.
-  let configYaml = switch IndexerRunner.selectedBackend {
-  | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #postgres => configYaml
-  }
+  // A scenario that can't run on a leg doesn't get shaped for it: some
+  // schemas Postgres accepts (an unbounded BigInt id, say) fail the parse
+  // outright once ClickHouse storage is on, which would take the whole file
+  // down before the skip could apply.
+  let configYaml = isUnsupported ? configYaml : configYaml->withLegStorage
 
   let withIndexerTypes = handlers->Option.isSome
   let {config: configJson, indexerTypes} = Core.fromUserApi(
@@ -174,14 +188,16 @@ let withInternalOverrides = (
   ),
 }
 
-@set external setErrorMessage: (JsExn.t, string) => unit = "message"
-type rescriptExn = {@as("RE_EXN_ID") id: string, mutable message?: string}
-
 let run = async (
   scenario: t,
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Leaves every chain on the source its YAML names, for a scenario whose YAML
+  // points each chain at a local server the test runs.
+  ~yamlSources=false,
+  ~sourceTiming=?,
+  // How long startup keeps asking for a `latest` start block. `Once` is what
+  // `envio local db-migrate` runs with.
+  ~startBlockRetry=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -191,7 +207,8 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
+  ~provideClickHouse=?,
+  ~chains=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
@@ -202,6 +219,7 @@ let run = async (
       ?pollingInterval,
       ?isWildcard,
       ?autoHeight,
+      ?startupHeights,
     }) => (
       chain,
       MockSource.make(
@@ -211,13 +229,14 @@ let run = async (
         ~pollingInterval?,
         ~isWildcard?,
         ~autoHeight?,
+        ~startupHeights?,
       ),
     ))
 
   let config =
-    scenario.config
-    ->withMockSources(~sources=mocks)
-    ->withInternalOverrides(
+    (
+      yamlSources ? scenario.config : scenario.config->withMockSources(~sources=mocks)
+    )->withInternalOverrides(
       ~maxAddrInPartition,
       ~clientFilterAddressThreshold,
       ~reorgThresholdReadyTolerance,
@@ -239,11 +258,13 @@ let run = async (
   // One registration for the whole run, so a restart reuses the handlers the
   // first pass imported rather than re-importing a module the loader has
   // already cached.
-  let registration = HandlerRegister.makeRegistration(~config)
+  let logger = Logger.makeInMemory()
+  let registration = HandlerRegister.makeRegistration(~config, ~logger)
   let imported = ref(false)
 
   await IndexerRunner.run(
     ~config,
+    ~logger,
     ~resolveRegistrations=(~config) =>
       registration->HandlerRegister.useRegistration(async () => {
         switch (scenario.handlers, imported.contents) {
@@ -256,15 +277,16 @@ let run = async (
         }
         HandlerRegister.finishRegistration(~config)
       }),
-    ~reducedPollingInterval?,
-    ~newBlockStallTimeoutRealtime?,
+    ~sourceTiming?,
+    ~startBlockRetry?,
     ~targetBufferSize?,
     ~holdRealtime?,
     ~superviseRun?,
     ~onError?,
     ~onExit?,
     ~mapStorage?,
-    ~captureLogs?,
+    ~provideClickHouse?,
+    ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
       switch await body(~indexer, ~source) {
@@ -272,18 +294,14 @@ let run = async (
       // A failure says what the mocks were left holding, so finding out what
       // the indexer asked for doesn't take a probe of its own.
       | exception exn if mocks->Array.length > 0 =>
-        let report = message =>
-          [message, ...mocks->Array.map(((_, mock)) => mock.describeState())]->Array.join("\n\n")
+        exn->IndexerRunner.appendToFailureMessage(
+          mocks
+          ->Array.map(((_, mock)) => "\n\n" ++ mock.describeState())
+          ->Array.join(""),
+        )
         switch exn {
-        | JsExn(error) =>
-          error->setErrorMessage(report(error->JsExn.message->Option.getOr("")))
-          JsExn.throw(error)
-        | exn =>
-          // A ReScript exception is thrown as a plain object, so the report goes
-          // on it directly and it still matches as the same exception.
-          let raw = exn->(Utils.magic: exn => rescriptExn)
-          raw.message = Some(report(raw.id))
-          throw(exn)
+        | JsExn(error) => JsExn.throw(error)
+        | exn => throw(exn)
         }
       }
       // Only after the body passed: a failing body has its own error to report,
@@ -293,20 +311,23 @@ let run = async (
   )
 }
 
-let skipReason = (scenario: t) =>
-  scenario.unsupported
+let skipReason = (unsupported: array<unsupported>) =>
+  unsupported
   ->Array.find(({backend}) => backend === IndexerRunner.selectedBackend)
   ->Option.map(({reason}) => reason)
 
 // Registers a vitest test that runs `body` against this scenario. A backend the
-// scenario declares unsupported is skipped by name and reason, so the reporter
-// says which coverage the run is missing instead of quietly passing.
+// scenario, or this one case of it, declares unsupported is skipped by name and
+// reason, so the reporter says which coverage the run is missing instead of
+// quietly passing.
 let it = (
   scenario: t,
   name,
+  ~unsupported=[],
   ~sources: array<sourceMock>=[],
-  ~reducedPollingInterval=?,
-  ~newBlockStallTimeoutRealtime=?,
+  // Shortens the stall, recovery and polling windows a test would otherwise
+  // have to wait out in real time.
+  ~sourceTiming=?,
   ~targetBufferSize=?,
   ~maxAddrInPartition=?,
   ~clientFilterAddressThreshold=?,
@@ -319,7 +340,6 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  ~captureLogs=?,
   ~timeout=?,
   ~retry=?,
   body: (
@@ -328,7 +348,7 @@ let it = (
     ~source: (int, ~index: int=?) => MockSource.t,
   ) => promise<unit>,
 ) => {
-  switch scenario->skipReason {
+  switch scenario.unsupported->Array.concat(unsupported)->skipReason {
   | Some(reason) =>
     Vitest.Async.it_skip(
       `${name} [no ${IndexerRunner.selectedBackend->IndexerRunner.backendName}: ${reason}]`,
@@ -339,8 +359,7 @@ let it = (
       async (t: Vitest.testContext) =>
         await scenario->run(
           ~sources,
-          ~reducedPollingInterval?,
-          ~newBlockStallTimeoutRealtime?,
+          ~sourceTiming?,
           ~targetBufferSize?,
           ~maxAddrInPartition?,
           ~clientFilterAddressThreshold?,
@@ -350,7 +369,6 @@ let it = (
           ~onError?,
           ~onExit?,
           ~mapStorage?,
-          ~captureLogs?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>

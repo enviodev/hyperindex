@@ -12,6 +12,7 @@ type t
 
 let make: (
   ~config: Config.t,
+  ~logger: Logger.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
   ~isRealtime: bool,
@@ -27,14 +28,14 @@ let make: (
 
 let makeFromDbState: (
   ~config: Config.t,
+  ~logger: Logger.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
-  ~reducedPollingInterval: int=?,
-  ~newBlockStallTimeoutRealtime: int=?,
+  ~sourceTiming: SourceManager.timing=?,
   ~targetBufferSize: int=?,
   ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
@@ -49,6 +50,8 @@ let isResolvingReorg: t => bool
 let errorExit: (t, ErrorHandling.t) => unit
 let stop: t => unit
 let getChainState: (t, ~chainId: ChainId.t) => ChainState.t
+let loggerForItem: (t, Internal.item) => Logger.t
+let loggerForScope: (t, Internal.chainScope) => Logger.t
 let enterReorgThreshold: t => unit
 let beginReorg: (t, ~chainId: ChainId.t, ~blockNumber: int) => unit
 let enterFindingReorgDepth: t => unit
@@ -67,6 +70,7 @@ let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpoin
 
 // Accessors.
 let config: t => Config.t
+let logger: t => Logger.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t
@@ -124,9 +128,11 @@ let toMetrics: t => Metrics.t
 // Metric counters.
 let recordBatchDurations: (t, ~loadDuration: float, ~handlerDuration: float) => unit
 let recordStalledOnStorageWrite: (t, ~seconds: float) => unit
-let recordHandlerDuration: (t, ~contract: string, ~event: string, ~duration: float) => unit
-let startPreloadHandler: (t, ~contract: string, ~event: string) => Performance.timeRef
-let endPreloadHandler: (t, Performance.timeRef, ~contract: string, ~event: string) => unit
+type handlerStat
+let handlerStatFor: (t, Internal.eventConfig) => handlerStat
+let recordHandlerDuration: (handlerStat, ~duration: float) => unit
+let startPreloadHandler: handlerStat => Performance.timeRef
+let endPreloadHandler: (handlerStat, Performance.timeRef) => unit
 let startStorageLoad: (t, ~storage: string, ~operation: string) => Performance.timeRef
 let endStorageLoad: (
   t,

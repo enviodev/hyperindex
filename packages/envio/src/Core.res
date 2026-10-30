@@ -10,12 +10,14 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
-type clickHouseSinkCtor
-type pgStorageCtor
+type storageCtor
 type addressStoreCtor
 type tuiCtor
+type loggerCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
+// Test-only: the ledger behind envio-tests' MockSource.
+type mockSourceCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -36,9 +38,9 @@ type pgColumnInput = {
   // The database column name, renames already resolved.
   name: string,
   fieldType: string,
-  isArray?: bool,
-  isNullable?: bool,
-  isPrimaryKey?: bool,
+  isArray: bool,
+  isNullable: bool,
+  isPrimaryKey: bool,
   defaultValue?: string,
   precision?: int,
   scale?: int,
@@ -46,13 +48,12 @@ type pgColumnInput = {
 }
 
 type pgTableInput = {
-  tableName: string,
   // In the order the table declares them.
   columns: array<pgColumnInput>,
   // The columns a batch's rows carry, in the order they are laid out.
   writeColumns: array<string>,
   partitionByColumn?: string,
-  appendOnly?: bool,
+  appendOnly: bool,
   // An entity's history table, and the column its chain is in when it is
   // per-chain.
   historyTable?: string,
@@ -94,15 +95,20 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
-  @as("ClickHouseSink")
-  clickHouseSink: clickHouseSinkCtor,
-  @as("PgStorage")
-  pgStorage: pgStorageCtor,
+  @as("Storage")
+  storage: storageCtor,
   @as("Tui")
   tui: tuiCtor,
+  @as("Logger")
+  logger: loggerCtor,
+  writeStdoutLine: string => unit,
+  writeStderrLine: string => unit,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
+  @as("MockSource")
+  mockSource: mockSourceCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
+  normalizeEvmAddress: (~address: string, ~shouldChecksum: bool) => Null.t<Address.t>,
   renderAddresses: (
     ~ecosystem: string,
     ~shouldChecksum: bool,

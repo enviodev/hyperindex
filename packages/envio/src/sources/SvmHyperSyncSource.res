@@ -5,6 +5,7 @@ type options = {
   endpointUrl: string,
   apiToken: option<string>,
   onEventRegistrations: array<Internal.svmOnEventRegistration>,
+  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   clientTimeoutMillis: int,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
@@ -35,18 +36,18 @@ let namedAccounts = (
 }
 
 let selectedLog = (
-  log: SvmHyperSyncClient.EventItems.log,
+  log: SvmHyperSyncClient.Items.log,
   ~logFields: Utils.Set.t<string>,
 ): Envio.svmLog => {
   let out = Dict.make()
   if logFields->Utils.Set.has("kind") {
-    switch log.kind->Null.toOption {
+    switch log.kind->Nullable.toOption {
     | Some(kind) => out->Dict.set("kind", kind)
     | None => ()
     }
   }
   if logFields->Utils.Set.has("message") {
-    switch log.message->Null.toOption {
+    switch log.message->Nullable.toOption {
     | Some(message) => out->Dict.set("message", message)
     | None => ()
     }
@@ -61,7 +62,7 @@ let setField = (out: dict<unknown>, name: string, value: 'a) =>
 // at batch prep. Named-account `.activity` is attached then too.
 // Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
-  item: SvmHyperSyncClient.EventItems.item,
+  item: SvmHyperSyncClient.Items.item,
   ~programName,
   ~instructionName,
   ~eventConfig: Internal.svmInstructionEventConfig,
@@ -90,7 +91,7 @@ let toSvmInstruction = (
   if hasSelection("isInner") {
     out->setField("isInner", item.isInner)
   }
-  switch item.args->Null.toOption {
+  switch item.args->Nullable.toOption {
   | Some(args) => out->setField("args", args)
   | None => ()
   }
@@ -111,7 +112,7 @@ let toSvmInstruction = (
     out->setField(
       "logs",
       item.logs
-      ->Null.getOr([])
+      ->Nullable.getOr([])
       ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
     )
   }
@@ -124,11 +125,13 @@ let make = (
     endpointUrl,
     apiToken,
     onEventRegistrations,
+    ?onBlockRegistrations,
     clientTimeoutMillis,
     addressStore,
   }: options,
 ): t => {
   let name = "SvmHyperSync"
+  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   let apiToken = apiToken->HyperSync.requireApiToken
 
@@ -140,6 +143,7 @@ let make = (
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~onBlockRegistrations,
     ~addressStore,
   )
 
@@ -147,7 +151,7 @@ let make = (
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks,
+    ~reorgableFrom,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -160,17 +164,17 @@ let make = (
 
     let fetchStats = () => RequestStat.single(~method="getInstructions", ~sentAt=pageFetchRef)
 
-    let query: SvmHyperSyncClient.EventItems.query = {
+    let query: SvmHyperSyncClient.Items.query = {
       fromSlot: fromBlock,
-      toSlot: toBlock,
-      maxNumInstructions: ?itemsTarget,
-      registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+      toSlot: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
+      ?itemsTarget,
+      onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+      onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
       clientFilteredContracts: selection.clientFilteredContracts,
-      // Absent rather than false, so a backfill query is the one it always was.
-      includeAllBlocks: ?(includeAllBlocks ? Some(true) : None),
+      ?reorgableFrom,
     }
 
-    let (resp, transactionStore, blockStore) = try await client.getEventItems(
+    let (resp, transactionStore, blockStore) = try await client.getItems(
       ~query,
       ~addressSet,
     ) catch {
@@ -200,7 +204,7 @@ let make = (
 
     let parsingRef = Performance.now()
 
-    let parsedQueueItems = resp.items->Array.map(item => {
+    let eventItems = resp.eventItems->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
@@ -238,7 +242,9 @@ let make = (
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
-      parsedQueueItems,
+      parsedQueueItems: eventItems->Array.concat(
+        resp.blockItems->BlockItem.toInternalItems(~onBlockRegistrations),
+      ),
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
       // Raw blocks kept in Rust; materialised onto the payload at batch prep.

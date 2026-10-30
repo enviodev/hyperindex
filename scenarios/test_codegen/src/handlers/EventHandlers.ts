@@ -869,7 +869,7 @@ indexer.onEvent({ contract: "Gravatar", event: "FactoryEvent" }, async ({ event,
     // Reproduction for https://github.com/enviodev/hyperindex/issues/1199:
     // getWhere on a linkedEntity field (db column name `<field>_id`) must
     // resolve the field schema in the in-memory TestIndexer. Production
-    // PgStorage uses the db column path, so the bug only surfaces here.
+    // storage uses the db column path, so the bug only surfaces here.
     case "getWhereByLinkedEntityField": {
       const tokens = await context.Token.getWhere({
         collection_id: { _eq: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },

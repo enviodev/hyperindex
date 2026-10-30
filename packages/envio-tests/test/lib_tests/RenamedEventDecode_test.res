@@ -29,16 +29,16 @@ describe("Renamed event decoding (issue #1285)", () => {
       ~eventRegistrations=[
         {
           index: 5,
-          sighash: onChainSighash,
+          sighash: Some(onChainSighash),
           topicCount: 1,
           eventName: "ApprovalRenamed",
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
           startBlock: None,
-          topicSelections: [
+          topicFilters: [
             {
-              topic0: [onChainSighash],
+              topic0: Some([onChainSighash]),
               topic1: Some([]),
               topic2: Some([]),
               topic3: Some([]),
@@ -57,9 +57,7 @@ describe("Renamed event decoding (issue #1285)", () => {
     )
     let item = decoded[0]->Option.getUnsafe
 
-    t
-    .expect((item.onEventRegistrationIndex, item.params))
-    .toEqual((
+    t.expect((item.onEventRegistrationIndex, item.params)).toEqual((
       5,
       {"owner": owner, "value": value}->(Utils.magic: {..} => Internal.eventParams),
     ))

@@ -103,6 +103,7 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
     enableQueryCaching: false,
     logLevel: #error,
     addressStore,
+    logger: Logger.makeInMemory(),
   })
   (source, addressStore->AddressStore.makeSet(~contractName="Token"))
 }
@@ -112,13 +113,13 @@ let fetch = (
   ~addressSet,
   ~fromBlock=10,
   ~toBlock=Some(11),
-  ~includeAllBlocks=false,
+  ~reorgableFrom=None,
 ) =>
   source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks,
+    ~reorgableFrom,
     ~knownHeight=100,
     ~partitionId="mock-partition",
     ~selection={
@@ -126,10 +127,11 @@ let fetch = (
       onEventRegistrations: onEventRegistrations()->(
         Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
       ),
+      onBlockRegistrations: [],
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,
-    ~logger=Logging.createChild(~params={"test": "HyperSync source contract"}),
+    ~logger=Logger.makeInMemory()->Logger.withFields({"test": "HyperSync source contract"}),
   )
 
 // A Transfer in block 10 and an Approval in block 11, each with its own
@@ -250,16 +252,17 @@ describe("HyperSync source contract", () => {
     ])
   })
 
-  // At the head the progress block is often a block no event landed on, and its
-  // timestamp is what says how far behind chain time the indexer is. Asking for
-  // every block in the range is what puts that header in the response.
-  Async.it("asks for every block in the range once the chain is at the head", async t => {
+  // Where blocks can still be reorged, every hash of the range feeds reorg
+  // detection, and at the head the progress block is often one no event landed
+  // on, whose timestamp says how far behind chain time the indexer is. Asking
+  // for every block in the range puts both in the response.
+  Async.it("asks for every block in a range reaching reorgable blocks", async t => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
         let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let _ = await source->fetch(~addressSet, ~includeAllBlocks=true)
+        let _ = await source->fetch(~addressSet, ~reorgableFrom=Some(10))
         server->MockHyperSyncServer.takeQueries
       },
     )
@@ -383,7 +386,7 @@ describe("HyperSync source contract", () => {
           ]),
         })
         let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
-        let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~includeAllBlocks=true)
+        let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~reorgableFrom=Some(10))
         [10, 12]->Array.map(
           blockNumber =>
             page.blockStore
@@ -736,7 +739,7 @@ describe("HyperSync source responses", () => {
         })
         let {result} = await source.getBlockHashes(
           ~blockNumbers=[10, 12],
-          ~logger=Logging.createChild(~params={"test": "block hashes"}),
+          ~logger=Logger.makeInMemory()->Logger.withFields({"test": "block hashes"}),
         )
         let missing = switch result {
         | Ok(store) =>
@@ -755,29 +758,35 @@ describe("HyperSync source responses", () => {
     ))
   })
 
-  Async.it("counts a block-hash request behind the head once", async t => {
-    let samples = await MockHyperSyncServer.withServer(
-      ~height=100,
-      async server => {
-        let (source, _) = makeSource(~url=server->MockHyperSyncServer.url)
-        // The replica that answers first hasn't reached block 10.
-        server->MockHyperSyncServer.pushResponse({blocks: [], nextBlock: 10})
-        server->MockHyperSyncServer.pushResponse({
-          blocks: [JSON.parseOrThrow(`{"number":10,"hash":"${blockHash(10)}"}`)],
-          nextBlock: 11,
-        })
-        let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
-        let _ = await sourceManager->SourceManager.getBlockHashes(
-          ~blockNumbers=[10],
-          ~isRealtime=false,
-        )
-        sourceManager
-        ->SourceManager.getRequestStatSamples
-        ->Array.map(({method, count}) => (method, count))
-      },
-    )
-    t.expect(samples).toEqual([("getBlockHashes", 2)])
-  })
+  // The same request is reported on the response and on the failure it carries,
+  // which is why the retry above it records only the response's.
+  Async.it(
+    "reports a block-hash request behind the head on the response and the failure",
+    async t => {
+      let reported = await MockHyperSyncServer.withServer(
+        ~height=100,
+        async server => {
+          let (source, _) = makeSource(~url=server->MockHyperSyncServer.url)
+          // The replica that answers hasn't reached block 10.
+          server->MockHyperSyncServer.pushResponse({blocks: [], nextBlock: 10})
+          let {result, requestStats} = await source.getBlockHashes(
+            ~blockNumbers=[10],
+            ~logger=Logger.makeInMemory()->Logger.withFields({"test": "block hashes"}),
+          )
+          let methods = (stats: array<Source.requestStat>) => stats->Array.map(stat => stat.method)
+          (
+            methods(requestStats),
+            switch result {
+            | Error(Source.SourceBehindHead({blockNumber, requestStats})) =>
+              Some((blockNumber, methods(requestStats)))
+            | _ => None
+            },
+          )
+        },
+      )
+      t.expect(reported).toEqual((["getBlockHashes"], Some((10, ["getBlockHashes"]))))
+    },
+  )
 
   Async.it("surfaces a page that withholds a selected block field", async t => {
     let result = await MockHyperSyncServer.withServer(

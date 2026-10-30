@@ -8,6 +8,8 @@ external toEventSelector: string => string = "toEventSelector"
 
 @module("viem") external pad: string => string = "pad"
 
+@module("viem") external numberToHex: (bigint, {"size": int}) => string = "numberToHex"
+
 let sighash = toEventSelector("event Transfer(address, address, uint256)")
 
 let fromAddr = "0x000000000000000000000000000000000000aaaa"
@@ -31,7 +33,7 @@ let decodeSingle = async (
     ~eventRegistrations=[
       {
         index: 0,
-        sighash,
+        sighash: Some(sighash),
         topicCount,
         eventName,
         contractName: "TestContract",
@@ -39,8 +41,8 @@ let decodeSingle = async (
         dependsOnAddresses: true,
         startBlock: None,
         params,
-        topicSelections: [
-          {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
+        topicFilters: [
+          {topic0: Some([sighash]), topic1: Some([]), topic2: Some([]), topic3: Some([])},
         ],
         blockFields: [],
         transactionFields: [],
@@ -52,15 +54,7 @@ let decodeSingle = async (
   (decoded[0]->Option.getUnsafe).params
 }
 
-let allIndexedLog = (
-  [
-    sighash,
-    fromAddr->pad,
-    toAddr->pad,
-    Viem.bigintToHex(value, ~options={size: 32})->(Utils.magic: Viem.hex => string),
-  ],
-  "0x",
-)
+let allIndexedLog = ([sighash, fromAddr->pad, toAddr->pad, value->numberToHex({"size": 32})], "0x")
 
 let noneIndexedLog = (
   [sighash],
@@ -72,21 +66,21 @@ let noneIndexedLog = (
 
 describe("EVM event decoding via EvmRpcClient.getLogs", () => {
   Async.it("produces named params directly for different indexed layouts", async t => {
-    let topicSelections: array<HyperSyncClient.Registration.topicSelectionInput> = [
-      {topic0: [sighash], topic1: Some([]), topic2: Some([]), topic3: Some([])},
+    let topicFilters: array<HyperSyncClient.Registration.topicFilterInput> = [
+      {topic0: Some([sighash]), topic1: Some([]), topic2: Some([]), topic3: Some([])},
     ]
     let decoded = await NativeDecoder.decodeLogs(
       ~eventRegistrations=[
         {
           index: 0,
-          sighash,
+          sighash: Some(sighash),
           topicCount: 4,
           eventName: "Transfer",
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
           startBlock: None,
-          topicSelections,
+          topicFilters,
           blockFields: [],
           transactionFields: [],
           params: [
@@ -97,14 +91,14 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         },
         {
           index: 1,
-          sighash,
+          sighash: Some(sighash),
           topicCount: 1,
           eventName: "Transfer",
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
           startBlock: None,
-          topicSelections,
+          topicFilters,
           blockFields: [],
           transactionFields: [],
           params: [
@@ -155,16 +149,16 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       ~eventRegistrations=[
         {
           index: 0,
-          sighash: toEventSelector("event Empty()"),
+          sighash: Some(toEventSelector("event Empty()")),
           topicCount: 1,
           eventName: "Empty",
           contractName: "TestContract",
           isWildcard: false,
           dependsOnAddresses: true,
           startBlock: None,
-          topicSelections: [
+          topicFilters: [
             {
-              topic0: [toEventSelector("event Empty()")],
+              topic0: Some([toEventSelector("event Empty()")]),
               topic1: Some([]),
               topic2: Some([]),
               topic3: Some([]),
@@ -221,7 +215,7 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
       payload,
     })->Internal.castUnsafeEventItem
 
-    let ecosystem = Evm.make(~logger=Logging.getLogger())
+    let ecosystem = Evm.make()
     t.expect(ecosystem.toRawEvent(eventItem)).toEqual({
       chain_id: 137->ChainId.fromInt,
       event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),

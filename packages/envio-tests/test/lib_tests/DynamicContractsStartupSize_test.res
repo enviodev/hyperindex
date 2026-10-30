@@ -40,33 +40,40 @@ describe("Dynamic contracts startup size", () => {
     async t => {
       await scenario->Scenario.run(
         ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-        async (~indexer, ~source as _) => {
-          let {sql, pgSchema} = indexer.pg
+        async (~indexer, ~source as _) =>
+          await indexer.usePostgresSql(
+            async sql => {
+              let pgSchema = indexer.pgSchema
 
-          let chainId = 1337->ChainId.fromInt
-          let rowCount = 30_000_000
+              let chainId = 1337->ChainId.fromInt
+              let rowCount = 30_000_000
 
-          let _ = await sql->Sql.queryForTests(
-            `INSERT INTO "${pgSchema}"."envio_addresses" ("chain_id", "address", "contract_id", "registration_block")
+              let _ = await sql->Sql.queryForTests(
+                `INSERT INTO "${pgSchema}"."envio_addresses" ("chain_id", "address", "contract_id", "registration_block")
   SELECT ${chainId->ChainId.toString}, decode(lpad(to_hex(g), 40, '0'), 'hex'), 0, 0
   FROM generate_series(1, ${rowCount->Int.toString}) AS g
   ON CONFLICT DO NOTHING;`,
-          )
+              )
 
-          let storage = PgStorage.make(~pgSchema, ~ecosystem=Evm)
-          let resumed = await storage.resumeInitialState(
-            ~entities=[],
-            ~chainIds=[chainId],
-            ~contractMapping=ContractMapping.empty,
-          )
-          await storage.close()
-          let chainState = resumed.chains->Array.getUnsafe(0)
+              let storage = Storage.make(
+                ~client=TestPgSchema.client(~pgSchema),
+                ~logger=Logger.makeInMemory(),
+                ~ecosystem=Evm,
+              )
+              let resumed = await storage.resumeInitialState(
+                ~entities=[],
+                ~chainIds=[chainId],
+                ~contractMapping=ContractMapping.empty,
+              )
+              await storage.close()
+              let chainState = resumed.chains->Array.getUnsafe(0)
 
-          t.expect(
-            chainState.addressRows.contractIds->Array.length,
-            ~message=`Every stored address should load, however many a chain has`,
-          ).toBeGreaterThanOrEqual(rowCount)
-        },
+              t.expect(
+                chainState.addressRows.contractIds->Array.length,
+                ~message=`Every stored address should load, however many a chain has`,
+              ).toBeGreaterThanOrEqual(rowCount)
+            },
+          ),
       )
     },
   )

@@ -209,7 +209,7 @@ type t = {
   poweredByHyperSync: bool,
   /* Frequency (in ms) used when polling for new events on this network. */
   pollingInterval: int,
-  getBlockHashes: (~blockNumbers: array<int>, ~logger: Pino.t) => promise<getBlockHashesResponse>,
+  getBlockHashes: (~blockNumbers: array<int>, ~logger: Logger.t) => promise<getBlockHashesResponse>,
   getHeightOrThrow: unit => promise<getHeightResponse>,
   getItemsOrThrow: (
     ~fromBlock: int,
@@ -218,13 +218,13 @@ type t = {
     // straight to its Rust client, which builds the query's address filter from
     // it and gates every returned item against the chain-wide store.
     ~addressSet: AddressSet.t,
-    // Return a header for every block in the range, not only the ones an item
-    // landed on. The progress block's timestamp is what measures how far behind
-    // chain time the indexer is, and at the head that block often carries no
-    // item of its own. Only set once the chain is at the head, where the range
-    // is a handful of blocks; over a backfill range it would be a header per
-    // block for no gain.
-    ~includeAllBlocks: bool,
+    // Blocks at or above this one can still be reorged on the chain, so a page
+    // reaching them must let reorg detection link it to the page before it:
+    // its last block's header and its first block's parent hash, or every
+    // block's hash. That header also gives the progress block its timestamp at
+    // the head, where the block often carries no item. Each source decides how
+    // to provide it. None when every block of the range is final.
+    ~reorgableFrom: option<int>,
     ~knownHeight: int,
     ~partitionId: string,
     ~selection: FetchState.selection,
@@ -237,7 +237,7 @@ type t = {
     // expected, so client-side-filtered items can't truncate the range short.
     ~itemsTarget: option<int>,
     ~retry: int,
-    ~logger: Pino.t,
+    ~logger: Logger.t,
   ) => promise<blockRangeFetchResponse>,
   createHeightSubscription?: (
     ~onHeight: int => unit,

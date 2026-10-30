@@ -88,7 +88,7 @@ let registerToken = (~block): MockSource.itemMock => {
   contractRegister: async args => {
     let context = args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)
     context.chain["Token"].add(
-      "0x0000000000000000000000000000000000000003"->Address.Evm.fromStringOrThrow,
+      "0x0000000000000000000000000000000000000003"->Address.unsafeFromString,
     )
   },
 }
@@ -236,7 +236,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     // Two addresses on chain 1 -> two partitions, so one partition's query
     // can stay in flight while the other's response lands.
     ~maxAddrInPartition=1,
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let progressAfterRollback = await runIncident(~indexer, ~source)
       let victim = source(1)
@@ -283,7 +283,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     "chain keeps fetching and is never rolled back when the reorg stays isolated",
     ~sources,
     ~maxAddrInPartition=1,
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let progressAfterRollback = await runIncident(~indexer, ~source)
       let victim = source(1)

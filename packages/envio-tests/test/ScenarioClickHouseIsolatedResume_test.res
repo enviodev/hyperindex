@@ -42,7 +42,7 @@ type Counter {
 
 let orphanCheckpointId = "999999999"
 
-describe("ClickHouse sink resumed by one chain's process", () => {
+describe("ClickHouse resumed by one chain's process", () => {
   scenario->Scenario.it(
     "trims past its own chain's checkpoint and leaves the other chain's rows alone",
     ~sources=[{chain: 1}, {chain: 137}],

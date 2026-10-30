@@ -28,7 +28,7 @@ type Tally {
 )
 
 let resumeLines = (indexer: IndexerRunner.t) =>
-  indexer.logs()
+  indexer.infoAndAboveLogs()
   ->Array.map(entry => entry.msg)
   ->Array.filter(msg => msg->String.toLowerCase->String.includes("resum"))
 
@@ -36,7 +36,6 @@ describe("Announcing a resume", () => {
   scenario->Scenario.it(
     "is quiet for a forked worker, and not for anyone else",
     ~sources=[{chain: 1337}],
-    ~captureLogs=true,
     async (~t, ~indexer, ~source) => {
       source(1337).setAutoHeight(100)
       let beforeResuming = indexer->resumeLines

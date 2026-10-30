@@ -21,6 +21,7 @@ let registrationsByChainId: HandlerRegister.registrationsByChainId = {
             startBlock: None,
             endBlock: None,
             interval: 1,
+            blockFieldMask: None,
             handler: "mock onBlock handler"->(
               Utils.magic: string => Internal.onBlockArgs => promise<unit>
             ),
@@ -31,8 +32,6 @@ let registrationsByChainId: HandlerRegister.registrationsByChainId = {
   )
   d
 }
-
-let caughtUpAt = Date.fromTime(1700000000000.)
 
 let makeChainState = (
   ~endBlock=None,
@@ -45,6 +44,7 @@ let makeChainState = (
   ~config=TestConfig.default,
 ): ChainState.t =>
   ChainState.makeFromDbState(
+    ~logger=Logger.makeInMemory(),
     chainConfig,
     ~resumedChainState={
       id: chainId,

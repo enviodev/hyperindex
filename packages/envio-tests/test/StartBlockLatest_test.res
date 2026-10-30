@@ -89,15 +89,8 @@ indexer.onBlock({
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
-let persistedStartBlocks = async (~sql, ~pgSchema) => {
-  let rows: array<{
-    "id": int,
-    "start_block": int,
-  }> = await sql->Sql.queryForTests(
-    `SELECT "id", "start_block" FROM "${pgSchema}"."envio_chains" ORDER BY "id";`,
-  )
-  rows->Array.map(row => (row["id"], row["start_block"]))
-}
+let persistedStartBlocks = async (indexer: IndexerRunner.t) =>
+  (await indexer.queryChains())->Array.map(row => (row.id->ChainId.toInt, row.startBlock))
 
 describe("start_block: latest", () => {
   scenario->Scenario.it(
@@ -105,7 +98,6 @@ describe("start_block: latest", () => {
     ~sources=[{chain: 1337, methods, autoHeight: 1000}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       await source.expectItemsQueries([
         {fromBlock: 1000, reply: Respond({items: [], latestFetchedBlockNumber: 1000})},
@@ -113,7 +105,7 @@ describe("start_block: latest", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await persistedStartBlocks(~sql, ~pgSchema),
+        await persistedStartBlocks(indexer),
         ~message="latest resolves to the head observed at first deploy",
       ).toEqual([(1337, 1000)])
 
@@ -129,7 +121,7 @@ describe("start_block: latest", () => {
       await restarted.waitUntilReady()
 
       t.expect(
-        await persistedStartBlocks(~sql, ~pgSchema),
+        await persistedStartBlocks(indexer),
         ~message="start_block is reused from the first deploy, not re-resolved to the new head",
       ).toEqual([(1337, 1000)])
     },
@@ -145,10 +137,7 @@ describe("start_block: latest", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      let {sql, pgSchema} = indexer.pg
-      let rows: array<{
-        "seenStartBlock": int,
-      }> = await sql->Sql.queryForTests(`SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`)
+      let rows: array<{"seenStartBlock": int}> = await indexer.query("Seen")
 
       t.expect(rows->Array.map(row => row["seenStartBlock"])).toEqual([1000])
     },
@@ -160,7 +149,6 @@ describe("start_block: latest", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer.pg
 
       await source1.expectItemsQueries([
         {fromBlock: 5, reply: Respond({items: [], latestFetchedBlockNumber: 10})},
@@ -171,9 +159,192 @@ describe("start_block: latest", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        await persistedStartBlocks(~sql, ~pgSchema),
+        await persistedStartBlocks(indexer),
         ~message="chain 1 keeps its configured start block; only chain 1337 resolves latest",
       ).toEqual([(1, 5), (1337, 2000)])
     },
   )
+
+  scenario->Scenario.it(
+    "never subscribes to a height stream while resolving",
+    ~sources=[{chain: 1337, methods: [...methods, #createHeightSubscription], autoHeight: 500}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      // Reading a start block is one question with one answer. A stream is for
+      // a height that keeps moving, which is the indexer loop's business.
+      t.expect((
+        await persistedStartBlocks(indexer),
+        source.heightSubscriptionCalls->Array.length,
+      )).toEqual(([(1337, 500)], 0))
+    },
+  )
+})
+
+// What startup refused with, without the line that says where its logs went.
+let startupFailure = async (scenario, ~sources, ~startBlockRetry=?, ~sourceTiming=?) =>
+  switch await scenario->Scenario.run(~sources, ~startBlockRetry?, ~sourceTiming?, async (
+    ~indexer as _,
+    ~source as _,
+  ) => ()) {
+  | () => None
+  | exception JsExn(exn) =>
+    exn->JsExn.message->Option.map(msg => msg->String.split("\n\nLogs:")->Array.getUnsafe(0))
+  }
+
+let resolvedStartBlocks = async (scenario, ~sources, ~startBlockRetry=?, ~sourceTiming=?) => {
+  let resolved = ref([])
+  await scenario->Scenario.run(~sources, ~startBlockRetry?, ~sourceTiming?, async (
+    ~indexer,
+    ~source as _,
+  ) => {
+    resolved := (await persistedStartBlocks(indexer))
+  })
+  resolved.contents
+}
+
+describe("start_block: latest against sources that struggle", () => {
+  Async.it("keeps asking a failing source until it answers", async t => {
+    t.expect(
+      await scenario->resolvedStartBlocks(
+        ~sources=[
+          {
+            chain: 1337,
+            methods,
+            startupHeights: [
+              HeightFailure("temporary network blip"),
+              HeightFailure("another blip"),
+              Height(777),
+            ],
+          },
+        ],
+        ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
+      ),
+    ).toEqual([(1337, 777)])
+  })
+
+  Async.it("fails over to a fallback source when the primary stays quiet", async t => {
+    t.expect(
+      await scenario->resolvedStartBlocks(
+        ~sources=[
+          {chain: 1337, methods},
+          {chain: 1337, methods, sourceFor: Fallback, autoHeight: 999},
+        ],
+        // The window the primary gets to itself before a fallback is recruited.
+        ~sourceTiming={newBlockStallTimeout: 1},
+      ),
+    ).toEqual([(1337, 999)])
+  })
+
+  Async.it("with a single attempt, takes the first source that answers", async t => {
+    t.expect(
+      await scenario->resolvedStartBlocks(
+        ~sources=[
+          {chain: 1337, methods, startupHeights: [HeightFailure("primary is down")]},
+          {chain: 1337, methods, sourceFor: Fallback, autoHeight: 4242},
+        ],
+        ~startBlockRetry=Once,
+      ),
+    ).toEqual([(1337, 4242)])
+  })
+
+  Async.it("with a single attempt, gives up after one per source and says why", async t => {
+    t.expect(
+      await scenario->startupFailure(
+        ~sources=[
+          {chain: 1337, methods, startupHeights: [HeightFailure("primary is down")]},
+          {
+            chain: 1337,
+            methods,
+            sourceFor: Fallback,
+            startupHeights: [HeightFailure("fallback is down too")],
+          },
+        ],
+        ~startBlockRetry=Once,
+      ),
+    ).toEqual(
+      Some(`Chain 1337: couldn't resolve the "latest" start block - no source answered a height request.
+  MockSource: primary is down
+  MockSource: fallback is down too`),
+    )
+  })
+
+  Async.it("says what's wrong when no source can serve historical sync", async t => {
+    // Nothing left to ask is a config error rather than an unanswered request,
+    // and reads as the same config error the chain itself would raise.
+    t.expect(
+      await scenario->startupFailure(
+        ~sources=[{chain: 1337, methods, sourceFor: Realtime, autoHeight: 100}],
+        ~startBlockRetry=Once,
+      ),
+    ).toEqual(Some("Invalid configuration, no data-source for historical sync provided"))
+  })
+})
+
+describe("start_block: latest validation", () => {
+  let pastEndBlock = Scenario.make(
+    ~configYaml=`
+name: start-block-latest-end-block${contractsYaml}chains:${chainYaml(
+        ~chainId=1337,
+        ~startBlock="latest",
+      )}    end_block: 50
+`,
+    ~schema,
+  )
+
+  Async.it("refuses a latest that resolves past end_block", async t => {
+    t.expect(
+      await pastEndBlock->startupFailure(~sources=[{chain: 1337, methods, autoHeight: 100}]),
+    ).toEqual(
+      Some(`Chain 1337: the "latest" start block resolved to 100, which is past the configured end_block (50). There is nothing to index - remove end_block, raise it above the chain's current head, or pin start_block to a fixed value instead of "latest".`),
+    )
+  })
+})
+
+// `start_block: latest` is offered on every ecosystem, and each one builds its
+// own address store and sources on the way to a height request.
+describe("start_block: latest on every ecosystem", () => {
+  [
+    (
+      "Fuel",
+      `
+name: fuel-latest
+ecosystem: fuel
+chains:
+  - id: 0
+    start_block: latest
+`,
+      `
+import { indexer } from "envio";
+indexer.onBlock({ name: "blocks" }, async () => {});
+`,
+    ),
+    (
+      "SVM",
+      `
+name: svm-latest
+ecosystem: svm
+chains:
+  - id: solana
+    start_slot: latest
+    rpc: https://api.mainnet-beta.solana.com
+`,
+      `
+import { indexer } from "envio";
+indexer.onSlot({ name: "slots" }, async () => {});
+`,
+    ),
+  ]->Array.forEach(((ecosystem, configYaml, handlers)) => {
+    // A block handler gives the chain something to fetch once it starts.
+    let scenario = Scenario.make(~configYaml, ~schema, ~handlers)
+    let chain = scenario.config.chainMap->ChainMap.keys->Utils.Array.firstUnsafe->ChainId.toInt
+
+    Async.it(
+      `resolves latest on ${ecosystem}`,
+      async t => {
+        t.expect(
+          await scenario->resolvedStartBlocks(~sources=[{chain, methods, autoHeight: 8888}]),
+        ).toEqual([(chain, 8888)])
+      },
+    )
+  })
 })

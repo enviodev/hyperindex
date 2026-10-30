@@ -40,7 +40,7 @@ describe("Height subscription push metrics", () => {
         pollingInterval: 1,
       },
     ],
-    ~reducedPollingInterval=1,
+    ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
 

@@ -1,10 +1,21 @@
 type name = | @as("evm") Evm | @as("fuel") Fuel | @as("svm") Svm
 
+/** What a block handler's `fields` option selects from. */
+type onBlockFields = {
+  /** In store order: a field's index is its bit in the block store's mask. */
+  fields: array<string>,
+  /** The field keying a block in the store, which a handler always has. */
+  keyField: string,
+  mask: Utils.Set.t<string> => float,
+}
+
 type t = {
   name: name,
   blockNumberName: string,
   blockTimestampName: string,
   blockHashName: string,
+  /** `None` where block handlers get the block's key alone (Fuel). */
+  onBlockFields: option<onBlockFields>,
   /** Method name that the block handler is exposed under on the public
       `indexer` object — `"onBlock"` for chain-based ecosystems, `"onSlot"`
       for SVM. Centralised here so adding a new ecosystem only requires a
@@ -31,17 +42,14 @@ type t = {
       `LogSelection.res`. SVM parses its own `where` (including the
       `block.slot` chunk), so its schema always surfaces `None`. */
   onEventBlockFilterSchema: S.t<option<unknown>>,
-  /** Base logger injected at construction. Used to build per-item child
-      loggers (see `getItemLogger`). */
-  logger: Pino.t,
   /** Materialise the user-facing event handed to handlers and contract
       registration from an item's opaque payload. `event.transaction` is written
       onto the payload at batch prep (HyperSync) or inline (RPC/simulate). */
   toEvent: Internal.eventItem => Internal.event,
   /** Build the per-item child logger for an event item, with
       ecosystem-specific log fields (EVM/Fuel: contract/event/address; SVM:
-      program/instruction/programId). Closes over the injected logger. */
-  toEventLogger: Internal.eventItem => Pino.t,
+      program/instruction/programId), on top of the logger it's given. */
+  withEventFields: (Internal.eventItem, ~logger: Logger.t) => Logger.t,
   /** Build a raw event row for the `raw_events` table. Unsupported on SVM,
       where the implementation throws. */
   toRawEvent: Internal.eventItem => Internal.rawEvent,
@@ -64,41 +72,37 @@ let getItemEvent = {
   }
 }
 
-let getItemLogger = {
-  let cacheKey = "_logger"
-  (item: Internal.item, ~ecosystem: t): Pino.t => {
-    let cache = item->(Utils.magic: Internal.item => dict<Pino.t>)
-    switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
-    | Some(logger) => logger
-    | None =>
-      let logger = switch item {
-      | Internal.Event(_) => ecosystem.toEventLogger(item->Internal.castUnsafeEventItem)
-      | Block({blockNumber, onBlockRegistration}) =>
-        Logging.createChildFrom(
-          ~logger=ecosystem.logger,
-          ~params={
-            "onBlock": onBlockRegistration.name,
-            "chainId": onBlockRegistration.chainId,
-            "block": blockNumber,
-          },
-        )
-      }
-      cache->Dict.set(cacheKey, logger)
-      logger
-    }
+// Made for each line rather than kept on the item: building one costs a few
+// hundred nanoseconds, and only a line that passes the level asks for it.
+let loggerForItem = (item: Internal.item, ~ecosystem: t, ~logger: Logger.t): Logger.t =>
+  switch item {
+  | Internal.Event(_) => ecosystem.withEventFields(item->Internal.castUnsafeEventItem, ~logger)
+  | Block({blockNumber, onBlockRegistration}) =>
+    logger->Logger.withFieldsJson(
+      `{"onBlock":${JSON.stringify(
+          JSON.String(onBlockRegistration.name),
+        )},"block":${blockNumber->Int.toString}}`,
+    )
   }
-}
 
-let getItemUserLogger = (item: Internal.item, ~ecosystem: t): Envio.logger =>
-  getItemLogger(item, ~ecosystem)->Logging.userLogger
-
-let makeOnBlockArgs = (~blockNumber: int, ~ecosystem: t, ~context): Internal.onBlockArgs => {
+// `block` is the item's materialised selection, which already carries the key;
+// without one the handler selected nothing but the key.
+let makeOnBlockArgs = (
+  ~blockNumber: int,
+  ~block: option<Internal.eventBlock>,
+  ~ecosystem: t,
+  ~context,
+): Internal.onBlockArgs => {
   switch ecosystem.name {
-  | Svm => {slot: blockNumber, context}
-  | _ => {
-      let blockEvent = Dict.make()
-      blockEvent->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
-      {block: blockEvent->(Utils.magic: dict<unknown> => Internal.blockEvent), context}
+  | Svm => {slot: blockNumber, ?block, context}
+  | Evm | Fuel =>
+    let block = switch block {
+    | Some(block) => block
+    | None =>
+      let keyOnly = Dict.make()
+      keyOnly->Dict.set(ecosystem.blockNumberName, blockNumber->(Utils.magic: int => unknown))
+      keyOnly->(Utils.magic: dict<unknown> => Internal.eventBlock)
     }
+    {block, context}
   }
 }

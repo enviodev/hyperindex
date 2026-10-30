@@ -132,24 +132,6 @@ jobs:
     timeout-minutes: 15
     needs: authorize
 
-    # For the Postgres client's live tests: what it does when a connection
-    # dies, a statement fails mid-transaction or the server cancels one, which
-    # no indexer run can bring about.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: envio-dev
-          POSTGRES_USER: postgres
-        options: >-
-          --health-cmd "pg_isready -U postgres -d envio-dev"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
-
     steps:
       - uses: actions/checkout@v6
         with:
@@ -172,10 +154,14 @@ jobs:
       - name: Cargo Test
         run: cargo test
 
+      # What the Postgres client does when a connection dies, a statement fails
+      # mid-transaction or the server cancels one, which no indexer run can
+      # bring about, and every statement the ClickHouse store builds against a
+      # server that has to accept it. The tests start the servers themselves.
       # Serially: some of these terminate a backend by pid, and a pid the
       # server has just freed is one it can hand to another test's connection.
-      - name: Live Postgres client tests
-        run: cargo test --lib postgres::live -- --ignored --test-threads=1
+      - name: Live storage tests
+        run: cargo test --lib -- --ignored --test-threads=1 postgres::live clickhouse::live storage::live
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
@@ -217,10 +203,12 @@ jobs:
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
-  # The scenario suite is backend-agnostic, so it runs once per storage
-  # backend, one runner each. A scenario that can't run on a backend skips
-  # itself with a reason. The ClickHouse leg still needs Postgres: ClickHouse
-  # is a sink attached to Postgres storage, not a replacement for it.
+  # The scenario suite is backend-agnostic, so it runs once per storage leg,
+  # one runner each. A scenario that can't run on a leg skips itself with a
+  # reason. The clickhouse leg keeps every entity in ClickHouse alone, beside
+  # the Postgres that keeps the indexer's own state; the both leg keeps every
+  # entity in each. A scenario whose config sets its own storage keeps it on
+  # every leg, which is why each leg has both servers.
   envio-tests:
     runs-on: ubuntu-latest
     needs: build-envio-package
@@ -229,7 +217,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        storage: [postgres, clickhouse]
+        storage: [postgres, clickhouse, both]
 
     services:
       postgres:
@@ -275,6 +263,17 @@ jobs:
         env:
           ENVIO_TEST_STORAGE: ${{ matrix.storage }}
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+
+      # A failing test names its logs file in its failure message.
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: envio-tests-logs-${{ matrix.storage }}
+          path: packages/envio-tests/.test-logs
+          # The folder's own name starts with a dot.
+          include-hidden-files: true
+          if-no-files-found: ignore
 
       - name: Test Failure Notification
         uses: rjstone/discord-webhook-notify@c2597273488aeda841dd1e891321952b51f7996f # v2.2.1

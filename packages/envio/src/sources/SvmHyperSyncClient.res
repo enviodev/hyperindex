@@ -117,44 +117,34 @@ module Registration = {
   }
 }
 
-module ResponseTypes = {
-  // Lean per-slot header for reorg detection and each item's slot/time; the
-  // selectable fields live in the block store and are materialised on demand.
-  type block = {
-    slot: int,
-    blockhash: string,
-    blockTime: Null.t<int>,
-  }
-}
-
-module EventItems = {
-  // The whole per-query input: slot range, the partition's registration
-  // selection (by index), and its current addresses (program ids per program
-  // name). Instruction selections, field selection, and routing are derived
-  // on the Rust side.
+module Items = {
+  // The whole per-query input beside the partition's address set: slot range
+  // and what it selects from each table. Instruction selections, field
+  // selection, and routing are derived on the Rust side.
   type query = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
     toSlot: option<int>,
-    // Absent means no server-side cap on the number of instructions returned.
-    maxNumInstructions?: int,
-    registrationIndexes: array<int>,
+    // Soft cap on the page's items: the instructions it selects, or for a query
+    // selecting slots alone, its slot handlers' runs. Absent sends no cap.
+    itemsTarget?: int,
+    onEventRegistrationIndexes: array<int>,
+    onBlockRegistrationIndexes: array<int>,
     // Program names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means every
     // address-dependent program is filtered server-side.
     clientFilteredContracts: option<array<string>>,
-    // Return a block for every slot in the range, not only the ones an
-    // instruction landed on. Absent means only the slots instructions came
-    // from, which leaves a skipped slot indistinguishable from an unfetched
-    // one.
-    includeAllBlocks?: bool,
+    // Slots at or above this one can still be reorged, so a page reaching
+    // them reads every slot of its range, which also tells a skipped slot from
+    // an unfetched one. Absent when the range is final.
+    reorgableFrom?: int,
   }
 
-  // NAPI encodes Rust `None` as `null`, never `undefined`, so an unselected
-  // key arrives as an explicit null rather than a missing field.
+  // NAPI leaves a Rust `None` field of an object as `undefined`, not `null`,
+  // so `Option` fields decode as `Nullable`.
   type log = {
-    kind: Null.t<string>,
-    message: Null.t<string>,
+    kind: Nullable.t<string>,
+    message: Nullable.t<string>,
   }
 
   // One routed instruction; `block` and `transaction` are materialised from
@@ -169,21 +159,17 @@ module EventItems = {
     data: Uint8Array.t,
     isInner: bool,
     // Borsh-decoded args as a JS value tree (wide integers as bigint).
-    // Non-null exactly when the routed registration selected `args`: an
+    // Present exactly when the routed registration selected `args`: an
     // instruction its layout rejects is dropped in Rust.
-    args: Null.t<unknown>,
-    // Non-null only when the routed registration selected `fields.log`.
-    logs: Null.t<array<log>>,
+    args: Nullable.t<unknown>,
+    // Present exactly when the routed registration selected `fields.log`.
+    logs: Nullable.t<array<log>>,
   }
 
   type response = {
     nextSlot: int,
-    // One lean header per returned slot, including slots no item references —
-    // reorg detection and the batch's latest timestamp read them all. The full
-    // blocks live in the block store returned alongside, which keeps only the
-    // slots items reference.
-    blocks: array<ResponseTypes.block>,
-    items: array<item>,
+    eventItems: array<item>,
+    blockItems: array<BlockItem.t>,
   }
 }
 
@@ -195,10 +181,10 @@ type t = {
   // Returns the routed items plus pages of raw transactions and blocks (kept
   // in Rust), keyed by (slot, transactionIndex) / slot, materialised at batch
   // prep.
-  getEventItems: (
-    ~query: EventItems.query,
+  getItems: (
+    ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
+  ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
 }
 
 @send
@@ -207,6 +193,7 @@ external classFromConfig: (
   cfg,
   string,
   array<Registration.program>,
+  array<BlockItem.registrationInput>,
   AddressStore.t,
 ) => t = "fromConfig"
 
@@ -217,6 +204,7 @@ let make = (
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~programs=[],
+  ~onBlockRegistrations,
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
@@ -230,6 +218,7 @@ let make = (
     },
     `hyperindex/${envioVersion}`,
     programs,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
     addressStore,
   )
 }

@@ -3,8 +3,6 @@
 
 type t = dict<InMemoryTable.Entity.t>
 
-exception UndefinedEntity({entityName: string})
-
 let make = (entities: array<Internal.entityConfig>): t => {
   let init = Dict.make()
   entities->Array.forEach(entityConfig => {
@@ -17,9 +15,7 @@ let get = (self: t, ~entityName: string) => {
   switch self->Utils.Dict.dangerouslyGetNonOption(entityName) {
   | Some(table) => table
   | None =>
-    UndefinedEntity({entityName: entityName})->ErrorHandling.mkLogAndRaise(
-      ~msg="Unexpected, entity InMemoryTable is undefined",
-    )
+    JsError.throwWithMessage(`Unexpected, entity InMemoryTable is undefined for ${entityName}`)
   }
 }
 
