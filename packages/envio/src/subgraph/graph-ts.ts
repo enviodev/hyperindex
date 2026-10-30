@@ -3627,8 +3627,8 @@ export function makeBlockHandlerBlock(
   return new LazyBlock(blockNumber, selected?.timestamp);
 }
 
-// The getters live on the prototype: a sparse handler builds one of these per
-// block, and defining them on each instance cost more than the handler did.
+// The getters live on the prototype: a template's handler builds one of these
+// per block, and defining them on each instance cost more than the handler did.
 class LazyBlock extends EthereumBlock {
   #blockNumber: number;
   #timestamp: unknown;
