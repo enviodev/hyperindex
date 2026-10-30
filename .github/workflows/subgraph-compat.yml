@@ -66,10 +66,10 @@ jobs:
         run: scenarios/subgraph_test/differential/run.sh
 
       # Real subgraphs, installed and indexed the way their authors would.
+      # Contract calls are answered from scenarios/subgraph_corpus/fixtures,
+      # recorded once from archive nodes (see run.mjs), so no RPC is asked.
       - name: Subgraph corpus
         if: matrix.suite == 'corpus'
         run: node scenarios/subgraph_corpus/run.mjs
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
-          ENVIO_SUBGRAPH_RPC_1: ${{ secrets.ENVIO_SUBGRAPH_RPC_1 }}
-          ENVIO_SUBGRAPH_RPC_11155111: ${{ secrets.ENVIO_SUBGRAPH_RPC_11155111 }}

@@ -4,32 +4,58 @@
 //
 //   node scenarios/subgraph_corpus/run.mjs [name…]
 //
-// Needs network access, ENVIO_API_TOKEN for HyperSync, and an archive RPC per
-// chain whose subgraphs make contract calls (ENVIO_SUBGRAPH_RPC_<chainId>).
-import { execFileSync } from "node:child_process";
+// Needs network access and ENVIO_API_TOKEN for HyperSync. Contract calls are
+// answered from fixtures/<name>.json. CORPUS_RPC_RECORD=1 records them instead,
+// from an archive node per chain: ENVIO_SUBGRAPH_RPC_<chainId>, a URL.
+import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startRpcFixture } from "./rpc-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const envio = path.resolve(here, "../../packages/envio");
 const corpus = JSON.parse(readFileSync(path.join(here, "corpus.json"), "utf8"));
 const only = process.argv.slice(2);
 
-const run = (cwd, command, args, env = {}) =>
+const run = (cwd, command, args) =>
   execFileSync(command, args, {
     cwd,
     stdio: "inherit",
-    env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0", ...env },
+    env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
   });
 
-// A mapping's contract calls need an archive RPC for the entry's chain:
-// ENVIO_SUBGRAPH_RPC_<chainId>, handed to the indexer as ENVIO_SUBGRAPH_RPC.
-const indexEnv = (entry) => {
-  const rpc = process.env[`ENVIO_SUBGRAPH_RPC_${entry.chainId}`];
-  return { ...(rpc ? { ENVIO_SUBGRAPH_RPC: rpc } : {}), ...entry.env };
-};
+const record = process.env.CORPUS_RPC_RECORD === "1";
+
+// The indexer runs as a child so the fixture RPC, served from this process,
+// can answer it; a replay miss stops it rather than letting it retry forever.
+function index(dir, entry, rpc) {
+  const child = spawn(process.execPath, [".envio-corpus.mjs", String(entry.chainId), String(entry.endBlock)], {
+    cwd: dir,
+    stdio: "inherit",
+    env: { ...process.env, ...(rpc ? { ENVIO_SUBGRAPH_RPC: rpc.url } : {}), ...entry.env },
+  });
+  const watch = setInterval(() => {
+    if (rpc?.misses.length) child.kill();
+  }, 200);
+  return new Promise((resolve, reject) => {
+    child.on("exit", (code) => {
+      clearInterval(watch);
+      if (rpc?.misses.length) reject(new Error(`no recorded answer for ${rpc.misses[0]}`));
+      else if (code === 0) resolve();
+      else reject(new Error(`indexing exited with code ${code}`));
+    });
+  });
+}
+
+async function fixtureRpc(entry) {
+  const file = path.join(here, "fixtures", `${entry.name}.json`);
+  if (!record) return existsSync(file) ? startRpcFixture({ chainId: entry.chainId, file }) : undefined;
+  const upstream = process.env[`ENVIO_SUBGRAPH_RPC_${entry.chainId}`];
+  if (!upstream) throw new Error(`recording needs ENVIO_SUBGRAPH_RPC_${entry.chainId}`);
+  return startRpcFixture({ chainId: entry.chainId, file, upstream });
+}
 
 // Corepack runs the package manager version a project pins in `packageManager`.
 function install(dir) {
@@ -70,7 +96,12 @@ for (const entry of corpus) {
     rmSync(path.join(dir, "node_modules", "envio"), { recursive: true, force: true });
     symlinkSync(envio, path.join(dir, "node_modules", "envio"));
     writeFileSync(path.join(dir, ".envio-corpus.mjs"), INDEX);
-    run(dir, process.execPath, [".envio-corpus.mjs", String(entry.chainId), String(entry.endBlock)], indexEnv(entry));
+    const rpc = await fixtureRpc(entry);
+    try {
+      await index(dir, entry, rpc);
+    } finally {
+      await rpc?.close();
+    }
     results.push({ name: entry.name, ok: true });
   } catch (error) {
     results.push({ name: entry.name, ok: false, error: String(error.message).split("\n")[0] });
