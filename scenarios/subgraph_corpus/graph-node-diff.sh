@@ -25,6 +25,7 @@ compose() {
   GRAPH_ETHEREUM="mainnet:$RPC_URL" docker compose -f "$compose_file" -p envio-corpus-diff "$@"
 }
 cleanup() {
+  compose logs --no-color graph-node 2>&1 | grep -viE '"level":"debug"| DEBG ' | tail -150 || true
   compose down -v >/dev/null 2>&1 || true
   rm -rf "$work"
 }
@@ -99,4 +100,4 @@ export ENVIO_SUBGRAPH_RPC="$RPC_URL" ENVIO_HASURA=false ENVIO_PG_SCHEMA="corpus_
 # graph-node syncs on its own; the diff waits for it to reach envio's block.
 cd "$project"
 node "$envio" subgraph diff "http://localhost:8000/subgraphs/name/$subgraph" \
-  --block "$end_block" --wait 5400 --sample 1000000
+  --block "$end_block" --wait "${DIFF_WAIT:-5400}" --sample 1000000
