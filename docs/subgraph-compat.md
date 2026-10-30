@@ -803,6 +803,14 @@ was only partly compared (`status: incomplete`: `--max-entities` capped the
 reference listing and nothing seen so far differs). `--json` prints the same
 report with `schemaVersion: 1`.
 
+`RPC_URL=<archive node> scenarios/subgraph_corpus/graph-node-diff.sh <corpus
+entry>` runs this against a local graph-node (the differential scenario's
+compose): both index the entry's data sources up to its `endBlock`, then
+every entity type is diffed with every entity sampled. It refuses a subgraph
+with templates, which keep both chains open past the window. A manual check:
+ens over a public archive node took 20 minutes and matched (27 types, 0 field
+mismatches).
+
 ## 6d. Repo shapes: what runs before graph-cli would
 
 graph-cli reads a finished manifest. What a hosting user hands it is the
