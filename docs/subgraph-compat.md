@@ -803,13 +803,6 @@ was only partly compared (`status: incomplete`: `--max-entities` capped the
 reference listing and nothing seen so far differs). `--json` prints the same
 report with `schemaVersion: 1`.
 
-`scenarios/subgraph_corpus/graph-node-diff.sh <corpus entry>` runs this
-against a local graph-node (the differential scenario's compose, pointed at
-`RPC_URL`, an archive node): both index the entry's data sources up to its
-`endBlock`, then they are diffed with every entity sampled. It is a manual
-check, not a CI one: over a public archive RPC, graph-node is rate-limited
-too much for a PR job to finish.
-
 ## 6d. Repo shapes: what runs before graph-cli would
 
 graph-cli reads a finished manifest. What a hosting user hands it is the
