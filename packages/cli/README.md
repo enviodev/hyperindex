@@ -33,7 +33,7 @@ It reads chain data through [HyperSync](https://docs.envio.dev/docs/HyperSync/ov
 
 Most blockchain indexers are bottlenecked by RPC. HyperIndex isn't. HyperSync, the data engine underneath, is a purpose-built, Rust-based query layer that retrieves multiple blocks per round trip, cuts out the overhead, and makes historical backfills genuinely fast.
 
-In the [open indexer benchmark](https://github.com/enviodev/open-indexer-benchmark), HyperIndex is 6–879x faster across the speed scenarios, and passes every reliability check. Every number there comes from code in the repository, so you can run it yourself.
+The [open indexer benchmark](https://github.com/enviodev/open-indexer-benchmark) tracks current speed results across scenarios, and HyperIndex passes every reliability check. Every number there comes from code in the repository, so you can run it yourself.
 
 [How the benchmarks work →](https://docs.envio.dev/docs/HyperIndex/benchmarks)
 
