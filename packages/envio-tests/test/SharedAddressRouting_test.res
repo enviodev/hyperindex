@@ -94,7 +94,7 @@ let makeSource = (~url) => {
 
 let fetch = (source: Source.t, ~addressSet) =>
   source.getItemsOrThrow(
-    ~includeAllBlocks=false,
+    ~reorgableFrom=None,
     ~fromBlock=10,
     ~toBlock=Some(10),
     ~addressSet,
@@ -103,6 +103,7 @@ let fetch = (source: Source.t, ~addressSet) =>
     ~selection={
       dependsOnAddresses: true,
       onEventRegistrations: onEventRegistrations(),
+      onBlockRegistrations: [],
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,
