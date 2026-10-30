@@ -79,7 +79,6 @@ let waitForNewBlock: (
   ~knownHeight: int,
   ~isRealtime: bool,
   ~reducedPolling: bool,
-  ~blockThrottle: int=?,
 ) => promise<int>
 
 // The retry at which a query that no source can answer stops being a hiccup

@@ -74,11 +74,10 @@ describe("E2E blockThrottle tests", () => {
   scenario->Scenario.it(
     "The first height of a chain younger than blockThrottle starts fetching at once",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       await Scenario.resolveInitialHeight(~source=sourceMock, ~head=3)
       await sourceMock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      t.expect(sourceMock.pendingItemsQueries->Array.length).toEqual(1)
     },
   )
 
@@ -94,8 +93,6 @@ describe("E2E blockThrottle tests", () => {
     ~sourceTiming={
       newBlockStallTimeout: 200,
       newBlockStallTimeoutRealtime: 200,
-      // A wait with reduced polling stalls after twice this.
-      reducedPollingInterval: 100,
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
@@ -116,6 +113,44 @@ describe("E2E blockThrottle tests", () => {
         indexer.infoAndAboveLogs()->Array.filter(
           ({msg}) => msg->String.startsWith("No new blocks detected"),
         ),
+      ).toEqual([])
+    },
+  )
+
+  scenario->Scenario.it(
+    "A backfill wait left behind by the switch to realtime reports no stall",
+    ~sources=[
+      {chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
+      {
+        chain: 1337,
+        methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        sourceFor: Realtime,
+      },
+    ],
+    ~sourceTiming={reducedPollingInterval: 1},
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let live = source(1337, ~index=1)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sync)
+      sync.resolveGetHeightOrThrow(300)
+      await sync.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await indexer.getBatchWritePromise()
+      await live.expectHeightCalls(1)
+
+      // The sync head moves, but stays short of the throttle.
+      sync.setAutoHeight(301)
+      live.resolveGetHeightOrThrow(305)
+      await live.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
+      await Utils.delay(20)
+
+      let logs = indexer.infoAndAboveLogs()
+      let readyAt = logs->Array.findIndex(({msg}) => msg == "Ready. Fully indexed for queries.")
+      t.expect(
+        logs
+        ->Array.slice(~start=readyAt)
+        ->Array.filter(({msg}) => msg->String.startsWith("No new blocks detected")),
       ).toEqual([])
     },
   )
