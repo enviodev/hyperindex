@@ -1,8 +1,8 @@
-// The RPC a corpus entry's mappings call, answered from a fixture of an
-// archive node's real answers, so a run costs no RPC queries and can't flake
-// on a provider. Recording forwards each request to that node and keeps what
-// it answered; replay answers only from the fixture, and a request it doesn't
-// hold is a miss the runner fails the entry on, never an invented answer.
+// The RPC a corpus entry's mappings call, so a run costs no RPC queries and
+// can't flake on a provider. Answers come from a fixture of an archive node's
+// real answers when the entry has one (recording forwards each request to that
+// node and keeps what it answered), else from `fake` (fake-calls.mjs). A
+// request neither answers is a miss the runner fails the entry on.
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -18,8 +18,8 @@ const FIXED_AT_BLOCK = new Set([
   "eth_getTransactionReceipt",
 ]);
 
-export async function startRpcFixture({ chainId, file, upstream }) {
-  const answers = !upstream && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+export async function startRpcFixture({ chainId, file, upstream, fake }) {
+  const answers = !upstream && file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   const misses = [];
 
   const forward = async ({ method, params }) => {
@@ -31,6 +31,13 @@ export async function startRpcFixture({ chainId, file, upstream }) {
     if (!response.ok) return undefined;
     const { result, error } = await response.json();
     return error ? { error } : { result };
+  };
+
+  const synthetic = ({ method, params }) => {
+    if (method === "eth_getBalance") return { result: "0x1" };
+    if (method === "eth_getCode") return { result: "0x6001" };
+    const result = method === "eth_call" ? fake(params[0].data ?? params[0].input) : undefined;
+    return result === undefined ? undefined : { result };
   };
 
   const answer = async (request) => {
@@ -45,6 +52,8 @@ export async function startRpcFixture({ chainId, file, upstream }) {
       return reply;
     }
     if (key in answers) return answers[key];
+    const made = fake && synthetic(request);
+    if (made) return made;
     misses.push(key);
     return undefined;
   };

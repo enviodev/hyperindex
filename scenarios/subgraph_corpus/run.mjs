@@ -5,13 +5,15 @@
 //   node scenarios/subgraph_corpus/run.mjs [name…]
 //
 // Needs network access and ENVIO_API_TOKEN for HyperSync. Contract calls are
-// answered from fixtures/<name>.json. CORPUS_RPC_RECORD=1 records them instead,
-// from an archive node per chain: ENVIO_SUBGRAPH_RPC_<chainId>, a URL.
+// answered from fixtures/<name>.json, or with synthetic values where an entry
+// has none. CORPUS_RPC_RECORD=1 records fixtures instead, from an archive node
+// per chain: ENVIO_SUBGRAPH_RPC_<chainId>, a URL.
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { fakeCallAnswers } from "./fake-calls.mjs";
 import { startRpcFixture } from "./rpc-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -49,9 +51,12 @@ function index(dir, entry, rpc) {
   });
 }
 
-async function fixtureRpc(entry) {
+async function fixtureRpc(entry, dir) {
   const file = path.join(here, "fixtures", `${entry.name}.json`);
-  if (!record) return existsSync(file) ? startRpcFixture({ chainId: entry.chainId, file }) : undefined;
+  if (!record) {
+    if (existsSync(file)) return startRpcFixture({ chainId: entry.chainId, file });
+    return { ...(await startRpcFixture({ chainId: entry.chainId, fake: fakeCallAnswers(dir) })), fake: true };
+  }
   const upstream = process.env[`ENVIO_SUBGRAPH_RPC_${entry.chainId}`];
   if (!upstream) throw new Error(`recording needs ENVIO_SUBGRAPH_RPC_${entry.chainId}`);
   return startRpcFixture({ chainId: entry.chainId, file, upstream });
@@ -96,13 +101,13 @@ for (const entry of corpus) {
     rmSync(path.join(dir, "node_modules", "envio"), { recursive: true, force: true });
     symlinkSync(envio, path.join(dir, "node_modules", "envio"));
     writeFileSync(path.join(dir, ".envio-corpus.mjs"), INDEX);
-    const rpc = await fixtureRpc(entry);
+    const rpc = await fixtureRpc(entry, dir);
     try {
       await index(dir, entry, rpc);
     } finally {
       await rpc?.close();
     }
-    results.push({ name: entry.name, ok: true });
+    results.push({ name: entry.name, ok: true, fake: rpc?.fake });
   } catch (error) {
     results.push({ name: entry.name, ok: false, error: String(error.message).split("\n")[0] });
   } finally {
@@ -113,7 +118,7 @@ for (const entry of corpus) {
 const summary = [
   "| subgraph | result |",
   "| --- | --- |",
-  ...results.map(({ name, ok, error }) => `| ${name} | ${ok ? "✅" : `❌ ${error}`} |`),
+  ...results.map(({ name, ok, fake, error }) => `| ${name} | ${ok ? (fake ? "✅ (synthetic contract calls)" : "✅") : `❌ ${error}`} |`),
 ].join("\n");
 console.log(`\n${summary}`);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);

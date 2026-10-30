@@ -1262,7 +1262,10 @@ scenario with graph-node and with envio over one anvil chain and diffs every
 stored field; `scenarios/subgraph_corpus` installs real subgraphs at pinned
 commits the way their authors do and indexes a window of blocks from their
 start. Their contract calls are answered from fixtures of an archive
-node's answers (`CORPUS_RPC_RECORD=1` records them), so CI asks no RPC.
+node's answers (`CORPUS_RPC_RECORD=1` records them), or, for an entry with
+none, with synthetic values valid for each function's ABI outputs, so CI asks
+no RPC; such an entry's pass means its mappings run, not that they compute
+graph-node's values.
 Additionally, add an **"Envio Subgraph"** tool to
 [open-indexer-benchmark](https://github.com/enviodev/open-indexer-benchmark)
 that runs the benchmark's existing Subgraph case unmodified on HyperIndex —
