@@ -51,6 +51,7 @@ let rec startProcessing = async (
       }
     }
     state->IndexerState.endProcessing
+    state->IndexerState.reportArrivalAtHead
 
     // A reorg detected mid-batch parks the rollback until the loop is idle.
     // Hand off now that no batch is in flight.

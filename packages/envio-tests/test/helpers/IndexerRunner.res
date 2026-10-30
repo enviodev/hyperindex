@@ -112,11 +112,6 @@ type rec t = {
   releaseRealtime: unit => unit,
 }
 
-// How often the stand-in supervisor of a supervised pass asks whether the run
-// may go realtime. Short enough that the run gets there in the same tick a test
-// would otherwise see it.
-%%private(let releaseCheckIntervalMillis = 1)
-
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
@@ -332,6 +327,25 @@ let run = async (
     throwIfClosing()
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
+    // Only when the test didn't ask for the hold itself: one that did is
+    // testing the barrier and owns its own release. The stand-in supervisor
+    // releases in the processing pass that arrives, as a real one would on the
+    // report that says so, but at a point in the indexer's progress instead of
+    // on a timer that can land between two of the test's steps. Off the pass's
+    // own stack, as a release arrives from outside it.
+    let stateRef = ref(None)
+    let onArrivedAtHead = if superviseRun && !holdRealtime {
+      Some(
+        () =>
+          Promise.resolve()
+          ->Promise.thenResolve(() =>
+            stateRef.contents->Option.forEach(IndexerState.releaseRealtime)
+          )
+          ->ignore,
+      )
+    } else {
+      None
+    }
     let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
@@ -345,21 +359,10 @@ let run = async (
       ~holdRealtime={holdRealtime || superviseRun},
       ~onError,
       ~onExit?,
+      ~onArrivedAtHead?,
     )
+    stateRef := Some(state)
     state->IndexerLoop.start
-
-    // Only when the test didn't ask for the hold itself: one that did is
-    // testing the barrier and owns its own release.
-    let releaseCheck = ref(None)
-    if superviseRun && !holdRealtime {
-      releaseCheck := Some(setInterval(() =>
-            if state->IndexerState.hasArrivedAtHead {
-              releaseCheck.contents->Option.forEach(clearInterval)
-              releaseCheck := None
-              state->IndexerState.releaseRealtime
-            }
-          , releaseCheckIntervalMillis))
-    }
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
@@ -373,8 +376,6 @@ let run = async (
       | None =>
         let promise = (
           async () => {
-            releaseCheck.contents->Option.forEach(clearInterval)
-            releaseCheck := None
             await state->Writing.flush
             state->IndexerState.stop
             // Tests deliberately leave handlers that never resolve, which pins
