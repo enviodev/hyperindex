@@ -57,8 +57,11 @@ let runContractRegistersOrThrow = async (
   // materialise the selected fields onto the payloads before running them. All
   // items belong to the chain being fetched, and both stores are the chain's
   // own, which this response's pages have already been merged into.
+  // A subgraph's block register passes ride along; their blocks have no page.
   await ChainState.materializePageItems(
-    ~items=itemsWithContractRegister->Array.filter(item => item->Internal.getItemKind === 0),
+    ~items=Env.subgraphMode.contents
+      ? itemsWithContractRegister->Array.filter(item => item->Internal.getItemKind === 0)
+      : itemsWithContractRegister,
     ~transactionStore=chainState->ChainState.transactionStore,
     ~blockStore=chainState->ChainState.blockStore,
     ~shouldChecksum=chainState->ChainState.shouldChecksum,
@@ -517,11 +520,13 @@ let rec onQueryResponse = async (
       switch itemsWithContractRegister {
       | _ if withBlockPasses =>
         let (previous, finish) = chainState->ChainState.queueBlockRegisterRun
-        let extra = Pervasives.max(0, newItems->Array.length - query.itemsEst)
-        chainState->ChainState.holdExtraBudget(~items=extra)
+        let held =
+          chainState->ChainState.holdExtraBudget(
+            ~items=Pervasives.max(0, newItems->Array.length - query.itemsEst),
+          )
         await previous
         if state->IndexerState.isStale(~stateId) {
-          chainState->ChainState.releaseExtraBudget(~items=extra)
+          chainState->ChainState.releaseExtraBudget(held)
           finish()
           scheduleFetch()
         } else {
@@ -559,16 +564,22 @@ let rec onQueryResponse = async (
               exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
             )
           | (newRegistrations, blockRegisterThrough) =>
-            chainState->ChainState.releaseExtraBudget(~items=extra)
+            chainState->ChainState.releaseExtraBudget(held)
             proceed(~newRegistrations, ~blockRegisterThrough?, ~newItems, ~latestFetchedBlock)
             finish()
           }
         }
       | [] => proceed(~newRegistrations=[])
       | _ =>
-        // Keep the response's real size reserved while its passes run.
-        let extra = Pervasives.max(0, newItems->Array.length - query.itemsEst)
-        chainState->ChainState.holdExtraBudget(~items=extra)
+        // A subgraph's register passes run in chunks, long enough for the pool
+        // to admit queries on top of a response it doesn't count yet.
+        let held = Env.subgraphMode.contents
+          ? Some(
+              chainState->ChainState.holdExtraBudget(
+                ~items=Pervasives.max(0, newItems->Array.length - query.itemsEst),
+              ),
+            )
+          : None
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~runtime,
@@ -580,7 +591,7 @@ let rec onQueryResponse = async (
             exn->ErrorHandling.make(~logger=chainState->ChainState.logger),
           )
         | newRegistrations =>
-          chainState->ChainState.releaseExtraBudget(~items=extra)
+          held->Option.forEach(held => chainState->ChainState.releaseExtraBudget(held))
           proceed(~newRegistrations)
         }
       }

@@ -26,6 +26,9 @@ type t = {
   // scheduler doesn't re-sum pending queries on every tick. Incremented when
   // queries are dispatched, decremented as their responses land.
   mutable pendingBudget: float,
+  // Counts resets of pendingBudget: a hold taken before one has nothing left
+  // to release.
+  mutable pendingBudgetResets: int,
   // Chain-wide events/block, used to turn a chain's item budget into a target
   // block for query sizing. Seeded from cumulative progress on construction,
   // then smoothed with an EMA on every batch (see applyBatchProgress). None
@@ -173,6 +176,7 @@ let make = (
     processingBlockNumber: committedProgressBlockNumber,
     numEventsProcessed,
     pendingBudget: 0.,
+    pendingBudgetResets: 0,
     chainDensity,
     safeCheckpointTracking,
     shouldRollbackOnReorg,
@@ -555,19 +559,24 @@ let startFetchingQueries = (cs: t, ~queries: array<FetchState.query>) => {
 let resetPendingQueries = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.resetPendingQueries
   cs.pendingBudget = 0.
+  cs.pendingBudgetResets = cs.pendingBudgetResets + 1
 }
 
 // A response that landed with more items than its query was priced at keeps the
 // excess reserved while it waits for its register passes: until then its items
 // are neither in the buffer nor in the query's estimate, and the pool would
 // admit the next queries on top of them. Released when the response is applied.
+type heldBudget = {items: int, resets: int}
+
 let holdExtraBudget = (cs: t, ~items) => {
   cs.pendingBudget = cs.pendingBudget +. items->Int.toFloat
+  {items, resets: cs.pendingBudgetResets}
 }
 
-let releaseExtraBudget = (cs: t, ~items) => {
-  cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. items->Int.toFloat)
-}
+let releaseExtraBudget = (cs: t, held: heldBudget) =>
+  if held.resets === cs.pendingBudgetResets {
+    cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. held.items->Int.toFloat)
+  }
 
 let hasBlockRegisters = (cs: t) => cs.fetchState.blockRegisterThrough !== None
 let isBlockRegisterIdle = (cs: t) => cs.blockRegisterRuns === 0

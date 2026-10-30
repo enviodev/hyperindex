@@ -1007,14 +1007,16 @@ let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
 // else, ordered among themselves by the same transaction rule. A `once`
 // handler's item (rank -1) comes before all of them.
 let blockOrderRank = (item: Internal.item) =>
-  if item->Internal.getItemRunsAfterBlock {
-    3 + item->Internal.getItemCreationRound->Option.getOr(1)
-  } else if item->Internal.getItemKind !== 0 {
-    item->Internal.itemRunsFirst ? -1 : 3
-  } else if item->Internal.getItemCallRank === Some(2) {
-    2
-  } else {
-    0
+  switch item->Internal.getItemCreationRound {
+  | Some(round) => 3 + round
+  | None =>
+    if item->Internal.getItemKind !== 0 {
+      item->Internal.itemRunsFirst ? -1 : 3
+    } else if item->Internal.getItemCallRank === Some(2) {
+      2
+    } else {
+      0
+    }
   }
 
 let compareWithCalls = (a: Internal.item, b: Internal.item): int => {

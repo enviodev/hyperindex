@@ -803,9 +803,7 @@ external getItemKind: item => int = "kind"
 // block it was logged in: graph-node runs a new data source's creation-block
 // events after everything else in that block. The value is the round, as
 // graph-node counts them: 1 for a data source a block's own triggers created,
-// 2 for one that round-1 handlers created, and so on. Absent reads as false.
-@get
-external getItemRunsAfterBlock: item => bool = "runsAfterBlock"
+// 2 for one that round-1 handlers created, and so on.
 @get
 external getItemCreationRound: item => option<int> = "runsAfterBlock"
 @set

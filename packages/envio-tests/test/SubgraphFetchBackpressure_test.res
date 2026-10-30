@@ -70,12 +70,17 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
 
   it("keeps a response's size beyond its estimate reserved while its passes run", t => {
     let (cs, _) = makeChainState()
-    cs->ChainState.holdExtraBudget(~items=17_000)
+    let response = cs->ChainState.holdExtraBudget(~items=17_000)
     let held = cs->ChainState.pendingBudget
-    cs->ChainState.releaseExtraBudget(~items=17_000)
+    cs->ChainState.releaseExtraBudget(response)
     let released = cs->ChainState.pendingBudget
-    // A rollback that reset the reservations meanwhile leaves nothing to go negative.
-    cs->ChainState.releaseExtraBudget(~items=5)
-    t.expect((held, released, cs->ChainState.pendingBudget)).toEqual((17_000., 0., 0.))
+    // A reorg resets the reservations while a response's passes run; the
+    // queries sent after it reserve again, and the old response, landing
+    // last, must not take its share out of theirs.
+    let stale = cs->ChainState.holdExtraBudget(~items=5)
+    cs->ChainState.resetPendingQueries
+    let _ = cs->ChainState.holdExtraBudget(~items=100)
+    cs->ChainState.releaseExtraBudget(stale)
+    t.expect((held, released, cs->ChainState.pendingBudget)).toEqual((17_000., 0., 100.))
   })
 })

@@ -77,8 +77,9 @@ let committedProgressBlockNumber: t => int
 let committedProgressBlockTime: t => option<int>
 let numEventsProcessed: t => float
 let pendingBudget: t => float
-let holdExtraBudget: (t, ~items: int) => unit
-let releaseExtraBudget: (t, ~items: int) => unit
+type heldBudget
+let holdExtraBudget: (t, ~items: int) => heldBudget
+let releaseExtraBudget: (t, heldBudget) => unit
 // Subgraph mode: the register passes of block handlers that create data
 // sources. See `FetchState.blockRegisterThrough`.
 let hasBlockRegisters: t => bool

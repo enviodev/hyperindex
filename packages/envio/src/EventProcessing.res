@@ -126,6 +126,9 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~runtime) => {
 let runBatchHandlersOrThrow = async (batch: Batch.t, ~runtime) => {
   let itemIdx = ref(0)
   let lookahead = PreloadLookahead.active.contents
+  // Settled before the batch ends: one finishing after a rollback would put a
+  // value read before it back into memory.
+  let lookaheadPreloads = []
   // Only read by the lookahead, which preloads items out of checkpoint order.
   let checkpointIdOf = switch lookahead {
   | Some(_) =>
@@ -152,8 +155,13 @@ let runBatchHandlersOrThrow = async (batch: Batch.t, ~runtime) => {
       | Some(lookahead) =>
         lookahead->PreloadLookahead.afterItem(~index, ~preload=(ahead, aheadIdx) =>
           if ahead->hasHandler {
-            runtime
-            ->preload(~item=ahead, ~checkpointId=checkpointIdOf->Array.getUnsafe(aheadIdx))
+            lookaheadPreloads
+            ->Array.push(
+              runtime->preload(
+                ~item=ahead,
+                ~checkpointId=checkpointIdOf->Array.getUnsafe(aheadIdx),
+              ),
+            )
             ->ignore
           }
         )
@@ -162,6 +170,7 @@ let runBatchHandlersOrThrow = async (batch: Batch.t, ~runtime) => {
     }
     itemIdx := itemIdx.contents + checkpointItemsCount
   }
+  let _ = await Promise.all(lookaheadPreloads)
 }
 
 let registerProcessEventBatchMetrics = (

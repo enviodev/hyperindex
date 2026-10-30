@@ -391,11 +391,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
           ~logger,
           ~recordRequestStats=stats => requestStats->recordStatsInto(stats),
           ~getHeightRetryInterval,
-          // A height is a few hundred bytes, answered in well under a second,
-          // so a merely slow endpoint answers first. Not the source's own
-          // request timeout: HyperSync's is sized for its largest queries,
-          // and a stalled height waited out on it idles the chain.
-          ~pollTimeoutMillis=timing.heightPollTimeout->Option.getOr(10_000),
+          ~pollTimeoutMillis=timing.heightPollTimeout->Option.getOr(60_000),
         ),
         disabled: false,
         lastFailedAt: None,

@@ -312,25 +312,6 @@ describe("Height poll failures", () => {
     },
   )
 
-  // A height is a tiny request: a healthy endpoint answers in well under a
-  // second, and one that hasn't in 10 has stalled. Waiting out a minute on it
-  // left Ethereum and Linea subgraph runs idle before falling back to RPC.
-  scenario->Scenario.it(
-    "Gives up on a poll that never answers within ten seconds by default",
-    ~sources=[{chain: 1337, pollingInterval: 10_000}],
-    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
-    ~timeout=30_000,
-    async (~t, ~indexer as _, ~source) => {
-      let mock = source(1337)
-      await mock.expectHeightCalls(1)
-      let startedAt = Date.now()
-      await Scenario.waitUntil(() => mock->polls > 1, ~message="a second poll", ~timeoutMs=15_000.)
-      t.expect(Date.now() -. startedAt < 15_000.).toBe(true)
-      mock.resolveGetHeightOrThrow(100)
-      await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-    },
-  )
-
   scenario->Scenario.it(
     "Uses a height that answers after the poll was given up on",
     ~sources=[{chain: 1337, pollingInterval: 10_000}],
