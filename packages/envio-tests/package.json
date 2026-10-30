@@ -11,16 +11,16 @@
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs"
   },
   "devDependencies": {
-    "@rescript/runtime": "12.2.0",
+    "@rescript/runtime": "12.3.1",
     "@types/node": "24.12.2",
-    "@types/ws": "8.18.1",
-    "rescript": "12.2.0",
+    "@types/ws": "8.18.2",
+    "rescript": "12.3.1",
     "rescript-schema": "9.5.1",
     "ts-expect": "1.3.0",
     "typescript": "6.0.3",
-    "viem": "2.54.0",
-    "vitest": "4.1.0",
-    "ws": "8.21.3"
+    "viem": "2.57.13",
+    "vitest": "4.1.12",
+    "ws": "8.22.0"
   },
   "dependencies": {
     "bignumber.js": "9.3.1",

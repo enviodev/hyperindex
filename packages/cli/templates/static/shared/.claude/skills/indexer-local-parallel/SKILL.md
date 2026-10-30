@@ -78,7 +78,7 @@ docker run -d --name myproject-hasura --network envio-network -p 8081:8080 \
   -e HASURA_GRAPHQL_ENABLE_CONSOLE=true \
   -e HASURA_GRAPHQL_CORS_DOMAIN='*' \
   -e HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true \
-  hasura/graphql-engine:v2.43.0
+  hasura/graphql-engine:v2.51.3
 ```
 
 Then add the source and track the schema's tables via the metadata API. Three

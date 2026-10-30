@@ -12,9 +12,9 @@
   "devDependencies": {
     "@types/node": "24.12.2",
     "typescript": "6.0.3",
-    "vitest": "4.1.0",
-    "rescript": "12.2.0",
-    "@rescript/runtime": "12.2.0",
+    "vitest": "4.1.12",
+    "rescript": "12.3.1",
+    "@rescript/runtime": "12.3.1",
     "rescript-schema": "9.5.1"
   },
   "dependencies": {

@@ -18,7 +18,7 @@ use tokio::net::TcpStream;
 use tokio::time::Duration;
 
 const POSTGRES_IMAGE: &str = "postgres:18.3";
-const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.43.0";
+const HASURA_IMAGE: &str = "hasura/graphql-engine:v2.51.3";
 const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server:26.2.15.4";
 const CONFIG_HASH_LABEL: &str = "dev.envio.config-hash";
 const SOCKET_TIMEOUT: u64 = 120;

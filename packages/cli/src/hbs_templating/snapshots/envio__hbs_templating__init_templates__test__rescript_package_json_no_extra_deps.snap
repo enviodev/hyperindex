@@ -16,8 +16,8 @@ expression: "template(true, \"latest\", vec![]).render_package_json()"
     "test": "rescript && vitest run --test-timeout=20000"
   },
   "devDependencies": {
-    "rescript": "12.2.0",
-    "@rescript/runtime": "12.2.0",
+    "rescript": "12.3.1",
+    "@rescript/runtime": "12.3.1",
     "vitest": "4.1.0"
   },
   "dependencies": {
