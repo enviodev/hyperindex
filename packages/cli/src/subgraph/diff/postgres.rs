@@ -206,17 +206,6 @@ impl PgSide {
             .collect())
     }
 
-    pub async fn count(&self, table: &str) -> Result<u64> {
-        let row = self
-            .client
-            .query_one(
-                &format!("SELECT count(*)::bigint FROM {}", self.table(table)),
-                &[],
-            )
-            .await?;
-        Ok(row.get::<_, i64>(0) as u64)
-    }
-
     pub async fn ids(&self, table: &str) -> Result<Vec<Value>> {
         let rows = self
             .client

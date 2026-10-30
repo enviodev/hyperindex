@@ -778,23 +778,9 @@ pub fn register_handlers(sources: &[(PathBuf, Vec<String>)]) -> Vec<Vec<String>>
         .collect()
 }
 
-/// The subset of `handlers`, exported by the mapping at `mapping`, whose code
-/// can reach a `DataSourceTemplate.create`.
-pub fn creating_handlers(mapping: &Path, handlers: &[String]) -> Vec<String> {
-    let mut analysis = Analysis::default();
-    let Ok(mapping) = std::fs::canonicalize(mapping) else {
-        return handlers.to_vec();
-    };
-    handlers
-        .iter()
-        .filter(|handler| analysis.creates(&mapping, handler))
-        .cloned()
-        .collect()
-}
-
 /// For each of `handlers`, the `templates` whose generated class (graph
 /// codegen's `templates.ts`) its code surely reaches: by name, through code
-/// the analysis read in full. Unlike `creating_handlers`, whatever it can't
+/// the analysis read in full. Unlike `Analysis::creates`, whatever it can't
 /// see leads nowhere here, and neither does a namespace import, which may
 /// stand for any of a module's declarations.
 pub fn sure_creates(mapping: &Path, handlers: &[String], templates: &[String]) -> Vec<Vec<String>> {
@@ -844,6 +830,20 @@ mod tests {
             std::fs::write(file, source).unwrap();
         }
         dir
+    }
+
+    /// The subset of `handlers`, exported by the mapping at `mapping`, whose code
+    /// can reach a `DataSourceTemplate.create`.
+    fn creating_handlers(mapping: &Path, handlers: &[String]) -> Vec<String> {
+        let mut analysis = Analysis::default();
+        let Ok(mapping) = std::fs::canonicalize(mapping) else {
+            return handlers.to_vec();
+        };
+        handlers
+            .iter()
+            .filter(|handler| analysis.creates(&mapping, handler))
+            .cloned()
+            .collect()
     }
 
     fn creating(dir: &TempDir, mapping: &str, handlers: &[&str]) -> Vec<String> {

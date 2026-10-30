@@ -1834,8 +1834,10 @@ impl SystemConfig {
             };
             manifest_path = output;
         }
-        if !project_paths.config.exists() || manifest_path == project_paths.config || from_template
-        {
+        let config_is_manifest = manifest_path == project_paths.config
+            && std::fs::read_to_string(&manifest_path)
+                .is_ok_and(|text| crate::subgraph::is_manifest(&text));
+        if !project_paths.config.exists() || config_is_manifest || from_template {
             let env = crate::utils::project_env::ProjectEnv::new(root);
             let network = env.var(crate::subgraph::NETWORK_ENV_VAR);
             let rendered =
@@ -3281,6 +3283,40 @@ mod test {
     use super::SystemConfig;
     use crate::{config_parsing::system_config::Event, project_paths::ParsedProjectPaths};
     use pretty_assertions::assert_eq;
+
+    // A config under another name is the manifest only when it is one: an
+    // envio config a script renders mustn't have that script's other outputs
+    // written beside it on every parse.
+    #[test]
+    fn parses_a_renamed_envio_config_without_touching_its_render_script() {
+        let dir = tempdir::TempDir::new("envio-renamed-config").unwrap();
+        let root = dir.path();
+        let write = |name: &str, text: &str| {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "package.json",
+            r#"{"scripts":{"prepare":"mustache config/mainnet.json my.template.yaml > my.yaml && mustache config/mainnet.json companion.template > companion.txt"}}"#,
+        );
+        write("config/mainnet.json", r#"{"name":"renamed"}"#);
+        write("companion.template", "{{name}}\n");
+        write(
+            "my.template.yaml",
+            "name: {{name}}\nchains:\n  - id: 1\n    start_block: 0\n    contracts: []\n",
+        );
+        write(
+            "my.yaml",
+            "name: renamed\nchains:\n  - id: 1\n    start_block: 0\n    contracts: []\n",
+        );
+        write("schema.graphql", "type A {\n  id: ID!\n}\n");
+
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "my.yaml").unwrap();
+        let _ = SystemConfig::parse_from_project_files(&project_paths);
+
+        assert_eq!(root.join("companion.txt").exists(), false);
+    }
 
     #[test]
     fn in_memory_yaml_matches_filesystem_public_config() {

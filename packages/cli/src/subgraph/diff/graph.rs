@@ -377,10 +377,6 @@ pub fn page_query(collection: &str, cursor: Option<&str>, block: Option<u64>) ->
     format!("{{ page: {} {{ id }} }}", call(collection, &arguments))
 }
 
-pub fn rows_query(collection: &str, selection: &str, ids: &[Value], block: Option<u64>) -> String {
-    rows_query_as("rows", collection, selection, ids, block)
-}
-
 fn rows_query_as(
     alias: &str,
     collection: &str,
@@ -969,7 +965,13 @@ pub mod tests {
     #[test]
     fn escapes_ids_in_queries() {
         assert_eq!(
-            rows_query("tokens", "name", &[json!("a\"b"), json!("0x01")], None),
+            rows_query_as(
+                "rows",
+                "tokens",
+                "name",
+                &[json!("a\"b"), json!("0x01")],
+                None
+            ),
             "{ rows: tokens(first: 1000, where: {id_in: [\"a\\\"b\", \"0x01\"]}) { id name } }"
         );
     }

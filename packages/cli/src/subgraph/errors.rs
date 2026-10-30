@@ -191,6 +191,7 @@ impl Report {
         self.findings.is_empty()
     }
 
+    #[cfg(test)]
     pub fn findings(&self) -> &[Finding] {
         &self.findings
     }

@@ -735,14 +735,6 @@ pub fn missing_rpc_message(call_site: &str) -> String {
     )
 }
 
-pub fn missing_api_token_message() -> String {
-    format!(
-        "Envio Subgraph needs a HyperSync API token to sync.\n\
-         Create one at https://envio.dev/app/api-tokens, then add it to .env:\n  \
-         {API_TOKEN_ENV_VAR}=<your token>"
-    )
-}
-
 /// Also the runtime's, when a mapping imports the tree it couldn't build
 /// (napi `subgraph_missing_graph_cli_message`). It shows when graph-cli isn't
 /// installed, so the manual command names the package: `npx graph` would fetch
@@ -891,14 +883,6 @@ fn pathdiff_relative(path: &std::path::Path, root: &std::path::Path) -> String {
     path.strip_prefix(&root)
         .map(|relative| relative.display().to_string())
         .unwrap_or_else(|_| path.display().to_string())
-}
-
-pub fn graph_codegen_failed_message() -> String {
-    "Envio Subgraph ran `graph codegen` to build \"generated/\", but it failed —\n\
-     the error above comes from The Graph's own codegen, so fix it there and\n\
-     rerun. If `graph codegen` succeeds on its own but fails through envio,\n\
-     please open an issue: https://github.com/enviodev/hyperindex/issues"
-        .to_string()
 }
 
 /// The envio contract name for each data source and template name. graph-node

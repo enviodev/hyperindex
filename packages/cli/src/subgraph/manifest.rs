@@ -1191,12 +1191,15 @@ fn parse_event_handler(
 /// parameter names dropped. `None` when the signature isn't one this reads.
 pub fn canonical_event_hash(event: &str) -> Option<String> {
     let open = event.find('(')?;
-    let close = event.rfind(')')?;
+    let close = event.rfind(')').filter(|&close| close > open)?;
     let name = event[..open].trim();
     let mut types = Vec::new();
     let (mut depth, mut start) = (0usize, open + 1);
     let params = &event[..close];
-    for (at, c) in params.char_indices().skip(open + 1) {
+    for (at, c) in params[open + 1..]
+        .char_indices()
+        .map(|(at, c)| (at + open + 1, c))
+    {
         match c {
             '(' => depth += 1,
             ')' => depth = depth.checked_sub(1)?,
@@ -2050,6 +2053,19 @@ mod topic0_tests {
             canonical_event_hash("Deposit(indexed bytes32 id, address a, address b, uint256 c)")
                 .as_deref(),
             Some("0xc95ddcaddf83340b68d0d44c01b1703f5d28d0611a3fd87e69d79ba7e2ac21d3")
+        );
+    }
+
+    // The signature comes from the user's manifest: a malformed one has no
+    // hash, it doesn't take the translation down.
+    #[test]
+    fn has_no_hash_for_a_malformed_signature() {
+        assert_eq!(
+            (
+                canonical_event_hash("Foo)(uint256"),
+                canonical_event_hash("Ünïcode(uint256)").is_some(),
+            ),
+            (None, true)
         );
     }
 }
