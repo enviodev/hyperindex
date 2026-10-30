@@ -275,15 +275,6 @@ let getIdFieldOrThrow = (table): field =>
 let getIdSchema = (table): S.t<EntityId.t> =>
   (table->getIdFieldOrThrow).fieldSchema->(Utils.magic: S.t<unknown> => S.t<EntityId.t>)
 
-// Serializes an array of ids to the values the SQL layer binds. Not JSON: a
-// Uint8Array id has no JSON form. The array schema is memoized per table so its
-// serializer compiles once, not on every (high-frequency) delete/history write.
-let idsArraySchema: table => S.t<array<EntityId.t>> = Utils.WeakMap.memoize(table =>
-  S.array(table->getIdSchema)
-)
-let encodeIds = (table, ids: array<EntityId.t>): array<unknown> =>
-  ids->S.reverseConvertOrThrow(table->idsArraySchema)->(Utils.magic: unknown => array<unknown>)
-
 // TODO: Test whether it should be passed via args and match the column type
 
 // Resolved once per table, because a getWhere looks up every field it filters

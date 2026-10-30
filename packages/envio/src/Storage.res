@@ -528,11 +528,11 @@ let stagedFor = (staged, ~store, stage) => {
     })
 )
 
-// Ids as the text their column reads them from.
-let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
-  table
-  ->Table.encodeIds(ids)
-  ->Array.map(Sql.render)
+// Ids as the text their column reads them from. An id is already the raw
+// scalar its column stores (string, int, bigint or Uint8Array), so it renders
+// as is.
+let renderIds = (ids: array<EntityId.t>) =>
+  ids->(Utils.magic: array<EntityId.t> => array<unknown>)->Array.map(Sql.render)
 
 let bounds = (
   {sequence, byChain}: CheckpointSequence.checkpointBoundsByChain,
@@ -1248,16 +1248,16 @@ let make = (
           : None
       {
         sets: ?rowsOf(sets),
-        deletes: entityConfig.table->renderIds(deletes),
+        deletes: renderIds(deletes),
         history: ?(
           shouldSaveHistory
             ? Some(
                 (
                   {
-                    backfill: entityConfig.table->renderIds(backfill),
+                    backfill: renderIds(backfill),
                     sets: ?rowsOf(historySets),
                     setCheckpointIds: historySetCheckpointIds,
-                    deleteIds: entityConfig.table->renderIds(historyDeleteIds),
+                    deleteIds: renderIds(historyDeleteIds),
                     deleteCheckpointIds: historyDeleteCheckpointIds,
                   }: StorageClient.historyWrite
                 ),

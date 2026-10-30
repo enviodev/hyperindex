@@ -266,4 +266,15 @@ describe("Bytes entity id", () => {
       ))
     },
   )
+
+  it("still rejects an id type outside the supported set", t => {
+    t->toThrowErrorEqual(
+      () =>
+        InternalTestIndexer.fromUserApi(
+          ~schema=`type Thing { id: Float! }`,
+          ~configYaml=configYaml(~bytesType="hex"),
+        )->ignore,
+      "schema.graphql:1:1: The 'id' field on entity Thing has unsupported type 'Float'. An entity id must be one of: ID, String, Int, BigInt, Bytes.",
+    )
+  })
 })

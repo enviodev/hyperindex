@@ -46,7 +46,7 @@ module Entity = {
   }
 
   // Helper to extract an entity's id as a dict key. The raw id may be a
-  // string/int/bigint, so it's stringified to a stable key for in-memory
+  // string/int/bigint/Uint8Array, so it's stringified to a stable key for in-memory
   // indexing.
   let getEntityIdUnsafe = (entity: Internal.entity): string =>
     switch (entity->(Utils.magic: Internal.entity => {"id": option<EntityId.t>}))["id"] {

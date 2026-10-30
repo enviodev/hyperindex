@@ -159,7 +159,7 @@ let handleWriteBatch = (
       | Set({entityId, entity, checkpointId}) =>
         // The store keeps decoded entities so load comparisons (bigint /
         // BigDecimal) work on real values. Ids are keyed by their string form
-        // since they may be string/int/bigint.
+        // since they may be string/int/bigint/Uint8Array.
         let storedEntity = switch (chainIdField, scope->Internal.chainScopeChainId) {
         | (Some(field), Some(chainId)) =>
           entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId)
@@ -436,7 +436,12 @@ let getEntityFromState = (
   switch entityConfig.table->Table.getChainIdField {
   | None => entityDict->Dict.get(entityId)->Option.map(copyEntity)
   | Some(field) =>
-    let matches = entityDict->Dict.valuesToArray->Array.filter(entity => entity.id === entityId)
+    // By key, not `===`: a Uint8Array id is a different object on every call.
+    let key = entityId->EntityId.unsafeOfString->EntityId.toKey
+    let matches =
+      entityDict
+      ->Dict.valuesToArray
+      ->Array.filter(entity => entity.id->EntityId.unsafeOfString->EntityId.toKey === key)
     switch matches {
     | [] => None
     | [entity] => Some(copyEntity(entity))

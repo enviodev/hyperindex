@@ -91,7 +91,8 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
 
 /// An entity's `id` rescript type and whether it is the default `string`.
 /// Foreign keys and id-keyed operations adopt this type; `ID!`/`String!` keep
-/// `string`, `Int!` is `int`, `BigInt!` is `bigint`.
+/// `string`, `Int!` is `int`, `BigInt!` is `bigint`, `Bytes!` follows
+/// `bytes_type`.
 fn entity_id_type(entity: &EntityRecordTypeTemplate) -> (bool, String) {
     entity
         .params
