@@ -55,13 +55,8 @@ describe("Dynamic contracts startup size", () => {
   ON CONFLICT DO NOTHING;`,
               )
 
-              let storage = Storage.make(
-                ~client=TestPgSchema.client(~pgSchema),
-                ~logger=Logger.makeInMemory(),
-                ~ecosystem=Evm,
-              )
+              let storage = Storage.make(~client=TestPgSchema.client(~pgSchema), ~ecosystem=Evm)
               let resumed = await storage.resumeInitialState(
-                ~entities=[],
                 ~chainIds=[chainId],
                 ~contractMapping=ContractMapping.empty,
               )

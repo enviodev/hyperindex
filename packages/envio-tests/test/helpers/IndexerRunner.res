@@ -3,6 +3,24 @@ type metric = {
   labels: dict<string>,
 }
 
+// The entity as its stored rows hold it: the handler-visible schema, and the
+// chain-id column a per-chain entity's table carries.
+let storedRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =>
+  switch entityConfig.table->Table.getChainIdField {
+  | None => entityConfig.schema
+  | Some(chainIdField) =>
+    S.schema(s => {
+      let dict = Dict.make()
+      switch entityConfig.schema->S.classify {
+      | Object({items}) =>
+        items->Array.forEach(({location, schema}) => dict->Dict.set(location, s.matches(schema)))
+      | _ => ()
+      }
+      dict->Dict.set(chainIdField.fieldName, s.matches(ChainId.schema->S.toUnknown))
+      dict
+    })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>)
+  }
+
 let loadAllQuery = (~pgSchema, ~tableName) => `SELECT * FROM "${pgSchema}"."${tableName}";`
 
 // Which persistence a run is exercised against: Postgres alone, every entity
@@ -277,16 +295,7 @@ let run = async (
     clients->Array.push(sql)->ignore
     // Tracking tables in Hasura costs ~1.9 seconds per indexer.
     let client = Storage.clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
-    let storage = mapStorage(
-      Storage.make(
-        ~client,
-        ~logger,
-        ~entities=config.userEntities,
-        ~cacheDir,
-        ~ecosystem=config.ecosystem.name,
-        ~isolated=config.isolated,
-      ),
-    )
+    let storage = mapStorage(Storage.make(~client, ~cacheDir, ~ecosystem=config.ecosystem.name))
     storages->Array.push(storage)
     let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
     // `Main.start` does this before handler modules load, so the exported
@@ -386,26 +395,10 @@ let run = async (
     stops->Array.push(stop)->ignore
 
     // An entity's ClickHouse copy is read through the run's own client, which
-    // sees what the indexer has committed. A read goes to Postgres whenever it
-    // keeps the entity, so the table is registered as ClickHouse's alone.
-    // Registered once per client: the handle is what a read names the table by.
-    let clickHouseTables = Dict.make()
-    let clickHouseTable = (entityConfig: Internal.entityConfig) =>
-      switch clickHouseTables->Dict.get(entityConfig.name) {
-      | Some(handle) => handle
-      | None =>
-        let handle = (
-          client->Storage.registerEntity({
-            ...entityConfig,
-            storage: {...entityConfig.storage, postgres: false},
-          })
-        ).handle
-        clickHouseTables->Dict.set(entityConfig.name, handle)
-        handle
-      }
+    // sees what the indexer has committed.
     let clickHouseRows = (entityConfig: Internal.entityConfig) =>
       client
-      ->StorageClient.loadWhere(~table=clickHouseTable(entityConfig), ~conditions=[])
+      ->StorageClient.clickHouseRowsForTests(~entity=entityConfig.index)
       ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<unknown>>)
     let postgresRows = (entityConfig: Internal.entityConfig) =>
       sql->Sql.queryForTests(loadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName))
@@ -493,7 +486,7 @@ let run = async (
       switch entityConfig.storage {
       | {postgres: false} =>
         client
-        ->StorageClient.historyForTests(~table=clickHouseTable(entityConfig))
+        ->StorageClient.historyForTests(~entity=entityConfig.index)
         ->(Utils.magic: promise<array<dict<unknown>>> => promise<array<unknown>>)
       | _ =>
         sql->Sql.queryForTests(
@@ -517,7 +510,7 @@ let run = async (
             S.union([
               EntityHistory.makeSetUpdateSchema(
                 ~idSchema=entityConfig.table->Table.getIdSchema,
-                entityConfig->Storage.getRowSchema,
+                entityConfig->storedRowSchema,
               ),
               S.object((s): Change.t<Internal.entity> => {
                 s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)

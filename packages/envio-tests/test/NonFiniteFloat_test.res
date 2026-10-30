@@ -2,9 +2,7 @@ open Vitest
 
 // A division by zero in a handler is a NaN or an Infinity. A float field's
 // schema reads neither back, so storing one leaves an entity no later handler
-// can load; the write refuses it instead. An entity with a list field is bound
-// a cell at a time rather than staged (LocalWriteFailure_test), and has to
-// refuse it the same way.
+// can load; the write refuses it instead, in a list as in a scalar.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -83,3 +81,73 @@ refusesWith(
   ~sample={id: "1", value: 1.5, history: [2.5, Float.Constants.positiveInfinity]},
   ~reason="Infinity is not a finite number, so it cannot be stored in the `history` column. Store a finite number, or keep it out of the entity.",
 )
+
+// Each store spells a column its own way, so the refusal names the field the
+// handler set, as the schema declares it.
+describe("A NaN in a field Postgres stores under a snake_case column", () => {
+  let refusal = Scenario.captureRefusal()
+
+  Scenario.make(
+    ~configYaml=`
+name: non-finite-float-snake-case
+storage:
+  postgres:
+    default: true
+    column_name_format: snake_case
+chains:
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "TestEvent()"
+`,
+    ~schema=`
+type Reading {
+  id: ID!
+  sampleValue: Float!
+}
+`,
+  )->Scenario.it(
+    "is refused, naming the field",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~onError=refusal.onError,
+    async (~t, ~indexer as _, ~source) => {
+      let sourceMock = source(1337)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=100)
+
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 1,
+                logIndex: 0,
+                handler: async args =>
+                  (
+                    args.context->(
+                      Utils.magic: Internal.handlerContext => {
+                        "Reading": {"set": {"id": string, "sampleValue": float} => unit},
+                      }
+                    )
+                  )["Reading"]["set"]({"id": "1", "sampleValue": Float.Constants.nan}),
+              },
+            ],
+          }),
+        },
+      ])
+
+      t.expect(await refusal.awaitRefusalReason()).toEqual(
+        Some(
+          "NaN is not a finite number, so it cannot be stored in the `sampleValue` column. Store a finite number, or keep it out of the entity.",
+        ),
+      )
+    },
+  )
+})

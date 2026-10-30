@@ -16,12 +16,13 @@ use super::client::{error_code, insert_tag_prefix, Client, Connection, Tuning, W
 use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
 use super::select::{self, Frontier};
-use super::table::{ClickHouseTableInput, Table};
+use super::table::Table;
 use super::{literal, quoted, table_ref};
-use crate::columnar::Arena;
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
-use crate::storage::rows::{self, Cell, ColumnRead, ReadKind, ResultSet};
+use crate::storage::changes::ChangeSet;
+use crate::storage::rows::{self, Cell, ColumnRead, Decoded, ReadKind, ResultSet};
+use crate::storage::schema::{Entity, FieldType, Schema};
 use crate::storage::types::{
     Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
     INFO_TABLE,
@@ -29,7 +30,6 @@ use crate::storage::types::{
 use crate::storage::{Batch, Failure, Handoff, Initialize, Resume, WriteError};
 
 pub struct Settings {
-    pub chain_id_mode: ChainIdMode,
     pub replicated: bool,
     pub database_engine: Option<String>,
 }
@@ -61,6 +61,9 @@ struct Chains {
 pub struct Storage {
     client: Client,
     settings: Settings,
+    schema: Arc<Schema>,
+    /// By entity index: None for an entity ClickHouse doesn't keep.
+    tables: Vec<Option<Arc<Table>>>,
     chains: Mutex<Chains>,
 }
 
@@ -82,16 +85,44 @@ impl Storage {
         tuning: Tuning,
         warn: Warn,
         settings: Settings,
+        schema: Arc<Schema>,
     ) -> Result<Self> {
+        let client = Client::new(connection, tuning, warn)?;
+        let tables = schema
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .clickhouse
+                    .is_some()
+                    .then(|| {
+                        Table::new(entity, &client.database, schema.chain_id_mode).map(Arc::new)
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
-            client: Client::new(connection, tuning, warn)?,
+            client,
             settings,
+            schema,
+            tables,
             chains: Mutex::new(Chains::default()),
         })
     }
 
-    pub fn register(&self, input: ClickHouseTableInput) -> Result<Table> {
-        Table::new(input, self.database(), self.settings.chain_id_mode)
+    pub fn table(&self, entity: &Entity) -> Result<&Arc<Table>> {
+        self.tables
+            .get(entity.index)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| anyhow!("\"{}\" is not stored in ClickHouse", entity.name))
+    }
+
+    fn all_tables(&self) -> Vec<Arc<Table>> {
+        self.tables.iter().flatten().cloned().collect()
+    }
+
+    fn chain_id_mode(&self) -> ChainIdMode {
+        self.schema.chain_id_mode
     }
 
     fn database(&self) -> &str {
@@ -99,16 +130,9 @@ impl Storage {
     }
 
     fn chain_id_type(&self) -> ChType {
-        FieldSpec {
-            field_type: "ChainId".to_string(),
-            is_nullable: false,
-            is_array: false,
-            precision: None,
-            scale: None,
-            enum_variants: None,
-        }
-        .ch_type(self.settings.chain_id_mode)
-        .expect("a chain id always has a ClickHouse type")
+        FieldSpec::new("chainId", FieldType::ChainId)
+            .ch_type(self.chain_id_mode())
+            .expect("a chain id always has a ClickHouse type")
     }
 
     fn topology(&self) -> Topology {
@@ -162,26 +186,16 @@ impl Storage {
         self.insert(table, &query, &encoded).await
     }
 
-    /// Sends what JavaScript staged for one table, in one insert. Encoding
-    /// runs off the async workers: it is pure CPU over every cell of the batch.
-    async fn insert_staged(&self, table: Arc<Table>, arenas: Vec<Arena>) -> Result<()> {
-        let schema = table.clone();
+    /// Sends every change set of one table, in one insert. Encoding runs off
+    /// the async workers: it is pure CPU over every cell of the batch.
+    async fn insert_changes(&self, table: Arc<Table>, changes: Vec<Arc<ChangeSet>>) -> Result<()> {
+        let encoding = table.clone();
         let encoded = tokio::task::spawn_blocking(move || {
-            let rows = arenas.iter().map(Arena::rows).sum();
-            let mut body = Vec::with_capacity(rows * schema.staged.len() * 12);
+            let rows = changes.iter().map(|changes| changes.len()).sum();
+            let mut body = Vec::with_capacity(rows * encoding.staged.len() * 12);
             let mut row_offsets = Vec::with_capacity(rows);
-            for arena in &arenas {
-                let columns: Vec<row_binary::Column> = schema
-                    .staged
-                    .iter()
-                    .zip(arena.columns())
-                    .map(|((name, ch_type), values)| row_binary::Column {
-                        name,
-                        ch_type,
-                        values,
-                    })
-                    .collect();
-                row_binary::encode_into(&mut body, &mut row_offsets, &columns, arena.rows())?;
+            for changes in &changes {
+                row_binary::encode_changes(&mut body, &mut row_offsets, &encoding, changes)?;
             }
             Ok::<_, anyhow::Error>(EncodedRows {
                 body: body.into(),
@@ -324,20 +338,12 @@ impl Storage {
         }
         let database = quoted(self.database());
 
-        let entities = input
-            .tables
-            .iter()
-            .filter_map(|table| table.clickhouse.as_ref().map(|table| &table.entity))
-            .collect::<Vec<_>>();
+        let tables = self.all_tables();
+        let entities = tables.iter().map(|table| &table.entity).collect::<Vec<_>>();
         let history_tables = entities
             .iter()
             .map(|entity| {
-                ddl::create_history_table(
-                    entity,
-                    self.database(),
-                    topology,
-                    self.settings.chain_id_mode,
-                )
+                ddl::create_history_table(entity, self.database(), topology, self.chain_id_mode())
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -819,17 +825,14 @@ impl Storage {
         if frontier.is_empty() {
             return Ok(());
         }
-        let tables = input
-            .tables
-            .iter()
-            .filter_map(|table| table.clickhouse.clone())
-            .collect::<Vec<_>>();
+        let tables = self.all_tables();
         if self.topology().replicated {
             self.sync_replica(&tables).await?;
         }
         self.check_holds(&frontier).await?;
         self.write_chains(frontier.clone()).await?;
-        self.trim_above(input.sequence, &frontier, &tables).await
+        self.trim_above(self.schema.sequence, &frontier, &tables)
+            .await
     }
 
     pub async fn resume(&self, input: &Resume) -> Result<()> {
@@ -840,18 +843,18 @@ impl Storage {
 
     pub async fn load_where(
         &self,
-        table: &crate::storage::Table,
+        entity: &Entity,
         conditions: Vec<Condition>,
     ) -> Result<ResultSet> {
-        let table = table.clickhouse()?;
+        let table = self.table(entity)?;
         let read = select::load(self.database(), table, &conditions, &self.frontier())?;
         let body = self.client.read_with(read).await?;
         let (types, reads) = table.reads();
         rows::lay_out(&row_binary::decode(&body, &types)?, reads)
     }
 
-    pub async fn history(&self, table: &crate::storage::Table) -> Result<ResultSet> {
-        let table = table.clickhouse()?;
+    pub async fn history(&self, entity: &Entity) -> Result<ResultSet> {
+        let table = self.table(entity)?;
         let body = self
             .client
             .read(select::history(self.database(), table, &self.frontier()))
@@ -865,10 +868,10 @@ impl Storage {
     /// The keys a rollback removes, and the rows it restores the rest from.
     pub async fn rollback_data(
         &self,
-        table: &crate::storage::Table,
+        entity: &Entity,
         bounds: &Bounds,
     ) -> Result<(ResultSet, ResultSet)> {
-        let table = table.clickhouse()?;
+        let table = self.table(entity)?;
         let key = table.key_columns()?;
         let (removed, restored) = futures_util::try_join!(
             self.client
@@ -876,45 +879,43 @@ impl Storage {
             self.client
                 .read(select::rollback_restored(self.database(), table, bounds)?),
         )?;
-        let removed = rows::lay_out(
-            &row_binary::decode(
+        let removed = Decoded {
+            cells: row_binary::decode(
                 &removed,
                 &key.iter()
                     .map(|column| (column.ch_type.clone(), column.read))
                     .collect::<Vec<_>>(),
             )?,
-            key.iter()
+            columns: key
+                .iter()
                 .map(|column| ColumnRead::scalar(&column.row_name, column.read))
                 .collect(),
-        )?;
+        };
         let (types, reads) = table.history_reads();
-        let restored = rows::lay_out(&row_binary::decode(&restored, &types)?, reads)?;
-        Ok((removed, restored))
+        let restored = Decoded {
+            cells: row_binary::decode(&restored, &types)?,
+            columns: reads,
+        };
+        rows::rollback(removed, restored)
     }
 
     /// Whether the batch was committed: one landed but not told to commit is
     /// left above the frontier, unread and trimmed by the next resume.
-    async fn write_inner(&self, batch: Batch, mut handoff: Handoff) -> Result<bool> {
-        let Batch {
-            entities,
-            frontier,
-            checkpoints,
-            ..
-        } = batch;
-
+    async fn write_inner(&self, batch: &Batch, mut handoff: Handoff) -> Result<bool> {
         // A per-chain entity stages each chain's rows apart, and each insert
         // is a part the server has to merge.
-        let mut staged: Vec<(Arc<Table>, Vec<Arena>)> = Vec::new();
-        for write in entities {
-            if let Some(arena) = write.clickhouse {
-                let table = write.table.clickhouse()?.clone();
-                match staged
-                    .iter_mut()
-                    .find(|(staged, _)| staged.entity.history_table == table.entity.history_table)
-                {
-                    Some((_, arenas)) => arenas.push(arena),
-                    None => staged.push((table, vec![arena])),
-                }
+        let mut staged: Vec<(Arc<Table>, Vec<Arc<ChangeSet>>)> = Vec::new();
+        for changes in &batch.changes {
+            if changes.entity.clickhouse.is_none() || changes.len() == 0 {
+                continue;
+            }
+            let table = self.table(&changes.entity)?;
+            match staged
+                .iter_mut()
+                .find(|(staged, _)| Arc::ptr_eq(staged, table))
+            {
+                Some((_, sets)) => sets.push(changes.clone()),
+                None => staged.push((table.clone(), vec![changes.clone()])),
             }
         }
         // With no rows between the old frontier and the new one, every read
@@ -923,16 +924,16 @@ impl Storage {
         let moved = if staged.is_empty() {
             Frontier::new()
         } else {
-            frontier.entries().collect()
+            batch.frontier.entries().collect()
         };
         let checkpoint_columns = ddl::checkpoint_columns(&self.chain_id_type());
-        let checkpoint_rows = Self::checkpoint_values(&checkpoints);
+        let checkpoint_rows = Self::checkpoint_values(&batch.checkpoints_with_diff());
         futures_util::try_join!(
             self.insert_values(CHECKPOINTS_TABLE, &checkpoint_columns, &checkpoint_rows),
             try_join_all(
                 staged
                     .into_iter()
-                    .map(|(table, arenas)| self.insert_staged(table, arenas))
+                    .map(|(table, changes)| self.insert_changes(table, changes))
             ),
         )?;
 
@@ -946,7 +947,7 @@ impl Storage {
 
     pub async fn write_batch(
         &self,
-        batch: Batch,
+        batch: &Batch,
         handoff: Handoff,
     ) -> std::result::Result<(), WriteError> {
         match self.write_inner(batch, handoff).await {
@@ -974,34 +975,54 @@ mod tests {
     use super::*;
     use crate::clickhouse::mock_server::MockClickHouse;
     use crate::clickhouse::table::test_support::{column, entity_input};
+    use crate::storage::changes::test_support::{change_set, Change};
     use crate::storage::types::{Addresses, ChainConfig, Frontier, ResumedChain};
-    use crate::storage::EntityWrite;
     use pretty_assertions::assert_eq;
 
-    fn storage_at(server: &MockClickHouse) -> Storage {
+    /// A cross-chain entity has no chain column, which only a shared sequence
+    /// bounds.
+    fn schema() -> Arc<Schema> {
+        Arc::new(Schema {
+            entities: vec![Arc::new(entity_input(
+                "Account",
+                vec![column("id", "String")],
+            ))],
+            enums: Vec::new(),
+            sequence: Sequence::SharedAcrossChains,
+            chain_id_mode: ChainIdMode::Int32,
+        })
+    }
+
+    fn storage_with(server: &MockClickHouse, replicated: bool) -> Storage {
         Storage::new(
             crate::clickhouse::client::test_support::connection(server.url.clone()),
             Tuning::default(),
             Arc::new(|_: &str| {}),
             Settings {
-                chain_id_mode: ChainIdMode::Int32,
-                replicated: false,
+                replicated,
                 database_engine: None,
             },
+            schema(),
         )
         .unwrap()
     }
 
-    fn account(storage: &Storage) -> Arc<crate::storage::Table> {
-        Arc::new(crate::storage::Table {
-            name: "Account".to_string(),
-            postgres: None,
-            clickhouse: Some(Arc::new(
-                storage
-                    .register(entity_input("Account", vec![column("id", "String")]))
-                    .unwrap(),
-            )),
-        })
+    fn storage_at(server: &MockClickHouse) -> Storage {
+        storage_with(server, false)
+    }
+
+    /// A set of each id, at checkpoint 1.
+    fn sets(storage: &Storage, ids: &[&str]) -> ChangeSet {
+        let values = ids.iter().map(|id| [Some(*id)]).collect::<Vec<_>>();
+        change_set(
+            storage.schema.entities[0].clone(),
+            None,
+            true,
+            &values
+                .iter()
+                .map(|value| Change::Set(value, 1))
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// The table each insert went to, in the order they were sent.
@@ -1017,13 +1038,9 @@ mod tests {
             .collect()
     }
 
-    async fn initialize(storage: &Storage, tables: Vec<Arc<crate::storage::Table>>) {
+    async fn initialize(storage: &Storage) {
         storage
             .initialize(&Initialize {
-                sequence: Sequence::PerChain,
-                tables,
-                partitions: Vec::new(),
-                enums: Vec::new(),
                 chains: vec![ChainConfig {
                     id: 1,
                     ecosystem: "evm".to_string(),
@@ -1101,42 +1118,12 @@ mod tests {
         .await
     }
 
-    /// A set of each id, staged at checkpoint 1.
-    fn staged(ids: &[&str]) -> Arena {
-        let mut arena = Arena::new(
-            ids.len(),
-            &[
-                crate::columnar::ColumnKind::Text,
-                crate::columnar::ColumnKind::U64,
-                crate::columnar::ColumnKind::Text,
-            ],
-        )
-        .unwrap();
-        for (row, id) in ids.iter().enumerate() {
-            arena.set_bytes(0, row, id.as_bytes());
-            arena.set_u64(1, row, 1);
-            arena.set_bytes(2, row, b"SET");
-        }
-        arena
-            .seal_unlent(&["id", "envio_checkpoint_id", "envio_change"].map(str::to_string))
-            .unwrap();
-        arena
-    }
-
     /// Writes the staged rows at checkpoint 1 of chain 1.
-    async fn write_staged(storage: &Storage, writes: Vec<(Arc<crate::storage::Table>, Arena)>) {
+    async fn write_staged(storage: &Storage, writes: Vec<ChangeSet>) {
         storage
             .write_batch(
-                Batch {
-                    entities: writes
-                        .into_iter()
-                        .map(|(table, arena)| EntityWrite {
-                            table,
-                            chain_id: None,
-                            postgres: None,
-                            clickhouse: Some(arena),
-                        })
-                        .collect(),
+                &Batch {
+                    changes: writes.into_iter().map(Arc::new).collect(),
                     frontier: Frontier {
                         chain_ids: vec![1],
                         checkpoint_ids: vec![1],
@@ -1168,16 +1155,12 @@ mod tests {
     async fn a_write_sends_each_table_one_insert() {
         let server = accepting().await;
         let storage = storage_at(&server);
-        let account = account(&storage);
-        initialize(&storage, vec![account.clone()]).await;
+        initialize(&storage).await;
         let initialized = inserted_tables(&server).len();
 
         write_staged(
             &storage,
-            vec![
-                (account.clone(), staged(&["a"])),
-                (account, staged(&["b", "c"])),
-            ],
+            vec![sets(&storage, &["a"]), sets(&storage, &["b", "c"])],
         )
         .await;
 
@@ -1197,12 +1180,11 @@ mod tests {
     async fn a_write_commits_with_its_chains_rows_last() {
         let server = accepting().await;
         let storage = storage_at(&server);
-        let account = account(&storage);
-        initialize(&storage, vec![account.clone()]).await;
+        initialize(&storage).await;
         let initialized = inserted_tables(&server).len();
 
         let queries_before = server.queries_seen();
-        write_staged(&storage, vec![(account, staged(&["a"]))]).await;
+        write_staged(&storage, vec![sets(&storage, &["a"])]).await;
 
         let mut written = inserted_tables(&server).split_off(initialized);
         let last = written.pop();
@@ -1226,13 +1208,12 @@ mod tests {
     async fn only_a_write_with_rows_raises_the_chains_frontier() {
         let server = accepting().await;
         let storage = storage_at(&server);
-        let account = account(&storage);
-        initialize(&storage, vec![account.clone()]).await;
+        initialize(&storage).await;
         let initialized = inserted_tables(&server).len();
 
         write_staged(&storage, Vec::new()).await;
         let without_rows = inserted_tables(&server).split_off(initialized);
-        write_staged(&storage, vec![(account, staged(&["a"]))]).await;
+        write_staged(&storage, vec![sets(&storage, &["a"])]).await;
         let mut with_rows = inserted_tables(&server).split_off(initialized + without_rows.len());
         with_rows.sort();
 
@@ -1265,12 +1246,8 @@ mod tests {
         }
     }
 
-    fn resume_at_checkpoint_7(table: Arc<crate::storage::Table>) -> Resume {
+    fn resume_at_checkpoint_7() -> Resume {
         Resume {
-            // A cross-chain entity has no chain column, which only a shared
-            // sequence bounds.
-            sequence: Sequence::SharedAcrossChains,
-            tables: vec![table],
             committed: vec![ResumedChain {
                 id: 1,
                 start_block: 0,
@@ -1304,9 +1281,7 @@ mod tests {
         }))
         .await;
         let storage = storage_at(&server);
-        let account = account(&storage);
-
-        let resumed = storage.resume(&resume_at_checkpoint_7(account)).await;
+        let resumed = storage.resume(&resume_at_checkpoint_7()).await;
 
         assert_eq!(
             resumed.map_err(|error| format!("{error:#}").contains("ACCESS_DENIED")),
@@ -1320,23 +1295,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_replicated_resume_waits_for_the_chains_rows_too() {
         let server = MockClickHouse::answering_statements(Arc::new(after_a_clean_stop)).await;
-        let storage = Storage::new(
-            crate::clickhouse::client::test_support::connection(server.url.clone()),
-            Tuning::default(),
-            Arc::new(|_: &str| {}),
-            Settings {
-                chain_id_mode: ChainIdMode::Int32,
-                replicated: true,
-                database_engine: None,
-            },
-        )
-        .unwrap();
-        let account = account(&storage);
+        let storage = storage_with(&server, true);
 
-        storage
-            .resume(&resume_at_checkpoint_7(account))
-            .await
-            .unwrap();
+        storage.resume(&resume_at_checkpoint_7()).await.unwrap();
 
         let mut synced = server
             .statements_seen()
@@ -1360,11 +1321,7 @@ mod tests {
     async fn resuming_after_a_clean_stop_rewrites_nothing() {
         let server = MockClickHouse::answering_statements(Arc::new(after_a_clean_stop)).await;
         let storage = storage_at(&server);
-        let account = account(&storage);
-        storage
-            .resume(&resume_at_checkpoint_7(account))
-            .await
-            .unwrap();
+        storage.resume(&resume_at_checkpoint_7()).await.unwrap();
         assert_eq!(
             (
                 server

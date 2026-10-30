@@ -36,66 +36,6 @@ let parseError = (~perChain, ~columnNameFormat="original", schema) =>
 let entityConfig = (config: Config.t, name) => config.userEntitiesByName->Dict.getUnsafe(name)
 
 describe("clickhouse.orderBy on the appended chain column", () => {
-  it("Sorts by the chain column when the entity lists it", t => {
-    let config = parse(
-      ~perChain=true,
-      ~columnNameFormat="snake_case",
-      `
-type Transfer @storage(clickhouse: {orderBy: ["chainId", "timestamp"]}) {
-  id: ID!
-  timestamp: Timestamp!
-}
-`,
-    )
-
-    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
-
-    t.expect(
-      (spec.chainIdColumn, spec.orderBy),
-      ~message="chain column leads the sorting key",
-    ).toEqual((Some("chain_id"), Some(["chainId", "timestamp"])))
-  })
-
-  it("Sorts by the chain column alone, overriding the default id sorting key", t => {
-    let config = parse(
-      ~perChain=true,
-      ~columnNameFormat="snake_case",
-      `
-type Transfer @storage(clickhouse: {orderBy: ["chainId"]}) {
-  id: ID!
-  timestamp: Timestamp!
-}
-`,
-    )
-
-    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
-
-    t.expect(
-      (spec.chainIdColumn, spec.orderBy),
-      ~message="a lone chain column replaces the default id sorting key",
-    ).toEqual((Some("chain_id"), Some(["chainId"])))
-  })
-
-  it("Keeps the listed position, so a trailing chain column stays trailing", t => {
-    let config = parse(
-      ~perChain=true,
-      ~columnNameFormat="snake_case",
-      `
-type Transfer @storage(clickhouse: {orderBy: ["timestamp", "chainId"]}) {
-  id: ID!
-  timestamp: Timestamp!
-}
-`,
-    )
-
-    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
-
-    t.expect(
-      (spec.chainIdColumn, spec.orderBy),
-      ~message="chain column stays where the schema put it",
-    ).toEqual((Some("chain_id"), Some(["timestamp", "chainId"])))
-  })
-
   it("Points at the schema spelling when the storage column name is used", t => {
     t.expect(
       parseError(
@@ -157,32 +97,6 @@ type Transfer @crossChain @storage(clickhouse: {orderBy: ["chainId"]}) {
   envio only appends a chain column to per-chain entities, and entities are cross-chain unless config.yaml sets \`disable_default_cross_chain: true\`. Set it and drop \`@crossChain\`, or declare a \`chainId\` field yourself.`)
   })
 
-  it("Treats a declared chainId on a cross-chain entity as an ordinary column", t => {
-    let config = parse(
-      ~perChain=true,
-      ~columnNameFormat="snake_case",
-      `
-type Transfer @crossChain @storage(clickhouse: {orderBy: ["chainId", "timestamp"]}) {
-  id: ID!
-  chainId: Int!
-  timestamp: Timestamp!
-}
-`,
-    )
-
-    let spec = ClickHouse.entityTable(config->entityConfig("Transfer"))
-
-    t.expect(
-      (spec.columns->Array.map(({name}) => name), spec.chainIdColumn, spec.orderBy),
-      ~message="the user's own chainId field sorts like any other",
-    ).toEqual((
-      ["id", "chain_id", "timestamp"],
-      // No column envio appended, so nothing stamps the chain id on a write.
-      None,
-      Some(["chainId", "timestamp"]),
-    ))
-  })
-
   it("Lists the columns available when the name is nothing at all", t => {
     t.expect(
       parseError(
@@ -200,28 +114,6 @@ type Transfer @storage(clickhouse: {orderBy: ["blockNumber"]}) {
 })
 
 describe("@index on the appended chain column", () => {
-  it("Indexes the chain column alongside another field", t => {
-    let config = parse(
-      ~perChain=true,
-      `
-type Transfer @index(fields: ["chainId", "timestamp"]) {
-  id: ID!
-  timestamp: Timestamp!
-}
-`,
-    )
-
-    t.expect(
-      (config->entityConfig("Transfer")).table->Table.getCompositeIndexes,
-      ~message="the appended chain column resolves to its storage column",
-    ).toEqual([
-      [
-        ({fieldName: "chainId", direction: Table.Asc}: Table.compositeIndexField),
-        {fieldName: "timestamp", direction: Table.Asc},
-      ],
-    ])
-  })
-
   it("Rejects a lone chain-column index, which the primary key already covers", t => {
     t.expect(
       parseError(

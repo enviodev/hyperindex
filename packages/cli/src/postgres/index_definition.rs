@@ -7,11 +7,7 @@
 
 pub const BTREE: &str = "btree";
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Direction {
-    Asc,
-    Desc,
-}
+pub use crate::storage::schema::Direction;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct IndexColumn {

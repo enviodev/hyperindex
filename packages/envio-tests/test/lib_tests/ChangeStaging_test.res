@@ -113,40 +113,46 @@ let changes = [
   }),
 ]
 
-describe("ClickHouse staging", () => {
-  let tableFor = () => TestClickHouse.offlineClient()->TestClickHouse.entityTable(entityConfig)
+// What JavaScript owes the addon is every value in the encoding the layout
+// declares for it; each store converts from there on its own side.
+let client = Storage.makeClient(
+  ~logger=Logger.makeInMemory(),
+  ~config,
+  ~postgres=Storage.postgresOptions(~maxConnections=1),
+)
 
-  let stage = (table, arena, ~changes) =>
-    arena->ClickHouse.stageChangesOrThrow(
-      table,
-      ~entityConfig,
-      ~scope=Chain(ChainId.fromInt(137)),
-      ~changes,
-    )
+let writers =
+  (client->StorageClient.layouts).entities
+  ->Array.getUnsafe(entityConfig.index)
+  ->(layout => layout.StorageClient.fields)
+  ->StagedRows.writersOf
 
-  it("writes every column of every row shape into its own position", t => {
-    let table = tableFor()
-    let (mock, arena) = MockArena.make(~columns=table.columns)
+let columns = writers->StagedRows.columnsOf->Array.concat(Storage.changeColumns)
 
-    let _ = table->stage(arena, ~changes)
+describe("Change staging", () => {
+  let stage = (arena, ~changes) => arena->Storage.stageChangesOrThrow(~writers, ~changes)
+
+  it("writes every field of every change in the encoding its layout declares", t => {
+    let (mock, arena) = MockArena.make(~columns)
+
+    let _ = arena->stage(~changes)
 
     t.expect(mock->MockArena.staged).toEqual([
       {name: "id", values: Texts(["a", "b", "c"]), nulls: [0, 0, 0]},
-      {name: "some_int", values: Numbers([5., 0., 7.]), nulls: [0, 1, 0]},
-      {name: "opt_float", values: Numbers([1.5, 0., 0.]), nulls: [0, 1, 1]},
+      {name: "someInt", values: Numbers([5., 0., 7.]), nulls: [0, 1, 0]},
+      {name: "optFloat", values: Numbers([1.5, 0., 0.]), nulls: [0, 1, 1]},
       {name: "flag", values: Numbers([1., 0., 0.]), nulls: [0, 1, 0]},
       {name: "at", values: Numbers([1000., 0., 2000.]), nulls: [0, 1, 0]},
       {name: "big", values: Texts(["10", "", "20"]), nulls: [0, 1, 0]},
       {name: "tags", values: Texts([`["x","y"]`, "", "[]"]), nulls: [0, 1, 0]},
-      {name: "opt_kind", values: Texts(["A", "", ""]), nulls: [0, 1, 1]},
+      {name: "optKind", values: Texts(["A", "", ""]), nulls: [0, 1, 1]},
       {name: "doc", values: Texts([`{"k":1}`, "", "[1]"]), nulls: [0, 1, 0]},
       {name: "owner_id", values: Texts(["alice", "", "carol"]), nulls: [0, 1, 0]},
       {name: "blob", values: Blobs([blobA, emptyBytes, blobC]), nulls: [0, 1, 0]},
-      {name: "opt_blob", values: Blobs([optBlobA, emptyBytes, emptyBytes]), nulls: [0, 1, 1]},
+      {name: "optBlob", values: Blobs([optBlobA, emptyBytes, emptyBytes]), nulls: [0, 1, 1]},
       {name: "chunks", values: Texts(["[[1,2],[3]]", "", "[]"]), nulls: [0, 1, 0]},
-      {name: "chain_id", values: Numbers([137., 137., 137.]), nulls: [0, 0, 0]},
-      {name: "envio_checkpoint_id", values: Unsigned([1n, 2n, 3n]), nulls: [0, 0, 0]},
-      {name: "envio_change", values: Texts(["SET", "DELETE", "SET"]), nulls: [0, 0, 0]},
+      {name: "envio_checkpoint_id", values: Signed([1n, 2n, 3n]), nulls: [0, 0, 0]},
+      {name: "envio_change", values: Numbers([0., 1., 0.]), nulls: [0, 0, 0]},
     ])
   })
 
@@ -155,8 +161,7 @@ describe("ClickHouse staging", () => {
   // text is deliberately not ASCII — a string is given room for one byte per
   // UTF-16 unit first, and only the short encode says it needs more.
   it("keeps a value that outgrows the payload it was given", t => {
-    let table = tableFor()
-    let (mock, arena) = MockArena.make(~columns=table.columns)
+    let (mock, arena) = MockArena.make(~columns)
     let long = "xé😀"->String.repeat(1500)
     let changes = [
       Change.Set({
@@ -180,7 +185,7 @@ describe("ClickHouse staging", () => {
       }),
     ]
 
-    let _ = table->stage(arena, ~changes)
+    let _ = arena->stage(~changes)
 
     let staged = mock->MockArena.staged
     t.expect((staged->Array.getUnsafe(0), staged->Array.getUnsafe(10))).toEqual((
@@ -196,9 +201,8 @@ describe("ClickHouse staging", () => {
   // The arena is Rust memory lent to this side, so a batch that throws mid-fill
   // has to hand it back rather than leave it to a garbage collector that owns
   // none of it.
-  it("aborts the stage when a row cannot be converted", t => {
-    let table = tableFor()
-    let (mock, arena) = MockArena.make(~columns=table.columns)
+  it("aborts the stage when a value cannot be staged", t => {
+    let (mock, arena) = MockArena.make(~columns)
     let changes = [
       Change.Set({
         entityId: entityId("a"),
@@ -222,7 +226,7 @@ describe("ClickHouse staging", () => {
     ]
 
     let failed = try {
-      let _ = table->stage(arena, ~changes)
+      let _ = arena->stage(~changes)
       false
     } catch {
     | _ => true
@@ -237,12 +241,7 @@ describe("ClickHouse staging", () => {
 // what they are handed rather than trusting it, because the alternative is a
 // read of memory something can still write and no test that could see it.
 describe("Staged buffer checks", () => {
-  let staged = () => {
-    let client = TestClickHouse.offlineClient()
-    let table = client->TestClickHouse.entityTable(entityConfig)
-    let begun = client->StorageClient.beginStage(~table=table.handle, ~store=ClickHouse, ~rows=4)
-    (client, table, begun)
-  }
+  let staged = () => client->StorageClient.beginChanges(~entity=entityConfig.index, ~rows=4)
 
   let messageOf = body =>
     try {
@@ -253,17 +252,16 @@ describe("Staged buffer checks", () => {
     }
 
   // The first text column, and where its buffers start in the lent array.
-  let textColumn = (table: ClickHouse.table) => {
-    let column =
-      table.columns->Array.findIndexOpt(({kind}) => kind === Staging.Text)->Option.getOrThrow
-    (column, MockArena.slotOf(table.columns, ~column))
+  let textColumn = () => {
+    let column = columns->Array.findIndexOpt(({kind}) => kind === Staging.Text)->Option.getOrThrow
+    (column, MockArena.slotOf(columns, ~column))
   }
 
   // A buffer left attached is a view into the arena, so the batch is dropped
   // without freeing it — and the handle goes with it, which is what the abort
   // that follows finds.
   it("refuses a commit that leaves a buffer attached, and abandons the batch", t => {
-    let (client, _, begun) = staged()
+    let begun = staged()
     let refused = messageOf(
       () => client->StorageClient.commitStage(~handle=begun.handle, ~buffers=[]),
     )
@@ -283,8 +281,8 @@ describe("Staged buffer checks", () => {
   // buffer would replace the reason the batch failed with a complaint about the
   // cleanup.
   it("lets the abort after a commit that could not seal through", t => {
-    let (client, table, begun) = staged()
-    let (column, slot) = textColumn(table)
+    let begun = staged()
+    let (column, slot) = textColumn()
     // Offsets only a bug in the writer could leave behind: a row ending before
     // the row before it.
     let ends = Uint32Array.fromBuffer(begun.buffers->Array.getUnsafe(slot + 1))
@@ -299,16 +297,14 @@ describe("Staged buffer checks", () => {
     )
 
     t.expect((refused, aborted)).toEqual((
-      `column \`${(
-          table.columns->Array.getUnsafe(column)
-        ).name}\` row 1 ends at 4, before row 0 at 8`,
+      `column \`${(columns->Array.getUnsafe(column)).name}\` row 1 ends at 4, before row 0 at 8`,
       "returned without complaint",
     ))
   })
 
   it("refuses to grow against a buffer that is not the column's payload", t => {
-    let (client, table, begun) = staged()
-    let (column, _) = textColumn(table)
+    let begun = staged()
+    let (column, _) = textColumn()
     t.expect(
       messageOf(
         () =>

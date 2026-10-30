@@ -1,75 +1,6 @@
-use anyhow::{bail, Result};
-
 pub use crate::config_parsing::system_config::ChainIdMode;
 
-/// The schema's scalars, as the table model names them. `BigInt` and
-/// `BigDecimal` carry the precision and scale a `@config` directive set, which
-/// only they can be given.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum FieldType {
-    String,
-    Boolean,
-    Uint32,
-    UInt52,
-    SmallInt,
-    Bytea,
-    UInt64,
-    Int32,
-    ChainId,
-    Number,
-    BigInt { precision: Option<u32> },
-    BigDecimal { config: Option<(u32, u32)> },
-    Serial,
-    BigSerial,
-    Json,
-    Date,
-    Enum { name: String },
-}
-
-impl FieldType {
-    /// Rebuilds the variant from the discriminant and the modifiers that reach
-    /// the addon separately, since neither napi nor JSON carries a tagged union
-    /// of its own.
-    pub fn parse(
-        field_type: &str,
-        precision: Option<u32>,
-        scale: Option<u32>,
-        enum_name: Option<&str>,
-    ) -> Result<Self> {
-        Ok(match field_type {
-            "String" => FieldType::String,
-            "Boolean" => FieldType::Boolean,
-            "Uint32" => FieldType::Uint32,
-            "UInt52" => FieldType::UInt52,
-            "SmallInt" => FieldType::SmallInt,
-            "Bytea" => FieldType::Bytea,
-            "UInt64" => FieldType::UInt64,
-            "Int32" => FieldType::Int32,
-            "ChainId" => FieldType::ChainId,
-            "Number" => FieldType::Number,
-            "Serial" => FieldType::Serial,
-            "BigSerial" => FieldType::BigSerial,
-            "Json" => FieldType::Json,
-            "Date" => FieldType::Date,
-            "BigInt" => FieldType::BigInt { precision },
-            "BigDecimal" => FieldType::BigDecimal {
-                // A scale without a precision is not a configuration the schema
-                // can express, so the pair is taken together or not at all.
-                config: match (precision, scale) {
-                    (Some(precision), Some(scale)) => Some((precision, scale)),
-                    _ => None,
-                },
-            },
-            "Enum" => match enum_name {
-                Some(name) => FieldType::Enum {
-                    name: name.to_string(),
-                },
-                None => bail!("an Enum column needs the name of its type"),
-            },
-            other => bail!("`{other}` is not a column type"),
-        })
-    }
-}
+pub use crate::storage::schema::FieldType;
 
 const NUMERIC: &str = "NUMERIC";
 const TEXT: &str = "TEXT";
@@ -121,7 +52,7 @@ pub fn pg_field_type(
             "TIMESTAMP WITH TIME ZONE"
         }
         .to_string(),
-        FieldType::Enum { name } => format!("\"{pg_schema}\".{name}"),
+        FieldType::Enum { name, .. } => format!("\"{pg_schema}\".{name}"),
     };
 
     let column_type = if column_type == NUMERIC && is_array && is_numeric_array_as_text {
@@ -271,14 +202,16 @@ mod tests {
             (
                 render(
                     &FieldType::Enum {
-                        name: "AccountType".to_string()
+                        name: "AccountType".to_string(),
+                        variants: vec![],
                     },
                     false,
                     false
                 ),
                 render(
                     &FieldType::Enum {
-                        name: "AccountType".to_string()
+                        name: "AccountType".to_string(),
+                        variants: vec![],
                     },
                     true,
                     false
@@ -325,48 +258,6 @@ mod tests {
                 "TEXT[]".to_string(),
                 "NUMERIC(10, 8)[]".to_string(),
                 "TEXT[]".to_string(),
-            )
-        );
-    }
-
-    #[test]
-    fn parsing_rebuilds_the_modified_variants() {
-        assert_eq!(
-            (
-                FieldType::parse("BigInt", Some(76), None, None).unwrap(),
-                FieldType::parse("BigDecimal", Some(10), Some(8), None).unwrap(),
-                FieldType::parse("BigDecimal", Some(10), None, None).unwrap(),
-                FieldType::parse("Enum", None, None, Some("AccountType")).unwrap(),
-            ),
-            (
-                FieldType::BigInt {
-                    precision: Some(76)
-                },
-                FieldType::BigDecimal {
-                    config: Some((10, 8))
-                },
-                FieldType::BigDecimal { config: None },
-                FieldType::Enum {
-                    name: "AccountType".to_string()
-                },
-            )
-        );
-    }
-
-    #[test]
-    fn parsing_refuses_what_it_cannot_name() {
-        assert_eq!(
-            (
-                FieldType::parse("Uuid", None, None, None)
-                    .unwrap_err()
-                    .to_string(),
-                FieldType::parse("Enum", None, None, None)
-                    .unwrap_err()
-                    .to_string(),
-            ),
-            (
-                "`Uuid` is not a column type".to_string(),
-                "an Enum column needs the name of its type".to_string(),
             )
         );
     }

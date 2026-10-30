@@ -12,6 +12,7 @@ pub(crate) mod live_tests;
 pub mod param;
 pub mod pg_type;
 pub mod rows;
+pub mod schema_indexes;
 pub mod select;
 pub mod storage;
 mod tls;

@@ -1,7 +1,8 @@
 open Vitest
 
-// Asserted against the indexes the tables end up with: a directive that parses
-// into the right shape can still resolve to a column the table lacks.
+// The indexes a directive resolves to are asserted where they are derived, in
+// `packages/cli/src/postgres/schema_indexes.rs`; these are the directives the
+// config refuses.
 
 let configYaml = `
 name: entity-index-directive
@@ -11,11 +12,6 @@ chains:
 `
 
 let parse = schema => InternalTestIndexer.fromUserApi(~schema, ~configYaml).config
-
-let table = (schema, name) => {
-  let config: Config.t = parse(schema)
-  (config.userEntitiesByName->Dict.getUnsafe(name)).table
-}
 
 let parseError = schema => InternalTestIndexer.parseError(~schema, ~configYaml)
 
@@ -27,84 +23,6 @@ type TestEntity ${index} {
   collection: String!
 }
 `
-
-describe("@index(fields:) column order and direction", () => {
-  it("Keeps each index in the order the entity declares it", t => {
-    t.expect(
-      table(
-        `
-type TestEntity @index(fields: ["a", "b"]) @index(fields: ["b", "a"]) {
-  id: ID!
-  a: String!
-  b: String!
-}
-`,
-        "TestEntity",
-      )->Table.getCompositeIndexes,
-      ~message="two indexes over the same columns in opposite order",
-    ).toEqual([
-      [
-        ({fieldName: "a", direction: Table.Asc}: Table.compositeIndexField),
-        {fieldName: "b", direction: Table.Asc},
-      ],
-      [{fieldName: "b", direction: Table.Asc}, {fieldName: "a", direction: Table.Asc}],
-    ])
-  })
-
-  it("Carries an explicit direction per column", t => {
-    t.expect(
-      table(
-        schemaWith(`@index(fields: [["tokenId", "DESC"], ["collection", "ASC"]])`),
-        "TestEntity",
-      )->Table.getCompositeIndexes,
-      ~message="both columns take the direction they were given",
-    ).toEqual([
-      [
-        ({fieldName: "tokenId", direction: Table.Desc}: Table.compositeIndexField),
-        {fieldName: "collection", direction: Table.Asc},
-      ],
-    ])
-  })
-
-  it("Defaults a bare column name to ascending", t => {
-    t.expect(
-      table(
-        schemaWith(`@index(fields: ["tokenId", ["collection", "DESC"]])`),
-        "TestEntity",
-      )->Table.getCompositeIndexes,
-      ~message="the bare name is ascending, the paired one keeps its direction",
-    ).toEqual([
-      [
-        ({fieldName: "tokenId", direction: Table.Asc}: Table.compositeIndexField),
-        {fieldName: "collection", direction: Table.Desc},
-      ],
-    ])
-  })
-
-  it("Reads a direction whatever its case", t => {
-    t.expect(
-      table(
-        schemaWith(`@index(fields: [["tokenId", "desc"], ["collection", "asc"]])`),
-        "TestEntity",
-      )->Table.getCompositeIndexes,
-      ~message="lowercase directions parse like uppercase ones",
-    ).toEqual([
-      [
-        ({fieldName: "tokenId", direction: Table.Desc}: Table.compositeIndexField),
-        {fieldName: "collection", direction: Table.Asc},
-      ],
-    ])
-  })
-
-  it("Indexes a lone column singly rather than as a composite", t => {
-    let table = table(schemaWith(`@index(fields: [["tokenId", "DESC"]])`), "TestEntity")
-
-    t.expect(
-      (table->Table.getCompositeIndexes, table->Table.getSingleIndexes),
-      ~message="one column is a single index, not a composite one",
-    ).toEqual(([], ["tokenId"]))
-  })
-})
 
 describe("@index(fields:) rejections", () => {
   it("Names the columns available when the entity has no such field", t => {
@@ -130,21 +48,6 @@ type Token {
 `),
     ).toBe(`schema.graphql:2:11: Invalid \`@index\` on \`User\`: \`tokens\` is a @derivedFrom field, which has no column.
   Use a stored field instead.`)
-  })
-
-  it("Indexes id alongside another column", t => {
-    t.expect(
-      table(
-        schemaWith(`@index(fields: ["id", "tokenId"])`),
-        "TestEntity",
-      )->Table.getCompositeIndexes,
-      ~message="only a lone id is redundant — leading a composite is not",
-    ).toEqual([
-      [
-        ({fieldName: "id", direction: Table.Asc}: Table.compositeIndexField),
-        {fieldName: "tokenId", direction: Table.Asc},
-      ],
-    ])
   })
 
   it("Rejects a lone id, which the primary key already indexes", t => {

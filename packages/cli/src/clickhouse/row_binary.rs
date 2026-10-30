@@ -4,15 +4,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 
 use super::ch_type::ChType;
+use super::table::{Source, Table};
 use crate::columnar::{self, ColumnKind};
+use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{Cell, ReadKind};
-
-/// One staged column, read straight out of the arena JavaScript filled.
-pub struct Column<'a> {
-    pub name: &'a str,
-    pub ch_type: &'a ChType,
-    pub values: &'a columnar::Column,
-}
+use crate::storage::schema::iso_millis;
+use crate::storage::schema::FieldType;
+use crate::storage::types::{DELETE, SET};
 
 fn put_varint(out: &mut Vec<u8>, mut value: u64) {
     loop {
@@ -179,29 +177,6 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
 const DATETIME64_MIN_MS: i128 = -2_208_988_800_000;
 const DATETIME64_MAX_MS: i128 = 10_413_791_999_999;
 
-fn iso_millis(ticks: i64) -> String {
-    let days = ticks.div_euclid(86_400_000);
-    let ms = ticks.rem_euclid(86_400_000);
-    // Days since 1970-01-01 to a civil date, via a 400-year era whose day
-    // count is fixed; March-based so leap days fall at the end of the year.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        ms / 3_600_000,
-        ms / 60_000 % 60,
-        ms / 1000 % 60,
-        ms % 1000
-    )
-}
-
 fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
     let (min, max) = int_bounds(ch_type)?;
     if value < min || value > max {
@@ -345,10 +320,16 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
     Ok(())
 }
 
-fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
-    let (ch_type, is_nullable) = match column.ch_type {
+/// One staged cell, read straight out of the arena JavaScript filled.
+fn encode_cell(
+    out: &mut Vec<u8>,
+    ch_type: &ChType,
+    values: &columnar::Column,
+    row: usize,
+) -> Result<()> {
+    let (ch_type, is_nullable) = match ch_type {
         ChType::Nullable(inner) => {
-            if column.values.is_null(row) {
+            if values.is_null(row) {
                 out.push(1);
                 return Ok(());
             }
@@ -357,11 +338,10 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         }
         other => (other, false),
     };
-    if !is_nullable && column.values.is_null(row) {
+    if !is_nullable && values.is_null(row) {
         return put_default(out, ch_type);
     }
 
-    let values = column.values;
     match (values.kind(), ch_type) {
         // Nothing registers one: a ClickHouse array is staged as the JSON text
         // of its elements.
@@ -667,28 +647,74 @@ pub fn decode<'a>(body: &'a [u8], columns: &[(ChType, ReadKind)]) -> Result<Vec<
     Ok(cells)
 }
 
-/// Appends the rows to what `body` already holds, so several stagings of one
-/// table go in one insert.
-pub fn encode_into(
-    body: &mut Vec<u8>,
-    row_offsets: &mut Vec<usize>,
-    columns: &[Column],
-    rows: usize,
-) -> Result<()> {
-    for column in columns {
-        if column.values.len() != rows {
-            bail!(
-                "column `{}` has {} values but the batch has {rows} rows",
-                column.name,
-                column.values.len()
-            );
+/// A list of documents, each its own text, where a missing one is the
+/// document `null`: the column's elements can't hold nothing.
+fn documents(list: &[u8]) -> Result<serde_json::Value> {
+    let mut list: serde_json::Value =
+        serde_json::from_slice(list).context("a list's value is not JSON")?;
+    if let serde_json::Value::Array(documents) = &mut list {
+        for document in documents.iter_mut().filter(|document| document.is_null()) {
+            *document = serde_json::Value::String("null".to_string());
         }
     }
-    for row in 0..rows {
+    Ok(list)
+}
+
+/// Appends every change of a change set to what `body` already holds as a row
+/// of the table's history, so several change sets of one table go in one
+/// insert.
+///
+/// A delete names the entity it removed and nothing else: every other field
+/// is stored as its column's null or default. A document field a set left
+/// empty is the document `null`, which is how the column says nothing.
+pub fn encode_changes(
+    body: &mut Vec<u8>,
+    row_offsets: &mut Vec<usize>,
+    table: &Table,
+    changes: &ChangeSet,
+) -> Result<()> {
+    let fields = changes.fields();
+    let change_type = super::ddl::change_type();
+    for row in 0..changes.len() {
         row_offsets.push(body.len());
-        for column in columns {
-            encode_cell(body, column, row)
-                .with_context(|| format!("encoding column `{}` row {row}", column.name))?;
+        let is_delete = changes.is_delete(row);
+        for (source, (name, ch_type)) in table.sources.iter().zip(&table.staged) {
+            let encoded = match *source {
+                Source::Field(index) => {
+                    let field = &changes.entity.fields[index];
+                    let values = &fields[index];
+                    if is_delete && index != changes.id_index() {
+                        match ch_type {
+                            ChType::Nullable(_) => {
+                                body.push(1);
+                                Ok(())
+                            }
+                            other => put_default(body, other),
+                        }
+                    } else if field.field_type == FieldType::Json && !field.is_array {
+                        if values.is_null(row) {
+                            put_string(body, "null");
+                            Ok(())
+                        } else {
+                            encode_cell(body, ch_type, values, row)
+                        }
+                    } else if field.field_type == FieldType::Json && !values.is_null(row) {
+                        documents(values.bytes_at(row))
+                            .and_then(|documents| encode_json_value(body, ch_type, &documents))
+                    } else {
+                        encode_cell(body, ch_type, values, row)
+                    }
+                }
+                Source::ChainId => match changes.chain_id {
+                    Some(chain_id) => put_int(body, i128::from(chain_id), ch_type),
+                    None => Err(anyhow!("a per-chain entity's changes name no chain")),
+                },
+                Source::Checkpoint => put_int(body, i128::from(changes.checkpoint(row)), ch_type),
+                Source::Change => {
+                    encode_text_scalar(body, &change_type, if is_delete { DELETE } else { SET })
+                }
+            };
+            encoded.with_context(|| format!("encoding column `{name}` row {row}"))?;
         }
     }
     Ok(())
@@ -751,16 +777,14 @@ mod tests {
     }
 
     fn encode(columns: &[TestColumn], rows: usize) -> Result<EncodedRows> {
-        let borrowed: Vec<Column> = columns
-            .iter()
-            .map(|column| Column {
-                name: &column.name,
-                ch_type: &column.ch_type,
-                values: &column.arena.columns()[0],
-            })
-            .collect();
         let (mut body, mut row_offsets) = (Vec::new(), Vec::new());
-        encode_into(&mut body, &mut row_offsets, &borrowed, rows)?;
+        for row in 0..rows {
+            row_offsets.push(body.len());
+            for column in columns {
+                encode_cell(&mut body, &column.ch_type, &column.arena.columns()[0], row)
+                    .with_context(|| format!("encoding column `{}` row {row}", column.name))?;
+            }
+        }
         Ok(EncodedRows {
             body: body.into(),
             row_offsets,
@@ -1429,12 +1453,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rejects_a_column_shorter_than_the_batch() {
-        let err = encode(&[text_column("id", "String", &["a"])], 2).unwrap_err();
-        assert!(format!("{err:#}").contains("has 1 values"));
-    }
-
     /// Each value is read as what Postgres hands back for the same field: an
     /// integer wider than a JavaScript number as its digits, a Decimal at its
     /// scale, an enum by name.
@@ -1553,6 +1571,85 @@ mod tests {
                 decode(&[5, b'a'], &[(ChType::String, ReadKind::Text)]).unwrap_err()
             ),
             "reading column 0 of row 0: the answer ended 1 bytes into a value that needs 5"
+        );
+    }
+
+    /// A delete row carries no entity, so the chain a per-chain entity's row
+    /// belongs to comes from the change set's scope, for sets and deletes
+    /// alike, and a cross-chain entity's rows carry none.
+    #[test]
+    fn every_history_row_carries_its_change_sets_chain() {
+        use crate::clickhouse::table::test_support::{account, per_chain_account};
+        use crate::storage::changes::test_support::{change_set, Change};
+
+        let history = |table: &Table, chain_id: Option<i64>| {
+            let entity = std::sync::Arc::new(crate::storage::schema::Entity {
+                chain_id: chain_id.map(|_| crate::storage::schema::ChainIdColumn {
+                    pg_column: "chainId".to_string(),
+                    ch_column: "chain_id".to_string(),
+                }),
+                ..crate::clickhouse::table::test_support::entity_input(
+                    "Account",
+                    table
+                        .columns
+                        .iter()
+                        .filter(|column| column.field.name != "chainId")
+                        .map(|column| column.field.clone())
+                        .collect(),
+                )
+            });
+            let width = entity.fields.len();
+            let mut set = vec![Some("a")];
+            set.resize(width, Some("1"));
+            let changes = change_set(
+                entity,
+                chain_id,
+                true,
+                &[Change::Set(&set, 3), Change::Delete("b", 4)],
+            );
+            let (mut body, mut offsets) = (Vec::new(), Vec::new());
+            encode_changes(&mut body, &mut offsets, table, &changes).unwrap();
+            let types = table
+                .staged
+                .iter()
+                .map(|(_, ch_type)| (ch_type.clone(), ReadKind::Text))
+                .collect::<Vec<_>>();
+            decode(&body, &types)
+                .unwrap()
+                .chunks(types.len())
+                .map(|row| {
+                    row.iter()
+                        .map(|cell| match cell {
+                            Cell::Str(text) => text.to_string(),
+                            Cell::Num(number) => number.to_string(),
+                            Cell::Null => "null".to_string(),
+                            other => format!("{other:?}"),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        let strings = |cells: &[&str]| {
+            cells
+                .iter()
+                .map(|cell| cell.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (
+                history(&per_chain_account(), Some(137)),
+                history(&account(), None),
+            ),
+            (
+                vec![
+                    strings(&["a", "137", "3", "SET"]),
+                    strings(&["b", "137", "4", "DELETE"]),
+                ],
+                vec![
+                    strings(&["a", "1", "1", "3", "SET"]),
+                    strings(&["b", "", "", "4", "DELETE"]),
+                ],
+            )
         );
     }
 }

@@ -189,7 +189,6 @@ pub struct ProgressDiff {
     pub progress_block: i32,
 }
 
-#[napi_derive::napi(object)]
 pub struct CacheTable {
     pub table_name: String,
     pub rows: i32,

@@ -1,164 +1,153 @@
 //! The indexer's Postgres storage: every statement it runs, and the
 //! transactions they run in.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::join_all;
 use tokio_postgres::Row;
 
-use crate::columnar::ColumnKind;
-
 use super::client::{PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
 use super::error::sql_state;
 use super::history::{History, CHANGE_TYPE};
-use super::index_definition::IndexDefinition;
+use super::index_definition::{Direction, IndexColumn, IndexDefinition, BTREE};
 use super::index_row;
 use super::indexes::{IndexEvent, Indexes, Report};
-use super::insert::{self, Constant};
+use super::insert;
 use super::internal;
 use super::param::Param;
 use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
-use super::rows::into_result;
+use super::rows::{decode_rows, into_result};
+use super::schema_indexes;
 use super::select;
-use super::write;
+use super::write::{self, Render, Source};
+use crate::columnar::{Arena, Column, ColumnKind};
 use crate::entity_filter::Condition;
-use crate::storage::rows::ResultSet;
+use crate::storage::changes::ChangeSet;
+use crate::storage::effect_cache::{CacheDump, CacheFile};
+use crate::storage::rows::{self, ResultSet};
+use crate::storage::schema::{
+    self, effect_cache_fields, raw_event_fields, raw_events_key, Entity, Field, Schema,
+    RAW_EVENTS_TABLE,
+};
 use crate::storage::types::{
-    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress,
-    ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE,
-    CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, DELETE, SET,
+    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, Progress, ProgressDiff,
+    ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE, CHANGE_COLUMN,
+    CHECKPOINT_ID_COLUMN, DELETE, SET,
 };
 use crate::storage::{
-    self as composite, AddChain, Batch, CacheDump, CacheFile, EntityWrite, Failure, Handoff,
-    Initialize, PgEntityWrite, Resumed, RollbackWrite, Rows, StoredConfigRead, WriteError,
+    AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, StoredConfigRead,
+    WriteError,
 };
 
 pub struct Settings {
     pub pg_schema: String,
     /// Only for the GRANT the schema is created with.
     pub pg_user: String,
-    pub chain_id_mode: ChainIdMode,
     /// Hasura cannot read a `numeric[]`, so a schema it tracks stores those as
     /// `text[]` (issue #788).
     pub numeric_array_as_text: bool,
+    /// An `envio start --chain` process: builds and looks for a per-chain
+    /// entity's indexes on its own chains' partitions, never on the parent
+    /// table, so no build reaches into the rows a sibling process drives.
+    pub isolated: bool,
 }
 
-/// What a registered table is to the storage.
-pub struct TableRegistration {
-    pub spec: TableSpec,
-    /// The columns a batch's rows carry, by name, in the order JavaScript lays
-    /// them out — which is the order its schema emits them, not the table's.
-    pub write_columns: Vec<String>,
-    /// Raw events are only ever appended, so a row already there is one the
-    /// batch has seen before rather than one to overwrite.
-    pub append_only: bool,
-    /// An entity's: where its history goes, and which column names its chain.
-    pub history: Option<HistoryRegistration>,
+impl ColumnSpec {
+    fn of(field: &Field) -> Self {
+        ColumnSpec {
+            name: field.pg_column.clone(),
+            field_type: field.field_type.clone(),
+            is_array: field.is_array,
+            is_nullable: field.is_nullable,
+            is_primary_key: field.is_primary_key,
+            default_value: field.default_value.clone(),
+        }
+    }
 }
 
-pub struct HistoryRegistration {
-    pub table_name: String,
-    pub chain_id_column: Option<String>,
-}
-
+/// A table the storage writes, and how a staged batch's columns reach it.
 pub struct Table {
     pub spec: TableSpec,
-    write: TableSpec,
+    /// The staged fields, in the order a batch lays them out.
+    fields: Vec<Field>,
+    /// The insert's columns: the staged fields, and for a per-chain entity its
+    /// chain last.
+    insert: TableSpec,
+    /// Raw events are only ever appended, so a row already there is one the
+    /// batch has seen before rather than one to overwrite.
     append_only: bool,
-    /// The slot each write column travels in, when the table can be staged. A
-    /// column of arrays has none: unnesting it would spread it across the rows,
-    /// so such a table binds a parameter per cell instead.
-    pub kinds: Option<Vec<ColumnKind>>,
-    entity: Option<Entity>,
+    entity: Option<EntityHistory>,
 }
 
-struct Entity {
+struct EntityHistory {
     history: History,
-    history_spec: TableSpec,
-    /// The write columns as history declares them, plus the checkpoint.
-    history_write: TableSpec,
+    spec: TableSpec,
+    /// The staged fields as history declares them, then the checkpoint, the
+    /// change and the chain.
+    insert: TableSpec,
 }
-
-const SET_CHANGE: [Constant<'static>; 1] = [Constant {
-    column: CHANGE_COLUMN,
-    literal: "'SET'",
-}];
 
 impl Table {
-    fn new(registration: TableRegistration, settings: &Settings) -> Result<Self> {
-        let TableRegistration {
-            spec,
-            write_columns,
-            append_only,
-            history,
-        } = registration;
-        let write = TableSpec {
-            table_name: spec.table_name.clone(),
-            columns: write_columns
-                .iter()
-                .map(|name| {
-                    spec.columns
-                        .iter()
-                        .find(|column| &column.name == name)
-                        .cloned()
-                        .ok_or_else(|| {
-                            anyhow!("`{name}` is not a column of \"{}\"", spec.table_name)
-                        })
-                })
-                .collect::<Result<_>>()?,
+    fn internal(name: &str, fields: Vec<Field>, own: Vec<Field>, append_only: bool) -> Self {
+        let insert = TableSpec {
+            table_name: name.to_string(),
+            columns: fields.iter().map(ColumnSpec::of).collect(),
             partition_by_column: None,
         };
-        let kinds = write
-            .columns
-            .iter()
-            .all(|column| !column.is_array)
-            .then(|| {
-                write
+        Self {
+            spec: TableSpec {
+                columns: insert
                     .columns
                     .iter()
-                    .map(|column| insert::staged_kind(&column.field_type))
-                    .collect()
-            });
-        let entity = history
-            .map(|history| Entity::new(&spec, &write, history, settings))
-            .transpose()?;
-        Ok(Self {
-            spec,
-            write,
+                    .cloned()
+                    .chain(own.iter().map(ColumnSpec::of))
+                    .collect(),
+                ..insert.clone()
+            },
+            fields,
+            insert,
             append_only,
-            kinds,
-            entity,
-        })
+            entity: None,
+        }
     }
 
-    pub fn name(&self) -> &str {
-        &self.spec.table_name
+    pub fn raw_events() -> Self {
+        Self::internal(
+            RAW_EVENTS_TABLE,
+            raw_event_fields(),
+            vec![raw_events_key()],
+            true,
+        )
     }
 
-    pub fn write_column_names(&self) -> Vec<String> {
-        self.write.columns.iter().map(|c| c.name.clone()).collect()
+    pub fn effect_cache(name: &str) -> Self {
+        Self::internal(name, effect_cache_fields(), Vec::new(), false)
     }
 
-    fn entity(&self) -> Result<&Entity> {
-        self.entity
+    fn entity(entity: &Entity, settings: &Settings, chain_id_mode: ChainIdMode) -> Result<Self> {
+        let chain_id = entity
+            .chain_id
             .as_ref()
-            .ok_or_else(|| anyhow!("\"{}\" is not an entity table", self.spec.table_name))
-    }
-}
+            .map(|chain_id| ColumnSpec::of(&chain_id.field()));
+        let staged = entity.fields.iter().map(ColumnSpec::of).collect::<Vec<_>>();
+        let insert = TableSpec {
+            table_name: entity.name.clone(),
+            columns: staged.iter().cloned().chain(chain_id.clone()).collect(),
+            partition_by_column: None,
+        };
+        let spec = TableSpec {
+            partition_by_column: chain_id.as_ref().map(|column| column.name.clone()),
+            ..insert.clone()
+        };
 
-impl Entity {
-    fn new(
-        spec: &TableSpec,
-        write: &TableSpec,
-        registration: HistoryRegistration,
-        settings: &Settings,
-    ) -> Result<Self> {
+        let chain_id_column = chain_id.as_ref().map(|column| column.name.clone());
         let is_key = |column: &ColumnSpec| {
-            column.name == "id" || registration.chain_id_column.as_deref() == Some(&column.name)
+            column.name == schema::ID_FIELD || chain_id_column.as_deref() == Some(&column.name)
         };
         // Every data column takes NULL, which is what a delete row holds;
         // the key is what identifies the row, so it never does.
@@ -179,54 +168,78 @@ impl Entity {
             name: CHANGE_COLUMN.to_string(),
             field_type: FieldType::Enum {
                 name: CHANGE_TYPE.to_string(),
+                variants: vec![SET.to_string(), DELETE.to_string()],
             },
             is_primary_key: false,
             ..checkpoint.clone()
         };
-        let id = spec
-            .columns
-            .iter()
-            .find(|column| column.name == "id")
-            .ok_or_else(|| anyhow!("\"{}\" has no id column", spec.table_name))?;
-        let id_pg_type = pg_field_type(
-            &id.field_type,
-            &settings.pg_schema,
-            false,
-            false,
-            false,
-            settings.chain_id_mode,
-        );
-        let history_spec = TableSpec {
-            table_name: registration.table_name.clone(),
-            columns: spec
-                .columns
-                .iter()
-                .map(as_history)
-                .chain([checkpoint.clone(), change])
-                .collect(),
-            partition_by_column: None,
-        };
-        let history_write = TableSpec {
-            table_name: registration.table_name.clone(),
-            columns: write
-                .columns
-                .iter()
-                .map(as_history)
-                .chain([checkpoint])
-                .collect(),
-            partition_by_column: None,
+        let (_, id) = entity.id()?;
+        let history_table = entity.history_table.clone();
+        let history = EntityHistory {
+            history: History {
+                entity_table: entity.name.clone(),
+                history_table: history_table.clone(),
+                data_columns: spec.columns.iter().map(|c| c.name.clone()).collect(),
+                chain_id_column: chain_id_column.clone(),
+                id_pg_type: pg_field_type(
+                    &id.field_type,
+                    &settings.pg_schema,
+                    false,
+                    false,
+                    false,
+                    chain_id_mode,
+                ),
+            },
+            spec: TableSpec {
+                table_name: history_table.clone(),
+                columns: spec
+                    .columns
+                    .iter()
+                    .map(as_history)
+                    .chain([checkpoint.clone(), change.clone()])
+                    .collect(),
+                partition_by_column: None,
+            },
+            insert: TableSpec {
+                table_name: history_table,
+                columns: staged
+                    .iter()
+                    .map(as_history)
+                    .chain([checkpoint, change])
+                    .chain(chain_id.as_ref().map(as_history))
+                    .collect(),
+                partition_by_column: None,
+            },
         };
         Ok(Self {
-            history: History {
-                entity_table: spec.table_name.clone(),
-                history_table: registration.table_name,
-                data_columns: spec.columns.iter().map(|c| c.name.clone()).collect(),
-                chain_id_column: registration.chain_id_column,
-                id_pg_type,
-            },
-            history_spec,
-            history_write,
+            spec,
+            fields: entity.fields.clone(),
+            insert,
+            append_only: false,
+            entity: Some(history),
         })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.spec.table_name
+    }
+
+    fn entity_history(&self) -> Result<&EntityHistory> {
+        self.entity
+            .as_ref()
+            .ok_or_else(|| anyhow!("\"{}\" is not an entity table", self.spec.table_name))
+    }
+
+    /// The staged columns, rendered as their fields say.
+    fn sources<'a>(&self, columns: &'a [Column]) -> Vec<Source<'a>> {
+        self.fields
+            .iter()
+            .zip(columns)
+            .map(|(field, column)| Source::Staged {
+                column,
+                render: Render::of(field.encoding(), field.field_type.encoding()),
+            })
+            .collect()
     }
 }
 
@@ -281,7 +294,13 @@ fn execute<'a>(
 pub struct Storage {
     pub client: PgClient,
     settings: Settings,
+    schema: Arc<Schema>,
     pub indexes: Arc<Indexes<PgClient>>,
+    /// By entity index: None for an entity Postgres doesn't keep.
+    entities: Vec<Option<Arc<Table>>>,
+    raw_events: Table,
+    /// An effect's cache is written and read before anything else names it.
+    caches: Mutex<HashMap<String, Arc<Table>>>,
 }
 
 /// The failure worth reporting out of a transaction's: the first one that is
@@ -316,8 +335,23 @@ fn settle<T>(outcomes: Vec<std::result::Result<T, Failure>>) -> std::result::Res
 }
 
 impl Storage {
-    pub fn new(client: PgClient, settings: Settings, report: Report) -> Self {
-        Self {
+    pub fn new(
+        client: PgClient,
+        settings: Settings,
+        schema: Arc<Schema>,
+        report: Report,
+    ) -> Result<Self> {
+        let entities = schema
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .postgres
+                    .then(|| Table::entity(entity, &settings, schema.chain_id_mode).map(Arc::new))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
             indexes: Arc::new(Indexes::new(
                 client.clone(),
                 settings.pg_schema.clone(),
@@ -325,15 +359,37 @@ impl Storage {
             )),
             client,
             settings,
-        }
+            schema,
+            entities,
+            raw_events: Table::raw_events(),
+            caches: Mutex::new(HashMap::new()),
+        })
     }
 
     fn schema(&self) -> &str {
         &self.settings.pg_schema
     }
 
-    pub fn register(&self, registration: TableRegistration) -> Result<Table> {
-        Table::new(registration, &self.settings)
+    fn chain_id_mode(&self) -> ChainIdMode {
+        self.schema.chain_id_mode
+    }
+
+    pub fn entity_table(&self, index: usize) -> Option<&Arc<Table>> {
+        self.entities.get(index).and_then(Option::as_ref)
+    }
+
+    fn entity_table_or_err(&self, entity: &Entity) -> Result<&Arc<Table>> {
+        self.entity_table(entity.index)
+            .ok_or_else(|| anyhow!("\"{}\" is not stored in Postgres", entity.name))
+    }
+
+    pub fn effect_cache_table(&self, name: &str) -> Arc<Table> {
+        self.caches
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_insert_with(|| Arc::new(Table::effect_cache(name)))
+            .clone()
     }
 
     fn create_table(&self, spec: &TableSpec) -> Result<String> {
@@ -341,17 +397,27 @@ impl Storage {
             spec,
             self.schema(),
             self.settings.numeric_array_as_text,
-            self.settings.chain_id_mode,
+            self.chain_id_mode(),
         )
     }
 
-    fn create_partition(&self, partition: &composite::Partition) -> Option<String> {
-        Some(create_partition_query(
-            self.schema(),
-            partition.table.postgres.as_ref()?.name(),
-            &partition.name,
-            partition.chain_id,
-        ))
+    /// One partition per chain of every per-chain entity Postgres keeps.
+    fn create_partitions(&self, chain_ids: &[i64]) -> Vec<String> {
+        self.schema
+            .entities
+            .iter()
+            .filter(|entity| entity.postgres && entity.chain_id.is_some())
+            .flat_map(|entity| {
+                chain_ids.iter().map(|&chain_id| {
+                    create_partition_query(
+                        self.schema(),
+                        &entity.name,
+                        &entity.partition_table_name(chain_id),
+                        chain_id,
+                    )
+                })
+            })
+            .collect()
     }
 
     async fn table_names(&self) -> Result<Vec<String>> {
@@ -410,10 +476,13 @@ impl Storage {
         is_empty_schema: bool,
     ) -> Result<()> {
         let schema = self.schema();
-        let tables = input
-            .tables
+        let tables = std::iter::once(&self.raw_events)
+            .chain(self.entities.iter().flatten().map(Arc::as_ref))
+            .collect::<Vec<_>>();
+        let chain_ids = input
+            .chains
             .iter()
-            .filter_map(|table| table.postgres.as_deref())
+            .map(|chain| chain.id)
             .collect::<Vec<_>>();
         let mut ddl = Vec::new();
         // A hosted database already has a `public` schema it won't let us
@@ -431,12 +500,11 @@ impl Storage {
              public;",
             self.settings.pg_user
         ));
-        for enum_type in &input.enums {
+        for (name, variants) in &self.schema.enums {
             ddl.push(format!(
                 "CREATE TYPE \"{schema}\".{} AS ENUM({});",
-                enum_type.name,
-                enum_type
-                    .variants
+                name,
+                variants
                     .iter()
                     .map(|variant| format!("'{variant}'"))
                     .collect::<Vec<_>>()
@@ -446,24 +514,19 @@ impl Storage {
         ddl.push(format!(
             "CREATE TYPE \"{schema}\".{CHANGE_TYPE} AS ENUM('{SET}', '{DELETE}');"
         ));
-        for spec in internal::tables(input.sequence) {
+        for spec in internal::tables(self.schema.sequence) {
             ddl.push(self.create_table(&spec)?);
         }
         for table in &tables {
             ddl.push(self.create_table(&table.spec)?);
         }
-        ddl.extend(
-            input
-                .partitions
-                .iter()
-                .filter_map(|partition| self.create_partition(partition)),
-        );
+        ddl.extend(self.create_partitions(&chain_ids));
         // History stays unpartitioned: it is only ever read by checkpoint,
         // never by chain, so partitioning it would route every write and prune
         // nothing.
         for table in &tables {
             if let Some(entity) = &table.entity {
-                ddl.push(self.create_table(&entity.history_spec)?);
+                ddl.push(self.create_table(&entity.spec)?);
             }
         }
         ddl.push(internal::views(schema));
@@ -511,7 +574,7 @@ impl Storage {
         }
         transaction
             .execute(
-                &internal::insert_addresses(self.schema(), self.settings.chain_id_mode),
+                &internal::insert_addresses(self.schema(), self.chain_id_mode()),
                 &address_params(addresses, true),
             )
             .await?;
@@ -523,11 +586,7 @@ impl Storage {
     pub async fn add_chain(&self, input: &AddChain) -> Result<()> {
         let transaction = self.client.begin().await?;
         let outcome = async {
-            for partition in input
-                .partitions
-                .iter()
-                .filter_map(|partition| self.create_partition(partition))
-            {
+            for partition in self.create_partitions(&[input.chain.id]) {
                 transaction.batch(&partition).await?;
             }
             self.insert_addresses(&transaction, &input.addresses)
@@ -704,14 +763,12 @@ impl Storage {
     /// stamped only once every one is verified, so a crash either leaves it
     /// unset and the retry finds the indexes built, or commits readiness the
     /// schema backs.
-    pub async fn finalize_backfill(
-        &self,
-        definitions: Vec<IndexDefinition>,
-        chain_ids: &[i64],
-        ready_at: f64,
-    ) -> Result<()> {
+    pub async fn finalize_backfill(&self, chain_ids: &[i64], ready_at: f64) -> Result<()> {
         let start = std::time::Instant::now();
-        let built = self.indexes.finalize(definitions).await?;
+        let built = self
+            .indexes
+            .finalize(self.schema_indexes(chain_ids))
+            .await?;
         self.set_ready_at(chain_ids, ready_at).await?;
         // Only when something was built: the wait this closes is the build,
         // and the stamp on its own is not one anybody waited through.
@@ -724,6 +781,41 @@ impl Storage {
         Ok(())
     }
 
+    /// Every index the schema promises for the given chains.
+    pub fn schema_indexes(&self, chain_ids: &[i64]) -> Vec<IndexDefinition> {
+        schema_indexes::schema_indexes(&self.schema, self.settings.isolated.then_some(chain_ids))
+    }
+
+    /// The single-column indexes a getWhere on `columns` of the entity wants,
+    /// on the table its query for `chain_id`'s scope is planned against: a
+    /// per-chain entity's query carries the chain, so it is planned against
+    /// that chain's partition, which an index on the parent covers by
+    /// cascading.
+    pub fn query_indexes(
+        &self,
+        entity: &Entity,
+        chain_id: Option<i64>,
+        columns: Vec<String>,
+    ) -> Vec<IndexDefinition> {
+        let table_name = match chain_id {
+            Some(chain_id) if self.settings.isolated => {
+                schema_indexes::index_tables(entity, Some(&[chain_id])).remove(0)
+            }
+            _ => entity.name.clone(),
+        };
+        columns
+            .into_iter()
+            .map(|name| IndexDefinition {
+                table_name: table_name.clone(),
+                columns: vec![IndexColumn {
+                    name,
+                    direction: Direction::Asc,
+                }],
+                method: BTREE.to_string(),
+            })
+            .collect()
+    }
+
     pub async fn prune_checkpoints(&self, bounds: &Bounds) -> Result<()> {
         self.client
             .execute(
@@ -734,8 +826,8 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn prune_history(&self, table: &Table, bounds: &Bounds) -> Result<()> {
-        let entity = table.entity()?;
+    pub async fn prune_history(&self, entity: &Entity, bounds: &Bounds) -> Result<()> {
+        let entity = self.entity_table_or_err(entity)?.entity_history()?;
         self.client
             .execute(
                 &entity.history.prune(self.schema(), bounds.sequence)?,
@@ -800,10 +892,10 @@ impl Storage {
     /// The ids a rollback removes, and the history rows it restores from.
     pub async fn rollback_data(
         &self,
-        table: &Table,
+        entity: &Entity,
         bounds: &Bounds,
     ) -> Result<(ResultSet, ResultSet)> {
-        let history = &table.entity()?.history;
+        let history = &self.entity_table_or_err(entity)?.entity_history()?.history;
         let params = bound_params(bounds);
         let removed = history.removed_ids(self.schema(), bounds.sequence)?;
         let restored = history.pre_target_rows(self.schema(), bounds.sequence)?;
@@ -811,10 +903,10 @@ impl Storage {
             self.client.query(&removed, &params),
             self.client.query(&restored, &params),
         )?;
-        Ok((
-            into_result(&removed, &removed_columns)?,
-            into_result(&restored, &restored_columns)?,
-        ))
+        rows::rollback(
+            decode_rows(&removed, &removed_columns)?,
+            decode_rows(&restored, &restored_columns)?,
+        )
     }
 
     pub async fn effect_cache_tables(&self) -> Result<Vec<CacheTable>> {
@@ -848,7 +940,7 @@ impl Storage {
     pub async fn upload_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
         let schema = self.schema();
         let uploads = files.iter().map(|file| async move {
-            let table = file.table.postgres()?;
+            let table = self.effect_cache_table(&file.table);
             self.client.batch(&self.create_table(&table.spec)?).await?;
             self.client
                 .copy_in(
@@ -918,20 +1010,9 @@ impl Storage {
     /// to.
     pub async fn write_batch(
         &self,
-        batch: Batch,
+        batch: &Batch,
         mut handoff: Handoff,
     ) -> std::result::Result<(), WriteError> {
-        let Batch {
-            rollback,
-            progress,
-            raw_events,
-            entities,
-            chain_meta,
-            addresses,
-            frontier,
-            checkpoints,
-            effect_caches,
-        } = batch;
         // Moved in, so the handoff goes as soon as the transaction is done and a
         // store waiting on its word never waits on the caches too.
         let transactional = async move {
@@ -940,20 +1021,10 @@ impl Storage {
                     Failure::new("Failed opening the batch's transaction", error)
                 })?;
             let outcome = async {
-                if let Some(rollback) = &rollback {
+                if let Some(rollback) = &batch.rollback {
                     self.write_rollback(&transaction, rollback).await?;
                 }
-                self.write_changes(
-                    &transaction,
-                    &progress,
-                    raw_events.as_ref(),
-                    &entities,
-                    &chain_meta,
-                    &addresses,
-                    &frontier,
-                    &checkpoints,
-                )
-                .await?;
+                self.write_changes(&transaction, batch).await?;
                 if !handoff.ready_to_commit().await {
                     return Err(WriteError::Gated);
                 }
@@ -976,14 +1047,14 @@ impl Storage {
             }
         };
         let caches = async {
-            let writes = effect_caches.iter().map(|write| async move {
-                let table = postgres_table(&write.table)?;
+            let writes = batch.effect_caches.iter().map(|write| async move {
+                let table = self.effect_cache_table(&write.table);
                 if write.create {
                     let fail = |error| Failure::new(insert_context(table.name()), error);
                     let create = self.create_table(&table.spec).map_err(fail)?;
                     self.client.batch(&create).await.map_err(fail)?;
                 }
-                self.insert(None, table, &write.rows).await
+                self.insert(None, &table, &write.rows).await
             });
             settle(join_all(writes).await)
         };
@@ -1000,13 +1071,9 @@ impl Storage {
         let schema = self.schema();
         let params = bound_params(&rollback.bounds);
         let mut statements = Vec::new();
-        for table in rollback
-            .tables
-            .iter()
-            .filter_map(|table| table.postgres.as_ref())
-        {
+        for table in self.entities.iter().flatten() {
             let sql = table
-                .entity()
+                .entity_history()
                 .and_then(|entity| entity.history.rollback(schema, rollback.bounds.sequence))
                 .map_err(|error| Failure::new("Failed rolling back the history", error))?;
             statements.push(execute(
@@ -1040,31 +1107,24 @@ impl Storage {
             statements.push(execute(
                 transaction,
                 "Failed rolling back the registered addresses",
-                internal::delete_addresses(schema, self.settings.chain_id_mode),
+                internal::delete_addresses(schema, self.chain_id_mode()),
                 address_params(&rollback.removed_addresses, false),
             ));
         }
         settle(join_all(statements).await)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn write_changes(
         &self,
         transaction: &Transaction,
-        progress: &[Progress],
-        raw_events: Option<&composite::TableWrite>,
-        entities: &[EntityWrite],
-        chain_meta: &[ChainMeta],
-        addresses: &Addresses,
-        frontier: &Frontier,
-        checkpoints: &Checkpoints,
+        batch: &Batch,
     ) -> std::result::Result<(), Failure> {
         let schema = self.schema();
-        let chain_id_mode = self.settings.chain_id_mode;
+        let chain_id_mode = self.chain_id_mode();
         let mut statements: Vec<Statement<'_>> = Vec::new();
 
         let progress_sql = internal::set_progress(schema);
-        for progress in progress {
+        for progress in &batch.progress {
             statements.push(execute(
                 transaction,
                 "Failed writing the chains' progress",
@@ -1072,23 +1132,24 @@ impl Storage {
                 progress_params(progress),
             ));
         }
-        if let Some(write) = raw_events {
-            let table = postgres_table(&write.table)?;
-            statements.push(Box::pin(self.insert(Some(transaction), table, &write.rows)));
+        if let Some(rows) = &batch.raw_events {
+            statements.push(Box::pin(self.insert(
+                Some(transaction),
+                &self.raw_events,
+                rows,
+            )));
         }
-        for write in entities {
-            if let Some(rows) = &write.postgres {
-                let table = postgres_table(&write.table)?;
+        for changes in &batch.changes {
+            if changes.entity.postgres {
                 statements.push(Box::pin(self.write_entity(
                     transaction,
-                    table,
-                    write.chain_id,
-                    rows,
+                    changes,
+                    batch.diff_checkpoint(changes.chain_id),
                 )));
             }
         }
         let meta_sql = internal::set_meta(schema);
-        for meta in chain_meta {
+        for meta in &batch.chain_meta {
             statements.push(execute(
                 transaction,
                 "Failed writing the chains' metadata",
@@ -1096,14 +1157,15 @@ impl Storage {
                 meta_params(meta),
             ));
         }
-        if !addresses.chain_ids.is_empty() {
+        if !batch.addresses.chain_ids.is_empty() {
             statements.push(execute(
                 transaction,
                 "Failed writing the registered addresses",
                 internal::insert_addresses(schema, chain_id_mode),
-                address_params(addresses, true),
+                address_params(&batch.addresses, true),
             ));
         }
+        let frontier = &batch.frontier;
         if !frontier.chain_ids.is_empty() {
             statements.push(execute(
                 transaction,
@@ -1122,244 +1184,213 @@ impl Storage {
         }
         // Only the checkpoints a rollback can reach back to: those anchoring
         // history a chain keeps.
-        let checkpoints = checkpoints.keeping_history();
+        let checkpoints = batch.checkpoints.keeping_history();
         if !checkpoints.ids.is_empty() {
             statements.push(execute(
                 transaction,
                 "Failed writing the checkpoints",
                 internal::insert_checkpoints(schema, chain_id_mode),
-                vec![
-                    array_literal(checkpoints.ids.iter().map(|id| Some(id.to_string()))),
-                    array_literal(checkpoints.chain_ids.iter().map(|id| Some(id.to_string()))),
-                    array_literal(
-                        checkpoints
-                            .block_numbers
-                            .iter()
-                            .map(|block| Some(block.to_string())),
-                    ),
-                    array_literal(checkpoints.block_hashes.iter().map(Option::as_ref)),
-                    array_literal(
-                        checkpoints
-                            .events_processed
-                            .iter()
-                            .map(|count| Some(count.to_string())),
-                    ),
-                ],
+                checkpoint_params(&checkpoints),
             ));
         }
 
         settle(join_all(statements).await)
     }
 
-    /// One entity's share of the batch. The backfill runs first: it copies the
-    /// rows the other statements are about to change.
+    /// One entity's share of the batch: the latest state of every id it
+    /// changed, and when its scope keeps history, every change leading to it.
+    /// The backfill runs first: it copies the rows the other statements are
+    /// about to change.
     async fn write_entity(
         &self,
         transaction: &Transaction,
-        table: &Table,
-        chain_id: Option<i64>,
-        write: &PgEntityWrite,
+        changes: &ChangeSet,
+        diff: Option<i64>,
     ) -> std::result::Result<(), Failure> {
         let schema = self.schema();
-        let entity = table
-            .entity()
-            .map_err(|error| Failure::new(insert_context(table.name()), error))?;
-        let history_context = || format!("Failed writing the history of \"{}\"", table.name());
+        let entity = &changes.entity;
+        let history_context = || format!("Failed writing the history of \"{}\"", entity.name);
+        let insert_failure = |error| Failure::new(insert_context(&entity.name), error);
+        let table = self.entity_table_or_err(entity).map_err(insert_failure)?;
+        let history = table.entity_history().map_err(insert_failure)?;
+        let projection = changes.project(diff);
+        let ids = |rows: &[usize]| {
+            rows.iter()
+                .map(|&row| changes.id_text(row).map(Some))
+                .collect::<Result<Vec<_>>>()
+        };
+        let chain_id = changes.chain_id.map(|chain_id| chain_id.to_string());
 
+        if !projection.backfill.is_empty() {
+            let backfill = ids(&projection.backfill)
+                .map_err(|error| Failure::new(history_context(), error))?;
+            transaction
+                .execute(
+                    &history.history.backfill(schema, changes.chain_id),
+                    &[array_literal(backfill)],
+                )
+                .await
+                .map_err(|error| Failure::new(history_context(), error))?;
+        }
         let mut statements: Vec<Statement<'_>> = Vec::new();
-        if let Some(history) = &write.history {
-            if !history.backfill.is_empty() {
-                transaction
-                    .execute(
-                        &entity.history.backfill(schema, chain_id),
-                        &[array_literal(history.backfill.iter().map(Some))],
-                    )
-                    .await
-                    .map_err(|error| Failure::new(history_context(), error))?;
+        if !projection.history_deletes.is_empty() {
+            let mut params = vec![
+                array_literal(
+                    ids(&projection.history_deletes)
+                        .map_err(|error| Failure::new(history_context(), error))?,
+                ),
+                array_literal(
+                    projection
+                        .history_deletes
+                        .iter()
+                        .map(|&row| Some(changes.checkpoint(row).to_string())),
+                ),
+            ];
+            let with_chain = history.history.chain_id_column.is_some() && chain_id.is_some();
+            if let (true, Some(chain_id)) = (with_chain, &chain_id) {
+                params.push(Param::Text(chain_id.clone()));
             }
-            if !history.delete_ids.is_empty() {
-                let mut params = vec![
-                    array_literal(history.delete_ids.iter().map(Some)),
-                    array_literal(history.delete_checkpoint_ids.iter().map(Some)),
-                ];
-                let chain_id = chain_id.filter(|_| entity.history.chain_id_column.is_some());
-                if let Some(chain_id) = chain_id {
-                    params.push(Param::Text(chain_id.to_string()));
-                }
-                statements.push(execute(
-                    transaction,
-                    history_context(),
-                    entity
-                        .history
-                        .insert_delete_rows(schema, chain_id.is_some()),
-                    params,
-                ));
-            }
-            if let Some((rows, checkpoint_ids)) = &history.sets {
-                statements.push(Box::pin(self.insert_history(
-                    transaction,
-                    table,
-                    entity,
-                    rows,
-                    checkpoint_ids,
-                )));
-            }
-        }
-        if let Some(rows) = &write.sets {
-            statements.push(Box::pin(self.insert(Some(transaction), table, rows)));
-        }
-        if !write.deletes.is_empty() {
             statements.push(execute(
                 transaction,
-                format!("Failed deleting \"{}\" from storage by ids", table.name()),
-                entity.history.delete_entities(schema, chain_id),
-                vec![array_literal(write.deletes.iter().map(Some))],
+                history_context(),
+                history.history.insert_delete_rows(schema, with_chain),
+                params,
+            ));
+        }
+        if !projection.history_sets.is_empty() {
+            let columns = changes.rows.columns();
+            let mut sources = table.sources(columns);
+            sources.push(Source::Staged {
+                column: changes.checkpoints(),
+                render: Render::Plain,
+            });
+            sources.push(Source::Repeated(SET));
+            sources.extend(chain_id.as_deref().map(Source::Repeated));
+            statements.push(Box::pin(self.run_insert(
+                Some(transaction),
+                &history.insert,
+                false,
+                sources,
+                &projection.history_sets,
+                &entity.history_table,
+                table,
+                changes.fields(),
+            )));
+        }
+        if !projection.sets.is_empty() {
+            let mut sources = table.sources(changes.rows.columns());
+            sources.extend(chain_id.as_deref().map(Source::Repeated));
+            statements.push(Box::pin(self.run_insert(
+                Some(transaction),
+                &table.insert,
+                false,
+                sources,
+                &projection.sets,
+                &entity.name,
+                table,
+                changes.fields(),
+            )));
+        }
+        if !projection.deletes.is_empty() {
+            let deletes = ids(&projection.deletes).map_err(insert_failure)?;
+            statements.push(execute(
+                transaction,
+                format!("Failed deleting \"{}\" from storage by ids", entity.name),
+                history.history.delete_entities(schema, changes.chain_id),
+                vec![array_literal(deletes)],
             ));
         }
         settle(join_all(statements).await)
     }
 
-    /// Inserts rows into a table, in the transaction when there is one.
+    /// Inserts every staged row into a table, in the transaction when there
+    /// is one.
     async fn insert(
         &self,
         transaction: Option<&Transaction>,
         table: &Table,
-        rows: &Rows,
+        rows: &Arena,
     ) -> std::result::Result<(), Failure> {
-        let fail = |error| Failure::new(insert_context(table.name()), error);
-        let statements = match rows {
-            Rows::Staged(arena) => vec![(
-                insert::unnest_query(
-                    &table.write,
-                    self.schema(),
-                    &[],
-                    table.append_only,
-                    self.settings.chain_id_mode,
-                ),
-                write::unnest_params(arena).map_err(fail)?,
-                Shape::Recurring,
-            )],
-            Rows::Cells { cells, rows } => {
-                chunked_cells(cells, *rows, table.write.columns.len(), &[], |count| {
-                    insert::values_query(&table.write, self.schema(), &[], count)
-                })
-                .map_err(fail)?
-            }
-        };
-        self.run_all(transaction, statements)
-            .await
-            .map_err(|error| {
-                if sql_state(&error) == Some(index_row::PROGRAM_LIMIT_EXCEEDED) {
-                    let oversized = self.oversized_value(table, rows);
-                    Failure::new(index_row::explain_insert(table.name(), oversized), error)
-                } else {
-                    fail(error)
-                }
-            })
+        let all = (0..rows.rows()).collect::<Vec<_>>();
+        self.run_insert(
+            transaction,
+            &table.insert,
+            table.append_only,
+            table.sources(rows.columns()),
+            &all,
+            table.name(),
+            table,
+            rows.columns(),
+        )
+        .await
     }
 
-    /// The first indexed value in the batch over the btree limit. Only staged
-    /// rows are searched: a table with a list column writes its rows as cells,
-    /// and is explained without naming the value.
-    fn oversized_value(&self, table: &Table, rows: &Rows) -> Option<index_row::Oversized> {
-        let Rows::Staged(arena) = rows else {
-            return None;
+    #[allow(clippy::too_many_arguments)]
+    async fn run_insert(
+        &self,
+        transaction: Option<&Transaction>,
+        spec: &TableSpec,
+        append_only: bool,
+        sources: Vec<Source<'_>>,
+        rows: &[usize],
+        target: &str,
+        table: &Table,
+        staged: &[Column],
+    ) -> std::result::Result<(), Failure> {
+        let fail = |error| Failure::new(insert_context(target), error);
+        let sql = insert::unnest_query(
+            spec,
+            self.schema(),
+            append_only,
+            self.settings.numeric_array_as_text,
+            self.chain_id_mode(),
+        );
+        let params = write::unnest_params(&sources, rows).map_err(fail)?;
+        let outcome = match transaction {
+            Some(transaction) => transaction.execute(&sql, &params).await,
+            None => self.client.execute(&sql, &params).await,
         };
-        let indexed = self.indexes.btree_columns(table.name());
-        let columns = table.write.columns.iter().zip(arena.columns());
-        let id = table.write.columns.iter().position(|c| c.name == "id")?;
-        (0..arena.rows()).find_map(|row| {
-            columns.clone().find_map(|(spec, column)| {
-                // A fixed-width or null cell has no bytes to count.
-                let value = column.bytes_at(row);
-                (value.len() > index_row::BTREE_MAX_ITEM_BYTES && indexed.contains(&spec.name))
-                    .then(|| index_row::Oversized {
-                        column: spec.name.clone(),
-                        id: String::from_utf8_lossy(arena.columns()[id].bytes_at(row)).into_owned(),
-                        value: match column.kind() {
-                            ColumnKind::Bytes => value
-                                .iter()
-                                .fold("0x".to_string(), |hex, byte| hex + &format!("{byte:02x}")),
-                            _ => String::from_utf8_lossy(value).into_owned(),
-                        },
-                        bytes: value.len(),
-                    })
-            })
+        outcome.map(|_| ()).map_err(|error| {
+            if sql_state(&error) == Some(index_row::PROGRAM_LIMIT_EXCEEDED) {
+                let oversized = self.oversized_value(table, staged, rows);
+                Failure::new(index_row::explain_insert(target, oversized), error)
+            } else {
+                fail(error)
+            }
         })
     }
 
-    /// A set's history row: the same values the entity's insert takes, plus
-    /// the checkpoint the change happened at.
-    async fn insert_history(
+    /// The first indexed value among the rows over the btree limit.
+    fn oversized_value(
         &self,
-        transaction: &Transaction,
         table: &Table,
-        entity: &Entity,
-        rows: &Rows,
-        checkpoint_ids: &[String],
-    ) -> std::result::Result<(), Failure> {
-        let fail = |error| Failure::new(insert_context(&entity.history.history_table), error);
-        let statements = match rows {
-            Rows::Staged(arena) => {
-                let mut params = write::unnest_params(arena).map_err(fail)?;
-                params.push(array_literal(checkpoint_ids.iter().map(Some)));
-                vec![(
-                    insert::unnest_query(
-                        &entity.history_write,
-                        self.schema(),
-                        &SET_CHANGE,
-                        false,
-                        self.settings.chain_id_mode,
-                    ),
-                    params,
-                    Shape::Recurring,
-                )]
-            }
-            Rows::Cells { cells, rows } => {
-                let checkpoints = checkpoint_ids
-                    .iter()
-                    .map(|id| Param::Text(id.clone()))
-                    .collect::<Vec<_>>();
-                chunked_cells(
-                    cells,
-                    *rows,
-                    table.write.columns.len(),
-                    &checkpoints,
-                    |count| {
-                        insert::values_query(
-                            &entity.history_write,
-                            self.schema(),
-                            &SET_CHANGE,
-                            count,
-                        )
+        staged: &[Column],
+        rows: &[usize],
+    ) -> Option<index_row::Oversized> {
+        let indexed = self.indexes.btree_columns(table.name());
+        let id = table
+            .fields
+            .iter()
+            .position(|field| field.name == schema::ID_FIELD)?;
+        rows.iter().find_map(|&row| {
+            table.fields.iter().zip(staged).find_map(|(field, column)| {
+                // A fixed-width or null cell has no bytes to count.
+                let value = column.bytes_at(row);
+                (value.len() > index_row::BTREE_MAX_ITEM_BYTES
+                    && indexed.contains(&field.pg_column))
+                .then(|| index_row::Oversized {
+                    column: field.pg_column.clone(),
+                    id: String::from_utf8_lossy(staged[id].bytes_at(row)).into_owned(),
+                    value: match column.kind() {
+                        ColumnKind::Bytes => value
+                            .iter()
+                            .fold("0x".to_string(), |hex, byte| hex + &format!("{byte:02x}")),
+                        _ => String::from_utf8_lossy(value).into_owned(),
                     },
-                )
-                .map_err(fail)?
-            }
-        };
-        self.run_all(Some(transaction), statements)
-            .await
-            .map_err(fail)
-    }
-
-    async fn run_all(
-        &self,
-        transaction: Option<&Transaction>,
-        statements: Vec<(String, Vec<Param>, Shape)>,
-    ) -> Result<()> {
-        let outcomes = join_all(statements.iter().map(|(sql, params, shape)| async move {
-            match (transaction, shape) {
-                (Some(transaction), Shape::Recurring) => transaction.execute(sql, params).await,
-                (Some(transaction), Shape::Once) => transaction.execute_once(sql, params).await,
-                (None, Shape::Recurring) => self.client.execute(sql, params).await,
-                (None, Shape::Once) => self.client.execute_once(sql, params).await,
-            }
-        }))
-        .await;
-        match first_cause(outcomes.into_iter().filter_map(Result::err), |error| error) {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+                    bytes: value.len(),
+                })
+            })
+        })
     }
 }
 
@@ -1380,61 +1411,24 @@ fn insert_context(table_name: &str) -> String {
     format!("Failed to insert items into table \"{table_name}\"")
 }
 
-fn postgres_table(table: &composite::Table) -> std::result::Result<&Arc<Table>, Failure> {
-    table
-        .postgres()
-        .map_err(|error| Failure::new(insert_context(&table.name), error))
-}
-
-/// Whether a statement's text recurs. One that does is kept prepared on its
-/// connection; one that doesn't is sent unnamed, so the server keeps no plan for
-/// a shape it won't see again.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Shape {
-    Recurring,
-    Once,
-}
-
-/// The statements for rows bound a parameter per cell, as many rows to each
-/// as its parameters allow. `cells` holds every row's first column, then every
-/// row's second; `extra` is one more column, appended after them.
-///
-/// Only a full chunk recurs: a short last one spells out however many rows the
-/// batch had left, and there are as many such statements as chunk lengths.
-fn chunked_cells(
-    cells: &[Param],
-    rows: usize,
-    columns: usize,
-    extra: &[Param],
-    query: impl Fn(usize) -> String,
-) -> Result<Vec<(String, Vec<Param>, Shape)>> {
-    if cells.len() != rows * columns {
-        bail!(
-            "{} cells came for {rows} rows of {columns} columns",
-            cells.len()
-        );
-    }
-    let all_columns = columns + usize::from(!extra.is_empty());
-    let per_statement = insert::values_rows_per_statement(all_columns);
-    Ok((0..rows)
-        .step_by(per_statement)
-        .map(|start| {
-            let end = (start + per_statement).min(rows);
-            let mut params = Vec::with_capacity((end - start) * all_columns);
-            for column in 0..columns {
-                params.extend_from_slice(&cells[column * rows + start..column * rows + end]);
-            }
-            if !extra.is_empty() {
-                params.extend_from_slice(&extra[start..end]);
-            }
-            let shape = if end - start == per_statement {
-                Shape::Recurring
-            } else {
-                Shape::Once
-            };
-            (query(end - start), params, shape)
-        })
-        .collect::<Vec<_>>())
+fn checkpoint_params(checkpoints: &Checkpoints) -> Vec<Param> {
+    vec![
+        array_literal(checkpoints.ids.iter().map(|id| Some(id.to_string()))),
+        array_literal(checkpoints.chain_ids.iter().map(|id| Some(id.to_string()))),
+        array_literal(
+            checkpoints
+                .block_numbers
+                .iter()
+                .map(|block| Some(block.to_string())),
+        ),
+        array_literal(checkpoints.block_hashes.iter().map(Option::as_ref)),
+        array_literal(
+            checkpoints
+                .events_processed
+                .iter()
+                .map(|count| Some(count.to_string())),
+        ),
+    ]
 }
 
 fn progress_params(progress: &Progress) -> Vec<Param> {
@@ -1522,43 +1516,26 @@ fn bytea(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::schema::test_support;
 
     fn counter(chain_id_column: Option<&str>) -> Table {
-        let column = |name: &str, field_type: FieldType, is_primary_key: bool| ColumnSpec {
-            name: name.to_string(),
-            field_type,
-            is_array: false,
-            is_nullable: false,
-            is_primary_key,
-            default_value: None,
-        };
-        let mut columns = vec![
-            column("id", FieldType::String, true),
-            column("count", FieldType::BigInt { precision: None }, false),
-        ];
-        if let Some(chain_id) = chain_id_column {
-            columns.push(column(chain_id, FieldType::ChainId, true));
-        }
-        Table::new(
-            TableRegistration {
-                write_columns: columns.iter().map(|c| c.name.clone()).collect(),
-                spec: TableSpec {
-                    table_name: "Counter".to_string(),
-                    columns,
-                    partition_by_column: chain_id_column.map(str::to_string),
-                },
-                append_only: false,
-                history: Some(HistoryRegistration {
-                    table_name: "envio_history_Counter".to_string(),
-                    chain_id_column: chain_id_column.map(str::to_string),
-                }),
-            },
+        let entity = test_support::entity(
+            "Counter",
+            vec![
+                test_support::id(),
+                Field::new("count", FieldType::BigInt { precision: None }),
+            ],
+            chain_id_column,
+        );
+        Table::entity(
+            &entity,
             &Settings {
                 pg_schema: "public".to_string(),
                 pg_user: "postgres".to_string(),
-                chain_id_mode: ChainIdMode::Int32,
                 numeric_array_as_text: false,
+                isolated: false,
             },
+            ChainIdMode::Int32,
         )
         .unwrap()
     }
@@ -1569,7 +1546,7 @@ mod tests {
     fn history_is_keyed_by_the_entitys_chain_and_the_checkpoint() {
         let history_ddl = |table: Table| {
             create_table_query(
-                &table.entity.unwrap().history_spec,
+                &table.entity.unwrap().spec,
                 "public",
                 false,
                 ChainIdMode::Int32,
@@ -1612,38 +1589,6 @@ mod tests {
         );
     }
 
-    /// Cells come column by column for the whole batch, and each statement
-    /// takes its rows' slice of every column, the extra one last.
-    #[test]
-    fn cells_are_cut_into_statements_column_by_column() {
-        let text = |value: &str| Param::Text(value.to_string());
-        let cells = ["a1", "a2", "a3", "b1", "b2", "b3"].map(text).to_vec();
-        let extra = ["c1", "c2", "c3"].map(text).to_vec();
-        let statements = chunked_cells(&cells, 3, 2, &extra, |rows| rows.to_string()).unwrap();
-        assert_eq!(
-            statements,
-            vec![(
-                "3".to_string(),
-                ["a1", "a2", "a3", "b1", "b2", "b3", "c1", "c2", "c3"]
-                    .map(text)
-                    .to_vec(),
-                Shape::Once,
-            )]
-        );
-    }
-
-    #[test]
-    fn only_a_full_chunk_is_kept_prepared() {
-        let rows = insert::values_rows_per_statement(2) + 1;
-        let cells = vec![Param::Null; rows * 2];
-        let shapes = chunked_cells(&cells, rows, 2, &[], |rows| rows.to_string())
-            .unwrap()
-            .into_iter()
-            .map(|(_, _, shape)| shape)
-            .collect::<Vec<_>>();
-        assert_eq!(shapes, vec![Shape::Recurring, Shape::Once]);
-    }
-
     fn bounds(sequence: Sequence) -> Bounds {
         Bounds {
             sequence,
@@ -1673,19 +1618,6 @@ mod tests {
         assert_eq!(
             bound_params(&bounds(Sequence::SharedAcrossChains)),
             vec![Param::Text("2".to_string())]
-        );
-    }
-
-    /// Rows whose cells don't fill every column would be bound out of place,
-    /// so they are refused rather than sliced.
-    #[test]
-    fn cells_that_dont_fill_the_columns_are_refused() {
-        let cells = vec![Param::Null; 5];
-        assert_eq!(
-            chunked_cells(&cells, 3, 2, &[], |rows| rows.to_string())
-                .unwrap_err()
-                .to_string(),
-            "5 cells came for 3 rows of 2 columns"
         );
     }
 
