@@ -70,4 +70,52 @@ describe("E2E blockThrottle tests", () => {
       await indexer.getBatchWritePromise()
     },
   )
+
+  scenario->Scenario.it(
+    "The first height of a chain younger than blockThrottle starts fetching at once",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+    async (~t, ~indexer as _, ~source) => {
+      let sourceMock = source(1337)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=3)
+      await sourceMock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+      t.expect(sourceMock.pendingItemsQueries->Array.length).toEqual(1)
+    },
+  )
+
+  scenario->Scenario.it(
+    "A head still advancing towards blockThrottle does not report a stall",
+    ~sources=[
+      {
+        chain: 1337,
+        methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
+        pollingInterval: 5,
+      },
+    ],
+    ~sourceTiming={
+      newBlockStallTimeout: 200,
+      newBlockStallTimeoutRealtime: 200,
+      reducedPollingInterval: 50,
+    },
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
+      sourceMock.resolveGetHeightOrThrow(300)
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await indexer.getBatchWritePromise()
+
+      // Four blocks spread over twice the stall window, each inside it.
+      for height in 301 to 304 {
+        sourceMock.setAutoHeight(height)
+        await Utils.delay(120)
+      }
+
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filter(({msg}) =>
+          msg->String.startsWith("No new blocks detected")
+        ),
+      ).toEqual([])
+    },
+  )
 })
