@@ -4,7 +4,8 @@
 //
 //   node scenarios/subgraph_corpus/run.mjs [name…]
 //
-// Needs network access and ENVIO_API_TOKEN for HyperSync.
+// Needs network access, ENVIO_API_TOKEN for HyperSync, and an archive RPC per
+// chain whose subgraphs make contract calls (ENVIO_SUBGRAPH_RPC_<chainId>).
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,12 +17,19 @@ const envio = path.resolve(here, "../../packages/envio");
 const corpus = JSON.parse(readFileSync(path.join(here, "corpus.json"), "utf8"));
 const only = process.argv.slice(2);
 
-const run = (cwd, command, args) =>
+const run = (cwd, command, args, env = {}) =>
   execFileSync(command, args, {
     cwd,
     stdio: "inherit",
-    env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+    env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0", ...env },
   });
+
+// A mapping's contract calls need an archive RPC for the entry's chain:
+// ENVIO_SUBGRAPH_RPC_<chainId>, handed to the indexer as ENVIO_SUBGRAPH_RPC.
+const indexEnv = (entry) => {
+  const rpc = process.env[`ENVIO_SUBGRAPH_RPC_${entry.chainId}`];
+  return { ...(rpc ? { ENVIO_SUBGRAPH_RPC: rpc } : {}), ...entry.env };
+};
 
 // Corepack runs the package manager version a project pins in `packageManager`.
 function install(dir) {
@@ -62,7 +70,7 @@ for (const entry of corpus) {
     rmSync(path.join(dir, "node_modules", "envio"), { recursive: true, force: true });
     symlinkSync(envio, path.join(dir, "node_modules", "envio"));
     writeFileSync(path.join(dir, ".envio-corpus.mjs"), INDEX);
-    run(dir, process.execPath, [".envio-corpus.mjs", String(entry.chainId), String(entry.endBlock)]);
+    run(dir, process.execPath, [".envio-corpus.mjs", String(entry.chainId), String(entry.endBlock)], indexEnv(entry));
     results.push({ name: entry.name, ok: true });
   } catch (error) {
     results.push({ name: entry.name, ok: false, error: String(error.message).split("\n")[0] });

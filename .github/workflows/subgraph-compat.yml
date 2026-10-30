@@ -71,3 +71,5 @@ jobs:
         run: node scenarios/subgraph_corpus/run.mjs
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
+          ENVIO_SUBGRAPH_RPC_1: ${{ secrets.ENVIO_SUBGRAPH_RPC_1 }}
+          ENVIO_SUBGRAPH_RPC_11155111: ${{ secrets.ENVIO_SUBGRAPH_RPC_11155111 }}
