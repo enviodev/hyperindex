@@ -1030,17 +1030,23 @@ let executeQuery = async (
   ~isRealtime,
   ~reorgableFrom,
 ) => {
-  // Read when the manager actually runs out of sources, not on the way in: the
-  // reason is recorded by the failure that disabled the last one.
-  let noSourcesError = () =>
-    switch sourceManager.disableReason {
-    | Some(reason) =>
-      `The indexer doesn't have data-sources which can continue fetching. The last one was disabled because ${reason}`
-    | None => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
-    }
-
   // Sources where the query is impossible - lazily allocated, excluded for the duration of this query
   let excludedSourcesRef = ref(None)
+  let excludedReasonRef = ref(None)
+
+  // Read when the manager actually runs out of sources, not on the way in: the
+  // reason is recorded by the failure that disabled or excluded the last one.
+  let noSourcesError = () =>
+    switch (excludedReasonRef.contents, sourceManager.disableReason) {
+    | (Some(reason), _) =>
+      `The indexer doesn't have data-sources which can serve the block range. ${reason}`
+    | (None, Some(reason)) =>
+      `The indexer doesn't have data-sources which can continue fetching. The last one was disabled because ${reason}`
+    | (
+        None,
+        None,
+      ) => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
+    }
 
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
@@ -1206,6 +1212,7 @@ let executeQuery = async (
           s
         }
         excludedSources->Utils.Set.add(sourceState)->ignore
+        excludedReasonRef := Some(message)
 
         logger->Logger.warn(
           message ++ " - Attempting another source",

@@ -34,6 +34,7 @@ type pageOutcome =
   | @as("Backoff") Backoff
   | @as("FieldSelection") FieldSelection
   | @as("BehindHead") BehindHead
+  | @as("Unavailable") Unavailable
 
 type nextPageResult = {
   kind: pageOutcome,

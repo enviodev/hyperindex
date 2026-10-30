@@ -165,6 +165,17 @@ let make = (
           }),
         ),
       )
+    | Unavailable =>
+      throw(
+        failedGettingItems(
+          ImpossibleForTheQuery({
+            message: switch result.message {
+            | Some(message) => message
+            | None => missing("message")
+            },
+          }),
+        ),
+      )
     | Backoff =>
       throw(
         failedGettingItems(

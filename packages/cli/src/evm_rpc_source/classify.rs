@@ -26,6 +26,24 @@ pub fn is_response_too_large_message(message: &str) -> bool {
     TOO_LARGE_PATTERNS.iter().any(|re| re.is_match(message))
 }
 
+// The node only holds blocks from some base height on (Sei, and other Cosmos
+// SDK chains with pruned history). No wait and no narrower range changes the
+// answer for a block below it, so another source has to serve the query.
+static HISTORY_UNAVAILABLE_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        // Sei: "height is not available (requested height: 138905662, base height: 161957762)"
+        Regex::new(r"(?i)height is not available").unwrap(),
+        // Cosmos SDK: "height 100 is not available, lowest height is 200"
+        Regex::new(r"(?i)height \d+ is not available, lowest height is \d+").unwrap(),
+    ]
+});
+
+pub fn is_history_unavailable_message(message: &str) -> bool {
+    HISTORY_UNAVAILABLE_PATTERNS
+        .iter()
+        .any(|re| re.is_match(message))
+}
+
 // Unknown provider: "retry with the range 123-456"
 static SUGGESTED_RANGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"retry with the range (\d+)-(\d+)").unwrap());
@@ -198,6 +216,21 @@ mod tests {
         assert_eq!(
             messages.map(is_response_too_large_message),
             [true, true, true, true, true, false, false]
+        );
+    }
+
+    #[test]
+    fn history_unavailable_classifies_pruned_nodes_and_ignores_unrelated() {
+        let messages = [
+            "height is not available (requested height: 138905662, base height: 161957762)",
+            "height 100 is not available, lowest height is 200",
+            // A block the node hasn't reached yet is a node behind the head.
+            "header not found",
+            "query exceeds max block range 1000",
+        ];
+        assert_eq!(
+            messages.map(is_history_unavailable_message),
+            [true, true, false, false]
         );
     }
 }

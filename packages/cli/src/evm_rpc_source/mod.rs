@@ -29,7 +29,10 @@ use crate::evm_hypersync_source::EventItem;
 use crate::js_value::JsTape;
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
-use classify::{is_response_too_large_message, suggested_block_interval_from_message};
+use classify::{
+    is_history_unavailable_message, is_response_too_large_message,
+    suggested_block_interval_from_message,
+};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use enrich::{BlockRead, EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
 use hypersync_client::format::{self, Hex};
@@ -163,6 +166,8 @@ pub enum PageOutcome {
     FieldSelection,
     /// The node that answered has not reached `block_number` yet.
     BehindHead,
+    /// The node doesn't hold the range at all, so another source has to serve it.
+    Unavailable,
 }
 
 /// The outcome of a page read.
@@ -178,7 +183,7 @@ pub struct NextPageResult {
     pub event_items: Vec<EventItem>,
     pub block_items: Vec<BlockItem>,
     /// What to say about a failure: on `Backoff` the line the retry logs, on
-    /// `FieldSelection` why the selection cannot be served.
+    /// `FieldSelection` and `Unavailable` why the source cannot serve it.
     pub message: Option<String>,
     /// The cause logged beside `message`, where there is one distinct from it:
     /// the provider's own words, or the transport's.
@@ -210,6 +215,24 @@ fn transient_backoff_millis(retry: i64) -> i64 {
 enum PageError {
     Logs(RpcError),
     Enrich(EnrichError),
+}
+
+impl PageError {
+    /// The provider's words when it doesn't hold the range, whichever read hit it:
+    /// a pruned node refuses `eth_getLogs` and `eth_getBlockByNumber` alike.
+    fn history_unavailable_message(&self) -> Option<&str> {
+        let err = match self {
+            PageError::Logs(err) => err,
+            PageError::Enrich(EnrichError::Rpc(err)) => err.as_ref(),
+            PageError::Enrich(_) => return None,
+        };
+        match err {
+            RpcError::JsonRpc { message, .. } if is_history_unavailable_message(message) => {
+                Some(message)
+            }
+            _ => None,
+        }
+    }
 }
 
 impl From<EnrichError> for PageError {
@@ -246,6 +269,15 @@ impl NextPageResult {
             message: Some(message),
             backoff_millis: Some(backoff_millis),
             ..NextPageResult::new(PageOutcome::Backoff, to_block, request_stats)
+        }
+    }
+
+    fn unavailable(provider_message: &str, to_block: u64, request_stats: Vec<RequestStat>) -> Self {
+        NextPageResult {
+            message: Some(format!(
+                "The RPC doesn't hold the requested blocks: {provider_message}"
+            )),
+            ..NextPageResult::new(PageOutcome::Unavailable, to_block, request_stats)
         }
     }
 
@@ -625,6 +657,10 @@ impl EvmRpcClient {
                     Some(page),
                 )
             }
+            Err(ref err) if let Some(message) = err.history_unavailable_message() => (
+                NextPageResult::unavailable(message, to_block, request_stats),
+                None,
+            ),
             Err(PageError::Logs(err)) => {
                 let provider_message = match &err {
                     RpcError::JsonRpc { message, .. } => Some(message.clone()),
