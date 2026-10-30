@@ -157,9 +157,60 @@ impl BlockRegistrations {
             to_block,
             max_blocks,
             claimed_to_block,
+            numbers: Vec::new(),
+        })
+    }
+
+    /// How a query to a source filtering blocks by number reads the block table
+    /// over `[from_block, to_block]`: it lists the blocks a handler runs on, as
+    /// many as `items_target` handler runs (at most `MAX_BLOCK_NUMBERS`), and
+    /// ends at the last when that cuts the range short. A range reaching
+    /// `reorgable_from` is read whole instead, as in `plan`.
+    pub(crate) fn plan_by_number(
+        &self,
+        indexes: &[i64],
+        from_block: i64,
+        to_block: Option<i64>,
+        blocks_only: bool,
+        reorgable_from: Option<i64>,
+        items_target: Option<i64>,
+    ) -> Result<BlockQuery> {
+        let read_every_block =
+            reorgable_from.is_some_and(|from| to_block.is_none_or(|to| to >= from));
+        let from_block = u64::try_from(from_block).context("from_block must be >= 0")?;
+        let mut to_block = to_block
+            .map(|to| u64::try_from(to).context("to_block must be >= 0"))
+            .transpose()?;
+        let selection = self.select(indexes, from_block, to_block)?;
+        let numbers = if read_every_block {
+            Vec::new()
+        } else {
+            let max = items_target
+                .and_then(|target| usize::try_from(target).ok())
+                .map_or(MAX_BLOCK_NUMBERS, |target| {
+                    target.clamp(1, MAX_BLOCK_NUMBERS)
+                });
+            let numbers = selection.numbers(from_block, to_block, max);
+            if numbers.len() == max {
+                to_block = numbers.last().copied();
+            }
+            numbers
+        };
+        Ok(BlockQuery {
+            selection,
+            blocks_only,
+            read_every_block,
+            from_block,
+            to_block,
+            max_blocks: None,
+            claimed_to_block: None,
+            numbers,
         })
     }
 }
+
+/// Bounds the block numbers one query lists, and so its request size.
+const MAX_BLOCK_NUMBERS: usize = 5000;
 
 /// Past this many blocks to the next one a handler runs on, a request for the
 /// one block costs less than reading every block up to it.
@@ -178,6 +229,8 @@ pub(crate) struct BlockQuery {
     /// A query reading less than its range answers for the rest of it up to
     /// here, where no handler runs.
     claimed_to_block: Option<u64>,
+    /// The blocks a handler runs on, for a source filtering blocks by number.
+    pub(crate) numbers: Vec<u64>,
 }
 
 impl BlockQuery {
@@ -198,7 +251,7 @@ impl BlockQuery {
     /// does one reaching blocks that can still be reorged: its hashes feed
     /// reorg detection, and its last block's time is the progress block's.
     pub(crate) fn include_all_blocks(&self) -> bool {
-        self.read_every_block || !self.selection.is_empty()
+        self.read_every_block || (!self.selection.is_empty() && self.numbers.is_empty())
     }
 
     /// Where the fetched range ends (exclusive), for a page that read up to
@@ -251,10 +304,11 @@ impl BlockSelection {
     /// An item for every handler running on a block of `covered`, in block
     /// then registration order.
     pub(crate) fn route(&self, covered: Range<u64>) -> Vec<BlockItem> {
-        if self.is_empty() {
+        let Some(last) = covered.end.checked_sub(1) else {
             return Vec::new();
-        }
-        covered
+        };
+        self.numbers(covered.start, Some(last), usize::MAX)
+            .into_iter()
             .flat_map(|block_number| {
                 self.registrations
                     .iter()
@@ -266,6 +320,21 @@ impl BlockSelection {
                     })
             })
             .collect()
+    }
+
+    /// The first `max` blocks of `[from_block, to_block]` (`to_block`
+    /// unbounded when absent) some handler runs on.
+    fn numbers(&self, from_block: u64, to_block: Option<u64>, max: usize) -> Vec<u64> {
+        let mut numbers = Vec::new();
+        let mut next = self.first_from(from_block);
+        while let Some(block_number) = next.filter(|&b| to_block.is_none_or(|to| b <= to)) {
+            if numbers.len() == max {
+                break;
+            }
+            numbers.push(block_number);
+            next = block_number.checked_add(1).and_then(|b| self.first_from(b));
+        }
+        numbers
     }
 
     /// The blocks a query for blocks alone reads of `[from_block, to_block]`,
@@ -519,5 +588,60 @@ mod tests {
     #[test]
     fn rejects_an_interval_that_matches_nothing() {
         assert!(BlockRegistrations::new(&[input(0, 0, None, 0)]).is_err());
+    }
+
+    fn by_number(
+        inputs: &[OnBlockRegistrationInput],
+        range: (i64, Option<i64>),
+        blocks_only: bool,
+        reorgable_from: Option<i64>,
+        items_target: Option<i64>,
+    ) -> (Vec<u64>, Option<u64>, bool) {
+        let indexes: Vec<i64> = inputs.iter().map(|i| i.index).collect();
+        let query = BlockRegistrations::new(inputs)
+            .unwrap()
+            .plan_by_number(
+                &indexes,
+                range.0,
+                range.1,
+                blocks_only,
+                reorgable_from,
+                items_target,
+            )
+            .unwrap();
+        let include_all_blocks = query.include_all_blocks();
+        (query.numbers, query.to_block, include_all_blocks)
+    }
+
+    #[test]
+    fn lists_the_handler_blocks_of_the_range_beside_other_tables() {
+        let handlers = [input(0, 10, None, 5000), input(1, 0, Some(12), 6)];
+        assert_eq!(
+            (
+                by_number(&handlers, (0, Some(20_000)), false, None, None),
+                by_number(&handlers, (0, None), false, None, Some(3)),
+                by_number(&handlers, (0, Some(20_000)), false, Some(19_800), None),
+                by_number(&[], (0, Some(20_000)), false, None, None),
+            ),
+            (
+                (
+                    vec![0, 6, 10, 12, 5010, 10_010, 15_010],
+                    Some(20_000),
+                    false
+                ),
+                (vec![0, 6, 10], Some(10), false),
+                (vec![], Some(20_000), true),
+                (vec![], Some(20_000), false),
+            )
+        );
+    }
+
+    #[test]
+    fn routes_handler_blocks_of_a_wide_range_without_walking_it() {
+        let selection = select(&[input(0, 0, None, 1_000_000_000)], 0, None);
+        assert_eq!(
+            (selection.route(1..2_500_000_000), selection.route(0..0)),
+            (vec![item(1_000_000_000, 0), item(2_000_000_000, 0)], vec![])
+        );
     }
 }

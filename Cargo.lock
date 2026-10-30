@@ -3065,9 +3065,8 @@ dependencies = [
 
 [[package]]
 name = "hypersync-format"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de5a308029c5ea9c5dcd4bc1c76bbbec76ff25044fab79cba29dbc46b177f34e"
+version = "0.7.1"
+source = "git+https://github.com/enviodev/hypersync-client-rust?branch=claude%2Fawesome-cray-xs4o1b#e3e3aa4ddef80ae147f8bc5c3b28519bf8325da8"
 dependencies = [
  "alloy-primitives 1.5.7",
  "arrayvec",
@@ -3083,8 +3082,7 @@ dependencies = [
 [[package]]
 name = "hypersync-net-types"
 version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e98ff4e71862d242d9d884ce128e6e6b0a4faa380b57589556707af3fd7e5ee"
+source = "git+https://github.com/enviodev/hypersync-client-rust?branch=claude%2Fawesome-cray-xs4o1b#e3e3aa4ddef80ae147f8bc5c3b28519bf8325da8"
 dependencies = [
  "anyhow",
  "arrayvec",

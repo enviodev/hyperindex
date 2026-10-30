@@ -3,6 +3,7 @@ use std::sync::Once;
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
+use napi::bindgen_prelude::Either;
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
@@ -51,6 +52,10 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 #[napi]
 pub struct EvmHyperSyncClient {
     inner: hypersync_client::Client,
+    /// Skips the query cache, which saves sending a query body the server
+    /// already holds: a block query's body is tiny, and one listing block
+    /// numbers differs every page, so a cached request only adds a round trip.
+    uncached: hypersync_client::Client,
     enable_checksum_addresses: bool,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
@@ -60,10 +65,12 @@ pub struct EvmHyperSyncClient {
 impl EvmHyperSyncClient {
     /// Execute one raw HyperSync page. Public methods decide how much of the
     /// response to convert for their specific caller.
-    async fn get_raw(&self, query: Query) -> napi::Result<hypersync_client::QueryResponse> {
+    async fn get_raw(
+        client: &hypersync_client::Client,
+        query: Query,
+    ) -> napi::Result<hypersync_client::QueryResponse> {
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
+        let res = client
             .get_with_rate_limit(&query)
             .await
             .context("run inner query")
@@ -102,12 +109,21 @@ impl EvmHyperSyncClient {
             .context("build selection builder")
             .map_err(map_err)?;
 
+        let uncached_cfg = ClientConfig {
+            enable_query_caching: Some(false),
+            ..cfg.clone()
+        };
+        let uncached =
+            hypersync_client::Client::new_with_agent(uncached_cfg.into(), user_agent.clone())
+                .context("build client")
+                .map_err(map_err)?;
         let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
             .context("build client")
             .map_err(map_err)?;
 
         Ok(EvmHyperSyncClient {
             inner,
+            uncached,
             enable_checksum_addresses,
             decoder,
             selection_builder,
@@ -130,9 +146,12 @@ impl EvmHyperSyncClient {
 
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
-        convert_response(self.get_raw(query).await?, self.enable_checksum_addresses)
-            .context("convert response")
-            .map_err(map_err)
+        convert_response(
+            Self::get_raw(&self.inner, query).await?,
+            self.enable_checksum_addresses,
+        )
+        .context("convert response")
+        .map_err(map_err)
     }
 
     /// Fetch the complete inclusive range spanning `block_numbers` into one
@@ -160,7 +179,7 @@ impl EvmHyperSyncClient {
                     },
                     ..Default::default()
                 };
-                let response = self.get_raw(query).await?;
+                let response = Self::get_raw(&self.uncached, query).await?;
                 let (next, store) = block_hash_page(response).map_err(map_err)?;
                 // `include_all_blocks` leaves no gaps, so the last block the
                 // page covered is the one before where it stopped.
@@ -204,7 +223,7 @@ impl EvmHyperSyncClient {
             .map_err(map_err)?;
         let block_query = self
             .block_registrations
-            .plan(
+            .plan_by_number(
                 &params.on_block_registration_indexes,
                 params.from_block,
                 params.to_block,
@@ -272,7 +291,12 @@ impl EvmHyperSyncClient {
                     .collect()
             }),
             max_num_logs: params.items_target.filter(|_| selects_logs),
-            max_num_blocks: block_query.max_blocks.map(|b| b as i64),
+            blocks: (!block_query.numbers.is_empty()).then(|| {
+                vec![Either::B(query::BlockFilter {
+                    number: Some(block_query.numbers.iter().map(|&n| n as i64).collect()),
+                    ..Default::default()
+                })]
+            }),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
                 transaction: selects_logs.then_some(transaction_fields),
@@ -296,18 +320,12 @@ impl EvmHyperSyncClient {
             ..Default::default()
         };
 
-        let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
-
-        let response = match res {
-            RateLimitResponse::Success { response, .. } => response,
-            RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
+        let client = if selects_logs && block_query.numbers.is_empty() {
+            &self.inner
+        } else {
+            &self.uncached
         };
+        let response = Self::get_raw(client, query).await?;
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
@@ -318,7 +336,8 @@ impl EvmHyperSyncClient {
             .map_err(map_err)?;
         let transaction_store = TransactionStore::new_evm();
         let block_store = BlockStore::new_evm();
-        // The range the page covered: `include_all_blocks` leaves no gaps in it.
+        // The range the page covered: the page holds every block of it a
+        // handler runs on.
         let block_items = block_selection.route(block_query.from_block..(next_block as u64));
         let event_items = tokio::task::block_in_place(|| {
             process_response(

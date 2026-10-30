@@ -264,6 +264,9 @@ pub struct BlockFilter {
     /// Miner address of a block, any blocks that have one of these miners will be returned.
     /// Empty means match all.
     pub miner: Option<Vec<String>>,
+    /// Number of a block, any blocks that have one of these numbers will be returned.
+    /// Empty means match all.
+    pub number: Option<Vec<i64>>,
 }
 
 /// Selection criteria for blocks with include and exclude filters
@@ -572,7 +575,19 @@ impl TryFrom<BlockFilter> for net_types::BlockFilter {
             Vec::new()
         };
 
-        Ok(net_types::BlockFilter { hash, miner })
+        let number = filter
+            .number
+            .unwrap_or_default()
+            .into_iter()
+            .map(u64::try_from)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("block number must be >= 0")?;
+
+        Ok(net_types::BlockFilter {
+            hash,
+            miner,
+            number,
+        })
     }
 }
 
@@ -903,6 +918,8 @@ impl From<net_types::BlockFilter> for BlockFilter {
         BlockFilter {
             hash: map_maybe_hex_vec(filter.hash),
             miner: map_maybe_hex_vec(filter.miner),
+            number: (!filter.number.is_empty())
+                .then(|| filter.number.into_iter().map(|n| n as i64).collect()),
         }
     }
 }

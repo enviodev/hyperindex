@@ -1,3 +1,8 @@
 [workspace]
 members = ["packages/cli"]
 resolver = "2"
+
+[patch.crates-io]
+# Block number filter (BlockFilter.number); drop once hypersync-net-types is released with it.
+hypersync-net-types = { git = "https://github.com/enviodev/hypersync-client-rust", branch = "claude/awesome-cray-xs4o1b" }
+hypersync-format = { git = "https://github.com/enviodev/hypersync-client-rust", branch = "claude/awesome-cray-xs4o1b" }
