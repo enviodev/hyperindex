@@ -5,5 +5,54 @@
     "commit": "ad62221d8ebb6a0102a5caa41a23130e2e6251b2",
     "chainId": 1,
     "endBlock": 3427417
+  },
+  {
+    "name": "gravatar",
+    "repo": "https://github.com/graphprotocol/example-subgraph",
+    "commit": "0202cf93fdfe968165d5cbdddbd92834e59dc543",
+    "chainId": 1,
+    "endBlock": 6200000
+  },
+  {
+    "name": "uniswap-v1",
+    "repo": "https://github.com/graphprotocol/uniswap-subgraph",
+    "commit": "ed19523cd80d29a6b403591f4f1b24746ab05023",
+    "chainId": 1,
+    "endBlock": 6700000
+  },
+  {
+    "name": "uniswap-v2",
+    "repo": "https://github.com/Uniswap/v2-subgraph",
+    "commit": "9d8a918bfecc2310337a917919c3ad56c5071d87",
+    "chainId": 1,
+    "endBlock": 10100000
+  },
+  {
+    "name": "uniswap-v3-sepolia",
+    "repo": "https://github.com/Uniswap/v3-subgraph",
+    "commit": "fb917a6ccaee465f6b5eab8059452f22eb6d4da6",
+    "chainId": 11155111,
+    "endBlock": 3600000
+  },
+  {
+    "name": "balancer-v1",
+    "repo": "https://github.com/balancer-labs/balancer-subgraph",
+    "commit": "818d705734f4393c88abbb587dd1c6bcfad4e66d",
+    "chainId": 1,
+    "endBlock": 9600000
+  },
+  {
+    "name": "compound-v2",
+    "repo": "https://github.com/compound-finance/compound-v2-subgraph",
+    "commit": "19f5d8cdd200d8c2a1d68acd2b2f2ae6dfc2ed7c",
+    "chainId": 1,
+    "endBlock": 7720000
+  },
+  {
+    "name": "cryptopunks",
+    "repo": "https://github.com/itsjerryokolo/CryptoPunks",
+    "commit": "2c67cd251dce9faa49c2a5d4cd949e0514fc28f3",
+    "chainId": 1,
+    "endBlock": 3950000
   }
 ]
