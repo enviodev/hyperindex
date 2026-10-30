@@ -393,11 +393,12 @@ export function makeHostEffects(
     },
   );
 
-  // graph-node returns null when its rainbow table doesn't hold the hash, and
-  // for every hash when it has no table loaded. ENSRainbow answers the first
-  // as a 404, and a hash that isn't one as a 400. A service that keeps failing
-  // — no hosted ENSRainbow has stayed up — answers like graph-node without a
-  // table, said once and not cached, rather than failing or stalling the run.
+  // graph-node returns null when its rainbow table doesn't hold the hash;
+  // ENSRainbow answers that as a 404, and a hash that isn't one as a 400.
+  // With no table loaded, graph-node fails the subgraph ("Missing ENS data")
+  // and retries forever. A service that keeps failing — no hosted ENSRainbow
+  // has stayed up — answers null instead, said once and not cached, so the run
+  // goes on with the names a table would have healed left null.
   const ensGate = gate(ENS_IN_FLIGHT);
   // Keyed by endpoint: the env var is read per lookup.
   const ensDownUntil = new Map<string, number>();
@@ -408,7 +409,7 @@ export function makeHostEffects(
     ensWarned.add(url);
     warn(
       `Envio Subgraph: ENSRainbow at ${url} isn't answering (${reason}), so ens.nameByHash() ` +
-        "returns null, as graph-node does without a rainbow table, and asks again in " +
+        "returns null (graph-node without a rainbow table stops at this lookup instead), and asks again in " +
         `${ENS_DOWN_MS / 60_000} minutes. Those nulls aren't cached. Point ${ENS_RAINBOW_ENV} ` +
         "at a working ENSRainbow heal endpoint (…/v1/heal/), or set it to \"off\" to skip lookups.",
     );

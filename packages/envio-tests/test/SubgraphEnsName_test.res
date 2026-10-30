@@ -1,8 +1,8 @@
 // `ens.nameByHash` through ENSRainbow. A hash its table doesn't hold reads as
 // null, as on graph-node; a lookup service that is failing is asked again, not
 // cached as a null for good. One that stays down — api.ensrainbow.io is gone,
-// and the ENS subgraph died on its first lookup — answers like graph-node
-// without a rainbow table: null, said once.
+// and the ENS subgraph died on its first lookup — answers null, said once,
+// where graph-node without a rainbow table stops ("Missing ENS data").
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5
