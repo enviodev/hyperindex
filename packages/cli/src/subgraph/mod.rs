@@ -1571,6 +1571,7 @@ pub fn translate(
             hypersync_config: None,
             max_reorg_depth: None,
             block_lag: None,
+            block_throttle: None,
             start_block: StartBlock::Number(start_block),
             end_block: source.end_block,
             contracts: Some(vec![]),
