@@ -386,7 +386,7 @@ jobs:
           - 5433:5432
 
       hasura:
-        image: hasura/graphql-engine:v2.43.0
+        image: hasura/graphql-engine:v2.51.3
         env:
           HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
           HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
