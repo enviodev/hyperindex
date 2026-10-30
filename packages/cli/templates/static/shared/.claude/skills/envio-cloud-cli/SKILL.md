@@ -144,7 +144,7 @@ It prints the commit's status as it changes. `--deploy` deploys the commit if it
 node "$CLOUD" wait-synced "$IDX" "$C" "$ORG"
 ```
 
-It prints per-chain progress; once every chain is ready it prints the GraphQL URL and checks that it answers. On exit 75, run it again. Builds take a few minutes (30-minute limit); sync time depends on the start block and event volume. No progress after two rounds → [4. Debug a deployment](#4-debug-a-deployment). In an agent session, use `wait-synced` rather than `deployment status --watch-till-synced`, which has no time limit.
+It prints per-chain progress, then the GraphQL URL once every chain is ready. On exit 75, run it again. Builds take a few minutes (30-minute limit); sync time depends on the start block and event volume. No progress after two rounds → [4. Debug a deployment](#4-debug-a-deployment). In an agent session, use `wait-synced` rather than `deployment status --watch-till-synced`, which has no time limit.
 
 **3d. Verify the data.** Query one real entity on the URL and compare it with a local run if you have one. If a browser app on another origin will call it, check CORS:
 

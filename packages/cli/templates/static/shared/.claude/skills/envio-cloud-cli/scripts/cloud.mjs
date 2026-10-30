@@ -18,7 +18,7 @@ const usage = `Usage:
       Waits until Envio Cloud has seen <commit> and reports its status.
       --deploy deploys it when it is 'inactive' (auto-deploy off) and waits for it to start.
   node cloud.mjs wait-synced <indexer> <commit> <org> [--timeout <s>]
-      Waits until every chain has caught up, then prints the GraphQL endpoint and tries a _meta query on it.
+      Waits until every chain is ready, then prints the GraphQL endpoint.
 
 The time budget defaults to ${DEFAULT_TIMEOUT_S} s, which fits a 2-minute tool call; with a
 10-minute tool call pass --timeout 540. Exit code 75 means "still in progress": run the
@@ -102,12 +102,12 @@ function cloudJson(args) {
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return { error: (stderr || stdout).trim() || `exit code ${code}` };
+    return { code, error: (stderr || stdout).trim() || `exit code ${code}` };
   }
   if (code !== 0 || parsed.ok === false) {
-    return { error: parsed.error || stderr.trim() || `exit code ${code}` };
+    return { code, error: parsed.error || stderr.trim() || `exit code ${code}` };
   }
-  return { data: parsed.data };
+  return { code, data: parsed.data };
 }
 
 function failOnAuth(error) {
@@ -189,52 +189,24 @@ function chainLine(c) {
   return { ready, text: `chain ${c.chain_id}: ${progress}${ready ? " (ready)" : ""}` };
 }
 
-async function checkEndpoint(indexer, commit, org) {
-  const { code, stdout, stderr } = cloud(["deployment", "endpoint", indexer, commit, org, "-q"]);
-  const url = stdout.trim().split("\n").pop();
-  if (code !== 0 || !url?.startsWith("http")) {
-    console.log(`No endpoint yet: ${(stderr || stdout).trim()}`);
-    return;
-  }
-  console.log(`GraphQL endpoint (this deployment): ${url}`);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query: "{ _meta { isReady progressBlock } }" }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (response.status === 401 || response.status === 403) {
-      console.log(
-        `_meta query: HTTP ${response.status}. The endpoint is protected by API keys or an IP allow-list; ` +
-          `clients need a key from: npx -y envio-cloud indexer security api-key list ${indexer} ${org}`,
-      );
-      return;
-    }
-    console.log(`_meta query: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
-  } catch (e) {
-    console.log(`_meta query failed: ${e.message}`);
-  }
-}
-
 async function waitSynced([indexer, commit, org], flags) {
   if (!indexer || !commit || !org) return usageError();
   const deadline = Date.now() + (flags.timeout ?? DEFAULT_TIMEOUT_S) * 1000;
   while (true) {
-    const { data, error } = cloudJson(["deployment", "status", indexer, commit, org]);
-    if (error) failOnAuth(error);
-    if (error?.includes("_meta")) {
+    const { data, error, code } = cloudJson(["deployment", "status", indexer, commit, org]);
+    // Exit code 1 is an error a retry can't fix, such as an envio too old to report progress.
+    if (code === 1) {
       console.log(error);
       return 1;
     }
     const chains = Array.isArray(data) ? data.map(chainLine) : [];
     if (chains.length === 0) {
-      console.log(error ? `No sync metrics yet: ${error}` : "No sync metrics yet (still building?)");
+      console.log(error ? `No progress yet: ${error}` : "No progress yet (still building?)");
     } else {
       console.log(chains.map((c) => c.text).join("\n"));
       if (chains.every((c) => c.ready)) {
-        console.log("Synced.");
-        await checkEndpoint(indexer, commit, org);
+        const url = cloud(["deployment", "endpoint", indexer, commit, org, "-q"]).stdout.trim();
+        console.log(`Synced. GraphQL endpoint (this deployment): ${url}`);
         return 0;
       }
     }
@@ -247,7 +219,7 @@ async function waitSynced([indexer, commit, org], flags) {
       console.log("Still in progress: run the same command again.");
       return IN_PROGRESS;
     }
-    await sleepUntil(deadline, 30_000);
+    await sleepUntil(deadline, 10_000);
   }
 }
 
