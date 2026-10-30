@@ -887,6 +887,23 @@ module Hash = {
       (any->magic)["toString"]()
     }
   }
+
+  type sha256
+  @module("node:crypto") external createSha256: (@as("sha256") _, unit) => sha256 = "createHash"
+  @send external update: (sha256, string) => sha256 = "update"
+  @send external digestHex: (sha256, @as("hex") _) => string = "digest"
+  @val @scope("Buffer") external byteLength: string => int = "byteLength"
+
+  // A cache row is keyed by its effect's input, and a Postgres btree key takes
+  // at most 2704 bytes: a contract call with a large argument (calldata of a
+  // few kB) failed the batch write. Such inputs are keyed by their sha256;
+  // every shorter input keeps the key it always had.
+  let maxRawCacheKeyBytes = 2000
+
+  let boundCacheKey = (key: string) =>
+    key->byteLength > maxRawCacheKeyBytes
+      ? "sha256:" ++ createSha256()->update(key)->digestHex
+      : key
 }
 
 let prettifyExn = exn => {

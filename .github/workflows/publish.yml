@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   # Determine npm tag from release tag name:
+  #   v1.2.3-subgraph, v1.2.3-subgraph.1, v1.2.3-alpha.1-subgraph → subgraph
   #   v1.2.3, v1.2.3-alpha.1, v1.2.3-rc.1 → next
   #   anything else → dev
   prepare:
@@ -31,8 +32,13 @@ jobs:
           VERSION=$(echo "$TAG" | sed 's/^v//')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+          # Envio Subgraph builds get a dist-tag of their own, so
+          # `envio@subgraph` stays on them and `envio@next` never does.
+          if echo "$VERSION" | grep -qP '^\d+\.\d+\.\d+-(?:.+-)?subgraph(?:\.\d+)?$'; then
+            echo "npm_tag=subgraph" >> "$GITHUB_OUTPUT"
+            echo "Tag: subgraph"
           # Valid semver or semver with -alpha/-rc prerelease → next
-          if echo "$VERSION" | grep -qP '^\d+\.\d+\.\d+(-(?:alpha|rc)\.\d+)?$'; then
+          elif echo "$VERSION" | grep -qP '^\d+\.\d+\.\d+(-(?:alpha|rc)\.\d+)?$'; then
             echo "npm_tag=next" >> "$GITHUB_OUTPUT"
             echo "Tag: next"
           else

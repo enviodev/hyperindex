@@ -27,6 +27,15 @@ describe("Config.toEnvioInfo", () => {
     let _ = Config.toEnvioInfo(input)
     t.expect(input).toEqual(json(`{"isDev": true, "evm": {"chains": {"1": {"id": 1}}}}`))
   })
+
+  it("drops the subgraph blob so a specVersion bump is not a reset", t => {
+    let info = json(`{
+      "name": "demo",
+      "entities": [],
+      "subgraph": {"specVersion": "0.0.2", "rpcUrls": ["https://secret"], "root": "."}
+    }`)->Config.toEnvioInfo
+    t.expect(info).toEqual(json(`{"name": "demo", "entities": []}`))
+  })
 })
 
 describe("Config.diffPaths", () => {

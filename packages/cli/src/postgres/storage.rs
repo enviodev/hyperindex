@@ -469,6 +469,30 @@ impl Storage {
         ddl.push(internal::views(schema));
         ddl.extend(internal::insert_chains(schema, &input.chains));
 
+        let kept_schema = internal::kept_caches_schema(schema);
+        if !is_empty_schema && !input.kept_effect_caches.is_empty() {
+            let (rows, _) = self
+                .client
+                .query(&internal::effect_cache_tables(schema), &[])
+                .await?;
+            let kept = rows
+                .iter()
+                .map(|row| cell::<String>(row, 0))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .filter(|table| {
+                    internal::effect_name_of_cache_table(table).is_some_and(|name| {
+                        input.kept_effect_caches.iter().any(|kept| kept == name)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !kept.is_empty() {
+                self.client
+                    .batch(&internal::move_tables_aside(schema, &kept_schema, &kept))
+                    .await?;
+            }
+        }
+
         let transaction = self.client.begin().await?;
         let outcome = async {
             transaction.batch(&ddl.join("\n")).await?;
@@ -498,6 +522,22 @@ impl Storage {
         }
         .await;
         finish(transaction, outcome).await?;
+        // Also whatever a run that died after setting them aside left there.
+        if !input.kept_effect_caches.is_empty() {
+            let (rows, _) = self
+                .client
+                .query(&internal::tables_in_schema(&kept_schema), &[])
+                .await?;
+            let kept = rows
+                .iter()
+                .map(|row| cell::<String>(row, 0))
+                .collect::<Result<Vec<_>>>()?;
+            if !kept.is_empty() {
+                self.client
+                    .batch(&internal::move_tables_back(schema, &kept_schema, &kept))
+                    .await?;
+            }
+        }
         self.indexes.reload().await
     }
 

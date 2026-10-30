@@ -192,8 +192,29 @@ let getSchemaIndexes = (
     ->Array.forEach(derivedFromField => {
       let column =
         derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
+      // A list column holds every id in one value; a btree entry over it
+      // outgrows a page (Hats' `wearers`), so it gets GIN, as graph-node gives
+      // list attributes.
+      let isList =
+        derivedSchema
+        ->Utils.Dict.dangerouslyGetNonOption(derivedFromField.derivedFromEntity)
+        ->Option.flatMap(table => table->Table.getFieldByName(derivedFromField.derivedFromField))
+        ->Option.mapOr(
+          false,
+          field =>
+            switch field {
+            | Table.Field({isArray}) => isArray
+            | DerivedFrom(_) => false
+            },
+        )
       all
-      ->Array.push(IndexDefinition.single(~tableName=derivedFromField.derivedFromEntity, ~column))
+      ->Array.push(
+        IndexDefinition.make(
+          ~tableName=derivedFromField.derivedFromEntity,
+          ~columns=[{name: column, direction: Table.Asc}],
+          ~method=?isList ? Some("gin") : None,
+        ),
+      )
       ->ignore
     })
   )
@@ -624,6 +645,25 @@ let make = (
   ~isolated=false,
   ~onInitialize=?,
 ): Persistence.storage => {
+  // A subgraph's Graph endpoint serves while it syncs, as graph-node's does,
+  // and graph-node builds every index with the table: the schema's indexes
+  // are built at initialize rather than once the backfill is done.
+  let eagerSchemaIndexes = Env.subgraphMode.contents
+  // The subgraph runtime's caches whose rows can't go stale: a contract call,
+  // a balance or code at a block number, and a file by its content id.
+  // graph-node keeps its call cache when a subgraph is synced again from
+  // scratch; so does a reset here, and a resync asks an RPC only for what it
+  // never asked before.
+  let keptEffectCaches = Env.subgraphMode.contents
+    ? Some([
+        "envio_subgraph_eth_call",
+        "envio_subgraph_eth_balance",
+        "envio_subgraph_has_code",
+        "envio_subgraph_file",
+        "envio_subgraph_ipfs_cat",
+        "envio_subgraph_arweave",
+      ])
+    : None
   let cacheDirPath = switch cacheDir {
   | Some(cacheDir) => cacheDir
   | None =>
@@ -764,6 +804,14 @@ let make = (
     cache
   }
 
+  let partitionChainIds = chainIds => isolated ? Some(chainIds) : None
+
+  let schemaIndexes = (~entities: array<Internal.entityConfig>, ~chainIds) =>
+    getSchemaIndexes(
+      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+      ~partitionChainIds=?partitionChainIds(chainIds),
+    )->Array.map(IndexDefinition.toInput)
+
   let initialize = async (
     ~chainConfigs=[],
     ~entities=[],
@@ -792,7 +840,17 @@ let make = (
       envioInfo: envioInfo->JSON.stringify,
       contractNames: contractMapping->ContractMapping.names,
       addresses: rowsByChain->Array.flat->addressColumns,
+      ?keptEffectCaches,
     })
+
+    if eagerSchemaIndexes {
+      await client->StorageClient.ensureSchemaIndexes(
+        schemaIndexes(
+          ~entities,
+          ~chainIds=chainConfigs->Array.map((chainConfig: Config.chain) => chainConfig.id),
+        ),
+      )
+    }
 
     let cache = await restoreEffectCache(~withUpload=true)
 
@@ -873,8 +931,6 @@ let make = (
     columns
   }
 
-  let partitionChainIds = chainIds => isolated ? Some(chainIds) : None
-
   // The physical table a query index for `scope` is built on. A per-chain
   // entity's query carries the scope's chain id, so it is planned against that
   // chain's partition, which an index on the parent covers by cascading.
@@ -901,12 +957,6 @@ let make = (
     | Value(building) => await building
     | Null => ()
     }
-
-  let schemaIndexes = (~entities: array<Internal.entityConfig>, ~chainIds) =>
-    getSchemaIndexes(
-      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
-      ~partitionChainIds=?partitionChainIds(chainIds),
-    )->Array.map(IndexDefinition.toInput)
 
   // Runs on a resumed indexer that is already ready, so handlers may be issuing
   // getWhere queries alongside it. Nothing here writes `ready_at` — the chains

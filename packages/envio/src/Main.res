@@ -303,12 +303,25 @@ let getGlobalIndexer = (): 'indexer => {
 
   let onBlockFn = (rawOptions: 'a, handler: 'b) => {
     HandlerRegister.throwIfFinishedRegistration(~methodName="onBlock")
-    let raw = rawOptions->(Utils.magic: 'a => {"name": string, "where": unknown, "fields": unknown})
+    let raw =
+      rawOptions->(
+        Utils.magic: 'a => {
+          "name": string,
+          "where": unknown,
+          "fields": unknown,
+          "runsFirst": option<bool>,
+          "contractRegister": option<Internal.onBlockContractRegisterArgs => promise<unit>>,
+        }
+      )
     HandlerRegister.registerOnBlock(
       ~name=raw["name"],
       ~where=raw["where"],
       ~fields=raw["fields"],
       ~handler=handler->(Utils.magic: 'b => Internal.onBlockArgs => promise<unit>),
+      // Not part of the public API: the subgraph runtime's `once` handlers, and
+      // the register passes of block handlers that create data sources.
+      ~runsFirst=Env.subgraphMode.contents && raw["runsFirst"] === Some(true),
+      ~contractRegister=?Env.subgraphMode.contents ? raw["contractRegister"] : None,
       ~getChainsObject=config => {
         let (chains, _) = buildChainsObject(~config)
         chains->(Utils.magic: {..} => dict<unknown>)

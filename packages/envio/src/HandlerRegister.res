@@ -699,6 +699,8 @@ let registerOnBlock = (
   ~where: unknown,
   ~fields: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
+  ~runsFirst=false,
+  ~contractRegister=?,
   ~getChainsObject: Config.t => dict<unknown>,
 ) => {
   withRegistration(registration => {
@@ -792,6 +794,8 @@ let registerOnBlock = (
               interval: range._every,
               chainId,
               handler,
+              runsFirst,
+              ?contractRegister,
               blockFieldMask,
             }: Internal.onBlockRegistration
           ),

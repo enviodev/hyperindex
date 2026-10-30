@@ -1,0 +1,123 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+
+// The stub below answers on a port the OS assigns, taken now and freed for it,
+// so ENVIO_SUBGRAPH_RPC can name it before envio is imported.
+const probe = createServer();
+await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+const port = (probe.address() as AddressInfo).port;
+await new Promise<void>((resolve) => probe.close(() => resolve()));
+process.env.ENVIO_SUBGRAPH_RPC = `http://127.0.0.1:${port}`;
+
+const { createTestIndexer, TestHelpers } = await import("envio");
+
+const { Addresses } = TestHelpers;
+const factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
+const pair = Addresses.mockAddresses[3];
+
+// name() -> "Uniswap", ABI-encoded.
+const NAME_RESULT =
+  "0x0000000000000000000000000000000000000000000000000000000000000020" +
+  "0000000000000000000000000000000000000000000000000000000000000007" +
+  "556e69737761700000000000000000000000000000000000000000000000000000".slice(0, 64);
+
+let server: Server;
+
+beforeAll(async () => {
+  server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      const request = JSON.parse(body);
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: request.method === "eth_call" ? NAME_RESULT : "0x1",
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+// A subgraph's `Bytes` column stores the bytes themselves: subgraph mode runs
+// with `bytes_type: uint8array`, which is what graph-ts hands the store.
+const bytes = (hex: string) => Uint8Array.from(Buffer.from(hex.slice(2), "hex"));
+
+describe("an unmodified subgraph project", () => {
+  // createTestIndexer() reads the project synchronously, and reading it asks
+  // ENVIO_SUBGRAPH_RPC its eth_chainId. This stub answers on the thread that
+  // read blocks, so the ask waited out its 15 s deadline; an endpoint this
+  // process serves is now left unasked. The project is read once per process,
+  // so this runs first.
+  it("creates its indexer without waiting on the RPC stub this process serves", () => {
+    const started = performance.now();
+    createTestIndexer();
+    expect(performance.now() - started).toBeLessThan(5_000);
+  });
+
+  it("indexes a factory event, its contract call and its template", async () => {
+    const indexer = createTestIndexer();
+
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            {
+              contract: "Factory",
+              event: "PairCreated",
+              srcAddress: factory,
+              params: {
+                token0: Addresses.mockAddresses[1],
+                token1: Addresses.mockAddresses[2],
+                pair,
+              },
+            },
+            {
+              contract: "Factory",
+              event: "PairCreated",
+              srcAddress: factory,
+              params: {
+                token0: Addresses.mockAddresses[1],
+                token1: Addresses.mockAddresses[2],
+                pair,
+              },
+            },
+            {
+              contract: "Pair",
+              event: "Swap",
+              srcAddress: pair,
+              params: { sender: Addresses.mockAddresses[4], amount: 500n },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(await indexer.Pair.getOrThrow(pair.toLowerCase())).toEqual({
+      id: pair.toLowerCase(),
+      token0: bytes(Addresses.mockAddresses[1]),
+      token1: bytes(Addresses.mockAddresses[2]),
+      // The second event read the first back through the generated `load()`,
+      // then the swap handler appended what the two derived fields answered:
+      // the one-to-one `metadata` and the one-element `swaps` list.
+      name: "Uniswap+Uniswap/seen1",
+    });
+
+    const swaps = await indexer.Swap.getWhere({ pair_id: { _eq: pair.toLowerCase() } });
+    expect(swaps).toEqual([
+      {
+        id: pair.toLowerCase() + "-2",
+        pair_id: pair.toLowerCase(),
+        sender: bytes(Addresses.mockAddresses[4]),
+        amount: 500n,
+      },
+    ]);
+  });
+});

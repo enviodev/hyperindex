@@ -27,6 +27,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio local db-migrate up`↴](#envio-local-db-migrate-up)
 * [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
 * [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
+* [`envio subgraph-codegen`↴](#envio-subgraph-codegen)
 * [`envio start`↴](#envio-start)
 * [`envio metrics`↴](#envio-metrics)
 * [`envio metrics runtime`↴](#envio-metrics-runtime)
@@ -37,6 +38,8 @@ This document contains the help content for the `envio` command-line program.
 * [`envio tools fetch-docs`↴](#envio-tools-fetch-docs)
 * [`envio config`↴](#envio-config)
 * [`envio config view`↴](#envio-config-view)
+* [`envio subgraph`↴](#envio-subgraph)
+* [`envio subgraph diff`↴](#envio-subgraph-diff)
 
 ## `envio`
 
@@ -49,16 +52,18 @@ This document contains the help content for the `envio` command-line program.
 * `stop` — Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
+* `subgraph-codegen` — Write a subgraph's generated/ tree (schema entities, ABI bindings, templates) without graph-cli. Reads the manifest named by --config (default subgraph.yaml)
 * `start` — Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
 * `metrics` — Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
+* `subgraph` — Tools for subgraph projects (a directory with subgraph.yaml)
 
 ###### **Options:**
 
 * `-d`, `--directory <DIRECTORY>` — The directory of the project. Defaults to current dir ("./")
-* `--config <CONFIG>` — The config file path, resolved relative to the project directory. It can also be set via the `ENVIO_CONFIG` environment variable
+* `--config <CONFIG>` — The config file path, resolved relative to the project directory: an envio config.yaml or a subgraph manifest. It can also be set via the `ENVIO_CONFIG` environment variable
 
   Default value: `config.yaml`
 
@@ -369,6 +374,18 @@ Drop all indexed data and run migrations
 
 
 
+## `envio subgraph-codegen`
+
+Write a subgraph's generated/ tree (schema entities, ABI bindings, templates) without graph-cli. Reads the manifest named by --config (default subgraph.yaml)
+
+**Usage:** `envio subgraph-codegen [OPTIONS]`
+
+###### **Options:**
+
+* `--output-dir <OUTPUT_DIR>` — Where to write the generated tree. Defaults to where the mappings import it from, else ./generated
+
+
+
 ## `envio start`
 
 Start the indexer. Runs codegen automatically before launching so the on-disk types stay in sync with `config.yaml` and `schema.graphql`
@@ -478,6 +495,64 @@ Inspect the indexer config
 Print the resolved indexer config as JSON
 
 **Usage:** `envio config view`
+
+
+
+## `envio subgraph`
+
+Tools for subgraph projects (a directory with subgraph.yaml)
+
+**Usage:** `envio subgraph <COMMAND>`
+
+###### **Subcommands:**
+
+* `diff` — Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint at one block, and print a parity report
+
+
+
+## `envio subgraph diff`
+
+Prove a migration: compare this indexer's data with the subgraph's graph-node endpoint at one block, and print a parity report.
+
+Ours is the project's Postgres (the same ENVIO_PG_* settings the indexer uses), at the block the indexer has processed; the reference is queried at that block with `block: {number: N}`. Per entity type it compares the full id sets and a deterministic sample of entities field by field, in graph-node's encodings.
+
+Exit code: 0 when everything matches within the tolerances, 1 on a mismatch, 2 when the comparison couldn't run or was incomplete.
+
+**Usage:** `envio subgraph diff [OPTIONS] <ENDPOINT>`
+
+###### **Arguments:**
+
+* `<ENDPOINT>` — The reference graph-node GraphQL endpoint, e.g. https://<host>/subgraphs/name/<name>
+
+###### **Options:**
+
+* `--ours <GRAPH_ENDPOINT>` — Compare a Graph endpoint of ours (e.g. envio-serve's) instead of the project's Postgres. It's read at its latest block, which pins the reference
+* `--block <BLOCK>` — Fail unless ours is at exactly this block. Ours keeps no history, so it can only be compared at the block it has reached
+* `--sample <SAMPLE>` — Entities per type compared field by field
+
+  Default value: `100`
+* `--type <ENTITY>` — Only compare these entity types (repeat, or separate with commas)
+* `--tolerance <TOLERANCE>` — Allowed difference per type between the entity sets, in percent of the reference's count
+
+  Default value: `0.1`
+* `--max-field-mismatches <MAX_FIELD_MISMATCHES>` — Allowed sampled field mismatches, across all types
+
+  Default value: `0`
+* `--concurrency <CONCURRENCY>` — Requests in flight per endpoint (one fewer after each HTTP 429, down to one)
+
+  Default value: `4`
+* `--max-entities <MAX_ENTITIES>` — Stop listing a type's reference ids after this many (the count is then a lower bound and the type is inconclusive unless ours falls short of it). 0 lists them all
+
+  Default value: `0`
+* `--header <HEADER>` — Extra HTTP header for the reference, as `Name: value` (repeatable)
+* `--allow-indexing-errors` — Compare even when the reference reports indexing errors
+* `--timeout <TIMEOUT>` — Per-request timeout, in seconds
+
+  Default value: `60`
+* `--wait <WAIT>` — How long to wait for a reference behind ours to reach ours' block, in seconds
+
+  Default value: `120`
+* `--json` — Print the report as JSON (stable shape, `schemaVersion: 1`) instead of a table
 
 
 

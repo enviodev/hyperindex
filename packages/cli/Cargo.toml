@@ -83,6 +83,9 @@ base64 = "0.22.1"
 ratatui = { version = "0.30.2", default-features = false }
 unicode-width = "0.2.2"
 libc = "0.2"
+# graph-node names collection fields with exactly this version's plural rules
+# (graph/src/data/graphql/ext.rs `camel_cased_names`).
+Inflector = "=0.11.4"
 
 # Severity lives here rather than in the CI command line, so `cargo clippy`
 # locally and in CI agree on what is fatal.

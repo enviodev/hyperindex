@@ -11,5 +11,7 @@ test/.tmp/
 # Log files the file-writing LOG_STRATEGY cases emit
 logs/
 
+# Subgraph runtime state the test indexers write into the working directory
+.envio/
 # A failed run's logs, which its failure message links to
 .test-logs/

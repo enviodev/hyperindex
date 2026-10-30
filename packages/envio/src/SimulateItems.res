@@ -638,7 +638,16 @@ let parse = (
       // A simulate item must land on a distinct (block, logIndex): event ordering
       // and the dead-input tracker both key on it. Catch explicit duplicates and
       // explicit-vs-auto-increment collisions here, naming both offending indices.
-      let coordinate = `${blockNumber->Int.toString}:${logIndex->Int.toString}`
+      // A call is ordered by its position in its transaction's trace, so two
+      // transactions' calls share an index.
+      let coordinate = switch Internal.callRankOfEventName(eventConfig.name) {
+      | Some(_) =>
+        let transactionIndex = (
+          transaction->(Utils.magic: Internal.eventTransaction => {"transactionIndex": int})
+        )["transactionIndex"]
+        `${blockNumber->Int.toString}:tx${transactionIndex->Int.toString}:${logIndex->Int.toString}`
+      | None => `${blockNumber->Int.toString}:${logIndex->Int.toString}`
+      }
       switch seenCoordinates->Dict.get(coordinate) {
       | Some(firstIndex) =>
         JsError.throwWithMessage(
@@ -673,31 +682,38 @@ let parse = (
         let onEventRegistration = {...reg, index: onEventRegistrationIndex}
         onEventRegistrations->Array.push(onEventRegistration)->ignore
 
-        items
-        ->Array.push(
-          Internal.Event({
-            onEventRegistration,
-            chainId,
-            blockNumber,
-            logIndex,
-            // Simulate keeps the transaction inline on the payload, so the store
-            // key is unused.
-            transactionIndex: 0,
-            payload: (
-              {
-                contractName: eventConfig.contractName,
-                eventName: eventConfig.name,
-                params,
-                chainId,
-                srcAddress,
-                logIndex,
-                transaction,
-                block,
-              }: Evm.payload
-            )->Evm.fromPayload,
-          }),
-        )
-        ->ignore
+        let item = Internal.Event({
+          onEventRegistration,
+          chainId,
+          blockNumber,
+          logIndex,
+          // Simulate keeps the transaction inline on the payload, so the store
+          // key is unused; a subgraph's call triggers order by it among logs.
+          transactionIndex: switch config.ecosystem.name {
+          | Evm =>
+            (
+              transaction->(Utils.magic: Internal.eventTransaction => {"transactionIndex": int})
+            )["transactionIndex"]
+          | _ => 0
+          },
+          payload: (
+            {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              params,
+              chainId,
+              srcAddress,
+              logIndex,
+              transaction,
+              block,
+            }: Evm.payload
+          )->Evm.fromPayload,
+        })
+        switch Internal.callRankOfEventName(eventConfig.name) {
+        | Some(rank) => item->Internal.markItemCall(~rank)
+        | None => ()
+        }
+        items->Array.push(item)->ignore
       })
     }
   })

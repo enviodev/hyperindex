@@ -160,6 +160,7 @@ pub(crate) fn initialize_input(tables: Vec<Arc<Table>>) -> Initialize {
         envio_info: "{\"config\":1}".to_string(),
         contract_names: Vec::new(),
         addresses: Addresses::default(),
+        kept_effect_caches: Vec::new(),
     }
 }
 

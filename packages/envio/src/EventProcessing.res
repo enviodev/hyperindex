@@ -125,17 +125,52 @@ let preloadBatchOrThrow = async (batch: Batch.t, ~runtime) => {
 
 let runBatchHandlersOrThrow = async (batch: Batch.t, ~runtime) => {
   let itemIdx = ref(0)
+  let lookahead = PreloadLookahead.active.contents
+  // Settled before the batch ends: one finishing after a rollback would put a
+  // value read before it back into memory.
+  let lookaheadPreloads = []
+  // Only read by the lookahead, which preloads items out of checkpoint order.
+  let checkpointIdOf = switch lookahead {
+  | Some(_) =>
+    let ids = []
+    batch.checkpointIds->Array.forEachWithIndex((checkpointId, checkpointIdx) => {
+      for _ in 1 to batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx) {
+        ids->Array.push(checkpointId)
+      }
+    })
+    ids
+  | None => []
+  }
 
   for checkpointIdx in 0 to batch.checkpointIds->Array.length - 1 {
     let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpointIdx)
     let checkpointItemsCount = batch.checkpointItemsCount->Array.getUnsafe(checkpointIdx)
 
     for idx in 0 to checkpointItemsCount - 1 {
-      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
+      let index = itemIdx.contents + idx
+      let item = batch.items->Array.getUnsafe(index)
       await runHandlerOrThrow(item, ~checkpointId, ~runtime)
+
+      switch lookahead {
+      | Some(lookahead) =>
+        lookahead->PreloadLookahead.afterItem(~index, ~preload=(ahead, aheadIdx) =>
+          if ahead->hasHandler {
+            lookaheadPreloads
+            ->Array.push(
+              runtime->preload(
+                ~item=ahead,
+                ~checkpointId=checkpointIdOf->Array.getUnsafe(aheadIdx),
+              ),
+            )
+            ->ignore
+          }
+        )
+      | None => ()
+      }
     }
     itemIdx := itemIdx.contents + checkpointItemsCount
   }
+  let _ = await Promise.all(lookaheadPreloads)
 }
 
 let registerProcessEventBatchMetrics = (
@@ -219,6 +254,7 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
       // Materialise store-backed transactions onto payloads before any handler
       // (preload or execute) reads them.
       await materializeBatchEvents(batch, ~chainStates)
+      PreloadLookahead.start(~items=batch.items)
       await batch->preloadBatchOrThrow(~runtime)
     }
 
@@ -227,6 +263,7 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
     if batch.items->Utils.Array.notEmpty {
       await batch->runBatchHandlersOrThrow(~runtime)
     }
+    PreloadLookahead.stop()
 
     let elapsedTimeAfterProcessing = timeRef->Performance.secondsSince
 

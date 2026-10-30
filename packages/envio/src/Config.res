@@ -155,6 +155,9 @@ type t = {
   // reach, so its checkpoints have to be comparable across chains.
   checkpointSequence: CheckpointSequence.t,
   envioInfo: JSON.t,
+  // Set only in subgraph mode: the translated manifest, which is what makes
+  // the subgraph runtime take over handler registration.
+  subgraph: option<JSON.t>,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -618,6 +621,7 @@ let publicConfigSchema = S.schema(s =>
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
     "enums": s.matches(S.option(S.dict(S.array(S.string)))),
     "entities": s.matches(S.option(S.array(entityJsonSchema))),
+    "subgraph": s.matches(S.option(S.json(~validate=false))),
   }
 )
 
@@ -700,6 +704,10 @@ let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
   switch envioInfo {
   | Object(obj) => {
       commandFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
+      // The subgraph blob is how the runtime finds mappings. None of it
+      // describes stored data — that's already in `evm` / `entities` — so a
+      // specVersion bump or a mapping-path edit must not force a reset.
+      obj->Utils.Dict.deleteInPlace("subgraph")
       ecosystemFields->Array.forEach(ecosystem =>
         switch obj->Dict.get(ecosystem) {
         | Some(Object(ecosystemDict)) => ecosystemDict->Utils.Dict.deleteInPlace("chains")
@@ -1148,6 +1156,10 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => []
   }
 
+  if publicConfig["subgraph"]->Option.isSome {
+    Env.subgraphMode := true
+  }
+
   let config = {
     name: publicConfig["name"],
     description: publicConfig["description"],
@@ -1176,6 +1188,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     allEnums,
     checkpointSequence: CheckpointSequence.fromEntities(userEntities),
     envioInfo: publicConfigJson->toEnvioInfo,
+    subgraph: publicConfig["subgraph"],
   }
 
   switch publicConfig["isolatedChains"] {

@@ -31,6 +31,23 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
+type fromSubgraphOptions = {
+  name?: string,
+  env?: dict<string>,
+  files?: dict<string>,
+  root?: string,
+}
+
+type bundledCodegenResult = {outputDir: string, files: array<string>}
+
+type filledGeneratedFile = {
+  file: string,
+  source: string,
+  abiName?: string,
+  renamedFrom?: string,
+  undeclared: bool,
+}
+
 // One column of a Postgres table, flattened for the boundary: napi carries no
 // tagged union, so the field type arrives as its name plus whichever of the
 // modifiers it takes.
@@ -72,7 +89,25 @@ type pgIndexInput = {
 }
 
 type addon = {
-  getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  getConfigJson: (
+    ~configPath: Null.t<string>,
+    ~directory: Null.t<string>,
+    ~portsServedHere: array<int>,
+  ) => string,
+  fromSubgraph: (string, string, fromSubgraphOptions) => fromUserApiResult,
+  subgraphFileToJavascript: (string, string, bool) => string,
+  subgraphRegisterHandlers: (array<string>, array<array<string>>) => array<array<string>>,
+  subgraphSureCreates: (string, array<string>, array<string>) => array<array<string>>,
+  subgraphKeccak256: Uint8Array.t => Uint8Array.t,
+  subgraphAbiDecode: (string, Uint8Array.t, bool) => unknown,
+  subgraphAbiEncodeCall: (string, string, JSON.t) => string,
+  subgraphBundledCodegen: (string, Null.t<string>) => bundledCodegenResult,
+  subgraphBundledCodegenCurrent: (string, string) => bool,
+  subgraphMissingGraphCliMessage: string => string,
+  subgraphFillGenerated: (string, string, string, array<string>) => array<filledGeneratedFile>,
+  subgraphWorkspacePackages: string => dict<string>,
+  subgraphWorkspaceRoot: string => Null.t<string>,
+  subgraphScriptsWriting: (string, string) => array<array<string>>,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   isSvmPubkey: (~value: string) => bool,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
@@ -330,11 +365,24 @@ let getAddon = () =>
     }
   }
 
+// The ports servers in this process listen on. Node has no public list of
+// them; `_getActiveHandles` has held them since its first releases, and
+// without it nothing is reported.
+let portsServedHere: unit => array<int> = %raw(`() =>
+  typeof process._getActiveHandles !== "function"
+    ? []
+    : process
+        ._getActiveHandles()
+        .map((handle) => (handle?.listening === true && typeof handle.address === "function" ? handle.address() : null))
+        .filter((address) => typeof address?.port === "number")
+        .map((address) => address.port)`)
+
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
   addon.getConfigJson(
     ~configPath=configPath->Null.fromOption,
     ~directory=directory->Null.fromOption,
+    ~portsServedHere=portsServedHere(),
   )
 }
 
@@ -355,6 +403,53 @@ let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) =
     },
   )
 }
+
+/// Parses a subgraph project without touching the filesystem: subgraph.yaml and
+/// its schema inline, ABI bodies through `files`.
+let fromSubgraph = (~name=?, ~env=?, ~files=?, ~root=?, ~manifest, ~schema) => {
+  let addon = getAddon()
+  addon.fromSubgraph(manifest, schema, {?name, ?env, ?files, ?root})
+}
+
+let subgraphFileToJavascript = (~source, ~path, ~legacyNulls) => {
+  let addon = getAddon()
+  addon.subgraphFileToJavascript(source, path, legacyNulls)
+}
+
+let subgraphRegisterHandlers = (~mappingFiles, ~handlers) => {
+  let addon = getAddon()
+  addon.subgraphRegisterHandlers(mappingFiles, handlers)
+}
+
+let subgraphSureCreates = (~mappingFile, ~handlers, ~templates) =>
+  getAddon().subgraphSureCreates(mappingFile, handlers, templates)
+
+let subgraphKeccak256 = bytes => getAddon().subgraphKeccak256(bytes)
+
+let subgraphAbiDecode = (ty, data, params) => getAddon().subgraphAbiDecode(ty, data, params)
+
+let subgraphAbiEncodeCall = (name, inputs, args) =>
+  getAddon().subgraphAbiEncodeCall(name, inputs, args)
+
+let subgraphBundledCodegen = (~manifestFile, ~outputDir: option<string>) => {
+  let addon = getAddon()
+  addon.subgraphBundledCodegen(manifestFile, outputDir->Null.fromOption)
+}
+
+let subgraphBundledCodegenCurrent = (~manifestFile, ~outputDir) =>
+  getAddon().subgraphBundledCodegenCurrent(manifestFile, outputDir)
+
+let subgraphMissingGraphCliMessage = generated =>
+  getAddon().subgraphMissingGraphCliMessage(generated)
+
+let subgraphFillGenerated = (~root, ~manifestFile, ~outputDir, ~wanted) =>
+  getAddon().subgraphFillGenerated(root, manifestFile, outputDir, wanted)
+
+let subgraphWorkspacePackages = root => getAddon().subgraphWorkspacePackages(root)
+
+let subgraphWorkspaceRoot = root => getAddon().subgraphWorkspaceRoot(root)
+
+let subgraphScriptsWriting = (~dir, ~needle) => getAddon().subgraphScriptsWriting(dir, needle)
 
 let runCli = args => {
   let addon = getAddon()

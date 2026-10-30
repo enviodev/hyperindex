@@ -1034,6 +1034,7 @@ mod tests {
                 envio_info: "{}".to_string(),
                 contract_names: Vec::new(),
                 addresses: Addresses::default(),
+                kept_effect_caches: Vec::new(),
             })
             .await
             .unwrap();

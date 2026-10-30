@@ -13,7 +13,7 @@ type t = {
   method: string,
 }
 
-let make = (~tableName, ~columns) => {tableName, columns, method: "btree"}
+let make = (~tableName, ~columns, ~method="btree") => {tableName, columns, method}
 
 let single = (~tableName, ~column) =>
   make(~tableName, ~columns=[{name: column, direction: Table.Asc}])

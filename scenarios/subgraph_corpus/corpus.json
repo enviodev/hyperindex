@@ -1,0 +1,33 @@
+[
+  {
+    "name": "ens",
+    "repo": "https://github.com/ensdomains/ens-subgraph",
+    "commit": "ad62221d8ebb6a0102a5caa41a23130e2e6251b2",
+    "chainId": 1,
+    "endBlock": 3427417
+  },
+  {
+    "name": "uniswap-v2",
+    "repo": "https://github.com/Uniswap/v2-subgraph",
+    "commit": "9d8a918bfecc2310337a917919c3ad56c5071d87",
+    "chainId": 1,
+    "endBlock": 10020000
+  },
+  {
+    "name": "uniswap-v3-sepolia",
+    "repo": "https://github.com/Uniswap/v3-subgraph",
+    "commit": "fb917a6ccaee465f6b5eab8059452f22eb6d4da6",
+    "chainId": 11155111,
+    "endBlock": 3600000,
+    "env": {
+      "ENVIO_SUBGRAPH_NETWORK": "sepolia"
+    }
+  },
+  {
+    "name": "cryptopunks",
+    "repo": "https://github.com/itsjerryokolo/CryptoPunks",
+    "commit": "2c67cd251dce9faa49c2a5d4cd949e0514fc28f3",
+    "chainId": 1,
+    "endBlock": 3950000
+  }
+]

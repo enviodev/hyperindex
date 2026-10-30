@@ -435,11 +435,83 @@ pub fn rollback_progress_diff(pg_schema: &str, sequence: Sequence) -> anyhow::Re
 pub fn effect_cache_tables(pg_schema: &str) -> String {
     format!(
         "SELECT t.table_name::TEXT\nFROM information_schema.tables t\nWHERE t.table_schema = \
-         '{pg_schema}'\nAND t.table_name ~ '^envio_([0-9]+_)?effect_.+'\nAND (\n  SELECT \
+         {}\nAND t.table_name ~ '^envio_([0-9]+_)?effect_.+'\nAND (\n  SELECT \
          array_agg(c.column_name::text ORDER BY c.column_name::text)\n  FROM \
          information_schema.columns c\n  WHERE c.table_schema = t.table_schema AND c.table_name \
-         = t.table_name\n) = ARRAY['id', 'output'];"
+         = t.table_name\n) = ARRAY['id', 'output'];",
+        quote_literal(pg_schema)
     )
+}
+
+/// The effect a cache table belongs to: `envio_effect_<name>` or, for a
+/// chain-scoped one, `envio_<chain id>_effect_<name>`.
+pub fn effect_name_of_cache_table(table_name: &str) -> Option<&str> {
+    let rest = table_name.strip_prefix("envio_")?;
+    let rest = match rest.split_once('_') {
+        Some((chain_id, rest))
+            if !chain_id.is_empty() && chain_id.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            rest
+        }
+        _ => rest,
+    };
+    rest.strip_prefix("effect_").filter(|name| !name.is_empty())
+}
+
+/// Where a reset keeps the caches it doesn't drop while the schema is rebuilt.
+pub fn kept_caches_schema(pg_schema: &str) -> String {
+    const MAX_IDENTIFIER_BYTES: usize = 63;
+    let name = format!("envio_kept_{pg_schema}");
+    if name.len() <= MAX_IDENTIFIER_BYTES {
+        return name;
+    }
+    // A later run restores what a crashed one set aside, so the name has to
+    // come out the same from any build: FNV-1a, not the std hasher.
+    let hash = pg_schema
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+    let mut cut = MAX_IDENTIFIER_BYTES - 17;
+    while !name.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}_{hash:016x}", &name[..cut])
+}
+
+pub fn tables_in_schema(pg_schema: &str) -> String {
+    format!(
+        "SELECT table_name::TEXT FROM information_schema.tables WHERE table_schema = {};",
+        quote_literal(pg_schema)
+    )
+}
+
+pub fn move_tables_aside(pg_schema: &str, kept_schema: &str, tables: &[String]) -> String {
+    let kept = quote_ident(kept_schema);
+    let mut sql = format!("CREATE SCHEMA IF NOT EXISTS {kept};");
+    for table in tables {
+        let table = quote_ident(table);
+        sql.push_str(&format!(
+            "\nDROP TABLE IF EXISTS {kept}.{table};\nALTER TABLE {}.{table} SET SCHEMA {kept};",
+            quote_ident(pg_schema)
+        ));
+    }
+    sql
+}
+
+pub fn move_tables_back(pg_schema: &str, kept_schema: &str, tables: &[String]) -> String {
+    let kept = quote_ident(kept_schema);
+    let mut sql = String::new();
+    for table in tables {
+        let table = quote_ident(table);
+        sql.push_str(&format!(
+            "DROP TABLE IF EXISTS {}.{table};\nALTER TABLE {kept}.{table} SET SCHEMA {};\n",
+            quote_ident(pg_schema),
+            quote_ident(pg_schema)
+        ));
+    }
+    sql.push_str(&format!("DROP SCHEMA IF EXISTS {kept};"));
+    sql
 }
 
 /// The name comes from the catalog, so anything cache-shaped created out of
@@ -450,6 +522,10 @@ pub fn count_rows(pg_schema: &str, table_name: &str) -> String {
         quote_ident(pg_schema),
         quote_ident(table_name)
     )
+}
+
+pub fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 pub fn quote_ident(ident: &str) -> String {
@@ -466,6 +542,26 @@ mod tests {
             .iter()
             .map(|table| create_table_query(table, "s", false, ChainIdMode::Int32).unwrap())
             .collect()
+    }
+
+    // Postgres cuts an identifier at 63 bytes: two long schemas sharing a
+    // prefix would set their kept caches aside in the same schema.
+    #[test]
+    fn keeps_each_schema_s_caches_apart_whatever_its_length() {
+        let long = |tail: &str| format!("{}{tail}", "s".repeat(60));
+        let (a, b) = (
+            kept_caches_schema(&long("a")),
+            kept_caches_schema(&long("b")),
+        );
+        assert_eq!(
+            (
+                kept_caches_schema("public"),
+                a != b,
+                a.len() <= 63 && b.len() <= 63,
+                effect_cache_tables("o'neil").contains("t.table_schema = 'o''neil'"),
+            ),
+            ("envio_kept_public".to_string(), true, true, true)
+        );
     }
 
     /// Only a per-chain sequence keys the checkpoints by chain.
