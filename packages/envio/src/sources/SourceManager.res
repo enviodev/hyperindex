@@ -807,20 +807,9 @@ let retryFailedPage = async (
 Resolves at the first height above `knownHeight` that any eligible source
 reports. A waiter is registered per source and the first one to fire wins,
 cancelling the rest.
-
-With a `blockThrottle` of N, the head has to be at least N blocks past
-`knownHeight` before the wait resolves, so a chain at the head fetches once per
-N blocks instead of once per block. 0 and 1 both resolve on the next block.
 */
-let waitForNewBlock = (
-  sourceManager: t,
-  ~knownHeight,
-  ~isRealtime,
-  ~reducedPolling,
-  ~blockThrottle=0,
-) => {
+let waitForHeightAbove = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
-  let heightToWaitAbove = knownHeight + Pervasives.max(0, blockThrottle - 1)
 
   let logger = sourceManager.logger->Logger.withFields({
     "knownHeight": knownHeight,
@@ -902,7 +891,7 @@ let waitForNewBlock = (
           sourceState.feed->HeightFeed.enableStream
         }
         let subscription = sourceState.feed->HeightFeed.onHeightAbove(
-          ~knownHeight=heightToWaitAbove,
+          ~knownHeight,
           // Read per poll rather than captured, so a wait that goes on to stall
           // slows its own polling down without anything having to restart it.
           ~interval=() =>
@@ -1006,6 +995,32 @@ let waitForNewBlock = (
       armStallTimeout()
     }
   })
+}
+
+// Waits block by block rather than for the far height directly, so each block
+// restarts the stall window and only a head that really went quiet reports a
+// stall. A chain with no known height takes its first one as is: a head below
+// `blockThrottle` would otherwise never start fetching.
+let waitForNewBlock = (
+  sourceManager: t,
+  ~knownHeight,
+  ~isRealtime,
+  ~reducedPolling,
+  ~blockThrottle=0,
+) => {
+  if knownHeight === 0 || blockThrottle <= 1 {
+    sourceManager->waitForHeightAbove(~knownHeight, ~isRealtime, ~reducedPolling)
+  } else {
+    let rec waitAbove = async height => {
+      let newHeight = await sourceManager->waitForHeightAbove(
+        ~knownHeight=height,
+        ~isRealtime,
+        ~reducedPolling,
+      )
+      newHeight < knownHeight + blockThrottle ? await waitAbove(newHeight) : newHeight
+    }
+    waitAbove(knownHeight)
+  }
 }
 
 let executeQuery = async (

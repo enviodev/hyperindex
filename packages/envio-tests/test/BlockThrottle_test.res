@@ -94,7 +94,8 @@ describe("E2E blockThrottle tests", () => {
     ~sourceTiming={
       newBlockStallTimeout: 200,
       newBlockStallTimeoutRealtime: 200,
-      reducedPollingInterval: 50,
+      // A wait with reduced polling stalls after twice this.
+      reducedPollingInterval: 100,
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
@@ -112,8 +113,8 @@ describe("E2E blockThrottle tests", () => {
       }
 
       t.expect(
-        indexer.infoAndAboveLogs()->Array.filter(({msg}) =>
-          msg->String.startsWith("No new blocks detected")
+        indexer.infoAndAboveLogs()->Array.filter(
+          ({msg}) => msg->String.startsWith("No new blocks detected"),
         ),
       ).toEqual([])
     },
