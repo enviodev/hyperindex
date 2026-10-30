@@ -10,12 +10,6 @@ external toMethod: 'a => 'a = "%unsafe_to_method"
 
 @val external importPath: string => promise<unknown> = "import"
 
-// Half the delay fixed, half spread across it. Every indexer pointed at one
-// provider loses its stream, or gives up on a quiet chain, in the same instant
-// that provider blinks, and putting them all back on the same schedule is how a
-// blip becomes a stampede.
-let jitter = delay => delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
-
 // Clearing a pending timer and forgetting it are one action. A ref left holding
 // a spent id reads as a timer still pending, and the next clear looks like it
 // did something.

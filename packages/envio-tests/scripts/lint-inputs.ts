@@ -84,12 +84,10 @@ for (const path of resFiles(testRoot)) {
         });
       }
     }
-    // A poll's condition sits on the same line or the one after it. A loop that
-    // steps a faked clock is moving time, which `expectItemsQueries` can't do.
+    // A poll's condition sits on the same line or the one after it.
     if (pollStart.test(code)) {
       const condition = `${code} ${nextCodeLine(lines, index + 1) ?? ""}`;
-      const body = lines.slice(index, index + 8).join("\n");
-      if (/\bpendingItemsQueries\b/.test(condition) && !/\badvanceTimers/.test(body)) {
+      if (/\bpendingItemsQueries\b/.test(condition)) {
         violations.push({
           file,
           line: index + 1,
@@ -103,21 +101,233 @@ for (const path of resFiles(testRoot)) {
   });
 }
 
-if (violations.length > 0) {
+// A scenario on virtual time only moves when it advances its clock, so real
+// time spent between steps changes nothing it can observe, and a count taken
+// before a step stands in for what `expectNewHeightCalls` checks exactly.
+// A zero delay is a turn of the event loop, not time.
+const realDelay = /\bUtils\.delay\((?!0\))([^)]*)\)/;
+const realClock = /\bDate\.now\(/;
+// `length - 1` indexes the latest call, which is how a test answers one poll.
+const pollSnapshot = /\bgetHeightOrThrowCalls->Array\.length\b(?!\s*-\s*1)/;
+const scenarioStart = /\bScenario\.(?:it|run)\(/;
+
+for (const path of resFiles(testRoot)) {
+  const file = relative(repoRoot, path);
+  const lines = readFileSync(path, "utf8").split("\n");
+  // Work off the source clock (a handler or effect taking time, events from the
+  // addon's threads, throttled writes) still takes real time, and says so: a
+  // `// Real time:` comment covers the statement it sits on or above, the lines
+  // below it indented at least as deep, up to the next blank line.
+  const indentOf = (line: string) => line.length - line.trimStart().length;
+  const realTimeAt = (index: number) => {
+    for (let at = index; at >= 0 && lines[at].trim() !== ""; at--) {
+      if (/\/\/\s*Real time:/.test(lines[at])) {
+        const indent = indentOf(lines[at]);
+        return lines.slice(at + 1, index + 1).every((line) => indentOf(line) >= indent);
+      }
+    }
+    return false;
+  };
+  // Scenarios run on virtual time unless `~virtualTime=false` takes them off it,
+  // on `Scenario.make` for every test of that scenario or on one test.
+  const realTimeScenarios = new Set<string>();
+  // Scenarios a file makes through a function of its own count the same way.
+  lines.forEach((line, index) => {
+    const bound = line.match(/^let (\w+) =/);
+    if (!bound) return;
+    // The binding ends at the first line back at the margin: the call's own
+    // closing paren, or whatever top-level code follows a one-line call.
+    const next = lines.findIndex((later, at) => at > index && /^\S/.test(later));
+    const end = next === -1 ? lines.length : /^\)/.test(lines[next]) ? next + 1 : next;
+    const region = lines.slice(index, end).map((line) => line.replace(/\/\/.*$/, ""));
+    if (
+      region.some((line) => /\bScenario\.make\(/.test(line)) &&
+      region.some((line) => /~virtualTime=false\b/.test(line))
+    ) {
+      realTimeScenarios.add(bound[1]);
+    }
+  });
+  lines.forEach((line, index) => {
+    // `//` after a colon is a URL in a string, not a comment.
+    const code = line.replace(/(?<!:)\/\/.*$/, "");
+    // Scenario.res is where the default is set, and a test of a real-time
+    // scenario turns virtual time back on with it.
+    if (
+      /~virtualTime=true\b/.test(code) &&
+      realTimeScenarios.size === 0 &&
+      !file.endsWith("helpers/Scenario.res")
+    ) {
+      violations.push({
+        file,
+        line: index + 1,
+        title: "~virtualTime=true is the default",
+        fix: "Delete it: scenarios run on virtual time unless they opt out.",
+      });
+    }
+    // Real time is the exception, and the reason is what keeps it from
+    // spreading by copy and paste.
+    const previous = lines[index - 1] ?? "";
+    if (
+      /~virtualTime=false\b/.test(code) &&
+      !/~virtualTime=false\b.*(?<!:)\/\//.test(line) &&
+      !/^\s*\/\//.test(previous)
+    ) {
+      violations.push({
+        file,
+        line: index + 1,
+        title: "~virtualTime=false without a reason",
+        fix: "Say on the line above why this test needs real time, such as a source talking to a real server.",
+      });
+    }
+  });
+  const starts = lines.flatMap((line, index) => (scenarioStart.test(line) ? [index] : []));
+  starts.forEach((start, position) => {
+    const end = starts[position + 1] ?? lines.length;
+    const block = lines.slice(start, end);
+    const code = block.map((line) => line.replace(/\/\/.*$/, ""));
+    const receiver = block[0].match(/(\w+)\s*->\s*Scenario\.(?:it|run)\(|Scenario\.(?:it|run)\(\s*(\w+)/);
+    // `makeScenario(~name=...)->Scenario.it(` spreads the receiver over the
+    // lines before the one that names `Scenario.it`.
+    const factoryCall = lines
+      .slice(Math.max(0, start - 6), start + 1)
+      .join("\n")
+      .match(/(\w+)\([^()]*\)\s*->\s*Scenario\.(?:it|run)\($/m);
+    const name = receiver?.[1] ?? receiver?.[2] ?? factoryCall?.[1];
+    const onRealTime =
+      (name !== undefined &&
+        realTimeScenarios.has(name) &&
+        !code.some((line) => /~virtualTime=true\b/.test(line))) ||
+      code.some((line) => /~virtualTime=false\b/.test(line));
+    if (!onRealTime) {
+      code.forEach((line, offset) => {
+        const delay = line.match(realDelay);
+        if (delay && !realTimeAt(start + offset)) {
+          violations.push({
+            file,
+            line: start + offset + 1,
+            title: `Utils.delay(${delay[1]}) on virtual time`,
+            fix: `Replace it with \`await indexer.advanceTime(${delay[1]})\`: the source layer's timers only fire when the test advances the clock.`,
+          });
+        }
+        if (realClock.test(line) && !realTimeAt(start + offset)) {
+          violations.push({
+            file,
+            line: start + offset + 1,
+            title: "Reading the real clock on virtual time",
+            fix: "Time the scenario by how far it advanced: real time says nothing about when a virtual timer fired.",
+          });
+        }
+        if (pollSnapshot.test(line)) {
+          violations.push({
+            file,
+            line: start + offset + 1,
+            title: "Counting height calls by hand on virtual time",
+            fix: "Replace the count with `await mock.expectNewHeightCalls(n)` at the step that causes the polls.",
+          });
+        }
+      });
+    } else {
+      // A window shortened on real time races the test's own steps on a loaded
+      // runner: what lands between two of them is down to the scheduler.
+      const timing = code.findIndex((line) => /~sourceTiming=/.test(line));
+      if (timing !== -1) {
+        violations.push({
+          file,
+          line: start + timing + 1,
+          title: "~sourceTiming on real time",
+          fix: "Drop `~virtualTime=false` and drive its timers with `await indexer.advanceTime(ms)`.",
+        });
+      }
+    }
+  });
+}
+
+// Faked timers replace the global setTimeout that Clock.real arms, so a test
+// that fakes them freezes the real-time parts of a run (startup, writes, the
+// mock's own deadlines) while leaving the virtual clock where it was.
+const fakeTimers = /\b[vV]i\.(?:useFakeTimers|advanceTimers\w*|runAllTimers\w*|runOnlyPendingTimers\w*|runToLastTimer\w*|setSystemTime)\b/;
+const testSources = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return testSources(path);
+    return entry.isFile() && /\.(?:res|ts)$/.test(entry.name) ? [path] : [];
+  });
+for (const path of testSources(testRoot)) {
+  const file = relative(repoRoot, path);
+  readFileSync(path, "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      const match = line.replace(/\/\/.*$/, "").match(fakeTimers);
+      if (match) {
+        violations.push({
+          file,
+          line: index + 1,
+          title: `${match[0]} fakes vitest's timers`,
+          fix:
+            "Move time on the clock the code was given instead: `await indexer.advanceTime(ms)` " +
+            "for a scenario, or a `VirtualClock` passed as the module's clock for a unit test.",
+        });
+      }
+    });
+}
+
+// The source layer's time is whatever its clock says, so a scenario on virtual
+// time sees every timer it arms. One armed on the real clock fires on its own
+// schedule, between a test's steps, with nothing in the test to say so.
+const sourcesRoot = fileURLToPath(new URL("../../envio/src/sources", import.meta.url));
+// `Performance.now()` stays: it measures how long real work took, for request
+// stats, and a virtual clock would report every request as instant.
+const realTime = [
+  {
+    pattern: /(?<![.\w])(?:setTimeout|clearTimeout|setInterval)\(/,
+    use: "`clock.setTimeout(~label, ...)` and `clock.clearTimeout`",
+  },
+  { pattern: /\bUtils\.delay\(/, use: "`clock->Clock.delay(~label, millis)`" },
+  { pattern: /\bDate\.now\(/, use: "`clock.now()`" },
+  { pattern: /\bMath\.random\(/, use: "`clock.random()`" },
+];
+const sourceViolations: violation[] = [];
+for (const path of resFiles(sourcesRoot)) {
+  const file = relative(repoRoot, path);
+  readFileSync(path, "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      const code = line.replace(/\/\/.*$/, "");
+      for (const { pattern, use } of realTime) {
+        if (pattern.test(code)) {
+          sourceViolations.push({
+            file,
+            line: index + 1,
+            title: `${code.match(pattern)?.[0]}...) on the real clock`,
+            fix: `Use ${use} on the clock the module was given: a virtual-time scenario only sees and moves time that goes through it.`,
+          });
+        }
+      }
+    });
+}
+
+const report = (list: violation[], heading: string) => {
   // An annotation puts the rule on the line that broke it, in the PR diff. The log
   // alone is prose under a step named for the tests, which a reader reaches only
   // after scrolling past the service-container dumps that follow a failed job.
   if (process.env.GITHUB_ACTIONS) {
-    for (const { file, line, title, fix } of violations) {
+    for (const { file, line, title, fix } of list) {
       console.log(`::error file=${file},line=${line},title=${title}::${fix}`);
     }
   }
   console.error(
-    [
-      "These tests guess at how long the indexer takes to ask the source:",
-      "",
-      ...violations.map(({ file, line, title, fix }) => `${file}:${line}: ${title}. ${fix}`),
-    ].join("\n"),
+    [heading, "", ...list.map(({ file, line, title, fix }) => `${file}:${line}: ${title}. ${fix}`)].join(
+      "\n",
+    ),
   );
+};
+
+if (violations.length > 0) {
+  report(violations, "These tests guess at how long the indexer takes to ask the source:");
+}
+if (sourceViolations.length > 0) {
+  report(sourceViolations, "The source layer reads time the tests can't control:");
+}
+if (violations.length > 0 || sourceViolations.length > 0) {
   process.exit(1);
 }

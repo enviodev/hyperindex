@@ -469,15 +469,10 @@ describe("E2E rollback tests", () => {
         {value: "1", labels: Dict.make()},
       ])
 
+      // The first run's polls.
+      await sourceMock1337.expectNewHeightCallsAtLeast(1)
       let restarted = await indexer.restart()
-
-      sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
-      sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
-
-      // Allow async operations to settle
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await restarted.advanceTime(0)
 
       // After restart, we should still be in reorg threshold because
       // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
@@ -486,11 +481,8 @@ describe("E2E rollback tests", () => {
       ])
 
       // After restart, both chains have knownHeight from sourceBlockNumber,
-      // so they don't need to call getHeightOrThrow
-      t.expect(
-        sourceMock1337.getHeightOrThrowCalls->Array.length,
-        ~message="should not call getHeightOrThrow on restart (uses sourceBlockNumber as knownHeight)",
-      ).toEqual(0)
+      // so they don't need to call getHeightOrThrow.
+      await sourceMock1337.expectNewHeightCalls(0)
 
       // Both chains are ready immediately, so chain 1337 continues indexing from
       // where it left off.
@@ -611,6 +603,8 @@ describe("E2E rollback tests", () => {
             (await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)) == [
                 {id: "1", value: "after-recreate"},
               ]
+
+          // Real time: polls the database for the recreated row.
           if shouldKeepWaiting.contents && !isRecreated {
             await Utils.delay(1)
             await waitForRecreatedEntity()
@@ -3558,10 +3552,10 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
-      // Wait until the batch is processed and its (stalled) write has started
-      while writeBatchCalls.contents == writeBatchCallsBeforeStall {
-        await Utils.delay(1)
-      }
+      await Scenario.waitUntil(
+        () => writeBatchCalls.contents != writeBatchCallsBeforeStall,
+        ~message="the batch's stalled write to start",
+      )
 
       // Reorg on chain 1337 while chain 100's batch write is still in-flight
       await sourceMock1337.expectItemsQueries([
@@ -3592,7 +3586,7 @@ describe("E2E rollback tests", () => {
       // chain 100's checkpoint at block 106 wouldn't be in the db yet: its
       // entity change would be reverted without the chain being rolled back,
       // and the event would never be reprocessed.
-      await Utils.delay(10)
+      await indexer.advanceTime(0)
       resolveStall.contents()
       stallWriteBatch := None
 

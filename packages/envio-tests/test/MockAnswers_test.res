@@ -248,7 +248,10 @@ Reply to them in this list, or keep them pending:
     let mock = source(1)
     t.expect(
       await failureOf(
-        mock.expectItemsQueries([{partitionId: "0", toBlock: Unbounded, reply: LeavePending}]),
+        mock.expectItemsQueries(
+          [{partitionId: "0", toBlock: Unbounded, reply: LeavePending}],
+          ~within=50.,
+        ),
       ),
       ~message="nothing is pending before the chain knows the head",
     ).toEqual(
@@ -259,12 +262,14 @@ Pending:
     )
 
     mock.resolveGetHeightOrThrow(300)
+    // The query is in before the deadline starts, so the report names it.
+    await mock.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
     t.expect(
       await failureOf(
-        mock.expectItemsQueries([
-          {fromBlock: 1, reply: Respond({items: []})},
-          {partitionId: "0", reply: LeavePending},
-        ]),
+        mock.expectItemsQueries(
+          [{fromBlock: 1, reply: Respond({items: []})}, {partitionId: "0", reply: LeavePending}],
+          ~within=50.,
+        ),
       ),
       ~message="a single pending query can't be both replied to and left pending",
     ).toEqual(
@@ -346,7 +351,7 @@ Pending:
     await mock.expectItemsQueries([
       {fromBlock: 1, reply: Fail(Source.SourceBehindHead({blockNumber: 50, requestStats: []}))},
     ])
-    // The retry comes after a backoff; the wait covers it without knowing how long.
+    await indexer.advanceTime(100)
     await mock.expectItemsQueries([{retryCount: 1, reply: LeavePending}])
     t.expect(mock.pendingItemsQueries).toEqual([
       {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 1},
@@ -417,29 +422,6 @@ Pending:
     },
   )
 
-  // A test that fakes the clock still gets the timeout message instead of a
-  // suite-level hang, so the deadline can't run on the faked setTimeout.
-  scenario->Scenario.it("times out on the real clock while timers are faked", ~sources, async (
-    ~t,
-    ~indexer,
-    ~source,
-  ) => {
-    let mock = source(1)
-    mock.resolveGetHeightOrThrow(300)
-    await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-    Vi.useFakeTimers()
-    let failure = await failureOf(mock.expectItemsQueries([{fromBlock: 2, reply: LeavePending}]))
-    Vi.useRealTimers()
-    t.expect(failure).toEqual(
-      Some(`expectItemsQueries timed out. Expected:
-  #0 {fromBlock: 2, reply: LeavePending} (matches no pending query)
-Pending:
-  {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}`),
-    )
-    await mock.respondEmptyUpTo(300)
-    await indexer.getBatchWritePromise()
-  })
-
   scenario->Scenario.it("voids the stopped indexer's pending query on restart", ~sources, async (
     ~t,
     ~indexer,
@@ -472,7 +454,9 @@ describe("MockSource.expectHeightCalls", () => {
     let mock = source(1)
     await mock.expectHeightCalls(1)
     t.expect(await failureOf(mock.expectHeightCalls(0))).toEqual(
-      Some("expectHeightCalls expected 0 height calls, but the source has taken 1"),
+      Some(
+        "expectHeightCalls expected 0 height calls, but source for chain 1 has taken 1 (0 since the last expectation accounted for 1)",
+      ),
     )
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
@@ -486,8 +470,10 @@ describe("MockSource.expectHeightCalls", () => {
   ) => {
     let mock = source(1)
     await mock.expectHeightCalls(1)
-    t.expect(await failureOf(mock.expectHeightCalls(2))).toEqual(
-      Some("expectHeightCalls timed out waiting for 2 height calls; the source has taken 1"),
+    t.expect(await failureOf(mock.expectHeightCalls(2, ~within=50.))).toEqual(
+      Some(
+        "expectHeightCalls timed out waiting for 2 height calls; source for chain 1 has taken 1 (0 since the last expectation accounted for 1)",
+      ),
     )
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
@@ -555,10 +541,13 @@ describe("MockSource.expectBlockHashLookup", () => {
       mock.resolveGetHeightOrThrow(300)
       t.expect(
         await failureOf(
-          mock.expectBlockHashLookup({
-            blockNumbers: [200],
-            reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
-          }),
+          mock.expectBlockHashLookup(
+            {
+              blockNumbers: [200],
+              reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
+            },
+            ~within=50.,
+          ),
         ),
       ).toEqual(
         Some(`expectBlockHashLookup timed out waiting for a lookup of [200]. No lookup is pending.`),
@@ -607,7 +596,9 @@ Give each query its own entry, told apart by partitionId:
     let expectation = mock.expectHeightCalls(1)
     let _ = mock.source.getHeightOrThrow()
     t.expect(await failureOf(expectation)).toEqual(
-      Some("expectHeightCalls expected 1 height calls, but the source has taken 2"),
+      Some(
+        "expectHeightCalls expected 1 height calls, but source for chain 1 has taken 2 (2 since the last expectation accounted for 0)",
+      ),
     )
   })
 

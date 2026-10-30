@@ -26,8 +26,6 @@ type Gravatar {
 `
 let scenario = Scenario.make(~configYaml, ~schema)
 
-let polls = (mock: MockSource.t) => mock.getHeightOrThrowCalls->Array.length
-
 let upTo = toBlock => MockSource.Respond({items: [], latestFetchedBlockNumber: toBlock})
 
 // Backfills the chain to `head` on `sync`, which is where a realtime wait starts.
@@ -39,8 +37,8 @@ let backfill = async (~sync: MockSource.t, ~head=100) => {
 let hasLog = (indexer: IndexerRunner.t, msg) =>
   indexer.allLogsAsJson()->Array.some(line => line->Dict.get("msg") == Some(String(msg)))
 
-let waitForLog = (indexer, msg) =>
-  Scenario.waitUntil(() => indexer->hasLog(msg), ~message=`the log "${msg}"`)
+let recruitedFallback = "No new blocks detected within 0s. Continuing polling with secondary RPC sources from the configuration."
+let slowedDown = "No new blocks detected within 0s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync"
 
 describe("Waiting for the first height", () => {
   scenario->Scenario.it(
@@ -50,16 +48,16 @@ describe("Waiting for the first height", () => {
       {chain: 1337, sourceFor: Realtime},
       {chain: 1337, sourceFor: Fallback},
     ],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sync = source(1337)
       let live = source(1337, ~index=1)
       let fallback = source(1337, ~index=2)
-      await sync.expectHeightCalls(1)
-      await Utils.delay(20)
-      let (livePolls, fallbackPolls) = (live->polls, fallback->polls)
+      await sync.expectNewHeightCalls(1)
+      await indexer.advanceTime(20)
+      await live.expectNewHeightCalls(0)
+      await fallback.expectNewHeightCalls(0)
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      t.expect((livePolls, fallbackPolls)).toEqual((0, 0))
     },
   )
 
@@ -69,8 +67,8 @@ describe("Waiting for the first height", () => {
     async (~t, ~indexer, ~source) => {
       let sync0 = source(1337)
       let sync1 = source(1337, ~index=1)
-      await sync0.expectHeightCalls(1)
-      await sync1.expectHeightCalls(1)
+      await sync0.expectNewHeightCalls(1)
+      await sync1.expectNewHeightCalls(1)
       // The higher height arrives second, so it loses.
       sync1.resolveGetHeightOrThrow(2)
       sync0.resolveGetHeightOrThrow(3)
@@ -84,20 +82,25 @@ describe("Waiting for the first height", () => {
   scenario->Scenario.it(
     "Polls each source at its own interval until a new block arrives, then stops",
     ~sources=[{chain: 1337, pollingInterval: 5}, {chain: 1337, pollingInterval: 10_000}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let fast = source(1337)
       let slow = source(1337, ~index=1)
       // No block yet: every answer leaves the wait where it was.
       fast.setAutoHeight(0)
       slow.setAutoHeight(0)
-      await fast.expectHeightCalls(4)
-      let slowPolls = slow->polls
+      await fast.expectNewHeightCalls(1)
+      await slow.expectNewHeightCalls(1)
+      await indexer.advanceTime(15)
+      await fast.expectNewHeightCalls(3)
+      await slow.expectNewHeightCalls(0)
 
       fast.setAutoHeight(101)
+      await indexer.advanceTime(5)
+      await fast.expectNewHeightCalls(1)
       await fast.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      let pollsAtAnswer = (fast->polls, slow->polls)
-      await Utils.delay(50)
-      t.expect((slowPolls, (fast->polls, slow->polls))).toEqual((1, pollsAtAnswer))
+      await indexer.advanceTime(50)
+      await fast.expectNewHeightCalls(0)
+      await slow.expectNewHeightCalls(0)
     },
   )
 
@@ -113,33 +116,24 @@ describe("Waiting for the first height", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
-      let calls = ref(0)
-      let next = async answer => {
-        calls := calls.contents + 1
-        await sync.expectHeightCalls(calls.contents)
-        answer()
-      }
       let fail = () => sync.rejectGetHeightOrThrow("ERROR")
-      await next(fail)
-      await next(fail)
-      await next(fail)
-      await next(() => sync.resolveGetHeightOrThrow(0))
-      await next(fail)
-      await next(() => sync.resolveGetHeightOrThrow(101))
+      // Each answer, and how long the poll after it is due.
+      let steps = [(fail, 4), (fail, 8), (fail, 10), (() => sync.resolveGetHeightOrThrow(0), 1)]
+      await sync.expectNewHeightCalls(1)
+      for index in 0 to steps->Array.length - 1 {
+        let (answer, wait) = steps->Array.getUnsafe(index)
+        answer()
+        await indexer.advanceTime(wait - 1)
+        await sync.expectNewHeightCalls(0)
+        await indexer.advanceTime(1)
+        await sync.expectNewHeightCalls(1)
+      }
+      fail()
+      await indexer.advanceTime(4)
+      await sync.expectNewHeightCalls(1)
+      sync.resolveGetHeightOrThrow(101)
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-
-      t.expect(
-        indexer.allLogsAsJson()->Array.filterMap(
-          line =>
-            switch line->Dict.get("msg") {
-            | Some(String(msg)) =>
-              msg
-              ->String.match(/^Height retrieval from MockSource source .*Retrying in (\d+)ms\.$/)
-              ->Option.flatMap(match => match->Array.get(1)->Option.flatMap(x => x))
-            | _ => None
-            },
-        ),
-      ).toEqual(["4", "8", "10", "4"])
+      t.expect(indexer->RealtimeChain.heightRetryIntervals).toEqual(["4", "8", "10", "4"])
     },
   )
 
@@ -157,30 +151,25 @@ describe("Waiting for the first height", () => {
       let failing = source(1337)
       let healthy = source(1337, ~index=1)
       healthy.setAutoHeight(0)
-      for call in 1 to 4 {
-        await failing.expectHeightCalls(call)
+      await failing.expectNewHeightCalls(1)
+      await healthy.expectNewHeightCalls(1)
+      for index in 0 to 3 {
         failing.rejectGetHeightOrThrow("ERROR")
+        let wait = [4, 8, 10, 10]->Array.getUnsafe(index)
+        await indexer.advanceTime(wait)
+        await failing.expectNewHeightCalls(1)
+        // One a millisecond, whatever the other source's backoff.
+        await healthy.expectNewHeightCalls(wait)
       }
-      let healthyPollsWhileFailing = healthy->polls
 
       healthy.setAutoHeight(101)
+      await indexer.advanceTime(1)
+      await healthy.expectNewHeightCalls(1)
       await healthy.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      let pollsAtAnswer = (failing->polls, healthy->polls)
-      await Utils.delay(50)
-      t.expect((
-        indexer.allLogsAsJson()->Array.filterMap(
-          line =>
-            switch line->Dict.get("msg") {
-            | Some(String(msg)) =>
-              msg
-              ->String.match(/^Height retrieval from MockSource source .*Retrying in (\d+)ms\.$/)
-              ->Option.flatMap(match => match->Array.get(1)->Option.flatMap(x => x))
-            | _ => None
-            },
-        ),
-        healthyPollsWhileFailing >= 4,
-        (failing->polls, healthy->polls),
-      )).toEqual((["4", "8", "10", "10"], true, pollsAtAnswer))
+      await indexer.advanceTime(50)
+      await failing.expectNewHeightCalls(0)
+      await healthy.expectNewHeightCalls(0)
+      t.expect(indexer->RealtimeChain.heightRetryIntervals).toEqual(["4", "8", "10", "10"])
     },
   )
 
@@ -195,29 +184,30 @@ describe("Waiting for the first height", () => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
       sync.setAutoHeight(0)
-      await sync.expectHeightCalls(3)
-      let fallbackPollsBeforeStall = fallback->polls
+      await sync.expectNewHeightCalls(1)
+      await indexer.advanceTime(49)
+      await sync.expectNewHeightCalls(49)
+      await fallback.expectNewHeightCalls(0)
+      let recruitedEarly = indexer->hasLog(recruitedFallback)
 
-      await indexer->waitForLog(
-        "No new blocks detected within 0s. Continuing polling with secondary RPC sources from the configuration.",
-      )
-      await fallback.expectHeightCalls(1)
-      let syncPollsAtStall = sync->polls
-      await Utils.delay(50)
-      let syncPollsAfterStall = sync->polls
+      await indexer.advanceTime(1)
+      await sync.expectNewHeightCalls(1)
+      await fallback.expectNewHeightCalls(1)
+      await indexer.advanceTime(50)
+      await sync.expectNewHeightCalls(0)
 
       fallback.resolveGetHeightOrThrow(101)
       // The fallback's height is taken, but the query goes to sync, which
       // never failed one.
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      let pollsAtAnswer = (sync->polls, fallback->polls)
-      await Utils.delay(50)
+      await indexer.advanceTime(50)
+      await sync.expectNewHeightCalls(0)
+      await fallback.expectNewHeightCalls(0)
       t.expect((
-        fallbackPollsBeforeStall,
-        syncPollsAfterStall - syncPollsAtStall <= 1,
+        recruitedEarly,
+        indexer->hasLog(recruitedFallback),
         fallback.pendingItemsQueries,
-        (sync->polls, fallback->polls),
-      )).toEqual((0, true, [], pollsAtAnswer))
+      )).toEqual((false, true, []))
     },
   )
 
@@ -228,29 +218,35 @@ describe("Waiting for the first height", () => {
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.setAutoHeight(0)
-      await indexer->waitForLog(
-        "No new blocks detected within 0s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync",
-      )
-      await sync.expectHeightCalls(sync->polls + 1)
+      await sync.expectNewHeightCalls(1)
+      await indexer.advanceTime(20)
+      await sync.expectNewHeightCalls(20)
+      let warned = indexer->hasLog(slowedDown)
+      await indexer.advanceTime(5)
+      await sync.expectNewHeightCalls(1)
       sync.setAutoHeight(101)
+      await indexer.advanceTime(5)
+      await sync.expectNewHeightCalls(1)
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      t.expect(sync.pendingItemsQueries->Array.length).toEqual(1)
+      t.expect(warned).toBe(true)
     },
   )
 
   scenario->Scenario.it(
     "Slows the only source down to the stalled interval past the stall",
     ~sources=[{chain: 1337, pollingInterval: 1}],
-    ~sourceTiming={newBlockStallTimeout: 20, stalledPollingInterval: 10_000},
+    ~sourceTiming={newBlockStallTimeout: 20, stalledPollingInterval: 500},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.setAutoHeight(0)
-      await indexer->waitForLog(
-        "No new blocks detected within 0s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync",
-      )
-      let pollsAtStall = sync->polls
-      await Utils.delay(50)
-      t.expect(sync->polls - pollsAtStall <= 1).toBe(true)
+      await sync.expectNewHeightCalls(1)
+      await indexer.advanceTime(20)
+      await sync.expectNewHeightCalls(20)
+      await indexer.advanceTime(499)
+      await sync.expectNewHeightCalls(0)
+      await indexer.advanceTime(1)
+      await sync.expectNewHeightCalls(1)
+      t.expect(indexer->hasLog(slowedDown)).toBe(true)
     },
   )
 })
@@ -265,13 +261,16 @@ describe("Waiting for a new block during backfill", () => {
       let sync = source(1337)
       await backfill(~sync)
       sync.setAutoHeight(100)
-      await indexer->waitForLog(
-        "Waiting for new blocks with reduced polling (10s) until the indexer enters realtime mode.",
-      )
-      await Utils.delay(10)
-      let pollsAtWait = sync->polls
-      await Utils.delay(50)
-      t.expect(sync->polls).toEqual(pollsAtWait)
+      await sync.expectNewHeightCalls(2)
+      await indexer.advanceTime(9_999)
+      await sync.expectNewHeightCalls(0)
+      await indexer.advanceTime(1)
+      await sync.expectNewHeightCalls(1)
+      t.expect(
+        indexer->hasLog(
+          "Waiting for new blocks with reduced polling (10s) until the indexer enters realtime mode.",
+        ),
+      ).toBe(true)
     },
   )
 })
@@ -285,68 +284,66 @@ describe("Waiting for a new block in realtime", () => {
       {chain: 1337, sourceFor: Fallback},
     ],
     ~sourceTiming={newBlockStallTimeoutRealtime: 200},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       let live = source(1337, ~index=1)
       let fallback = source(1337, ~index=2)
       await backfill(~sync)
-      await live.expectHeightCalls(1)
+      await live.expectNewHeightCalls(1)
       // Answers whatever poll sync still has out from the backfill, so any
       // poll it takes from here on is one the realtime wait asked for.
       sync.setAutoHeight(100)
-      let syncPolls = sync->polls
-      await Utils.delay(50)
-      let beforeStall = (sync->polls - syncPolls, fallback->polls)
+      await sync.expectNewHeightCalls(2)
+      await indexer.advanceTime(199)
+      await sync.expectNewHeightCalls(0)
+      await fallback.expectNewHeightCalls(0)
       live.resolveGetHeightOrThrow(100)
 
-      await sync.expectHeightCalls(syncPolls + 1)
-      await fallback.expectHeightCalls(1)
+      await indexer.advanceTime(1)
+      await sync.expectNewHeightCalls(1)
+      await fallback.expectNewHeightCalls(1)
       fallback.resolveGetHeightOrThrow(101)
       // Live never failed a query, so it takes this one whoever found the block.
       await live.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      t.expect((beforeStall, sync.pendingItemsQueries, fallback.pendingItemsQueries)).toEqual((
-        (0, 0),
-        [],
-        [],
-      ))
+      // Ending the wait wakes sync's loop, and the backfill's last wait, still
+      // waiting on sync for a block above 100, asks once more.
+      await sync.expectNewHeightCalls(1)
+      t.expect((sync.pendingItemsQueries, fallback.pendingItemsQueries)).toEqual(([], []))
     },
   )
 
   scenario->Scenario.it(
     "Keeps the sync source primary when no live source is configured",
     ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
       await backfill(~sync)
-      await sync.expectHeightCalls(2)
-      await Utils.delay(20)
-      let fallbackPolls = fallback->polls
+      await sync.expectNewHeightCalls(2)
+      await indexer.advanceTime(20)
+      await fallback.expectNewHeightCalls(0)
       sync.resolveGetHeightOrThrow(101)
       await sync.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      t.expect(fallbackPolls).toEqual(0)
     },
   )
 
   scenario->Scenario.it(
     "Resumes realtime on the live source after a restart",
     ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Realtime}],
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sync = source(1337)
       let live = source(1337, ~index=1)
       await backfill(~sync)
       await indexer.getBatchWritePromise()
-      await live.expectHeightCalls(1)
-      let syncPolls = sync->polls
-      let livePolls = live->polls
+      await live.expectNewHeightCalls(1)
+      await sync.expectNewHeightCalls(2)
 
       let _ = await indexer.restart()
-      await live.expectHeightCalls(livePolls + 1)
-      await Utils.delay(20)
-      let syncPollsAfterRestart = sync->polls
+      await live.expectNewHeightCalls(1)
+      await indexer.advanceTime(20)
+      await sync.expectNewHeightCalls(0)
       live.resolveGetHeightOrThrow(101)
       await live.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      t.expect(syncPollsAfterRestart).toEqual(syncPolls)
     },
   )
 })
@@ -422,7 +419,7 @@ describe("Waiting across a sibling's rollback", () => {
       // Spans two of the waiting chain's 40ms stall windows.
       for step in 1 to 6 {
         await sibling.expectItemsQueries([{reply: upTo(step * 100)}])
-        await Utils.delay(20)
+        await indexer.advanceTime(20)
       }
       t.expect(
         indexer.allLogsAsJson()->Array.filter(
@@ -483,7 +480,7 @@ describe("Waiting across a sibling's rollback", () => {
       waiting.setAutoHeight(300)
       waiting.triggerHeightSubscription(301)
       await waiting.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
-      await Utils.delay(20)
+      await indexer.advanceTime(20)
       t.expect((
         waiting.heightSubscriptionCalls->Array.length,
         waiting.pendingItemsQueries->Array.length,
@@ -559,10 +556,10 @@ describe("Catching up a contract registered at the head", () => {
         },
       ])
       await sync.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      t.expect((
-        sync->polls,
+      await sync.expectNewHeightCalls(1)
+      t.expect(
         (await indexer.metric("envio_source_known_height"))->Array.map(({value}) => value),
-      )).toEqual((1, ["105"]))
+      ).toEqual(["105"])
     },
   )
 })

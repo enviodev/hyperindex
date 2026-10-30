@@ -38,6 +38,7 @@ describe("preload handler metrics", () => {
                   logIndex: 1,
                   preloadHandler: async _ => JsError.throwWithMessage("Not created yet"),
                 },
+                // Real time: a preload handler that takes a while to run.
                 {blockNumber: 6, logIndex: 2, preloadHandler: async _ => await Utils.delay(1)},
               ],
               latestFetchedBlockNumber: 100,

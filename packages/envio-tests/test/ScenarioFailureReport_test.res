@@ -67,6 +67,8 @@ describe("A failing scenario body", () => {
     let rejection = await rejectionOf(
       scenario->Scenario.run(
         ~sources=[{chain: 1}],
+        // Pins the report a real-time run gives; the virtual one is pinned below.
+        ~virtualTime=false,
         async (~indexer as _, ~source) => {
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
@@ -92,6 +94,8 @@ Mock source for chain 1 at the failure:
     let rejection = await rejectionOf(
       scenario->Scenario.run(
         ~sources=[{chain: 1}],
+        // Pins the report a real-time run gives; the virtual one is pinned below.
+        ~virtualTime=false,
         async (~indexer as _, ~source) => {
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
@@ -147,6 +151,56 @@ Mock source for chain 1 at the failure:
         Some(
           JSON.parseOrThrow(`{"level":"info","msg":"The indexer storage is ready. Starting indexing!"}`),
         ),
+      ),
+    )
+  })
+
+  // On virtual time nothing the indexer schedules runs until the test advances
+  // it, so a test that forgot to is told which timer it is waiting for, and a
+  // poll it never accounted for is named with the steps around it.
+  Async.it("on virtual time, says what the clock was holding and what ran", async t => {
+    let rejection = await rejectionOf(
+      scenario->Scenario.run(
+        ~sources=[{chain: 1}],
+        ~seed=1,
+        async (~indexer as _, ~source) => {
+          let mock = source(1)
+          mock.resolveGetHeightOrThrow(300)
+          await mock.expectNewHeightCalls(1)
+          await mock.respondEmptyUpTo(300)
+        },
+      ),
+    )
+    t.expect(rejection->stripLogsLink).toEqual(
+      Some(
+        Nullable.make(`Height calls no expectation accounted for on source for chain 1: 1 (calls 2 to 2). Name each poll where the test causes it with \`expectNewHeightCalls(n)\`, so one nobody planned for fails at the step that caused it.
+
+Mock source for chain 1 at the failure:
+  pending item queries: none
+  pending block-hash lookups: none
+  height calls taken: 2
+
+Virtual time at the failure: t=0ms, seed 1 (ENVIO_TEST_SEED=1 replays it)
+  pending timers:
+    height poll timeout due t=60000ms (in 60000ms), armed t=0ms
+    stall poke due t=60164ms (in 60164ms), armed t=0ms
+    stall timeout due t=120000ms (in 120000ms), armed t=0ms
+  timeline:
+    t=0ms source(1): height call 1 (pending)
+    t=0ms armed height poll timeout for t=60000ms
+    t=0ms armed stall poke for t=48812ms
+    t=0ms armed stall timeout for t=60000ms
+    t=0ms source(1): test answered heights with 300
+    t=0ms cleared height poll timeout
+    t=0ms cleared stall poke
+    t=0ms cleared stall timeout
+    t=0ms source(1): items query 1..100 (partition 0)
+    t=0ms source(1): height call 2 (pending)
+    t=0ms armed height poll timeout for t=60000ms
+    t=0ms armed stall poke for t=60164ms
+    t=0ms armed stall timeout for t=120000ms
+    t=0ms source(1): items query 101.. (partition 0)
+  Nothing the indexer schedules runs until the test advances time: \`await indexer.advanceTime(60000)\` fires the next timer (height poll timeout).`),
       ),
     )
   })

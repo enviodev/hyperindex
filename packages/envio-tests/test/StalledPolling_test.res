@@ -36,16 +36,15 @@ describe("Polling-stall loophole", () => {
       },
     ],
     ~sourceTiming={reducedPollingInterval: 10},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let source = source(1337)
 
       source.resolveGetHeightOrThrow(300)
 
-      // Handler that never resolves keeps the batch in-progress,
-      // so isReady stays false while the buffer sits at the head.
-      let blockingHandler = async _ => {
-        let _ = await Promise.make((_, _) => ())
-      }
+      // A handler held until the end keeps the batch in progress, so isReady
+      // stays false while the buffer sits at the head.
+      let release = ref(() => ())
+      let blockingHandler = async _ => await Promise.make((resolve, _) => release := resolve)
       await source.expectItemsQueries([
         {
           fromBlock: 1,
@@ -57,29 +56,17 @@ describe("Polling-stall loophole", () => {
         },
       ])
 
-      await Utils.delay(5)
+      // Whatever the stuck wait asked before the window opens.
+      await source.expectNewHeightCallsAtLeast(1)
 
-      let baseline = source.getHeightOrThrowCalls->Array.length
-
-      // Answer every poll the moment it arrives: the measurement is how often
-      // the loop asks, not how promptly the test replies.
+      // The bug this pins is polling stopping altogether. Busy-polling would ask
+      // on every tick; throttled polling asks once at the wait's start and then
+      // once per 10ms reduced interval. Every poll is answered the moment it
+      // arrives, so the count is how often the loop asks.
       source.setAutoHeight(300)
-      let deadline = Date.now() +. 50.
-      while Date.now() < deadline {
-        await Utils.delay(2)
-      }
-
-      let newCalls = source.getHeightOrThrowCalls->Array.length - baseline
-
-      // The bug this pins is polling stopping altogether (0-1 calls). The upper
-      // bound separates throttled polling from busy-polling, which fires on
-      // every tick and reaches the hundreds — it is not a rate measurement, so
-      // it sits an order of magnitude above the ~5 a healthy 50ms window at the
-      // 10ms interval produces. A tighter bound flakes on timer coalescing.
-      t.expect(
-        newCalls > 1 && newCalls <= 40,
-        ~message=`polling should continue but stay throttled while the batch is stuck (got ${newCalls->Int.toString})`,
-      ).toBe(true)
+      await indexer.advanceTime(50)
+      await source.expectNewHeightCalls(6)
+      release.contents()
     },
   )
 })
