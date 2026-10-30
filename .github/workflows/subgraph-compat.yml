@@ -93,7 +93,6 @@ jobs:
         env:
           ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
-
       # The shim has to stay assignable to the types a subgraph's mappings are
       # compiled against; every known gap is recorded in conformance.ts.
       - name: graph-ts conformance
