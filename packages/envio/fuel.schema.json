@@ -336,6 +336,15 @@
           "format": "uint32",
           "minimum": 0
         },
+        "block_throttle": {
+          "description": "The minimum number of new blocks the chain head must advance by before the indexer fetches again once it has caught up. Useful on chains with very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 all fetch on every new block.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "contracts": {
           "description": "All the contracts that should be indexed on the given chain",
           "type": [

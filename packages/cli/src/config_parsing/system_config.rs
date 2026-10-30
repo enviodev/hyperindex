@@ -1155,6 +1155,7 @@ impl SystemConfig {
                             .max_reorg_depth
                             .or_else(|| get_max_reorg_depth_from_id(network.id)),
                         block_lag: network.block_lag,
+                        block_throttle: network.block_throttle,
                         start_block: network.start_block,
                         end_block: network.end_block,
                         sync_source,
@@ -1315,6 +1316,7 @@ impl SystemConfig {
                         end_block: network.end_block,
                         max_reorg_depth: network.max_reorg_depth,
                         block_lag: network.block_lag,
+                        block_throttle: network.block_throttle,
                         sync_source,
                         contracts,
                     };
@@ -1426,6 +1428,7 @@ impl SystemConfig {
                         end_block: network.end_slot,
                         max_reorg_depth: None,
                         block_lag: network.block_lag,
+                        block_throttle: network.block_throttle,
                         sync_source: DataSource::Svm {
                             hypersync_endpoint_url,
                         },
@@ -1720,6 +1723,7 @@ pub struct Chain {
     pub end_block: Option<u64>,
     pub max_reorg_depth: Option<u32>,
     pub block_lag: Option<u32>,
+    pub block_throttle: Option<u32>,
     pub contracts: Vec<ChainContract>,
 }
 
