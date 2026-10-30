@@ -75,9 +75,6 @@ type t = {
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
   reducedPollingInterval: int,
-  minHeadFetchInterval: int,
-  // Date.now() when the last wait for a new block returned.
-  mutable lastNewBlockAt: option<float>,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
@@ -355,7 +352,6 @@ let make = (
     ~backoffMultiplicative=2,
     ~maxRetryInterval=60_000,
   ),
-  ~minHeadFetchInterval=Env.minHeadFetchIntervalMs,
 ) => {
   let hasRealtime = sources->Array.some(s => s.sourceFor === Realtime)
   let initialActiveSource = switch sources->Array.find(source =>
@@ -388,8 +384,6 @@ let make = (
     newBlockStallTimeoutRealtime,
     stalledPollingInterval,
     reducedPollingInterval,
-    minHeadFetchInterval,
-    lastNewBlockAt: None,
     recoveryTimeout,
     statusStart: Performance.now(),
     status: Idle,
@@ -783,7 +777,7 @@ Resolves at the first height above `knownHeight` that any eligible source
 reports. A waiter is registered per source and the first one to fire wins,
 cancelling the rest.
 */
-let waitForHeightAbove = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
+let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
@@ -973,24 +967,6 @@ let waitForHeightAbove = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedP
       armStallTimeout()
     }
   })
-}
-
-let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
-  // Held before the wait registers rather than after it answers: a stream keeps
-  // the source's height current during the hold, so the wait then answers at
-  // once with the latest height, and a polling-only source asks for the head
-  // after the hold instead of handing back one an interval old.
-  switch sourceManager.lastNewBlockAt {
-  | Some(lastNewBlockAt) if sourceManager.minHeadFetchInterval > 0 =>
-    let remaining = lastNewBlockAt +. sourceManager.minHeadFetchInterval->Int.toFloat -. Date.now()
-    if remaining > 0. {
-      await Utils.delay(remaining->Math.ceil->Float.toInt)
-    }
-  | _ => ()
-  }
-  let height = await sourceManager->waitForHeightAbove(~knownHeight, ~isRealtime, ~reducedPolling)
-  sourceManager.lastNewBlockAt = Some(Date.now())
-  height
 }
 
 let executeQuery = async (

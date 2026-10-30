@@ -24,12 +24,6 @@ let clientFilterAddressThreshold =
     ~fallback=maxAddrInPartition * maxChainConcurrency / 5,
   )
 
-// Shortest time between two new heights handed to a chain's fetch loop. A fetch
-// costs about the same whatever its block range, so on a chain with sub-second
-// blocks and pushed heads, 0 (no minimum) pays for a full fetch on every block.
-let minHeadFetchIntervalMs =
-  envSafe->EnvSafe.get("ENVIO_MIN_HEAD_FETCH_INTERVAL_MS", S.int, ~fallback=0)
-
 // Target number of in-memory objects (uncommitted entity/effect changes plus
 // unwritten batch items) the store holds before processing waits for the write
 // cycle to catch up.
