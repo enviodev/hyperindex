@@ -76,8 +76,8 @@ type t = {
   stalledPollingInterval: int,
   reducedPollingInterval: int,
   minHeadFetchInterval: int,
-  // Monotonic, so a wall-clock correction cannot stretch the next hold.
-  mutable lastNewBlockAt: option<Performance.timeRef>,
+  // Date.now() when the last wait for a new block returned.
+  mutable lastNewBlockAt: option<float>,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
@@ -982,15 +982,14 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
   // after the hold instead of handing back one an interval old.
   switch sourceManager.lastNewBlockAt {
   | Some(lastNewBlockAt) if sourceManager.minHeadFetchInterval > 0 =>
-    let remaining =
-      lastNewBlockAt +. sourceManager.minHeadFetchInterval->Int.toFloat -. Performance.now()
+    let remaining = lastNewBlockAt +. sourceManager.minHeadFetchInterval->Int.toFloat -. Date.now()
     if remaining > 0. {
       await Utils.delay(remaining->Math.ceil->Float.toInt)
     }
   | _ => ()
   }
   let height = await sourceManager->waitForHeightAbove(~knownHeight, ~isRealtime, ~reducedPolling)
-  sourceManager.lastNewBlockAt = Some(Performance.now())
+  sourceManager.lastNewBlockAt = Some(Date.now())
   height
 }
 

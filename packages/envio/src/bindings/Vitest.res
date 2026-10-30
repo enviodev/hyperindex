@@ -194,9 +194,4 @@ module Vi = {
 
   @module("vitest") @scope("vi")
   external clearAllTimers: unit => unit = "clearAllTimers"
-
-  // Moves only the wall clock (`Date.now()`); `performance.now()` and pending
-  // timers stay where they are, as after an NTP correction.
-  @module("vitest") @scope("vi")
-  external setSystemTime: float => unit = "setSystemTime"
 }
