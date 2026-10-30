@@ -21,6 +21,7 @@ const FIXED_AT_BLOCK = new Set([
 export async function startRpcFixture({ chainId, file, upstream, fake }) {
   const answers = !upstream && file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   const misses = [];
+  let synthesized = 0;
 
   const forward = async ({ method, params }) => {
     const response = await fetch(upstream, {
@@ -53,7 +54,10 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
     }
     if (key in answers) return answers[key];
     const made = fake && synthetic(request);
-    if (made) return made;
+    if (made) {
+      synthesized++;
+      return made;
+    }
     misses.push(key);
     return undefined;
   };
@@ -81,6 +85,7 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     misses,
+    synthesized: () => synthesized,
     async close() {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

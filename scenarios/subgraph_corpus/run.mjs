@@ -55,7 +55,7 @@ async function fixtureRpc(entry, dir) {
   const file = path.join(here, "fixtures", `${entry.name}.json`);
   if (!record) {
     if (existsSync(file)) return startRpcFixture({ chainId: entry.chainId, file });
-    return { ...(await startRpcFixture({ chainId: entry.chainId, fake: fakeCallAnswers(dir) })), fake: true };
+    return startRpcFixture({ chainId: entry.chainId, fake: fakeCallAnswers(dir) });
   }
   const upstream = process.env[`ENVIO_SUBGRAPH_RPC_${entry.chainId}`];
   if (!upstream) throw new Error(`recording needs ENVIO_SUBGRAPH_RPC_${entry.chainId}`);
@@ -107,7 +107,7 @@ for (const entry of corpus) {
     } finally {
       await rpc?.close();
     }
-    results.push({ name: entry.name, ok: true, fake: rpc?.fake });
+    results.push({ name: entry.name, ok: true, fake: rpc?.synthesized?.() ?? 0 });
   } catch (error) {
     results.push({ name: entry.name, ok: false, error: String(error.message).split("\n")[0] });
   } finally {
@@ -118,7 +118,7 @@ for (const entry of corpus) {
 const summary = [
   "| subgraph | result |",
   "| --- | --- |",
-  ...results.map(({ name, ok, fake, error }) => `| ${name} | ${ok ? (fake ? "✅ (synthetic contract calls)" : "✅") : `❌ ${error}`} |`),
+  ...results.map(({ name, ok, fake, error }) => `| ${name} | ${ok ? (fake > 0 ? `✅ (${fake} synthetic RPC answers)` : "✅") : `❌ ${error}`} |`),
 ].join("\n");
 console.log(`\n${summary}`);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
