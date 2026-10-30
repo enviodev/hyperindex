@@ -3619,7 +3619,6 @@ export function makeCallBlock(raw: unknown): EthereumBlock {
  */
 export function makeBlockHandlerBlock(
   blockNumber: number,
-  _location: string,
   selected?: Record<string, unknown>,
 ): EthereumBlock {
   // A simulated block carries no fields: they are read as for a template.

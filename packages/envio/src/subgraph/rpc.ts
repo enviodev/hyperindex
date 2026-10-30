@@ -9,7 +9,7 @@
  * short, and a queue drains far faster than a refused connection retries.
  */
 
-import { HttpStatusError, isRateLimit, requestTimeoutMs, withDeadline } from "./transient.ts";
+import { HttpStatusError, isRateLimit, isRevert, requestTimeoutMs, withDeadline } from "./transient.ts";
 
 /**
  * Requests in flight at once, per set of endpoints. A handler's calls run one
@@ -282,7 +282,7 @@ function makeClient(transports: ((body: Body) => Promise<unknown>)[]): RpcClient
       try {
         return await transport(body);
       } catch (error) {
-        if (error instanceof RpcError && /revert/i.test(error.message)) throw error;
+        if (error instanceof RpcError && isRevert(error)) throw error;
         failure = error;
       }
     }

@@ -13,28 +13,8 @@ import { createEffect } from "../Envio.res.mjs";
 import { missingRpcMessage } from "./errors.ts";
 import { rpcClient } from "./rpc.ts";
 import { parseSignature } from "./abi-types.ts";
-import { untilAnswered } from "./transient.ts";
+import { isRevert, untilAnswered } from "./transient.ts";
 import { info } from "./log.ts";
-
-/**
- * A revert is data: the mapping's `try_` sees `{reverted: true}`. A transport
- * failure is not — `untilAnswered` asks again — so a flaky RPC never
- * fabricates reverted data.
- */
-export function isRevert(error: unknown): boolean {
-  const parts: string[] = [];
-  let current: any = error;
-  for (let depth = 0; current && depth < 10; depth++) {
-    parts.push(current.name, current.shortMessage, current.details, current.message);
-    current = current.cause;
-  }
-  const text = parts.filter(Boolean).join(" | ");
-
-  if (/revert|invalid opcode|out of gas/i.test(text)) {
-    return true;
-  }
-  return false;
-}
 
 export type CallInput = {
   chainId: number;
@@ -49,11 +29,6 @@ export type CallOutput = {
   values: unknown[] | null;
 };
 
-/**
- * BigInt and Bytes cross the effect boundary through Sury, which needs a
- * serialisable shape — so the call is described in plain JSON and the graph-ts
- * values are converted on both sides by the shim.
- */
 /**
  * A batch commits only once every contract call its handlers make is in, and a
  * call-heavy backfill's first batch can wait minutes on thousands of them with

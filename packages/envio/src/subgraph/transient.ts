@@ -73,9 +73,7 @@ export function isRateLimit(error: unknown): boolean {
   let current: any = error;
   for (let depth = 0; current && depth < 10; depth++) {
     if (current.status === 429 || current.code === 429 || RATE_LIMIT_CODES.has(current.code)) return true;
-    for (const text of [current.shortMessage, current.details, current.message]) {
-      if (typeof text === "string" && RATE_LIMIT_TEXT.test(text)) return true;
-    }
+    if (typeof current.message === "string" && RATE_LIMIT_TEXT.test(current.message)) return true;
     current = current.cause;
   }
   return false;
@@ -92,9 +90,7 @@ export function isTransient(error: unknown): boolean {
     if (current.name === "AbortError" || current.name === "TimeoutError") return true;
     if (typeof current.status === "number") return transientStatus(current.status);
     if (TRANSIENT_CODES.has(current.code)) return true;
-    for (const text of [current.shortMessage, current.details, current.message]) {
-      if (typeof text === "string" && TRANSIENT_TEXT.test(text)) return true;
-    }
+    if (typeof current.message === "string" && TRANSIENT_TEXT.test(current.message)) return true;
     current = current.cause;
   }
   return false;
@@ -159,3 +155,22 @@ export async function untilAnswered<T>(
     }
   }
 }
+
+/**
+ * A revert is data: the mapping's `try_` sees `{reverted: true}`, and every
+ * node gives the same one. Geth says it in the message; Parity, OpenEthereum
+ * and older Nethermind answer -32015 "VM execution error." and say it in the
+ * error's data ("Reverted 0x…"), as graph-node reads them.
+ */
+export function isRevert(error: unknown): boolean {
+  let current: any = error;
+  for (let depth = 0; current && depth < 10; depth++) {
+    for (const text of [current.message, current.data]) {
+      if (typeof text === "string" && REVERT_TEXT.test(text)) return true;
+    }
+    current = current.cause;
+  }
+  return false;
+}
+
+const REVERT_TEXT = /revert|invalid opcode|bad instruction|bad jump|out of gas/i;

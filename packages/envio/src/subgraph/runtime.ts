@@ -37,10 +37,7 @@ import {
 } from "./scope.ts";
 import {
   contextOf,
-  Address,
   assemblyScriptPrimitives,
-  BigInt as GraphBigInt,
-  Bytes,
   changetype,
   retagChangetype,
   retagEach,
@@ -92,7 +89,7 @@ import {
   resetNullObjects,
   stringEncodings,
 } from "./assemblyscript.ts";
-import { makeHostEffects, normalizeIpfsPath } from "./hosts.ts";
+import { makeHostEffects, normalizeIpfsPath, type HostEffects } from "./hosts.ts";
 import { createHash } from "node:crypto";
 import { advanceRollup } from "./rollup.ts";
 import { graftBaseNotice } from "./graft.ts";
@@ -1134,7 +1131,7 @@ const MAX_FILES_PER_TRIGGER = 10_000;
  */
 function makeFileRunner(
   fileTemplates: Map<string, FileTemplate>,
-  hosts: ReturnType<typeof makeHostEffects>,
+  hosts: HostEffects,
   schema: SubgraphSchema,
 ) {
   return async (parent: Scope | undefined, context: any): Promise<void> => {
@@ -1252,9 +1249,8 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
     return hit && "value" in hit ? (hit.value as string) : undefined;
   });
   const hosts = makeHostEffects(rpcUrls, config.blockHeaderLag ?? {}, config.rpcOnlyChains ?? []);
-  const callSync = (effect: unknown, input: unknown, what: string) => {
+  const callSync = (effect: unknown, input: unknown) => {
     const scope = currentScope();
-    void what;
     if (scope.mode === "register") {
       return registerHostSync(scope, effect as Effect, input);
     }
@@ -1265,7 +1261,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
     // graph-node's `ipfs.cat` answers null for a path its ContentPath refuses.
     ipfsCat: (hash) => {
       const path = normalizeIpfsPath(hash);
-      return path === null ? null : callSync(hosts.ipfsCat, path, "ipfs.cat()");
+      return path === null ? null : callSync(hosts.ipfsCat, path);
     },
     ipfsMap: (hash, callback, userData, flags) => {
       const scope = currentScope();
@@ -1279,7 +1275,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
       }
       const path = normalizeIpfsPath(hash);
       if (path === null) throw new Error(`ipfs.map(): "${hash}" is not an IPFS content path`);
-      const encoded: string | null = callSync(hosts.ipfsMapFile, path, "ipfs.map()");
+      const encoded: string | null = callSync(hosts.ipfsMapFile, path);
       if (encoded === null) return;
       const body = Buffer.from(encoded, "base64").toString("utf8");
       // One JSON value per line, each handed to the callback in turn; a line
@@ -1299,24 +1295,22 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
         }
       }
     },
-    arweaveData: (txId) => callSync(hosts.arweaveData, txId, "arweave.transactionData()"),
-    ensName: (hash) => callSync(hosts.ensName, hash, "ens.nameByHash()"),
+    arweaveData: (txId) => callSync(hosts.arweaveData, txId),
+    ensName: (hash) => callSync(hosts.ensName, hash),
     getBalance: (address) =>
       callSync(
         hosts.getBalance,
         JSON.stringify({ address, blockNumber: currentScope().blockNumber }),
-        "ethereum.getBalance()",
       ),
     hasCode: (address) =>
       callSync(
         hosts.hasCode,
         JSON.stringify({ address, blockNumber: currentScope().blockNumber }),
-        "ethereum.hasCode()",
       ),
     blockTimestamp: (blockNumber) =>
-      callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"),
-    blockHeader: (blockNumber) => callSync(hosts.blockHeader, blockNumber, "block header"),
-    receiptLogs: (transaction) => callSync(hosts.receiptLogs, transaction, "event.receipt.logs"),
+      callSync(hosts.blockTimestamp, blockNumber),
+    blockHeader: (blockNumber) => callSync(hosts.blockHeader, blockNumber),
+    receiptLogs: (transaction) => callSync(hosts.receiptLogs, transaction),
   });
 
   // Reads the scope rather than closing over one context: register passes for
@@ -1423,15 +1417,14 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
 
   installCallHook((call) => {
     const scope = currentScope();
-    void scope;
     const encoded = JSON.stringify({
-      chainId: currentScope().dataSource.chainId,
+      chainId: scope.dataSource.chainId,
       address: call.contractAddress.toHexString(),
       signature: call.functionSignature,
       args: call.functionParams.map((param: any) => encodeArg(ethereumValueToJs(param))),
       blockNumber: scope.blockNumber,
     });
-    const raw = callSync(callEffect, encoded, `the contract call ${call.functionSignature}`);
+    const raw = callSync(callEffect, encoded);
     if (raw === null) {
       return { reverted: true, value: null };
     }
@@ -1457,7 +1450,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
   const secondsOf = (blockNumber: number, given: unknown) => () =>
     given !== undefined && given !== null
       ? Number(given)
-      : Number(callSync(hosts.blockTimestamp, blockNumber, "block.timestamp"));
+      : Number(callSync(hosts.blockTimestamp, blockNumber));
   // Aggregations roll up when a block's time passes a bucket's end, so every
   // handler checks first; the timeseries it saves carry the block's time.
   // graph-node's `SeqGenerator`: one id sequence per block, which its handlers
@@ -1728,7 +1721,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
           chainId: event.chainId,
           network: source.network ?? "",
           context: contextOf(event.chainId, source.name, event.srcAddress) ?? source.context ?? {},
-          wildcard: !source.isTemplate && !source.address,
+          wildcard,
         },
         registered: new Set(),
         blockNumber: event.block.number,
@@ -1898,7 +1891,6 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
       const start = source.startBlock ?? 0;
       const once = handler.filter === "once";
       const every = typeof handler.filter === "object" ? handler.filter.every : 1;
-      const location = `data source "${source.name}" → "${handler.handler}"`;
       // graph-node creates a data source from any handler, a block handler's
       // included, and runs it from that block on. A data source's block handler
       // that can reach a create runs in register mode at each of its blocks,
@@ -1948,7 +1940,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
               const { pass, settle } = startRegisterPass(source.chainId ?? 0, position);
               scope.pass = pass;
               try {
-                await runRegisterRounds(scope, () => fn(makeBlockHandlerBlock(blockNumber, location)));
+                await runRegisterRounds(scope, () => fn(makeBlockHandlerBlock(blockNumber)));
               } finally {
                 settle();
                 scope.slot?.release();
@@ -1983,7 +1975,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
           const { pass, settle } = startRegisterPass(chainId, position);
           scope.pass = pass;
           try {
-            await runRegisterRounds(scope, () => fn(makeBlockHandlerBlock(blockNumber, location)));
+            await runRegisterRounds(scope, () => fn(makeBlockHandlerBlock(blockNumber)));
           } finally {
             settle();
             scope.slot?.release();
@@ -1996,7 +1988,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
       const chainStarts = config.dataSources
         .filter((other) => other.chainId === source.chainId)
         .map((other) => other.startBlock ?? 0);
-      const first = source.isTemplate ? Math.min(...chainStarts, 0 + (chainStarts.length === 0 ? 0 : Number.MAX_SAFE_INTEGER)) : start;
+      const first = source.isTemplate ? (chainStarts.length > 0 ? Math.min(...chainStarts) : 0) : start;
       // An instance's creation block is its start block (graph-node), so a
       // template's `once` and `polling` schedules differ by instance: every
       // block is visited and each instance checked.
@@ -2026,7 +2018,7 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
         } as any,
         async ({ block, context }: any) => {
           if (skipPreload && context.isPreload) return;
-          const graphBlock = makeBlockHandlerBlock(block.number, location, block);
+          const graphBlock = makeBlockHandlerBlock(block.number, block);
           const addresses = source.isTemplate
             ? instancesAt(block.chainId ?? source.chainId, source.name, block.number)
                 .filter((instance) => scheduled(instance.block, block.number))

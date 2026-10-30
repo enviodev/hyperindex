@@ -13,7 +13,7 @@
  * queries. Fetched after the batch, a header is outside the reorg guard that
  * validates an event's block, so it is only ever served from below the
  * chain's head by its reorg depth: the translator holds the chain back by
- * that much, and the check here is the backstop.
+ * that much, and HyperSync's answers are checked against it here too.
  */
 
 import { rpcClient } from "./rpc.ts";

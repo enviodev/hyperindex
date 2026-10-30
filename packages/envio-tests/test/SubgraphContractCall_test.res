@@ -1,4 +1,4 @@
-// Contract calls from a mapping: an envio effect over viem, evaluated at the
+// Contract calls from a mapping: an envio effect, evaluated at the
 // event's block. A revert is data; a transport failure is asked again.
 let port = FreePort.pick()
 
@@ -61,6 +61,9 @@ class Token extends ethereum.SmartContract {
   try_boom(): any {
     return this.tryCall("boom", "boom():(uint256)", []);
   }
+  try_vmError(): any {
+    return this.tryCall("vmError", "vmError():(uint256)", []);
+  }
   try_flaky(): any {
     return this.tryCall("flaky", "flaky():(uint256)", []);
   }
@@ -113,6 +116,15 @@ export function handlePing(event: any): void {
     return;
   }
 
+  if (nonce === 6) {
+    let vm = token.try_vmError();
+    let probe = new Entity();
+    probe.setString("name", vm.reverted ? "reverted" : vm.value[0].toBigInt().toString());
+    probe.setBoolean("reverted", vm.reverted);
+    store.set("Probe", "vm", probe);
+    return;
+  }
+
   if (nonce === 5) {
     let fields = token.getMarginRatio();
     let probe = new Entity();
@@ -151,6 +163,7 @@ const SLOT_SELECTOR = "0xb2025e4f";
 const SLOT_RESULT =
   "0x000000000000000000000000000000000000000000000000000000000000002a";
 const RATIO_SELECTOR = "0x4f3c1542";
+const VM_ERROR_SELECTOR = "0xd695d178";
 const RATIO_RESULT =
   "0x0000000000000000000000000000000000000000000000000000000000000064";
 
@@ -186,6 +199,17 @@ beforeAll(async () => {
           }),
         );
       }
+      // Parity and OpenEthereum, and older Nethermind, say a revert in the
+      // error's data, not its message.
+      if (data.startsWith(VM_ERROR_SELECTOR)) {
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32015, message: "VM execution error.", data: "Reverted 0x" },
+          }),
+        );
+      }
       // Anything else is the flaky endpoint: two transport failures, then 7.
       if (flakyFailures++ < 2) {
         res.statusCode = 503;
@@ -214,6 +238,22 @@ describe("contract calls", () => {
     t.expect(await indexer.Probe.getOrThrow("probe")).toEqual({
       id: "probe",
       name: "envio",
+      reverted: true,
+    });
+  });
+
+  it("takes a revert a node reports in the error's data", async (t) => {
+    const indexer = createTestIndexer();
+
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Ping", params: { nonce: 6n } }] },
+      },
+    });
+
+    t.expect(await indexer.Probe.getOrThrow("vm")).toEqual({
+      id: "vm",
+      name: "reverted",
       reverted: true,
     });
   });

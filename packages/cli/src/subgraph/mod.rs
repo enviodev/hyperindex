@@ -110,7 +110,7 @@ pub struct SubgraphRuntimeConfig {
     pub entity_accessors: BTreeMap<String, String>,
     pub contract_accessors: BTreeMap<String, String>,
     /// `ENVIO_SUBGRAPH_RPC` flattened to plain URLs, in order. The shim's call
-    /// effects use them as a viem fallback transport; empty means the mapping's
+    /// effects try them in order; empty means the mapping's
     /// first contract call raises the missing-RPC error.
     pub rpc_urls: Vec<String>,
     /// The manifest's file name within `root`, which `graph codegen` is run on.

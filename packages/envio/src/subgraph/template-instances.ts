@@ -64,8 +64,3 @@ export function instancesAt(chainId: number, template: string, block: number): I
   load();
   return (instances.get(keyOf(chainId, template)) ?? []).filter((instance) => instance.block <= block);
 }
-
-export function forgetInstances() {
-  instances.clear();
-  loaded = false;
-}

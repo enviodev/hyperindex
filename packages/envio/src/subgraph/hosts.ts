@@ -496,7 +496,7 @@ export function makeHostEffects(
         () => client.getCode({ address, blockNumber }),
         { deadline: false },
       );
-      return code !== undefined && code !== "0x";
+      return code !== "0x";
     },
   );
 
