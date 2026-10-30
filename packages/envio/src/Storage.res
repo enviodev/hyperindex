@@ -531,8 +531,7 @@ let stagedFor = (staged, ~store, stage) => {
 // Ids as the text their column reads them from.
 let renderIds = (table: Table.table, ids: array<EntityId.t>) =>
   table
-  ->Table.encodeIdsToJson(ids)
-  ->(Utils.magic: JSON.t => array<unknown>)
+  ->Table.encodeIds(ids)
   ->Array.map(Sql.render)
 
 let bounds = (
