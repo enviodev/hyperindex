@@ -6,6 +6,8 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
   | Chain(chainId) => `.${chainId->ChainId.toString}`
   }
 
+let entityKeyOf = (entityId: string) => entityId->EntityId.unsafeOfString->EntityId.toKey
+
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -16,7 +18,9 @@ let loadById = (
   ~entityId,
 ) => {
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
-  switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+  switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(
+    entityId->entityKeyOf,
+  ) {
   // A row already in memory is final, so even a grouped call skips the load
   // manager: grouping it would only resolve it a tick later to the same value.
   | Some(change) => Promise.resolve(change->InMemoryTable.Entity.mapChangeToEntity)
@@ -53,14 +57,14 @@ let loadById = (
       //Set the entity in the in memory store
       for idx in 0 to dbEntities->Array.length - 1 {
         let entity = dbEntities->Array.getUnsafe(idx)
-        entitiesMap->Dict.set(entity.id, entity)
+        entitiesMap->Dict.set(entity.id->entityKeyOf, entity)
       }
       let committedCheckpointId = indexerState->IndexerState.committedCheckpointIdFor(~scope)
       idsToLoad->Array.forEach(entityId => {
         inMemTable->InMemoryTable.Entity.initValue(
           ~committedCheckpointId,
-          ~key=entityId,
-          ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
+          ~entityId=entityId->EntityId.unsafeOfString,
+          ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId->entityKeyOf),
         )
       })
 
@@ -77,7 +81,7 @@ let loadById = (
       ~key,
       ~load,
       ~shouldGroup,
-      ~hasher=LoadManager.noopHasher,
+      ~hasher=entityKeyOf,
       ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
       ~hasInMemory=hash => inMemTable.latestEntityChangeById->Dict.has(hash),
       ~input=entityId,
@@ -387,7 +391,7 @@ let loadByParsedFilter = (
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
             ~committedCheckpointId,
-            ~key=entity.id,
+            ~entityId=entity.id->EntityId.unsafeOfString,
             ~entity=Some(entity),
           )
         })

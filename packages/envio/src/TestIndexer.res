@@ -433,11 +433,10 @@ let getEntityFromState = (
     )
   }
   let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
+  let key = entityId->EntityId.unsafeOfString->EntityId.toKey
   switch entityConfig.table->Table.getChainIdField {
-  | None => entityDict->Dict.get(entityId)->Option.map(copyEntity)
+  | None => entityDict->Dict.get(key)->Option.map(copyEntity)
   | Some(field) =>
-    // By key, not `===`: a Uint8Array id is a different object on every call.
-    let key = entityId->EntityId.unsafeOfString->EntityId.toKey
     let matches =
       entityDict
       ->Dict.valuesToArray

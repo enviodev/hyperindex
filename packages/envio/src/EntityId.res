@@ -9,9 +9,14 @@ external unsafeOfAny: 'a => t = "%identity"
 external unsafeToAny: t => 'a = "%identity"
 external unsafeOfString: string => t = "%identity"
 
-// Stringified id used as a JS object/dict key. `String` matches how JS coerces
-// a value used as an object key, so an id indexes the same whether the raw
-// value or its key form is used for lookup, across string/int/bigint. A
-// Uint8Array keys as its comma-joined bytes, which is unique per byte sequence
-// and the only way two separate arrays holding the same bytes compare equal.
-let toKey: t => string = %raw(`String`)
+// Stringified id used as a JS object/dict key. Every keyed lookup goes through
+// this rather than letting JS coerce the raw id: a Uint8Array keys as its hex
+// bytes, so two arrays holding the same bytes share a key. `String` would get
+// that wrong for a `Buffer`, which stringifies by decoding UTF-8, so distinct
+// byte sequences can collide and the same bytes key differently from a plain
+// Uint8Array.
+let toKey = (id: t): string =>
+  switch id->(Utils.magic: t => unknown)->Utils.Bytes.asUint8Array {
+  | Some(bytes) => bytes->Utils.Bytes.toHex
+  | None => id->(Utils.magic: t => unknown)->String.make
+  }

@@ -125,7 +125,7 @@ let tokenItem = (~block, handler): MockSource.itemMock => {
   blockNumber: block,
   logIndex: 0,
   handler: async args =>
-    handler(args.context->(Utils.magic: Internal.handlerContext => handlerContext<'id>)),
+    await handler(args.context->(Utils.magic: Internal.handlerContext => handlerContext<'id>)),
 }
 
 // Block 101 sets `restored`; block 102 sets `removed` and deletes `restored`.
@@ -142,7 +142,7 @@ let rollback = async (
     {
       fromBlock: 101,
       reply: Respond({
-        items: [tokenItem(~block=101, context => context.token.set({id: restored}))],
+        items: [tokenItem(~block=101, async context => context.token.set({id: restored}))],
         latestFetchedBlockNumber: 101,
         latestFetchedBlockHash: "0x0101",
       }),
@@ -154,7 +154,7 @@ let rollback = async (
       fromBlock: 102,
       reply: Respond({
         items: [
-          tokenItem(~block=102, context => {
+          tokenItem(~block=102, async context => {
             context.token.set({id: removed})
             context.token.deleteUnsafe(restored)
           }),
@@ -206,6 +206,11 @@ let rollback = async (
 
 let reorgMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
+@val @scope("Buffer") external bufferFrom: array<int> => Uint8Array.t = "from"
+
+let tokenIds = (tokens: array<token<Uint8Array.t>>) =>
+  tokens->Array.map(token => token.id)->Array.toSorted(Utils.Bytes.compare)
+
 describe("Bytes entity id", () => {
   Scenario.make(
     ~schema,
@@ -237,6 +242,80 @@ describe("Bytes entity id", () => {
         Some({token: Some({id: kept}), deleted: None, holders: [{id: "h1", tokenId: kept}]}),
         [{id: kept}],
         [{id: "h1", tokenId: kept}],
+      ))
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/pull/1787#discussion_r4422855235
+  // `Buffer` stringifies by decoding UTF-8, so `[0xaa]`, `[0xbb]` and `[0xcc]`
+  // would all key as "�" if an id were keyed by `String`.
+  Scenario.make(
+    ~schema,
+    ~configYaml=configYaml(~bytesType="uint8array"),
+  )->Scenario.it(
+    "keys a Buffer id by its bytes, the same as a plain Uint8Array",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(10)
+      let inMemory = ref([])
+      let fromStorage = ref([])
+      await source.expectItemsQueries([
+        {
+          fromBlock: 0,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              tokenItem(
+                ~block=5,
+                async context => {
+                  context.token.set({id: bufferFrom([0xaa])})
+                  context.token.set({id: bufferFrom([0xbb])})
+                  inMemory :=
+                    (
+                      await Promise.all([
+                        context.token.get(Uint8Array.fromArray([0xaa])),
+                        context.token.get(Uint8Array.fromArray([0xbb])),
+                      ])
+                    )->Array.map(Option.isSome)
+                },
+              ),
+            ],
+            latestFetchedBlockNumber: 5,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      await source.expectItemsQueries([
+        {
+          fromBlock: 6,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              tokenItem(
+                ~block=6,
+                async context => {
+                  fromStorage :=
+                    (
+                      await Promise.all([
+                        context.token.get(bufferFrom([0xaa])),
+                        context.token.get(bufferFrom([0xcc])),
+                      ])
+                    )->Array.map(Option.isSome)
+                },
+              ),
+            ],
+            latestFetchedBlockNumber: 10,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      let tokens: array<token<Uint8Array.t>> = await indexer.query("Token")
+      t.expect((inMemory.contents, fromStorage.contents, tokens->tokenIds)).toEqual((
+        [true, true],
+        [true, false],
+        [Uint8Array.fromArray([0xaa]), Uint8Array.fromArray([0xbb])],
       ))
     },
   )

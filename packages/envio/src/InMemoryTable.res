@@ -214,11 +214,14 @@ module Entity = {
   let initValue = (
     inMemTable: t,
     ~committedCheckpointId,
-    ~key: string,
+    ~entityId: EntityId.t,
     ~entity: option<Internal.entity>,
   ) =>
-    if inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(key)->Option.isNone {
-      let entityId = key->EntityId.unsafeOfString
+    if (
+      inMemTable.latestEntityChangeById
+      ->Utils.Dict.dangerouslyGetNonOption(entityId->EntityId.toKey)
+      ->Option.isNone
+    ) {
       let change: Change.t<Internal.entity> = switch entity {
       | Some(entity) => Set({entityId, entity, checkpointId: Internal.loadedFromDbCheckpointId})
       | None => Delete({entityId, checkpointId: Internal.loadedFromDbCheckpointId})

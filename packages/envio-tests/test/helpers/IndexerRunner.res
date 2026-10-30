@@ -422,7 +422,7 @@ let run = async (
         entityConfig.table->Table.getChainIdField->Option.map(field => field.fieldName)
       let keyOf = row => {
         let row = row->(Utils.magic: unknown => dict<unknown>)
-        let id = row->Dict.getUnsafe("id")->Utils.Hash.makeOrThrow
+        let id = row->Dict.getUnsafe("id")->EntityId.unsafeOfAny->EntityId.toKey
         switch chainField {
         | Some(field) => `${id}|${row->Dict.getUnsafe(field)->Utils.Hash.makeOrThrow}`
         | None => id
