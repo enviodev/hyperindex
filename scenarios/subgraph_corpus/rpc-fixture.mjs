@@ -22,6 +22,8 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
   const answers = !upstream && file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   const misses = [];
   let synthesized = 0;
+  // Recording: what the node answered, and its failures by HTTP status.
+  const upstreamStats = { answered: 0, failed: {} };
 
   const forward = async ({ method, params }) => {
     const response = await fetch(upstream, {
@@ -29,7 +31,7 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     });
-    if (!response.ok) return undefined;
+    if (!response.ok) return { status: response.status };
     const { result, error } = await response.json();
     return error ? { error } : { result };
   };
@@ -47,12 +49,17 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
       return { error: { code: -32601, message: `${request.method} is not served by the corpus RPC fixture` } };
     }
     const key = JSON.stringify([request.method, request.params ?? []]);
-    // A node that fails or rate-limits answers 503, which the runtime retries
-    // with backoff; the runner's per-entry deadline bounds a node that never
-    // recovers.
+    // A node's failure is passed on with its status, so the runtime backs off
+    // on a 429 as it would against the node itself; the runner's per-entry
+    // deadline bounds a node that never recovers.
     if (upstream) {
-      const reply = await forward(request).catch(() => undefined);
-      if (reply) answers[key] = reply;
+      const reply = await forward(request).catch(() => ({ status: 503 }));
+      if ("status" in reply) {
+        upstreamStats.failed[reply.status] = (upstreamStats.failed[reply.status] ?? 0) + 1;
+        return reply;
+      }
+      upstreamStats.answered++;
+      answers[key] = reply;
       return reply;
     }
     if (key in answers) return answers[key];
@@ -80,8 +87,9 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
       const replies = await Promise.all(requests.map(answer));
       // A miss or an upstream failure answers like a failing node, which the
       // runtime retries rather than handing a mapping a revert.
-      if (replies.some((reply) => reply === undefined)) {
-        res.writeHead(503).end();
+      if (replies.some((reply) => reply === undefined || "status" in reply)) {
+        const limited = replies.some((reply) => reply?.status === 429);
+        res.writeHead(limited ? 429 : 503).end();
         return;
       }
       const wrapped = replies.map((reply, index) => ({ jsonrpc: "2.0", id: requests[index].id, ...reply }));
@@ -95,6 +103,7 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
     url: `http://127.0.0.1:${server.address().port}`,
     misses,
     synthesized: () => synthesized,
+    upstreamStats: () => upstreamStats,
     async close() {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

@@ -54,7 +54,13 @@ function index(dir, entry, rpc) {
       clearInterval(watch);
       clearTimeout(deadline);
       if (rpc?.misses.length) reject(new Error(`no answer for ${rpc.misses[0]}`));
-      else if (timedOut) reject(new Error(`indexing took over ${ENTRY_TIMEOUT_MS / 60000} minutes`));
+      else if (timedOut) {
+        const stats = rpc?.upstreamStats?.();
+        const node = stats
+          ? ` (the node answered ${stats.answered} requests, failed ${JSON.stringify(stats.failed)})`
+          : "";
+        reject(new Error(`indexing took over ${ENTRY_TIMEOUT_MS / 60000} minutes${node}`));
+      }
       else if (code !== 0) reject(new Error(`indexing exited with code ${code}`));
       else {
         const { changes } = JSON.parse(readFileSync(path.join(dir, RESULT), "utf8"));
