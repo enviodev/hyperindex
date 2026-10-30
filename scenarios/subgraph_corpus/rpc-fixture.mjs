@@ -47,10 +47,12 @@ export async function startRpcFixture({ chainId, file, upstream, fake }) {
       return { error: { code: -32601, message: `${request.method} is not served by the corpus RPC fixture` } };
     }
     const key = JSON.stringify([request.method, request.params ?? []]);
+    // A node that fails or rate-limits answers 503, which the runtime retries
+    // with backoff; the runner's per-entry deadline bounds a node that never
+    // recovers.
     if (upstream) {
       const reply = await forward(request).catch(() => undefined);
       if (reply) answers[key] = reply;
-      else misses.push(key);
       return reply;
     }
     if (key in answers) return answers[key];
