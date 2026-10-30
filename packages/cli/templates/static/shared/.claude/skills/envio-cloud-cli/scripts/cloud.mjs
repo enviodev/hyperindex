@@ -181,10 +181,8 @@ async function waitCommit([indexer, commit, org], flags) {
   }
 }
 
-// A chain is synced once the indexer marks it ready. envio-cloud 1.0.0 has no
-// is_ready, but its caught-up timestamp is the same ready mark.
 function chainLine(c) {
-  const ready = c.is_ready ?? Boolean(c.timestamp_caught_up_to_head_or_endblock);
+  const ready = c.is_ready === true;
   const height = Number(c.block_height);
   const processed = Number(c.latest_processed_block);
   const progress = height > 0 ? `${processed}/${height}` : `${processed}/? (chain head not known yet)`;
