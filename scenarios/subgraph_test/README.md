@@ -29,6 +29,6 @@ type-checked by `asc`, through `graph build`.
 `differential/run.sh` deploys this project, unchanged but for its factory
 address and start block, to a graph-node in Docker, drives the contracts behind
 its ABIs on a local anvil chain, indexes the same chain with envio over RPC, and
-diffs every stored field of every entity. It needs Docker and the network, so it
-runs nightly (`.github/workflows/subgraph-nightly.yml`) rather than per PR;
+diffs every stored field of every entity. CI runs it on every PR
+(`.github/workflows/subgraph-compat.yml`);
 `KEEP=1` leaves the containers and the work directory up for inspection.

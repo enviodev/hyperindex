@@ -1,19 +1,20 @@
 # Subgraph mode against the outside world: graph-node itself, and real
-# subgraphs at pinned commits. Both need the network and minutes of indexing,
-# so they run nightly rather than on every PR.
-name: Subgraph nightly
+# subgraphs at pinned commits. `pull_request`, not `pull_request_target`, so a
+# PR runs its own copy of this file: Build & Verify runs the base branch's.
+# A fork's PR gets no secrets, so its corpus run has no HyperSync token.
+name: Subgraph compat
 
 on:
-  schedule:
-    - cron: "0 3 * * *"
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# ENVIO_API_TOKEN goes to the corpus step alone: installs and builds run
+# scripts that must not read it.
 env:
   CARGO_TERM_COLOR: always
-  ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
 jobs:
   subgraph:
@@ -68,3 +69,5 @@ jobs:
       - name: Subgraph corpus
         if: matrix.suite == 'corpus'
         run: node scenarios/subgraph_corpus/run.mjs
+        env:
+          ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
