@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 #[napi_derive::napi(object)]
 #[derive(Clone, Debug, Default)]
@@ -120,6 +120,20 @@ impl Chain {
         self.rate_limit_time_ms > 1000.
     }
 
+    fn covered_block(&self) -> i64 {
+        match self.progress {
+            Progress::Syncing {
+                latest_processed_block,
+                ..
+            }
+            | Progress::Synced {
+                latest_processed_block,
+                ..
+            } => latest_processed_block,
+            Progress::SearchingForEvents => self.latest_fetched_block_number,
+        }
+    }
+
     pub fn from_metrics(m: &TuiChain, ecosystem: &str, now: f64) -> Self {
         let first_event_block = m.first_event_block_number.unwrap_or(m.start_block);
         let latest_processed_block = m.progress_block_number;
@@ -188,6 +202,10 @@ pub struct State {
     /// Once every chain has a height and fetched something, the ETA stays on
     /// rather than flickering back to "calculating".
     eta_ready: bool,
+    /// The block each chain had covered when first seen. A resumed run's
+    /// earlier progress took longer than the time since this start, so it
+    /// stays out of the pace.
+    covered_at_start: HashMap<String, i64>,
 }
 
 impl State {
@@ -198,6 +216,7 @@ impl State {
             messages: Messages::Loading,
             samples: VecDeque::new(),
             eta_ready: false,
+            covered_at_start: HashMap::new(),
         }
     }
 
@@ -206,6 +225,11 @@ impl State {
             .iter()
             .map(|chain| Chain::from_metrics(chain, &self.info.ecosystem, now))
             .collect();
+        for chain in &self.chains {
+            self.covered_at_start
+                .entry(chain.chain_id.clone())
+                .or_insert_with(|| chain.covered_block());
+        }
         if !self.eta_ready {
             self.eta_ready = self
                 .chains
@@ -273,19 +297,23 @@ impl State {
     fn processed_blocks(&self) -> i64 {
         self.chains
             .iter()
-            .map(|chain| match chain.progress {
-                Progress::Syncing {
-                    first_event_block,
-                    latest_processed_block,
+            .map(|chain| {
+                let covered_at_start = self.covered_at_start[&chain.chain_id];
+                match chain.progress {
+                    Progress::Syncing {
+                        first_event_block,
+                        latest_processed_block,
+                    }
+                    | Progress::Synced {
+                        first_event_block,
+                        latest_processed_block,
+                        ..
+                    } => latest_processed_block - first_event_block.max(covered_at_start),
+                    Progress::SearchingForEvents => {
+                        chain.latest_fetched_block_number - chain.start_block.max(covered_at_start)
+                    }
                 }
-                | Progress::Synced {
-                    first_event_block,
-                    latest_processed_block,
-                    ..
-                } => latest_processed_block - first_event_block,
-                Progress::SearchingForEvents => {
-                    (chain.latest_fetched_block_number - chain.start_block).max(0)
-                }
+                .max(0)
             })
             .sum()
     }
@@ -351,8 +379,19 @@ mod tests {
         }
     }
 
+    /// Every chain is first seen at its start block, as on a fresh run.
     fn state(chains: &[TuiChain], now: f64) -> State {
         let mut state = State::new(TuiInfo::default());
+        let fresh: Vec<TuiChain> = chains
+            .iter()
+            .map(|chain| TuiChain {
+                chain_id: chain.chain_id.clone(),
+                start_block: chain.start_block,
+                latest_fetched_block_number: chain.start_block - 1,
+                ..chain_metrics()
+            })
+            .collect();
+        state.update(&fresh, 0.);
         state.update(chains, now);
         state
     }
@@ -574,6 +613,24 @@ mod tests {
             state(&[syncing], 10_000.).eta(10_000.),
             Eta::Syncing("1m 30s".to_string())
         );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/497
+    #[test]
+    fn projects_the_eta_from_the_pace_since_a_restart() {
+        let resumed = |progress_block_number| TuiChain {
+            first_event_block_number: Some(100),
+            progress_block_number,
+            latest_fetched_block_number: progress_block_number,
+            known_height: 1_000_100,
+            source_block_number: 1_000_100,
+            ..chain_metrics()
+        };
+        let mut state = State::new(TuiInfo::default());
+        state.update(&[resumed(900_100)], 0.);
+        state.update(&[resumed(910_100)], 10_000.);
+        // 10,000 blocks in 10s, 90,000 to go.
+        assert_eq!(state.eta(10_000.), Eta::Syncing("1m 30s".to_string()));
     }
 
     // A chain still searching for its first event has covered the blocks it

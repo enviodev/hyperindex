@@ -976,6 +976,16 @@ mod tests {
     /// Ten seconds of indexing at 5,000 events a second, ending at `NOW`.
     fn state(chains: &[TuiChain], messages: Messages) -> State {
         let mut state = State::new(info());
+        let fresh: Vec<TuiChain> = chains
+            .iter()
+            .map(|chain| TuiChain {
+                chain_id: chain.chain_id.clone(),
+                start_block: chain.start_block,
+                latest_fetched_block_number: chain.start_block - 1,
+                ..TuiChain::default()
+            })
+            .collect();
+        state.update(&fresh, START);
         let earlier: Vec<TuiChain> = chains
             .iter()
             .map(|chain| TuiChain {
