@@ -33,7 +33,7 @@ services:
       postgres_pass: let-me-in
       postgres_db: graph-node
       ipfs: ipfs:5001
-      ethereum: mainnet:http://anvil:8545
+      ethereum: ${GRAPH_ETHEREUM:-mainnet:http://anvil:8545}
       GRAPH_LOG: info
       # anvil mines a block per transaction; poll it often.
       ETHEREUM_POLLING_INTERVAL: "200"
