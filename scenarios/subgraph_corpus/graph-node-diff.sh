@@ -44,7 +44,23 @@ git -C "$project" fetch --quiet --depth 1 "$repo" "$commit"
 git -C "$project" checkout --quiet FETCH_HEAD
 (cd "$project" && corepack yarn install --frozen-lockfile --ignore-scripts)
 
-# graph-node gets the manifest as its authors wrote it.
+# Both index the same data sources: one that starts after the window writes
+# nothing in it, and some repos no longer build theirs (missing mapping files).
+# envio's copy also ends every source at the window's last block.
+window() {
+  node --input-type=module -e '
+    import { readFileSync, writeFileSync } from "node:fs";
+    import YAML from "'"$root"'/packages/envio/node_modules/yaml/dist/index.js";
+    const [file, end, ends] = [process.argv[1], Number(process.argv[2]), process.argv[3] === "ends"];
+    const manifest = YAML.parse(readFileSync(file, "utf8"));
+    manifest.dataSources = manifest.dataSources
+      .filter((source) => (source.source.startBlock ?? 0) <= end)
+      .map((source) => (ends ? { ...source, source: { ...source.source, endBlock: end } } : source));
+    writeFileSync(file, YAML.stringify(manifest));
+  ' "$project/subgraph.yaml" "$end_block" "${1:-}"
+}
+
+window
 subgraph="corpus/$name"
 wait_for curl -s -o /dev/null http://localhost:8020
 (
@@ -56,19 +72,7 @@ wait_for curl -s -o /dev/null http://localhost:8020
     --version-label v1 "$subgraph"
 )
 
-# envio gets the same window: every data source ends at the entry's block, and
-# one that starts after it, which writes nothing there, is left out.
-node --input-type=module -e '
-  import { readFileSync, writeFileSync } from "node:fs";
-  import YAML from "'"$root"'/packages/envio/node_modules/yaml/dist/index.js";
-  const [file, end] = [process.argv[1], Number(process.argv[2])];
-  const manifest = YAML.parse(readFileSync(file, "utf8"));
-  manifest.dataSources = manifest.dataSources
-    .filter((source) => (source.source.startBlock ?? 0) <= end)
-    .map((source) => ({ ...source, source: { ...source.source, endBlock: end } }));
-  writeFileSync(file, YAML.stringify(manifest));
-' "$project/subgraph.yaml" "$end_block"
-
+window ends
 rm -rf "$project/node_modules/envio"
 ln -s "$root/packages/envio" "$project/node_modules/envio"
 envio="$root/packages/envio/bin.mjs"
