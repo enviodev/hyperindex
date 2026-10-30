@@ -12,14 +12,22 @@ type counter = {
 }
 type total = {id: string, count: bigint}
 
-type counterOps = {set: {"id": string, "count": bigint} => unit}
-type handlerContext = {
-  @as("Counter") counter: counterOps,
-  @as("Total") total: counterOps,
-}
+let perChainHandlers = `
+import { indexer } from "envio";
 
-let asContext = (context: Internal.handlerContext) =>
-  context->(Utils.magic: Internal.handlerContext => handlerContext)
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count });
+});
+`
+
+let crossChainHandlers = `
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count });
+  context.Total.set({ id: "total", count: event.params.count });
+});
+`
 
 let chainYaml = chainId =>
   `
@@ -41,7 +49,7 @@ disable_default_cross_chain: true${extra}
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100)}${chainYaml(1337)}
 `
 
@@ -55,6 +63,7 @@ type Counter {
 let scenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
+  ~handlers=perChainHandlers,
   ~configYaml=makeConfigYaml(~name="isolated-rollback"),
 )
 
@@ -64,6 +73,7 @@ let scenario = Scenario.make(
 let singleChainScenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
+  ~handlers=perChainHandlers,
   ~configYaml=`
 name: single-chain-per-chain
 rollback_on_reorg: true
@@ -71,7 +81,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100)}
 `,
 )
@@ -87,6 +97,7 @@ type Total @crossChain {
   count: BigInt!
 }
 `,
+  ~handlers=crossChainHandlers,
   ~configYaml=makeConfigYaml(~name="isolated-rollback-cross-chain"),
 )
 
@@ -96,6 +107,7 @@ type Total @crossChain {
 let clickHouseScenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
+  ~handlers=perChainHandlers,
   ~configYaml=makeConfigYaml(~name="isolated-rollback-clickhouse"),
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
@@ -103,6 +115,7 @@ let clickHouseScenario = Scenario.make(
 let fullHistoryScenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
+  ~handlers=perChainHandlers,
   ~configYaml=makeConfigYaml(
     ~name="isolated-rollback-full-history",
     ~extra="\nsave_full_history: true",
@@ -115,6 +128,7 @@ let fullHistoryScenario = Scenario.make(
 let snakeCaseScenario = Scenario.make(
   ~supervised=false,
   ~schema=perChainSchema,
+  ~handlers=perChainHandlers,
   ~configYaml=makeConfigYaml(
     ~name="isolated-rollback-snake-case",
     ~extra="\nstorage:\n  postgres:\n    column_name_format: snake_case",
@@ -123,23 +137,13 @@ let snakeCaseScenario = Scenario.make(
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
-let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
-  blockNumber: block,
-  logIndex: 0,
-  handler: async args => {
-    let context = args.context->asContext
-    context.counter.set({"id": "total", "count": count})
-  },
-}
+external toUnknown: bigint => unknown = "%identity"
 
-let setCounterAndTotal = (~block, ~count: bigint): MockSource.itemMock => {
+let transfer = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->asContext
-    context.counter.set({"id": "total", "count": count})
-    context.total.set({"id": "total", "count": count})
-  },
+  params: dict{"count": count->toUnknown},
 }
 
 // Per-chain metrics come back in no particular order, so every read is sorted
@@ -173,7 +177,6 @@ let driveBothChainsToBlock102 = async (
   ~indexer: IndexerRunner.t,
   ~source100: MockSource.t,
   ~source1337: MockSource.t,
-  ~item: (~block: int, ~count: bigint) => MockSource.itemMock,
 ) => {
   let _ = await Promise.all2((
     Scenario.enterReorgThreshold(~indexer, ~source=source100),
@@ -185,13 +188,13 @@ let driveBothChainsToBlock102 = async (
   await source100.expectItemsQueries([
     {
       fromBlock: 101,
-      reply: Respond({items: [item(~block=101, ~count=100n)], latestFetchedBlockNumber: 101}),
+      reply: Respond({items: [transfer(~block=101, ~count=100n)], latestFetchedBlockNumber: 101}),
     },
   ])
   await source1337.expectItemsQueries([
     {
       fromBlock: 101,
-      reply: Respond({items: [item(~block=101, ~count=1337n)], latestFetchedBlockNumber: 101}),
+      reply: Respond({items: [transfer(~block=101, ~count=1337n)], latestFetchedBlockNumber: 101}),
     },
   ])
   await indexer.getBatchWritePromise()
@@ -199,14 +202,14 @@ let driveBothChainsToBlock102 = async (
   await source1337.expectItemsQueries([
     {
       fromBlock: 102,
-      reply: Respond({items: [item(~block=102, ~count=13372n)], latestFetchedBlockNumber: 102}),
+      reply: Respond({items: [transfer(~block=102, ~count=13372n)], latestFetchedBlockNumber: 102}),
     },
   ])
   await indexer.getBatchWritePromise()
   await source100.expectItemsQueries([
     {
       fromBlock: 102,
-      reply: Respond({items: [item(~block=102, ~count=1002n)], latestFetchedBlockNumber: 102}),
+      reply: Respond({items: [transfer(~block=102, ~count=1002n)], latestFetchedBlockNumber: 102}),
     },
   ])
   await indexer.getBatchWritePromise()
@@ -281,7 +284,7 @@ let reindexBlock102 = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~
   await source.expectItemsQueries([
     {
       coversBlock: 102,
-      reply: Respond({items: [setCounter(~block=102, ~count)], latestFetchedBlockNumber: 102}),
+      reply: Respond({items: [transfer(~block=102, ~count)], latestFetchedBlockNumber: 102}),
     },
   ])
   await indexer.getBatchWritePromise()
@@ -315,14 +318,14 @@ let driveToDistantChain1337 = async (
   await source100.expectItemsQueries([
     {
       fromBlock: 101,
-      reply: Respond({items: [setCounter(~block=101, ~count=100n)], latestFetchedBlockNumber: 101}),
+      reply: Respond({items: [transfer(~block=101, ~count=100n)], latestFetchedBlockNumber: 101}),
     },
   ])
   await source1337.expectItemsQueries([
     {
       fromBlock: 101,
       reply: Respond({
-        items: [setCounter(~block=150, ~count=1337n)],
+        items: [transfer(~block=150, ~count=1337n)],
         latestFetchedBlockNumber: 150,
       }),
     },
@@ -333,7 +336,7 @@ let driveToDistantChain1337 = async (
     {
       fromBlock: 102,
       reply: Respond({
-        items: [setCounter(~block=102, ~count=1002n)],
+        items: [transfer(~block=102, ~count=1002n)],
         latestFetchedBlockNumber: 151,
       }),
     },
@@ -370,7 +373,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
@@ -395,7 +398,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
 
       let checkpoints = await indexer.queryCheckpoints()
       let byChain = chain =>
@@ -422,7 +425,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
 
       source100.setAutoHeight(300)
       source1337.setAutoHeight(300)
@@ -432,7 +435,7 @@ describe("Isolated multichain rollback", () => {
         {
           coversBlock: 103,
           reply: Respond({
-            items: [setCounter(~block=103, ~count=13373n)],
+            items: [transfer(~block=103, ~count=13373n)],
             latestFetchedBlockNumber: 103,
           }),
         },
@@ -442,7 +445,7 @@ describe("Isolated multichain rollback", () => {
         {
           coversBlock: 103,
           reply: Respond({
-            items: [setCounter(~block=103, ~count=1003n)],
+            items: [transfer(~block=103, ~count=1003n)],
             latestFetchedBlockNumber: 103,
           }),
         },
@@ -474,7 +477,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
 
       t.expect(
         await Promise.all4((
@@ -557,7 +560,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounterAndTotal)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // Chain 100 has to give back block 102 as well: its own write to `Total`
@@ -574,7 +577,7 @@ describe("Isolated multichain rollback", () => {
         {
           coversBlock: 102,
           reply: Respond({
-            items: [setCounterAndTotal(~block=102, ~count=1002n)],
+            items: [transfer(~block=102, ~count=1002n)],
             latestFetchedBlockNumber: 102,
           }),
         },
@@ -584,7 +587,7 @@ describe("Isolated multichain rollback", () => {
         {
           coversBlock: 102,
           reply: Respond({
-            items: [setCounterAndTotal(~block=102, ~count=999n)],
+            items: [transfer(~block=102, ~count=999n)],
             latestFetchedBlockNumber: 102,
           }),
         },
@@ -621,7 +624,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
@@ -670,7 +673,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
 
       // No batch progresses in between, so the first diff is still unwritten
       // when the second reorg computes its own.
@@ -728,7 +731,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // Only chain 100 progresses, so its batch is what carries the diff.
@@ -770,7 +773,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounterAndTotal)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // The global rollback took chain 100 back to 101 as well; it re-fetches
@@ -807,7 +810,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
 
       // Chain 100's rollback lands first and is still unwritten when chain
       // 1337's supersedes it, which recomputes chain 100 back onto the 101 the
@@ -940,7 +943,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
@@ -973,7 +976,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
 
@@ -1018,7 +1021,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
       // Only chain 100 progresses, so its batch is what commits the rollback,
@@ -1032,7 +1035,7 @@ describe("Isolated multichain rollback", () => {
         {
           coversBlock: 105,
           reply: Respond({
-            items: [setCounter(~block=105, ~count=1005n)],
+            items: [transfer(~block=105, ~count=1005n)],
             latestFetchedBlockNumber: 105,
           }),
         },
@@ -1100,7 +1103,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
 
       // One block further on chain 1337, so the reorg chain is the one holding
       // the highest checkpoint when its own rows are orphaned.
@@ -1108,7 +1111,7 @@ describe("Isolated multichain rollback", () => {
         {
           coversBlock: 103,
           reply: Respond({
-            items: [setCounter(~block=103, ~count=13373n)],
+            items: [transfer(~block=103, ~count=13373n)],
             latestFetchedBlockNumber: 103,
           }),
         },
@@ -1168,7 +1171,7 @@ describe("Isolated multichain rollback", () => {
       let source100 = source(100)
       let source1337 = source(1337)
 
-      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337, ~item=setCounter)
+      await driveBothChainsToBlock102(~indexer, ~source100, ~source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
       await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
       await indexer.waitUntilIdle()
@@ -1198,7 +1201,7 @@ describe("Isolated multichain rollback", () => {
         {
           fromBlock: 101,
           reply: Respond({
-            items: [setCounter(~block=101, ~count=100n)],
+            items: [transfer(~block=101, ~count=100n)],
             latestFetchedBlockNumber: 101,
           }),
         },
@@ -1208,7 +1211,7 @@ describe("Isolated multichain rollback", () => {
         {
           fromBlock: 102,
           reply: Respond({
-            items: [setCounter(~block=102, ~count=1002n)],
+            items: [transfer(~block=102, ~count=1002n)],
             latestFetchedBlockNumber: 102,
           }),
         },

@@ -30,20 +30,22 @@ type Tally {
   count: Int!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Tally.set({ id: "tally", count: Number(event.params.value) });
+});
+`,
 )
 
 type tally = {id: string, count: int}
-type tallyOps = {set: tally => unit}
-type handlerContext = {@as("Tally") tally: tallyOps}
 
-let setTally = (~block, ~count): MockSource.itemMock => {
+let setTally = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args =>
-    (args.context->(Utils.magic: Internal.handlerContext => handlerContext)).tally.set({
-      id: "tally",
-      count,
-    }),
+  params: dict{"value": count->(Utils.magic: bigint => unknown)},
 }
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
@@ -58,14 +60,14 @@ describe("A chain id past int32", () => {
       await source.expectItemsQueries([
         {
           fromBlock: 1,
-          reply: Respond({items: [setTally(~block=50, ~count=1)], latestFetchedBlockNumber: 100}),
+          reply: Respond({items: [setTally(~block=50, ~count=1n)], latestFetchedBlockNumber: 100}),
         },
       ])
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
         {
           fromBlock: 101,
-          reply: Respond({items: [setTally(~block=200, ~count=2)], latestFetchedBlockNumber: 300}),
+          reply: Respond({items: [setTally(~block=200, ~count=2n)], latestFetchedBlockNumber: 300}),
         },
       ])
       await indexer.getBatchWritePromise()

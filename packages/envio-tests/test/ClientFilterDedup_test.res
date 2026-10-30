@@ -22,15 +22,29 @@ chains:
           - event: "TestEvent()"
 `,
   ~schema=`
-type Gravatar {
+type Processed {
   id: ID!
-  owner: String!
+  times: Int!
 }
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.contractRegister({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  context.chain.Gravatar.add("0x1111111111111111111111111111111111111111");
+  context.chain.Gravatar.add("0x2222222222222222222222222222222222222222");
+  context.chain.Gravatar.add("0x3333333333333333333333333333333333333333");
+});
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  const id = \`\${event.block.number}-\${event.logIndex}\`;
+  const existing = await context.Processed.get(id);
+  context.Processed.set({ id, times: (existing?.times ?? 0) + 1 });
+});
 `,
 )
 
-type gravatarOps = {add: Address.t => unit}
-type registerContext = {chain: {"Gravatar": gravatarOps}}
+type processed = {id: string, times: int}
 
 describe("Client-side address filtering item dedup", () => {
   scenario->Scenario.it(
@@ -40,10 +54,6 @@ describe("Client-side address filtering item dedup", () => {
     ~clientFilterAddressThreshold=2,
     ~maxAddrInPartition=1,
     async (~t, ~indexer, ~source) => {
-      let processed = []
-      let record = (~blockNumber, ~logIndex) =>
-        (async _ => processed->Array.push((blockNumber, logIndex))->ignore)->Obj.magic
-
       let sourceMock = source(1337)
 
       sourceMock.resolveGetHeightOrThrow(1000)
@@ -56,26 +66,7 @@ describe("Client-side address filtering item dedup", () => {
           partitionId: "0",
           fromBlock: 1,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 10,
-                logIndex: 0,
-                handler: record(~blockNumber=10, ~logIndex=0),
-                contractRegister: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)
-                  context.chain["Gravatar"].add(
-                    "0x1111111111111111111111111111111111111111"->Address.unsafeFromString,
-                  )
-                  context.chain["Gravatar"].add(
-                    "0x2222222222222222222222222222222222222222"->Address.unsafeFromString,
-                  )
-                  context.chain["Gravatar"].add(
-                    "0x3333333333333333333333333333333333333333"->Address.unsafeFromString,
-                  )
-                },
-              },
-            ],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 10, logIndex: 0}],
             latestFetchedBlockNumber: 10,
           }),
         },
@@ -92,7 +83,7 @@ describe("Client-side address filtering item dedup", () => {
           fromBlock: 1,
           toBlock: Bounded(800),
           reply: Respond({
-            items: [{blockNumber: 10, logIndex: 0, handler: record(~blockNumber=10, ~logIndex=0)}],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 10, logIndex: 0}],
             latestFetchedBlockNumber: 200,
           }),
         },
@@ -100,9 +91,9 @@ describe("Client-side address filtering item dedup", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        processed,
+        (await indexer.query("Processed"): array<processed>),
         ~message="the block-10 event is processed exactly once despite the backfill re-fetch",
-      ).toEqual([(10, 0)])
+      ).toEqual([{id: "10-0", times: 1}])
     },
   )
 })

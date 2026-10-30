@@ -37,19 +37,13 @@ let unsupported: array<Scenario.unsupported> = [
   {backend: #postgres, reason: "asserts against a ClickHouse server"},
 ]
 
-type token = {id: string, tokenId: int}
-type tokenOps = {set: token => unit}
-type handlerContext = {@as("Token") token: tokenOps}
+let handlers = `
+import { indexer } from "envio";
 
-let setToken: MockSource.itemMock = {
-  blockNumber: 1,
-  logIndex: 0,
-  handler: async args =>
-    (args.context->(Utils.magic: Internal.handlerContext => handlerContext)).token.set({
-      id: "1",
-      tokenId: 7,
-    }),
-}
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  context.Token.set({ id: "1", tokenId: 7 });
+});
+`
 
 let columns = async (sql, ~pgSchema) => {
   let postgres: array<{
@@ -81,7 +75,11 @@ let writeAndRead = async (
   let source = source(1)
   source.resolveGetHeightOrThrow(100)
   await source.expectItemsQueries([
-    {fromBlock: 1, toBlock: Unbounded, reply: Respond({items: [setToken]})},
+    {
+      fromBlock: 1,
+      toBlock: Unbounded,
+      reply: Respond({items: [{event: "Gravatar.TestEvent", blockNumber: 1, logIndex: 0}]}),
+    },
   ])
   await indexer.getBatchWritePromise()
   await sql->columns(~pgSchema=indexer.pgSchema)
@@ -93,6 +91,7 @@ describe("Column names per storage", () => {
   Scenario.make(
     ~unsupported,
     ~schema,
+    ~handlers,
     ~configYaml=configYaml(~postgres="snake_case", ~clickhouse="original"),
   )->Scenario.it("follow Postgres' format in Postgres only", ~sources=[{chain: 1}], async (
     ~t,
@@ -113,6 +112,7 @@ describe("Column names per storage", () => {
   Scenario.make(
     ~unsupported,
     ~schema,
+    ~handlers,
     ~configYaml=configYaml(~postgres="original", ~clickhouse="snake_case"),
   )->Scenario.it("follow ClickHouse's format in ClickHouse only", ~sources=[{chain: 1}], async (
     ~t,

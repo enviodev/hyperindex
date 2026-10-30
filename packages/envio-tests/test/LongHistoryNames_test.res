@@ -75,20 +75,19 @@ type BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2BB {
   id: ID!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  context.${first}.set({ id: "first" });
+  context.${second}.set({ id: "second" });
+});
+`,
 )
 
 type named = {id: string}
-type namedOps = {set: named => unit}
 
-let setBoth: MockSource.itemMock = {
-  blockNumber: 1,
-  logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => dict<namedOps>)
-    (context->Dict.getUnsafe(first)).set({id: "first"})
-    (context->Dict.getUnsafe(second)).set({id: "second"})
-  },
-}
+let setBoth: MockSource.itemMock = {event: "Gravatar.TestEvent", blockNumber: 1, logIndex: 0}
 
 let ids = (changes: array<Change.t<named>>) =>
   changes->Array.map(change =>

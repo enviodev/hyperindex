@@ -61,79 +61,52 @@ type EveryType {
   optEnumField: AccountType
 }
 `,
+  ~handlers=`
+import { indexer, BigDecimal } from "envio";
+
+const timestamp = new Date(1234567890123);
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.EveryType.set({
+    id: "0x5c4f2e1d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
+    // Not ASCII on purpose: RowBinary prefixes a string with its length in UTF-8
+    // bytes, which is not the length JS reports for anything outside Latin-1. "é"
+    // is one UTF-16 unit over two bytes, "😀" is two units over four. Both values
+    // also run past the length where staging copies a string in bulk instead of
+    // character by character, which is where a mis-sized reservation would show.
+    string: "héllo 😀 and the quick brown fox jumps over the lazy dog",
+    optString: undefined,
+    arrayOfStrings: ["a", "日本"],
+    int_: -7,
+    optInt: 3,
+    arrayOfInts: [1, 2],
+    float_: 1.5,
+    optFloat: undefined,
+    arrayOfFloats: [0.5, 2.5],
+    bool: true,
+    optBool: false,
+    bigInt: 123456789012345678901234567890n,
+    optBigInt: undefined,
+    arrayOfBigInts: [1n, 2n],
+    bigDecimal: new BigDecimal("1.25"),
+    optBigDecimal: undefined,
+    bigDecimalWithConfig: new BigDecimal("12.00000001"),
+    arrayOfBigDecimals: [new BigDecimal("3.5")],
+    timestamp,
+    optTimestamp: timestamp,
+    json: { nested: [1, 2] },
+    optJson: undefined,
+    optJsonNull: null,
+    // The case a String element has to hold something that is not a string,
+    // which the column takes as the element's JSON text.
+    arrayOfJson: [{ a: 1 }, 2, true, "s"],
+    enumField: "ADMIN",
+    optEnumField: undefined,
+  });
+});
+`,
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
-
-type everyType = {
-  id: string,
-  string: string,
-  optString: option<string>,
-  arrayOfStrings: array<string>,
-  int_: int,
-  optInt: option<int>,
-  arrayOfInts: array<int>,
-  float_: float,
-  optFloat: option<float>,
-  arrayOfFloats: array<float>,
-  bool: bool,
-  optBool: option<bool>,
-  bigInt: bigint,
-  optBigInt: option<bigint>,
-  arrayOfBigInts: array<bigint>,
-  bigDecimal: BigDecimal.t,
-  optBigDecimal: option<BigDecimal.t>,
-  bigDecimalWithConfig: BigDecimal.t,
-  arrayOfBigDecimals: array<BigDecimal.t>,
-  timestamp: Date.t,
-  optTimestamp: option<Date.t>,
-  json: JSON.t,
-  optJson: option<JSON.t>,
-  optJsonNull: option<JSON.t>,
-  arrayOfJson: array<JSON.t>,
-  enumField: string,
-  optEnumField: option<string>,
-}
-type everyTypeOps = {set: everyType => unit}
-type handlerContext = {@as("EveryType") everyType: everyTypeOps}
-
-let timestamp = Date.fromTime(1234567890123.0)
-
-// Not ASCII on purpose: RowBinary prefixes a string with its length in UTF-8
-// bytes, which is not the length JS reports for anything outside Latin-1. "é"
-// is one UTF-16 unit over two bytes, "😀" is two units over four. Both values
-// also run past the length where staging copies a string in bulk instead of
-// character by character, which is where a mis-sized reservation would show.
-let entity = {
-  id: "0x5c4f2e1d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
-  string: "héllo 😀 and the quick brown fox jumps over the lazy dog",
-  optString: None,
-  arrayOfStrings: ["a", "日本"],
-  int_: -7,
-  optInt: Some(3),
-  arrayOfInts: [1, 2],
-  float_: 1.5,
-  optFloat: None,
-  arrayOfFloats: [0.5, 2.5],
-  bool: true,
-  optBool: Some(false),
-  bigInt: 123456789012345678901234567890n,
-  optBigInt: None,
-  arrayOfBigInts: [1n, 2n],
-  bigDecimal: BigDecimal.fromStringUnsafe("1.25"),
-  optBigDecimal: None,
-  bigDecimalWithConfig: BigDecimal.fromStringUnsafe("12.00000001"),
-  arrayOfBigDecimals: [BigDecimal.fromStringUnsafe("3.5")],
-  timestamp,
-  optTimestamp: Some(timestamp),
-  json: %raw(`{"nested": [1, 2]}`),
-  optJson: None,
-  optJsonNull: Some(%raw(`null`)),
-  // The case a String element has to hold something that is not a string,
-  // which the column takes as the element's JSON text.
-  arrayOfJson: %raw(`[{"a": 1}, 2, true, "s"]`),
-  enumField: "ADMIN",
-  optEnumField: None,
-}
 
 describe("ClickHouse stores every schema type", () => {
   scenario->Scenario.it("reads back each column as it was written", ~sources=[{chain: 1}], async (
@@ -149,16 +122,7 @@ describe("ClickHouse stores every schema type", () => {
         fromBlock: 0,
         toBlock: Unbounded,
         reply: Respond({
-          items: [
-            {
-              blockNumber: 5,
-              logIndex: 0,
-              handler: async args => {
-                let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                context.everyType.set(entity)
-              },
-            },
-          ],
+          items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
           latestFetchedBlockNumber: 10,
         }),
       },
