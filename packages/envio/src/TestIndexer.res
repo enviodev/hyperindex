@@ -53,11 +53,13 @@ let renderRows = (rows: array<AddressRows.row>, ~config: Config.t) =>
 
 // Rows of a per-chain entity are keyed per (chain, id): the same id exists
 // independently on every chain.
-let rowKey = (~scope: Internal.chainScope, ~entityId: EntityId.t) =>
+let rowKey = (~table: Table.table, ~scope: Internal.chainScope, ~entityId: EntityId.t) => {
+  let idKey = (table->Table.idKey)(entityId)
   switch scope {
-  | CrossChain => entityId->EntityId.toKey
-  | Chain(chainId) => `${chainId->ChainId.toString}|${entityId->EntityId.toKey}`
+  | CrossChain => idKey
+  | Chain(chainId) => `${chainId->ChainId.toString}|${idKey}`
   }
+}
 
 let readChainId = (entity: Internal.entity, ~field: Table.field): option<ChainId.t> =>
   entity
@@ -158,19 +160,18 @@ let handleWriteBatch = (
       switch change {
       | Set({entityId, entity, checkpointId}) =>
         // The store keeps decoded entities so load comparisons (bigint /
-        // BigDecimal) work on real values. Ids are keyed by their string form
-        // since they may be string/int/bigint/Uint8Array.
+        // BigDecimal) work on real values.
         let storedEntity = switch (chainIdField, scope->Internal.chainScopeChainId) {
         | (Some(field), Some(chainId)) =>
           entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId)
         | _ => entity
         }
-        entityDict->Dict.set(rowKey(~scope, ~entityId), storedEntity)
+        entityDict->Dict.set(rowKey(~table=entityConfig.table, ~scope, ~entityId), storedEntity)
         // The change already carries the checkpoint's chainId, so the entity
         // inside it stays unstamped.
         entityChangeFor(checkpointId).sets->Array.push(entity->Utils.magic)->ignore
       | Delete({entityId, checkpointId}) =>
-        Dict.delete(entityDict->Obj.magic, rowKey(~scope, ~entityId))
+        Dict.delete(entityDict->Obj.magic, rowKey(~table=entityConfig.table, ~scope, ~entityId))
         entityChangeFor(checkpointId).deleted->Array.push(entityId)->ignore
       }
     }
@@ -433,14 +434,15 @@ let getEntityFromState = (
     )
   }
   let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-  let key = entityId->EntityId.unsafeOfString->EntityId.toKey
+  let idKey = entityConfig.table->Table.idKey
+  let key = idKey(entityId->EntityId.unsafeOfString)
   switch entityConfig.table->Table.getChainIdField {
   | None => entityDict->Dict.get(key)->Option.map(copyEntity)
   | Some(field) =>
     let matches =
       entityDict
       ->Dict.valuesToArray
-      ->Array.filter(entity => entity.id->EntityId.unsafeOfString->EntityId.toKey === key)
+      ->Array.filter(entity => idKey(entity.id->EntityId.unsafeOfString) === key)
     switch matches {
     | [] => None
     | [entity] => Some(copyEntity(entity))
@@ -512,7 +514,7 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
       }
     }
     entityDict->Dict.set(
-      rowKey(~scope, ~entityId=entity.id->EntityId.unsafeOfString),
+      rowKey(~table=entityConfig.table, ~scope, ~entityId=entity.id->EntityId.unsafeOfString),
       copyEntity(entity),
     )
   }
