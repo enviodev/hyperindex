@@ -65,7 +65,12 @@ subgraph="corpus/$name"
 wait_for curl -s -o /dev/null http://localhost:8020
 (
   cd "$project"
-  ./node_modules/.bin/graph codegen
+  # The project's own codegen script, which may write elsewhere than generated/.
+  if node -e 'process.exit(require("./package.json").scripts?.codegen ? 0 : 1)'; then
+    corepack yarn codegen
+  else
+    ./node_modules/.bin/graph codegen
+  fi
   ./node_modules/.bin/graph build
   ./node_modules/.bin/graph create --node http://localhost:8020 "$subgraph"
   ./node_modules/.bin/graph deploy --node http://localhost:8020 --ipfs http://localhost:5001 \
