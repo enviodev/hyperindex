@@ -869,6 +869,14 @@ pub mod evm {
                            tip."
         )]
         pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The minimum number of new blocks the chain head must advance by before \
+                           the indexer fetches again once it has caught up. Useful on chains with \
+                           very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 \
+                           all fetch on every new block."
+        )]
+        pub block_throttle: Option<u32>,
         #[schemars(
             description = "The block at which the indexer should start ingesting data, or \
                            \"latest\" to start from the chain's current head block when the \
@@ -1055,6 +1063,14 @@ pub mod fuel {
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The minimum number of new blocks the chain head must advance by before \
+                           the indexer fetches again once it has caught up. Useful on chains with \
+                           very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 \
+                           all fetch on every new block."
+        )]
+        pub block_throttle: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "All the contracts that should be indexed on the given chain")]
         pub contracts: Option<Vec<ChainContract<ContractConfig>>>,
     }
@@ -1231,6 +1247,14 @@ pub mod svm {
                            tip."
         )]
         pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The minimum number of new blocks the chain head must advance by before \
+                           the indexer fetches again once it has caught up. Useful on chains with \
+                           very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 \
+                           all fetch on every new block."
+        )]
+        pub block_throttle: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "HyperSync Config for fetching historical instructions on this chain. \
@@ -2217,6 +2241,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 hyperfuel_config: None,
                 max_reorg_depth: None,
                 block_lag: None,
+                block_throttle: None,
                 contracts: Some(vec![ChainContract {
                     name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"

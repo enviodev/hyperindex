@@ -326,6 +326,8 @@ struct ChainConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     block_lag: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    block_throttle: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     hypersync: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     rpcs: Vec<RpcConfig>,
@@ -572,6 +574,7 @@ impl SystemConfig {
                         end_block: network.end_block,
                         max_reorg_depth: network.max_reorg_depth,
                         block_lag: network.block_lag,
+                        block_throttle: network.block_throttle,
                         hypersync,
                         rpcs,
                         contracts: chain_contracts,
