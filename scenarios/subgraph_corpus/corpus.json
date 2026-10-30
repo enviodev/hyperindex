@@ -11,7 +11,7 @@
     "repo": "https://github.com/Uniswap/v2-subgraph",
     "commit": "9d8a918bfecc2310337a917919c3ad56c5071d87",
     "chainId": 1,
-    "endBlock": 10100000
+    "endBlock": 10020000
   },
   {
     "name": "uniswap-v3-sepolia",
