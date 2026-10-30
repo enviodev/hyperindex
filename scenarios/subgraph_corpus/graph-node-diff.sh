@@ -75,6 +75,12 @@ window() {
 window
 subgraph="corpus/$name"
 wait_for curl -s -o /dev/null http://localhost:8020
+# graph-node fails ens.nameByHash outright while its rainbow table is empty
+# ("Missing ENS data") and answers null for a hash the table lacks. One row
+# that matches no hash gets every lookup that null; envio's lookups are off
+# below for the same answer.
+compose exec -T postgres psql -q -U graph-node -d graph-node \
+  -c "insert into ens_names (hash, name) values ('0x', '') on conflict do nothing"
 (
   cd "$project"
   # The project's own codegen script, which may write elsewhere than generated/.
@@ -93,7 +99,8 @@ window ends
 rm -rf "$project/node_modules/envio"
 ln -s "$root/packages/envio" "$project/node_modules/envio"
 envio="$root/packages/envio/bin.mjs"
-export ENVIO_SUBGRAPH_RPC="$RPC_URL" ENVIO_HASURA=false ENVIO_PG_SCHEMA="corpus_diff"
+export ENVIO_SUBGRAPH_RPC="$RPC_URL" ENVIO_HASURA=false ENVIO_PG_SCHEMA="corpus_diff" \
+  ENVIO_SUBGRAPH_ENS_RAINBOW_URL=off
 # It stops at the end block; the diff fails unless it got there.
 (cd "$project" && timeout 1800 node "$envio" start) || true
 
