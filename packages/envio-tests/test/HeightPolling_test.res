@@ -310,6 +310,23 @@ describe("Height poll failures", () => {
   )
 
   scenario->Scenario.it(
+    "Waits the whole poll timeout before giving up on a poll",
+    ~sources=[{chain: 1337, pollingInterval: 10_000}],
+    ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 1},
+    async (~t as _, ~indexer, ~source) => {
+      let mock = source(1337)
+      await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(49)
+      await mock.expectNewHeightCalls(0)
+      // The timeout at 50, then the 1ms retry interval.
+      await indexer.advanceTime(2)
+      await mock.expectNewHeightCalls(1)
+      mock.resolveGetHeightOrThrow(100)
+      await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+    },
+  )
+
+  scenario->Scenario.it(
     "Uses a height that answers after the poll was given up on",
     ~sources=[{chain: 1337, pollingInterval: 10_000}],
     ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 10_000},
