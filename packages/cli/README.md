@@ -23,7 +23,7 @@
 
 HyperIndex is Envio's blockchain indexing framework. Choose the contracts and events to track, write TypeScript handlers that shape the data, and HyperIndex keeps it up to date across EVM chains, Solana and Fuel, handles chain reorgs, and serves the result as a GraphQL API or direct Postgres/ClickHouse SQL.
 
-It reads chain data through [HyperSync](https://docs.envio.dev/docs/HyperSync/overview), Envio's blockchain data API, which is up to 2,000x faster than JSON-RPC. Run it yourself with Docker, or deploy to [Envio Cloud](https://docs.envio.dev/docs/HyperIndex/hosted-service), from a free development plan up to Dedicated deployments with an SLA of up to 99.99% uptime.
+It reads chain data through [HyperSync](https://docs.envio.dev/docs/HyperSync/overview), Envio's blockchain data API, which is up to 2,000x faster than JSON-RPC. Run it yourself with Docker, or deploy to [Envio Cloud](https://docs.envio.dev/docs/HyperIndex/hosted-service). Cloud starts with a free development plan and scales with your project up to Dedicated infrastructure with a 99.99% uptime SLA.
 
 ![Envio Sync](sync.gif)
 
