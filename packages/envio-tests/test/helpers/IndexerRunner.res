@@ -293,6 +293,8 @@ let run = async (
   // what differs between them and reads the rest off this call.
   let rec make = async (~reset, ~config as baseConfig, ~chains=?, ~asWorker=false) => {
     throwIfClosing()
+    // Startup runs on the real clock, a restart's included.
+    Clock.refuseReal := false
     let storageCallsInFlight = ref(0)
     let config = switch chains {
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
@@ -385,6 +387,7 @@ let run = async (
       ~onArrivedAtHead?,
     )
     stateRef := Some(state)
+    Clock.refuseReal := clock->Option.isSome
     state->IndexerLoop.start
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
@@ -886,6 +889,7 @@ let run = async (
   | exn => Some(exn)
   }
   isClosing := true
+  Clock.refuseReal := false
 
   // Every step runs even if an earlier one throws, and a teardown failure
   // never replaces the body's — losing the real failure behind a cleanup

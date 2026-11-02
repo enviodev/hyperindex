@@ -206,6 +206,34 @@ Virtual time at the failure: t=0ms, seed 1 (ENVIO_TEST_SEED=1 replays it)
   })
 })
 
+describe("A scenario on virtual time", () => {
+  // Source-layer code that reaches past the clock it was given arms a timer
+  // advanceTime never sees: the run fails where it happens, not as a hang.
+  Async.it("refuses the real clock once startup is done", async t => {
+    let rejection = await rejectionOf(
+      scenario->Scenario.run(
+        ~sources=[{chain: 1}],
+        async (~indexer as _, ~source) => {
+          let mock = source(1)
+          mock.resolveGetHeightOrThrow(300)
+          await mock.expectItemsQueries([{reply: LeavePending}])
+          await Clock.real->Clock.delay(~label="a stray retry", 10)
+        },
+      ),
+    )
+    t.expect(
+      rejection
+      ->stripLogsLink
+      ->Option.flatMap(Nullable.toOption)
+      ->Option.map(message => message->String.split("\n\n")->Array.getUnsafe(0)),
+    ).toEqual(
+      Some(
+        "Clock.real armed \"a stray retry\" on virtual time. Use the clock the code was given, so advanceTime can see and move it.",
+      ),
+    )
+  })
+})
+
 describe("A passing scenario body", () => {
   Async.it("reads every line the run logged as JSON", async t => {
     await scenario->Scenario.run(

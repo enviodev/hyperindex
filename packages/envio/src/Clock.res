@@ -11,13 +11,26 @@ type t = {
   random: unit => float,
 }
 
+// Test-only. Set while a test drives a run on virtual time, so code that reaches
+// past the clock it was given fails where it does, instead of arming a timer
+// the test can neither see nor move.
+let refuseReal = ref(false)
+
+let refused = what =>
+  JsError.throwWithMessage(
+    `Clock.real ${what} on virtual time. Use the clock the code was given, so advanceTime can see and move it.`,
+  )
+
 // Monotonic: every reading is only ever compared with another, and a wall
 // clock corrected mid-run would make a connection look like it served for
 // minutes, or a benched source look recovered.
 let real: t = {
-  now: Performance.now,
-  setTimeout: (~label as _, callback, millis) =>
-    setTimeout(callback, millis)->(Utils.magic: timeoutId => timer),
+  now: () => refuseReal.contents ? refused("read the time") : Performance.now(),
+  // A zero delay is a turn of the event loop on either clock.
+  setTimeout: (~label, callback, millis) =>
+    refuseReal.contents && millis > 0
+      ? refused(`armed "${label}"`)
+      : setTimeout(callback, millis)->(Utils.magic: timeoutId => timer),
   clearTimeout: timer => clearTimeout(timer->(Utils.magic: timer => timeoutId)),
   random: Math.random,
 }
