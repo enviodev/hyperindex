@@ -7,7 +7,8 @@
 //! keeping it as one value.
 
 use super::ddl::{ColumnSpec, TableSpec};
-use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use super::pg_type::{pg_field_type, ChainIdMode};
+use crate::storage::schema::FieldType;
 
 /// How a column's array of values is cast in an `unnest`. An enum array is sent
 /// as text and cast, since a parameter cannot name a type the client did not

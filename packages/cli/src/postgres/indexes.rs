@@ -15,10 +15,11 @@ use tokio_postgres::Row;
 
 use super::client::PgClient;
 use super::error::{message_of, sql_state, Explained};
-use super::index_definition::{drop_query, Direction, IndexColumn, IndexDefinition, BTREE};
+use super::index_definition::{drop_query, IndexColumn, IndexDefinition, BTREE};
 use super::index_row;
 use super::param::Param;
 use crate::logger::{BoundLogger, Level};
+use crate::storage::schema::Direction;
 
 /// How much of an existing index has to line up before it counts as coverage.
 ///

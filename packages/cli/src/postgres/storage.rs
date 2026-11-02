@@ -14,13 +14,13 @@ use super::client::{PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
 use super::error::sql_state;
 use super::history::{History, CHANGE_TYPE};
-use super::index_definition::{Direction, IndexColumn, IndexDefinition, BTREE};
+use super::index_definition::{IndexColumn, IndexDefinition, BTREE};
 use super::index_row;
 use super::indexes::{IndexEvent, Indexes, Report};
 use super::insert;
 use super::internal;
 use super::param::Param;
-use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use super::pg_type::{pg_field_type, ChainIdMode};
 use super::rows::{decode_rows, into_result};
 use super::schema_indexes;
 use super::select;
@@ -28,8 +28,10 @@ use super::write::{self, Render, Source};
 use crate::columnar::{Arena, Column, ColumnKind};
 use crate::entity_filter::Condition;
 use crate::storage::changes::ChangeSet;
-use crate::storage::effect_cache::{CacheDump, CacheFile};
+use crate::storage::effect_cache::CacheFile;
 use crate::storage::rows::{self, ResultSet};
+use crate::storage::schema::Direction;
+use crate::storage::schema::FieldType;
 use crate::storage::schema::{
     self, effect_cache_fields, raw_event_fields, raw_events_key, Entity, Field, Schema,
     RAW_EVENTS_TABLE,
@@ -65,7 +67,7 @@ impl ColumnSpec {
             is_array: field.is_array,
             is_nullable: field.is_nullable,
             is_primary_key: field.is_primary_key,
-            default_value: field.default_value.clone(),
+            default_value: None,
         }
     }
 }
@@ -959,13 +961,13 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn dump_effect_cache(&self, files: &[CacheDump]) -> Result<()> {
+    pub async fn dump_effect_cache(&self, files: &[CacheFile]) -> Result<()> {
         let schema = self.schema();
         let dumps = files.iter().map(|dump| {
             let sql = format!(
                 "COPY {}.{} TO STDOUT WITH (FORMAT text, HEADER)",
                 internal::quote_ident(schema),
-                internal::quote_ident(&dump.table_name)
+                internal::quote_ident(&dump.table)
             );
             async move {
                 dump.replace_with(async |file| self.client.copy_out(&sql, file).await)
@@ -1246,14 +1248,15 @@ impl Storage {
                         .map(|&row| Some(changes.checkpoint(row).to_string())),
                 ),
             ];
-            let with_chain = history.history.chain_id_column.is_some() && chain_id.is_some();
-            if let (true, Some(chain_id)) = (with_chain, &chain_id) {
+            if let Some(chain_id) = &chain_id {
                 params.push(Param::Text(chain_id.clone()));
             }
             statements.push(execute(
                 transaction,
                 history_context(),
-                history.history.insert_delete_rows(schema, with_chain),
+                history
+                    .history
+                    .insert_delete_rows(schema, chain_id.is_some()),
                 params,
             ));
         }
@@ -1269,10 +1272,8 @@ impl Storage {
             statements.push(Box::pin(self.run_insert(
                 Some(transaction),
                 &history.insert,
-                false,
                 sources,
                 &projection.history_sets,
-                &entity.history_table,
                 table,
                 changes.fields(),
             )));
@@ -1283,10 +1284,8 @@ impl Storage {
             statements.push(Box::pin(self.run_insert(
                 Some(transaction),
                 &table.insert,
-                false,
                 sources,
                 &projection.sets,
-                &entity.name,
                 table,
                 changes.fields(),
             )));
@@ -1315,33 +1314,29 @@ impl Storage {
         self.run_insert(
             transaction,
             &table.insert,
-            table.append_only,
             table.sources(rows.columns()),
             &all,
-            table.name(),
             table,
             rows.columns(),
         )
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn run_insert(
         &self,
         transaction: Option<&Transaction>,
         spec: &TableSpec,
-        append_only: bool,
         sources: Vec<Source<'_>>,
         rows: &[usize],
-        target: &str,
         table: &Table,
         staged: &[Column],
     ) -> std::result::Result<(), Failure> {
+        let target = &spec.table_name;
         let fail = |error| Failure::new(insert_context(target), error);
         let sql = insert::unnest_query(
             spec,
             self.schema(),
-            append_only,
+            table.append_only,
             self.settings.numeric_array_as_text,
             self.chain_id_mode(),
         );

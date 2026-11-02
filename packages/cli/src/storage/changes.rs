@@ -9,11 +9,8 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 
 use super::schema::Entity;
+use super::types::{CHANGE_COLUMN, CHECKPOINT_ID_COLUMN};
 use crate::columnar::{Arena, Column, ColumnKind};
-
-/// The two columns a change set carries after the entity's fields.
-pub const CHECKPOINT: &str = "envio_checkpoint_id";
-pub const CHANGE: &str = "envio_change";
 
 /// How a change set is laid out: the entity's fields, the checkpoint each
 /// change was made at, and 1 for a change that deletes the entity.
@@ -23,8 +20,8 @@ pub fn layout(entity: &Entity) -> (Vec<String>, Vec<ColumnKind>) {
         .iter()
         .map(|field| (field.name.clone(), field.encoding().kind()))
         .chain([
-            (CHECKPOINT.to_string(), ColumnKind::I64),
-            (CHANGE.to_string(), ColumnKind::F64),
+            (CHECKPOINT_ID_COLUMN.to_string(), ColumnKind::I64),
+            (CHANGE_COLUMN.to_string(), ColumnKind::F64),
         ])
         .unzip()
 }

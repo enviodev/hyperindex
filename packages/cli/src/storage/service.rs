@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Result};
 
 use super::batch::Batch;
-use super::effect_cache::{self, CacheDump, CacheEvent, CacheFile, EffectCache, StoredCache};
+use super::effect_cache::{self, CacheEvent, CacheFile, EffectCache, StoredCache};
 use super::handoff::{Failure, Gate, Handoff, WriteError};
 use super::rows::ResultSet;
 use super::schema::{Entity, Schema};
@@ -26,13 +26,6 @@ pub struct Storage {
     pub schema: Arc<Schema>,
     pub postgres: Arc<postgres::storage::Storage>,
     pub clickhouse: Option<Arc<clickhouse::storage::Storage>>,
-}
-
-/// The rows a rollback reads for one entity: the keys it removes, and the
-/// rows it restores the rest from.
-pub struct RollbackData {
-    pub removed: ResultSet,
-    pub restored: ResultSet,
 }
 
 /// One initialize's instance, written to both stores so a ClickHouse database
@@ -257,12 +250,16 @@ impl Storage {
         self.postgres.load_where(table, conditions).await
     }
 
-    pub async fn rollback_data(&self, entity: &Entity, bounds: &Bounds) -> Result<RollbackData> {
-        let (removed, restored) = match self.home(entity)? {
-            Store::Postgres => self.postgres.rollback_data(entity, bounds).await?,
-            Store::ClickHouse => self.clickhouse()?.rollback_data(entity, bounds).await?,
-        };
-        Ok(RollbackData { removed, restored })
+    /// The keys a rollback removes, and the rows it restores.
+    pub async fn rollback_data(
+        &self,
+        entity: &Entity,
+        bounds: &Bounds,
+    ) -> Result<(ResultSet, ResultSet)> {
+        match self.home(entity)? {
+            Store::Postgres => self.postgres.rollback_data(entity, bounds).await,
+            Store::ClickHouse => self.clickhouse()?.rollback_data(entity, bounds).await,
+        }
     }
 
     /// Every current row of an entity ClickHouse keeps.
@@ -336,8 +333,8 @@ impl Storage {
             }
             let dumps = caches
                 .iter()
-                .map(|stored| CacheDump {
-                    table_name: stored.cache.table_name(),
+                .map(|stored| CacheFile {
+                    table: stored.cache.table_name(),
                     path: stored.cache.file(cache_dir).to_string_lossy().into_owned(),
                 })
                 .collect::<Vec<_>>();

@@ -114,7 +114,6 @@ pub struct Field {
     pub is_nullable: bool,
     pub is_primary_key: bool,
     pub is_index: bool,
-    pub default_value: Option<String>,
 }
 
 impl Field {
@@ -129,7 +128,6 @@ impl Field {
             is_nullable: false,
             is_primary_key: false,
             is_index: false,
-            default_value: None,
         }
     }
 
@@ -155,24 +153,29 @@ pub struct IndexField {
     pub direction: Direction,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
 pub struct DerivedFrom {
+    #[serde(rename = "derivedFromEntity")]
     pub entity: String,
+    #[serde(rename = "derivedFromField")]
     pub field: String,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClickHouseOptions {
     pub partition_by: Option<String>,
     pub order_by: Option<Vec<String>>,
     pub ttl: Option<String>,
+    #[serde(default)]
     pub skipping_indexes: Vec<SkippingIndex>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
 pub struct SkippingIndex {
     pub name: String,
     pub expr: String,
+    #[serde(rename = "type")]
     pub index_type: String,
     pub granularity: Option<u32>,
 }
@@ -428,7 +431,7 @@ struct EntityJson {
     storage: Option<EntityStorageJson>,
     properties: Vec<PropertyJson>,
     #[serde(default)]
-    derived_fields: Vec<DerivedFieldJson>,
+    derived_fields: Vec<DerivedFrom>,
     #[serde(default, rename = "compositeIndices")]
     composite_indexes: Vec<Vec<CompositeIndexJson>>,
 }
@@ -443,25 +446,7 @@ struct EntityStorageJson {
 #[serde(untagged)]
 enum ClickHouseStorageJson {
     Enabled(bool),
-    Options(ClickHouseOptionsJson),
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClickHouseOptionsJson {
-    partition_by: Option<String>,
-    order_by: Option<Vec<String>>,
-    ttl: Option<String>,
-    skipping_indexes: Option<Vec<SkippingIndexJson>>,
-}
-
-#[derive(Deserialize)]
-struct SkippingIndexJson {
-    name: String,
-    expr: String,
-    #[serde(rename = "type")]
-    index_type: String,
-    granularity: Option<u32>,
+    Options(ClickHouseOptions),
 }
 
 #[derive(Deserialize)]
@@ -483,13 +468,6 @@ struct PropertyJson {
     enum_name: Option<String>,
     precision: Option<u32>,
     scale: Option<u32>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DerivedFieldJson {
-    derived_from_entity: String,
-    derived_from_field: String,
 }
 
 #[derive(Deserialize)]
@@ -572,22 +550,7 @@ impl EntityJson {
                     Some(ClickHouseStorageJson::Enabled(true)) => {
                         Some(ClickHouseOptions::default())
                     }
-                    Some(ClickHouseStorageJson::Options(options)) => Some(ClickHouseOptions {
-                        partition_by: options.partition_by,
-                        order_by: options.order_by,
-                        ttl: options.ttl,
-                        skipping_indexes: options
-                            .skipping_indexes
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|index| SkippingIndex {
-                                name: index.name,
-                                expr: index.expr,
-                                index_type: index.index_type,
-                                granularity: index.granularity,
-                            })
-                            .collect(),
-                    }),
+                    Some(ClickHouseStorageJson::Options(options)) => Some(options),
                 },
             ),
         };
@@ -619,14 +582,7 @@ impl EntityJson {
             postgres,
             clickhouse,
             composite_indexes,
-            derived_from: self
-                .derived_fields
-                .into_iter()
-                .map(|field| DerivedFrom {
-                    entity: field.derived_from_entity,
-                    field: field.derived_from_field,
-                })
-                .collect(),
+            derived_from: self.derived_fields,
         })
     }
 }
@@ -676,7 +632,6 @@ impl PropertyJson {
             is_array: self.is_array,
             is_nullable: self.is_nullable,
             is_index: self.is_index,
-            default_value: None,
         })
     }
 }

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::future::try_join_all;
 
-use super::ch_type::{ChType, FieldSpec};
+use super::ch_type::{self, ChType};
 use super::client::{error_code, insert_tag_prefix, Client, Connection, Tuning, Warn};
 use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
@@ -27,7 +27,7 @@ use crate::config_parsing::system_config::ChainIdMode;
 use crate::entity_filter::Condition;
 use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{self, Cell, ColumnRead, Decoded, ReadKind, ResultSet};
-use crate::storage::schema::{Entity, FieldType, Schema};
+use crate::storage::schema::{Entity, Schema};
 use crate::storage::types::{
     Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
     INFO_TABLE,
@@ -135,9 +135,7 @@ impl Storage {
     }
 
     fn chain_id_type(&self) -> ChType {
-        FieldSpec::new("chainId", FieldType::ChainId)
-            .ch_type(self.chain_id_mode())
-            .expect("a chain id always has a ClickHouse type")
+        ch_type::chain_id(self.chain_id_mode())
     }
 
     fn topology(&self) -> Topology {

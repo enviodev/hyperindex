@@ -7,7 +7,7 @@
 
 pub const BTREE: &str = "btree";
 
-pub use crate::storage::schema::Direction;
+use crate::storage::schema::Direction;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct IndexColumn {

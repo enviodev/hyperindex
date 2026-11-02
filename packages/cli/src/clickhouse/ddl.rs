@@ -5,9 +5,10 @@ use std::sync::LazyLock;
 use anyhow::{bail, Result};
 use regex::{Captures, Regex};
 
-use super::ch_type::{ChType, FieldSpec};
+use super::ch_type::ChType;
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::config_parsing::system_config::ChainIdMode;
+use crate::storage::schema::{Field, SkippingIndex};
 use crate::storage::types::{
     CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, DELETE, INFO_TABLE, SET,
 };
@@ -24,15 +25,7 @@ const FRONTIER_COLUMN: &str = "checkpoint_id";
 pub struct ColumnSpec {
     pub name: String,
     pub field_name: String,
-    pub field: FieldSpec,
-}
-
-#[derive(Debug, Clone)]
-pub struct SkippingIndexSpec {
-    pub name: String,
-    pub expr: String,
-    pub index_type: String,
-    pub granularity: Option<u32>,
+    pub field: Field,
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +37,7 @@ pub struct EntitySpec {
     pub partition_by: Option<String>,
     pub order_by: Option<Vec<String>>,
     pub ttl: Option<String>,
-    pub skipping_indexes: Vec<SkippingIndexSpec>,
+    pub skipping_indexes: Vec<SkippingIndex>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -594,7 +587,7 @@ mod tests {
         entity.order_by = Some(vec!["createdAt".to_string()]);
         entity.partition_by = Some("toYYYYMM(createdAt)".to_string());
         entity.ttl = Some("createdAt + INTERVAL 1 MONTH".to_string());
-        entity.skipping_indexes = vec![SkippingIndexSpec {
+        entity.skipping_indexes = vec![SkippingIndex {
             name: "idx_created".to_string(),
             expr: "createdAt".to_string(),
             index_type: "minmax".to_string(),

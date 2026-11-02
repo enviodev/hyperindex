@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 
-use super::ch_type::{ChType, FieldSpec};
-use super::ddl::{self, ColumnSpec, EntitySpec, SkippingIndexSpec};
+use super::ch_type::ChType;
+use super::ddl::{self, ColumnSpec, EntitySpec};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::rows::{ColumnRead, ReadKind};
 use crate::storage::schema::{Entity, Field, FieldType};
@@ -39,7 +39,7 @@ pub struct Table {
     pub entity: EntitySpec,
 }
 
-impl FieldSpec {
+impl Field {
     /// What a stored value reads back as: whatever Postgres hands back for the
     /// same field, so a row decodes the same from either store. A 64-bit
     /// integer and an unbounded number are text there, since a JavaScript
@@ -105,16 +105,7 @@ impl Table {
             partition_by: options.partition_by,
             order_by: options.order_by,
             ttl: options.ttl,
-            skipping_indexes: options
-                .skipping_indexes
-                .into_iter()
-                .map(|index| SkippingIndexSpec {
-                    name: index.name,
-                    expr: index.expr,
-                    index_type: index.index_type,
-                    granularity: index.granularity,
-                })
-                .collect(),
+            skipping_indexes: options.skipping_indexes,
         };
         let staged = entity.history_columns(chain_id_mode)?;
         let insert_query = ddl::insert_query(

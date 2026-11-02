@@ -223,17 +223,13 @@ impl CacheEvent {
     }
 }
 
+/// A cache table and the file it is uploaded from or dumped to.
 pub struct CacheFile {
     pub table: String,
     pub path: String,
 }
 
-pub struct CacheDump {
-    pub table_name: String,
-    pub path: String,
-}
-
-impl CacheDump {
+impl CacheFile {
     /// Writes the dump through a file of its own beside its path, which
     /// replaces it only once `write` has finished: a dump the server gives up on
     /// part way would otherwise leave a file holding its first rows, and the
@@ -435,8 +431,8 @@ mod tests {
         let directory = tempdir::TempDir::new("envio-dump").unwrap();
         let path = directory.path().join("price.tsv");
         std::fs::write(&path, "id\toutput\nk1\t1\n").unwrap();
-        let dump = CacheDump {
-            table_name: "envio_effect_price".to_string(),
+        let dump = CacheFile {
+            table: "envio_effect_price".to_string(),
             path: path.to_string_lossy().into_owned(),
         };
 

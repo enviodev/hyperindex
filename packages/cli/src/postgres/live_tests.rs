@@ -15,7 +15,7 @@ use super::param::Param;
 use futures_util::future;
 
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
-use crate::storage::effect_cache::CacheDump;
+use crate::storage::effect_cache::CacheFile;
 use crate::storage::rows::{Cell, ReadKind};
 use crate::test_servers;
 
@@ -837,7 +837,8 @@ async fn a_server_failure_keeps_its_detail() {
 #[tokio::test]
 #[ignore = "needs a Postgres server"]
 async fn a_backfill_that_loses_its_index_to_an_orphaned_build_still_finishes() {
-    use super::index_definition::{Direction, IndexColumn, IndexDefinition, BTREE};
+    use super::index_definition::{IndexColumn, IndexDefinition, BTREE};
+    use crate::storage::schema::Direction;
 
     let schema = "live_lost_create";
     let setup = client();
@@ -1357,8 +1358,8 @@ async fn a_copy_that_fails_part_way_leaves_the_previous_file() {
     let path = dir.join("cache.tsv");
     std::fs::write(&path, "the previous dump\n").unwrap();
 
-    let dump = CacheDump {
-        table_name: "cache".to_string(),
+    let dump = CacheFile {
+        table: "cache".to_string(),
         path: path.to_string_lossy().into_owned(),
     };
     let failed = dump

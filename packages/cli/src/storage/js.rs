@@ -771,14 +771,14 @@ impl JsStorage {
     ) -> napi::Result<RollbackDataOutput> {
         let entity = self.entity(entity)?;
         let bounds = self.bounds(bounds)?;
-        let data = self
+        let (removed, restored) = self
             .inner
             .rollback_data(&entity, &bounds)
             .await
             .map_err(to_napi)?;
         Ok(RollbackDataOutput {
-            removed: self.hold(data.removed),
-            restored: self.hold(data.restored),
+            removed: self.hold(removed),
+            restored: self.hold(restored),
         })
     }
 

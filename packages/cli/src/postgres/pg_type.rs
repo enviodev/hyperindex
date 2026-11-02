@@ -1,6 +1,6 @@
 pub use crate::config_parsing::system_config::ChainIdMode;
 
-pub use crate::storage::schema::FieldType;
+use crate::storage::schema::FieldType;
 
 const NUMERIC: &str = "NUMERIC";
 const TEXT: &str = "TEXT";

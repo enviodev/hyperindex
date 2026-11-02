@@ -3,8 +3,7 @@ use std::fmt;
 use anyhow::{bail, Result};
 
 use crate::config_parsing::system_config::ChainIdMode;
-pub use crate::storage::schema::Field as FieldSpec;
-use crate::storage::schema::FieldType;
+use crate::storage::schema::{Field, FieldType};
 
 /// How wide an `Enum` column's variant list can get before it needs two bytes.
 /// ClickHouse's `Enum8` spans -128..=127, but envio numbers from 1, so 127 is
@@ -109,7 +108,14 @@ pub fn stored_as_string(precision: Option<u32>, scale: u32) -> bool {
     matches!(decimal_or_string(precision, scale), ChType::String)
 }
 
-impl FieldSpec {
+pub fn chain_id(chain_id_mode: ChainIdMode) -> ChType {
+    match chain_id_mode {
+        ChainIdMode::Int32 => ChType::Int32,
+        ChainIdMode::Int64 => ChType::UInt64,
+    }
+}
+
+impl Field {
     pub fn ch_type(&self, chain_id_mode: ChainIdMode) -> Result<ChType> {
         let base = match &self.field_type {
             FieldType::String | FieldType::Json => ChType::String,
@@ -121,10 +127,7 @@ impl FieldSpec {
             FieldType::BigSerial => ChType::Int64,
             FieldType::Number => ChType::Float64,
             FieldType::Date => ChType::DateTime64,
-            FieldType::ChainId => match chain_id_mode {
-                ChainIdMode::Int32 => ChType::Int32,
-                ChainIdMode::Int64 => ChType::UInt64,
-            },
+            FieldType::ChainId => chain_id(chain_id_mode),
             FieldType::BigInt { precision } => decimal_or_string(*precision, 0),
             FieldType::BigDecimal { config } => match config {
                 Some((precision, scale)) => decimal_or_string(Some(*precision), *scale),
@@ -210,8 +213,8 @@ impl fmt::Display for ChType {
 pub(crate) mod test_support {
     use super::*;
 
-    pub fn field(field_type: &str) -> FieldSpec {
-        FieldSpec::new(
+    pub fn field(field_type: &str) -> Field {
+        Field::new(
             "value",
             match field_type {
                 "String" => FieldType::String,
@@ -235,11 +238,11 @@ pub(crate) mod test_support {
         )
     }
 
-    pub fn typed(field_type: FieldType) -> FieldSpec {
-        FieldSpec::new("value", field_type)
+    pub fn typed(field_type: FieldType) -> Field {
+        Field::new("value", field_type)
     }
 
-    pub fn enumeration(variants: Vec<String>) -> FieldSpec {
+    pub fn enumeration(variants: Vec<String>) -> Field {
         typed(FieldType::Enum {
             name: "Kind".to_string(),
             variants,
@@ -315,7 +318,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn rendered(spec: &FieldSpec) -> String {
+    fn rendered(spec: &Field) -> String {
         spec.ch_type(ChainIdMode::Int32).unwrap().to_string()
     }
 
@@ -364,7 +367,7 @@ mod tests {
 
     #[test]
     fn rejects_a_nullable_list() {
-        let error = FieldSpec {
+        let error = Field {
             is_array: true,
             is_nullable: true,
             ..field("String")
@@ -381,7 +384,7 @@ mod tests {
     #[test]
     fn a_nullable_json_column_still_holds_the_documents_text() {
         let types = ["Json", "String"].map(|field_type| {
-            rendered(&FieldSpec {
+            rendered(&Field {
                 is_nullable: true,
                 ..field(field_type)
             })
@@ -391,7 +394,7 @@ mod tests {
 
     #[test]
     fn wraps_a_non_null_list_in_array() {
-        let spec = FieldSpec {
+        let spec = Field {
             is_array: true,
             ..field("String")
         };
