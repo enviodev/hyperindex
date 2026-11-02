@@ -26,22 +26,29 @@ pub fn is_response_too_large_message(message: &str) -> bool {
     TOO_LARGE_PATTERNS.iter().any(|re| re.is_match(message))
 }
 
-// The node only holds blocks from some base height on (Sei, and other Cosmos
-// SDK chains with pruned history). No wait and no narrower range changes the
-// answer for a block below it, so another source has to serve the query.
+// The node only holds blocks from some base height on (Sei, and other CometBFT
+// chains with pruned history). No wait and no narrower range changes the answer
+// for a block below it, so another source has to serve it. Each pattern captures
+// (requested, base): the outcome can fail a run with a single source, so a
+// message only counts when it names a block below the base.
 static HISTORY_UNAVAILABLE_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
         // Sei: "height is not available (requested height: 138905662, base height: 161957762)"
-        Regex::new(r"(?i)height is not available").unwrap(),
-        // Cosmos SDK: "height 100 is not available, lowest height is 200"
-        Regex::new(r"(?i)height \d+ is not available, lowest height is \d+").unwrap(),
+        Regex::new(r"height is not available \(requested height: (\d+), base height: (\d+)\)")
+            .unwrap(),
+        // CometBFT: "height 100 is not available, lowest height is 200"
+        Regex::new(r"height (\d+) is not available, lowest height is (\d+)").unwrap(),
     ]
 });
 
-pub fn is_history_unavailable_message(message: &str) -> bool {
-    HISTORY_UNAVAILABLE_PATTERNS
-        .iter()
-        .any(|re| re.is_match(message))
+/// The first block the node holds, when the message refuses one below it.
+pub fn history_base_height_from_message(message: &str) -> Option<u64> {
+    HISTORY_UNAVAILABLE_PATTERNS.iter().find_map(|re| {
+        let caps = re.captures(message)?;
+        let requested: u64 = caps.get(1)?.as_str().parse().ok()?;
+        let base: u64 = caps.get(2)?.as_str().parse().ok()?;
+        (requested < base).then_some(base)
+    })
 }
 
 // Unknown provider: "retry with the range 123-456"
@@ -220,17 +227,20 @@ mod tests {
     }
 
     #[test]
-    fn history_unavailable_classifies_pruned_nodes_and_ignores_unrelated() {
+    fn history_base_height_reads_pruned_nodes_and_ignores_unrelated() {
         let messages = [
             "height is not available (requested height: 138905662, base height: 161957762)",
             "height 100 is not available, lowest height is 200",
+            // A block at or above the base is not one the node pruned.
+            "height is not available (requested height: 200, base height: 200)",
+            "height 300 is not available, lowest height is 200",
             // A block the node hasn't reached yet is a node behind the head.
             "header not found",
             "query exceeds max block range 1000",
         ];
         assert_eq!(
-            messages.map(is_history_unavailable_message),
-            [true, true, false, false]
+            messages.map(history_base_height_from_message),
+            [Some(161957762), Some(200), None, None, None, None]
         );
     }
 }

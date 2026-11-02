@@ -2,10 +2,13 @@
 //
 // Some public RPCs only hold blocks above a base height and answer anything
 // older with an error. Waiting or narrowing the range cannot change that answer,
-// so the query has to move to another source straight away.
+// so the query has to move to another source straight away, and later pages
+// below the base must not go back to the node that refused.
 //
 // The node here serves the logs and refuses only the blocks behind them, which is
 // how the issue reported it: the refusal reaches the page from `eth_getBlockByNumber`.
+// The archive is a `fallback`, so the pruned `sync` node outranks it on every page
+// unless the source remembers what it doesn't hold.
 let prunedPort = 18551
 let archivePort = 18552
 
@@ -17,7 +20,7 @@ let archive = RpcE2eChain.serveDuringSuite(() => PrunedRpcChain.serveArchive(~po
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=PrunedRpcChain.configYaml(
     ~name="rpc-pruned-history-e2e",
-    ~ports=[prunedPort, archivePort],
+    ~rpcs=[(prunedPort, "sync"), (archivePort, "fallback")],
   ),
   ~schema=RpcE2eChain.schema,
   ~handlers=RpcE2eChain.handlers,
@@ -47,11 +50,9 @@ describe("Indexing below a pruned RPC's base height", () => {
 `,
 )
 
-// The pruned node is asked once and then left alone: no backoff retries, and no
-// narrowed ranges that would only be refused the same way.
-Vitest.it("asks the pruned RPC once and reads the range from the archive one", t => {
+Vitest.it("asks the pruned RPC once and reads every page from the archive one", t => {
   t.expect((pruned()->RpcE2eChain.callSummary, archive()->RpcE2eChain.logRanges)).toEqual((
-    ["eth_getBlockByNumber", "eth_getBlockByNumber", `eth_getLogs "0x64"-"0x65"`],
-    ["0x64-0x65"],
+    ["eth_getBlockByNumber", `eth_getLogs "0x64"-"0x64"`],
+    ["0x64-0x64", "0x65-0x65"],
   ))
 })

@@ -30,7 +30,7 @@ use crate::js_value::JsTape;
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{
-    is_history_unavailable_message, is_response_too_large_message,
+    history_base_height_from_message, is_response_too_large_message,
     suggested_block_interval_from_message,
 };
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
@@ -166,7 +166,8 @@ pub enum PageOutcome {
     FieldSelection,
     /// The node that answered has not reached `block_number` yet.
     BehindHead,
-    /// The node doesn't hold the range at all, so another source has to serve it.
+    /// The node only holds blocks from `block_number` on, so another source has
+    /// to serve anything below it.
     Unavailable,
 }
 
@@ -183,13 +184,14 @@ pub struct NextPageResult {
     pub event_items: Vec<EventItem>,
     pub block_items: Vec<BlockItem>,
     /// What to say about a failure: on `Backoff` the line the retry logs, on
-    /// `FieldSelection` and `Unavailable` why the source cannot serve it.
+    /// `FieldSelection` why the selection cannot be served.
     pub message: Option<String>,
     /// The cause logged beside `message`, where there is one distinct from it:
     /// the provider's own words, or the transport's.
     pub provider_message: Option<String>,
-    /// `FieldSelection` and `BehindHead` only: the block it happened on, which
-    /// is the one thing that makes an unservable selection diagnosable.
+    /// `FieldSelection` and `BehindHead`: the block it happened on, which is the
+    /// one thing that makes an unservable selection diagnosable. `Unavailable`:
+    /// the first block the node holds.
     pub block_number: Option<i64>,
     /// `SuggestedToBlock` only: the narrower end to ask for instead.
     pub retry_to_block: Option<i64>,
@@ -218,19 +220,20 @@ enum PageError {
 }
 
 impl PageError {
-    /// The provider's words when it doesn't hold the range, whichever read hit it:
-    /// a pruned node refuses `eth_getLogs` and `eth_getBlockByNumber` alike.
-    fn history_unavailable_message(&self) -> Option<&str> {
+    /// The first block the node holds and the provider's words, when it refused
+    /// one below it. A pruned node refuses `eth_getLogs` and
+    /// `eth_getBlockByNumber` alike, so either read can be the one that tells.
+    fn history_unavailable(&self) -> Option<(u64, &str)> {
         let err = match self {
             PageError::Logs(err) => err,
             PageError::Enrich(EnrichError::Rpc(err)) => err.as_ref(),
             PageError::Enrich(_) => return None,
         };
         match err {
-            RpcError::JsonRpc { message, .. } if is_history_unavailable_message(message) => {
-                Some(message)
+            RpcError::JsonRpc { message, .. } => {
+                Some((history_base_height_from_message(message)?, message))
             }
-            _ => None,
+            RpcError::Other(_) => None,
         }
     }
 }
@@ -272,11 +275,15 @@ impl NextPageResult {
         }
     }
 
-    fn unavailable(provider_message: &str, to_block: u64, request_stats: Vec<RequestStat>) -> Self {
+    fn unavailable(
+        base_height: u64,
+        provider_message: &str,
+        to_block: u64,
+        request_stats: Vec<RequestStat>,
+    ) -> Self {
         NextPageResult {
-            message: Some(format!(
-                "The RPC doesn't hold the requested blocks: {provider_message}"
-            )),
+            block_number: Some(base_height as i64),
+            provider_message: Some(provider_message.to_string()),
             ..NextPageResult::new(PageOutcome::Unavailable, to_block, request_stats)
         }
     }
@@ -657,8 +664,8 @@ impl EvmRpcClient {
                     Some(page),
                 )
             }
-            Err(ref err) if let Some(message) = err.history_unavailable_message() => (
-                NextPageResult::unavailable(message, to_block, request_stats),
+            Err(ref err) if let Some((base_height, message)) = err.history_unavailable() => (
+                NextPageResult::unavailable(base_height, message, to_block, request_stats),
                 None,
             ),
             Err(PageError::Logs(err)) => {

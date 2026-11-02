@@ -28,6 +28,7 @@ type pinnedRetry =
   | SuggestedToBlock(int)
   | Backoff({message: string, backoffMillis: int})
   | Impossible(string)
+  | HistoryUnavailable({firstBlock: int})
 
 type pinnedError =
   | UnsupportedSelection(string)
@@ -145,6 +146,7 @@ let normalizeRetry = retry =>
   | Source.WithSuggestedToBlock({toBlock}) => SuggestedToBlock(toBlock)
   | WithBackoff({message, backoffMillis}) => Backoff({message, backoffMillis})
   | ImpossibleForTheQuery({message}) => Impossible(message)
+  | HistoryUnavailable({firstBlock}) => HistoryUnavailable({firstBlock: firstBlock})
   }
 
 let normalizeError = error =>

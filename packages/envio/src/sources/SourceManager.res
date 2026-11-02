@@ -17,6 +17,9 @@ type sourceState = {
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
   mutable lastFailedAt: option<float>,
+  // The first block the source holds, once it has refused one below it. Only
+  // ever raised: a pruned node's base moves up as it prunes further.
+  mutable firstBlock: option<int>,
   requestStats: dict<requestStatAgg>,
 }
 
@@ -395,6 +398,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
         ),
         disabled: false,
         lastFailedAt: None,
+        firstBlock: None,
         requestStats,
       }
     }),
@@ -516,12 +520,13 @@ let compareByOldestFailure = (a: sourceState, b: sourceState) =>
   | (None, None) => Ordering.equal
   }
 
-// Priority: working primaries > working secondaries > all primaries.
+// Priority: working primaries > working secondaries > all primaries > all secondaries.
 let getNextSources = (sourceManager, ~isRealtime, ~excludedSources=?) => {
   let now = Date.now()
   let workingPrimarySources = []
   let allPrimarySources = []
   let workingSecondarySources = []
+  let allSecondarySources = []
   for i in 0 to sourceManager.sourcesState->Array.length - 1 {
     let sourceState = sourceManager.sourcesState->Array.getUnsafe(i)
     if !sourceState.disabled {
@@ -544,8 +549,12 @@ let getNextSources = (sourceManager, ~isRealtime, ~excludedSources=?) => {
           if isWorking {
             workingPrimarySources->Array.push(sourceState)
           }
-        | Some(Secondary) if isWorking => workingSecondarySources->Array.push(sourceState)
-        | _ => ()
+        | Some(Secondary) =>
+          allSecondarySources->Array.push(sourceState)
+          if isWorking {
+            workingSecondarySources->Array.push(sourceState)
+          }
+        | None => ()
         }
       }
     }
@@ -555,9 +564,12 @@ let getNextSources = (sourceManager, ~isRealtime, ~excludedSources=?) => {
   } else if workingSecondarySources->Array.length > 0 {
     workingSecondarySources
   } else {
-    // All primaries in recovery - sort by oldest lastFailedAt (closest to recovery first)
-    allPrimarySources->Array.sort(compareByOldestFailure)
-    allPrimarySources
+    // Everything is in recovery - sort by oldest lastFailedAt (closest to recovery first).
+    // Secondaries only stand in when no primary can take the query at all, e.g.
+    // the only primary doesn't hold the range.
+    let lastResort = allPrimarySources->Array.length > 0 ? allPrimarySources : allSecondarySources
+    lastResort->Array.sort(compareByOldestFailure)
+    lastResort
   }
 }
 
@@ -1030,23 +1042,43 @@ let executeQuery = async (
   ~isRealtime,
   ~reorgableFrom,
 ) => {
-  // Sources where the query is impossible - lazily allocated, excluded for the duration of this query
-  let excludedSourcesRef = ref(None)
-  let excludedReasonRef = ref(None)
+  let holdsQueryStart = sourceState =>
+    switch sourceState.firstBlock {
+    | Some(firstBlock) => firstBlock <= query.fromBlock
+    | None => true
+    }
 
   // Read when the manager actually runs out of sources, not on the way in: the
-  // reason is recorded by the failure that disabled or excluded the last one.
+  // reason is recorded by the failure that disabled the last one.
   let noSourcesError = () =>
-    switch (excludedReasonRef.contents, sourceManager.disableReason) {
+    switch (
+      sourceManager.disableReason,
+      sourceManager.sourcesState->Array.find(s => !s.disabled && !holdsQueryStart(s)),
+    ) {
     | (Some(reason), _) =>
-      `The indexer doesn't have data-sources which can serve the block range. ${reason}`
-    | (None, Some(reason)) =>
       `The indexer doesn't have data-sources which can continue fetching. The last one was disabled because ${reason}`
-    | (
-        None,
-        None,
-      ) => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
+    | (None, Some({source, firstBlock: Some(firstBlock)})) =>
+      `The indexer doesn't have data-sources which can continue fetching. The ${source.name} source only holds blocks from #${firstBlock->Int.toString}, and the range starts at #${query.fromBlock->Int.toString}. Add an RPC that serves the chain's full history.`
+    | _ => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
     }
+
+  // Sources where the query is impossible - lazily allocated, excluded for the duration of this query
+  let excludedSourcesRef = ref(None)
+  let exclude = sourceState => {
+    let excludedSources = switch excludedSourcesRef.contents {
+    | Some(s) => s
+    | None =>
+      let s = Utils.Set.make()
+      excludedSourcesRef := Some(s)
+      s
+    }
+    excludedSources->Utils.Set.add(sourceState)->ignore
+  }
+  sourceManager.sourcesState->Array.forEach(sourceState =>
+    if !holdsQueryStart(sourceState) {
+      exclude(sourceState)
+    }
+  )
 
   let toBlockRef = ref(query.toBlock)
   let responseRef = ref(None)
@@ -1204,20 +1236,31 @@ let executeQuery = async (
         retryRef := 0
       | FailedGettingItems({?exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         // Don't set lastFailedAt - the source isn't broken, the query just can't work on it
-        let excludedSources = switch excludedSourcesRef.contents {
-        | Some(s) => s
-        | None =>
-          let s = Utils.Set.make()
-          excludedSourcesRef := Some(s)
-          s
-        }
-        excludedSources->Utils.Set.add(sourceState)->ignore
-        excludedReasonRef := Some(message)
+        exclude(sourceState)
 
         logger->Logger.warn(
           message ++ " - Attempting another source",
           ~params={"toBlock": attemptedToBlock, "err": exn->Option.map(Utils.prettifyExn)},
         )
+        retryRef := 0
+
+      | FailedGettingItems({?exn, retry: HistoryUnavailable({firstBlock})}) =>
+        // Not a failure either: the source serves everything from `firstBlock`
+        // on, so it stays first in line for the queries that start there.
+        exclude(sourceState)
+        let raised = switch sourceState.firstBlock {
+        | Some(known) => firstBlock > known
+        | None => true
+        }
+
+        // Partitions refused at the same time report the same base. Say it once.
+        if raised {
+          sourceState.firstBlock = Some(firstBlock)
+          logger->Logger.warn(
+            `The ${source.name} source only holds blocks from #${firstBlock->Int.toString}. Blocks below it are only fetched from other sources.`,
+            ~params={"err": exn->Option.map(Utils.prettifyExn)},
+          )
+        }
         retryRef := 0
 
       | FailedGettingItems({

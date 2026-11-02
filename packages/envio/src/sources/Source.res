@@ -117,6 +117,9 @@ type getItemsRetry =
   | WithSuggestedToBlock({toBlock: int})
   | WithBackoff({message: string, backoffMillis: int})
   | ImpossibleForTheQuery({message: string})
+  // The source only holds blocks from `firstBlock` on, so it can't serve this
+  // query or any later one starting below it.
+  | HistoryUnavailable({firstBlock: int})
 
 type rateLimited = {resetMs: int, requestStats: array<requestStat>}
 exception RateLimited(rateLimited)

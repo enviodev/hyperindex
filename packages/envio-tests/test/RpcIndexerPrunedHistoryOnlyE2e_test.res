@@ -9,7 +9,10 @@ let pruned = RpcE2eChain.serveDuringSuite(() =>
 )
 
 let _ = InternalTestIndexer.fromUserApi(
-  ~configYaml=PrunedRpcChain.configYaml(~name="rpc-pruned-history-only-e2e", ~ports=[port]),
+  ~configYaml=PrunedRpcChain.configYaml(
+    ~name="rpc-pruned-history-only-e2e",
+    ~rpcs=[(port, "sync")],
+  ),
   ~schema=RpcE2eChain.schema,
   ~handlers=RpcE2eChain.handlers,
   ~test=`
@@ -28,7 +31,7 @@ describe("Indexing below the base height of the only RPC", () => {
     }
 
     t.expect([outcome, await indexer.Transfer.get("100-0")]).toEqual([
-      "Error: The indexer doesn't have data-sources which can serve the block range. The RPC doesn't hold the requested blocks: height is not available (requested height: 100, base height: 200)",
+      "Error: The indexer doesn't have data-sources which can continue fetching. The RPC (127.0.0.1:18553) source only holds blocks from #200, and the range starts at #100. Add an RPC that serves the chain's full history.",
       undefined,
     ]);
   });
@@ -37,5 +40,5 @@ describe("Indexing below the base height of the only RPC", () => {
 )
 
 Vitest.it("asks the pruned RPC once", t => {
-  t.expect(pruned()->RpcE2eChain.logRanges).toEqual(["0x64-0x65"])
+  t.expect(pruned()->RpcE2eChain.logRanges).toEqual(["0x64-0x64"])
 })

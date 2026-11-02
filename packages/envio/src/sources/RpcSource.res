@@ -168,10 +168,10 @@ let make = (
     | Unavailable =>
       throw(
         failedGettingItems(
-          ImpossibleForTheQuery({
-            message: switch result.message {
-            | Some(message) => message
-            | None => missing("message")
+          HistoryUnavailable({
+            firstBlock: switch result.blockNumber {
+            | Some(blockNumber) => blockNumber
+            | None => missing("blockNumber")
             },
           }),
         ),

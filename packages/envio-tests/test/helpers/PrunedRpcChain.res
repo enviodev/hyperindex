@@ -45,25 +45,56 @@ let servePruned = (~port, ~refused) =>
     (200, JSON.stringify(JSON.Object(payload)))
   })
 
-let serveArchive = (~port) =>
-  MockRpcServer.makeWithParams(~port, ~getResult=(~method, ~params) =>
-    RpcE2eChain.resultFor(~transfers, ~height, ~method, ~params)
-  )
+// Holds every block, but fails its first `failedLogReads` eth_getLogs calls
+// the way an overloaded provider does.
+let serveArchive = (~port, ~failedLogReads=0) => {
+  let failed = ref(0)
+  MockRpcServer.start(~port, ~handler=body => {
+    let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
+    let method = request->Dict.getUnsafe("method")->JSON.Decode.string->Option.getOrThrow
+    if method == "eth_getLogs" && failed.contents < failedLogReads {
+      failed := failed.contents + 1
+      (502, "upstream exploded")
+    } else {
+      (
+        200,
+        JSON.stringify(
+          JSON.Object(
+            dict{
+              "jsonrpc": JSON.String("2.0"),
+              "id": request->Dict.getUnsafe("id"),
+              "result": RpcE2eChain.resultFor(
+                ~transfers,
+                ~height,
+                ~method,
+                ~params=request->Dict.getUnsafe("params"),
+              ),
+            },
+          ),
+        ),
+      )
+    }
+  })
+}
 
 let urlOf = port => `http://127.0.0.1:${port->Int.toString}`
 
-let configYaml = (~name, ~ports) =>
+// Each RPC is a (port, `for` role) pair. `interval_ceiling: 1` makes every block
+// its own page, so a test sees whether a later page goes back to a source.
+let configYaml = (~name, ~rpcs) =>
   `
 name: ${name}
 rollback_on_reorg: false
 chains:
   - id: 1337
     start_block: 100
-    rpc:${ports
-    ->Array.map(port =>
+    rpc:${rpcs
+    ->Array.map(((port, role)) =>
       `
       - url: ${port->urlOf}
-        for: sync`
+        for: ${role}
+        interval_ceiling: 1
+        backoff_millis: 10`
     )
     ->Array.join("")}
     contracts:
