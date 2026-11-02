@@ -445,22 +445,21 @@ Pending:
   })
 })
 
-describe("MockSource.expectHeightCalls", () => {
+describe("MockSource.expectNewHeightCalls", () => {
   scenario->Scenario.it("waits for the chain's first height call", ~sources, async (
     ~t,
     ~indexer,
     ~source,
   ) => {
     let mock = source(1)
-    await mock.expectHeightCalls(1)
-    t.expect(await failureOf(mock.expectHeightCalls(0))).toEqual(
-      Some(
-        "expectHeightCalls expected 0 height calls, but source for chain 1 has taken 1 (0 since the last expectation accounted for 1)",
-      ),
-    )
+    await mock.expectNewHeightCalls(1)
+    // Counted from the call it just accounted for, not from the start.
+    t.expect(await failureOf(mock.expectNewHeightCalls(0))).toEqual(None)
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
     await indexer.getBatchWritePromise()
+    // Back at the head, it waits for the next block.
+    await mock.expectNewHeightCalls(1)
   })
 
   scenario->Scenario.it("times out naming the count it waited for", ~sources, async (
@@ -469,15 +468,17 @@ describe("MockSource.expectHeightCalls", () => {
     ~source,
   ) => {
     let mock = source(1)
-    await mock.expectHeightCalls(1)
-    t.expect(await failureOf(mock.expectHeightCalls(2, ~within=50.))).toEqual(
+    await mock.expectNewHeightCalls(1)
+    t.expect(await failureOf(mock.expectNewHeightCalls(1, ~within=50.))).toEqual(
       Some(
-        "expectHeightCalls timed out waiting for 2 height calls; source for chain 1 has taken 1 (0 since the last expectation accounted for 1)",
+        "expectNewHeightCalls timed out waiting for 1 new height calls; source for chain 1 has taken 0 since the last expectation (1 in all)",
       ),
     )
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
     await indexer.getBatchWritePromise()
+    // Back at the head, it waits for the next block.
+    await mock.expectNewHeightCalls(1)
   })
 })
 
@@ -593,11 +594,11 @@ Give each query its own entry, told apart by partitionId:
   Async.it("counts height calls only once all of them have arrived", async t => {
     let mock = MockSource.make([#getHeightOrThrow])
     let _ = mock.source.getHeightOrThrow()
-    let expectation = mock.expectHeightCalls(1)
+    let expectation = mock.expectNewHeightCalls(1)
     let _ = mock.source.getHeightOrThrow()
     t.expect(await failureOf(expectation)).toEqual(
       Some(
-        "expectHeightCalls expected 1 height calls, but source for chain 1 has taken 2 (2 since the last expectation accounted for 0)",
+        "expectNewHeightCalls expected 1 new height calls, but source for chain 1 has taken 2 since the last expectation (2 in all)",
       ),
     )
   })

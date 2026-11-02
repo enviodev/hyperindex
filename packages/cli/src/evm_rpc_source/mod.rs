@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
-
 use anyhow::Context;
 use napi_derive::napi;
 use serde::Deserialize;

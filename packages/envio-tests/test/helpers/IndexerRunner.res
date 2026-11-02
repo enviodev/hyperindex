@@ -112,6 +112,27 @@ type rec t = {
   releaseRealtime: unit => unit,
 }
 
+// Storage the indexer awaits outside a processing pass or a write, as
+// catching up does on its way to realtime, is still the indexer at work. A
+// settle that can't see it returns while a slow store is answering, and the
+// step the indexer takes next lands after the test's.
+let countStorageCalls: (
+  Persistence.storage,
+  ~inFlight: ref<int>,
+) => Persistence.storage = %raw(`(storage, inFlight) =>
+  new Proxy(storage, {
+    get: (target, key) => {
+      const value = target[key];
+      if (typeof value !== "function") return value;
+      return (...args) => {
+        const result = value.apply(target, args);
+        if (!result || typeof result.then !== "function") return result;
+        inFlight.contents = inFlight.contents + 1;
+        return result.finally(() => { inFlight.contents = inFlight.contents - 1; });
+      };
+    },
+  })`)
+
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
 
@@ -272,6 +293,9 @@ let run = async (
   // what differs between them and reads the rest off this call.
   let rec make = async (~reset, ~config as baseConfig, ~chains=?, ~asWorker=false) => {
     throwIfClosing()
+    // Startup runs on the real clock, a restart's included.
+    Clock.refuseReal := false
+    let storageCallsInFlight = ref(0)
     let config = switch chains {
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
@@ -286,16 +310,17 @@ let run = async (
     clients->Array.push(sql)->ignore
     // Tracking tables in Hasura costs ~1.9 seconds per indexer.
     let client = Storage.clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
-    let storage = mapStorage(
-      Storage.make(
-        ~client,
-        ~logger,
-        ~entities=config.userEntities,
-        ~cacheDir,
-        ~ecosystem=config.ecosystem.name,
-        ~isolated=config.isolated,
-      ),
-    )
+    let storage =
+      mapStorage(
+        Storage.make(
+          ~client,
+          ~logger,
+          ~entities=config.userEntities,
+          ~cacheDir,
+          ~ecosystem=config.ecosystem.name,
+          ~isolated=config.isolated,
+        ),
+      )->countStorageCalls(~inFlight=storageCallsInFlight)
     storages->Array.push(storage)
     let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
     // `Main.start` does this before handler modules load, so the exported
@@ -362,6 +387,7 @@ let run = async (
       ~onArrivedAtHead?,
     )
     stateRef := Some(state)
+    Clock.refuseReal := clock->Option.isSome
     state->IndexerLoop.start
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
@@ -437,7 +463,7 @@ let run = async (
         entityConfig.table->Table.getChainIdField->Option.map(field => field.fieldName)
       let keyOf = row => {
         let row = row->(Utils.magic: unknown => dict<unknown>)
-        let id = row->Dict.getUnsafe("id")->Utils.Hash.makeOrThrow
+        let id = entityConfig.table.entityIdToKey(row->Dict.getUnsafe("id")->EntityId.unsafeOfAny)
         switch chainField {
         | Some(field) => `${id}|${row->Dict.getUnsafe(field)->Utils.Hash.makeOrThrow}`
         | None => id
@@ -524,6 +550,7 @@ let run = async (
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) => {
       let chainIdOfRow = chainIdOfRow(entityConfig)
+      let {entityIdToKey} = entityConfig.table
       historyRows(entityConfig)->Promise.thenResolve(items => {
         // Rows aren't ordered by the query, and insert order isn't meaningful
         // since checkpointId is the source of truth. Sort for stable assertions.
@@ -554,8 +581,8 @@ let run = async (
         ))
         ->Array.toSorted(((a, aChain), (b, bChain)) => {
           switch String.compare(
-            a->Change.getEntityId->EntityId.toKey,
-            b->Change.getEntityId->EntityId.toKey,
+            entityIdToKey(a->Change.getEntityId),
+            entityIdToKey(b->Change.getEntityId),
           ) {
           | 0. =>
             // Compared as bigints: checkpoint ids are unbounded, and past 2^53
@@ -579,6 +606,13 @@ let run = async (
       })
     }
 
+    // Nothing in the indexer's hands: no pass, no write, no storage call. Each
+    // wait below adds what else it needs settled.
+    let isQuiet = () =>
+      !(state->IndexerState.isProcessing) &&
+      state->IndexerState.writeFiber->Option.isNone &&
+      storageCallsInFlight.contents === 0
+
     let waitUntilIdle = async () => {
       await state->Writing.flush
       // Settling takes several ticks: the loop dispatches follow-up actions
@@ -589,8 +623,7 @@ let run = async (
       while settled.contents < 5 && attempts.contents < 5000 {
         attempts := attempts.contents + 1
         settled := if (
-            !(state->IndexerState.isProcessing) &&
-            state->IndexerState.writeFiber->Option.isNone &&
+            isQuiet() &&
             !(state->IndexerState.shouldFinalizeIndexes) &&
             Frontier.equals(
               state->IndexerState.committedFrontier,
@@ -619,8 +652,7 @@ let run = async (
           let rec wait = async () => {
             await state->Writing.flush
             let isIdle =
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
+              isQuiet() &&
               Frontier.equals(
                 state->IndexerState.committedFrontier,
                 state->IndexerState.processedFrontier,
@@ -665,15 +697,16 @@ let run = async (
             let idle = ref(0)
             let still = ref(0)
             let events = ref(clock.events)
-            // A write in flight gets a far longer quiet spell before it counts
-            // as held: a real one on a loaded runner can outlast the short one,
-            // and returning mid-write would let the next step read stale rows.
-            let quietLimit = () => state->IndexerState.writeFiber->Option.isSome ? 500 : 50
+            // A write or storage call in flight gets a far longer quiet spell
+            // before it counts as held: a real one on a loaded runner can
+            // outlast the short one, and returning mid-flight would let the next
+            // step read stale rows.
+            let quietLimit = () =>
+              state->IndexerState.writeFiber->Option.isSome || storageCallsInFlight.contents > 0
+                ? 500
+                : 50
             while idle.contents < 5 && still.contents < quietLimit() {
-              idle := if (
-                  !(state->IndexerState.isProcessing) &&
-                  state->IndexerState.writeFiber->Option.isNone
-                ) {
+              idle := if isQuiet() {
                   idle.contents + 1
                 } else {
                   0
@@ -857,6 +890,7 @@ let run = async (
   | exn => Some(exn)
   }
   isClosing := true
+  Clock.refuseReal := false
 
   // Every step runs even if an earlier one throws, and a teardown failure
   // never replaces the body's — losing the real failure behind a cleanup

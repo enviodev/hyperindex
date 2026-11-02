@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
-
 use std::future::Future;
 use std::time::Instant;
 

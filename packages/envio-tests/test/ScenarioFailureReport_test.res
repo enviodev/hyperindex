@@ -41,6 +41,7 @@ let logsLinkOf = (rejection: option<rejection>) =>
     }
   )
 
+@val external processEnv: dict<string> = "process.env"
 @module("node:fs") external readFileSync: (string, string) => string = "readFileSync"
 
 describe("A failing scenario body", () => {
@@ -159,10 +160,11 @@ Mock source for chain 1 at the failure:
   // it, so a test that forgot to is told which timer it is waiting for, and a
   // poll it never accounted for is named with the steps around it.
   Async.it("on virtual time, says what the clock was holding and what ran", async t => {
+    // Pinned the way anyone replays a run's jitter.
+    processEnv->Dict.set("ENVIO_TEST_SEED", "1")
     let rejection = await rejectionOf(
       scenario->Scenario.run(
         ~sources=[{chain: 1}],
-        ~seed=1,
         async (~indexer as _, ~source) => {
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
@@ -171,6 +173,7 @@ Mock source for chain 1 at the failure:
         },
       ),
     )
+    processEnv->Dict.delete("ENVIO_TEST_SEED")
     t.expect(rejection->stripLogsLink).toEqual(
       Some(
         Nullable.make(`Height calls no expectation accounted for on source for chain 1: 1 (calls 2 to 2). Name each poll where the test causes it with \`expectNewHeightCalls(n)\`, so one nobody planned for fails at the step that caused it.
@@ -201,6 +204,34 @@ Virtual time at the failure: t=0ms, seed 1 (ENVIO_TEST_SEED=1 replays it)
     t=0ms armed stall timeout for t=120000ms
     t=0ms source(1): items query 101.. (partition 0)
   Nothing the indexer schedules runs until the test advances time: \`await indexer.advanceTime(60000)\` fires the next timer (height poll timeout).`),
+      ),
+    )
+  })
+})
+
+describe("A scenario on virtual time", () => {
+  // Source-layer code that reaches past the clock it was given arms a timer
+  // advanceTime never sees: the run fails where it happens, not as a hang.
+  Async.it("refuses the real clock once startup is done", async t => {
+    let rejection = await rejectionOf(
+      scenario->Scenario.run(
+        ~sources=[{chain: 1}],
+        async (~indexer as _, ~source) => {
+          let mock = source(1)
+          mock.resolveGetHeightOrThrow(300)
+          await mock.expectItemsQueries([{reply: LeavePending}])
+          await Clock.real->Clock.delay(~label="a stray retry", 10)
+        },
+      ),
+    )
+    t.expect(
+      rejection
+      ->stripLogsLink
+      ->Option.flatMap(Nullable.toOption)
+      ->Option.map(message => message->String.split("\n\n")->Array.getUnsafe(0)),
+    ).toEqual(
+      Some(
+        "Clock.real armed \"a stray retry\" on virtual time. Use the clock the code was given, so advanceTime can see and move it.",
       ),
     )
   })

@@ -164,10 +164,12 @@ let make = (
   ~onError: ErrorHandling.t => unit,
   ~onExit=?,
   ~onArrivedAtHead=?,
+  ~clock=Clock.real,
 ) => {
   let chainMetaThrottler = {
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
+      ~clock,
       ~intervalMillis,
       ~logger=logger->Logger.withFields({
         "context": "Throttler for chain metadata writes",
@@ -182,7 +184,7 @@ let make = (
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
-    effectState: EffectState.make(),
+    effectState: EffectState.make(~clock, ()),
     rollback: None,
     committedFrontier,
     processedFrontier: committedFrontier->Frontier.copy,
@@ -314,6 +316,7 @@ let makeFromDbState = (
     ~onError,
     ~onExit?,
     ~onArrivedAtHead?,
+    ~clock=?sourceTiming->Option.flatMap(timing => timing.clock),
   )
   state.crossChainState->CrossChainState.markCaughtUpOnResume
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
