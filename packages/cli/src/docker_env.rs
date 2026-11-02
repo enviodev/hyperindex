@@ -362,8 +362,9 @@ impl EnvConfig {
     /// recreates *that* container instead of all of them. Host fields are
     /// excluded: when external, no container is created; when local, the
     /// host is always the hardcoded default and can't vary.
-    fn pg_config_hash(&self) -> String {
+    fn pg_config_hash(&self, image: &str) -> String {
         let mut h = Sha256::new();
+        h.update(image);
         h.update(&self.pg_port);
         h.update(&self.pg_password);
         h.update(&self.pg_user);
@@ -371,8 +372,9 @@ impl EnvConfig {
         format!("{:x}", h.finalize())
     }
 
-    fn hasura_config_hash(&self) -> String {
+    fn hasura_config_hash(&self, image: &str) -> String {
         let mut h = Sha256::new();
+        h.update(image);
         h.update(&self.pg_password);
         h.update(&self.pg_user);
         h.update(&self.pg_database);
@@ -382,8 +384,9 @@ impl EnvConfig {
         format!("{:x}", h.finalize())
     }
 
-    fn ch_config_hash(&self) -> String {
+    fn ch_config_hash(&self, image: &str) -> String {
         let mut h = Sha256::new();
+        h.update(image);
         // Bump the version marker when the container creation shape
         // changes (e.g. injected files, mounts) so stale containers from
         // older CLI versions get recreated even when env values match.
@@ -958,9 +961,9 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
 
     // We need Docker for at least one container.
     let docker = connect_docker().await?;
-    let pg_hash = env.pg_config_hash();
-    let hasura_hash = env.hasura_config_hash();
-    let ch_hash = env.ch_config_hash();
+    let pg_hash = env.pg_config_hash(POSTGRES_IMAGE);
+    let hasura_hash = env.hasura_config_hash(HASURA_IMAGE);
+    let ch_hash = env.ch_config_hash(CLICKHOUSE_IMAGE);
 
     // Run full pipelines for each container in parallel:
     // pull image → create infra → ensure container.
@@ -1490,15 +1493,30 @@ mod tests {
         let d = default_env();
         assert_eq!(
             (
-                d.pg_config_hash(),
-                d.hasura_config_hash(),
-                d.ch_config_hash()
+                d.pg_config_hash(POSTGRES_IMAGE),
+                d.hasura_config_hash(HASURA_IMAGE),
+                d.ch_config_hash(CLICKHOUSE_IMAGE)
             ),
             (
-                default_env().pg_config_hash(),
-                default_env().hasura_config_hash(),
-                default_env().ch_config_hash()
+                default_env().pg_config_hash(POSTGRES_IMAGE),
+                default_env().hasura_config_hash(HASURA_IMAGE),
+                default_env().ch_config_hash(CLICKHOUSE_IMAGE)
             )
+        );
+    }
+
+    #[test]
+    fn hashes_change_on_image() {
+        let d = default_env();
+        assert_eq!(
+            (
+                d.pg_config_hash("postgres:18.3") != d.pg_config_hash("postgres:18.6"),
+                d.hasura_config_hash("hasura/graphql-engine:v2.43.0")
+                    != d.hasura_config_hash("hasura/graphql-engine:v2.51.3"),
+                d.ch_config_hash("clickhouse/clickhouse-server:26.2.15.4")
+                    != d.ch_config_hash("clickhouse/clickhouse-server:26.8.36.3"),
+            ),
+            (true, true, true)
         );
     }
 
@@ -1508,7 +1526,10 @@ mod tests {
             pg_port: "5434".into(),
             ..default_env()
         };
-        assert_ne!(default_env().pg_config_hash(), env2.pg_config_hash());
+        assert_ne!(
+            default_env().pg_config_hash(POSTGRES_IMAGE),
+            env2.pg_config_hash(POSTGRES_IMAGE)
+        );
     }
 
     #[test]
@@ -1518,8 +1539,14 @@ mod tests {
             pg_password: "new_password".into(),
             ..default_env()
         };
-        assert_eq!(default_env().ch_config_hash(), env2.ch_config_hash());
-        assert_ne!(default_env().pg_config_hash(), env2.pg_config_hash());
+        assert_eq!(
+            default_env().ch_config_hash(CLICKHOUSE_IMAGE),
+            env2.ch_config_hash(CLICKHOUSE_IMAGE)
+        );
+        assert_ne!(
+            default_env().pg_config_hash(POSTGRES_IMAGE),
+            env2.pg_config_hash(POSTGRES_IMAGE)
+        );
     }
 
     #[test]
@@ -1530,8 +1557,8 @@ mod tests {
             ..default_env()
         };
         assert_ne!(
-            default_env().hasura_config_hash(),
-            env2.hasura_config_hash()
+            default_env().hasura_config_hash(HASURA_IMAGE),
+            env2.hasura_config_hash(HASURA_IMAGE)
         );
     }
 
@@ -1569,7 +1596,10 @@ mod tests {
             ch_password: "secret".into(),
             ..default_env()
         };
-        assert_ne!(default_env().ch_config_hash(), env2.ch_config_hash());
+        assert_ne!(
+            default_env().ch_config_hash(CLICKHOUSE_IMAGE),
+            env2.ch_config_hash(CLICKHOUSE_IMAGE)
+        );
     }
 
     #[test]
