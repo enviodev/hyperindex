@@ -78,6 +78,7 @@ describe("Stopping an indexer while it finalizes the backfill", () => {
       releaseFinalize()
       await stopped
       isStopped := true
+      // Real time: throttled chain-metadata writes run on the real clock.
       await Utils.delay(Env.ThrottleWrites.chainMetadataIntervalMillis + 200)
 
       t.expect((writesAfterStop.contents, errors->Array.length)).toEqual((0, 0))

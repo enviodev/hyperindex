@@ -24,6 +24,7 @@ let make: (
   ~exitAfterFirstEventBlock: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
+  ~onArrivedAtHead: unit => unit=?,
 ) => t
 
 let makeFromDbState: (
@@ -40,6 +41,7 @@ let makeFromDbState: (
   ~holdRealtime: bool=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
+  ~onArrivedAtHead: unit => unit=?,
 ) => t
 
 let unexpectedErrorMsg: string
@@ -106,6 +108,7 @@ let shouldFinalizeIndexes: t => bool
 let bindScheduleProcessing: (t, unit => unit) => unit
 let isHoldingRealtime: t => bool
 let hasArrivedAtHead: t => bool
+let reportArrivalAtHead: t => unit
 // The supervisor's go-ahead for a process driving part of a split run.
 let releaseRealtime: t => unit
 let markReady: (t, ~readyAt: Date.t) => unit

@@ -34,6 +34,7 @@ type Visit @storage(clickhouse: {ttl: "createdAt + INTERVAL 30 day"}) {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  // Real time: recent enough that the table's 30-day TTL keeps the row.
   context.Visit.set({ id: "v1", day: 3, createdAt: new Date() });
 });
 `,
