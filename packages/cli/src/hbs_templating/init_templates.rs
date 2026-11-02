@@ -161,7 +161,7 @@ impl InitTemplates {
             out.push_str("    \"@types/node\": \"24.12.2\",\n");
             out.push_str("    \"typescript\": \"6.0.3\",\n");
         }
-        out.push_str("    \"vitest\": \"4.1.0\"\n");
+        out.push_str("    \"vitest\": \"4.1.12\"\n");
         out.push_str("  },\n");
         out.push_str("  \"dependencies\": {\n");
         out.push_str(&format!("    \"envio\": \"{}\"", self.envio_version));

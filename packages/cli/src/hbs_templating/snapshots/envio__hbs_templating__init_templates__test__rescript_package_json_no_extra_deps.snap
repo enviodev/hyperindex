@@ -18,7 +18,7 @@ expression: "template(true, \"latest\", vec![]).render_package_json()"
   "devDependencies": {
     "rescript": "12.3.1",
     "@rescript/runtime": "12.3.1",
-    "vitest": "4.1.0"
+    "vitest": "4.1.12"
   },
   "dependencies": {
     "envio": "latest"
