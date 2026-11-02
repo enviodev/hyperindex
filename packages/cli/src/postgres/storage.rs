@@ -72,14 +72,13 @@ impl ColumnSpec {
     }
 }
 
-/// A table the storage writes, and how a staged batch's columns reach it.
+/// A table the storage writes, and how a staged batch's columns reach it. An
+/// insert binds the spec's leading columns, one per source it is given, so the
+/// staged fields lead and what the table fills itself trails.
 pub struct Table {
     pub spec: TableSpec,
     /// The staged fields, in the order a batch lays them out.
     fields: Vec<Field>,
-    /// The insert's columns: the staged fields, and for a per-chain entity its
-    /// chain last.
-    insert: TableSpec,
     /// Raw events are only ever appended, so a row already there is one the
     /// batch has seen before rather than one to overwrite.
     append_only: bool,
@@ -89,30 +88,17 @@ pub struct Table {
 struct EntityHistory {
     history: History,
     spec: TableSpec,
-    /// The staged fields as history declares them, then the checkpoint, the
-    /// change and the chain.
-    insert: TableSpec,
 }
 
 impl Table {
     fn internal(name: &str, fields: Vec<Field>, own: Vec<Field>, append_only: bool) -> Self {
-        let insert = TableSpec {
-            table_name: name.to_string(),
-            columns: fields.iter().map(ColumnSpec::of).collect(),
-            partition_by_column: None,
-        };
         Self {
             spec: TableSpec {
-                columns: insert
-                    .columns
-                    .iter()
-                    .cloned()
-                    .chain(own.iter().map(ColumnSpec::of))
-                    .collect(),
-                ..insert.clone()
+                table_name: name.to_string(),
+                columns: fields.iter().chain(&own).map(ColumnSpec::of).collect(),
+                partition_by_column: None,
             },
             fields,
-            insert,
             append_only,
             entity: None,
         }
@@ -136,15 +122,15 @@ impl Table {
             .chain_id
             .as_ref()
             .map(|chain_id| ColumnSpec::of(&chain_id.field()));
-        let staged = entity.fields.iter().map(ColumnSpec::of).collect::<Vec<_>>();
-        let insert = TableSpec {
-            table_name: entity.name.clone(),
-            columns: staged.iter().cloned().chain(chain_id.clone()).collect(),
-            partition_by_column: None,
-        };
         let spec = TableSpec {
+            table_name: entity.name.clone(),
+            columns: entity
+                .fields
+                .iter()
+                .map(ColumnSpec::of)
+                .chain(chain_id.clone())
+                .collect(),
             partition_by_column: chain_id.as_ref().map(|column| column.name.clone()),
-            ..insert.clone()
         };
 
         let chain_id_column = chain_id.as_ref().map(|column| column.name.clone());
@@ -193,22 +179,12 @@ impl Table {
                 ),
             },
             spec: TableSpec {
-                table_name: history_table.clone(),
+                table_name: history_table,
                 columns: spec
                     .columns
                     .iter()
                     .map(as_history)
-                    .chain([checkpoint.clone(), change.clone()])
-                    .collect(),
-                partition_by_column: None,
-            },
-            insert: TableSpec {
-                table_name: history_table,
-                columns: staged
-                    .iter()
-                    .map(as_history)
                     .chain([checkpoint, change])
-                    .chain(chain_id.as_ref().map(as_history))
                     .collect(),
                 partition_by_column: None,
             },
@@ -216,7 +192,6 @@ impl Table {
         Ok(Self {
             spec,
             fields: entity.fields.clone(),
-            insert,
             append_only: false,
             entity: Some(history),
         })
@@ -1257,17 +1232,16 @@ impl Storage {
             ));
         }
         if !projection.history_sets.is_empty() {
-            let columns = changes.rows.columns();
-            let mut sources = table.sources(columns);
+            let mut sources = table.sources(changes.rows.columns());
+            sources.extend(chain_id.as_deref().map(Source::Repeated));
             sources.push(Source::Staged {
                 column: changes.checkpoints(),
                 render: Render::Plain,
             });
             sources.push(Source::Repeated(SET));
-            sources.extend(chain_id.as_deref().map(Source::Repeated));
             statements.push(Box::pin(self.run_insert(
                 Some(transaction),
-                &history.insert,
+                &history.spec,
                 sources,
                 &projection.history_sets,
                 table,
@@ -1279,7 +1253,7 @@ impl Storage {
             sources.extend(chain_id.as_deref().map(Source::Repeated));
             statements.push(Box::pin(self.run_insert(
                 Some(transaction),
-                &table.insert,
+                &table.spec,
                 sources,
                 &projection.sets,
                 table,
@@ -1309,7 +1283,7 @@ impl Storage {
         let all = (0..rows.rows()).collect::<Vec<_>>();
         self.run_insert(
             transaction,
-            &table.insert,
+            &table.spec,
             table.sources(rows.columns()),
             &all,
             table,
@@ -1329,8 +1303,16 @@ impl Storage {
     ) -> std::result::Result<(), Failure> {
         let target = &spec.table_name;
         let fail = |error| Failure::new(insert_context(target), error);
+        let columns = spec.columns.get(..sources.len()).ok_or_else(|| {
+            fail(anyhow!(
+                "Internal error: {} values for {} columns",
+                sources.len(),
+                spec.columns.len()
+            ))
+        })?;
         let sql = insert::unnest_query(
-            spec,
+            &spec.table_name,
+            columns,
             self.schema(),
             table.append_only,
             self.settings.numeric_array_as_text,
