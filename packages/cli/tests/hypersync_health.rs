@@ -1,6 +1,10 @@
 //! HyperSync endpoint health checks that require network access.
 //! Run with: cargo test --features hypersync_health --test hypersync_health
 #![cfg(feature = "hypersync_health")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test against live endpoints, backing off on the real clock"
+)]
 
 use envio::config_parsing::chain_helpers::HypersyncChain;
 use envio::config_parsing::hypersync_endpoints::network_to_hypersync_url;
