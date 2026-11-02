@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Result};
 
-use super::schema::{Encoding, Entity};
+use super::schema::Entity;
 use crate::columnar::{Arena, Column, ColumnKind};
 
 /// The two columns a change set carries after the entity's fields.
@@ -128,15 +128,6 @@ impl ChangeSet {
             ColumnKind::Text | ColumnKind::Bytes => Key::Bytes(column.bytes_at(row)),
             _ => Key::Bits(column.u64_at(row)),
         }
-    }
-
-    /// An id as the text its column reads it from.
-    pub fn id_text(&self, row: usize) -> Result<String> {
-        let column = self.id_column();
-        Ok(match self.entity.fields[self.id].encoding() {
-            Encoding::Number => column.f64_at(row).to_string(),
-            _ => column.str_at(row)?.to_string(),
-        })
     }
 
     /// The latest change of every id, in the order the ids first changed, and

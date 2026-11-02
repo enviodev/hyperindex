@@ -1,7 +1,7 @@
 //! Borsh instruction args decoder.
 //!
 //! Every config instruction carries its own `ArgsSchema`; the Solana client
-//! builds them once at creation and `get_event_items` decodes each routed
+//! builds them once at creation and `get_items` decodes each routed
 //! instruction inline, so decoded args ride back on the query response instead
 //! of crossing the napi boundary one instruction at a time.
 

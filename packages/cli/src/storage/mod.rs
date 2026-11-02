@@ -10,6 +10,11 @@
 //!
 //! JavaScript reaches all of it through [`js`], which only converts.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: retries against the database"
+)]
+
 pub mod batch;
 pub mod changes;
 pub mod effect_cache;

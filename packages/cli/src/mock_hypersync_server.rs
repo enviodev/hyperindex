@@ -13,6 +13,11 @@
 //!
 //! EVM only.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: a test server answering in real time"
+)]
+
 use std::collections::VecDeque;
 use std::net::TcpListener as StdTcpListener;
 use std::str::FromStr;

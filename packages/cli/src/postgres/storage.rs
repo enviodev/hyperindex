@@ -1214,10 +1214,12 @@ impl Storage {
         let table = self.entity_table_or_err(entity).map_err(insert_failure)?;
         let history = table.entity_history().map_err(insert_failure)?;
         let projection = changes.project(diff);
-        let ids = |rows: &[usize]| {
-            rows.iter()
-                .map(|&row| changes.id_text(row).map(Some))
-                .collect::<Result<Vec<_>>>()
+        let ids = |rows: &[usize]| -> Result<Param> {
+            let id = Source::Staged {
+                column: changes.id_column(),
+                render: Render::Plain,
+            };
+            Ok(write::unnest_params(&[id], rows)?.remove(0))
         };
         let chain_id = changes.chain_id.map(|chain_id| chain_id.to_string());
 
@@ -1227,7 +1229,7 @@ impl Storage {
             transaction
                 .execute(
                     &history.history.backfill(schema, changes.chain_id),
-                    &[array_literal(backfill)],
+                    &[backfill],
                 )
                 .await
                 .map_err(|error| Failure::new(history_context(), error))?;
@@ -1235,10 +1237,8 @@ impl Storage {
         let mut statements: Vec<Statement<'_>> = Vec::new();
         if !projection.history_deletes.is_empty() {
             let mut params = vec![
-                array_literal(
-                    ids(&projection.history_deletes)
-                        .map_err(|error| Failure::new(history_context(), error))?,
-                ),
+                ids(&projection.history_deletes)
+                    .map_err(|error| Failure::new(history_context(), error))?,
                 array_literal(
                     projection
                         .history_deletes
@@ -1297,7 +1297,7 @@ impl Storage {
                 transaction,
                 format!("Failed deleting \"{}\" from storage by ids", entity.name),
                 history.history.delete_entities(schema, changes.chain_id),
-                vec![array_literal(deletes)],
+                vec![deletes],
             ));
         }
         settle(join_all(statements).await)

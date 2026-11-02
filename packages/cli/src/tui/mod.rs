@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: the terminal UI redraw"
+)]
+
 mod format;
 mod logo;
 mod render;

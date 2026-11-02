@@ -17,8 +17,8 @@ let invokeHandler = (runtime: HandlerRuntime.t, item: Internal.item) => {
   let context = runtime.handlerContext
   let ecosystem = runtime->HandlerRuntime.ecosystem
   switch item {
-  | Block({onBlockRegistration: {handler}, blockNumber}) =>
-    handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~ecosystem, ~context))
+  | Block({onBlockRegistration: {handler}, blockNumber, ?block}) =>
+    handler(Ecosystem.makeOnBlockArgs(~blockNumber, ~block, ~ecosystem, ~context))
   | Event(_) =>
     let handler = (item->Internal.castUnsafeEventItem).onEventRegistration.handler->Option.getUnsafe
     handler({event: item->Ecosystem.getItemEvent(~ecosystem), context})

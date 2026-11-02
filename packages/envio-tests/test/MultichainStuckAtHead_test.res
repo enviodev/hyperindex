@@ -58,7 +58,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       {
         chain: 1337,
         methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        pollingInterval: 1,
+        pollingInterval: 100,
       },
     ],
     ~sourceTiming={reducedPollingInterval: 1, newBlockStallTimeoutRealtime: 2_000},
@@ -94,29 +94,19 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       await indexer.getBatchWritePromise()
 
       // The realtime wait polls height once more; a same-height response is
-      // what makes it open the subscription. Waits parked before the realtime
-      // flip keep REST-polling — feed them the same height until the
-      // subscription appears.
-      let subscriptionOpened = () => stuckChain.heightSubscriptionCalls->Array.length > 0
-      let deadline = Date.now() +. 5_000.
-      while !subscriptionOpened() && Date.now() < deadline {
-        try stuckChain.resolveGetHeightOrThrow(100) catch {
-        | _ => ()
-        }
-        await Utils.delay(1)
-      }
+      // what makes it open the subscription.
+      stuckChain.setAutoHeight(100)
+      await indexer.advanceTime(1)
       t.expect(
-        subscriptionOpened(),
+        stuckChain.heightSubscriptionCalls->Array.length > 0,
         ~message="realtime transition should open the height subscription",
       ).toBe(true)
       // The stream connects, so the wait relies on the staleness backstop
       // rather than the immediate fallback a never-connected stream gets.
       stuckChain.setHeightSubscriptionStatus(Live)
-      // Release any pre-realtime wait still REST-polling at the same height so
+      // Releases any pre-realtime wait still REST-polling at the same height so
       // it exits and gets discarded as stale.
-      try stuckChain.resolveGetHeightOrThrow(101) catch {
-      | _ => ()
-      }
+      stuckChain.setAutoHeight(101)
 
       // The stream finds block 101.
       stuckChain.triggerHeightSubscription(101)
@@ -150,7 +140,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       // The chain is at head again, waiting for a block above 102. The stream
       // re-emits the current head (as it does on reconnect) and then goes
       // quiet for good.
-      await Utils.delay(10)
+      await indexer.waitUntilIdle()
       stuckChain.triggerHeightSubscription(102)
 
       // Meanwhile the other chain keeps progressing, so the cross-chain
@@ -172,28 +162,14 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       await indexer.getBatchWritePromise()
 
       // The subscription is quiet, so the wait must fall back to REST height
-      // polling within the realtime stall window (1..2s here).
-      let heightCallsBefore = stuckChain.getHeightOrThrowCalls->Array.length
-      let pollDeadline = Date.now() +. 5_000.
-      while (
-        stuckChain.getHeightOrThrowCalls->Array.length === heightCallsBefore &&
-          Date.now() < pollDeadline
-      ) {
-        await Utils.delay(50)
-      }
-      t.expect(
-        stuckChain.getHeightOrThrowCalls->Array.length > heightCallsBefore,
-        ~message="the polling fallback should take over when the height subscription goes quiet",
-      ).toBe(true)
-
+      // polling within the realtime stall window, and the poll finds block 103.
+      stuckChain.setAutoHeight(103)
+      await indexer.advanceTime(2_000)
+      await stuckChain.expectItemsQueries([{fromBlock: 103, reply: LeavePending}])
       t.expect(
         stuckChain.heightSubscriptionCalls->Array.length,
         ~message="the subscription should not be recreated",
       ).toEqual(1)
-
-      // The fallback poll finds block 103 and the chain resumes indexing from it.
-      stuckChain.resolveGetHeightOrThrow(103)
-      await stuckChain.expectItemsQueries([{fromBlock: 103, reply: LeavePending}])
     },
   )
 })

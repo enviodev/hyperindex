@@ -4,6 +4,7 @@
 let make = (
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
   ~addressStore: AddressStore.t,
   ~lowercaseAddresses: bool,
   ~blockStore: BlockStore.t,
@@ -30,6 +31,7 @@ let make = (
       ~onEventRegistrations=onEventRegistrations->(
         Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
       ),
+      ~onBlockRegistrations,
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
@@ -56,13 +58,15 @@ let make = (
         onEventRegistrations: onEventRegistrations->(
           Utils.magic: array<Internal.onEventRegistration> => array<Internal.svmOnEventRegistration>
         ),
+        onBlockRegistrations,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         addressStore,
       }),
     ]
-  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
+  | Config.SimulateSourceConfig({items, getBlock, endBlock, ?transactionStore, ?blockStore}) => [
       SimulateSource.make(
         ~items,
+        ~getBlock,
         ~endBlock,
         ~chainId,
         ~addressStore,

@@ -146,16 +146,18 @@ describe("Progress block time", () => {
     },
   )
 
-  // The flag only pays for itself at the head, where the range is a handful of
-  // blocks. Over a backfill range it would be a header per block for no gain.
+  // Every block's header only pays for itself where blocks can still be
+  // reorged, at the head, where the range is a handful of blocks. Over a
+  // backfill range it would be a header per block for no gain.
   scenario->Scenario.it(
-    "asks for every block in the range only once the chain is at the head",
+    "marks a query reorgable only once the chain is at the head",
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
       // Replying to a query drops it from the pending list, so each one's flag is
       // read while it is still in flight.
-      let pendingFlags = () => mock.pendingItemsQueries->Array.map(MockSource.includeAllBlocks)
+      let pendingFlags = () =>
+        mock.pendingItemsQueries->Array.map(query => query->MockSource.reorgableFrom->Option.isSome)
 
       mock.resolveGetHeightOrThrow(300)
       await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])

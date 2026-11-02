@@ -113,7 +113,7 @@ describe("SVM instruction payload assembly", () => {
       ...reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig),
       discriminator: None,
     }
-    let item: SvmHyperSyncClient.EventItems.item = {
+    let item: SvmHyperSyncClient.Items.item = {
       onEventRegistrationIndex: 0,
       slot: 10,
       transactionIndex: 1,
@@ -142,7 +142,7 @@ describe("SVM instruction payload assembly", () => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-    let item: SvmHyperSyncClient.EventItems.item = {
+    let item: SvmHyperSyncClient.Items.item = {
       onEventRegistrationIndex: 0,
       slot: 10,
       transactionIndex: 1,
@@ -202,7 +202,7 @@ describe("SVM instruction payload assembly", () => {
       let reg = registrations()->Array.getUnsafe(0)
       let eventConfig =
         reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-      let base: SvmHyperSyncClient.EventItems.item = {
+      let base: SvmHyperSyncClient.Items.item = {
         onEventRegistrationIndex: 0,
         slot: 10,
         transactionIndex: 1,
@@ -277,7 +277,7 @@ describe("SVM instruction payload assembly", () => {
         isInner: false,
         args: %raw(`{}`),
         logs: Nullable.make([
-          {SvmHyperSyncClient.EventItems.kind: Nullable.make("data"), message: Nullable.undefined},
+          {SvmHyperSyncClient.Items.kind: Nullable.make("data"), message: Nullable.undefined},
         ]),
       },
       ~programName="Swapper",

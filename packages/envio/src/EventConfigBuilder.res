@@ -430,6 +430,37 @@ let resolveInlineFieldSelection = (
   )
 }
 
+// Resolve a block handler's `fields` option, the same shape `onEvent` takes but
+// with the block table alone to select from. The block's key comes with every
+// selection, so a selection of nothing else is no selection.
+let resolveOnBlockFieldMask = (fields: unknown, ~name, ~ecosystem: Ecosystem.t): option<float> =>
+  if typeof(fields) === #undefined {
+    None
+  } else {
+    let registration = `\`indexer.${ecosystem.onBlockMethodName}("${name}")\``
+    switch ecosystem.onBlockFields {
+    | None =>
+      JsError.throwWithMessage(
+        `Fuel block handlers can't select block fields. Remove the fields option of ${registration}.`,
+      )
+    | Some({fields: validFields, keyField, mask}) =>
+      validateFieldsShapeOrThrow(fields, ~registration, ~validKeys=["block"], ~shapeNoun="block")
+      let blockFields = parseFieldsOrThrow(
+        selectionList(fields, "block"),
+        ~valid=Utils.Set.fromArray(validFields),
+        ~kind="block",
+        ~registration,
+      )
+      blockFields->Utils.Set.delete(keyField)->ignore
+      if blockFields->Utils.Set.size === 0 {
+        None
+      } else {
+        blockFields->Utils.Set.add(keyField)->ignore
+        Some(mask(blockFields))
+      }
+    }
+  }
+
 // ============== Build complete EVM event config ==============
 
 let buildEvmEventConfig = (

@@ -219,6 +219,15 @@
           "format": "uint32",
           "minimum": 0
         },
+        "block_throttle": {
+          "description": "The minimum number of new blocks the chain head must advance by before the indexer fetches again once it has caught up. Useful on chains with very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 all fetch on every new block.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "hypersync_config": {
           "description": "HyperSync Config for fetching historical instructions on this chain. Optional for the `solana` and `solana-devnet` chain ids, which default to their public HyperSync endpoints; required for any other chain id.",
           "anyOf": [

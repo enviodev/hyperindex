@@ -26,7 +26,7 @@ use serde_json::{json, Value as Json};
 
 use super::client::{JsonRpcClient, RpcError};
 use super::fields::{
-    block_fields_in, tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
+    tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
     TX_EAGER_EXCLUDED_MASK,
 };
 use super::inflight::Inflight;
@@ -234,6 +234,18 @@ impl PageRefs {
                 hash: transaction_hash.clone(),
             });
         transaction.mask |= fields.tx_mask;
+    }
+
+    /// A block a block handler runs on, which no log of the page has to have
+    /// landed on.
+    pub(crate) fn add_block(&mut self, block_number: u64, block_mask: u64) {
+        self.blocks
+            .entry(block_number)
+            .or_insert_with(|| ReferencedBlock {
+                mask: 0,
+                log_hashes: Vec::new(),
+            })
+            .mask |= block_mask;
     }
 }
 
@@ -445,13 +457,10 @@ fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
     blocks
 }
 
-/// The blocks to read and the fields to read them for. One response carries
-/// every block field, so the whole page reads the same ones and merges into the
-/// store in a single batch.
-/// What every block this chain reads is decoded for. One response carries the
-/// whole header, so this depends on the chain's registrations and not on the
-/// page — which is why it is resolved once, when the client is built, rather
-/// than per page.
+/// What a page's blocks are decoded for: the chain's registrations, widened by
+/// the block handlers the page runs. One response carries the whole header, so
+/// every block of the page reads the same fields and merges into the store in a
+/// single batch.
 pub(crate) struct BlockRead {
     pub covering: u64,
     fields: Vec<BlockField>,
@@ -466,8 +475,8 @@ impl BlockRead {
         let covering = chain_mask | BLOCK_OBSERVATION_MASK;
         BlockRead {
             covering,
-            fields: block_fields_in(covering),
-            selected: block_fields_in(chain_mask & !BLOCK_OBSERVATION_MASK),
+            fields: BlockField::in_store_mask(covering),
+            selected: BlockField::in_store_mask(chain_mask & !BLOCK_OBSERVATION_MASK),
         }
     }
 
@@ -475,7 +484,7 @@ impl BlockRead {
     fn observations_only() -> Self {
         BlockRead {
             covering: BLOCK_OBSERVATION_MASK,
-            fields: block_fields_in(BLOCK_OBSERVATION_MASK),
+            fields: BlockField::in_store_mask(BLOCK_OBSERVATION_MASK),
             selected: Vec::new(),
         }
     }
@@ -494,7 +503,7 @@ struct TxReadPlan {
 
 /// Which blocks to read. A referenced block is skipped when the store was
 /// already asked for everything this page needs of it; a boundary block never
-/// is. What they are read for is `BlockRead`, the same for every page.
+/// is.
 fn plan_blocks(refs: &PageRefs, from_block: u64, to_block: u64, known: &BlockStore) -> Vec<u64> {
     let boundary = boundary_blocks(from_block, to_block);
     let mut numbers: Vec<u64> = refs
@@ -944,8 +953,8 @@ mod tests {
             (read.covering, read.fields, read.selected),
             (
                 miner | gas_used | BLOCK_OBSERVATION_MASK,
-                block_fields_in(miner | gas_used | BLOCK_OBSERVATION_MASK),
-                block_fields_in(miner | gas_used),
+                BlockField::in_store_mask(miner | gas_used | BLOCK_OBSERVATION_MASK),
+                BlockField::in_store_mask(miner | gas_used),
             )
         );
     }
