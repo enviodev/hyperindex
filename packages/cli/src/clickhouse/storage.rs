@@ -5,6 +5,11 @@
 //! over them. A read only sees rows at or below its chain's frontier, and a
 //! resume trims away whatever a batch Postgres never committed left above it.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: retries against the ClickHouse server"
+)]
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 

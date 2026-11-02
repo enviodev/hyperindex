@@ -305,6 +305,7 @@ impl Schema {
             GqlScalar::ID | GqlScalar::String => Some("String"),
             GqlScalar::Int => Some("Int"),
             GqlScalar::BigInt(_) => Some("BigInt"),
+            GqlScalar::Bytes => Some("Bytes"),
             _ => None,
         }
     }
@@ -1222,11 +1223,15 @@ fn validate_entity_shape(name: &str, fields: &[Field]) -> anyhow::Result<()> {
                     return Err(anyhow!("The 'id' field on entity {name} cannot be a list."));
                 }
                 match field_type.get_underlying_scalar() {
-                    GqlScalar::ID | GqlScalar::String | GqlScalar::Int | GqlScalar::BigInt(_) => {}
+                    GqlScalar::ID
+                    | GqlScalar::String
+                    | GqlScalar::Int
+                    | GqlScalar::BigInt(_)
+                    | GqlScalar::Bytes => {}
                     other => {
                         return Err(anyhow!(
                             "The 'id' field on entity {name} has unsupported type '{other}'. An \
-                             entity id must be one of: ID, String, Int, BigInt."
+                             entity id must be one of: ID, String, Int, BigInt, Bytes."
                         ));
                     }
                 }

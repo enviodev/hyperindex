@@ -85,7 +85,7 @@ type t = {
   // Should take into consideration partitions fetching for previous states (before rollback)
   mutable fetchingPartitionsCount: int,
   recoveryTimeout: float,
-  retryBackoffScale: float,
+  clock: Clock.t,
   // Why a source was last disabled for good. A disabled source is never
   // retried, so by the time the manager runs out of sources this is the reason
   // it did — and the only thing that tells a caller what to change.
@@ -93,11 +93,10 @@ type t = {
   mutable hasRealtime: bool,
   mutable committedRateLimitTimeMs: float,
   mutable rateLimitWaiters: int,
-  // Wall-clock timestamp (Date.now()) when the current rate-limit window
-  // started, or None if not currently waiting. Wall-clock so consumers
-  // (TUI) can compute elapsed time with their own Date.now() reads.
+  // When the current rate-limit window started on `clock`, or None if not
+  // currently waiting.
   mutable activeRateLimitStartMs: option<float>,
-  // Wall-clock timestamp by which the server expects the longest current
+  // Timestamp on `clock` by which the server expects the longest current
   // wait to clear. Tracks the latest reset across concurrent waiters so
   // the displayed countdown reflects when the indexer will actually retry.
   mutable activeRateLimitResetAtMs: option<float>,
@@ -206,20 +205,20 @@ let inFlightCount = sourceManager => sourceManager.fetchingPartitionsCount
 let getRateLimitTimeMs = sourceManager =>
   sourceManager.committedRateLimitTimeMs +.
   switch sourceManager.activeRateLimitStartMs {
-  | Some(startMs) => Date.now() -. startMs
+  | Some(startMs) => sourceManager.clock.now() -. startMs
   | None => 0.0
   }
 
 let getRateLimitResetInMs = sourceManager =>
   switch sourceManager.activeRateLimitResetAtMs {
   | Some(resetAt) =>
-    let remaining = resetAt -. Date.now()
+    let remaining = resetAt -. sourceManager.clock.now()
     remaining > 0.0 ? Some(remaining) : None
   | None => None
   }
 
 let startRateLimitTimeout = (sourceManager, ~resetMs) => {
-  let now = Date.now()
+  let now = sourceManager.clock.now()
   if sourceManager.rateLimitWaiters === 0 {
     sourceManager.activeRateLimitStartMs = Some(now)
   }
@@ -237,7 +236,7 @@ let stopRateLimitTimeout = sourceManager => {
     switch sourceManager.activeRateLimitStartMs {
     | Some(startMs) =>
       sourceManager.committedRateLimitTimeMs =
-        sourceManager.committedRateLimitTimeMs +. Date.now() -. startMs
+        sourceManager.committedRateLimitTimeMs +. sourceManager.clock.now() -. startMs
       sourceManager.activeRateLimitStartMs = None
     | None => ()
     }
@@ -259,16 +258,8 @@ let waitForRateLimitReset = async (sourceManager: t, ~resetMs, ~retry, ~logger) 
         ->Int.toString}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.`,
     ~params={"retry": retry, "waitMs": waitMs},
   )
-  let waitedAt = Date.now()
   sourceManager->startRateLimitTimeout(~resetMs=waitMs)
-  await Utils.delay(waitMs)
-  // Timers run on the event loop's cached clock, so one can fire with Date.now()
-  // a millisecond short of the wait it was set for, and the wait is counted by
-  // Date.now(). Temporary until main takes the same fix.
-  let short = waitedAt +. waitMs->Int.toFloat -. Date.now()
-  if short > 0. {
-    await Utils.delay(short->Math.ceil->Float.toInt)
-  }
+  await sourceManager.clock->Clock.delay(~label="rate-limit reset", waitMs)
   sourceManager->stopRateLimitTimeout
 }
 
@@ -354,11 +345,12 @@ type timing = {
   reducedPollingInterval?: int,
   recoveryTimeout?: float,
   getHeightRetryInterval?: (~retry: int) => int,
-  retryBackoffScale?: float,
   heightPollTimeout?: int,
+  clock?: Clock.t,
 }
 
 let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: timing={}) => {
+  let clock = timing.clock->Option.getOr(Clock.real)
   let newBlockStallTimeout = timing.newBlockStallTimeout->Option.getOr(60_000)
   let newBlockStallTimeoutRealtime = timing.newBlockStallTimeoutRealtime->Option.getOr(20_000)
   let stalledPollingInterval = timing.stalledPollingInterval->Option.getOr(5_000)
@@ -392,6 +384,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
           ~recordRequestStats=stats => requestStats->recordStatsInto(stats),
           ~getHeightRetryInterval,
           ~pollTimeoutMillis=timing.heightPollTimeout->Option.getOr(60_000),
+          ~clock,
         ),
         disabled: false,
         lastFailedAt: None,
@@ -408,7 +401,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
     stalledPollingInterval,
     reducedPollingInterval,
     recoveryTimeout,
-    retryBackoffScale: timing.retryBackoffScale->Option.getOr(1.),
+    clock,
     statusStart: Performance.now(),
     status: Idle,
     idleSeconds: 0.,
@@ -517,8 +510,8 @@ let compareByOldestFailure = (a: sourceState, b: sourceState) =>
   }
 
 // Priority: working primaries > working secondaries > all primaries.
-let getNextSources = (sourceManager, ~isRealtime, ~excludedSources=?) => {
-  let now = Date.now()
+let getNextSources = (sourceManager: t, ~isRealtime, ~excludedSources=?) => {
+  let now = sourceManager.clock.now()
   let workingPrimarySources = []
   let allPrimarySources = []
   let workingSecondarySources = []
@@ -589,10 +582,8 @@ let retryBackoffMillis = retry =>
 // 0, these must never busy-loop when there is no other source to move to.
 let minRecoverableBackoffMillis = 50
 
-// The logged backoff stays the unscaled one, so a scaled-down test still reads
-// the schedule an operator would see.
 let sleepBackoff = (sourceManager: t, millis) =>
-  Utils.delay((millis->Int.toFloat *. sourceManager.retryBackoffScale)->Float.toInt)
+  sourceManager.clock->Clock.delay(~label="retry backoff", millis)
 
 // Back off before retrying the same request, failing the source over first when
 // another one can actually take over. Marking `lastFailedAt` only demotes this
@@ -614,7 +605,7 @@ let backoffBeforeRetry = async (
   let switchedToWorkingSource = if (
     retry >= failoverAfterRetries && (retry - failoverAfterRetries)->mod(2) === 0
   ) {
-    let now = Date.now()
+    let now = sourceManager.clock.now()
     sourceState.lastFailedAt = Some(now)
     switch sourceManager->getNextSource(~isRealtime, ~excludedSources?) {
     | Some(next) =>
@@ -851,8 +842,8 @@ let waitForHeightAbove = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedP
     let cleanup = () => {
       watched->Array.forEach(subscription => subscription.unsubscribe())
       watched->Utils.Array.clearInPlace
-      pokeTimeoutId->Utils.clearTimeoutRef
-      stallTimeoutId->Utils.clearTimeoutRef
+      sourceManager.clock->Clock.clearRef(pokeTimeoutId)
+      sourceManager.clock->Clock.clearRef(stallTimeoutId)
     }
 
     let settled = ref(false)
@@ -922,32 +913,44 @@ let waitForHeightAbove = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedP
       // Re-armed because distrusting a stream is a one-shot — the next height it
       // delivers takes it back at its word — and the silence that earned it can
       // come straight back.
-      let rec armPokeTimeout = () => pokeTimeoutId := Some(setTimeout(() => {
-              pokeTimeoutId := None
-              if !settled.contents {
-                watched->Array.forEach(subscription => subscription.distrustStream())
-              }
+      let rec armPokeTimeout = () =>
+        pokeTimeoutId :=
+          Some(
+            sourceManager.clock.setTimeout(
+              ~label="stall poke",
+              () => {
+                pokeTimeoutId := None
+                if !settled.contents {
+                  watched->Array.forEach(subscription => subscription.distrustStream())
+                }
 
-              // Re-checked: distrusting can answer the wait, and a timer armed
-              // after the cleanup that follows is one nothing can ever clear.
-              if !settled.contents {
-                armPokeTimeout()
-              }
-            }, Utils.jitter(stallTimeout)))
+                // Re-checked: distrusting can answer the wait, and a timer armed
+                // after the cleanup that follows is one nothing can ever clear.
+                if !settled.contents {
+                  armPokeTimeout()
+                }
+              },
+              sourceManager.clock->Clock.jitter(stallTimeout),
+            ),
+          )
 
       // Punctual, unlike the poke above: newBlockStallTimeout is a promise to the
       // operator about when they hear about a quiet chain, and spreading that
       // would report it early. Fires once — the warning is worth saying once per
       // wait, and a fallback stays recruited.
-      let armStallTimeout = () => stallTimeoutId := Some(setTimeout(() => {
-              stallTimeoutId := None
-              if !settled.contents {
-                stalled := true
+      let armStallTimeout = () =>
+        stallTimeoutId :=
+          Some(
+            sourceManager.clock.setTimeout(
+              ~label="stall timeout",
+              () => {
+                stallTimeoutId := None
+                if !settled.contents {
+                  stalled := true
 
-                // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
-                let fallbackSources = []
-                sourcesState->Array.forEach(
-                  sourceState => {
+                  // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
+                  let fallbackSources = []
+                  sourcesState->Array.forEach(sourceState => {
                     if (
                       !sourceState.disabled &&
                       !(mainSources->Array.includes(sourceState)) &&
@@ -959,37 +962,41 @@ let waitForHeightAbove = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedP
                     ) {
                       fallbackSources->Array.push(sourceState)
                     }
-                  },
-                )
+                  })
 
-                switch fallbackSources {
-                | [] =>
-                  logger->Logger.warn(
-                    `No new blocks detected within ${(stallTimeout / 1000)
-                        ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
+                  switch fallbackSources {
+                  | [] =>
+                    logger->Logger.warn(
+                      `No new blocks detected within ${(stallTimeout / 1000)
+                          ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
+                    )
+                  | _ =>
+                    logger->Logger.warn(
+                      `No new blocks detected within ${(stallTimeout / 1000)
+                          ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
+                    )
+                  }
+
+                  // Recruited to poll, not to stream: see `watch`.
+                  fallbackSources->Array.forEach(sourceState =>
+                    sourceState->watch(~withStream=false)
                   )
-                | _ =>
-                  logger->Logger.warn(
-                    `No new blocks detected within ${(stallTimeout / 1000)
-                        ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
-                  )
-                }
 
-                // Recruited to poll, not to stream: see `watch`.
-                fallbackSources->Array.forEach(sourceState => sourceState->watch(~withStream=false))
-
-                // A fallback recruited here can still be holding a stream from an
-                // earlier wait that made it a primary, and a live stream is not
-                // polled behind. It has to inherit the verdict the primaries
-                // already earned — this wait has heard nothing for a whole window
-                // — or it would sit silent behind that stream until the next
-                // spread poke. Distrusting a waiter that already does so is a
-                // no-op, so this reaches the new ones only.
-                if !settled.contents {
-                  watched->Array.forEach(subscription => subscription.distrustStream())
+                  // A fallback recruited here can still be holding a stream from an
+                  // earlier wait that made it a primary, and a live stream is not
+                  // polled behind. It has to inherit the verdict the primaries
+                  // already earned — this wait has heard nothing for a whole window
+                  // — or it would sit silent behind that stream until the next
+                  // spread poke. Distrusting a waiter that already does so is a
+                  // no-op, so this reaches the new ones only.
+                  if !settled.contents {
+                    watched->Array.forEach(subscription => subscription.distrustStream())
+                  }
                 }
-              }
-            }, stallTimeout))
+              },
+              stallTimeout,
+            ),
+          )
 
       armPokeTimeout()
       armStallTimeout()

@@ -115,8 +115,8 @@ describe("Scenario rollback and history", () => {
         history->Array.map(
           change =>
             switch change {
-            | Set({entityId, entity}) => (entityId->EntityId.toKey, Some(entity.count))
-            | Delete({entityId}) => (entityId->EntityId.toKey, None)
+            | Set({entityId, entity}) => (entityId->EntityId.unsafeToAny, Some(entity.count))
+            | Delete({entityId}) => (entityId->EntityId.unsafeToAny, None)
             },
         ),
       ).toEqual([("total", Some(1n))])

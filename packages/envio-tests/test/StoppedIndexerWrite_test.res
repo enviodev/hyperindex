@@ -78,7 +78,7 @@ describe("Stopping an indexer while it finalizes the backfill", () => {
       releaseFinalize()
       await stopped
       isStopped := true
-      await Utils.delay(Env.ThrottleWrites.chainMetadataIntervalMillis + 200)
+      await indexer.advanceTime(Env.ThrottleWrites.chainMetadataIntervalMillis + 200)
 
       t.expect((writesAfterStop.contents, errors->Array.length)).toEqual((0, 0))
     },

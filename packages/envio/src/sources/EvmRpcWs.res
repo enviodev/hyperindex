@@ -81,8 +81,8 @@ let wsMessageSchema = S.union([
   }),
 ])
 
-let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
-  HeightStream.subscribe(~staleTimeout, ~onHeight, ~onStatus, ~connect=driver => {
+let subscribe = (~clock, ~wsUrl, ~onHeight, ~onStatus) =>
+  HeightStream.subscribe(~clock, ~staleTimeout, ~onHeight, ~onStatus, ~connect=driver => {
     let ws = WebSocket.create(wsUrl)
     let subscribed = ref(false)
 
@@ -103,7 +103,8 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
         | Some(Response({id: Some(id), isError: false})) if id === subscribeRequestIdText =>
           subscribed := true
           driver.onConnected()
-        | Some(Response({id, isError: true})) if id->refusesSubscribe(~subscribed=subscribed.contents) =>
+        | Some(Response({id, isError: true}))
+          if id->refusesSubscribe(~subscribed=subscribed.contents) =>
           driver.onFailure(~reason=SubscribeRejected, ~detail=text)
         // A provider talking about something other than the subscription this
         // socket asked for — a rate limit, a request nobody here made. Read

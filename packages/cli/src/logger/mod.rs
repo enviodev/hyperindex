@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: wall-clock log timestamps"
+)]
+
 mod fields;
 mod format;
 mod level;
