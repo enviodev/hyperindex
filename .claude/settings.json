@@ -28,7 +28,7 @@
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in *.res|*.resi) cd \"$CLAUDE_PROJECT_DIR\" && pnpx rescript@12.2.0 format \"$f\" || true ;; esac; }",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in *.res|*.resi) cd \"$CLAUDE_PROJECT_DIR\" && pnpx rescript@12.3.1 format \"$f\" || true ;; esac; }",
             "timeout": 60,
             "statusMessage": "Running rescript format..."
           }

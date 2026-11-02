@@ -15,7 +15,7 @@ expression: "template(false, \"latest\", vec![]).render_package_json()"
   "devDependencies": {
     "@types/node": "24.12.2",
     "typescript": "6.0.3",
-    "vitest": "4.1.0"
+    "vitest": "4.1.12"
   },
   "dependencies": {
     "envio": "latest"

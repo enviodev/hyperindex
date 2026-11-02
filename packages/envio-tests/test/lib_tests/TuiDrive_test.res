@@ -21,7 +21,7 @@ describe("Tui.drive", () => {
       ~elapsedSeconds=0.,
       ~targetBufferSize=0,
     )
-    let chain = Supervisor.configuredChains(TestConfig.default)->Array.getUnsafe(0)
+    let chain = Supervisor.resumedChains(TestConfig.default, ~resumed=[])->Array.getUnsafe(0)
     let events = ref(0.)
     let getMetrics = () => {...empty, chains: [{...chain, numEventsProcessed: events.contents}]}
 
