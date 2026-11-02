@@ -145,7 +145,7 @@ describe("E2E blockThrottle tests", () => {
       sync.setAutoHeight(301)
       live.resolveGetHeightOrThrow(305)
       await live.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
-      await Utils.delay(20)
+      await indexer.advanceTime(20)
 
       let logs = indexer.infoAndAboveLogs()
       let readyAt = logs->Array.findIndex(({msg}) => msg == "Ready. Fully indexed for queries.")
