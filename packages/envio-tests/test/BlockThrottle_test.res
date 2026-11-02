@@ -139,7 +139,7 @@ describe("E2E blockThrottle tests", () => {
         {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
       ])
       await indexer.getBatchWritePromise()
-      await live.expectHeightCalls(1)
+      await live.expectNewHeightCalls(1)
 
       // The sync head moves, but stays short of the throttle.
       sync.setAutoHeight(301)
@@ -147,12 +147,10 @@ describe("E2E blockThrottle tests", () => {
       await live.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
       await indexer.advanceTime(20)
 
-      let logs = indexer.infoAndAboveLogs()
-      let readyAt = logs->Array.findIndex(({msg}) => msg == "Ready. Fully indexed for queries.")
       t.expect(
-        logs
-        ->Array.slice(~start=readyAt)
-        ->Array.filter(({msg}) => msg->String.startsWith("No new blocks detected")),
+        indexer.infoAndAboveLogs()->Array.filter(
+          ({msg}) => msg->String.startsWith("No new blocks detected"),
+        ),
       ).toEqual([])
     },
   )
