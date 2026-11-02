@@ -41,6 +41,7 @@ let logsLinkOf = (rejection: option<rejection>) =>
     }
   )
 
+@val external processEnv: dict<string> = "process.env"
 @module("node:fs") external readFileSync: (string, string) => string = "readFileSync"
 
 describe("A failing scenario body", () => {
@@ -159,10 +160,11 @@ Mock source for chain 1 at the failure:
   // it, so a test that forgot to is told which timer it is waiting for, and a
   // poll it never accounted for is named with the steps around it.
   Async.it("on virtual time, says what the clock was holding and what ran", async t => {
+    // Pinned the way anyone replays a run's jitter.
+    processEnv->Dict.set("ENVIO_TEST_SEED", "1")
     let rejection = await rejectionOf(
       scenario->Scenario.run(
         ~sources=[{chain: 1}],
-        ~seed=1,
         async (~indexer as _, ~source) => {
           let mock = source(1)
           mock.resolveGetHeightOrThrow(300)
@@ -171,6 +173,7 @@ Mock source for chain 1 at the failure:
         },
       ),
     )
+    processEnv->Dict.delete("ENVIO_TEST_SEED")
     t.expect(rejection->stripLogsLink).toEqual(
       Some(
         Nullable.make(`Height calls no expectation accounted for on source for chain 1: 1 (calls 2 to 2). Name each poll where the test causes it with \`expectNewHeightCalls(n)\`, so one nobody planned for fails at the step that caused it.
@@ -229,51 +232,6 @@ describe("A scenario on virtual time", () => {
     ).toEqual(
       Some(
         "Clock.real armed \"a stray retry\" on virtual time. Use the clock the code was given, so advanceTime can see and move it.",
-      ),
-    )
-  })
-})
-
-describe("A scenario that counts every height call", () => {
-  let strict = Scenario.make(
-    ~configYaml=`
-name: scenario-failure-report
-contracts:
-  - name: Token
-    events:
-      - event: Transfer()
-chains:
-  - id: 1
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 1
-    contracts:
-      - name: Token
-        address: "0x0000000000000000000000000000000000000001"
-`,
-    ~strictHeightCalls=true,
-  )
-
-  Async.it("fails a test that never named its polls", async t => {
-    let rejection = await rejectionOf(
-      strict->Scenario.run(
-        ~sources=[{chain: 1}],
-        async (~indexer as _, ~source) => {
-          let mock = source(1)
-          mock.resolveGetHeightOrThrow(300)
-          await mock.expectItemsQueries([{reply: LeavePending}])
-        },
-      ),
-    )
-    t.expect(
-      rejection
-      ->stripLogsLink
-      ->Option.flatMap(Nullable.toOption)
-      ->Option.map(message => message->String.split("\n\n")->Array.getUnsafe(0)),
-    ).toEqual(
-      Some(
-        "Height calls no expectation accounted for on source for chain 1: 1 (calls 1 to 1). Name each poll where the test causes it with `expectNewHeightCalls(n)`, so one nobody planned for fails at the step that caused it.",
       ),
     )
   })

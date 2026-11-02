@@ -92,6 +92,13 @@ type contractOps = {add: Address.t => unit}
 type registerChain = {@as("Gravatar") gravatar: contractOps}
 type registerContext = {chain: registerChain}
 
+// The queued and in-flight calls of the one effect a test runs.
+let effectMetrics = async (indexer: IndexerRunner.t) => {
+  let value = async name =>
+    (await indexer.metric(name))->Array.map((m: IndexerRunner.metric) => m.value)
+  (await value("envio_effect_queue"), await value("envio_effect_active_calls"))
+}
+
 let asContext = (context: Internal.handlerContext) =>
   context->(Utils.magic: Internal.handlerContext => handlerContext)
 
@@ -135,9 +142,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t as _, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
-      // The initial height comes from a single getHeightOrThrow call.
-      await sourceMock.expectHeightCalls(1)
-      sourceMock.resolveGetHeightOrThrow(400)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=400)
 
       // Items from start block to reorg threshold.
       await sourceMock.expectItemsQueries([
@@ -780,9 +785,7 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMockPrimary = source(1337)
       let sourceMockFallback = source(1337, ~index=1)
-      // Resolve initial height request from primary source
-      await sourceMockPrimary.expectHeightCalls(1)
-      sourceMockPrimary.resolveGetHeightOrThrow(300)
+      await Scenario.resolveInitialHeight(~source=sourceMockPrimary, ~head=300)
 
       await sourceMockPrimary.expectItemsQueries([
         {
@@ -892,11 +895,6 @@ describe("E2E tests", () => {
           input ++ "-output"
         },
       )
-      let effectMetrics = async () => {
-        let value = async name =>
-          (await indexer.metric(name))->Array.map((m: IndexerRunner.metric) => m.value)
-        (await value("envio_effect_queue"), await value("envio_effect_active_calls"))
-      }
 
       let results = ref([])
       sourceMock.resolveGetHeightOrThrow(300)
@@ -930,17 +928,17 @@ describe("E2E tests", () => {
         },
       ])
       await indexer.advanceTime(0)
-      let inTheFirstWindow = await effectMetrics()
+      let inTheFirstWindow = await indexer->effectMetrics
       releaseCalls.contents()
       await indexer.advanceTime(15)
-      let inTheSecondWindow = await effectMetrics()
+      let inTheSecondWindow = await indexer->effectMetrics
       await indexer.advanceTime(15)
       await indexer.getBatchWritePromise()
 
       t.expect((
         inTheFirstWindow,
         inTheSecondWindow,
-        await effectMetrics(),
+        await indexer->effectMetrics,
         results.contents,
         await indexer.metric("envio_effect_call_total"),
       )).toEqual((
@@ -975,11 +973,6 @@ describe("E2E tests", () => {
           input ++ "-output"
         },
       )
-      let effectMetrics = async () => {
-        let value = async name =>
-          (await indexer.metric(name))->Array.map((m: IndexerRunner.metric) => m.value)
-        (await value("envio_effect_queue"), await value("envio_effect_active_calls"))
-      }
 
       sourceMock.resolveGetHeightOrThrow(300)
       await sourceMock.expectItemsQueries([
@@ -1006,17 +999,17 @@ describe("E2E tests", () => {
         },
       ])
       await indexer.advanceTime(0)
-      let inTheFirstWindow = await effectMetrics()
+      let inTheFirstWindow = await indexer->effectMetrics
       releaseCalls.contents()
       await indexer.advanceTime(15)
-      let inTheSecondWindow = await effectMetrics()
+      let inTheSecondWindow = await indexer->effectMetrics
       await indexer.advanceTime(30)
       await indexer.getBatchWritePromise()
 
       t.expect((
         inTheFirstWindow,
         inTheSecondWindow,
-        await effectMetrics(),
+        await indexer->effectMetrics,
         executionOrder,
         await indexer.metric("envio_effect_call_total"),
       )).toEqual((
@@ -1180,8 +1173,8 @@ describe("E2E tests", () => {
       // During initial height fetch (knownHeight === 0),
       // only the Sync source should be queried, not the Live source.
       // This is important to allow HyperSync's smart block detection to work.
-      await syncSource.expectHeightCalls(1)
-      await liveSource.expectHeightCalls(0)
+      await syncSource.expectNewHeightCalls(1)
+      await liveSource.expectNewHeightCalls(0)
 
       // Resolve the initial height and let the indexer start syncing
       syncSource.resolveGetHeightOrThrow(300)
@@ -1209,8 +1202,8 @@ describe("E2E tests", () => {
       // waiter had already parked on the Sync source, so it polls Sync once more
       // before the realtime transition bumps the epoch and a fresh Live-source
       // waiter supersedes it. Live participates in the first waitForNewBlock.
-      await liveSource.expectHeightCalls(1)
-      await syncSource.expectHeightCalls(2)
+      await liveSource.expectNewHeightCalls(1)
+      await syncSource.expectNewHeightCalls(1)
 
       // Resolve the first waitForNewBlock via the Live (Primary) source
       liveSource.resolveGetHeightOrThrow(301)
@@ -1227,8 +1220,8 @@ describe("E2E tests", () => {
 
       // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays
       // at its post-transition count of 2, the superseded backfill poll).
-      await liveSource.expectHeightCalls(2)
-      await syncSource.expectHeightCalls(2)
+      await liveSource.expectNewHeightCalls(1)
+      await syncSource.expectNewHeightCalls(0)
     },
   )
 
@@ -1640,8 +1633,7 @@ describe("E2E tests", () => {
 
       // Without reorg, chains don't use blockLag so they fetch from startBlock to knownHeight
       // Chain 1337 catches up first
-      await sourceMock1337.expectHeightCalls(1)
-      sourceMock1337.resolveGetHeightOrThrow(300)
+      await Scenario.resolveInitialHeight(~source=sourceMock1337, ~head=300)
 
       await sourceMock1337.expectItemsQueries([
         {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
@@ -1662,8 +1654,7 @@ describe("E2E tests", () => {
       ).toEqual([{value: "0", labels: Dict.make()}])
 
       // Chain 100 catches up
-      await sourceMock100.expectHeightCalls(1)
-      sourceMock100.resolveGetHeightOrThrow(300)
+      await Scenario.resolveInitialHeight(~source=sourceMock100, ~head=300)
 
       await sourceMock100.expectItemsQueries([
         {fromBlock: 1, reply: Respond({items: [], latestFetchedBlockNumber: 300})},

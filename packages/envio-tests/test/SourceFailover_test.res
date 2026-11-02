@@ -167,8 +167,7 @@ describe("Source failover", () => {
     async (~t, ~indexer as _, ~source) => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
-      await fallback.expectHeightCalls(1)
-      fallback.resolveGetHeightOrThrow(100)
+      await Scenario.resolveInitialHeight(~source=fallback, ~head=100)
       await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
       t.expect(fallback.pendingItemsQueries).toEqual([])
     },
@@ -218,7 +217,7 @@ describe("Source failover", () => {
     async (~t, ~indexer as _, ~source) => {
       let sync0 = source(1337)
       let sync1 = source(1337, ~index=1)
-      await sync0.expectHeightCalls(1)
+      await sync0.expectNewHeightCalls(1)
       sync1.resolveGetHeightOrThrow(100)
       await sync1.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
       t.expect(sync0.pendingItemsQueries).toEqual([])
