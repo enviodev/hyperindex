@@ -154,14 +154,14 @@ impl InitTemplates {
         out.push_str("  },\n");
         out.push_str("  \"devDependencies\": {\n");
         if self.is_rescript {
-            out.push_str("    \"rescript\": \"12.2.0\",\n");
-            out.push_str("    \"@rescript/runtime\": \"12.2.0\",\n");
+            out.push_str("    \"rescript\": \"12.3.1\",\n");
+            out.push_str("    \"@rescript/runtime\": \"12.3.1\",\n");
         }
         if self.is_typescript {
             out.push_str("    \"@types/node\": \"24.12.2\",\n");
             out.push_str("    \"typescript\": \"6.0.3\",\n");
         }
-        out.push_str("    \"vitest\": \"4.1.0\"\n");
+        out.push_str("    \"vitest\": \"4.1.12\"\n");
         out.push_str("  },\n");
         out.push_str("  \"dependencies\": {\n");
         out.push_str(&format!("    \"envio\": \"{}\"", self.envio_version));

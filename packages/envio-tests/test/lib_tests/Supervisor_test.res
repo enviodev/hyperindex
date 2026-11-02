@@ -307,8 +307,31 @@ describe("Supervisor.syncCache", () => {
   })
 })
 
-describe("Supervisor.configuredChains", () => {
-  it("Draws the run's chains at their configured blocks, with nothing indexed", t => {
+let resumedRow = (
+  ~id,
+  ~startBlock,
+  ~endBlock=?,
+  ~progressBlockNumber=-1,
+  ~firstEventBlockNumber=?,
+  ~numEventsProcessed=0.,
+  ~sourceBlockNumber=0,
+): Persistence.initialChainState => {
+  id: id->ChainId.fromInt,
+  startBlock,
+  endBlock,
+  maxReorgDepth: 200,
+  progressBlockNumber,
+  progressBlockTime: None,
+  numEventsProcessed,
+  firstEventBlockNumber,
+  timestampCaughtUpToHeadOrEndblock: None,
+  addressRows: AddressRows.emptySeedRows(),
+  sourceBlockNumber,
+}
+
+// https://github.com/enviodev/hyperindex/issues/497
+describe("Supervisor.resumedChains", () => {
+  it("Draws the run's chains where they resume, as their workers will report them", t => {
     let config = TestConfig.fromUserApi(`
 name: test-config
 chains:
@@ -333,20 +356,38 @@ chains:
 `)
 
     t.expect(
-      Supervisor.configuredChains(config)->Array.map(
+      Supervisor.resumedChains(
+        config,
+        ~resumed=[
+          resumedRow(
+            ~id=1,
+            ~startBlock=100,
+            ~endBlock=500,
+            ~progressBlockNumber=300,
+            ~firstEventBlockNumber=150,
+            ~numEventsProcessed=42.,
+            ~sourceBlockNumber=900,
+          ),
+          resumedRow(~id=137, ~startBlock=0),
+        ],
+      )->Array.map(
         chain => (
           chain.chainId->ChainId.toString,
           chain.startBlock,
           chain.endBlock,
           chain.poweredByHyperSync,
+          chain.firstEventBlockNumber,
           chain.progressBlockNumber,
+          chain.latestProcessedBlock,
+          chain.latestFetchedBlockNumber,
           chain.numEventsProcessed,
+          chain.knownHeight,
           chain.isReady,
         ),
       ),
     ).toStrictEqual([
-      ("1", 100, Some(500), true, -1, 0., false),
-      ("137", 0, None, false, -1, 0., false),
+      ("1", 100, Some(500), true, Some(150), 300, Some(300), 300, 42., 900, false),
+      ("137", 0, None, false, None, -1, None, 0, 0., 0, false),
     ])
   })
 })
@@ -369,14 +410,15 @@ describe("Supervisor.displayedSnapshots", () => {
       runtime: None,
       settled: false,
     }
+    let resumedChains = Supervisor.resumedChains(config, ~resumed=[])
     let synced =
-      Supervisor.configuredChains(config)
+      resumedChains
       ->Array.filter(chain => chain.chainId == 1->ChainId.fromInt)
       ->Array.map(chain => {...chain, timestampCaughtUpToHeadOrEndblock: Some(Date.make())})
 
     t.expect(
       [worker(1, ~snapshot=Some({...empty, chains: synced})), worker(137, ~snapshot=None)]
-      ->Supervisor.displayedSnapshots(~config, ~empty)
+      ->Supervisor.displayedSnapshots(~resumedChains, ~empty)
       ->Array.flatMap(snapshot => snapshot.chains)
       ->Array.map(
         chain => (
