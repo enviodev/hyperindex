@@ -200,13 +200,37 @@ type table = {
   fields: array<fieldOrDerived>,
   compositeIndexes: array<array<compositeIndexField>>,
   description: option<string>,
+  // The string an id keys a dict or Set by, picked from the id column's type
+  // so a string id, the common case, is its own key.
+  entityIdToKey: EntityId.t => string,
 }
+
+let stringEntityIdToKey = (Utils.magic: EntityId.t => string)
+// Always a string, never the raw number: a Set tells 7 from "7".
+let numericEntityIdToKey = (String.make: EntityId.t => string)
+// Hex rather than `String`, which decodes a Buffer as UTF-8 and so collides
+// distinct byte sequences.
+let bytesEntityIdToKey =
+  Utils.Bytes.toHex->(Utils.magic: (Uint8Array.t => string) => EntityId.t => string)
+
+let entityIdToKeyFor = (fields: array<fieldOrDerived>) =>
+  switch fields->Array.findMap(field =>
+    switch field {
+    | Field({fieldName, fieldType}) if fieldName === idFieldName => Some(fieldType)
+    | _ => None
+    }
+  ) {
+  | Some(Bytea) => bytesEntityIdToKey
+  | Some(String) | None => stringEntityIdToKey
+  | Some(_) => numericEntityIdToKey
+  }
 
 let mkTable = (tableName, ~compositeIndexes=[], ~fields, ~description=?) => {
   tableName,
   fields,
   compositeIndexes,
   description,
+  entityIdToKey: entityIdToKeyFor(fields),
 }
 
 let getFields = table =>
@@ -274,15 +298,6 @@ let getIdFieldOrThrow = (table): field =>
 // ids regardless of the underlying scalar.
 let getIdSchema = (table): S.t<EntityId.t> =>
   (table->getIdFieldOrThrow).fieldSchema->(Utils.magic: S.t<unknown> => S.t<EntityId.t>)
-
-// Serializes an array of ids to the JSON form the SQL layer binds. The array
-// schema is memoized per table so its serializer compiles once, not on every
-// (high-frequency) delete/history write.
-let idsArraySchema: table => S.t<array<EntityId.t>> = Utils.WeakMap.memoize(table =>
-  S.array(table->getIdSchema)
-)
-let encodeIdsToJson = (table, ids: array<EntityId.t>): JSON.t =>
-  ids->S.reverseConvertToJsonOrThrow(table->idsArraySchema)
 
 // TODO: Test whether it should be passed via args and match the column type
 

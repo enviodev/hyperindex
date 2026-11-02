@@ -454,7 +454,7 @@ describe("Write/read tests", () => {
     let makeEntity = (id): Internal.entity =>
       {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-    let table = InMemoryTable.Entity.make()
+    let table = InMemoryTable.Entity.make(~entityIdToKey=Table.stringEntityIdToKey)
     let add = (id, checkpointId) =>
       table->InMemoryTable.Entity.set(
         ~committedCheckpointId=Internal.initialCheckpointId,
@@ -479,7 +479,7 @@ describe("Write/read tests", () => {
     let makeEntity = (id): Internal.entity =>
       {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-    let table = InMemoryTable.Entity.make()
+    let table = InMemoryTable.Entity.make(~entityIdToKey=Table.stringEntityIdToKey)
     let add = (id, checkpointId) =>
       table->InMemoryTable.Entity.set(
         ~committedCheckpointId=Internal.initialCheckpointId,

@@ -6,7 +6,10 @@ type t = dict<InMemoryTable.Entity.t>
 let make = (entities: array<Internal.entityConfig>): t => {
   let init = Dict.make()
   entities->Array.forEach(entityConfig => {
-    init->Dict.set((entityConfig.name :> string), InMemoryTable.Entity.make())
+    init->Dict.set(
+      (entityConfig.name :> string),
+      InMemoryTable.Entity.make(~entityIdToKey=entityConfig.table.entityIdToKey),
+    )
   })
   init
 }
