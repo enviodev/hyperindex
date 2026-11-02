@@ -91,7 +91,8 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
 
 /// An entity's `id` rescript type and whether it is the default `string`.
 /// Foreign keys and id-keyed operations adopt this type; `ID!`/`String!` keep
-/// `string`, `Int!` is `int`, `BigInt!` is `bigint`.
+/// `string`, `Int!` is `int`, `BigInt!` is `bigint`, `Bytes!` follows
+/// `bytes_type`.
 fn entity_id_type(entity: &EntityRecordTypeTemplate) -> (bool, String) {
     entity
         .params
@@ -3397,6 +3398,49 @@ type Vault {
             "handlerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
             "testIndexerEntityOperations<Entities.Vault.testIndexerRow, \
              Entities.Vault.testIndexerGetWhereFilter>",
+        ];
+        for expected in expectations {
+            assert!(
+                indexer_code.contains(expected),
+                "generated indexer code missing:\n{expected}\n\n--- got ---\n{indexer_code}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexer_code_exposes_uint8array_bytes_entity_id_type() {
+        let yaml = r#"
+name: bytes-id
+bytes_type: uint8array
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+"#;
+        let schema = r#"
+type Token {
+  id: Bytes!
+}
+type Holder {
+  id: ID!
+  token: Token!
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("bytes-id config should parse");
+        let indexer_code = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .indexer_code
+            .expect("rescript indexer code");
+
+        let expectations = [
+            "module Token = {\n    type id = Uint8Array.t\n    type t = {id: Uint8Array.t}",
+            "module Holder = {\n    type id = string\n    type t = {id: id, token_id: Uint8Array.t}",
+            "handlerEntityOperationsWithCustomId<Entities.Token.t, Entities.Token.id, \
+             Entities.Token.getWhereFilter>",
         ];
         for expected in expectations {
             assert!(

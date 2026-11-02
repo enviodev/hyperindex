@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: health checks against local services"
+)]
+
 use tokio::time::{timeout, Duration};
 
 // NOTE: This assumes the hasura graphql availability means the postgres database is also available

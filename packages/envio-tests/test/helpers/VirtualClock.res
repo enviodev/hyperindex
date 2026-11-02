@@ -42,8 +42,8 @@ let seedFromEnv = () =>
     }
   }
 
-let make = (~seed=seedFromEnv()) => {
-  native: Core.getAddon().virtualClock->Native.make(seed),
+let make = () => {
+  native: Core.getAddon().virtualClock->Native.make(seedFromEnv()),
   callbacks: Map.make(),
   turns: Map.make(),
   nextTurn: 0,

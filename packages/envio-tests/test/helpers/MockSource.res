@@ -291,18 +291,20 @@ type t = {
   // settled does nothing. An index for a call the source never took throws.
   resolveGetHeightOrThrowAt: (~index: int, int) => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
-  // Waits until the source has taken `count` height calls in all, then fails
-  // if it has taken more. Answering them is still up to the resolvers above.
-  expectHeightCalls: (int, ~within: float=?) => promise<unit>,
   // Waits for exactly `count` height calls past the ones the last expectation
   // accounted for, so a test names the polls a step causes without counting
   // from the first. On virtual time, once a test accounts for this source's
   // height calls this way, one no expectation accounts for fails the scenario.
-  expectNewHeightCalls: int => promise<unit>,
+  // Answering them is still up to the resolvers above.
+  expectNewHeightCalls: (int, ~within: float=?) => promise<unit>,
   // Waits for at least `count` new height calls and accounts for all of them.
   // For a step whose number of polls rides on the clock's jitter, such as a
   // polling cadence started by a stall poke anywhere in its window.
   expectNewHeightCallsAtLeast: int => promise<unit>,
+  // Helpers only: waits for the next height call without accounting for the
+  // test's height calls, for a step such as answering the first height. The
+  // lint refuses it in test files, where `expectNewHeightCalls` names them.
+  waitForHeightCall: unit => promise<unit>,
   // Answer every height call with `height` from now on, one answer covering any
   // number of polls. A restarted indexer learns the head on its own this way,
   // before the test body gets a chance to resolve anything.
@@ -348,8 +350,8 @@ type t = {
   // What the source has been asked and not answered, for a failure report.
   describeState: unit => string,
   // Throws if a height answer given before its call arrived is still waiting
-  // for one, naming the call sites — or, with `~strictHeightCalls` and a test
-  // that accounts for height calls with `expectNewHeightCalls`, if the source
+  // for one, naming the call sites — or, on virtual time and in a test that
+  // accounts for height calls with `expectNewHeightCalls`, if the source
   // took one no expectation accounted for. Run at the end of a passing
   // scenario.
   validateAnswersClaimed: unit => unit,
@@ -417,10 +419,10 @@ module Ledger = {
   @send external resolveHeightAt: (t, int) => bool = "resolveHeightAt"
   @send external setAutoHeight: (t, int) => array<int> = "setAutoHeight"
   @send external rejectHeights: t => array<int> = "rejectHeights"
-  @send external checkHeightCalls: (t, int) => heightCallsCheck = "checkHeightCalls"
-  @send external heightCallsTimeoutMessage: (t, int) => string = "heightCallsTimeoutMessage"
-  @send external claimedHeightCalls: t => int = "claimedHeightCalls"
-  @send external checkHeightCallsAtLeast: (t, int) => bool = "checkHeightCallsAtLeast"
+  @send external checkNewHeightCalls: (t, int) => heightCallsCheck = "checkNewHeightCalls"
+  @send
+  external newHeightCallsTimeoutMessage: (t, int, bool) => string = "newHeightCallsTimeoutMessage"
+  @send external checkNewHeightCallsAtLeast: (t, int) => bool = "checkNewHeightCallsAtLeast"
   @send
   external unclaimedHeightCallsMessage: t => Nullable.t<string> = "unclaimedHeightCallsMessage"
   @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
@@ -491,7 +493,7 @@ let make = (
   ~label=?,
   // Hears what the source is asked and told, for the virtual clock's timeline.
   ~note: string => unit=_ => (),
-  ~strictHeightCalls=false,
+  ~virtualTime=false,
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -888,11 +890,11 @@ let make = (
   // arrive is about something else.
   let countsHeightCalls = ref(false)
 
-  let expectHeightCalls = async (count, ~within=2000.) => {
+  let awaitNewHeightCalls = async (count, ~within=2000.) => {
     let deadline = Date.now() +. within
     let rec awaitCount = async () => {
       await awaitSettled(~deadline)
-      let {done, error} = ledger->Ledger.checkHeightCalls(count)
+      let {done, error} = ledger->Ledger.checkNewHeightCalls(count)
       switch error->Nullable.toOption {
       | Some(message) => JsError.throwWithMessage(message)
       | None =>
@@ -900,7 +902,7 @@ let make = (
           if await nextArrival(~deadline) {
             await awaitCount()
           } else {
-            JsError.throwWithMessage(ledger->Ledger.heightCallsTimeoutMessage(count))
+            JsError.throwWithMessage(ledger->Ledger.newHeightCallsTimeoutMessage(count, false))
           }
         }
       }
@@ -910,15 +912,14 @@ let make = (
 
   let expectNewHeightCallsAtLeast = async count => {
     countsHeightCalls := true
-    let target = ledger->Ledger.claimedHeightCalls + count
     let deadline = Date.now() +. 2000.
     let rec awaitCount = async () => {
       await awaitSettled(~deadline)
-      if !(ledger->Ledger.checkHeightCallsAtLeast(target)) {
+      if !(ledger->Ledger.checkNewHeightCallsAtLeast(count)) {
         if await nextArrival(~deadline) {
           await awaitCount()
         } else {
-          JsError.throwWithMessage(ledger->Ledger.heightCallsTimeoutMessage(target))
+          JsError.throwWithMessage(ledger->Ledger.newHeightCallsTimeoutMessage(count, true))
         }
       }
     }
@@ -943,11 +944,11 @@ let make = (
     },
     rejectGetHeightOrThrow: exn =>
       ledger->Ledger.rejectHeights->settleHeightCalls(caller => caller["reject"](exn->Obj.magic)),
-    expectHeightCalls,
-    expectNewHeightCalls: count => {
+    expectNewHeightCalls: (count, ~within=?) => {
       countsHeightCalls := true
-      expectHeightCalls(ledger->Ledger.claimedHeightCalls + count)
+      awaitNewHeightCalls(count, ~within?)
     },
+    waitForHeightCall: () => awaitNewHeightCalls(1),
     expectNewHeightCallsAtLeast,
     reorgCallCount: () => ledger->Ledger.reorgCallCount,
     pendingItemsQueries,
@@ -1036,7 +1037,7 @@ let make = (
       | Some(message) => JsError.throwWithMessage(message)
       | None => ()
       }
-      if strictHeightCalls && countsHeightCalls.contents {
+      if virtualTime && countsHeightCalls.contents {
         switch ledger->Ledger.unclaimedHeightCallsMessage->Nullable.toOption {
         | Some(message) => JsError.throwWithMessage(message)
         | None => ()

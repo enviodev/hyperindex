@@ -1,3 +1,6 @@
+// Tests may sleep and time out on the real clock; the code they test may not.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 mod address_store;
 mod block_hash_pagination;
 mod block_selection;

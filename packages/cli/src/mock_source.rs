@@ -396,19 +396,27 @@ impl Ledger {
         indices
     }
 
-    fn check_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
+    /// Calls taken since the last expectation that accounted for some.
+    fn new_height_calls(&self) -> u32 {
         let taken = self.height_calls.len() as u32;
-        if taken > count {
+        taken - self.claimed_height_calls.min(taken)
+    }
+
+    /// Met once exactly `count` calls have arrived since the last expectation,
+    /// which it then accounts for.
+    fn check_new_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
+        let taken = self.height_calls.len() as u32;
+        let new = self.new_height_calls();
+        if new > count {
             MockHeightCallsCheck {
                 done: true,
                 error: Some(format!(
-                    "expectHeightCalls expected {count} height calls, but {} has taken {taken} ({} since the last expectation accounted for {})",
+                    "expectNewHeightCalls expected {count} new height calls, but {} has taken {new} since the last expectation ({taken} in all)",
                     self.source_name(),
-                    taken - self.claimed_height_calls.min(taken),
-                    self.claimed_height_calls
                 )),
             }
         } else {
+            let count = self.claimed_height_calls + count;
             let done = taken == count;
             if done {
                 self.claimed_height_calls = self.claimed_height_calls.max(count);
@@ -419,9 +427,9 @@ impl Ledger {
 
     /// For a step whose number of polls rides on the clock's jitter: met once
     /// `count` calls are in, and then accounts for every call so far.
-    fn check_height_calls_at_least(&mut self, count: u32) -> bool {
+    fn check_new_height_calls_at_least(&mut self, count: u32) -> bool {
         let taken = self.height_calls.len() as u32;
-        let done = taken >= count;
+        let done = self.new_height_calls() >= count;
         if done {
             self.claimed_height_calls = self.claimed_height_calls.max(taken);
         }
@@ -437,13 +445,13 @@ impl Ledger {
         }
     }
 
-    fn height_calls_timeout_message(&self, count: u32) -> String {
-        let taken = self.height_calls.len() as u32;
+    fn new_height_calls_timeout_message(&self, count: u32, at_least: bool) -> String {
         format!(
-            "expectHeightCalls timed out waiting for {count} height calls; {} has taken {taken} ({} since the last expectation accounted for {})",
+            "expectNewHeightCalls{} timed out waiting for {count} new height calls; {} has taken {} since the last expectation ({} in all)",
+            if at_least { "AtLeast" } else { "" },
             self.source_name(),
-            taken - self.claimed_height_calls.min(taken),
-            self.claimed_height_calls
+            self.new_height_calls(),
+            self.height_calls.len(),
         )
     }
 
@@ -924,23 +932,19 @@ impl MockSource {
     }
 
     #[napi]
-    pub fn check_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
-        self.ledger.check_height_calls(count)
+    pub fn check_new_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
+        self.ledger.check_new_height_calls(count)
     }
 
     #[napi]
-    pub fn height_calls_timeout_message(&self, count: u32) -> String {
-        self.ledger.height_calls_timeout_message(count)
+    pub fn new_height_calls_timeout_message(&self, count: u32, at_least: bool) -> String {
+        self.ledger
+            .new_height_calls_timeout_message(count, at_least)
     }
 
     #[napi]
-    pub fn check_height_calls_at_least(&mut self, count: u32) -> bool {
-        self.ledger.check_height_calls_at_least(count)
-    }
-
-    #[napi]
-    pub fn claimed_height_calls(&self) -> u32 {
-        self.ledger.claimed_height_calls
+    pub fn check_new_height_calls_at_least(&mut self, count: u32) -> bool {
+        self.ledger.check_new_height_calls_at_least(count)
     }
 
     #[napi]
@@ -1147,7 +1151,7 @@ mod tests {
         let mut ledger = ledger();
         ledger.take_height_call();
         ledger.take_height_call();
-        let met = ledger.check_height_calls(2).done;
+        let met = ledger.check_new_height_calls(2).done;
         ledger.take_height_call();
         ledger.take_height_call();
         assert_eq!(
@@ -1168,10 +1172,10 @@ mod tests {
     fn accounts_for_every_call_once_at_least_the_count_is_in() {
         let mut ledger = ledger();
         ledger.take_height_call();
-        let short = ledger.check_height_calls_at_least(2);
+        let short = ledger.check_new_height_calls_at_least(2);
         ledger.take_height_call();
         ledger.take_height_call();
-        let met = ledger.check_height_calls_at_least(2);
+        let met = ledger.check_new_height_calls_at_least(2);
         assert_eq!(
             (
                 short,

@@ -203,9 +203,6 @@ let run = async (
   // `Scenario.make` turned it off; the lint wants a reason beside every
   // `~virtualTime=false`.
   ~virtualTime=?,
-  // The virtual clock's seed. `ENVIO_TEST_SEED`, or a fresh one per run, when
-  // left out.
-  ~seed=?,
   // How long startup keeps asking for a `latest` start block. `Once` is what
   // `envio local db-migrate` runs with.
   ~startBlockRetry=?,
@@ -223,7 +220,7 @@ let run = async (
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let virtualTime = virtualTime->Option.getOr(scenario.virtualTime)
-  let clock = virtualTime ? Some(VirtualClock.make(~seed?)) : None
+  let clock = virtualTime ? Some(VirtualClock.make()) : None
   let mocks = sources->Array.mapWithIndex((
     {chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard, ?autoHeight, ?startupHeights},
     position,
@@ -252,7 +249,7 @@ let run = async (
         ~startupHeights?,
         ~label=?sharesChain ? Some(name) : None,
         ~note=?clock->Option.map(clock => event => clock->VirtualClock.note(`${name}: ${event}`)),
-        ~strictHeightCalls=virtualTime,
+        ~virtualTime,
       ),
     )
   })
@@ -449,7 +446,7 @@ let failThroughBackoff = async (
 }
 
 let resolveInitialHeight = async (~source: MockSource.t, ~head) => {
-  await source.expectHeightCalls(1)
+  await source.waitForHeightCall()
   source.resolveGetHeightOrThrow(head)
 }
 

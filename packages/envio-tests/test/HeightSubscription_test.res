@@ -587,6 +587,30 @@ describe("Height subscription", () => {
   )
 
   scenario->Scenario.it(
+    "Keeps covering a stream that a known height took back at its word",
+    ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
+    ~sourceTiming={newBlockStallTimeoutRealtime: 100},
+    async (~t as _, ~indexer, ~source) => {
+      let mock = source(1337)
+      await reachRealtime(~sync=mock)
+      await mock->goLive(~indexer)
+      mock.setAutoHeight(101)
+      await indexer.advanceTime(100)
+      await mock.expectNewHeightCalls(1)
+
+      // Any push takes the stream back at its word, even one of a height the
+      // chain already had, and then it goes quiet again. Only a poke armed
+      // again after the first is left to notice.
+      mock.triggerHeightSubscription(101)
+      await indexer.advanceTime(100)
+      await mock.expectNewHeightCallsAtLeast(1)
+
+      mock.triggerHeightSubscription(102)
+      await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+    },
+  )
+
+  scenario->Scenario.it(
     "Recruits a stalled wait's fallback to poll, without opening its stream",
     ~sources=[
       {chain: 1337, pollingInterval: 10_000},
