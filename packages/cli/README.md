@@ -106,7 +106,7 @@ From there, three files define your indexer:
 
 - `config.yaml`: networks, contracts, events, and indexing behaviour
 - `schema.graphql`: the shape of your indexed data
-- `src/handlers`: your handler logic in TypeScript or ReScript
+- `src/handlers`: your handler logic in TypeScript, JavaScript, or ReScript
 
 [Full getting started guide →](https://docs.envio.dev/docs/HyperIndex/getting-started)
 
