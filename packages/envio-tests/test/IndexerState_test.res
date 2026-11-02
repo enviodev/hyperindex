@@ -85,10 +85,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
-          selection: {
-            dependsOnAddresses: false,
-            onEventRegistrations,
-          },
+          selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations),
           addresses: TestAddresses.setOf([]),
         }
 
@@ -262,7 +259,10 @@ describe("IndexerState", () => {
                 fromBlock: 0,
                 toBlock: None,
                 isChunk: false,
-                selection: {dependsOnAddresses: false, onEventRegistrations},
+                selection: FetchState.makeSelection(
+                  ~dependsOnAddresses=false,
+                  ~onEventRegistrations,
+                ),
                 addresses: TestAddresses.setOf([]),
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
@@ -340,7 +340,7 @@ describe("IndexerState", () => {
           fromBlock: 0,
           toBlock: None,
           isChunk: false,
-          selection: {dependsOnAddresses: false, onEventRegistrations},
+          selection: FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations),
           addresses: TestAddresses.setOf([]),
         }
         cs->ChainState.startFetchingQueries(~queries=[concurrentQuery])

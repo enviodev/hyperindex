@@ -250,32 +250,33 @@ module Registration = {
   }
 }
 
-module EventItems = {
+module Items = {
   // The whole per-query input beside the partition's address set: block range
-  // and the registration selection (by id). Log selections, field selection,
-  // and the routing index are derived on the Rust side.
+  // and what it selects from each table. Log selections, field selection, and
+  // the routing index are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
-    // Absent means no server-side cap on the number of logs returned.
-    maxNumLogs?: int,
-    registrationIndexes: array<int>,
+    // Soft cap on the page's items: the logs it selects, or for a query
+    // selecting blocks alone, its block handlers' runs. Absent sends no cap.
+    itemsTarget?: int,
+    onEventRegistrationIndexes: array<int>,
+    onBlockRegistrationIndexes: array<int>,
     // Contract names to fetch address-free even though their registrations
     // depend on addresses (client-side filtering). None/empty means
     // every address-dependent contract is filtered server-side.
     clientFilteredContracts: option<array<string>>,
-    // Return a header for every block in the range, not only the ones a log
-    // landed on. Absent means only the blocks logs came from.
-    includeAllBlocks?: bool,
+    // Blocks at or above this one can still be reorged, so a page reaching
+    // them reads every block of its range. Absent when the range is final.
+    reorgableFrom?: int,
   }
-
-  type item = EvmEventItem.t
 
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    items: array<item>,
+    eventItems: array<EvmEventItem.t>,
+    blockItems: array<BlockItem.t>,
     // Blocks the server returned for the query, counted before routing drops
     // the ones no item joins to.
     responseBlocks: int,
@@ -288,10 +289,10 @@ type t = {
   getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
-  getEventItems: (
-    ~query: EventItems.query,
+  getItems: (
+    ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
+  ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 
@@ -301,11 +302,9 @@ external classNew: (
   cfg,
   string,
   array<Registration.input>,
+  array<BlockItem.registrationInput>,
   AddressStore.t,
 ) => t = "new"
-
-let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
-  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations, addressStore)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -324,6 +323,7 @@ let make = (
   ~apiToken,
   ~httpReqTimeoutMillis,
   ~eventRegistrations,
+  ~onBlockRegistrations=[],
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -334,7 +334,7 @@ let make = (
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
-  makeWithAgent(
+  Core.getAddon().evmHyperSyncClient->classNew(
     {
       url,
       enableChecksumAddresses,
@@ -347,8 +347,9 @@ let make = (
       ?retryCeilingMs,
       logLevel: logLevelToString(logLevel),
     },
-    ~userAgent=`hyperindex/${envioVersion}`,
-    ~eventRegistrations,
-    ~addressStore,
+    `hyperindex/${envioVersion}`,
+    eventRegistrations,
+    onBlockRegistrations->BlockItem.toRegistrationInputs,
+    addressStore,
   )
 }

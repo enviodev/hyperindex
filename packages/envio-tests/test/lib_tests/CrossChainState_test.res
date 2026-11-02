@@ -41,6 +41,7 @@ let makeChainState = (
         startBlock: None,
         endBlock: None,
         interval: 1,
+        blockFieldMask: None,
         handler: "mock onBlock handler"->(
           Utils.magic: string => Internal.onBlockArgs => promise<unit>
         ),
@@ -95,7 +96,10 @@ let makeFetchingChainState = (
   ~firstEventBlock=Some(0),
   ~blockLag=0,
 ) => {
-  let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+  let normalSelection = FetchState.makeSelection(
+    ~dependsOnAddresses=false,
+    ~onEventRegistrations=[],
+  )
   let address = "0x1234567890123456789012345678901234567890"->Address.unsafeFromString
   let partition: FetchState.partition = {
     id: "0",
@@ -503,7 +507,10 @@ describe("CrossChainState fetch control", () => {
   // 3000-item pool the waterfall would otherwise hand it. Returns each
   // chain's dispatched itemsEst total and pendingBudget.
   let runShortRangeWaterfall = async (~isRealtime) => {
-    let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
+    let normalSelection = FetchState.makeSelection(
+      ~dependsOnAddresses=false,
+      ~onEventRegistrations=[],
+    )
     let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
     let partition1: FetchState.partition = {
       id: "0",

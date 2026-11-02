@@ -168,6 +168,7 @@ let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let isInReorgThreshold: t => bool
+let reorgableFrom: (t, ~isRealtime: bool) => option<int>
 let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit

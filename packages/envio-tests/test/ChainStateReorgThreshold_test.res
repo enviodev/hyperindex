@@ -21,6 +21,7 @@ describe("ChainState reorg threshold", () => {
           startBlock: None,
           endBlock: None,
           interval: 1,
+          blockFieldMask: None,
           handler: "mock onBlock handler"->(
             Utils.magic: string => Internal.onBlockArgs => promise<unit>
           ),

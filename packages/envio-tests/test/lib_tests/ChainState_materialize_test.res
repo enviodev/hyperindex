@@ -21,7 +21,10 @@ let makeItem = (
   }
   switch inlineTransaction {
   | Some(tx) =>
-    payload->Dict.set("transaction", tx->(Utils.magic: Internal.eventTransaction => Internal.eventBlock))
+    payload->Dict.set(
+      "transaction",
+      tx->(Utils.magic: Internal.eventTransaction => Internal.eventBlock),
+    )
   | None => ()
   }
   {
@@ -29,13 +32,12 @@ let makeItem = (
     "blockNumber": blockNumber,
     "transactionIndex": transactionIndex,
     "chain": materializeChainId,
-    "onEventRegistration":
-      {
-        "fieldSelection": {
-          "transactionMask": transactionMask,
-          "blockMask": blockMask,
-        },
-      }->(Utils.magic: {..} => Internal.onEventRegistration),
+    "onEventRegistration": {
+      "fieldSelection": {
+        "transactionMask": transactionMask,
+        "blockMask": blockMask,
+      },
+    }->(Utils.magic: {..} => Internal.onEventRegistration),
     "payload": payload,
   }->(Utils.magic: {..} => Internal.item)
 }

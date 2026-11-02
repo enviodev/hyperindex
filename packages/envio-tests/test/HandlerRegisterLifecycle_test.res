@@ -55,6 +55,7 @@ describe("HandlerRegister — onBlock validation at registration", () => {
         HandlerRegister.registerOnBlock(
           ~name="badWhere",
           ~where=%raw(`{block: {number: {_gte: 10}}}`),
+          ~fields=%raw(`undefined`),
           ~handler=noopBlockHandler,
           ~getChainsObject,
         ),
@@ -68,6 +69,7 @@ describe("HandlerRegister — onBlock validation at registration", () => {
         HandlerRegister.registerOnBlock(
           ~name="typoFilter",
           ~where=%raw(`() => ({block: {number: {_gt: 10}}})`),
+          ~fields=%raw(`undefined`),
           ~handler=noopBlockHandler,
           ~getChainsObject,
         ),
@@ -81,6 +83,7 @@ describe("HandlerRegister — onBlock validation at registration", () => {
         HandlerRegister.registerOnBlock(
           ~name="tooEarly",
           ~where=%raw(`({chain}) => chain.id === 137 ? {block: {number: {_gte: 0}}} : false`),
+          ~fields=%raw(`undefined`),
           ~handler=noopBlockHandler,
           ~getChainsObject,
         ),

@@ -113,13 +113,13 @@ let fetch = (
   ~addressSet,
   ~fromBlock=10,
   ~toBlock=Some(11),
-  ~includeAllBlocks=false,
+  ~reorgableFrom=None,
 ) =>
   source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock,
     ~addressSet,
-    ~includeAllBlocks,
+    ~reorgableFrom,
     ~knownHeight=100,
     ~partitionId="mock-partition",
     ~selection={
@@ -127,6 +127,7 @@ let fetch = (
       onEventRegistrations: onEventRegistrations()->(
         Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
       ),
+      onBlockRegistrations: [],
     },
     ~itemsTarget=Some(5_000),
     ~retry=0,
@@ -251,16 +252,17 @@ describe("HyperSync source contract", () => {
     ])
   })
 
-  // At the head the progress block is often a block no event landed on, and its
-  // timestamp is what says how far behind chain time the indexer is. Asking for
-  // every block in the range is what puts that header in the response.
-  Async.it("asks for every block in the range once the chain is at the head", async t => {
+  // Where blocks can still be reorged, every hash of the range feeds reorg
+  // detection, and at the head the progress block is often one no event landed
+  // on, whose timestamp says how far behind chain time the indexer is. Asking
+  // for every block in the range puts both in the response.
+  Async.it("asks for every block in a range reaching reorgable blocks", async t => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
         let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let _ = await source->fetch(~addressSet, ~includeAllBlocks=true)
+        let _ = await source->fetch(~addressSet, ~reorgableFrom=Some(10))
         server->MockHyperSyncServer.takeQueries
       },
     )
@@ -384,7 +386,7 @@ describe("HyperSync source contract", () => {
           ]),
         })
         let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
-        let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~includeAllBlocks=true)
+        let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~reorgableFrom=Some(10))
         [10, 12]->Array.map(
           blockNumber =>
             page.blockStore

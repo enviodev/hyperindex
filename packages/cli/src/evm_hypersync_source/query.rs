@@ -3,6 +3,8 @@ use hypersync_client::{format::Hex, net_types};
 use napi::bindgen_prelude::Either;
 use napi_derive::napi;
 
+use crate::block_store::EvmBlockField;
+
 /// Filter for selecting logs based on address and topics
 #[napi(object)]
 #[derive(Default, Clone, Debug)]
@@ -118,6 +120,68 @@ pub enum BlockField {
     SendCount,
     SendRoot,
     MixHash,
+}
+
+impl BlockField {
+    /// The store column this field lands in. `None` for a field the store holds
+    /// no column for, which no user selection can reach — `Evm.res` offers
+    /// exactly the store's fields — so it can only mean a query built with a
+    /// field the store cannot serve.
+    pub(crate) fn store_column(self) -> Option<EvmBlockField> {
+        use BlockField as Q;
+        Some(match self {
+            Q::Number => EvmBlockField::Number,
+            Q::Hash => EvmBlockField::Hash,
+            Q::ParentHash => EvmBlockField::ParentHash,
+            Q::Nonce => EvmBlockField::Nonce,
+            Q::Sha3Uncles => EvmBlockField::Sha3Uncles,
+            Q::LogsBloom => EvmBlockField::LogsBloom,
+            Q::TransactionsRoot => EvmBlockField::TransactionsRoot,
+            Q::StateRoot => EvmBlockField::StateRoot,
+            Q::ReceiptsRoot => EvmBlockField::ReceiptsRoot,
+            Q::Miner => EvmBlockField::Miner,
+            Q::Difficulty => EvmBlockField::Difficulty,
+            Q::TotalDifficulty => EvmBlockField::TotalDifficulty,
+            Q::ExtraData => EvmBlockField::ExtraData,
+            Q::Size => EvmBlockField::Size,
+            Q::GasLimit => EvmBlockField::GasLimit,
+            Q::GasUsed => EvmBlockField::GasUsed,
+            Q::Timestamp => EvmBlockField::Timestamp,
+            Q::Uncles => EvmBlockField::Uncles,
+            Q::BaseFeePerGas => EvmBlockField::BaseFeePerGas,
+            Q::BlobGasUsed => EvmBlockField::BlobGasUsed,
+            Q::ExcessBlobGas => EvmBlockField::ExcessBlobGas,
+            Q::ParentBeaconBlockRoot => EvmBlockField::ParentBeaconBlockRoot,
+            Q::WithdrawalsRoot => EvmBlockField::WithdrawalsRoot,
+            Q::L1BlockNumber => EvmBlockField::L1BlockNumber,
+            Q::SendCount => EvmBlockField::SendCount,
+            Q::SendRoot => EvmBlockField::SendRoot,
+            Q::MixHash => EvmBlockField::MixHash,
+            Q::Withdrawals => return None,
+        })
+    }
+
+    /// Selection mask over store field ordinals.
+    pub(crate) fn store_mask(fields: &[BlockField]) -> u64 {
+        fields
+            .iter()
+            .filter_map(|f| f.store_column())
+            .fold(0, |acc, f| acc | 1u64 << (f as u32))
+    }
+
+    /// The fields a store selection mask stands for — the inverse of
+    /// `store_mask`, for turning an accumulated need back into a fetch.
+    pub(crate) fn in_store_mask(mask: u64) -> Vec<BlockField> {
+        use strum::VariantArray;
+        BlockField::VARIANTS
+            .iter()
+            .copied()
+            .filter(|f| {
+                f.store_column()
+                    .is_some_and(|c| mask & (1u64 << (c as u32)) != 0)
+            })
+            .collect()
+    }
 }
 
 /// Available fields for transaction data

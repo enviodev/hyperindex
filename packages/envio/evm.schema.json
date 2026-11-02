@@ -460,6 +460,15 @@
           "format": "uint32",
           "minimum": 0
         },
+        "block_throttle": {
+          "description": "The minimum number of new blocks the chain head must advance by before the indexer fetches again once it has caught up. Useful on chains with very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 all fetch on every new block.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "start_block": {
           "description": "The block at which the indexer should start ingesting data, or \"latest\" to start from the chain's current head block when the indexer is first deployed. Once resolved, the concrete block is persisted and reused every time the indexer resumes normally (for example recovering from a crash), so downtime is backfilled instead of skipped. Running `envio start`/`dev` with -r (--restart) resets this like any other config change: \"latest\" resolves again, against the head at that time.",
           "$ref": "#/$defs/StartBlock"

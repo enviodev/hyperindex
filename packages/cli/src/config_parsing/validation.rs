@@ -486,6 +486,7 @@ mod tests {
             hypersync_config: None,
             max_reorg_depth: None,
             block_lag: None,
+            block_throttle: None,
             start_block,
             end_block,
             contracts: None,

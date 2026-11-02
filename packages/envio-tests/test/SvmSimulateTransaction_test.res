@@ -127,6 +127,23 @@ describe("SVM simulate transaction fields", () => {
       version: "legacy",
     });
   });
+
+  it("rejects a block whose slot isn't the item's", async (t) => {
+    const indexer = createTestIndexer();
+    await t
+      .expect(
+        indexer.process({
+          chains: {
+            7565164: {
+              simulate: [{ program: "Swapper", instruction: "swap", slot: 142, block: { slot: 143 } }],
+            },
+          },
+        }),
+      )
+      .rejects.toThrowError(
+        "simulate: item at index 0 on chain 7565164 is at slot 142 but its block is slot 143. Give the slot once.",
+      );
+  });
 });
 `,
 )
