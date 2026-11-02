@@ -108,6 +108,12 @@ type t = {
   // in-process test runner injects a callback that resolves its run promise
   // instead, so a caught-up run doesn't kill the test process.
   onExit: option<unit => unit>,
+  // Told, in the processing pass that gets it there, that a run holding its
+  // realtime transitions has gone as far as it can on its own. The test
+  // runner's stand-in supervisor releases from it, so the release lands at a
+  // point in the indexer's own progress rather than on a timer.
+  onArrivedAtHead: option<unit => unit>,
+  mutable reportedArrivalAtHead: bool,
   // Set once on any fatal error. Every loop checks it to stop iterating and
   // every launch skips when it's set, so a single failure quiesces the indexer.
   mutable isStopped: bool,
@@ -157,10 +163,13 @@ let make = (
   ~exitAfterFirstEventBlock=false,
   ~onError: ErrorHandling.t => unit,
   ~onExit=?,
+  ~onArrivedAtHead=?,
+  ~clock=Clock.real,
 ) => {
   let chainMetaThrottler = {
     let intervalMillis = Env.ThrottleWrites.chainMetadataIntervalMillis
     Throttler.make(
+      ~clock,
       ~intervalMillis,
       ~logger=logger->Logger.withFields({
         "context": "Throttler for chain metadata writes",
@@ -175,7 +184,7 @@ let make = (
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
-    effectState: EffectState.make(),
+    effectState: EffectState.make(~clock, ()),
     rollback: None,
     committedFrontier,
     processedFrontier: committedFrontier->Frontier.copy,
@@ -205,6 +214,8 @@ let make = (
     exitAfterFirstEventBlock,
     onError,
     onExit,
+    onArrivedAtHead,
+    reportedArrivalAtHead: false,
     isStopped: false,
     epoch: 0,
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
@@ -249,6 +260,7 @@ let makeFromDbState = (
   ~holdRealtime=false,
   ~onError,
   ~onExit=?,
+  ~onArrivedAtHead=?,
 ) => {
   let isInReorgThreshold = if initialState.cleanRun {
     false
@@ -303,6 +315,8 @@ let makeFromDbState = (
     ~exitAfterFirstEventBlock,
     ~onError,
     ~onExit?,
+    ~onArrivedAtHead?,
+    ~clock=?sourceTiming->Option.flatMap(timing => timing.clock),
   )
   state.crossChainState->CrossChainState.markCaughtUpOnResume
   initialState.cache->Utils.Dict.forEach(({effectName, count, scope}) => {
@@ -558,6 +572,15 @@ let bindScheduleProcessing = (state: t, scheduleProcessing) =>
 let isHoldingRealtime = (state: t) => state.crossChainState->CrossChainState.isHoldingRealtime
 
 let hasArrivedAtHead = (state: t) => state.crossChainState->CrossChainState.hasArrivedAtHead
+
+let reportArrivalAtHead = (state: t) =>
+  switch state.onArrivedAtHead {
+  | Some(onArrivedAtHead)
+    if !state.reportedArrivalAtHead && state->isHoldingRealtime && state->hasArrivedAtHead =>
+    state.reportedArrivalAtHead = true
+    onArrivedAtHead()
+  | _ => ()
+  }
 
 let releaseRealtime = (state: t) => {
   state.crossChainState->CrossChainState.releaseRealtime

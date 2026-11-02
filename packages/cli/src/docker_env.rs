@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: waiting on local Docker services"
+)]
+
 use crate::utils::project_env::ProjectEnv;
 use anyhow::Context;
 use bollard::models::{

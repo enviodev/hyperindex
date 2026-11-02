@@ -82,6 +82,8 @@ describe("RPC realtime without a ws url", () => {
   Async.it("advances by polling, with no height stream to report on", async t => {
     await scenario->Scenario.run(
       ~yamlSources=true,
+      // A real RPC source against a local server: its polls resolve on real I/O.
+      ~virtualTime=false,
       async (~indexer, ~source as _) => {
         let deadline = Date.now() +. 5_000.
         while (await indexer->metricValues("envio_progress_block")) != ["101"] {

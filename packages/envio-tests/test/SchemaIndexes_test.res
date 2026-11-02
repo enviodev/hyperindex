@@ -332,20 +332,18 @@ describe("Deferred schema indexes", () => {
         ~message="Finalization is under way and nothing is ready while it is held",
       ).toEqual((1, [{value: "0", labels: dict{"chainId": "1337"}}]))
 
-      let heightCallsAtHead = source.getHeightOrThrowCalls->Array.length
-
       // A height update while the build is held: the chain fetches the new range
       // and its response schedules processing again.
-      await MockSource.waitHeightQuery(source, ~since=heightCallsAtHead)
+      await source.expectNewHeightCallsAtLeast(1)
+      await indexer.advanceTime(1000)
+      await source.expectNewHeightCalls(1)
       source.resolveGetHeightOrThrow(200)
       await source.expectItemsQueries([
         {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 200})},
       ])
-      let ticks = ref(0)
-      while ticks.contents < 20 {
-        ticks := ticks.contents + 1
-        await Utils.delay(0)
-      }
+      await indexer.advanceTime(0)
+      // Back at the head, it waits for the next block.
+      await source.expectNewHeightCalls(1)
 
       t.expect(
         (finalizeCalls.contents, await indexer.metric("envio_progress_ready")),
