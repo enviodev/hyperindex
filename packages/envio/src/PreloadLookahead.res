@@ -26,12 +26,12 @@
 type t = {
   items: array<Internal.item>,
   indexOf: Utils.Map.t<Internal.item, int>,
-  absentReaders: dict<array<int>>,
+  absentReaders: Map.t<string, array<int>>,
   dirty: array<bool>,
   // Milliseconds the item's preload rounds have run for, all runs together.
   preloadMs: array<float>,
   // By entity key, the writes items' preloads made: (item, entity or deleted).
-  overlay: dict<array<(int, option<Internal.entity>)>>,
+  overlay: Map.t<string, array<(int, option<Internal.entity>)>>,
   window: int,
   // The last item execute finished; reads and writes at or before it are history.
   mutable executed: int,
@@ -51,10 +51,10 @@ let start = (~items: array<Internal.item>) => {
       Some({
         items,
         indexOf,
-        absentReaders: Dict.make(),
+        absentReaders: Map.make(),
         dirty: Array.make(~length=items->Array.length, false),
         preloadMs: Array.make(~length=items->Array.length, 0.),
-        overlay: Dict.make(),
+        overlay: Map.make(),
         window,
         executed: -1,
       })
@@ -102,9 +102,9 @@ let recordAbsent = (~item: Internal.item, ~entityName, ~scope, ~entityId) =>
     switch t.indexOf->Utils.Map.get(item) {
     | Some(idx) if idx > t.executed =>
       let key = entityKey(~entityName, ~scope, ~entityId)
-      switch t.absentReaders->Utils.Dict.dangerouslyGetNonOption(key) {
+      switch t.absentReaders->Map.get(key) {
       | Some(readers) => readers->Array.push(idx)
-      | None => t.absentReaders->Dict.set(key, [idx])
+      | None => t.absentReaders->Map.set(key, [idx])
       }
     | _ => ()
     }
@@ -113,21 +113,41 @@ let recordAbsent = (~item: Internal.item, ~entityName, ~scope, ~entityId) =>
 let onSet = (~entityName, ~scope, ~entityId) =>
   switch active.contents {
   | None => ()
-  | Some(t) =>
+  // Every write execute makes lands here, and most batches have no absent read.
+  | Some(t) if t.absentReaders->Map.size > 0 =>
     let key = entityKey(~entityName, ~scope, ~entityId)
-    switch t.absentReaders->Utils.Dict.dangerouslyGetNonOption(key) {
+    switch t.absentReaders->Map.get(key) {
     | None => ()
     | Some(readers) =>
-      t.absentReaders->Utils.Dict.deleteInPlace(key)
+      t.absentReaders->Map.delete(key)->ignore
       readers->Array.forEach(idx =>
         if idx > t.executed {
           t.dirty->Array.setUnsafe(idx, true)
         }
       )
     }
+  | Some(_) => ()
   }
 
 let isActive = () => active.contents->Option.isSome
+
+// How many of `writes` (sorted by item) are by an item before `item`. An entity
+// every event of a batch touches (a popular holder) gathers a write per event,
+// and a scan of them per read was quadratic in the batch.
+let countBefore = (writes: array<(int, option<Internal.entity>)>, item) => {
+  let low = ref(0)
+  let high = ref(writes->Array.length)
+  while low.contents < high.contents {
+    let mid = (low.contents + high.contents) / 2
+    let (writer, _) = writes->Array.getUnsafe(mid)
+    if writer < item {
+      low := mid + 1
+    } else {
+      high := mid
+    }
+  }
+  low.contents
+}
 
 let overlaySet = (~item: Internal.item, ~entityName, ~scope, ~entityId, ~entity) =>
   switch active.contents {
@@ -136,12 +156,15 @@ let overlaySet = (~item: Internal.item, ~entityName, ~scope, ~entityId, ~entity)
     switch t.indexOf->Utils.Map.get(item) {
     | Some(writer) =>
       let key = entityKey(~entityName, ~scope, ~entityId)
-      let writes = switch t.overlay->Utils.Dict.dangerouslyGetNonOption(key) {
-      | Some(writes) => writes->Array.filter(((idx, _)) => idx !== writer)
-      | None => []
+      switch t.overlay->Map.get(key) {
+      | Some(writes) =>
+        let at = writes->countBefore(writer)
+        switch writes->Array.get(at) {
+        | Some((idx, _)) if idx === writer => writes->Array.setUnsafe(at, (writer, entity))
+        | _ => writes->Array.splice(~start=at, ~remove=0, ~insert=[(writer, entity)])
+        }
+      | None => t.overlay->Map.set(key, [(writer, entity)])
       }
-      writes->Array.push((writer, entity))
-      t.overlay->Dict.set(key, writes)
     | None => ()
     }
   }
@@ -154,18 +177,13 @@ let overlayGet = (~item: Internal.item, ~entityName, ~scope, ~entityId) =>
   | Some(t) =>
     switch (
       t.indexOf->Utils.Map.get(item),
-      t.overlay->Utils.Dict.dangerouslyGetNonOption(entityKey(~entityName, ~scope, ~entityId)),
+      t.overlay->Map.get(entityKey(~entityName, ~scope, ~entityId)),
     ) {
     | (Some(reader), Some(writes)) =>
-      let found = ref(None)
-      let foundAt = ref(t.executed)
-      writes->Array.forEach(((writer, entity)) =>
-        if writer > foundAt.contents && writer < reader {
-          foundAt := writer
-          found := Some(entity)
-        }
-      )
-      found.contents
+      switch writes->Array.get(writes->countBefore(reader) - 1) {
+      | Some((writer, entity)) if writer > t.executed => Some(entity)
+      | _ => None
+      }
     | _ => None
     }
   }

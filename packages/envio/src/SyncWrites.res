@@ -3,10 +3,12 @@
 // applied: the replay has to see the store exactly as the first round did, or a
 // read-modify-write lands once per round.
 
+// A Map rather than a dict: every round makes a fresh one keyed by ids no
+// other round shares, and a dict would give each of them its own hidden class.
 type table = {
   entityConfig: Internal.entityConfig,
   scope: Internal.chainScope,
-  changes: dict<Change.t<Internal.entity>>,
+  changes: Map.t<string, Change.t<Internal.entity>>,
 }
 
 // A handler runs on one chain, so an entity's scope is fixed for the whole
@@ -15,15 +17,18 @@ type t = dict<table>
 
 let make = (): t => Dict.make()
 
+// A Map doesn't coerce its keys, so an id is looked up by its key form.
+let keyOf = (entityId: string) => entityId->EntityId.unsafeOfString->EntityId.toKey
+
 let record = (writes: t, ~entityConfig: Internal.entityConfig, ~scope, change) => {
   let table = switch writes->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
   | Some(table) => table
   | None =>
-    let table = {entityConfig, scope, changes: Dict.make()}
+    let table = {entityConfig, scope, changes: Map.make()}
     writes->Dict.set(entityConfig.name, table)
     table
   }
-  table.changes->Dict.set(change->Change.getEntityId->EntityId.toKey, change)
+  table.changes->Map.set(change->Change.getEntityId->EntityId.toKey, change)
 }
 
 let changesOf = (writes: t, ~entityConfig: Internal.entityConfig) =>
@@ -37,7 +42,7 @@ let getById = (writes: t, ~entityConfig, ~entityId: string) =>
   switch writes->changesOf(~entityConfig) {
   | Some(changes) =>
     changes
-    ->Utils.Dict.dangerouslyGetNonOption(entityId)
+    ->Map.get(entityId->keyOf)
     ->Option.map(InMemoryTable.Entity.mapChangeToEntity)
   | None => None
   }
@@ -56,17 +61,15 @@ let overlayFilter = (
     let matches = filter->EntityFilter.makeMatcher(~table=entityConfig.table)
     let untouched =
       entities->Array.filter(entity =>
-        !(changes->Dict.has(entity->InMemoryTable.Entity.getEntityIdUnsafe))
+        !(changes->Map.has(entity->InMemoryTable.Entity.getEntityIdUnsafe->keyOf))
       )
-    let written =
-      changes
-      ->Dict.valuesToArray
-      ->Array.filterMap(change =>
-        switch change->InMemoryTable.Entity.mapChangeToEntity {
-        | Some(entity) if matches(entity) => Some(entity)
-        | _ => None
-        }
-      )
+    let written = []
+    changes->Map.forEach(change =>
+      switch change->InMemoryTable.Entity.mapChangeToEntity {
+      | Some(entity) if matches(entity) => written->Array.push(entity)->ignore
+      | _ => ()
+      }
+    )
     untouched->Array.concat(written)
   }
 
@@ -92,10 +95,10 @@ let write = (indexerState, ~entityConfig: Internal.entityConfig, ~scope, change)
 
 let forEachChange = (writes: t, fn) =>
   writes->Utils.Dict.forEach(({entityConfig, scope, changes}) =>
-    changes->Utils.Dict.forEach(change => fn(~entityConfig, ~scope, change))
+    changes->Map.forEach(change => fn(~entityConfig, ~scope, change))
   )
 
 let commit = (writes: t, ~indexerState) =>
   writes->Utils.Dict.forEach(({entityConfig, scope, changes}) =>
-    changes->Utils.Dict.forEach(change => indexerState->write(~entityConfig, ~scope, change))
+    changes->Map.forEach(change => indexerState->write(~entityConfig, ~scope, change))
   )
