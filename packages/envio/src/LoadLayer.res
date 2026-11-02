@@ -140,7 +140,7 @@ let rec executeWithRateLimit = (
     }
 
   | Some(state) =>
-    let now = Date.now()
+    let now = state.clock.now()
 
     // Check if we need to reset the window
     if now >= state.windowStartTime +. state.durationMs->Int.toFloat {
@@ -188,7 +188,8 @@ let rec executeWithRateLimit = (
       | None =>
         millisUntilReset :=
           (state.windowStartTime +. state.durationMs->Int.toFloat -. now)->Float.toInt
-        let p = Utils.delay(millisUntilReset.contents)
+        let p =
+          state.clock->Clock.delay(~label="effect rate limit window", millisUntilReset.contents)
         state.nextWindowPromise = Some(p)
         p
       }

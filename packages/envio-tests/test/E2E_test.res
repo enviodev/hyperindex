@@ -823,26 +823,21 @@ describe("E2E tests", () => {
   )
 
   scenario->Scenario.it(
-    "Effect rate limiting across multiple windows",
+    "Opens a rate-limited effect's next window when the clock reaches it",
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-
-      let queueMetricDuringExecution = ref(None)
-      let activeMetricDuringExecution = ref(None)
-
-      let testEffectMultiWindow = Envio.createEffect(
+      let calls = []
+      let windowed = Envio.createEffect(
         {
-          name: "testEffectMultiWindow",
+          name: "windowed",
           input: S.string,
           output: S.string,
-          rateLimit: Enable({calls: 2, per: Milliseconds(15)}),
+          rateLimit: Enable({calls: 1, per: Milliseconds(1000)}),
         },
         async ({input}) => {
-          // Real time: effects run on the real clock, rate limits included.
-          // Add delay to ensure effects take time (longer than metric check delay)
-          await Utils.delay(10)
-          input ++ "-output"
+          calls->Array.push(input)->ignore
+          input
         },
       )
 
@@ -857,33 +852,9 @@ describe("E2E tests", () => {
                 logIndex: 0,
                 handler: async args => {
                   let context = args.context->asContext
-                  // Call effect 6 times - should span 3 windows (2+2+2)
-                  let resultsPromise = Promise.all([
-                    context.effect(testEffectMultiWindow, "1"),
-                    context.effect(testEffectMultiWindow, "2"),
-                    context.effect(testEffectMultiWindow, "3"),
-                    context.effect(testEffectMultiWindow, "4"),
-                    context.effect(testEffectMultiWindow, "5"),
-                    context.effect(testEffectMultiWindow, "6"),
-                  ])
-
-                  // Real time: the metrics are read while the effects are still running.
-                  await Utils.delay(3)
-                  let (queueMetric, activeMetric) = await Promise.all2((
-                    indexer.metric("envio_effect_queue"),
-                    indexer.metric("envio_effect_active_calls"),
-                  ))
-                  queueMetricDuringExecution := Some(queueMetric)
-                  activeMetricDuringExecution := Some(activeMetric)
-
-                  let results = await resultsPromise
-                  t.expect(results).toEqual([
-                    "1-output",
-                    "2-output",
-                    "3-output",
-                    "4-output",
-                    "5-output",
-                    "6-output",
+                  let _ = await Promise.all([
+                    context.effect(windowed, "first"),
+                    context.effect(windowed, "second"),
                   ])
                 },
               },
@@ -892,51 +863,93 @@ describe("E2E tests", () => {
           }),
         },
       ])
+      await indexer.advanceTime(999)
+      let beforeTheWindow = calls->Array.copy
+      await indexer.advanceTime(1)
+      t.expect((beforeTheWindow, calls)).toEqual((["first"], ["first", "second"]))
+    },
+  )
 
+  scenario->Scenario.it(
+    "Effect rate limiting across multiple windows",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      // Holds every call open until the test lets them finish, so the calls in
+      // flight are what the metric counts.
+      let releaseCalls = ref(() => ())
+      let callsHeld = Promise.make((resolve, _) => releaseCalls := resolve)
+
+      let testEffectMultiWindow = Envio.createEffect(
+        {
+          name: "testEffectMultiWindow",
+          input: S.string,
+          output: S.string,
+          rateLimit: Enable({calls: 2, per: Milliseconds(15)}),
+        },
+        async ({input}) => {
+          await callsHeld
+          input ++ "-output"
+        },
+      )
+      let effectMetrics = async () => {
+        let value = async name =>
+          (await indexer.metric(name))->Array.map((m: IndexerRunner.metric) => m.value)
+        (await value("envio_effect_queue"), await value("envio_effect_active_calls"))
+      }
+
+      let results = ref([])
+      sourceMock.resolveGetHeightOrThrow(300)
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 100,
+                logIndex: 0,
+                handler: async args => {
+                  let context = args.context->asContext
+                  // Six calls at two a window: three windows.
+                  results :=
+                    (
+                      await Promise.all([
+                        context.effect(testEffectMultiWindow, "1"),
+                        context.effect(testEffectMultiWindow, "2"),
+                        context.effect(testEffectMultiWindow, "3"),
+                        context.effect(testEffectMultiWindow, "4"),
+                        context.effect(testEffectMultiWindow, "5"),
+                        context.effect(testEffectMultiWindow, "6"),
+                      ])
+                    )
+                },
+              },
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
+      await indexer.advanceTime(0)
+      let inTheFirstWindow = await effectMetrics()
+      releaseCalls.contents()
+      await indexer.advanceTime(15)
+      let inTheSecondWindow = await effectMetrics()
+      await indexer.advanceTime(15)
       await indexer.getBatchWritePromise()
 
-      // All effects should complete successfully - verify via calls count metric
-      t.expect(
+      t.expect((
+        inTheFirstWindow,
+        inTheSecondWindow,
+        await effectMetrics(),
+        results.contents,
         await indexer.metric("envio_effect_call_total"),
-        ~message="should have called effect 6 times total",
-      ).toEqual([
-        {
-          value: "6",
-          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
-        },
-      ])
-
-      // Check that we captured metrics during execution
-      // With 2 calls per window and 6 total calls: 4 items queued, max 2 active
-      t.expect(
-        queueMetricDuringExecution.contents->Option.getOrThrow,
-        ~message="queue should have 4 items during execution",
-      ).toEqual([
-        {
-          value: "4",
-          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
-        },
-      ])
-      t.expect(
-        activeMetricDuringExecution.contents->Option.getOrThrow,
-        ~message="active calls should be at rate limit (2)",
-      ).toEqual([
-        {
-          value: "2",
-          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
-        },
-      ])
-
-      // Final check - queue should be empty
-      t.expect(
-        await indexer.metric("envio_effect_queue"),
-        ~message="queue should be empty after all windows complete",
-      ).toEqual([
-        {
-          value: "0",
-          labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"},
-        },
-      ])
+      )).toEqual((
+        (["4"], ["2"]),
+        (["2"], ["0"]),
+        (["0"], ["0"]),
+        ["1-output", "2-output", "3-output", "4-output", "5-output", "6-output"],
+        [{value: "6", labels: dict{"effect": "testEffectMultiWindow", "scope": "crossChain"}}],
+      ))
     },
   )
 
@@ -945,11 +958,9 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-
       let executionOrder = []
-      let queueMetricDuringExecution = ref(None)
-      let activeMetricDuringExecution = ref(None)
-      let queueMetricAfterFirstWindow = ref(None)
+      let releaseCalls = ref(() => ())
+      let callsHeld = Promise.make((resolve, _) => releaseCalls := resolve)
 
       let testEffectNested = Envio.createEffect(
         {
@@ -960,16 +971,17 @@ describe("E2E tests", () => {
         },
         async ({input}) => {
           executionOrder->Array.push(input)->ignore
-          // Real time: effects run on the real clock, rate limits included.
-          // Add delay to ensure effects take time (longer than metric check delay)
-          await Utils.delay(10)
+          await callsHeld
           input ++ "-output"
         },
       )
+      let effectMetrics = async () => {
+        let value = async name =>
+          (await indexer.metric(name))->Array.map((m: IndexerRunner.metric) => m.value)
+        (await value("envio_effect_queue"), await value("envio_effect_active_calls"))
+      }
 
       sourceMock.resolveGetHeightOrThrow(300)
-
-      // Single batch with 4 calls that will be rate limited
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 1,
@@ -980,27 +992,12 @@ describe("E2E tests", () => {
                 logIndex: 0,
                 handler: async args => {
                   let context = args.context->asContext
-                  let resultsPromise = Promise.all([
+                  let _ = await Promise.all([
                     context.effect(testEffectNested, "call-1"),
                     context.effect(testEffectNested, "call-2"),
                     context.effect(testEffectNested, "call-3"),
                     context.effect(testEffectNested, "call-4"),
                   ])
-
-                  // Real time: the metrics are read while the effects are still running. (shortly after trigger)
-                  await Utils.delay(3)
-                  let (queueMetric1, activeMetric1) = await Promise.all2((
-                    indexer.metric("envio_effect_queue"),
-                    indexer.metric("envio_effect_active_calls"),
-                  ))
-                  queueMetricDuringExecution := Some(queueMetric1)
-                  activeMetricDuringExecution := Some(activeMetric1)
-
-                  // Real time: read again once the first rate-limit window has passed.
-                  await Utils.delay(14)
-                  queueMetricAfterFirstWindow := Some(await indexer.metric("envio_effect_queue"))
-
-                  let _ = await resultsPromise
                 },
               },
             ],
@@ -1008,64 +1005,27 @@ describe("E2E tests", () => {
           }),
         },
       ])
-
+      await indexer.advanceTime(0)
+      let inTheFirstWindow = await effectMetrics()
+      releaseCalls.contents()
+      await indexer.advanceTime(15)
+      let inTheSecondWindow = await effectMetrics()
+      await indexer.advanceTime(30)
       await indexer.getBatchWritePromise()
 
-      // All 4 effects should complete successfully despite rate limiting
-      t.expect(executionOrder->Array.length, ~message="should have executed all 4 calls").toEqual(4)
-
-      // Verify via calls count metric
-      t.expect(
+      t.expect((
+        inTheFirstWindow,
+        inTheSecondWindow,
+        await effectMetrics(),
+        executionOrder,
         await indexer.metric("envio_effect_call_total"),
-        ~message="should have called effect 4 times total",
-      ).toEqual([
-        {
-          value: "4",
-          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
-        },
-      ])
-
-      // Check that we captured metrics during execution
-      // With 1 call per window and 4 total calls: 3 items queued, max 1 active
-      t.expect(
-        queueMetricDuringExecution.contents->Option.getOrThrow,
-        ~message="queue should have 3 items during execution",
-      ).toEqual([
-        {
-          value: "3",
-          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
-        },
-      ])
-      t.expect(
-        activeMetricDuringExecution.contents->Option.getOrThrow,
-        ~message="active calls should be at rate limit (1)",
-      ).toEqual([
-        {
-          value: "1",
-          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
-        },
-      ])
-
-      // Check metrics after first window
-      let queueMetric2 = queueMetricAfterFirstWindow.contents->Option.getOrThrow
-      let queueValue2 = queueMetric2->Array.get(0)->Option.map(m => m.value)->Option.getOr("0")
-      t.expect(
-        queueValue2 != "0" || executionOrder->Array.length == 4,
-        ~message=`queue should have items or all should be done, queue: ${queueValue2}, executed: ${executionOrder
-          ->Array.length
-          ->Int.toString}`,
-      ).toBeTruthy()
-
-      // Final check - queue should be empty
-      t.expect(
-        await indexer.metric("envio_effect_queue"),
-        ~message="queue should be empty after all batches complete",
-      ).toEqual([
-        {
-          value: "0",
-          labels: dict{"effect": "testEffectNested", "scope": "crossChain"},
-        },
-      ])
+      )).toEqual((
+        (["3"], ["1"]),
+        (["2"], ["0"]),
+        (["0"], ["0"]),
+        ["call-1", "call-2", "call-3", "call-4"],
+        [{value: "4", labels: dict{"effect": "testEffectNested", "scope": "crossChain"}}],
+      ))
     },
   )
 

@@ -287,7 +287,11 @@ const realTime = [
   { pattern: /\bMath\.random\(/, use: "`clock.random()`" },
 ];
 const sourceViolations: violation[] = [];
-for (const path of resFiles(sourcesRoot)) {
+// The run-wide timers outside the sources take the same clock.
+const clockedModules = ["LoadLayer.res", "EffectState.res", "Throttler.res"].map((name) =>
+  fileURLToPath(new URL(`../../envio/src/${name}`, import.meta.url)),
+);
+for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
   const file = relative(repoRoot, path);
   readFileSync(path, "utf8")
     .split("\n")
