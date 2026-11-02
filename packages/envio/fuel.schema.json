@@ -337,7 +337,7 @@
           "minimum": 0
         },
         "block_throttle": {
-          "description": "The minimum number of new blocks the chain head must advance by before the indexer fetches again once it has caught up. Useful on chains with very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 all fetch on every new block.",
+          "description": "Once the indexer has caught up with the chain head, wait for this many new blocks and fetch them together, instead of fetching on every new block. Set it on chains with very fast blocks to send fewer requests. New events then reach your handlers up to this many blocks later. Leave it unset to fetch every block; 0 and 1 do the same.",
           "type": [
             "integer",
             "null"

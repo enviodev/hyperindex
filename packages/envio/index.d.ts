@@ -398,7 +398,7 @@ type EvmChainConfig<Id extends number = number> = {
   readonly maxReorgDepth?: number;
   /** Number of blocks behind the chain head to lag (default: 0). */
   readonly blockLag?: number;
-  /** Minimum number of new blocks before fetching again at the head (default: 0, every block). */
+  /** Once caught up with the head, wait for this many new blocks and fetch them together (default: every block). */
   readonly blockThrottle?: number;
 };
 
@@ -456,7 +456,7 @@ type FuelChainConfig<Id extends number = number> = {
   readonly maxReorgDepth?: number;
   /** Number of blocks behind the chain head to lag (default: 0). */
   readonly blockLag?: number;
-  /** Minimum number of new blocks before fetching again at the head (default: 0, every block). */
+  /** Once caught up with the head, wait for this many new blocks and fetch them together (default: every block). */
   readonly blockThrottle?: number;
 };
 
@@ -494,7 +494,7 @@ type SvmChainConfig<Id extends number = number> = {
   readonly maxReorgDepth?: number;
   /** Number of blocks behind the chain head to lag (default: 0). */
   readonly blockLag?: number;
-  /** Minimum number of new blocks before fetching again at the head (default: 0, every block). */
+  /** Once caught up with the head, wait for this many new slots and fetch them together (default: every slot). */
   readonly blockThrottle?: number;
 };
 
