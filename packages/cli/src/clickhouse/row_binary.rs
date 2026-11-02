@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 
 use super::ch_type::ChType;
-use super::table::{Source, Table};
+use super::table::Table;
 use crate::columnar::{self, ColumnKind};
 use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{Cell, ReadKind};
@@ -678,10 +678,10 @@ pub fn encode_changes(
     for row in 0..changes.len() {
         row_offsets.push(body.len());
         let is_delete = changes.is_delete(row);
-        for (source, (name, ch_type)) in table.sources.iter().zip(&table.staged) {
-            let encoded = match *source {
-                Source::Field(index) => {
-                    let field = &changes.entity.fields[index];
+        for (index, column) in table.columns().iter().enumerate() {
+            let ch_type = &column.ch_type;
+            let encoded = match changes.entity.fields.get(index) {
+                Some(field) => {
                     let values = &fields[index];
                     if is_delete && index != changes.id_index() {
                         match ch_type {
@@ -705,17 +705,17 @@ pub fn encode_changes(
                         encode_cell(body, ch_type, values, row)
                     }
                 }
-                Source::ChainId => match changes.chain_id {
+                // Past the fields is the chain a per-chain entity appends.
+                None => match changes.chain_id {
                     Some(chain_id) => put_int(body, i128::from(chain_id), ch_type),
                     None => Err(anyhow!("a per-chain entity's changes name no chain")),
                 },
-                Source::Checkpoint => put_int(body, i128::from(changes.checkpoint(row)), ch_type),
-                Source::Change => {
-                    encode_text_scalar(body, &change_type, if is_delete { DELETE } else { SET })
-                }
             };
-            encoded.with_context(|| format!("encoding column `{name}` row {row}"))?;
+            encoded
+                .with_context(|| format!("encoding column `{}` row {row}", column.ch_column()))?;
         }
+        put_int(body, i128::from(changes.checkpoint(row)), &ChType::UInt64)?;
+        encode_text_scalar(body, &change_type, if is_delete { DELETE } else { SET })?;
     }
     Ok(())
 }
@@ -1591,7 +1591,7 @@ mod tests {
                 ..crate::clickhouse::table::test_support::entity_input(
                     "Account",
                     table
-                        .columns
+                        .columns()
                         .iter()
                         .filter(|column| column.field.name != "chainId")
                         .map(|column| column.field.clone())
@@ -1610,9 +1610,10 @@ mod tests {
             let (mut body, mut offsets) = (Vec::new(), Vec::new());
             encode_changes(&mut body, &mut offsets, table, &changes).unwrap();
             let types = table
-                .staged
-                .iter()
-                .map(|(_, ch_type)| (ch_type.clone(), ReadKind::Text))
+                .entity
+                .history_columns()
+                .into_iter()
+                .map(|(_, ch_type)| (ch_type, ReadKind::Text))
                 .collect::<Vec<_>>();
             decode(&body, &types)
                 .unwrap()

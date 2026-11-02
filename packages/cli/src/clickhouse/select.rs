@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
-use super::table::{Column, Table};
+use super::ddl::Column;
+use super::table::Table;
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
 use crate::storage::schema::FieldType;
@@ -277,7 +278,7 @@ fn element(
 /// The column as a filter compares it: a number kept as text is read as the
 /// number it spells, and a list of them as the numbers they spell.
 fn compared(column: &Column, kind: ValueKind) -> String {
-    let name = quoted(&column.name);
+    let name = quoted(column.ch_column());
     let as_number = |text: &str| match column.field.field_type {
         FieldType::BigInt { .. } => integer_order(text),
         _ => decimal_order(text),
@@ -299,7 +300,7 @@ fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Re
     };
     if condition.is_list {
         let ChType::Array(inner) = column.ch_type.base() else {
-            bail!("`{}` is not a list column", column.row_name);
+            bail!("`{}` is not a list column", column.row_name());
         };
         let inner = inner.base();
         Ok(format!(
@@ -426,7 +427,13 @@ fn key_tuple(key: &[String]) -> String {
 fn as_row_names<'a>(columns: impl IntoIterator<Item = &'a Column>) -> String {
     columns
         .into_iter()
-        .map(|column| format!("{} AS {}", quoted(&column.name), quoted(&column.row_name)))
+        .map(|column| {
+            format!(
+                "{} AS {}",
+                quoted(column.ch_column()),
+                quoted(column.row_name())
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -474,9 +481,7 @@ fn load_sql(
     let mut on_values = Vec::new();
     for filter in conditions {
         let rendered = condition(table, filter, external.as_deref_mut())?;
-        let column = table
-            .column(&filter.column)
-            .map(|column| column.name.as_str());
+        let column = table.column(&filter.column).map(Column::ch_column);
         if column.is_some_and(|column| key.iter().any(|key| key == column)) {
             on_key.push(rendered);
         } else {
@@ -503,9 +508,9 @@ fn load_sql(
     // so they all come from the same row. Grouping on the key outruns sorting
     // each entity's rows to keep the first.
     let latest = table
-        .columns
+        .columns()
         .iter()
-        .map(|column| column.name.as_str())
+        .map(Column::ch_column)
         .filter(|name| !key.iter().any(|key| key == name))
         .chain([CHANGE_COLUMN])
         .collect::<Vec<_>>();
@@ -520,7 +525,7 @@ fn load_sql(
     Ok(format!(
         "SELECT {} FROM (SELECT {key}, {untupled} FROM (SELECT {key}, argMax(tuple({}), {}) AS \
          {LATEST} FROM {source} WHERE {} GROUP BY {key})) WHERE {} FORMAT RowBinary",
-        as_row_names(&table.columns),
+        as_row_names(table.columns()),
         quoted_list(&latest),
         quoted(CHECKPOINT_ID_COLUMN),
         conjunction(&narrowing),
@@ -591,8 +596,8 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
     Ok(format!(
         "SELECT {}, {change} FROM (SELECT {}, {change} FROM {source} WHERE {} AND NOT ({above}) \
          ORDER BY {key}, {} DESC LIMIT 1 BY {key}) FORMAT RowBinary",
-        as_row_names(&table.columns),
-        quoted_list(table.columns.iter().map(|column| &column.name)),
+        as_row_names(table.columns()),
+        quoted_list(table.columns().iter().map(Column::ch_column)),
         key_in(&table.entity.key(), &source, &above),
         quoted(CHECKPOINT_ID_COLUMN),
         change = quoted(CHANGE_COLUMN),
@@ -606,7 +611,7 @@ pub fn history(database: &str, table: &Table, frontier: &Frontier) -> String {
     format!(
         "SELECT {}, {}, {checkpoint} FROM {} WHERE {checkpoint} <= {} ORDER BY {}, {checkpoint} \
          FORMAT RowBinary",
-        as_row_names(&table.columns),
+        as_row_names(table.columns()),
         quoted(CHANGE_COLUMN),
         table_ref(database, &table.entity.history_table),
         frontier_of(table.entity.chain_id_column.as_deref(), frontier),

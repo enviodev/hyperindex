@@ -1,42 +1,19 @@
 use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
-use super::ddl::{self, ColumnSpec, EntitySpec};
+use super::ddl::{self, Column, EntitySpec};
 use crate::config_parsing::system_config::ChainIdMode;
 use crate::storage::rows::{ColumnRead, ReadKind};
 use crate::storage::schema::{Entity, Field, FieldType};
 use crate::storage::types::CHANGE_COLUMN;
 
-pub struct Column {
-    pub name: String,
-    pub row_name: String,
-    pub field: Field,
-    pub ch_type: ChType,
-    /// What a value reads back as — a list's elements, for a list.
-    pub read: ReadKind,
-}
-
-/// Where one column of a history row comes from in a staged change set.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Source {
-    /// The entity's field at this position.
-    Field(usize),
-    /// The chain the change set was written for.
-    ChainId,
-    Checkpoint,
-    Change,
-}
-
 /// An entity as ClickHouse keeps it: every change a row of its history table.
+/// Its columns are the entity's fields in order, then the chain a per-chain
+/// entity appends.
 pub struct Table {
-    pub columns: Vec<Column>,
-    /// What a history row carries, in order: the entity's columns, then the
-    /// checkpoint and the change.
-    pub staged: Vec<(String, ChType)>,
-    /// Where each of `staged` comes from.
-    pub sources: Vec<Source>,
-    pub insert_query: String,
     pub entity: EntitySpec,
+    pub insert_query: String,
+    chain_id_mode: ChainIdMode,
 }
 
 impl Field {
@@ -67,65 +44,45 @@ impl Table {
         let context = format!("ClickHouse table `{}`", entity.name);
         let options = entity.clickhouse.clone().unwrap_or_default();
         let chain_id = entity.chain_id.as_ref().map(|chain_id| chain_id.field());
-        let mut columns = Vec::with_capacity(entity.fields.len() + 1);
-        let mut specs = Vec::with_capacity(entity.fields.len() + 1);
-        let mut sources = Vec::with_capacity(entity.fields.len() + 3);
-        for (source, field) in entity
+        let columns = entity
             .fields
             .iter()
-            .enumerate()
-            .map(|(index, field)| (Source::Field(index), field))
-            .chain(chain_id.iter().map(|field| (Source::ChainId, field)))
-        {
-            let spec = ColumnSpec {
-                name: field.ch_column.clone(),
-                field_name: field.schema_name.clone(),
-                field: field.clone(),
-            };
-            let (_, ch_type) = spec.typed(chain_id_mode, &context)?;
-            columns.push(Column {
-                name: field.ch_column.clone(),
-                row_name: field.pg_column.clone(),
-                read: field.read_kind(chain_id_mode),
-                field: field.clone(),
-                ch_type,
-            });
-            specs.push(spec);
-            sources.push(source);
-        }
+            .chain(chain_id.iter())
+            .map(|field| Column::new(field.clone(), chain_id_mode, &context))
+            .collect::<Result<Vec<_>>>()?;
         if columns.is_empty() {
             bail!("{context} was registered with no columns");
         }
-        sources.extend([Source::Checkpoint, Source::Change]);
         let entity = EntitySpec {
             name: entity.name.clone(),
             history_table: entity.history_table.clone(),
-            columns: specs,
+            columns,
             chain_id_column: chain_id.map(|field| field.ch_column),
             partition_by: options.partition_by,
             order_by: options.order_by,
             ttl: options.ttl,
             skipping_indexes: options.skipping_indexes,
         };
-        let staged = entity.history_columns(chain_id_mode)?;
         let insert_query = ddl::insert_query(
             database,
             &entity.history_table,
-            staged.iter().map(|(name, _)| name),
+            entity.history_columns().iter().map(|(name, _)| name),
         );
         Ok(Self {
-            columns,
-            staged,
-            sources,
-            insert_query,
             entity,
+            insert_query,
+            chain_id_mode,
         })
     }
 
+    pub fn columns(&self) -> &[Column] {
+        &self.entity.columns
+    }
+
     pub fn column(&self, row_name: &str) -> Option<&Column> {
-        self.columns
+        self.columns()
             .iter()
-            .find(|column| column.row_name == row_name)
+            .find(|column| column.row_name() == row_name)
     }
 
     pub fn key_columns(&self) -> Result<Vec<&Column>> {
@@ -133,25 +90,32 @@ impl Table {
             .key()
             .iter()
             .map(|name| {
-                self.columns
+                self.columns()
                     .iter()
-                    .find(|column| &column.name == name)
+                    .find(|column| column.ch_column() == name)
                     .with_context(|| format!("\"{}\" has no column `{name}`", self.entity.name))
             })
             .collect()
     }
 
+    /// What a value of the column reads back as — a list's elements, for a
+    /// list.
+    pub fn read_kind(&self, column: &Column) -> ReadKind {
+        column.field.read_kind(self.chain_id_mode)
+    }
+
     /// How a row of the table's columns decodes, and what it reads as.
     pub fn reads(&self) -> (Vec<(ChType, ReadKind)>, Vec<ColumnRead>) {
-        self.columns
+        self.columns()
             .iter()
             .map(|column| {
+                let kind = self.read_kind(column);
                 let read = if column.field.is_array {
-                    ColumnRead::list(&column.row_name, column.read)
+                    ColumnRead::list(column.row_name(), kind)
                 } else {
-                    ColumnRead::scalar(&column.row_name, column.read)
+                    ColumnRead::scalar(column.row_name(), kind)
                 };
-                ((column.ch_type.clone(), column.read), read)
+                ((column.ch_type.clone(), kind), read)
             })
             .unzip()
     }
@@ -270,21 +234,22 @@ mod tests {
             (
                 table.entity.history_table.as_str(),
                 table
-                    .staged
-                    .iter()
-                    .map(|(name, _)| name.as_str())
+                    .entity
+                    .history_columns()
+                    .into_iter()
+                    .map(|(name, _)| name)
                     .collect::<Vec<_>>(),
                 table.insert_query.as_str(),
             ),
             (
                 "envio_history_Account",
-                vec![
+                strings(&[
                     "id",
                     "owner_name",
                     "balance",
                     "envio_checkpoint_id",
                     "envio_change"
-                ],
+                ]),
                 "INSERT INTO `db`.`envio_history_Account` (`id`, `owner_name`, `balance`, \
                  `envio_checkpoint_id`, `envio_change`) FORMAT RowBinary"
             )
@@ -359,9 +324,9 @@ chains:
     fn shape(table: &Table) -> Shape {
         (
             table
-                .columns
+                .columns()
                 .iter()
-                .map(|column| (column.name.clone(), column.ch_type.to_string()))
+                .map(|column| (column.ch_column().to_string(), column.ch_type.to_string()))
                 .collect(),
             table.entity.chain_id_column.clone(),
             table.entity.order_by.clone(),
@@ -518,9 +483,9 @@ chains:
                 "Transfer",
             );
             table
-                .columns
+                .columns()
                 .iter()
-                .find(|column| column.name == "chainId")
+                .find(|column| column.ch_column() == "chainId")
                 .unwrap()
                 .ch_type
                 .to_string()

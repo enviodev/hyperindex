@@ -195,7 +195,7 @@ impl Storage {
         let encoding = table.clone();
         let encoded = tokio::task::spawn_blocking(move || {
             let rows = changes.iter().map(|changes| changes.len()).sum();
-            let mut body = Vec::with_capacity(rows * encoding.staged.len() * 12);
+            let mut body = Vec::with_capacity(rows * (encoding.columns().len() + 2) * 12);
             let mut row_offsets = Vec::with_capacity(rows);
             for changes in &changes {
                 row_binary::encode_changes(&mut body, &mut row_offsets, &encoding, changes)?;
@@ -345,9 +345,7 @@ impl Storage {
         let entities = tables.iter().map(|table| &table.entity).collect::<Vec<_>>();
         let history_tables = entities
             .iter()
-            .map(|entity| {
-                ddl::create_history_table(entity, self.database(), topology, self.chain_id_mode())
-            })
+            .map(|entity| ddl::create_history_table(entity, self.database(), topology))
             .collect::<Result<Vec<_>>>()?;
 
         self.stop_inserts_left_running(Some(
@@ -886,12 +884,12 @@ impl Storage {
             cells: row_binary::decode(
                 &removed,
                 &key.iter()
-                    .map(|column| (column.ch_type.clone(), column.read))
+                    .map(|column| (column.ch_type.clone(), table.read_kind(column)))
                     .collect::<Vec<_>>(),
             )?,
             columns: key
                 .iter()
-                .map(|column| ColumnRead::scalar(&column.row_name, column.read))
+                .map(|column| ColumnRead::scalar(column.row_name(), table.read_kind(column)))
                 .collect(),
         };
         let (types, reads) = table.history_reads();
