@@ -24,6 +24,7 @@ type Gravatar {
   owner: String!
 }
 `,
+    ~strictHeightCalls=true,
   )
 
 // Answers every height call with a height that leaves the wait unsatisfied, so

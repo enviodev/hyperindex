@@ -26,6 +26,7 @@ type Gravatar {
   owner: String!
 }
 `,
+  ~strictHeightCalls=true,
 )
 
 let fail = (mock: MockSource.t) => mock.rejectGetHeightOrThrow(JsError.make("height unavailable"))

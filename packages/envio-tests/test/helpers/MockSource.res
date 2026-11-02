@@ -467,6 +467,7 @@ let make = (
   // Hears what the source is asked and told, for the virtual clock's timeline.
   ~note: string => unit=_ => (),
   ~strictHeightCalls=false,
+  ~countsHeightCalls as countsFromStart=false,
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -825,7 +826,7 @@ let make = (
   // A test that accounts for height calls step by step is one about polling,
   // and owes an account of every call. One that only waits for a call to
   // arrive is about something else.
-  let countsHeightCalls = ref(false)
+  let countsHeightCalls = ref(countsFromStart)
 
   let expectHeightCalls = async (count, ~within=2000.) => {
     let deadline = Date.now() +. within

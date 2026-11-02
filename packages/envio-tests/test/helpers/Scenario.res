@@ -28,6 +28,7 @@ type t = {
   // the premise such a body sets up being taken away.
   supervised: bool,
   virtualTime: bool,
+  strictHeightCalls: bool,
 }
 
 type sourceMock = {
@@ -78,6 +79,9 @@ let make = (
   ~unsupported=[],
   ~supervised=true,
   ~virtualTime=true,
+  // For a file about polling: every test owes an account of every height call
+  // from its first step, not only once it names one.
+  ~strictHeightCalls=false,
 ): t => {
   let isUnsupported =
     unsupported->Array.some(({backend}) => backend === IndexerRunner.selectedBackend)
@@ -121,6 +125,7 @@ let make = (
     site,
     supervised,
     virtualTime,
+    strictHeightCalls,
   }
 }
 
@@ -253,6 +258,7 @@ let run = async (
         ~label=?sharesChain ? Some(name) : None,
         ~note=?clock->Option.map(clock => event => clock->VirtualClock.note(`${name}: ${event}`)),
         ~strictHeightCalls=virtualTime,
+        ~countsHeightCalls=scenario.strictHeightCalls,
       ),
     )
   })

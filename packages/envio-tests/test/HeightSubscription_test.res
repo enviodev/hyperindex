@@ -25,6 +25,7 @@ type Gravatar {
   owner: String!
 }
 `,
+  ~strictHeightCalls=true,
 )
 
 open RealtimeChain

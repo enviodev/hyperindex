@@ -24,7 +24,7 @@ type Gravatar {
   owner: String!
 }
 `
-let scenario = Scenario.make(~configYaml, ~schema)
+let scenario = Scenario.make(~configYaml, ~schema, ~strictHeightCalls=true)
 
 let upTo = toBlock => MockSource.Respond({items: [], latestFetchedBlockNumber: toBlock})
 
