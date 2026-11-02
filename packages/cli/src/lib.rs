@@ -5,6 +5,7 @@ mod block_store;
 mod cli_args;
 mod clickhouse;
 mod client_filtered_contracts;
+mod clock;
 mod columnar;
 mod entity_filter;
 pub use cli_args::clap_definitions;

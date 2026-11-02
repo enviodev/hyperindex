@@ -94,6 +94,9 @@ warnings = "deny"
 # would not make the call sites clearer.
 too_many_arguments = "allow"
 dbg_macro = "deny"
+# The calls in clippy.toml are refused only where a module opts in: the source
+# modules, whose non-test code schedules on a `clock::Clock` instead.
+disallowed_methods = "allow"
 
 [features]
 hypersync_health = []

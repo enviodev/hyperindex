@@ -71,10 +71,11 @@ describe("Items query retries on a single source", () => {
   scenario->Scenario.it(
     "Retries a source that hasn't reached the queried block yet",
     ~sources=[{chain: 1337}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([{fromBlock: 1, retryCount: 0, reply: behindHead}])
+      await indexer.advanceTime(100)
       await sync.expectItemsQueries([
         {fromBlock: 1, retryCount: 1, reply: Respond({items: [], latestFetchedBlockNumber: 100})},
       ])
@@ -85,7 +86,7 @@ describe("Items query retries on a single source", () => {
   scenario->Scenario.it(
     "Drops the source's orphaned state before retrying an inconsistent response",
     ~sources=[{chain: 1337}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([
@@ -101,6 +102,7 @@ describe("Items query retries on a single source", () => {
           reply: Respond({items: [], latestFetchedBlockNumber: 9, latestFetchedBlockHash: "0x0a"}),
         },
       ])
+      await indexer.advanceTime(100)
       await sync.expectItemsQueries([{fromBlock: 10, retryCount: 1, reply: LeavePending}])
       t.expect(sync.reorgCallCount() - reorgsBefore).toEqual(1)
     },
@@ -109,14 +111,16 @@ describe("Items query retries on a single source", () => {
   scenario->Scenario.it(
     "Tells the user a source behind the head is catching up, not failing",
     ~sources=[{chain: 1337}],
-    ~sourceTiming={retryBackoffScale: 0.01},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
       // Retries 0 to 12: the quiet window, then the first attempt past it.
-      for retryCount in 0 to 12 {
-        await sync.expectItemsQueries([{retryCount, reply: behindHead}])
-      }
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync,
+        ~reply=behindHead,
+        ~waits=[100, 200, 400, 800, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+      )
       await sync.expectItemsQueries([{retryCount: 13, reply: LeavePending}])
 
       let keys = [
@@ -132,9 +136,11 @@ describe("Items query retries on a single source", () => {
       ]
       let lines = indexer->retryLines
       t.expect((
+        early,
         lines->Array.get(0)->Option.map(pick(_, keys)),
         lines->Array.get(12)->Option.map(pick(_, keys)),
       )).toEqual((
+        [],
         Some(
           JSON.parseOrThrow(`{
             "level": "trace",
@@ -168,36 +174,39 @@ describe("Items query retries on a single source", () => {
   scenario->Scenario.it(
     "Backs off further once a source stays behind the head past the window and has no alternative",
     ~sources=[{chain: 1337}],
-    ~sourceTiming={retryBackoffScale: 0.05},
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
-      let arrivedAt = []
-      for retryCount in 0 to 15 {
-        await sync.expectItemsQueries([{retryCount, reply: behindHead}])
-        arrivedAt->Array.push(Date.now())
-      }
-      await sync.expectItemsQueries([{retryCount: 16, reply: LeavePending}])
-      arrivedAt->Array.push(Date.now())
-
-      // What the retries past the window actually slept, against the logged
-      // 1s, 2s, 4s and 8s at this scale: never short of it, and short of the
-      // next doubling.
-      let slept = [50., 100., 200., 400.]->Array.mapWithIndex(
-        (expected, i) => {
-          let gap = arrivedAt->Array.getUnsafe(13 + i) -. arrivedAt->Array.getUnsafe(12 + i)
-          (expected, gap >= expected *. 0.9 && gap < expected *. 2.)
-        },
+      // What the retries actually wait is what they log.
+      let early = await Scenario.failThroughBackoff(
+        ~indexer,
+        ~source=sync,
+        ~reply=behindHead,
+        ~waits=[
+          100,
+          200,
+          400,
+          800,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          1000,
+          2000,
+          4000,
+          8000,
+        ],
       )
+      await sync.expectItemsQueries([{retryCount: 16, reply: LeavePending}])
+
       // The logged schedule: the window keeps attempts a second apart at most;
       // past it, a source that is still behind is polled less and less often.
-      t.expect(
-        (slept, indexer->backoffs),
-        ~message=`arrival times ${arrivedAt
-          ->Array.map(at => at->Float.toString)
-          ->Array.join(", ")}`,
-      ).toEqual((
-        [(50., true), (100., true), (200., true), (400., true)],
+      t.expect((early, indexer->backoffs)).toEqual((
+        [],
         [
           100.,
           200.,
@@ -239,6 +248,7 @@ describe("Items query retries on a single source", () => {
           ),
         },
       ])
+      await indexer.advanceTime(100)
       await sync.expectItemsQueries([{retryCount: 1, reply: LeavePending}])
 
       t.expect((
@@ -290,7 +300,7 @@ describe("Items query retries on a single source", () => {
     "Stops the indexer with an error the source doesn't classify",
     ~sources=[{chain: 1337}],
     ~onError=errHandler => stopped->Array.push(errHandler.exn->Utils.prettifyExn)->ignore,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       sync.resolveGetHeightOrThrow(100)
       await sync.expectItemsQueries([
@@ -298,7 +308,7 @@ describe("Items query retries on a single source", () => {
       ])
       await Scenario.waitUntil(() => stopped->Array.length > 0, ~message="the indexer to stop")
       // Nothing retries it: the query is never asked again.
-      await Utils.delay(10)
+      await indexer.advanceTime(10)
       t.expect((
         stopped->Array.map(exn => (exn->(Utils.magic: exn => {"message": string}))["message"]),
         sync.pendingItemsQueries,
@@ -310,9 +320,7 @@ describe("Items query retries on a single source", () => {
     "Immediately retries with the suggested toBlock, on the same source",
     // A second source the retry could have moved to, and must not.
     ~sources=[{chain: 1337}, {chain: 1337}],
-    // Any backoff at this scale outlives the test, so the retry arriving at all
-    // proves it didn't wait.
-    ~sourceTiming={retryBackoffScale: 1000.},
+    // No time passes here, so the retry arriving at all proves it didn't wait.
     async (~t, ~indexer as _, ~source) => {
       let sync = source(1337)
       let other = source(1337, ~index=1)
@@ -371,6 +379,7 @@ describe("Items query retries on a single source", () => {
       ])
       // The suggestion isn't applied, and the attempt counts towards the
       // failover schedule instead of restarting it.
+      await indexer.advanceTime(100)
       await sync.expectItemsQueries([
         {fromBlock: 1, toBlock: Unbounded, retryCount: 1, reply: LeavePending},
       ])

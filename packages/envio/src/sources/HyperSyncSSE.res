@@ -14,8 +14,8 @@ let failure = (error: EventSource.errorEvent): (
   | (None, None) => (Closed, None)
   }
 
-let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
-  HeightStream.subscribe(~staleTimeout, ~onHeight, ~onStatus, ~connect=driver => {
+let subscribe = (~clock, ~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
+  HeightStream.subscribe(~clock, ~staleTimeout, ~onHeight, ~onStatus, ~connect=driver => {
     let userAgent = `hyperindex/${Utils.EnvioPackage.value.version}`
     let es = EventSource.create(
       ~url=`${hyperSyncUrl}/height/sse`,
@@ -24,10 +24,8 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
           let headers =
             args.headers
             ->Option.getOr(Dict.make())
-            ->Utils.Dict.merge(
-              dict{"Authorization": `Bearer ${apiToken}`, "User-Agent": userAgent},
-            )
-          EventSource.Fetch.fetch(url, ~args={...args, headers: headers})
+            ->Utils.Dict.merge(dict{"Authorization": `Bearer ${apiToken}`, "User-Agent": userAgent})
+          EventSource.Fetch.fetch(url, ~args={...args, headers})
         },
       },
     )
