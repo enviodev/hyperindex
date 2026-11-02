@@ -86,8 +86,7 @@ mod tests {
             rollback: Some(RollbackWrite {
                 bounds: Bounds {
                     sequence: Sequence::PerChain,
-                    chain_ids: vec![1],
-                    checkpoint_ids: vec![1],
+                    frontier: Frontier::from([(1, 1)]),
                 },
                 progress: Vec::new(),
                 removed_addresses: Addresses::default(),

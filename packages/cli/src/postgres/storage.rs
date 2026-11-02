@@ -37,9 +37,9 @@ use crate::storage::schema::{
     RAW_EVENTS_TABLE,
 };
 use crate::storage::types::{
-    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, Progress, ProgressDiff,
-    ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE, CHANGE_COLUMN,
-    CHECKPOINT_ID_COLUMN, DELETE, SET,
+    Addresses, Bounds, CacheTable, ChainConfig, ChainMeta, Checkpoints, Frontier, Progress,
+    ProgressDiff, ReorgCheckpoint, ResumedChain, Sequence, StoredConfig, CHAINS_TABLE,
+    CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, DELETE, SET,
 };
 use crate::storage::{
     AddChain, Batch, Failure, Handoff, Initialize, Resumed, RollbackWrite, StoredConfigRead,
@@ -250,11 +250,16 @@ impl Table {
 fn bound_params(bounds: &Bounds) -> Vec<Param> {
     match bounds.sequence {
         Sequence::SharedAcrossChains => vec![Param::Text(bounds.shared_id().to_string())],
-        Sequence::PerChain => vec![
-            array_literal(bounds.chain_ids.iter().map(|id| Some(id.to_string()))),
-            array_literal(bounds.checkpoint_ids.iter().map(|id| Some(id.to_string()))),
-        ],
+        Sequence::PerChain => frontier_params(&bounds.frontier),
     }
+}
+
+/// The chains and their checkpoint ids, as two arrays read side by side.
+fn frontier_params(frontier: &Frontier) -> Vec<Param> {
+    vec![
+        array_literal(frontier.keys().map(|id| Some(id.to_string()))),
+        array_literal(frontier.values().map(|id| Some(id.to_string()))),
+    ]
 }
 
 fn address_params(addresses: &Addresses, with_registration_blocks: bool) -> Vec<Param> {
@@ -1167,21 +1172,12 @@ impl Storage {
                 address_params(&batch.addresses, true),
             ));
         }
-        let frontier = &batch.frontier;
-        if !frontier.chain_ids.is_empty() {
+        if !batch.frontier.is_empty() {
             statements.push(execute(
                 transaction,
                 "Failed writing the chains' checkpoint",
                 internal::set_frontier(schema, chain_id_mode),
-                vec![
-                    array_literal(frontier.chain_ids.iter().map(|id| Some(id.to_string()))),
-                    array_literal(
-                        frontier
-                            .checkpoint_ids
-                            .iter()
-                            .map(|id| Some(id.to_string())),
-                    ),
-                ],
+                frontier_params(&batch.frontier),
             ));
         }
         // Only the checkpoints a rollback can reach back to: those anchoring
@@ -1587,8 +1583,7 @@ mod tests {
     fn bounds(sequence: Sequence) -> Bounds {
         Bounds {
             sequence,
-            chain_ids: vec![1, 137],
-            checkpoint_ids: vec![9, 2],
+            frontier: Frontier::from([(1, 9), (137, 2)]),
         }
     }
 

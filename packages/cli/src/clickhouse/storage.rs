@@ -20,7 +20,7 @@ use super::ch_type::{self, ChType};
 use super::client::{error_code, insert_tag_prefix, Client, Connection, Tuning, Warn};
 use super::ddl::{self, Topology, CHAIN_ID_COLUMN, ID_COLUMN};
 use super::row_binary::{self, encode_values, EncodedRows, Value};
-use super::select::{self, Frontier};
+use super::select;
 use super::table::Table;
 use super::{literal, quoted, table_ref};
 use crate::config_parsing::system_config::ChainIdMode;
@@ -29,7 +29,7 @@ use crate::storage::changes::ChangeSet;
 use crate::storage::rows::{self, Cell, ColumnRead, Decoded, ReadKind, ResultSet};
 use crate::storage::schema::{Entity, Schema};
 use crate::storage::types::{
-    Bounds, Checkpoints, Sequence, CHAINS_TABLE, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
+    Bounds, Checkpoints, Frontier, Sequence, CHAINS_TABLE, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN,
     INFO_TABLE,
 };
 use crate::storage::{Batch, Failure, Handoff, Initialize, Resume, WriteError};
@@ -583,16 +583,18 @@ impl Storage {
     ) -> Result<()> {
         let bounds = Bounds {
             sequence,
-            chain_ids: frontier.keys().copied().collect(),
-            checkpoint_ids: match sequence {
+            frontier: match sequence {
                 // Under one shared counter every chain counts from the same
                 // run of it, so the highest committed id is where all of them
                 // trim — a lower one would remove another chain's rows.
                 Sequence::SharedAcrossChains => {
                     let highest = frontier.values().copied().max().unwrap_or(0);
-                    vec![highest; frontier.len()]
+                    frontier
+                        .keys()
+                        .map(|&chain_id| (chain_id, highest))
+                        .collect()
                 }
-                Sequence::PerChain => frontier.values().copied().collect(),
+                Sequence::PerChain => frontier.clone(),
             },
         };
         let mut above_by_table = tables
@@ -925,7 +927,7 @@ impl Storage {
         let moved = if staged.is_empty() {
             Frontier::new()
         } else {
-            batch.frontier.entries().collect()
+            batch.frontier.clone()
         };
         let checkpoint_columns = ddl::checkpoint_columns(&self.chain_id_type());
         let checkpoint_rows = Self::checkpoint_values(&batch.checkpoints_with_diff());
@@ -1125,10 +1127,7 @@ mod tests {
             .write_batch(
                 &Batch {
                     changes: writes.into_iter().map(Arc::new).collect(),
-                    frontier: Frontier {
-                        chain_ids: vec![1],
-                        checkpoint_ids: vec![1],
-                    },
+                    frontier: Frontier::from([(1, 1)]),
                     checkpoints: Checkpoints {
                         ids: vec![1],
                         chain_ids: vec![1],

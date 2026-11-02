@@ -3,8 +3,6 @@
 //! ClickHouse pushes nothing through `LIMIT 1 BY`; a load names the ids it
 //! wants up front, so the primary key narrows the scan to them.
 
-use std::collections::BTreeMap;
-
 use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
@@ -13,11 +11,7 @@ use super::table::Table;
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
 use crate::storage::schema::FieldType;
-use crate::storage::types::{Bounds, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, SET};
-
-/// Where each chain's committed rows end. A row stamped past its chain's id
-/// belongs to a write that has not committed.
-pub type Frontier = BTreeMap<i64, i64>;
+use crate::storage::types::{Bounds, Frontier, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, SET};
 
 /// A read, and the lists it sends beside its text. A batch loads thousands of
 /// ids at once, more than the server's cap on a statement's length holds as
@@ -77,14 +71,15 @@ pub fn above(
                      chain-id column. Only a schema whose entities are all per-chain has them."
                 )
             };
-            if bounds.chain_ids.is_empty() {
+            if bounds.frontier.is_empty() {
                 return Ok("false".to_string());
             }
             let chain = quoted(chain_column);
             Ok(format!(
                 "({})",
                 bounds
-                    .by_chain()
+                    .frontier
+                    .iter()
                     .map(|(chain_id, checkpoint_id)| {
                         format!("({chain} = {chain_id} AND {checkpoint} > {checkpoint_id})")
                     })
@@ -957,8 +952,7 @@ mod tests {
     fn rollback_reads_reach_only_what_a_bound_put_above_it() {
         let bounds = Bounds {
             sequence: Sequence::SharedAcrossChains,
-            chain_ids: vec![1, 137],
-            checkpoint_ids: vec![9, 4],
+            frontier: frontier(&[(1, 9), (137, 4)]),
         };
         assert_eq!(
             (
@@ -985,8 +979,7 @@ mod tests {
     fn per_chain_bounds_name_each_chain() {
         let bounds = Bounds {
             sequence: Sequence::PerChain,
-            chain_ids: vec![1, 137],
-            checkpoint_ids: vec![9, 4],
+            frontier: frontier(&[(1, 9), (137, 4)]),
         };
         assert_eq!(
             (

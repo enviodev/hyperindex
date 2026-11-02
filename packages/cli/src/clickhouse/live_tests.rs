@@ -254,10 +254,7 @@ fn batch(
             source_block: 1000,
         }],
         changes: vec![Arc::new(history(table, changes))],
-        frontier: Frontier {
-            chain_ids: vec![frontier.0],
-            checkpoint_ids: vec![frontier.1],
-        },
+        frontier: Frontier::from([frontier]),
         checkpoints: checkpoints(checkpoint_entries),
         ..Batch::default()
     }
@@ -1203,8 +1200,7 @@ async fn a_rollback_restores_the_target_at_its_diff_checkpoint() {
     .await;
     let bounds = |checkpoint_id: i64| Bounds {
         sequence: Sequence::SharedAcrossChains,
-        chain_ids: vec![1],
-        checkpoint_ids: vec![checkpoint_id],
+        frontier: Frontier::from([(1, checkpoint_id)]),
     };
 
     let (removed, restored) = live

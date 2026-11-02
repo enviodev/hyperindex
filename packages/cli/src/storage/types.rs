@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 /// The names both stores give the indexer's own tables and the columns an
 /// entity's history adds to its fields. Tests and tools on the JavaScript side
 /// read them by these names too.
@@ -19,27 +21,22 @@ pub enum Sequence {
     PerChain,
 }
 
+/// A checkpoint id per chain.
+pub type Frontier = BTreeMap<i64, i64>;
+
 /// Which rows a bounded operation reaches: the chains and the checkpoint each
 /// is held to.
 #[derive(Clone, Debug)]
 pub struct Bounds {
     pub sequence: Sequence,
-    pub chain_ids: Vec<i64>,
-    pub checkpoint_ids: Vec<i64>,
+    pub frontier: Frontier,
 }
 
 impl Bounds {
     /// Under one shared sequence every chain is held to the lowest of the ids:
     /// a higher one would leave another chain's rows above its own bound.
     pub fn shared_id(&self) -> i64 {
-        self.checkpoint_ids.iter().min().copied().unwrap_or(0)
-    }
-
-    pub fn by_chain(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
-        self.chain_ids
-            .iter()
-            .copied()
-            .zip(self.checkpoint_ids.iter().copied())
+        self.frontier.values().min().copied().unwrap_or(0)
     }
 }
 
@@ -124,22 +121,6 @@ fn kept<T: Clone>(values: &[T], keeps: &[bool]) -> Vec<T> {
         .filter(|(_, keep)| **keep)
         .map(|(value, _)| value.clone())
         .collect()
-}
-
-/// Where a write leaves each chain's checkpoint sequence.
-#[derive(Clone, Debug, Default)]
-pub struct Frontier {
-    pub chain_ids: Vec<i64>,
-    pub checkpoint_ids: Vec<i64>,
-}
-
-impl Frontier {
-    pub fn entries(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
-        self.chain_ids
-            .iter()
-            .copied()
-            .zip(self.checkpoint_ids.iter().copied())
-    }
 }
 
 /// The checkpoint a rollback's diff rows are stamped with, one per chain the

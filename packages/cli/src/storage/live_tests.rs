@@ -181,10 +181,7 @@ async fn clickhouse_commits_what_postgres_committed_whatever_its_caches_do() {
                 events_processed: 1.0,
                 source_block: 10,
             }],
-            frontier: Frontier {
-                chain_ids: vec![1],
-                checkpoint_ids: vec![1],
-            },
+            frontier: Frontier::from([(1, 1)]),
             changes: vec![Arc::new(clickhouse::live_tests::history(
                 &account,
                 &[("a", Some(("alice", "1")), 1)],

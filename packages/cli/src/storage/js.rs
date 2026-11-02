@@ -126,8 +126,9 @@ pub struct QueryResult {
     pub rows: u32,
 }
 
+/// A checkpoint id per chain, as two arrays read side by side.
 #[napi(object)]
-pub struct BoundsInput {
+pub struct FrontierInput {
     pub chain_ids: Vec<i64>,
     pub checkpoint_ids: Vec<BigInt>,
 }
@@ -236,7 +237,7 @@ pub struct DiffCheckpointInput {
 
 #[napi(object)]
 pub struct RollbackWriteInput {
-    pub bounds: BoundsInput,
+    pub bounds: FrontierInput,
     pub progress: Vec<Progress>,
     pub removed_addresses: AddressesInput,
     pub diff_checkpoints: Vec<DiffCheckpointInput>,
@@ -250,12 +251,6 @@ pub struct CheckpointsInput {
     pub block_hashes: Vec<Option<String>>,
     pub events_processed: Vec<f64>,
     pub keeps_history: Vec<bool>,
-}
-
-#[napi(object)]
-pub struct FrontierInput {
-    pub chain_ids: Vec<i64>,
-    pub checkpoint_ids: Vec<BigInt>,
 }
 
 #[napi(object)]
@@ -714,13 +709,13 @@ impl JsStorage {
     }
 
     #[napi]
-    pub async fn prune_checkpoints(&self, bounds: BoundsInput) -> napi::Result<()> {
+    pub async fn prune_checkpoints(&self, bounds: FrontierInput) -> napi::Result<()> {
         let bounds = self.bounds(bounds)?;
         self.inner.prune_checkpoints(&bounds).await.map_err(to_napi)
     }
 
     #[napi]
-    pub async fn prune_history(&self, entity: u32, bounds: BoundsInput) -> napi::Result<()> {
+    pub async fn prune_history(&self, entity: u32, bounds: FrontierInput) -> napi::Result<()> {
         let entity = self.entity(entity)?;
         let bounds = self.bounds(bounds)?;
         self.inner
@@ -746,7 +741,7 @@ impl JsStorage {
     #[napi]
     pub async fn rollback_progress_diff(
         &self,
-        bounds: BoundsInput,
+        bounds: FrontierInput,
     ) -> napi::Result<Vec<ProgressDiffOutput>> {
         let bounds = self.bounds(bounds)?;
         Ok(self
@@ -767,7 +762,7 @@ impl JsStorage {
     pub async fn rollback_data(
         &self,
         entity: u32,
-        bounds: BoundsInput,
+        bounds: FrontierInput,
     ) -> napi::Result<RollbackDataOutput> {
         let entity = self.entity(entity)?;
         let bounds = self.bounds(bounds)?;
@@ -881,15 +876,10 @@ impl JsStorage {
         result
     }
 
-    fn bounds(&self, bounds: BoundsInput) -> napi::Result<Bounds> {
-        same_length(
-            "bound",
-            &[bounds.chain_ids.len(), bounds.checkpoint_ids.len()],
-        )?;
+    fn bounds(&self, bounds: FrontierInput) -> napi::Result<Bounds> {
         Ok(Bounds {
             sequence: self.inner.schema.sequence,
-            chain_ids: bounds.chain_ids,
-            checkpoint_ids: checkpoint_ids(bounds.checkpoint_ids)?,
+            frontier: frontier("bound", bounds)?,
         })
     }
 
@@ -961,13 +951,6 @@ impl JsStorage {
                 })
             })
             .transpose()?;
-        same_length(
-            "frontier",
-            &[
-                batch.frontier.chain_ids.len(),
-                batch.frontier.checkpoint_ids.len(),
-            ],
-        )?;
         let checkpoints = &batch.checkpoints;
         same_length(
             "checkpoint",
@@ -987,10 +970,7 @@ impl JsStorage {
             changes,
             chain_meta: batch.chain_meta,
             addresses: addresses(batch.addresses)?,
-            frontier: Frontier {
-                chain_ids: batch.frontier.chain_ids,
-                checkpoint_ids: checkpoint_ids(batch.frontier.checkpoint_ids)?,
-            },
+            frontier: frontier("frontier", batch.frontier)?,
             checkpoints: Checkpoints {
                 ids: checkpoint_ids(batch.checkpoints.ids)?,
                 chain_ids: batch.checkpoints.chain_ids,
@@ -1032,6 +1012,22 @@ fn checkpoint_id(id: &BigInt) -> napi::Result<i64> {
 
 fn checkpoint_ids(ids: Vec<BigInt>) -> napi::Result<Vec<i64>> {
     ids.iter().map(checkpoint_id).collect()
+}
+
+fn frontier(rows: &str, input: FrontierInput) -> napi::Result<Frontier> {
+    same_length(rows, &[input.chain_ids.len(), input.checkpoint_ids.len()])?;
+    let chains = input.chain_ids.len();
+    let frontier = input
+        .chain_ids
+        .into_iter()
+        .zip(checkpoint_ids(input.checkpoint_ids)?)
+        .collect::<Frontier>();
+    if frontier.len() != chains {
+        return Err(napi::Error::from_reason(format!(
+            "Internal error: the {rows} names a chain twice"
+        )));
+    }
+    Ok(frontier)
 }
 
 fn addresses(addresses: AddressesInput) -> napi::Result<Addresses> {
