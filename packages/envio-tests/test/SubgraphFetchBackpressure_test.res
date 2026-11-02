@@ -5,8 +5,10 @@ open Vitest
 // 30 responses of 17,000 events each while the pool believed it had room,
 // because the pool priced a query at its density estimate and a response that
 // landed bigger left its register passes unaccounted. Two fixes: the pool is a
-// tenth of the size in subgraph mode, and a response keeps its real size
-// reserved until its passes are done.
+// tenth of the size for a subgraph with templates, and a response keeps its
+// real size reserved until its passes are done. A subgraph without templates
+// has no register passes and keeps the handler run's pool: a tenth of it left
+// a single query in flight and fetching stopped overlapping processing.
 describe("fetch buffer back-pressure for subgraph runs", () => {
   let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
@@ -59,13 +61,17 @@ describe("fetch buffer back-pressure for subgraph runs", () => {
     (cs, fetchState)
   }
 
-  it("sizes the pool for a subgraph run unless the operator set one", t => {
-    let before = Env.subgraphMode.contents
+  it("sizes the pool for a subgraph run with templates unless the operator set one", t => {
+    let before = (Env.subgraphMode.contents, Env.subgraphHasTemplates.contents)
     let handlerRun = CrossChainState.calculateTargetBufferSize()
     Env.subgraphMode := true
-    let subgraphRun = CrossChainState.calculateTargetBufferSize()
-    Env.subgraphMode := before
-    t.expect((handlerRun, subgraphRun)).toEqual((100_000, 10_000))
+    let withoutTemplates = CrossChainState.calculateTargetBufferSize()
+    Env.subgraphHasTemplates := true
+    let withTemplates = CrossChainState.calculateTargetBufferSize()
+    let (mode, templates) = before
+    Env.subgraphMode := mode
+    Env.subgraphHasTemplates := templates
+    t.expect((handlerRun, withoutTemplates, withTemplates)).toEqual((100_000, 100_000, 10_000))
   })
 
   it("keeps a response's size beyond its estimate reserved while its passes run", t => {

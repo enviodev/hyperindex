@@ -11,6 +11,10 @@ let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.
 // the pool of events ready to process is sized for that (CrossChainState).
 let subgraphMode = ref(false)
 
+// Set with subgraphMode when the manifest declares templates: without one no
+// event can create a data source, so none holds a register pass.
+let subgraphHasTemplates = ref(false)
+
 // Most events with a register pass one subgraph response may hold before it is
 // cut after a block and the rest fetched again. 0 turns the cut off; unset, it
 // follows what the register passes cost (ChainFetching).

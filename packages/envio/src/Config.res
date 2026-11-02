@@ -1156,8 +1156,16 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | None => []
   }
 
-  if publicConfig["subgraph"]->Option.isSome {
+  switch publicConfig["subgraph"] {
+  | Some(subgraph) =>
     Env.subgraphMode := true
+    Env.subgraphHasTemplates :=
+      subgraph
+      ->JSON.Decode.object
+      ->Option.flatMap(manifest => manifest->Dict.get("templates"))
+      ->Option.flatMap(JSON.Decode.array)
+      ->Option.mapOr(false, templates => templates->Array.length > 0)
+  | None => ()
   }
 
   let config = {
