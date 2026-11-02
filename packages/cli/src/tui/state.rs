@@ -190,7 +190,8 @@ impl Chain {
 pub enum Eta {
     Calculating,
     Syncing(String),
-    Synced(String),
+    /// How long this run took to sync; `None` when it resumed already synced.
+    Synced(Option<String>),
 }
 
 const EVENTS_PER_SECOND_WINDOW_MS: f64 = 60_000.;
@@ -304,7 +305,8 @@ impl State {
                     _ => None,
                 })
                 .fold(0., f64::max);
-            return Eta::Synced(super::format::duration(caught_up_at - self.info.start_time));
+            let took = caught_up_at - self.info.start_time;
+            return Eta::Synced((took > 0.).then(|| super::format::duration(took)));
         }
         let processed = self.processed_blocks();
         if !self.eta_ready || processed <= 0 {
@@ -492,7 +494,7 @@ mod tests {
                     latest_processed_block: 900,
                     caught_up_at: 30_000.,
                 },
-                Eta::Synced("30s".to_string())
+                Eta::Synced(Some("30s".to_string()))
             )
         );
     }
@@ -638,8 +640,26 @@ mod tests {
         };
         assert_eq!(
             state(&[synced("1", 30_000.), synced("2", 150_000.)], 0.).eta(0.),
-            Eta::Synced("2m 30s".to_string())
+            Eta::Synced(Some("2m 30s".to_string()))
         );
+    }
+
+    // A run resumed with every chain caught up took no time to sync here, and
+    // the earlier runs' time isn't known.
+    #[test]
+    fn reports_no_sync_time_for_a_run_resumed_synced() {
+        let synced = TuiChain {
+            first_event_block_number: Some(100),
+            progress_block_number: 900,
+            timestamp_caught_up_to_head_or_endblock: Some(30_000.),
+            ..chain_metrics()
+        };
+        let mut state = State::new(TuiInfo {
+            start_time: 60_000.,
+            ..TuiInfo::default()
+        });
+        state.update(&[synced], 61_000.);
+        assert_eq!(state.eta(61_000.), Eta::Synced(None));
     }
 
     #[test]

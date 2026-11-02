@@ -532,10 +532,13 @@ fn summary(
     let separator = || span(" · ", palette.faint());
     let spinner = || span(SPINNER[tick % SPINNER.len()], palette.gold());
     let status = match state.eta(now) {
-        Eta::Synced(took) => vec![
-            span("✓ synced", palette.green()),
-            span(format!(" in {took}"), palette.dim()),
-        ],
+        Eta::Synced(took) => {
+            let mut status = vec![span("✓ synced", palette.green())];
+            if let Some(took) = took {
+                status.push(span(format!(" in {took}"), palette.dim()));
+            }
+            status
+        }
         Eta::Syncing(eta) => vec![
             spinner(),
             span(" syncing", palette.text()),
