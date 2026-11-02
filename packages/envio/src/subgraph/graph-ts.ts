@@ -1685,13 +1685,30 @@ export function resetRegisterStore(): void {
  * needs it spelled out — a list column refuses a missing value.
  */
 function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, unknown>) {
-  const refFields = new Set(scope.schema.entityRefFields[entityType] ?? []);
-  for (const [field, declared] of Object.entries(scope.schema.entityFieldTypes[entityType] ?? {})) {
-    if (declared.derivedFrom) continue;
-    const column = refFields.has(field) ? `${field}_id` : field;
+  for (const column of entityColumns(scope, entityType)) {
     if (!(column in row)) row[column] = null;
   }
   return row;
+}
+
+const columnsBySchema = new WeakMap<object, Map<string, string[]>>();
+
+/** An entity's stored columns: a reference field's is `<field>_id`, a derived one has none. */
+function entityColumns(scope: Scope, entityType: string): string[] {
+  let byType = columnsBySchema.get(scope.schema);
+  if (!byType) {
+    byType = new Map();
+    columnsBySchema.set(scope.schema, byType);
+  }
+  let columns = byType.get(entityType);
+  if (!columns) {
+    const refFields = new Set(scope.schema.entityRefFields[entityType] ?? []);
+    columns = Object.entries(scope.schema.entityFieldTypes[entityType] ?? {})
+      .filter(([, declared]) => !declared.derivedFrom)
+      .map(([field]) => (refFields.has(field) ? `${field}_id` : field));
+    byType.set(entityType, columns);
+  }
+  return columns;
 }
 
 /**
@@ -1792,7 +1809,13 @@ const storeImpl = {
     }
     // A file data source's first write of an id is a new entity of its own,
     // whatever a chain handler stored under the same id.
-    const stored = own === false ? undefined : table.getSync(id);
+    // A save that sets every column leaves the merge nothing to keep, so the
+    // store isn't read: for an insert-only entity that read was a database
+    // lookup and a second preload round per event.
+    const replacesWhole =
+      !scope.schema.skipDuplicateEntities.includes(entityType) &&
+      entityColumns(scope, entityType).every((column) => column in row);
+    const stored = own === false || replacesWhole ? undefined : table.getSync(id);
     assertRequiredFields(scope, entityType, id, data, stored);
     // graph-node inserts a skipDuplicates type with ON CONFLICT DO NOTHING, so
     // an id an earlier block stored keeps that block's write; saves within
