@@ -57,6 +57,7 @@ describe("ClickHouse table options with a field named like a keyword", () => {
                 handler: async args => {
                   let context =
                     args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+                  // Real time: recent enough that the table's 30-day TTL keeps the row.
                   context.visit.set({id: "v1", day: 3, createdAt: Date.fromTime(Date.now())})
                 },
               },

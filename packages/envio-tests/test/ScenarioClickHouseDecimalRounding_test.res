@@ -165,24 +165,29 @@ describe("ClickHouse keeps an unbounded BigDecimal as Postgres renders it", () =
       let inClickHouse = await TestClickHouse.query(
         `SELECT id, value FROM \`${database}\`.\`Ratio\` ORDER BY id FORMAT JSONEachRow`,
       )
-      await indexer.usePostgresSql(async sql => {
-        let inPostgres: array<{"id": string, "value": string}> = await sql->Sql.queryForTests(
-          `SELECT "id", "value"::text AS "value" FROM "${indexer.pgSchema}"."Ratio" ORDER BY "id";`,
-        )
-        t.expect((
-          inPostgres->Array.map(row => `{"id":"${row["id"]}","value":"${row["value"]}"}`),
-          inClickHouse->String.trim->String.split("\n"),
-        )).toEqual((
-          [
-            `{"id":"large","value":"12500000000000000000000000"}`,
-            `{"id":"small","value":"0.000000000001"}`,
-          ],
-          [
-            `{"id":"large","value":"12500000000000000000000000"}`,
-            `{"id":"small","value":"0.000000000001"}`,
-          ],
-        ))
-      })
+      await indexer.usePostgresSql(
+        async sql => {
+          let inPostgres: array<{
+            "id": string,
+            "value": string,
+          }> = await sql->Sql.queryForTests(
+            `SELECT "id", "value"::text AS "value" FROM "${indexer.pgSchema}"."Ratio" ORDER BY "id";`,
+          )
+          t.expect((
+            inPostgres->Array.map(row => `{"id":"${row["id"]}","value":"${row["value"]}"}`),
+            inClickHouse->String.trim->String.split("\n"),
+          )).toEqual((
+            [
+              `{"id":"large","value":"12500000000000000000000000"}`,
+              `{"id":"small","value":"0.000000000001"}`,
+            ],
+            [
+              `{"id":"large","value":"12500000000000000000000000"}`,
+              `{"id":"small","value":"0.000000000001"}`,
+            ],
+          ))
+        },
+      )
     },
   )
 })

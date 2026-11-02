@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: retries against the database"
+)]
+
 pub mod rows;
 pub mod types;
 

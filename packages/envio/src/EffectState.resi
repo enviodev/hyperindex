@@ -4,6 +4,8 @@ type effectRateLimitState = {
   mutable availableCalls: int,
   mutable windowStartTime: float,
   mutable nextWindowPromise: option<promise<unit>>,
+  // The run's clock: a test on virtual time opens the next window by advancing.
+  clock: Clock.t,
 }
 
 // Per-(effect, scope) metric counters. Survive rollback so they stay monotonic.
@@ -32,7 +34,7 @@ type effectCacheInMemTable = {
 // Opaque store of all per-(effect, scope) runtime state.
 type t
 
-let make: unit => t
+let make: (~clock: Clock.t=?, unit) => t
 // Get, or lazily create, the in-mem table for an (effect, scope). Reuses the
 // surviving rate-limit window when the table is recreated after a rollback.
 let getTable: (t, ~effect: Internal.effect, ~scope: Internal.chainScope) => effectCacheInMemTable

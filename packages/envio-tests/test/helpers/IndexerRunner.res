@@ -56,6 +56,9 @@ type rec t = {
   getBatchWritePromise: unit => promise<unit>,
   getRollbackReadyPromise: unit => promise<unit>,
   waitUntilIdle: unit => promise<unit>,
+  // Moves a virtual-time run's clock forward, firing every source timer due
+  // on the way. Only a run on virtual time has a clock to move.
+  advanceTime: int => promise<unit>,
   waitUntilReady: unit => promise<unit>,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
@@ -109,10 +112,26 @@ type rec t = {
   releaseRealtime: unit => unit,
 }
 
-// How often the stand-in supervisor of a supervised pass asks whether the run
-// may go realtime. Short enough that the run gets there in the same tick a test
-// would otherwise see it.
-%%private(let releaseCheckIntervalMillis = 1)
+// Storage the indexer awaits outside a processing pass or a write, as
+// catching up does on its way to realtime, is still the indexer at work. A
+// settle that can't see it returns while a slow store is answering, and the
+// step the indexer takes next lands after the test's.
+let countStorageCalls: (
+  Persistence.storage,
+  ~inFlight: ref<int>,
+) => Persistence.storage = %raw(`(storage, inFlight) =>
+  new Proxy(storage, {
+    get: (target, key) => {
+      const value = target[key];
+      if (typeof value !== "function") return value;
+      return (...args) => {
+        const result = value.apply(target, args);
+        if (!result || typeof result.then !== "function") return result;
+        inFlight.contents = inFlight.contents + 1;
+        return result.finally(() => { inFlight.contents = inFlight.contents - 1; });
+      };
+    },
+  })`)
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
@@ -193,7 +212,9 @@ let run = async (
   // One capture for the whole run, `restart` and siblings included, so a test
   // reads the resumed indexer's lines after the ones that led to them.
   ~logger=Logger.makeInMemory(),
-  ~sourceTiming=?,
+  ~sourceTiming: option<SourceManager.timing>=?,
+  // Runs the source layer's timers on this clock instead of real time.
+  ~clock: option<VirtualClock.t>=?,
   ~startBlockRetry=?,
   ~targetBufferSize=?,
   // Runs the indexer the way a supervised worker runs: it waits to be released
@@ -220,6 +241,15 @@ let run = async (
   ~chains=?,
   body: t => promise<unit>,
 ) => {
+  // Startup keeps the real clock: it runs before the body can step anything,
+  // so there is no step for a timer to race, and nothing that could advance
+  // a virtual one.
+  let startupTiming = sourceTiming
+  let sourceTiming = switch clock {
+  | Some(clock) => Some({...sourceTiming->Option.getOr({}), clock: clock->VirtualClock.toClock})
+  | None => sourceTiming
+  }
+
   // Postgres resources this run owns: one schema, plus every client and
   // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
@@ -263,6 +293,9 @@ let run = async (
   // what differs between them and reads the rest off this call.
   let rec make = async (~reset, ~config as baseConfig, ~chains=?, ~asWorker=false) => {
     throwIfClosing()
+    // Startup runs on the real clock, a restart's included.
+    Clock.refuseReal := false
+    let storageCallsInFlight = ref(0)
     let config = switch chains {
     | Some(chainIds) => baseConfig->Config.isolate(~chainIds)
     | None => baseConfig
@@ -277,16 +310,17 @@ let run = async (
     clients->Array.push(sql)->ignore
     // Tracking tables in Hasura costs ~1.9 seconds per indexer.
     let client = Storage.clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
-    let storage = mapStorage(
-      Storage.make(
-        ~client,
-        ~logger,
-        ~entities=config.userEntities,
-        ~cacheDir,
-        ~ecosystem=config.ecosystem.name,
-        ~isolated=config.isolated,
-      ),
-    )
+    let storage =
+      mapStorage(
+        Storage.make(
+          ~client,
+          ~logger,
+          ~entities=config.userEntities,
+          ~cacheDir,
+          ~ecosystem=config.ecosystem.name,
+          ~isolated=config.isolated,
+        ),
+      )->countStorageCalls(~inFlight=storageCallsInFlight)
     storages->Array.push(storage)
     let persistence = Storage.makePersistenceFromConfig(~config, ~logger, ~storage)
     // `Main.start` does this before handler modules load, so the exported
@@ -306,7 +340,7 @@ let run = async (
       ~isDevelopmentMode=true,
       ~announceResume=!asWorker,
       ~startBlockRetry?,
-      ~sourceTiming?,
+      ~sourceTiming=?startupTiming,
     )
 
     // Same order as `Main.start`: storage is initialized - which is where a
@@ -318,6 +352,25 @@ let run = async (
     throwIfClosing()
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
+    // Only when the test didn't ask for the hold itself: one that did is
+    // testing the barrier and owns its own release. The stand-in supervisor
+    // releases in the processing pass that arrives, as a real one would on the
+    // report that says so, but at a point in the indexer's progress instead of
+    // on a timer that can land between two of the test's steps. Off the pass's
+    // own stack, as a release arrives from outside it.
+    let stateRef = ref(None)
+    let onArrivedAtHead = if superviseRun && !holdRealtime {
+      Some(
+        () =>
+          Promise.resolve()
+          ->Promise.thenResolve(() =>
+            stateRef.contents->Option.forEach(IndexerState.releaseRealtime)
+          )
+          ->ignore,
+      )
+    } else {
+      None
+    }
     let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
@@ -331,21 +384,11 @@ let run = async (
       ~holdRealtime={holdRealtime || superviseRun},
       ~onError,
       ~onExit?,
+      ~onArrivedAtHead?,
     )
+    stateRef := Some(state)
+    Clock.refuseReal := clock->Option.isSome
     state->IndexerLoop.start
-
-    // Only when the test didn't ask for the hold itself: one that did is
-    // testing the barrier and owns its own release.
-    let releaseCheck = ref(None)
-    if superviseRun && !holdRealtime {
-      releaseCheck := Some(setInterval(() =>
-            if state->IndexerState.hasArrivedAtHead {
-              releaseCheck.contents->Option.forEach(clearInterval)
-              releaseCheck := None
-              state->IndexerState.releaseRealtime
-            }
-          , releaseCheckIntervalMillis))
-    }
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
@@ -359,8 +402,6 @@ let run = async (
       | None =>
         let promise = (
           async () => {
-            releaseCheck.contents->Option.forEach(clearInterval)
-            releaseCheck := None
             await state->Writing.flush
             state->IndexerState.stop
             // Tests deliberately leave handlers that never resolve, which pins
@@ -565,6 +606,41 @@ let run = async (
       })
     }
 
+    // Nothing in the indexer's hands: no pass, no write, no storage call. Each
+    // wait below adds what else it needs settled.
+    let isQuiet = () =>
+      !(state->IndexerState.isProcessing) &&
+      state->IndexerState.writeFiber->Option.isNone &&
+      storageCallsInFlight.contents === 0
+
+    let waitUntilIdle = async () => {
+      await state->Writing.flush
+      // Settling takes several ticks: the loop dispatches follow-up actions
+      // (the next query, the finalize pass) from inside the tick that looks
+      // idle, so one observation isn't enough.
+      let settled = ref(0)
+      let attempts = ref(0)
+      while settled.contents < 5 && attempts.contents < 5000 {
+        attempts := attempts.contents + 1
+        settled := if (
+            isQuiet() &&
+            !(state->IndexerState.shouldFinalizeIndexes) &&
+            Frontier.equals(
+              state->IndexerState.committedFrontier,
+              state->IndexerState.processedFrontier,
+            )
+          ) {
+            settled.contents + 1
+          } else {
+            0
+          }
+        await Utils.delay(0)
+      }
+      if settled.contents < 5 {
+        JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
+      }
+    }
+
     {
       getBatchWritePromise: () => {
         Utils.Promise.makeAsync(async (resolve, _reject) => {
@@ -576,8 +652,7 @@ let run = async (
           let rec wait = async () => {
             await state->Writing.flush
             let isIdle =
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
+              isQuiet() &&
               Frontier.equals(
                 state->IndexerState.committedFrontier,
                 state->IndexerState.processedFrontier,
@@ -607,34 +682,46 @@ let run = async (
           resolve()
         })
       },
-      waitUntilIdle: async () => {
-        await state->Writing.flush
-        // Settling takes several ticks: the loop dispatches follow-up actions
-        // (the next query, the finalize pass) from inside the tick that looks
-        // idle, so one observation isn't enough.
-        let settled = ref(0)
-        let attempts = ref(0)
-        while settled.contents < 5 && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          settled := if (
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.shouldFinalizeIndexes) &&
-              Frontier.equals(
-                state->IndexerState.committedFrontier,
-                state->IndexerState.processedFrontier,
-              )
-            ) {
-              settled.contents + 1
-            } else {
-              0
+      waitUntilIdle,
+      advanceTime: millis =>
+        switch clock {
+        | Some(clock) =>
+          // Lets whatever a timer started run to where it waits on the test or
+          // on another timer. Weaker than `waitUntilIdle`: a chain mid-rollback,
+          // or left waiting on a query, is settled without being idle. So is a
+          // batch or write a test keeps from finishing, once nothing has touched
+          // the clock or the sources for a while — which is why pending writes
+          // are only started here, not awaited.
+          let settle = async () => {
+            state->Writing.schedule
+            let idle = ref(0)
+            let still = ref(0)
+            let events = ref(clock.events)
+            // A write or storage call in flight gets a far longer quiet spell
+            // before it counts as held: a real one on a loaded runner can
+            // outlast the short one, and returning mid-flight would let the next
+            // step read stale rows.
+            let quietLimit = () =>
+              state->IndexerState.writeFiber->Option.isSome || storageCallsInFlight.contents > 0
+                ? 500
+                : 50
+            while idle.contents < 5 && still.contents < quietLimit() {
+              idle := if isQuiet() {
+                  idle.contents + 1
+                } else {
+                  0
+                }
+              still := (clock.events === events.contents ? still.contents + 1 : 0)
+              events := clock.events
+              await Utils.delay(0)
             }
-          await Utils.delay(0)
-        }
-        if settled.contents < 5 {
-          JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
-        }
-      },
+          }
+          clock->VirtualClock.advance(millis, ~settle)
+        | None =>
+          JsError.throwWithMessage(
+            "advanceTime needs a run on virtual time, and this one opted out of it.",
+          )
+        },
       releaseRealtime: () => state->IndexerState.releaseRealtime,
       waitUntilReady: async () => {
         let isReady = () =>
@@ -803,6 +890,7 @@ let run = async (
   | exn => Some(exn)
   }
   isClosing := true
+  Clock.refuseReal := false
 
   // Every step runs even if an earlier one throws, and a teardown failure
   // never replaces the body's — losing the real failure behind a cleanup
@@ -821,15 +909,15 @@ let run = async (
   // against the vanished schema and report that instead of the real failure.
   // After a failed body, a stop can wait on a write the body stalled and was
   // never going to release, which would bury the failure under a suite timeout.
+  // Only a run that already failed waits on this, so it bounds how long its
+  // report takes rather than whether anything passes.
   let boundedStop = stop =>
     switch outcome {
     | Some(_) =>
       () =>
         Promise.race([
           stop(),
-          Promise.make((resolve, _reject) =>
-            MockSource.realSetTimeout(() => resolve(), 5000)->ignore
-          ),
+          Promise.make((resolve, _reject) => setTimeout(() => resolve(), 2000)->ignore),
         ])
     | None => stop
     }

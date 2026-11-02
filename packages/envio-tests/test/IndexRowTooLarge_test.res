@@ -78,6 +78,8 @@ describe("An indexed String field given a value too large to index", () => {
       await indexer.waitUntilReady()
 
       source.setAutoHeight(110)
+      // The next poll is the one that learns the new head.
+      await indexer.advanceTime(1000)
       await source.expectItemsQueries([
         {
           fromBlock: 101,
