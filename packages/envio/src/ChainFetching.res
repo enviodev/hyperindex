@@ -311,6 +311,11 @@ let finishWaitingForNewBlock = (
 // `blockThrottle` would otherwise never start fetching. A wait the epoch has
 // moved past stops at its next block instead of polling out the throttle on
 // sources the indexer no longer waits on.
+//
+// Unthrottled, the wait's own promise is handed back rather than awaited: a
+// height feed keeps its poll cadence only for a wait re-armed in the same turn
+// the last one was answered in, and the turns an `async` wrapper adds would
+// have every chain poll again at once after each block.
 let waitForThrottledBlock = (
   state: IndexerState.t,
   sourceManager,
@@ -319,21 +324,22 @@ let waitForThrottledBlock = (
   ~stateId,
   ~isRealtime,
   ~reducedPolling,
-) => {
-  let rec waitAbove = async height => {
-    let newHeight = await sourceManager->SourceManager.waitForNewBlock(
-      ~knownHeight=height,
-      ~isRealtime,
-      ~reducedPolling,
-    )
-    knownHeight === 0 ||
-    newHeight >= knownHeight + blockThrottle ||
-    state->IndexerState.isStale(~stateId)
-      ? newHeight
-      : await waitAbove(newHeight)
+) =>
+  if knownHeight === 0 || blockThrottle <= 1 {
+    sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling)
+  } else {
+    let rec waitAbove = async height => {
+      let newHeight = await sourceManager->SourceManager.waitForNewBlock(
+        ~knownHeight=height,
+        ~isRealtime,
+        ~reducedPolling,
+      )
+      newHeight >= knownHeight + blockThrottle || state->IndexerState.isStale(~stateId)
+        ? newHeight
+        : await waitAbove(newHeight)
+    }
+    waitAbove(knownHeight)
   }
-  waitAbove(knownHeight)
-}
 
 let fetchChain = async (
   state: IndexerState.t,
