@@ -56,6 +56,8 @@ describe("Height subscription", () => {
         () => mock.heightSubscriptionCalls->Array.length > 0,
         ~message="the height subscription",
       )
+      // The backfill's head, then the poll its last wait leaves in flight.
+      await mock.expectNewHeightCalls(2)
       mock.triggerHeightSubscription(101)
       await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       t.expect((subscriptionsInBackfill, mock.heightSubscriptionCalls->Array.length)).toEqual((
@@ -68,32 +70,30 @@ describe("Height subscription", () => {
   scenario->Scenario.it(
     "Fetches up to a pushed height without polling for it again",
     ~sources=[{chain: 1337, methods: streaming}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer as _, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       mock.resolveGetHeightOrThrow(100)
       mock.setHeightSubscriptionStatus(Live)
       mock.triggerHeightSubscription(105)
       await mock->answerQuery(~fromBlock=101, ~toBlock=101)
-      let pollsAfterPush = mock->polls
       await mock.expectItemsQueries([{fromBlock: 102, reply: upTo(105)}])
-      t.expect(mock->polls).toEqual(pollsAfterPush)
+      await mock.expectNewHeightCalls(0)
     },
   )
 
   scenario->Scenario.it(
     "Waits for the next push, without polling, while the stream is live",
     ~sources=[{chain: 1337, methods: streaming}],
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
-      let pollsWhileLive = mock->polls
-      await Utils.delay(20)
-      let pollsLater = mock->polls
+      // Short of half the 20s stall window, the earliest a poke can land.
+      await indexer.advanceTime(9_999)
+      await mock.expectNewHeightCalls(0)
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(pollsLater).toEqual(pollsWhileLive)
     },
   )
 
@@ -104,9 +104,15 @@ describe("Height subscription", () => {
       let mock = source(1337)
       mock.resolveGetHeightOrThrow(100)
       await mock->answerQuery(~fromBlock=1, ~toBlock=100)
+      await mock.expectNewHeightCalls(2)
       mock.setAutoHeight(100)
-      await mock.expectHeightCalls(mock->polls + 2)
+      // The realtime wait's own first poll, then one a millisecond, each
+      // answered with the head the chain has.
+      await indexer.advanceTime(2)
+      await mock.expectNewHeightCalls(3)
       mock.setAutoHeight(101)
+      await indexer.advanceTime(1)
+      await mock.expectNewHeightCalls(1)
       await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       // No stream to report on, so none of its metric families render.
       t.expect((mock.heightSubscriptionCalls, await indexer->streamMetrics)).toEqual(([], ([], [])))
@@ -117,17 +123,14 @@ describe("Height subscription", () => {
     "Polls behind a live stream that stays quiet for the stall timeout",
     ~sources=[{chain: 1337, methods: streaming}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 20},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
-      let pollsBeforeLive = mock->polls
       await mock->goLive(~indexer)
-      // Past the connect's catch-up, the poke lands somewhere in
-      // [stallTimeout/2, stallTimeout), which can be before goLive returns.
-      await mock.expectHeightCalls(pollsBeforeLive + 2)
+      await indexer.advanceTime(20)
+      await mock.expectNewHeightCalls(1)
       mock.resolveGetHeightOrThrow(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(mock.pendingItemsQueries->Array.length).toEqual(1)
     },
   )
 
@@ -138,56 +141,31 @@ describe("Height subscription", () => {
       {chain: 1337, sourceFor: Realtime, methods: streaming, pollingInterval: 10_000},
     ],
     ~sourceTiming={newBlockStallTimeoutRealtime: 400},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let sync = source(1337)
       let live = source(1337, ~index=1)
       await reachRealtime(~sync, ~mock=live)
-      // `goLive`'s steps, timed from the reply that starts the wait under test:
-      // the wait starts after it, so nothing measured from it reads early.
       live.resolveGetHeightOrThrow(100)
       live.setHeightSubscriptionStatus(Live)
-      await live.expectHeightCalls(live->polls + 1)
+      await live.expectNewHeightCalls(1)
       live.resolveGetHeightOrThrow(100)
       live.triggerHeightSubscription(101)
       // Answers the poll sync still has out from the backfill, so the poll the
       // stall recruits it for is a fresh one.
       sync.setAutoHeight(101)
-      let startedAt = Date.now()
       await live->answerQuery(~fromBlock=101, ~toBlock=101)
-      let (livePolls, syncPolls) = (live->polls, sync->polls)
-      let pokedAt = ref(None)
-      let recruitedAt = ref(None)
-      await Scenario.waitUntil(
-        () => {
-          let now = Date.now() -. startedAt
-          if pokedAt.contents->Option.isNone && live->polls > livePolls {
-            pokedAt := Some(now)
-          }
-          if recruitedAt.contents->Option.isNone && sync->polls > syncPolls {
-            recruitedAt := Some(now)
-          }
-          recruitedAt.contents->Option.isSome
-        },
-        ~message="the stall to recruit sync",
-      )
-      live.resolveGetHeightOrThrow(102)
-      await live.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
 
-      let pokedAt = pokedAt.contents->Option.getOr(infinity)
-      let recruitedAt = recruitedAt.contents->Option.getOr(0.)
-      // Timer slack only ever makes a timer late, never early, so the lower
-      // bounds are exact. The upper ones allow for a loaded runner: the poke
-      // lands short of the window, and the recruit soon after it opens.
-      t.expect(
-        (
-          pokedAt >= 200.,
-          pokedAt < 400.,
-          pokedAt <= recruitedAt,
-          recruitedAt >= 400.,
-          recruitedAt < 600.,
-        ),
-        ~message=`poked at ${pokedAt->Float.toString}ms, recruited at ${recruitedAt->Float.toString}ms`,
-      ).toEqual((true, true, true, true, true))
+      // Timed from the reply, which is where the wait under test starts.
+      await indexer.advanceTime(199)
+      await live.expectNewHeightCalls(0)
+      await indexer.advanceTime(200)
+      await live.expectNewHeightCalls(1)
+      await sync.expectNewHeightCalls(0)
+      await indexer.advanceTime(1)
+      await sync.expectNewHeightCalls(1)
+
+      live.triggerHeightSubscription(102)
+      await live.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
     },
   )
 
@@ -196,24 +174,23 @@ describe("Height subscription", () => {
     "Stale pushed heights do not multiply concurrent height polls",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 100}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 200},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
-      let pollsBefore = mock->polls
 
       // What a flapping stream re-emits on each reconnect.
       for _ in 1 to 20 {
         mock.triggerHeightSubscription(101)
         await Utils.delay(0)
       }
-      // Past the jittered stall poke, so the one poll it allows has run.
-      await Utils.delay(240)
-      let pollsAfterBurst = mock->polls - pollsBefore
+      await mock.expectNewHeightCalls(0)
+      // The stall poke allows one poll, which nothing answers.
+      await indexer.advanceTime(200)
+      await mock.expectNewHeightCalls(1)
 
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(pollsAfterBurst <= 1).toBe(true)
     },
   )
 
@@ -242,6 +219,7 @@ describe("Height subscription", () => {
       // The fallback is the only source left to find the next block.
       fallback.setAutoHeight(102)
       await fallback.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+      await fallback.expectNewHeightCalls(1)
       // Later realtime waits never subscribe a benched source again.
       t.expect((
         mock.heightSubscriptionCalls->Array.length,
@@ -261,33 +239,30 @@ describe("Height subscription", () => {
   scenario->Scenario.it(
     "Polls immediately when the stream reports it went down",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
-      let pollsWhileLive = mock->polls
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-      // Well inside the stall timeout the wait would otherwise sit on.
-      await mock.expectHeightCalls(pollsWhileLive + 1)
+      // Without any time passing: not on the stall the wait would otherwise
+      // sit out.
+      await mock.expectNewHeightCalls(1)
       mock.resolveGetHeightOrThrow(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(mock.pendingItemsQueries->Array.length).toEqual(1)
     },
   )
 
   scenario->Scenario.it(
     "Polls at the source's interval while the stream has never connected",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10}],
-    // Far past the 2s the poll is waited for, so the stall poke can't be what
-    // brings it.
-    ~sourceTiming={newBlockStallTimeoutRealtime: 20_000},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       mock.resolveGetHeightOrThrow(100)
-      let pollsAtSubscribe = mock->polls
-      await mock.expectHeightCalls(pollsAtSubscribe + 1)
+      await indexer.advanceTime(9)
+      await mock.expectNewHeightCalls(0)
+      await indexer.advanceTime(1)
+      await mock.expectNewHeightCalls(1)
       mock.resolveGetHeightOrThrow(101)
       await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       t.expect(mock.heightSubscriptionCalls->Array.length).toEqual(1)
@@ -297,22 +272,18 @@ describe("Height subscription", () => {
   scenario->Scenario.it(
     "Runs a single poll loop no matter how often the stream reports down",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
-      let pollsBefore = mock->polls
       for _ in 1 to 5 {
         mock.setHeightSubscriptionStatus(Down({reason: Closed}))
         await Utils.delay(0)
       }
-      // The polling interval is far longer than the test, so a second loop
-      // would show up as a second call in flight.
-      let inFlightPolls = mock->polls - pollsBefore
+      // A second loop would be a second call in flight.
+      await mock.expectNewHeightCalls(1)
       mock.resolveGetHeightOrThrow(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(inFlightPolls).toEqual(1)
     },
   )
 
@@ -320,24 +291,25 @@ describe("Height subscription", () => {
     "Stops polling behind the stream once it reconnects",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 20_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-      await Utils.delay(0)
+      await mock.expectNewHeightCalls(1)
       mock.setHeightSubscriptionStatus(Live)
 
       // Unchanged heights keep a loop that hasn't stopped asking every polling
-      // interval rather than blocking on one call.
+      // interval rather than blocking on one call. The poll in flight across
+      // the reconnect was asked of the old connection, so the next one, a
+      // cadence later, is what proves the new one.
       mock.setAutoHeight(101)
-      await Utils.delay(30)
-      let pollsAfterReconnect = mock->polls
-      await Utils.delay(40)
-      let pollsLater = mock->polls
+      await indexer.advanceTime(10)
+      await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(100)
+      await mock.expectNewHeightCalls(0)
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(pollsLater - pollsAfterReconnect).toEqual(0)
     },
   )
 
@@ -348,33 +320,28 @@ describe("Height subscription", () => {
       newBlockStallTimeoutRealtime: 5_000,
       getHeightRetryInterval: (~retry as _) => 300,
     },
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
-      let pollsAtDown = mock->polls
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-      await mock.expectHeightCalls(pollsAtDown + 1)
-      let pollsBefore = mock->polls
-      // The endpoint whose stream just dropped fails these too. Asking again
-      // every polling interval would issue one per round; the retry interval
-      // is far longer than the whole window.
-      for _ in 1 to 5 {
-        mock.rejectGetHeightOrThrow("height unavailable")
-        await Utils.delay(10)
-      }
-      let pollsDuringBackoff = mock->polls - pollsBefore
+      await mock.expectNewHeightCalls(1)
+      // The endpoint whose stream just dropped fails this too. Asking again
+      // every 10ms polling interval would issue 29 more before the retry.
+      mock.rejectGetHeightOrThrow("height unavailable")
+      await indexer.advanceTime(299)
+      await mock.expectNewHeightCalls(0)
+      await indexer.advanceTime(1)
+      await mock.expectNewHeightCalls(1)
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(pollsDuringBackoff).toEqual(0)
     },
   )
 
   scenario->Scenario.it(
     "Polls once on reconnect to pick up a height missed while down",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
@@ -385,100 +352,85 @@ describe("Height subscription", () => {
       // subscription would only deliver 103.
       mock.resolveGetHeightOrThrow(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(mock.pendingItemsQueries->Array.length).toEqual(1)
+      await mock.expectNewHeightCalls(1)
     },
   )
 
   scenario->Scenario.it(
     "Catches up on the stream's first connect too",
     ~sources=[{chain: 1337, methods: streaming}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       mock.resolveGetHeightOrThrow(100)
-      let pollsBeforeLive = mock->polls
+      // Lets the loop take that answer: a connect arriving while it still holds
+      // one leaves the catch-up to its next cadence.
+      await indexer.waitUntilIdle()
       mock.setHeightSubscriptionStatus(Live)
-      await mock.expectHeightCalls(pollsBeforeLive + 1)
+      await mock.expectNewHeightCalls(1)
       // A block mined between subscribing and the node accepting it.
       mock.resolveGetHeightOrThrow(101)
       await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      t.expect(mock->polls - pollsBeforeLive).toEqual(1)
     },
   )
 
   scenario->Scenario.it(
     "Catches up on reconnect even with nobody waiting",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
-      mock.resolveGetHeightOrThrow(100)
-      let pollsBeforeLive = mock->polls
-      mock.setHeightSubscriptionStatus(Live)
-      await mock.expectHeightCalls(pollsBeforeLive + 1)
-      mock.resolveGetHeightOrThrow(100)
-      // The chain is fetching 101, not waiting, when the stream reconnects.
-      mock.triggerHeightSubscription(101)
-      await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      // Once the polling the answered wait ran has wound down: a reconnect it
-      // could still pick up would be caught up by that, not by the reconnect.
-      await indexer.waitUntilIdle()
+      await mock->goLive(~indexer)
+      // The chain is fetching 102, not waiting, when the stream reconnects.
+      mock.triggerHeightSubscription(102)
+      await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
       mock.setHeightSubscriptionStatus(Live)
+      await mock.expectNewHeightCalls(1)
       mock.resolveGetHeightOrThrow(105)
-      await Utils.delay(0)
-      let pollsBefore = mock->polls
+      await indexer.waitUntilIdle()
 
       // The next wait already knows the height the catch-up found.
-      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=101)
-      await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(mock->polls - pollsBefore).toEqual(0)
+      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=102)
+      await mock.expectItemsQueries([{fromBlock: 103, reply: LeavePending}])
+      await mock.expectNewHeightCalls(0)
     },
   )
 
   scenario->Scenario.it(
     "Polls afresh for the next wait while a reconnect catch-up hangs",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 20_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
-      mock.resolveGetHeightOrThrow(100)
-      let pollsBeforeLive = mock->polls
-      mock.setHeightSubscriptionStatus(Live)
-      await mock.expectHeightCalls(pollsBeforeLive + 1)
-      mock.resolveGetHeightOrThrow(100)
-      mock.triggerHeightSubscription(101)
-      await mock.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
-      await indexer.waitUntilIdle()
-      let pollsBeforeReconnect = mock->polls
+      await mock->goLive(~indexer)
+      mock.triggerHeightSubscription(102)
+      await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
       mock.setHeightSubscriptionStatus(Live)
       // The catch-up goes out and is answered by nothing, ever.
-      await mock.expectHeightCalls(pollsBeforeReconnect + 1)
+      await mock.expectNewHeightCalls(1)
 
-      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=101)
-      await mock.expectHeightCalls(pollsBeforeReconnect + 2)
-      mock.resolveGetHeightOrThrowAt(~index=pollsBeforeReconnect + 1, 102)
-      await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(mock.pendingItemsQueries->Array.length).toEqual(1)
+      mock.drainPendingItemsQueries(~latestFetchedBlockNumber=102)
+      await mock.expectNewHeightCalls(1)
+      // Answers the wait's own poll, the latest call, and not the catch-up.
+      mock.resolveGetHeightOrThrowAt(~index=mock.getHeightOrThrowCalls->Array.length - 1, 103)
+      await mock.expectItemsQueries([{fromBlock: 103, reply: LeavePending}])
     },
   )
 
   scenario->Scenario.it(
     "Keeps waiting when the reconnect catch-up brings no new height",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-      await Utils.delay(0)
+      await mock.expectNewHeightCalls(1)
       mock.setHeightSubscriptionStatus(Live)
       mock.resolveGetHeightOrThrow(101)
-      await Utils.delay(10)
+      await indexer.waitUntilIdle()
       let queriedEarly = mock.pendingItemsQueries->Array.length
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
@@ -495,33 +447,29 @@ describe("Height subscription", () => {
       // still running rather than about how far it backs off.
       getHeightRetryInterval: (~retry as _) => 20,
     },
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-      await Utils.delay(0)
+      await mock.expectNewHeightCalls(1)
       mock.setHeightSubscriptionStatus(Live)
-      await Utils.delay(0)
-      let pollsAtReconnect = mock->polls
       // Nothing took the polling's job over, so it carries on rather than
       // leave the chain with no height until the stall timeout.
       for _ in 1 to 4 {
         mock.rejectGetHeightOrThrow("catch-up failed")
-        await Utils.delay(20)
+        await indexer.advanceTime(20)
+        await mock.expectNewHeightCalls(1)
       }
-      let pollsKeptComing = mock->polls > pollsAtReconnect
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect(pollsKeptComing).toBe(true)
     },
   )
 
   scenario->Scenario.it(
     "Takes a head the catch-up recorded while the race was settling",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 5_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
@@ -535,15 +483,14 @@ describe("Height subscription", () => {
       mock.resolveGetHeightOrThrow(105)
       mock.triggerHeightSubscription(103)
       await mock.expectItemsQueries([{fromBlock: 105, reply: LeavePending}])
-      t.expect(mock.pendingItemsQueries->Array.length).toEqual(1)
+      await mock.expectNewHeightCalls(1)
     },
   )
 
   scenario->Scenario.it(
     "Runs one poll loop when a push settles a wait without advancing it",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 20}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 5_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
@@ -556,7 +503,7 @@ describe("Height subscription", () => {
       mock.resolveGetHeightOrThrow(105)
       await Utils.delay(0)
       mock.setHeightSubscriptionStatus(Live)
-      await Utils.delay(40)
+      await indexer.advanceTime(40)
 
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
       await Utils.delay(0)
@@ -564,15 +511,13 @@ describe("Height subscription", () => {
       // It settles the wait without moving it forward, which must still retire
       // the poll loop the wait started.
       mock.triggerHeightSubscription(103)
-      await Utils.delay(0)
+      await mock.expectNewHeightCalls(2)
 
-      let pollsBefore = mock->polls
       mock.resolveGetHeightOrThrow(104)
-      await Utils.delay(40)
-      let pollsAdded = mock->polls - pollsBefore
+      await indexer.advanceTime(40)
+      await mock.expectNewHeightCalls(1)
       mock.triggerHeightSubscription(111)
       await mock.expectItemsQueries([{fromBlock: 111, reply: LeavePending}])
-      t.expect(pollsAdded).toEqual(1)
     },
   )
 
@@ -589,7 +534,9 @@ describe("Height subscription", () => {
       sync.resolveGetHeightOrThrow(100)
       await sync->answerQuery(~fromBlock=1, ~toBlock=100)
       sync.resolveGetHeightOrThrow(100)
-      await fallback.expectHeightCalls(1)
+      await sync.expectNewHeightCalls(3)
+      await indexer.advanceTime(50)
+      await fallback.expectNewHeightCalls(1)
       // Sync settles the wait; the fallback's answer arrives after it, so the
       // fallback knows a head the chain doesn't.
       sync.resolveGetHeightOrThrow(101)
@@ -598,14 +545,17 @@ describe("Height subscription", () => {
 
       // Recruiting the fallback answers this wait inside the stall callback
       // that recruited it.
+      await indexer.advanceTime(50)
       await sync.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
+      await sync.expectNewHeightCalls(1)
       let stallWarnings = () =>
         indexer.infoAndAboveLogs()
         ->Array.filter(({msg}) => msg->String.startsWith("No new blocks detected"))
         ->Array.length
       let warningsAtAnswer = stallWarnings()
-      await Utils.delay(200)
-      t.expect((warningsAtAnswer, stallWarnings(), fallback->polls)).toEqual((2, 2, 1))
+      await indexer.advanceTime(200)
+      await fallback.expectNewHeightCalls(0)
+      t.expect((warningsAtAnswer, stallWarnings())).toEqual((2, 2))
     },
   )
 
@@ -613,32 +563,26 @@ describe("Height subscription", () => {
     "Keeps covering a stream that goes quiet again after the stall",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
     ~sourceTiming={newBlockStallTimeoutRealtime: 100},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
       await mock->goLive(~indexer)
       // Every poll is answered on the spot, so none is left in flight to
       // swallow the next poke.
       mock.setAutoHeight(101)
-      let pollsWhileProven = mock->polls
-      await Utils.delay(150)
-      let pollsAfterFirstStall = mock->polls
+      await indexer.advanceTime(100)
+      await mock.expectNewHeightCalls(1)
 
       // A reconnect whose catch-up succeeds takes the stream at its word again,
       // and it goes quiet in exactly the same way.
       mock.setHeightSubscriptionStatus(Down({reason: Closed}))
       mock.setHeightSubscriptionStatus(Live)
-      await Utils.delay(0)
-      let pollsAfterReconnect = mock->polls
-      await Utils.delay(150)
-      let pollsAfterSecondStall = mock->polls
+      await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(100)
+      await mock.expectNewHeightCalls(1)
 
       mock.triggerHeightSubscription(102)
       await mock.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
-      t.expect((
-        pollsAfterFirstStall > pollsWhileProven,
-        pollsAfterSecondStall > pollsAfterReconnect,
-      )).toEqual((true, true))
     },
   )
 
@@ -649,13 +593,15 @@ describe("Height subscription", () => {
       {chain: 1337, sourceFor: Fallback, methods: streaming, pollingInterval: 10_000},
     ],
     ~sourceTiming={newBlockStallTimeoutRealtime: 50},
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
       sync.resolveGetHeightOrThrow(100)
       await sync->answerQuery(~fromBlock=1, ~toBlock=100)
       sync.resolveGetHeightOrThrow(100)
-      await fallback.expectHeightCalls(1)
+      await sync.expectNewHeightCalls(3)
+      await indexer.advanceTime(50)
+      await fallback.expectNewHeightCalls(1)
       fallback.resolveGetHeightOrThrow(101)
       await sync.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
       t.expect(fallback.heightSubscriptionCalls).toEqual([])
@@ -665,7 +611,6 @@ describe("Height subscription", () => {
   scenario->Scenario.it(
     "Reports height stream connects and disconnects as metrics",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       mock.resolveGetHeightOrThrow(100)
@@ -678,6 +623,8 @@ describe("Height subscription", () => {
         () => mock.heightSubscriptionCalls->Array.length > 0,
         ~message="the height subscription",
       )
+      // The backfill's head, then the poll its last wait leaves in flight.
+      await mock.expectNewHeightCalls(2)
       await mock->goLive(~indexer)
       let whileHealthy = await indexer->streamMetrics
 
@@ -690,6 +637,8 @@ describe("Height subscription", () => {
       await Utils.delay(0)
       mock.setHeightSubscriptionStatus(Down({reason: Rotated}))
       mock.setHeightSubscriptionStatus(Live)
+      // The one poll loop the first outage started.
+      await mock.expectNewHeightCalls(1)
 
       t.expect((beforeSubscribing, whileHealthy, await indexer->streamMetrics)).toEqual((
         ([], []),
@@ -703,7 +652,6 @@ describe("Height subscription", () => {
   scenario->Scenario.it(
     "Reports a stream that has never connected as zero connects",
     ~sources=[{chain: 1337, methods: streaming}],
-    ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reachRealtime(~sync=mock)
@@ -727,22 +675,22 @@ describe("Height subscription", () => {
       {chain: 1337, pollingInterval: 10},
     ],
     ~sourceTiming={newBlockStallTimeoutRealtime: 2_000},
-    async (~t, ~indexer, ~source) => {
+    async (~t as _, ~indexer, ~source) => {
       let stuck = source(1337)
       let fast = source(1337, ~index=1)
       await reachRealtime(~sync=stuck)
       await stuck->goLive(~indexer)
-      await fast.expectHeightCalls(fast->polls)
+      await fast.expectNewHeightCalls(1)
       stuck.setHeightSubscriptionStatus(Down({reason: Closed}))
+      await stuck.expectNewHeightCalls(1)
       // The other source decides the wait while the stuck one is mid-poll.
       fast.resolveGetHeightOrThrow(102)
       await fast.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
 
       stuck.resolveGetHeightOrThrow(101)
-      await Utils.delay(40)
-      let pollsAfterDecided = stuck->polls
-      await Utils.delay(40)
-      t.expect(stuck->polls).toEqual(pollsAfterDecided)
+      // Eight of its polling intervals.
+      await indexer.advanceTime(80)
+      await stuck.expectNewHeightCalls(0)
     },
   )
 
@@ -758,7 +706,7 @@ describe("Height subscription", () => {
       mock.triggerHeightSubscription(102)
       mock.triggerHeightSubscription(103)
       mock.triggerHeightSubscription(105)
-      await Utils.delay(10)
+      await indexer.waitUntilIdle()
       let queriedEarly = mock.pendingItemsQueries->Array.length
       mock.triggerHeightSubscription(106)
       await mock.expectItemsQueries([{fromBlock: 106, reply: LeavePending}])

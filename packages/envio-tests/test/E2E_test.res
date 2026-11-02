@@ -298,6 +298,7 @@ describe("E2E tests", () => {
                     id: "1",
                     value: "value-2",
                   })
+                  // Real time: a handler still running when its batch would time out.
                   // Wait to see what will happen when timeout finishes during the batch
                   await Utils.delay(1)
                 },
@@ -565,6 +566,7 @@ describe("E2E tests", () => {
             _ => {
               parser: value => value,
               serializer: value => {
+                // Real time: serialization that burns CPU for a while.
                 let until = Date.now() +. serializeMillis
                 while Date.now() < until {
                   ()
@@ -837,6 +839,7 @@ describe("E2E tests", () => {
           rateLimit: Enable({calls: 2, per: Milliseconds(15)}),
         },
         async ({input}) => {
+          // Real time: effects run on the real clock, rate limits included.
           // Add delay to ensure effects take time (longer than metric check delay)
           await Utils.delay(10)
           input ++ "-output"
@@ -864,7 +867,7 @@ describe("E2E tests", () => {
                     context.effect(testEffectMultiWindow, "6"),
                   ])
 
-                  // Check metrics while effects are executing
+                  // Real time: the metrics are read while the effects are still running.
                   await Utils.delay(3)
                   let (queueMetric, activeMetric) = await Promise.all2((
                     indexer.metric("envio_effect_queue"),
@@ -957,6 +960,7 @@ describe("E2E tests", () => {
         },
         async ({input}) => {
           executionOrder->Array.push(input)->ignore
+          // Real time: effects run on the real clock, rate limits included.
           // Add delay to ensure effects take time (longer than metric check delay)
           await Utils.delay(10)
           input ++ "-output"
@@ -983,7 +987,7 @@ describe("E2E tests", () => {
                     context.effect(testEffectNested, "call-4"),
                   ])
 
-                  // Check metrics while effects are executing (shortly after trigger)
+                  // Real time: the metrics are read while the effects are still running. (shortly after trigger)
                   await Utils.delay(3)
                   let (queueMetric1, activeMetric1) = await Promise.all2((
                     indexer.metric("envio_effect_queue"),
@@ -992,7 +996,7 @@ describe("E2E tests", () => {
                   queueMetricDuringExecution := Some(queueMetric1)
                   activeMetricDuringExecution := Some(activeMetric1)
 
-                  // Check again after first window should complete
+                  // Real time: read again once the first rate-limit window has passed.
                   await Utils.delay(14)
                   queueMetricAfterFirstWindow := Some(await indexer.metric("envio_effect_queue"))
 
@@ -1768,7 +1772,7 @@ describe("E2E tests", () => {
       ).toEqual([{value: "1", labels: Dict.make()}])
 
       // Both chains are now at head, parked on a realtime getHeightOrThrow poll.
-      let followerPollsBefore = followerSource.getHeightOrThrowCalls->Array.length
+      await followerSource.expectNewHeightCallsAtLeast(1)
 
       // Phase 2: divergent new heights. The leader jumps far ahead (a large
       // backlog whose reservation drains the shared fetch-buffer budget); the
@@ -1807,7 +1811,7 @@ describe("E2E tests", () => {
 
       // ...and once at head it goes back to polling for new blocks rather
       // than going silent, while the leader backfills a large range.
-      await followerSource.expectHeightCalls(followerPollsBefore + 1)
+      await followerSource.expectNewHeightCalls(1)
     },
   )
 })
