@@ -120,17 +120,20 @@ impl Chain {
         self.rate_limit_time_ms > 1000.
     }
 
-    fn covered_block(&self) -> i64 {
+    /// The blocks the chain has got through: processed from its first event
+    /// once it has one, fetched from its start block until then.
+    fn covered_range(&self) -> (i64, i64) {
         match self.progress {
             Progress::Syncing {
+                first_event_block,
                 latest_processed_block,
-                ..
             }
             | Progress::Synced {
+                first_event_block,
                 latest_processed_block,
                 ..
-            } => latest_processed_block,
-            Progress::SearchingForEvents => self.latest_fetched_block_number,
+            } => (first_event_block, latest_processed_block),
+            Progress::SearchingForEvents => (self.start_block, self.latest_fetched_block_number),
         }
     }
 
@@ -228,7 +231,7 @@ impl State {
         for chain in &self.chains {
             self.covered_at_start
                 .entry(chain.chain_id.clone())
-                .or_insert_with(|| chain.covered_block());
+                .or_insert_with(|| chain.covered_range().1);
         }
         if !self.eta_ready {
             self.eta_ready = self
@@ -277,20 +280,7 @@ impl State {
     fn remaining_blocks(&self) -> i64 {
         self.chains
             .iter()
-            .map(|chain| {
-                let final_block = chain.end_block.unwrap_or(chain.known_height);
-                match chain.progress {
-                    Progress::Syncing {
-                        latest_processed_block,
-                        ..
-                    }
-                    | Progress::Synced {
-                        latest_processed_block,
-                        ..
-                    } => final_block - latest_processed_block,
-                    Progress::SearchingForEvents => final_block - chain.latest_fetched_block_number,
-                }
-            })
+            .map(|chain| chain.end_block.unwrap_or(chain.known_height) - chain.covered_range().1)
             .sum()
     }
 
@@ -298,22 +288,8 @@ impl State {
         self.chains
             .iter()
             .map(|chain| {
-                let covered_at_start = self.covered_at_start[&chain.chain_id];
-                match chain.progress {
-                    Progress::Syncing {
-                        first_event_block,
-                        latest_processed_block,
-                    }
-                    | Progress::Synced {
-                        first_event_block,
-                        latest_processed_block,
-                        ..
-                    } => latest_processed_block - first_event_block.max(covered_at_start),
-                    Progress::SearchingForEvents => {
-                        chain.latest_fetched_block_number - chain.start_block.max(covered_at_start)
-                    }
-                }
-                .max(0)
+                let (from, to) = chain.covered_range();
+                (to - from.max(self.covered_at_start[&chain.chain_id])).max(0)
             })
             .sum()
     }
