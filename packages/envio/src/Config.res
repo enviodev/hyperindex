@@ -65,6 +65,7 @@ type chain = {
   endBlock?: int,
   maxReorgDepth: int,
   blockLag: int,
+  blockThrottle: int,
   contracts: array<contract>,
   sourceConfig: sourceConfig,
 }
@@ -217,6 +218,7 @@ let publicConfigChainSchema = S.schema(s =>
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
     "blockLag": s.matches(S.option(S.int)),
+    "blockThrottle": s.matches(S.option(S.int)),
     // EVM/Fuel source config (hypersync for EVM, hyperfuel for Fuel)
     "hypersync": s.matches(S.option(S.string)),
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
@@ -1081,6 +1083,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         | Ecosystem.Fuel => 0
         },
         blockLag: publicChainConfig["blockLag"]->Option.getOr(0),
+        blockThrottle: publicChainConfig["blockThrottle"]->Option.getOr(0),
         contracts,
         sourceConfig,
       }

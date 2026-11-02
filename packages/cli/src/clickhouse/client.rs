@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: request timeouts against the ClickHouse server"
+)]
+
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 

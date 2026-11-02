@@ -232,6 +232,7 @@ describe("A block handler with no block to read, fetched from an RPC", () => {
       ~calls=[],
       async mock => {
         let (source, addressSet) = makeRpcSource(~url=mock.url)
+
         (
           await source->fetch(
             ~addressSet,
@@ -255,6 +256,7 @@ describe("A block handler with no block to read, fetched from an RPC", () => {
       ~calls=[110, 11]->Array.map(getBlockCall),
       async mock => {
         let (source, addressSet) = makeRpcSource(~url=mock.url)
+
         (
           await source->fetch(
             ~addressSet,

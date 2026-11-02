@@ -101,8 +101,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
     async (~t, ~indexer, ~source) => {
       let chainA = source(100)
       let chainB = source(1337)
-      await chainA.expectHeightCalls(1)
-      chainA.resolveGetHeightOrThrow(1000)
+      await Scenario.resolveInitialHeight(~source=chainA, ~head=1000)
       chainB.resolveGetHeightOrThrow(1000)
 
       // Chain A wins the initial priority tie and fetches to its pre-threshold
@@ -133,7 +132,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       // (800) now trails the lagged head (801). Without a tolerance this would
       // un-ready chain A and defer entry; the 100-block tolerance keeps it ready.
       // (Chain A cannot re-query 801 yet — chain B holds the shared fetch budget.)
-      await chainA.expectHeightCalls(2)
+      await chainA.expectNewHeightCalls(1)
       chainA.resolveGetHeightOrThrow(1001)
       await waitKnownHeight(indexer, ~chainId="100", ~height="1001")
 

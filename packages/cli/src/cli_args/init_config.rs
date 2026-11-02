@@ -137,6 +137,7 @@ pub mod evm {
                                 end_block,
                                 max_reorg_depth: None,
                                 block_lag: None,
+                                block_throttle: None,
                                 contracts: Some(Vec::new()),
                             }
                         });
@@ -282,6 +283,7 @@ pub mod fuel {
                         hyperfuel_config: None,
                         max_reorg_depth: None,
                         block_lag: None,
+                        block_throttle: None,
                         contracts: Some(
                             contracts
                                 .iter()
