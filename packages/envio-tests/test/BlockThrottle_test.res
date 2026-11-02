@@ -29,7 +29,6 @@ describe("E2E blockThrottle tests", () => {
   scenario->Scenario.it(
     "Chain at the head with blockThrottle=5 fetches again only once the head is 5 blocks further",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-    ~sourceTiming={reducedPollingInterval: 1},
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
@@ -49,8 +48,9 @@ describe("E2E blockThrottle tests", () => {
       // At the head (300). Four new blocks are not enough: the wait keeps
       // polling instead of handing 304 to the fetch loop.
       sourceMock.resolveGetHeightOrThrow(304)
-      let heightCallsAfter304 = sourceMock.getHeightOrThrowCalls->Array.length
-      await MockSource.waitHeightQuery(sourceMock, ~since=heightCallsAfter304)
+      await sourceMock.expectNewHeightCallsAtLeast(1)
+      await indexer.advanceTime(1000)
+      await sourceMock.expectNewHeightCalls(1)
       t.expect(
         sourceMock.pendingItemsQueries->Array.length,
         ~message="Should not fetch before the head is blockThrottle blocks past the fetched range",
@@ -68,6 +68,8 @@ describe("E2E blockThrottle tests", () => {
         },
       ])
       await indexer.getBatchWritePromise()
+      // Back at the head, it waits for the next block.
+      await sourceMock.expectNewHeightCalls(1)
     },
   )
 
@@ -106,7 +108,7 @@ describe("E2E blockThrottle tests", () => {
       // Four blocks spread over twice the stall window, each inside it.
       for height in 301 to 304 {
         sourceMock.setAutoHeight(height)
-        await Utils.delay(120)
+        await indexer.advanceTime(120)
       }
 
       t.expect(
