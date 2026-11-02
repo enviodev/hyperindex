@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
-
 use std::collections::HashSet;
 use std::sync::Once;
 

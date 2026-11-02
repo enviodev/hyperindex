@@ -25,6 +25,7 @@ let make: (
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
   ~onArrivedAtHead: unit => unit=?,
+  ~clock: Clock.t=?,
 ) => t
 
 let makeFromDbState: (

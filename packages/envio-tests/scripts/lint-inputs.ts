@@ -150,12 +150,12 @@ for (const path of resFiles(testRoot)) {
   lines.forEach((line, index) => {
     // `//` after a colon is a URL in a string, not a comment.
     const code = line.replace(/(?<!:)\/\/.*$/, "");
-    // Scenario.res is where the default is set, and a test of a real-time
-    // scenario turns virtual time back on with it.
+    // Helpers declare the default, and a test of a real-time scenario turns
+    // virtual time back on with it.
     if (
       /~virtualTime=true\b/.test(code) &&
       realTimeScenarios.size === 0 &&
-      !file.endsWith("helpers/Scenario.res")
+      !file.includes("/helpers/")
     ) {
       violations.push({
         file,
@@ -168,6 +168,7 @@ for (const path of resFiles(testRoot)) {
     // spreading by copy and paste.
     const previous = lines[index - 1] ?? "";
     if (
+      !file.includes("/helpers/") &&
       /~virtualTime=false\b/.test(code) &&
       !/~virtualTime=false\b.*(?<!:)\/\//.test(line) &&
       !/^\s*\/\//.test(previous)
@@ -242,6 +243,25 @@ for (const path of resFiles(testRoot)) {
   });
 }
 
+// A test names the height calls it causes; only a helper waits for one without
+// accounting for it, the way answering the first height does.
+for (const path of resFiles(testRoot)) {
+  if (path.includes(`${join("test", "helpers")}`)) continue;
+  const file = relative(repoRoot, path);
+  readFileSync(path, "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      if (/\.waitForHeightCall\(/.test(line.replace(/\/\/.*$/, ""))) {
+        violations.push({
+          file,
+          line: index + 1,
+          title: "waitForHeightCall in a test",
+          fix: "Name the call with `await mock.expectNewHeightCalls(n)`, or answer the first height with `Scenario.resolveInitialHeight`.",
+        });
+      }
+    });
+}
+
 // Faked timers replace the global setTimeout that Clock.real arms, so a test
 // that fakes them freezes the real-time parts of a run (startup, writes, the
 // mock's own deadlines) while leaving the virtual clock where it was.
@@ -287,7 +307,11 @@ const realTime = [
   { pattern: /\bMath\.random\(/, use: "`clock.random()`" },
 ];
 const sourceViolations: violation[] = [];
-for (const path of resFiles(sourcesRoot)) {
+// The run-wide timers outside the sources take the same clock.
+const clockedModules = ["LoadLayer.res", "EffectState.res", "Throttler.res"].map((name) =>
+  fileURLToPath(new URL(`../../envio/src/${name}`, import.meta.url)),
+);
+for (const path of [...resFiles(sourcesRoot), ...clockedModules]) {
   const file = relative(repoRoot, path);
   readFileSync(path, "utf8")
     .split("\n")
