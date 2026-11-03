@@ -78,11 +78,10 @@ impl Core {
             },
         );
 
-        for source in main_sources {
-            self.watch(wait, source, is_realtime);
-        }
-
-        if self.waits.contains_key(&wait) {
+        let still_waiting = main_sources
+            .iter()
+            .all(|&source| self.watch(wait, source, is_realtime));
+        if still_waiting {
             self.arm_stall_poke(wait);
             let stall = self.arm_timer(
                 TimerPurpose::StallTimeout { wait },
@@ -90,19 +89,24 @@ impl Core {
                 stall_timeout,
                 false,
             );
-            if let Some(entry) = self.waits.get_mut(&wait) {
-                entry.stall = Some(stall);
-            }
+            self.wait_mut(wait).stall = Some(stall);
         }
         wait
     }
 
-    /// Registering can answer the wait on the spot, from a height the source
-    /// already knew, so every site copes with the wait being over.
-    fn watch(&mut self, wait: u32, source: usize, with_stream: bool) {
-        let Some(known_height) = self.waits.get(&wait).map(|entry| entry.known_height) else {
-            return;
-        };
+    /// A wait's timers are cleared when it settles, so one that fires is for a
+    /// wait still open.
+    fn wait_mut(&mut self, wait: u32) -> &mut Wait {
+        self.waits
+            .get_mut(&wait)
+            .expect("only an open wait is acted on")
+    }
+
+    /// Whether the wait is still open afterwards. Registering is the one step
+    /// that can answer it on the spot, from a height the source already knew;
+    /// the callers stop registering once it has.
+    fn watch(&mut self, wait: u32, source: usize, with_stream: bool) -> bool {
+        let known_height = self.waits[&wait].known_height;
         if with_stream {
             // A stream outlives the wait that asked for it, so only the sources a
             // wait was built on ask for one. A source recruited because another
@@ -111,9 +115,12 @@ impl Core {
             self.enable_stream(source);
         }
         self.add_waiter(source, wait, known_height);
-        // Absent when the registration itself answered the wait.
-        if let Some(entry) = self.waits.get_mut(&wait) {
-            entry.watched.push(source);
+        match self.waits.get_mut(&wait) {
+            Some(entry) => {
+                entry.watched.push(source);
+                true
+            }
+            None => false,
         }
     }
 
@@ -122,52 +129,35 @@ impl Core {
     /// Re-armed, because distrusting a stream is a one-shot: the next height it
     /// delivers takes it back at its word.
     fn arm_stall_poke(&mut self, wait: u32) {
-        let Some(stall_timeout) = self.waits.get(&wait).map(|entry| entry.stall_timeout) else {
-            return;
-        };
+        let stall_timeout = self.waits[&wait].stall_timeout;
         let poke = self.arm_timer(
             TimerPurpose::StallPoke { wait },
             "stall poke",
             stall_timeout,
             true,
         );
-        if let Some(entry) = self.waits.get_mut(&wait) {
-            entry.poke = Some(poke);
-        }
+        self.wait_mut(wait).poke = Some(poke);
     }
 
+    /// Distrusting only starts a poll, whose answer comes later, so it never
+    /// answers the wait itself.
     fn distrust_streams_of(&mut self, wait: u32) {
-        let watched = match self.waits.get(&wait) {
-            Some(entry) => entry.watched.clone(),
-            None => return,
-        };
-        for source in watched {
-            if !self.waits.contains_key(&wait) {
-                return;
-            }
+        for source in self.waits[&wait].watched.clone() {
             self.distrust_stream(source, wait);
         }
     }
 
     pub fn stall_poke(&mut self, wait: u32) {
-        let Some(entry) = self.waits.get_mut(&wait) else {
-            return;
-        };
-        entry.poke = None;
+        self.wait_mut(wait).poke = None;
         self.distrust_streams_of(wait);
-        // Re-checked: distrusting can answer the wait.
-        if self.waits.contains_key(&wait) {
-            self.arm_stall_poke(wait);
-        }
+        self.arm_stall_poke(wait);
     }
 
     /// Punctual, unlike the poke: the stall timeout is a promise to the operator
     /// about when they hear about a quiet chain. Fires once per wait, and a
     /// fallback stays recruited.
     pub fn stall_timeout(&mut self, wait: u32) {
-        let Some(entry) = self.waits.get_mut(&wait) else {
-            return;
-        };
+        let entry = self.wait_mut(wait);
         entry.stall = None;
         entry.stalled = true;
         let (is_realtime, stall_timeout) = (entry.is_realtime, entry.stall_timeout);
@@ -200,21 +190,23 @@ impl Core {
             Value::Null,
         );
 
-        for source in fallbacks {
-            self.watch(wait, source, false);
-        }
+        let still_waiting = fallbacks
+            .iter()
+            .all(|&source| self.watch(wait, source, false));
 
         // A fallback can still hold a stream from an earlier wait that made it a
         // primary, and a live stream is not polled behind. It inherits the
         // verdict the primaries earned, or it would sit silent behind that
         // stream until the next poke.
-        self.distrust_streams_of(wait);
+        if still_waiting {
+            self.distrust_streams_of(wait);
+        }
     }
 
     pub fn settle_wait(&mut self, wait: u32, source: usize, height: i64) {
-        let Some(mut entry) = self.waits.remove(&wait) else {
-            return;
-        };
+        // A source holds one waiter per wait, and answering removes the wait,
+        // so a wait settles once.
+        let mut entry = self.waits.remove(&wait).expect("a wait settles once");
         // Before anything else: the sources still watching have no reason to
         // keep polling for a height this wait already has.
         for watched in std::mem::take(&mut entry.watched) {

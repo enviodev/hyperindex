@@ -62,14 +62,11 @@ pub enum Poll {
     },
     /// Its sleep ended or was cut short; the loop carries on a microtask later.
     Woken,
-    /// A poll just settled. Whether to sleep `millis` or stop is decided a
-    /// microtask later, behind the caller of any wait the answer settled: if
-    /// that caller starts its next wait straight away, the wait joins this loop
-    /// rather than starting another poll on the spot.
-    Settled {
-        kind: SleepKind,
-        millis: u32,
-    },
+    /// A poll just settled. Whether to sleep or stop is decided a microtask
+    /// later, behind the caller of any wait the answer settled: if that caller
+    /// starts its next wait straight away, the wait joins this loop rather than
+    /// starting another poll on the spot.
+    Settled,
 }
 
 pub struct Feed {
@@ -237,10 +234,9 @@ impl Core {
         }
     }
 
+    /// Only a woken loop is resumed, and nothing moves a loop off `Woken` but
+    /// this.
     pub fn resume_poll_loop(&mut self, source: usize) {
-        if self.sources[source].feed.poll != Poll::Woken {
-            return;
-        }
         if self.sources[source].feed.should_poll() {
             self.poll_now(source);
         } else {
@@ -298,14 +294,15 @@ impl Core {
     /// After a poll: the source's own cadence after an answer, the escalating
     /// backoff a failing endpoint earned otherwise.
     fn continue_poll_loop(&mut self, source: usize, kind: SleepKind, millis: u32) {
-        self.sources[source].feed.poll = Poll::Settled { kind, millis };
-        self.defer(TimerPurpose::PollSettled { source });
+        self.sources[source].feed.poll = Poll::Settled;
+        self.defer(TimerPurpose::PollSettled {
+            source,
+            kind,
+            millis,
+        });
     }
 
-    pub fn poll_settled(&mut self, source: usize) {
-        let Poll::Settled { kind, millis } = self.sources[source].feed.poll else {
-            return;
-        };
+    pub fn poll_settled(&mut self, source: usize, kind: SleepKind, millis: u32) {
         if self.sources[source].feed.should_poll() {
             self.sleep_poll_loop(source, kind, millis);
         } else {
@@ -384,10 +381,15 @@ impl Core {
         self.wake_cadence(source);
     }
 
+    /// A height request settles exactly once, answered or failed.
+    fn settle_height_request(&mut self, request: u32) -> HeightRequest {
+        self.height_requests
+            .remove(&request)
+            .expect("a height request settles once")
+    }
+
     pub fn height_answered(&mut self, request: u32, height: i64, stats: &[RequestStat]) {
-        let Some(mut entry) = self.height_requests.remove(&request) else {
-            return;
-        };
+        let mut entry = self.settle_height_request(request);
         let source = entry.source;
         self.sources[source].record_request_stats(stats);
         if entry.timed_out {
@@ -407,9 +409,7 @@ impl Core {
     /// `stats` are the requests the failed call did make: billed whether or
     /// not it answered.
     pub fn height_failed(&mut self, request: u32, stats: &[RequestStat], err: Option<u32>) {
-        let Some(mut entry) = self.height_requests.remove(&request) else {
-            return;
-        };
+        let mut entry = self.settle_height_request(request);
         if entry.timed_out {
             return;
         }
@@ -423,9 +423,11 @@ impl Core {
     }
 
     pub fn height_request_timed_out(&mut self, request: u32) {
-        let Some(entry) = self.height_requests.get_mut(&request) else {
-            return;
-        };
+        // Cleared when the request settles, so it only fires on one still out.
+        let entry = self
+            .height_requests
+            .get_mut(&request)
+            .expect("a height request is out until it settles");
         entry.timed_out = true;
         entry.timeout = None;
         let (source, purpose) = (entry.source, entry.purpose);

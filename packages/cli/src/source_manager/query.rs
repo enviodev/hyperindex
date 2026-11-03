@@ -13,9 +13,7 @@ pub enum Kind {
         partition_id: String,
         addresses: u32,
     },
-    BlockHashes {
-        block_numbers: Vec<i64>,
-    },
+    BlockHashes,
 }
 
 pub struct Request {
@@ -32,7 +30,7 @@ impl Request {
     fn method(&self) -> &'static str {
         match self.kind {
             Kind::Items { .. } => "getItems",
-            Kind::BlockHashes { .. } => "getBlockHashes",
+            Kind::BlockHashes => "getBlockHashes",
         }
     }
 }
@@ -209,13 +207,8 @@ impl Core {
         )
     }
 
-    pub fn start_block_hashes(
-        &mut self,
-        block_numbers: Vec<i64>,
-        is_realtime: bool,
-        now: f64,
-    ) -> u32 {
-        self.start_request(Kind::BlockHashes { block_numbers }, None, is_realtime, now)
+    pub fn start_block_hashes(&mut self, is_realtime: bool, now: f64) -> u32 {
+        self.start_request(Kind::BlockHashes, None, is_realtime, now)
     }
 
     fn start_request(
@@ -241,11 +234,18 @@ impl Core {
         request
     }
 
-    pub fn requested_block_numbers(&self, request: u32) -> Vec<i64> {
-        match self.requests.get(&request).map(|request| &request.kind) {
-            Some(Kind::BlockHashes { block_numbers }) => block_numbers.clone(),
-            _ => Vec::new(),
-        }
+    /// A request is live from its start until it resolves, rejects or is
+    /// abandoned, and the caller only reports on, and times, live ones.
+    fn request(&self, request_id: u32) -> &Request {
+        self.requests
+            .get(&request_id)
+            .expect("a request is reported on only while it is live")
+    }
+
+    fn request_mut(&mut self, request_id: u32) -> &mut Request {
+        self.requests
+            .get_mut(&request_id)
+            .expect("a request is reported on only while it is live")
     }
 
     pub fn abandon_request(&mut self, request: u32) {
@@ -265,9 +265,7 @@ impl Core {
 
     /// Picks the best source for the request at the start of every attempt.
     fn attempt(&mut self, request_id: u32, now: f64) {
-        let Some(request) = self.requests.get(&request_id) else {
-            return;
-        };
+        let request = self.request(request_id);
         let Some(source) = self.next_source(request.is_realtime, &request.excluded, now) else {
             let message = self.no_sources_message();
             self.requests.remove(&request_id);
@@ -292,7 +290,7 @@ impl Core {
             }
         }
         self.active = source;
-        let request = self.requests.get_mut(&request_id).expect("checked above");
+        let request = self.request_mut(request_id);
         request.source = source;
         let (to_block, retry) = (request.to_block, request.retry);
         let fields = self.request_log_fields(request_id).expect("checked above");
@@ -307,7 +305,7 @@ impl Core {
 
     /// The fields every line about the request's current attempt carries.
     fn request_log_fields(&self, request: u32) -> Option<Value> {
-        let request = self.requests.get(&request)?;
+        let request = self.request(request);
         let name = &self.sources[request.source].spec.name;
         Some(match &request.kind {
             Kind::Items {
@@ -323,7 +321,7 @@ impl Core {
                 ("addresses", json!(addresses)),
                 ("retry", json!(request.retry)),
             ]),
-            Kind::BlockHashes { .. } => json!({
+            Kind::BlockHashes => json!({
                 "logType": "Block Hash Query",
                 "source": name,
                 "retry": request.retry,
@@ -339,9 +337,7 @@ impl Core {
         inconsistent: Option<Inconsistent>,
         now: f64,
     ) {
-        let Some(source) = self.requests.get(&request_id).map(|request| request.source) else {
-            return;
-        };
+        let source = self.request(request_id).source;
         self.sources[source].record_request_stats(stats);
         if let Some(inconsistent) = inconsistent {
             self.retry_inconsistent(request_id, &inconsistent, now);
@@ -366,9 +362,7 @@ impl Core {
         err: Option<u32>,
         now: f64,
     ) {
-        let Some(request) = self.requests.get(&request_id) else {
-            return;
-        };
+        let request = self.request(request_id);
         let source = request.source;
         let retry = request.retry;
         // A page that ends in a retry still made requests.
@@ -440,9 +434,7 @@ impl Core {
                     "Failed getting data for the block range. Immediately retrying with the suggested block range from response.".to_string(),
                     json!({ "toBlock": attempted_to_block, "suggestedToBlock": to_block }),
                 );
-                if let Some(request) = self.requests.get_mut(&request_id) {
-                    request.to_block = Some(to_block);
-                }
+                self.request_mut(request_id).to_block = Some(to_block);
                 // A strictly smaller question starts a fresh schedule.
                 self.retry_now(request_id, 0, now);
             }
@@ -452,9 +444,7 @@ impl Core {
             } => {
                 // No failure is recorded: the source isn't broken, the query just
                 // can't work on it.
-                if let Some(request) = self.requests.get_mut(&request_id) {
-                    request.excluded.push(source);
-                }
+                self.request_mut(request_id).excluded.push(source);
                 self.log_with_err(
                     fields,
                     Level::Warn,
@@ -490,9 +480,7 @@ impl Core {
         inconsistent: Option<Inconsistent>,
         now: f64,
     ) {
-        let Some(source) = self.requests.get(&request_id).map(|request| request.source) else {
-            return;
-        };
+        let source = self.request(request_id).source;
         self.sources[source].record_request_stats(stats);
         if let Some(inconsistent) = inconsistent {
             self.retry_inconsistent(request_id, &inconsistent, now);
@@ -513,9 +501,7 @@ impl Core {
         err: Option<u32>,
         now: f64,
     ) {
-        let Some(request) = self.requests.get(&request_id) else {
-            return;
-        };
+        let request = self.request(request_id);
         let (source, retry) = (request.source, request.retry);
         self.sources[source].record_request_stats(stats);
         match failure {
@@ -554,9 +540,7 @@ impl Core {
 
     /// The next attempt starts now, at `retry`.
     fn retry_now(&mut self, request_id: u32, retry: u32, now: f64) {
-        if let Some(request) = self.requests.get_mut(&request_id) {
-            request.retry = retry;
-        }
+        self.request_mut(request_id).retry = retry;
         self.attempt(request_id, now);
     }
 
@@ -565,9 +549,7 @@ impl Core {
     }
 
     fn next_retry(&mut self, request_id: u32, now: f64) {
-        let Some(retry) = self.requests.get(&request_id).map(|request| request.retry) else {
-            return;
-        };
+        let retry = self.request(request_id).retry;
         self.retry_now(request_id, retry + 1, now);
     }
 
@@ -575,9 +557,7 @@ impl Core {
     /// warn after the second consecutive retry so chronic throttling isn't
     /// silent.
     fn wait_for_rate_limit_reset(&mut self, request_id: u32, reset_ms: u32, now: f64) {
-        let Some(retry) = self.requests.get(&request_id).map(|request| request.retry) else {
-            return;
-        };
+        let retry = self.request(request_id).retry;
         let wait_ms = reset_ms.min(MAX_RATE_LIMIT_WAIT_MILLIS);
         let level = if retry >= 2 {
             Level::Warn
@@ -613,9 +593,7 @@ impl Core {
     /// request. Expected near the head of a load-balanced backend, so early
     /// attempts stay quiet and short.
     fn retry_behind_head(&mut self, request_id: u32, block_number: i64, now: f64) {
-        let Some(request) = self.requests.get(&request_id) else {
-            return;
-        };
+        let request = self.request(request_id);
         let retry = request.retry;
         let backoff_millis = behind_head_backoff_millis(retry);
         let name = &self.sources[request.source].spec.name;
@@ -651,9 +629,7 @@ impl Core {
     /// It may be a reorg mid-request, so refetch before concluding anything
     /// about the chain.
     fn retry_inconsistent(&mut self, request_id: u32, inconsistent: &Inconsistent, now: f64) {
-        let Some(request) = self.requests.get(&request_id) else {
-            return;
-        };
+        let request = self.request(request_id);
         let (retry, source, method) = (request.retry, request.source, request.method());
         let backoff_millis = retry_backoff_millis(retry);
         let message = format!(
@@ -703,9 +679,7 @@ impl Core {
         err: Option<u32>,
         now: f64,
     ) {
-        let Some(retry) = self.requests.get(&request_id).map(|request| request.retry) else {
-            return;
-        };
+        let retry = self.request(request_id).retry;
         let (level, message) = escalate_when_stalled(
             retry,
             4,
@@ -731,9 +705,7 @@ impl Core {
     /// alternative the next attempt lands right back here, so the floor is what
     /// keeps a retry loop that never changes source from spinning.
     fn back_off_before_retry(&mut self, request_id: u32, backoff: Backoff, now: f64) {
-        let Some(request) = self.requests.get(&request_id) else {
-            return;
-        };
+        let request = self.request(request_id);
         let (retry, source, is_realtime) = (request.retry, request.source, request.is_realtime);
         let excluded = request.excluded.clone();
         // A few attempts before demoting the source, then a failover every

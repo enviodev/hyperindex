@@ -232,14 +232,32 @@ pub enum Status {
 
 #[derive(Debug)]
 pub enum TimerPurpose {
-    PollSleep { source: usize },
-    PollSettled { source: usize },
-    PollResume { source: usize },
-    PollTimeout { request: u32 },
-    StallPoke { wait: u32 },
-    StallTimeout { wait: u32 },
-    RetryBackoff { request: u32 },
-    RateLimitReset { request: u32 },
+    PollSleep {
+        source: usize,
+    },
+    PollSettled {
+        source: usize,
+        kind: super::feed::SleepKind,
+        millis: u32,
+    },
+    PollResume {
+        source: usize,
+    },
+    PollTimeout {
+        request: u32,
+    },
+    StallPoke {
+        wait: u32,
+    },
+    StallTimeout {
+        wait: u32,
+    },
+    RetryBackoff {
+        request: u32,
+    },
+    RateLimitReset {
+        request: u32,
+    },
 }
 
 #[derive(Default)]
@@ -388,12 +406,19 @@ impl Core {
     }
 
     pub fn timer_fired(&mut self, timer: TimerId, now: f64) {
-        let Some(purpose) = self.timers.remove(&timer) else {
-            return;
-        };
+        // A cleared timer is cleared on the clock too, so only armed ones fire,
+        // and each once.
+        let purpose = self
+            .timers
+            .remove(&timer)
+            .expect("a fired timer is one still armed");
         match purpose {
             TimerPurpose::PollSleep { source } => self.poll_sleep_ended(source),
-            TimerPurpose::PollSettled { source } => self.poll_settled(source),
+            TimerPurpose::PollSettled {
+                source,
+                kind,
+                millis,
+            } => self.poll_settled(source, kind, millis),
             TimerPurpose::PollResume { source } => self.resume_poll_loop(source),
             TimerPurpose::PollTimeout { request } => self.height_request_timed_out(request),
             TimerPurpose::StallPoke { wait } => self.stall_poke(wait),

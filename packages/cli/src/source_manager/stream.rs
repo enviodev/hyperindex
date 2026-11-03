@@ -125,7 +125,7 @@ pub struct HeightStream {
 
 #[napi]
 impl HeightStream {
-    #[napi(factory)]
+    #[napi(factory, catch_unwind)]
     pub fn make(stale_timeout: u32) -> Self {
         HeightStream {
             stale_timeout,
@@ -139,17 +139,17 @@ impl HeightStream {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn take_effect(&mut self) -> Option<HeightStreamEffect> {
         self.effects.pop_front()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn is_current(&self, generation: u32) -> bool {
         generation == self.generation
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn start(&mut self) {
         self.generation += 1;
         self.unreadable_detail = None;
@@ -162,7 +162,7 @@ impl HeightStream {
         });
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn unsubscribe(&mut self) {
         self.generation += 1;
         self.clear_pending();
@@ -173,7 +173,7 @@ impl HeightStream {
 
     /// The stream is usable: for SSE the connection opened, for WebSocket the
     /// subscription was confirmed.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn connected(&mut self, generation: u32, now: f64) {
         if self.is_current(generation) {
             self.go_live(now);
@@ -183,7 +183,7 @@ impl HeightStream {
     /// Stops counting once anything unreadable has arrived: a stream whose
     /// heights are all malformed is otherwise held open by the keep-alives
     /// between them, never failing and so never reporting anything.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn keep_alive(&mut self, generation: u32) {
         if self.is_current(generation) && self.unreadable_detail.is_none() {
             self.arm(Pending::Stale);
@@ -192,7 +192,7 @@ impl HeightStream {
 
     /// A height is proof the stream is delivering, so it reports live as
     /// connecting does, and proves the shape readable again.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn height(&mut self, generation: u32, height: i64, now: f64) {
         if self.is_current(generation) {
             self.unreadable_detail = None;
@@ -202,14 +202,14 @@ impl HeightStream {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn unreadable(&mut self, generation: u32, detail: String) {
         if self.is_current(generation) {
             self.unreadable_detail = Some(detail);
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn failure(
         &mut self,
         generation: u32,
@@ -224,22 +224,22 @@ impl HeightStream {
 
     /// A transport that throws while connecting, which is the only account of
     /// why its url can't be connected to.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn connect_failed(&mut self, generation: u32, detail: Option<String>, now: f64) {
         if self.is_current(generation) {
             self.fail(HeightStreamDownReason::named("ConnectFailed"), detail, now);
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn timer_fired(&mut self, timer: u32, now: f64) {
-        let Some((pending_timer, pending)) = self.pending else {
-            return;
-        };
-        if pending_timer != timer {
-            return;
-        }
-        self.pending = None;
+        // Every timer this replaces is cleared on the clock, so the one that
+        // fires is the one pending.
+        let (pending_timer, pending) = self
+            .pending
+            .take()
+            .expect("a fired stream timer is the pending one");
+        debug_assert_eq!(pending_timer, timer);
         match pending {
             // Tells a provider whose messages we don't understand apart from a
             // chain that simply has nothing to report.

@@ -695,6 +695,21 @@ describe("Height subscription", () => {
   )
 
   scenario->Scenario.it(
+    "Counts a connection a transport reports live twice as one connect",
+    ~sources=[{chain: 1337, methods: streaming}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1337)
+      await reachRealtime(~sync=mock)
+      mock.setHeightSubscriptionStatus(Live)
+      mock.setHeightSubscriptionStatus(Live)
+      // The poll the backfill left in flight covers both: neither sends a
+      // catch-up of its own.
+      await mock.expectNewHeightCalls(0)
+      t.expect(await indexer->streamMetrics).toEqual(([("-", "1")], []))
+    },
+  )
+
+  scenario->Scenario.it(
     "Stops polling a source once the wait has been decided by another",
     ~sources=[
       {chain: 1337, methods: streaming, pollingInterval: 10},

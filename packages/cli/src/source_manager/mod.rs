@@ -340,7 +340,7 @@ pub struct SourceManager {
 
 #[napi]
 impl SourceManager {
-    #[napi(factory)]
+    #[napi(factory, catch_unwind)]
     pub fn make(
         sources: Vec<SourceManagerSource>,
         is_realtime: bool,
@@ -365,19 +365,19 @@ impl SourceManager {
     }
 
     /// The next thing the caller has to do, in the order it is owed.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn take_effect(&mut self) -> Option<SourceManagerEffect> {
         self.core.take_effect().map(SourceManagerEffect::from)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn timer_fired(&mut self, timer: u32, now: f64) {
         self.core.timer_fired(timer, now);
     }
 
     /// Resolves through a `ResolveWait` effect, which can already be queued
     /// when this returns.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn wait_for_new_block(
         &mut self,
         known_height: i64,
@@ -389,34 +389,34 @@ impl SourceManager {
             .wait_for_new_block(known_height, is_realtime, reduced_polling, now)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn height_answered(&mut self, request: u32, height: i64, stats: Vec<SourceRequestStat>) {
         self.core
             .height_answered(request, height, &to_request_stats(stats));
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn height_failed(&mut self, request: u32, stats: Vec<SourceRequestStat>, err: Option<u32>) {
         self.core
             .height_failed(request, &to_request_stats(stats), err);
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn stream_height(&mut self, source: u32, height: i64) {
         self.core.stream_height(source as usize, height);
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn stream_live(&mut self, source: u32) {
         self.core.stream_live(source as usize);
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn stream_down(&mut self, source: u32, reason: String, detail: Option<String>) {
         self.core.stream_down(source as usize, &reason, detail);
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn start_items_query(
         &mut self,
         from_block: i64,
@@ -437,7 +437,7 @@ impl SourceManager {
     }
 
     /// A response is trusted only once its page has proved internally coherent.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn items_answered(
         &mut self,
         request: u32,
@@ -456,7 +456,7 @@ impl SourceManager {
         );
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn items_failed(
         &mut self,
         request: u32,
@@ -469,30 +469,24 @@ impl SourceManager {
             .items_failed(request, failure.into(), &to_request_stats(stats), err, now);
     }
 
-    #[napi]
-    pub fn start_block_hashes(
-        &mut self,
-        block_numbers: Vec<i64>,
-        is_realtime: bool,
-        now: f64,
-    ) -> u32 {
-        self.core
-            .start_block_hashes(block_numbers, is_realtime, now)
+    #[napi(catch_unwind)]
+    pub fn start_block_hashes(&mut self, is_realtime: bool, now: f64) -> u32 {
+        self.core.start_block_hashes(is_realtime, now)
     }
 
     /// Also rejects a response that simply omitted one of the requested hashes.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn hashes_answered(
         &mut self,
         request: u32,
         block_store: &BlockStore,
+        block_numbers: Vec<i64>,
         stats: Vec<SourceRequestStat>,
         now: f64,
     ) {
-        let required = self.core.requested_block_numbers(request);
         let inconsistent = Inconsistent::check(
             block_store.response_conflict(),
-            block_store.missing_hashes(required),
+            block_store.missing_hashes(block_numbers),
         );
         self.core
             .hashes_answered(request, &to_request_stats(stats), inconsistent, now);
@@ -500,7 +494,7 @@ impl SourceManager {
 
     /// A failure that is neither rate-limiting nor a source behind the head is
     /// retried on the shared schedule.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn hashes_failed(
         &mut self,
         request: u32,
@@ -521,71 +515,71 @@ impl SourceManager {
 
     /// The attempt failed in a way nothing here can retry, and the caller
     /// raises it.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn abandon_request(&mut self, request: u32) {
         self.core.abandon_request(request);
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn begin_waiting(&mut self, state_id: i64) -> bool {
         self.core.begin_waiting(state_id)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn finish_waiting(&mut self, state_id: i64) -> bool {
         self.core.finish_waiting(state_id)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn queries_started(&mut self, count: u32) {
         self.core.queries_started(count);
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn query_finished(&mut self) {
         self.core.query_finished();
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn active_source(&self) -> u32 {
         self.core.active as u32
     }
 
     /// Partition queries in flight on this chain's sources. Summed across
     /// chains to enforce the indexer-wide concurrency budget.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn in_flight(&self) -> u32 {
         self.core.in_flight()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn idle_seconds(&self) -> f64 {
         self.core.seconds_in(Status::Idle)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn waiting_for_new_block_seconds(&self) -> f64 {
         self.core.seconds_in(Status::WaitingForNewBlock)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn querying_seconds(&self) -> f64 {
         self.core.seconds_in(Status::Querying)
     }
 
     /// Total time spent waiting on rate limits, including a window in progress.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn rate_limit_time_ms(&self, now: f64) -> f64 {
         self.core.rate_limit_time_ms(now)
     }
 
     /// Until the longest active rate-limit window resets.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn rate_limit_reset_in_ms(&self, now: f64) -> Option<f64> {
         self.core.rate_limit_reset_in_ms(now)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn request_stat_samples(&self) -> Vec<RequestStatSample> {
         self.core
             .sources
@@ -608,7 +602,7 @@ impl SourceManager {
     }
 
     /// Per-source known heights. A source with none observed yet is left out.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn source_height_samples(&self) -> Vec<SourceHeightSample> {
         self.core
             .sources
@@ -625,7 +619,7 @@ impl SourceManager {
     /// Every source a wait has asked for a stream, including one whose stream
     /// never came up. One never asked is left out, so a chain that only polls
     /// renders none of it rather than sitting at zero.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn height_stream_samples(&self) -> Vec<HeightStreamSample> {
         self.core
             .sources

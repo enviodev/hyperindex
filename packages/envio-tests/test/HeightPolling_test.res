@@ -328,6 +328,26 @@ describe("Height poll failures", () => {
   )
 
   scenario->Scenario.it(
+    "Ignores a failure that arrives after the poll was given up on",
+    ~sources=[{chain: 1337, pollingInterval: 10_000}],
+    ~sourceTiming={
+      heightPollTimeout: 50,
+      heightRetryInitialMillis: 10_000,
+      heightRetryMaxMillis: 10_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1337)
+      await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(80)
+      // The timeout already earned the backoff; failing late earns nothing more.
+      mock->fail
+      await indexer.advanceTime(0)
+      await mock.expectNewHeightCalls(0)
+      t.expect(indexer->heightRetryIntervals).toEqual(["10000"])
+    },
+  )
+
+  scenario->Scenario.it(
     "Uses a height that answers after the poll was given up on",
     ~sources=[{chain: 1337, pollingInterval: 10_000}],
     ~sourceTiming={

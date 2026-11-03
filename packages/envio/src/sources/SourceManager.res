@@ -104,10 +104,16 @@ module Native = {
     float,
   ) => unit = "itemsFailed"
   @send
-  external startBlockHashes: (t, array<int>, bool, float) => int = "startBlockHashes"
+  external startBlockHashes: (t, bool, float) => int = "startBlockHashes"
   @send
-  external hashesAnswered: (t, int, BlockStore.t, array<Source.requestStat>, float) => unit =
-    "hashesAnswered"
+  external hashesAnswered: (
+    t,
+    int,
+    BlockStore.t,
+    array<int>,
+    array<Source.requestStat>,
+    float,
+  ) => unit = "hashesAnswered"
   @send
   external hashesFailed: (
     t,
@@ -495,7 +501,9 @@ and attemptHashes = (sm: t, ~id, ~hashes, ~source: Source.t, ~logger) => {
     switch result {
     | Ok(blockStore) =>
       hashes.blockStore = Some(blockStore)
-      sm->report(_ => sm.native->Native.hashesAnswered(id, blockStore, requestStats, sm->now))
+      sm->report(_ =>
+        sm.native->Native.hashesAnswered(id, blockStore, hashes.blockNumbers, requestStats, sm->now)
+      )
     | Error(exn) => failed(~requestStats, exn)
     }
   )
@@ -621,7 +629,7 @@ let executeQuery = (sm: t, ~query: FetchState.query, ~knownHeight, ~isRealtime, 
 let getBlockHashes = (sm: t, ~blockNumbers, ~isRealtime) =>
   Promise.make((resolve, reject) =>
     sm->report(_ => {
-      let id = sm.native->Native.startBlockHashes(blockNumbers, isRealtime, sm->now)
+      let id = sm.native->Native.startBlockHashes(isRealtime, sm->now)
       sm.requests->Map.set(
         id,
         {
