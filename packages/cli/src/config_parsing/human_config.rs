@@ -851,7 +851,7 @@ pub mod evm {
                                   otherwise, for chains supported by HyperSync, RPC serves as a \
                                   fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
-                                  improvements, up to a 1000x faster than traditional RPC.")]
+                                  improvements, up to 2000x faster than traditional RPC.")]
         pub rpc: Option<RpcSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
