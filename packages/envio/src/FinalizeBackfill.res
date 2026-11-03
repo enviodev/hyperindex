@@ -40,7 +40,7 @@ let runOnce = async (state: IndexerState.t) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
     let readyAt = Date.make()
 
-    await storage.finalizeBackfill(~entities=persistence.allEntities, ~chainIds, ~readyAt)
+    await storage.finalizeBackfill(~chainIds, ~readyAt)
 
     // Only after the commit: in-memory readiness must never run ahead of the
     // `ready_at` a restart would read back.
@@ -68,10 +68,8 @@ let run = (state: IndexerState.t) =>
 // Best-effort and not awaited by the loop: indexing is already live and correct
 // without the index, just slower.
 let repairSchemaIndexes = (state: IndexerState.t) => {
-  let persistence = state->IndexerState.persistence
-  let storage = persistence->Persistence.getInitializedStorageOrThrow
+  let storage = state->IndexerState.persistence->Persistence.getInitializedStorageOrThrow
   storage.ensureSchemaIndexes(
-    ~entities=persistence.allEntities,
     ~chainIds=state->IndexerState.crossChainState->CrossChainState.chainIds,
   )
 }
