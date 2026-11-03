@@ -5,8 +5,9 @@
 
 use std::borrow::Cow;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
+use super::types::{CHANGE_COLUMN, DELETE, SET};
 use crate::columnar::{Arena, ColumnKind, ColumnSpec};
 
 /// A decoded column value, in the shape it will take in JavaScript.
@@ -203,9 +204,124 @@ pub fn lay_out(cells: &[Cell<'_>], columns: Vec<ColumnRead>) -> Result<ResultSet
     Ok(ResultSet { columns, arena })
 }
 
+/// Cells as a store decoded them, every row's in turn, before they are laid
+/// out.
+pub struct Decoded<'a> {
+    pub cells: Vec<Cell<'a>>,
+    pub columns: Vec<ColumnRead>,
+}
+
+impl Decoded<'_> {
+    pub fn lay_out(self) -> Result<ResultSet> {
+        lay_out(&self.cells, self.columns)
+    }
+}
+
+/// What rolling an entity back does, from the keys created past the target
+/// and the last history row of each key changed past it: the keys it removes,
+/// and the rows it restores. A last row that is a delete removes its key too.
+pub fn rollback(removed: Decoded<'_>, restored: Decoded<'_>) -> Result<(ResultSet, ResultSet)> {
+    let position = |name: &str| {
+        restored
+            .columns
+            .iter()
+            .position(|column| column.name == name)
+            .with_context(|| format!("the restored rows have no `{name}` column"))
+    };
+    let change = position(CHANGE_COLUMN)?;
+    let keys = removed
+        .columns
+        .iter()
+        .map(|key| position(&key.name))
+        .collect::<Result<Vec<_>>>()?;
+    let mut removed_cells = removed.cells;
+    let mut restored_cells = Vec::with_capacity(restored.cells.len());
+    for row in restored.cells.chunks(restored.columns.len()) {
+        match &row[change] {
+            Cell::Str(text) if text == DELETE => {
+                removed_cells.extend(keys.iter().map(|&key| row[key].clone()))
+            }
+            Cell::Str(text) if text == SET => restored_cells.extend(
+                row.iter()
+                    .enumerate()
+                    .filter(|(column, _)| *column != change)
+                    .map(|(_, cell)| cell.clone()),
+            ),
+            other => bail!("`{CHANGE_COLUMN}` holds {other:?}, which is no change"),
+        }
+    }
+    let mut restored_columns = restored.columns;
+    restored_columns.remove(change);
+    Ok((
+        lay_out(&removed_cells, removed.columns)?,
+        lay_out(&restored_cells, restored_columns)?,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn texts(result: &ResultSet) -> (Vec<String>, Vec<Vec<String>>) {
+        let columns = result.arena.columns();
+        (
+            result
+                .columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect(),
+            (0..result.arena.rows())
+                .map(|row| {
+                    columns
+                        .iter()
+                        .map(|column| column.str_at(row).unwrap().to_string())
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    /// A key deleted before the target is gone after the rollback, as one
+    /// created past it is; one set before it comes back as it was.
+    #[test]
+    fn a_rollback_removes_what_it_deletes_and_restores_what_it_sets() {
+        let text = |value: &str| Cell::Str(value.to_string().into());
+        let (removed, restored) = rollback(
+            Decoded {
+                cells: vec![text("new")],
+                columns: vec![ColumnRead::scalar("id", ReadKind::Text)],
+            },
+            Decoded {
+                cells: vec![
+                    text("kept"),
+                    text("a"),
+                    text(SET),
+                    text("gone"),
+                    text("b"),
+                    text(DELETE),
+                ],
+                columns: vec![
+                    ColumnRead::scalar("id", ReadKind::Text),
+                    ColumnRead::scalar("name", ReadKind::Text),
+                    ColumnRead::scalar(CHANGE_COLUMN, ReadKind::Text),
+                ],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (texts(&removed), texts(&restored)),
+            (
+                (
+                    vec!["id".to_string()],
+                    vec![vec!["new".to_string()], vec!["gone".to_string()]]
+                ),
+                (
+                    vec!["id".to_string(), "name".to_string()],
+                    vec![vec!["kept".to_string(), "a".to_string()]]
+                ),
+            )
+        );
+    }
 
     #[test]
     fn a_result_matching_nothing_still_describes_its_columns() {

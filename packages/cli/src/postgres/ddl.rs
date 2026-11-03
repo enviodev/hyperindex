@@ -1,6 +1,7 @@
 use anyhow::Result;
 
-use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use super::pg_type::{pg_field_type, ChainIdMode};
+use crate::storage::schema::FieldType;
 
 /// One column of a table, as the caller describes it. `name` is already the
 /// database name — a `column_name_format` rename is resolved before the spec is

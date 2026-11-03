@@ -16,7 +16,7 @@ use tokio_postgres::types::{FromSql, Kind, Type};
 use tokio_postgres::Row;
 
 use super::client::Column;
-use crate::storage::rows::{lay_out, Cell, ColumnRead, ReadKind, ResultSet};
+use crate::storage::rows::{Cell, ColumnRead, Decoded, ReadKind, ResultSet};
 
 /// Days between 2000-01-01, which Postgres counts from, and the Unix epoch.
 const POSTGRES_EPOCH_DAYS: i64 = 10957;
@@ -256,7 +256,7 @@ fn column_read(column: &Column) -> ColumnRead {
 ///
 /// The columns come from the statement rather than from the rows, so an empty
 /// result still describes them.
-pub fn into_result(rows: &[Row], columns: &[Column]) -> Result<ResultSet> {
+pub fn decode_rows<'a>(rows: &'a [Row], columns: &[Column]) -> Result<Decoded<'a>> {
     // One run of cells for the whole result rather than a `Vec` per row: the
     // cells borrow the bytes the rows already hold, so this is the only
     // allocation the decode makes, and `int8` and `numeric` the only values in
@@ -271,7 +271,14 @@ pub fn into_result(rows: &[Row], columns: &[Column]) -> Result<ResultSet> {
             );
         }
     }
-    lay_out(&decoded, columns.iter().map(column_read).collect())
+    Ok(Decoded {
+        cells: decoded,
+        columns: columns.iter().map(column_read).collect(),
+    })
+}
+
+pub fn into_result(rows: &[Row], columns: &[Column]) -> Result<ResultSet> {
+    decode_rows(rows, columns)?.lay_out()
 }
 
 #[cfg(test)]
