@@ -374,74 +374,93 @@ let releaseIfAtHead = group =>
     )
   }
 
-// The run's chains as an unsplit indexer reports them before it has fetched
-// anything: at their configured blocks, with nothing indexed. A display draws
-// these for a worker it hasn't heard from yet.
-let configuredChains = (config: Config.t): array<Metrics.chainMetrics> =>
+// The run's chains as a worker reports them before it has fetched anything:
+// where `ChainState.makeFromDbState` resumes them. A display draws these for a
+// worker it hasn't heard from yet, and its first sight of a chain is what it
+// measures the sync pace from, so a resumed chain drawn from its start block
+// would pass the earlier runs' progress off as this one's.
+let resumedChains = (config: Config.t, ~resumed: array<Persistence.initialChainState>): array<
+  Metrics.chainMetrics,
+> =>
   config.chainMap
   ->ChainMap.values
   ->Array.map((chain): Metrics.chainMetrics => {
-    chainId: chain.id,
-    poweredByHyperSync: switch chain.sourceConfig {
-    | EvmSourceConfig({hypersync}) => hypersync->Option.isSome
-    | FuelSourceConfig(_) | SvmSourceConfig(_) => true
-    | SimulateSourceConfig(_) | CustomSources(_) => false
-    },
-    firstEventBlockNumber: None,
-    latestProcessedBlock: None,
-    timestampCaughtUpToHeadOrEndblock: None,
-    numEventsProcessed: 0.,
-    latestFetchedBlockNumber: 0,
-    knownHeight: 0,
-    numBatchesFetched: 0,
-    // A chain resolves `start_block: latest` against its own head as it starts,
-    // which is a worker's to do and no supervisor's to guess.
-    startBlock: switch chain.startBlock {
-    | Block(block) => block
-    | Latest => 0
-    },
-    endBlock: chain.endBlock,
-    numAddresses: 0,
-    addressesByContract: [],
-    isReady: false,
-    sourceBlockNumber: 0,
-    progressBlockNumber: -1,
-    progressLatencyMs: None,
-    progressBlockTime: None,
-    concurrency: 0,
-    partitionsCount: 0,
-    bufferSize: 0,
-    bufferBlockNumber: -1,
-    idleSeconds: 0.,
-    waitingForNewBlockSeconds: 0.,
-    queryingSeconds: 0.,
-    blockRangeFetchSeconds: 0.,
-    blockRangeParseSeconds: 0.,
-    blockRangeFetchCount: 0.,
-    blockRangeFetchedEvents: 0.,
-    blockRangeFetchedBlocks: 0.,
-    reorgCount: 0,
-    reorgDetectedBlock: None,
-    rollbackTargetBlock: None,
-    rateLimitTimeMs: 0.,
-    rateLimitResetInMs: None,
+    let row = resumed->Array.find(row => row.id == chain.id)
+    let startBlock = row->Option.mapOr(chain->Config.startBlockOrZero, row => row.startBlock)
+    let endBlock = row->Option.mapOr(chain.endBlock, row => row.endBlock)
+    let progressBlockNumber = switch row {
+    | Some({progressBlockNumber}) if progressBlockNumber >= 0 => progressBlockNumber
+    | _ => startBlock - 1
+    }
+    let sourceBlockNumber = row->Option.mapOr(0, row => row.sourceBlockNumber)
+    let timestampCaughtUpToHeadOrEndblock =
+      row->Option.flatMap(row => row.timestampCaughtUpToHeadOrEndblock)
+    let metrics: Metrics.chainMetrics = {
+      chainId: chain.id,
+      poweredByHyperSync: switch chain.sourceConfig {
+      | EvmSourceConfig({hypersync}) => hypersync->Option.isSome
+      | FuelSourceConfig(_) | SvmSourceConfig(_) => true
+      | SimulateSourceConfig(_) | CustomSources(_) => false
+      },
+      firstEventBlockNumber: row->Option.flatMap(row => row.firstEventBlockNumber),
+      latestProcessedBlock: progressBlockNumber === -1 ? None : Some(progressBlockNumber),
+      timestampCaughtUpToHeadOrEndblock,
+      numEventsProcessed: row->Option.mapOr(0., row => row.numEventsProcessed),
+      latestFetchedBlockNumber: Pervasives.max(progressBlockNumber, 0),
+      knownHeight: sourceBlockNumber,
+      numBatchesFetched: 0,
+      startBlock,
+      endBlock,
+      numAddresses: 0,
+      addressesByContract: [],
+      isReady: timestampCaughtUpToHeadOrEndblock->Option.isSome,
+      sourceBlockNumber,
+      progressBlockNumber,
+      progressLatencyMs: None,
+      progressBlockTime: row->Option.flatMap(row => row.progressBlockTime),
+      concurrency: 0,
+      partitionsCount: 0,
+      bufferSize: 0,
+      bufferBlockNumber: progressBlockNumber,
+      idleSeconds: 0.,
+      waitingForNewBlockSeconds: 0.,
+      queryingSeconds: 0.,
+      blockRangeFetchSeconds: 0.,
+      blockRangeParseSeconds: 0.,
+      blockRangeFetchCount: 0.,
+      blockRangeFetchedEvents: 0.,
+      blockRangeFetchedBlocks: 0.,
+      reorgCount: 0,
+      reorgDetectedBlock: None,
+      rollbackTargetBlock: None,
+      rateLimitTimeMs: 0.,
+      rateLimitResetInMs: None,
+    }
+    switch (metrics->Metrics.hasProcessedToEndblock, endBlock) {
+    | (true, Some(endBlock)) => {...metrics, knownHeight: endBlock}
+    | _ => metrics
+    }
   })
 
 // Per worker rather than all or nothing: a worker done within its first report
 // interval is heard from only as it exits, and a display holding just its
 // siblings' finished chains would read as synced while it still indexes.
-let displayedSnapshots = (running: array<running>, ~config, ~empty: Metrics.t) => {
-  let configured = configuredChains(config)
+let displayedSnapshots = (
+  running: array<running>,
+  ~resumedChains: array<Metrics.chainMetrics>,
+  ~empty: Metrics.t,
+) =>
   running->Array.map(r =>
     switch r.snapshot {
     | Some(snapshot) => snapshot
     | None => {
         ...empty,
-        chains: configured->Array.filter(chain => r.worker.chainIds->Array.includes(chain.chainId)),
+        chains: resumedChains->Array.filter(chain =>
+          r.worker.chainIds->Array.includes(chain.chainId)
+        ),
       }
     }
   )
-}
 
 // Runs the group: creates the schema for every chain, forks a worker per plan
 // entry, and serves the run's metrics, console and display from what they
@@ -481,10 +500,9 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   let shouldUseTui = Tui.shouldUse()
   // A run that resumed with every chain already caught up owes nobody a wait:
   // its workers start realtime and there is no barrier to open.
+  let resumed = (persistence->Persistence.getInitializedState).chains
   let holdRealtime =
-    (persistence->Persistence.getInitializedState).chains->Array.some(chain =>
-      chain.timestampCaughtUpToHeadOrEndblock->Option.isNone
-    )
+    resumed->Array.some(chain => chain.timestampCaughtUpToHeadOrEndblock->Option.isNone)
   let group = {running: [], stopping: false, holdingRealtime: holdRealtime}
   group.running =
     workers->Array.mapWithIndex((worker, workerIndex) =>
@@ -534,8 +552,9 @@ let run = async (~config: Config.t, ~logger, ~workers: array<worker>, ~reset) =>
   )
 
   if shouldUseTui {
+    let resumedChains = resumedChains(config, ~resumed)
     Tui.start(~config, ~logger, ~getMetrics=() =>
-      group.running->displayedSnapshots(~config, ~empty=[]->merge)->merge
+      group.running->displayedSnapshots(~resumedChains, ~empty=[]->merge)->merge
     )
   }
 

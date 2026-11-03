@@ -121,11 +121,15 @@ const QUERY_FIELDS: [&str; 4] = ["partitionId", "fromBlock", "toBlock", "retryCo
 #[derive(Default)]
 struct Ledger {
     chain_id: u32,
+    label: Option<String>,
     auto_height: Option<i64>,
     startup_heights: VecDeque<MockStartupHeight>,
     /// One entry per height call taken, in arrival order, so an index is the
     /// call number a test counted. `true` while it waits for an answer.
     height_calls: Vec<bool>,
+    /// How many of `height_calls` an expectation has accounted for. A test
+    /// names the calls it expects next rather than counting from the first.
+    claimed_height_calls: u32,
     /// Height answers given before their call arrived, claimed in order.
     deferred_heights: VecDeque<DeferredHeight>,
     next_id: u32,
@@ -379,28 +383,76 @@ impl Ledger {
         indices
     }
 
-    fn check_height_calls(&self, count: u32) -> MockHeightCallsCheck {
+    /// Calls taken since the last expectation that accounted for some.
+    fn new_height_calls(&self) -> u32 {
         let taken = self.height_calls.len() as u32;
-        if taken > count {
+        taken - self.claimed_height_calls.min(taken)
+    }
+
+    /// Met once exactly `count` calls have arrived since the last expectation,
+    /// which it then accounts for.
+    fn check_new_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
+        let taken = self.height_calls.len() as u32;
+        let new = self.new_height_calls();
+        if new > count {
             MockHeightCallsCheck {
                 done: true,
                 error: Some(format!(
-                    "expectHeightCalls expected {count} height calls, but the source has taken {taken}"
+                    "expectNewHeightCalls expected {count} new height calls, but {} has taken {new} since the last expectation ({taken} in all)",
+                    self.source_name(),
                 )),
             }
         } else {
-            MockHeightCallsCheck {
-                done: taken == count,
-                error: None,
+            let count = self.claimed_height_calls + count;
+            let done = taken == count;
+            if done {
+                self.claimed_height_calls = self.claimed_height_calls.max(count);
             }
+            MockHeightCallsCheck { done, error: None }
         }
     }
 
-    fn height_calls_timeout_message(&self, count: u32) -> String {
+    /// For a step whose number of polls rides on the clock's jitter: met once
+    /// `count` calls are in, and then accounts for every call so far.
+    fn check_new_height_calls_at_least(&mut self, count: u32) -> bool {
+        let taken = self.height_calls.len() as u32;
+        let done = self.new_height_calls() >= count;
+        if done {
+            self.claimed_height_calls = self.claimed_height_calls.max(taken);
+        }
+        done
+    }
+
+    /// How messages name this mock: the way the test reaches it when one chain
+    /// has several, otherwise by its chain.
+    fn source_name(&self) -> String {
+        match &self.label {
+            Some(label) => label.clone(),
+            None => format!("source for chain {}", self.chain_id),
+        }
+    }
+
+    fn new_height_calls_timeout_message(&self, count: u32, at_least: bool) -> String {
         format!(
-            "expectHeightCalls timed out waiting for {count} height calls; the source has taken {}",
-            self.height_calls.len()
+            "expectNewHeightCalls{} timed out waiting for {count} new height calls; {} has taken {} since the last expectation ({} in all)",
+            if at_least { "AtLeast" } else { "" },
+            self.source_name(),
+            self.new_height_calls(),
+            self.height_calls.len(),
         )
+    }
+
+    fn unclaimed_height_calls_message(&self) -> Option<String> {
+        let taken = self.height_calls.len() as u32;
+        if taken <= self.claimed_height_calls {
+            return None;
+        }
+        let unclaimed = taken - self.claimed_height_calls;
+        Some(format!(
+            "Height calls no expectation accounted for on {}: {unclaimed} (calls {} to {taken}). Name each poll where the test causes it with `expectNewHeightCalls(n)`, so one nobody planned for fails at the step that caused it.",
+            self.source_name(),
+            self.claimed_height_calls + 1,
+        ))
     }
 
     fn unclaimed_answers_message(&self) -> Option<String> {
@@ -743,8 +795,8 @@ impl Ledger {
                 .join(", ")
         };
         format!(
-            "Mock source for chain {} at the failure:\n  pending item queries:{queries}\n  pending block-hash lookups: {lookups}\n  height calls taken: {}",
-            self.chain_id,
+            "Mock {} at the failure:\n  pending item queries:{queries}\n  pending block-hash lookups: {lookups}\n  height calls taken: {}",
+            self.source_name(),
             self.height_calls.len()
         )
     }
@@ -794,12 +846,14 @@ impl MockSource {
     #[napi(factory)]
     pub fn new(
         chain_id: u32,
+        label: Option<String>,
         auto_height: Option<i64>,
         startup_heights: Vec<MockStartupHeight>,
     ) -> Self {
         MockSource {
             ledger: Ledger {
                 chain_id,
+                label,
                 auto_height,
                 startup_heights: startup_heights.into(),
                 ..Ledger::default()
@@ -835,13 +889,24 @@ impl MockSource {
     }
 
     #[napi]
-    pub fn check_height_calls(&self, count: u32) -> MockHeightCallsCheck {
-        self.ledger.check_height_calls(count)
+    pub fn check_new_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
+        self.ledger.check_new_height_calls(count)
     }
 
     #[napi]
-    pub fn height_calls_timeout_message(&self, count: u32) -> String {
-        self.ledger.height_calls_timeout_message(count)
+    pub fn new_height_calls_timeout_message(&self, count: u32, at_least: bool) -> String {
+        self.ledger
+            .new_height_calls_timeout_message(count, at_least)
+    }
+
+    #[napi]
+    pub fn check_new_height_calls_at_least(&mut self, count: u32) -> bool {
+        self.ledger.check_new_height_calls_at_least(count)
+    }
+
+    #[napi]
+    pub fn unclaimed_height_calls_message(&self) -> Option<String> {
+        self.ledger.unclaimed_height_calls_message()
     }
 
     #[napi]
@@ -1017,6 +1082,47 @@ mod tests {
         assert_eq!(
             ledger.unclaimed_answers_message().as_deref(),
             Some("Chain 1 registered these mock answers before their call arrived, and no call ever claimed them:\n  resolveGetHeightOrThrow at Foo_test.res:3")
+        );
+    }
+
+    #[test]
+    fn names_the_height_calls_past_the_last_expectation() {
+        let mut ledger = ledger();
+        ledger.take_height_call();
+        ledger.take_height_call();
+        let met = ledger.check_new_height_calls(2).done;
+        ledger.take_height_call();
+        ledger.take_height_call();
+        assert_eq!(
+            (
+                met,
+                ledger.claimed_height_calls,
+                ledger.unclaimed_height_calls_message().as_deref()
+            ),
+            (
+                true,
+                2,
+                Some("Height calls no expectation accounted for on source for chain 1: 2 (calls 3 to 4). Name each poll where the test causes it with `expectNewHeightCalls(n)`, so one nobody planned for fails at the step that caused it.")
+            )
+        );
+    }
+
+    #[test]
+    fn accounts_for_every_call_once_at_least_the_count_is_in() {
+        let mut ledger = ledger();
+        ledger.take_height_call();
+        let short = ledger.check_new_height_calls_at_least(2);
+        ledger.take_height_call();
+        ledger.take_height_call();
+        let met = ledger.check_new_height_calls_at_least(2);
+        assert_eq!(
+            (
+                short,
+                met,
+                ledger.claimed_height_calls,
+                ledger.unclaimed_height_calls_message()
+            ),
+            (false, true, 3, None)
         );
     }
 

@@ -336,6 +336,15 @@
           "format": "uint32",
           "minimum": 0
         },
+        "block_throttle": {
+          "description": "Once caught up, wait for this many new blocks before fetching them. Delays new events by up to as many blocks.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "contracts": {
           "description": "All the contracts that should be indexed on the given chain",
           "type": [

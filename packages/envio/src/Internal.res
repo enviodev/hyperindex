@@ -950,55 +950,6 @@ module EffectCache = {
     | CrossChain => cacheTablePrefix ++ effectName
     | Chain(chainId) => `envio_${chainId->ChainId.toString}_effect_${effectName}`
     }
-
-  // Only accepts a canonical decimal chain id ("7", not "007" or "1foo") —
-  // the schema's parser follows parseFloat semantics and accepts both.
-  let parseChainId = str =>
-    switch try Some(str->ChainId.normalizeOrThrow) catch {
-    | _ => None
-    } {
-    | Some(chainId) if chainId->ChainId.toString === str => Some(chainId)
-    | _ => None
-    }
-
-  let chainScopedRe = /^envio_([0-9]+)_effect_(.+)$/
-  let crossChainRe = /^envio_effect_(.+)$/
-
-  // Inverse of toTableName. Returns None for any table name that isn't a cache
-  // table. Chain-scoped is tried first: the `_effect_` separator keeps effect
-  // names that themselves start with digits unambiguous.
-  let fromTableName = (tableName): option<(string, chainScope)> =>
-    switch RegExp.exec(chainScopedRe, tableName) {
-    | Some(result) =>
-      switch (
-        RegExp.Result.matches(result)->Array.get(0),
-        RegExp.Result.matches(result)->Array.get(1),
-      ) {
-      | (Some(Some(chainIdStr)), Some(Some(effectName))) =>
-        switch parseChainId(chainIdStr) {
-        | Some(chainId) => Some((effectName, Chain(chainId)))
-        | None => None
-        }
-      | _ => None
-      }
-    | None =>
-      switch RegExp.exec(crossChainRe, tableName) {
-      | Some(result) =>
-        switch RegExp.Result.matches(result)->Array.get(0) {
-        | Some(Some(effectName)) => Some((effectName, CrossChain))
-        | _ => None
-        }
-      | None => None
-      }
-    }
-
-  // Relative posix path within .envio/cache. Chain-scoped caches live one
-  // directory level deep, named by chain id.
-  let toCachePath = (~effectName, ~scope) =>
-    switch scope {
-    | CrossChain => effectName ++ ".tsv"
-    | Chain(chainId) => `${chainId->ChainId.toString}/${effectName}.tsv`
-    }
 }
 
 let cacheOutputSchema = S.json(~validate=false)->(Utils.magic: S.t<JSON.t> => S.t<effectOutput>)

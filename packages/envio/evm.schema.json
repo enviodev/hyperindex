@@ -421,7 +421,7 @@
           ]
         },
         "rpc": {
-          "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
+          "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to 2000x faster than traditional RPC.",
           "anyOf": [
             {
               "$ref": "#/$defs/RpcSelection"
@@ -453,6 +453,15 @@
         },
         "block_lag": {
           "description": "The number of blocks behind the chain head that the indexer should lag. Useful for avoiding reorg issues by indexing slightly behind the tip.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "block_throttle": {
+          "description": "Once caught up, wait for this many new blocks before fetching them. Delays new events by up to as many blocks.",
           "type": [
             "integer",
             "null"

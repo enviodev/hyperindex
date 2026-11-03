@@ -11,6 +11,8 @@ type effectRateLimitState = {
   mutable availableCalls: int,
   mutable windowStartTime: float,
   mutable nextWindowPromise: option<promise<unit>>,
+  // The run's clock: a test on virtual time opens the next window by advancing.
+  clock: Clock.t,
 }
 
 // Per-(effect, scope) counters rendered into the envio_effect_* metrics. Live
@@ -80,9 +82,14 @@ type t = {
   // rollback; stats and the rate-limit window survive because the table does.
   tables: dict<effectCacheInMemTable>,
   unregisteredCacheCounts: dict<unregisteredCacheCount>,
+  clock: Clock.t,
 }
 
-let make = (): t => {tables: Dict.make(), unregisteredCacheCounts: Dict.make()}
+let make = (~clock=Clock.real, ()): t => {
+  tables: Dict.make(),
+  unregisteredCacheCounts: Dict.make(),
+  clock,
+}
 
 let setUnregisteredCacheCount = (self: t, ~effectName, ~scope, ~count) => {
   let tableName = Internal.EffectCache.toTableName(~effectName, ~scope)
@@ -214,8 +221,9 @@ let getTable = (self: t, ~effect: Internal.effect, ~scope: Internal.chainScope) 
         callsPerDuration,
         durationMs,
         availableCalls: callsPerDuration,
-        windowStartTime: Date.now(),
+        windowStartTime: self.clock.now(),
         nextWindowPromise: None,
+        clock: self.clock,
       })
     }
     let inMemTable: effectCacheInMemTable = {

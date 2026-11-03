@@ -398,6 +398,8 @@ type EvmChainConfig<Id extends number = number> = {
   readonly maxReorgDepth?: number;
   /** Number of blocks behind the chain head to lag (default: 0). */
   readonly blockLag?: number;
+  /** Once caught up, wait for this many new blocks before fetching them. Delays new events (default: 0). */
+  readonly blockThrottle?: number;
 };
 
 /** EVM chain value (for runtime Indexer). */
@@ -454,6 +456,8 @@ type FuelChainConfig<Id extends number = number> = {
   readonly maxReorgDepth?: number;
   /** Number of blocks behind the chain head to lag (default: 0). */
   readonly blockLag?: number;
+  /** Once caught up, wait for this many new blocks before fetching them. Delays new events (default: 0). */
+  readonly blockThrottle?: number;
 };
 
 /** Fuel chain value (for runtime Indexer). */
@@ -490,6 +494,8 @@ type SvmChainConfig<Id extends number = number> = {
   readonly maxReorgDepth?: number;
   /** Number of blocks behind the chain head to lag (default: 0). */
   readonly blockLag?: number;
+  /** Once caught up, wait for this many new slots before fetching them. Delays new instructions (default: 0). */
+  readonly blockThrottle?: number;
 };
 
 /** SVM chain value (for runtime Indexer). */

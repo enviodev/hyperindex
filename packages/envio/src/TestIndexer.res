@@ -53,11 +53,13 @@ let renderRows = (rows: array<AddressRows.row>, ~config: Config.t) =>
 
 // Rows of a per-chain entity are keyed per (chain, id): the same id exists
 // independently on every chain.
-let rowKey = (~scope: Internal.chainScope, ~entityId: EntityId.t) =>
+let rowKey = (~table: Table.table, ~scope: Internal.chainScope, ~entityId: EntityId.t) => {
+  let entityKey = table.entityIdToKey(entityId)
   switch scope {
-  | CrossChain => entityId->EntityId.toKey
-  | Chain(chainId) => `${chainId->ChainId.toString}|${entityId->EntityId.toKey}`
+  | CrossChain => entityKey
+  | Chain(chainId) => `${chainId->ChainId.toString}|${entityKey}`
   }
+}
 
 let readChainId = (entity: Internal.entity, ~field: Table.field): option<ChainId.t> =>
   entity
@@ -158,19 +160,18 @@ let handleWriteBatch = (
       switch change {
       | Set({entityId, entity, checkpointId}) =>
         // The store keeps decoded entities so load comparisons (bigint /
-        // BigDecimal) work on real values. Ids are keyed by their string form
-        // since they may be string/int/bigint.
+        // BigDecimal) work on real values.
         let storedEntity = switch (chainIdField, scope->Internal.chainScopeChainId) {
         | (Some(field), Some(chainId)) =>
           entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId)
         | _ => entity
         }
-        entityDict->Dict.set(rowKey(~scope, ~entityId), storedEntity)
+        entityDict->Dict.set(rowKey(~table=entityConfig.table, ~scope, ~entityId), storedEntity)
         // The change already carries the checkpoint's chainId, so the entity
         // inside it stays unstamped.
         entityChangeFor(checkpointId).sets->Array.push(entity->Utils.magic)->ignore
       | Delete({entityId, checkpointId}) =>
-        Dict.delete(entityDict->Obj.magic, rowKey(~scope, ~entityId))
+        Dict.delete(entityDict->Obj.magic, rowKey(~table=entityConfig.table, ~scope, ~entityId))
         entityChangeFor(checkpointId).deleted->Array.push(entityId)->ignore
       }
     }
@@ -433,10 +434,15 @@ let getEntityFromState = (
     )
   }
   let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
+  let {entityIdToKey} = entityConfig.table
+  let key = entityIdToKey(entityId->EntityId.unsafeOfString)
   switch entityConfig.table->Table.getChainIdField {
-  | None => entityDict->Dict.get(entityId)->Option.map(copyEntity)
+  | None => entityDict->Dict.get(key)->Option.map(copyEntity)
   | Some(field) =>
-    let matches = entityDict->Dict.valuesToArray->Array.filter(entity => entity.id === entityId)
+    let matches =
+      entityDict
+      ->Dict.valuesToArray
+      ->Array.filter(entity => entityIdToKey(entity.id->EntityId.unsafeOfString) === key)
     switch matches {
     | [] => None
     | [entity] => Some(copyEntity(entity))
@@ -508,7 +514,7 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
       }
     }
     entityDict->Dict.set(
-      rowKey(~scope, ~entityId=entity.id->EntityId.unsafeOfString),
+      rowKey(~table=entityConfig.table, ~scope, ~entityId=entity.id->EntityId.unsafeOfString),
       copyEntity(entity),
     )
   }
@@ -568,13 +574,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
   // so none of these is reached.
-  initialize: async (
-    ~chainConfigs as _=?,
-    ~entities as _=?,
-    ~enums as _=?,
-    ~contractMapping as _,
-    ~envioInfo as _,
-  ) =>
+  initialize: async (~chainConfigs as _=?, ~contractMapping as _, ~envioInfo as _) =>
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
@@ -582,11 +582,11 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: readStoredConfig should not be called; the initial state is derived from config.",
     ),
-  addChain: async (~chainConfig as _, ~entities as _, ~contractMapping as _) =>
+  addChain: async (~chainConfig as _, ~contractMapping as _) =>
     JsError.throwWithMessage(
       "TestIndexer: addChain should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async (~entities as _, ~chainIds as _, ~contractMapping as _) =>
+  resumeInitialState: async (~chainIds as _, ~contractMapping as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
@@ -596,13 +596,12 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ->(Utils.magic: array<Internal.entity> => array<unknown>),
   // The in-memory storage has no indexes to build, and it's always ready.
   ensureQueryIndexes: async (~entityConfig as _, ~scope as _, ~filters as _) => (),
-  ensureSchemaIndexes: async (~entities as _, ~chainIds as _) => (),
-  finalizeBackfill: async (~entities as _, ~chainIds as _, ~readyAt as _) => (),
+  ensureSchemaIndexes: async (~chainIds as _) => (),
+  finalizeBackfill: async (~chainIds as _, ~readyAt as _) => (),
   writeBatch: async (
     ~batch,
     ~rollback as _,
     ~config,
-    ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
     ~registeredAddresses,
@@ -623,11 +622,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   setChainMeta: async _ => Obj.magic(),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
-  getRollbackTargetCheckpoint: async (
-    ~reorgChainId as _,
-    ~lastKnownValidBlockNumber as _,
-    ~sequence as _,
-  ) =>
+  getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),

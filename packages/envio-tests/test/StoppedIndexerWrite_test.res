@@ -35,10 +35,10 @@ let makeHeldStorage = () => {
   let released = Promise.make((resolve, _) => releaseFinalize := Some(resolve))
   let mapStorage = (storage: Persistence.storage) => {
     ...storage,
-    finalizeBackfill: async (~entities, ~chainIds, ~readyAt) => {
+    finalizeBackfill: async (~chainIds, ~readyAt) => {
       finalizeStarted.contents->Option.forEach(resolve => resolve())
       await released
-      await storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+      await storage.finalizeBackfill(~chainIds, ~readyAt)
     },
     setChainMeta: chainsData => {
       if isStopped.contents {
@@ -78,7 +78,7 @@ describe("Stopping an indexer while it finalizes the backfill", () => {
       releaseFinalize()
       await stopped
       isStopped := true
-      await Utils.delay(Env.ThrottleWrites.chainMetadataIntervalMillis + 200)
+      await indexer.advanceTime(Env.ThrottleWrites.chainMetadataIntervalMillis + 200)
 
       t.expect((writesAfterStop.contents, errors->Array.length)).toEqual((0, 0))
     },

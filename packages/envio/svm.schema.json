@@ -219,6 +219,15 @@
           "format": "uint32",
           "minimum": 0
         },
+        "block_throttle": {
+          "description": "Once caught up, wait for this many new slots before fetching them. Delays new instructions by up to as many slots.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "hypersync_config": {
           "description": "HyperSync Config for fetching historical instructions on this chain. Optional for the `solana` and `solana-devnet` chain ids, which default to their public HyperSync endpoints; required for any other chain id.",
           "anyOf": [

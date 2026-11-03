@@ -17,11 +17,10 @@ type timing = {
   reducedPollingInterval?: int,
   recoveryTimeout?: float,
   getHeightRetryInterval?: (~retry: int) => int,
-  // Multiplies the sleep before retrying an items query or a block-hash
-  // lookup, but not the backoff it logs. A rate limit's wait is the server's
-  // to set and isn't scaled.
-  retryBackoffScale?: float,
   heightPollTimeout?: int,
+  // Every timer the manager and its height feeds arm, and every time they
+  // read. A test passes one that only moves when the test advances it.
+  clock?: Clock.t,
 }
 
 let make: (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime: bool, ~timing: timing=?) => t

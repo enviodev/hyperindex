@@ -851,7 +851,7 @@ pub mod evm {
                                   otherwise, for chains supported by HyperSync, RPC serves as a \
                                   fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
-                                  improvements, up to a 1000x faster than traditional RPC.")]
+                                  improvements, up to 2000x faster than traditional RPC.")]
         pub rpc: Option<RpcSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
@@ -869,6 +869,12 @@ pub mod evm {
                            tip."
         )]
         pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Once caught up, wait for this many new blocks before fetching them. \
+                           Delays new events by up to as many blocks."
+        )]
+        pub block_throttle: Option<u32>,
         #[schemars(
             description = "The block at which the indexer should start ingesting data, or \
                            \"latest\" to start from the chain's current head block when the \
@@ -1055,6 +1061,12 @@ pub mod fuel {
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Once caught up, wait for this many new blocks before fetching them. \
+                           Delays new events by up to as many blocks."
+        )]
+        pub block_throttle: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "All the contracts that should be indexed on the given chain")]
         pub contracts: Option<Vec<ChainContract<ContractConfig>>>,
     }
@@ -1231,6 +1243,12 @@ pub mod svm {
                            tip."
         )]
         pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Once caught up, wait for this many new slots before fetching them. \
+                           Delays new instructions by up to as many slots."
+        )]
+        pub block_throttle: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "HyperSync Config for fetching historical instructions on this chain. \
@@ -2217,6 +2235,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 hyperfuel_config: None,
                 max_reorg_depth: None,
                 block_lag: None,
+                block_throttle: None,
                 contracts: Some(vec![ChainContract {
                     name: "Greeter".to_string(),
                     address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
