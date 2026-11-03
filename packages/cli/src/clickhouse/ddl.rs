@@ -3,12 +3,12 @@ use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use anyhow::{bail, Result};
-use napi_derive::napi;
 use regex::{Captures, Regex};
 
-use super::ch_type::{ChType, FieldSpec};
+use super::ch_type::ChType;
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::config_parsing::system_config::ChainIdMode;
+use crate::storage::schema::{Field, SkippingIndex};
 use crate::storage::types::{
     CHAINS_TABLE, CHANGE_COLUMN, CHECKPOINTS_TABLE, CHECKPOINT_ID_COLUMN, DELETE, INFO_TABLE, SET,
 };
@@ -21,32 +21,23 @@ const BLOCK_NUMBER_COLUMN: &str = "block_number";
 pub const VERSION_COLUMN: &str = "version";
 const FRONTIER_COLUMN: &str = "checkpoint_id";
 
+/// An entity's field with the ClickHouse type it is stored as.
 #[derive(Debug, Clone)]
-pub struct ColumnSpec {
-    pub name: String,
-    pub field_name: String,
-    pub field: FieldSpec,
-}
-
-#[napi(object)]
-#[derive(Debug, Clone)]
-pub struct SkippingIndexSpec {
-    pub name: String,
-    pub expr: String,
-    pub index_type: String,
-    pub granularity: Option<u32>,
+pub struct Column {
+    pub field: Field,
+    pub ch_type: ChType,
 }
 
 #[derive(Debug, Clone)]
 pub struct EntitySpec {
     pub name: String,
     pub history_table: String,
-    pub columns: Vec<ColumnSpec>,
+    pub columns: Vec<Column>,
     pub chain_id_column: Option<String>,
     pub partition_by: Option<String>,
     pub order_by: Option<Vec<String>>,
     pub ttl: Option<String>,
-    pub skipping_indexes: Vec<SkippingIndexSpec>,
+    pub skipping_indexes: Vec<SkippingIndex>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -130,29 +121,37 @@ pub fn change_type() -> ChType {
     }
 }
 
-impl ColumnSpec {
-    pub fn typed(&self, chain_id_mode: ChainIdMode, context: &str) -> Result<(String, ChType)> {
-        let ch_type = self
-            .field
+impl Column {
+    pub fn new(field: Field, chain_id_mode: ChainIdMode, context: &str) -> Result<Self> {
+        let ch_type = field
             .ch_type(chain_id_mode)
-            .map_err(|error| error.context(format!("Column `{}` of {context}", self.name)))?;
-        Ok((self.name.clone(), ch_type))
+            .map_err(|error| error.context(format!("Column `{}` of {context}", field.ch_column)))?;
+        Ok(Self { field, ch_type })
+    }
+
+    pub fn ch_column(&self) -> &str {
+        &self.field.ch_column
+    }
+
+    /// What a read names the column: its Postgres name, so a row reads the
+    /// same whichever store answered.
+    pub fn row_name(&self) -> &str {
+        &self.field.pg_column
     }
 }
 
 impl EntitySpec {
     /// What a history row carries: the entity's columns, then the checkpoint
     /// it was written at and whether it set or deleted the entity.
-    pub fn history_columns(&self, chain_id_mode: ChainIdMode) -> Result<Vec<(String, ChType)>> {
-        let context = format!("entity `{}`", self.name);
-        let mut columns = self
-            .columns
+    pub fn history_columns(&self) -> Vec<(String, ChType)> {
+        self.columns
             .iter()
-            .map(|column| column.typed(chain_id_mode, &context))
-            .collect::<Result<Vec<_>>>()?;
-        columns.push((CHECKPOINT_ID_COLUMN.to_string(), ChType::UInt64));
-        columns.push((CHANGE_COLUMN.to_string(), change_type()));
-        Ok(columns)
+            .map(|column| (column.ch_column().to_string(), column.ch_type.clone()))
+            .chain([
+                (CHECKPOINT_ID_COLUMN.to_string(), ChType::UInt64),
+                (CHANGE_COLUMN.to_string(), change_type()),
+            ])
+            .collect()
     }
 
     /// The columns naming one entity: its id, and the chain a per-chain one
@@ -168,7 +167,7 @@ impl EntitySpec {
     fn column_by_field_name(&self) -> HashMap<&str, &str> {
         self.columns
             .iter()
-            .map(|column| (column.field_name.as_str(), column.name.as_str()))
+            .map(|column| (column.field.schema_name.as_str(), column.ch_column()))
             .collect()
     }
 
@@ -179,8 +178,8 @@ impl EntitySpec {
     fn renamed_column_by_field_name(&self) -> HashMap<&str, &str> {
         self.columns
             .iter()
-            .filter(|column| column.field_name != column.name)
-            .map(|column| (column.field_name.as_str(), column.name.as_str()))
+            .filter(|column| column.field.schema_name != column.ch_column())
+            .map(|column| (column.field.schema_name.as_str(), column.ch_column()))
             .collect()
     }
 }
@@ -214,9 +213,8 @@ pub fn create_history_table(
     entity: &EntitySpec,
     database: &str,
     topology: Topology,
-    chain_id_mode: ChainIdMode,
 ) -> Result<String> {
-    let columns = entity.history_columns(chain_id_mode)?;
+    let columns = entity.history_columns();
     let by_field_name = entity.column_by_field_name();
 
     let (order_by, leads_with_id) = match &entity.order_by {
@@ -404,7 +402,7 @@ pub fn create_info_table(database: &str, topology: Topology) -> String {
 /// chain the frontier doesn't name reads as 0, so its rows stay hidden.
 pub fn create_view(entity: &EntitySpec, database: &str, topology: Topology) -> String {
     let dedup_key = quoted_list(entity.key());
-    let entity_fields = quoted_list(entity.columns.iter().map(|column| &column.name));
+    let entity_fields = quoted_list(entity.columns.iter().map(Column::ch_column));
 
     let chains = format!("{} FINAL", table_ref(database, CHAINS_TABLE));
     let checkpoint_id = quoted(FRONTIER_COLUMN);
@@ -518,15 +516,24 @@ mod tests {
         }
     }
 
-    fn column(name: &str, field_type: &str) -> ColumnSpec {
-        ColumnSpec {
-            name: name.to_string(),
-            field_name: name.to_string(),
-            field: field(field_type),
-        }
+    fn column(name: &str, field_type: &str) -> Column {
+        renamed(name, name, field_type)
     }
 
-    fn entity(name: &str, columns: Vec<ColumnSpec>) -> EntitySpec {
+    fn renamed(name: &str, field_name: &str, field_type: &str) -> Column {
+        Column::new(
+            Field {
+                schema_name: field_name.to_string(),
+                ch_column: name.to_string(),
+                ..field(field_type)
+            },
+            ChainIdMode::Int32,
+            "a test",
+        )
+        .unwrap()
+    }
+
+    fn entity(name: &str, columns: Vec<Column>) -> EntitySpec {
         EntitySpec {
             name: name.to_string(),
             history_table: format!("envio_history_{name}"),
@@ -540,7 +547,7 @@ mod tests {
     }
 
     fn render(entity: &EntitySpec, topology: Topology) -> String {
-        create_history_table(entity, "test_db", topology, ChainIdMode::Int32).unwrap()
+        create_history_table(entity, "test_db", topology).unwrap()
     }
 
     #[test]
@@ -586,17 +593,13 @@ mod tests {
             "Account",
             vec![
                 column("id", "String"),
-                ColumnSpec {
-                    name: "created_at".to_string(),
-                    field_name: "createdAt".to_string(),
-                    field: field("Date"),
-                },
+                renamed("created_at", "createdAt", "Date"),
             ],
         );
         entity.order_by = Some(vec!["createdAt".to_string()]);
         entity.partition_by = Some("toYYYYMM(createdAt)".to_string());
         entity.ttl = Some("createdAt + INTERVAL 1 MONTH".to_string());
-        entity.skipping_indexes = vec![SkippingIndexSpec {
+        entity.skipping_indexes = vec![SkippingIndex {
             name: "idx_created".to_string(),
             expr: "createdAt".to_string(),
             index_type: "minmax".to_string(),
@@ -660,11 +663,7 @@ mod tests {
             vec![
                 column("id", "String"),
                 column("day", "Int32"),
-                ColumnSpec {
-                    name: "created_at".to_string(),
-                    field_name: "createdAt".to_string(),
-                    field: field("Date"),
-                },
+                renamed("created_at", "createdAt", "Date"),
             ],
         );
         entity.ttl = Some("createdAt + INTERVAL 30 day".to_string());
@@ -691,7 +690,7 @@ mod tests {
         let mut entity = entity("Account", vec![column("id", "String")]);
         entity.order_by = Some(vec!["missing".to_string()]);
         assert_eq!(
-            create_history_table(&entity, "test_db", plain(), ChainIdMode::Int32)
+            create_history_table(&entity, "test_db", plain())
                 .unwrap_err()
                 .to_string(),
             "ClickHouse orderBy field \"missing\" is not defined on entity \"Account\""

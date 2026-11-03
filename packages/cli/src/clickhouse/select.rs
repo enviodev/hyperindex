@@ -3,19 +3,15 @@
 //! ClickHouse pushes nothing through `LIMIT 1 BY`; a load names the ids it
 //! wants up front, so the primary key narrows the scan to them.
 
-use std::collections::BTreeMap;
-
 use anyhow::{bail, Context, Result};
 
 use super::ch_type::ChType;
-use super::table::{Column, Table};
+use super::ddl::Column;
+use super::table::Table;
 use super::{literal, quoted, quoted_list, table_ref};
 use crate::entity_filter::{Condition, Operator, ValueKind};
-use crate::storage::types::{Bounds, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, SET};
-
-/// Where each chain's committed rows end. A row stamped past its chain's id
-/// belongs to a write that has not committed.
-pub type Frontier = BTreeMap<i64, i64>;
+use crate::storage::schema::FieldType;
+use crate::storage::types::{Bounds, Frontier, Sequence, CHANGE_COLUMN, CHECKPOINT_ID_COLUMN, SET};
 
 /// A read, and the lists it sends beside its text. A batch loads thousands of
 /// ids at once, more than the server's cap on a statement's length holds as
@@ -75,14 +71,15 @@ pub fn above(
                      chain-id column. Only a schema whose entities are all per-chain has them."
                 )
             };
-            if bounds.chain_ids.is_empty() {
+            if bounds.frontier.is_empty() {
                 return Ok("false".to_string());
             }
             let chain = quoted(chain_column);
             Ok(format!(
                 "({})",
                 bounds
-                    .by_chain()
+                    .frontier
+                    .iter()
                     .map(|(chain_id, checkpoint_id)| {
                         format!("({chain} = {chain_id} AND {checkpoint} > {checkpoint_id})")
                     })
@@ -230,7 +227,12 @@ fn decimal_scale(text: &str, column_scale: u32) -> u32 {
 }
 
 /// One element as the column's own type reads it.
-fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> Result<String> {
+fn element(
+    text: &str,
+    kind: ValueKind,
+    field_type: &FieldType,
+    ch_type: &ChType,
+) -> Result<String> {
     Ok(match kind {
         ValueKind::Text | ValueKind::Enum | ValueKind::Json => literal(text),
         ValueKind::Boolean => match text {
@@ -249,7 +251,9 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
             // A bound wider than any Decimal keeps the number as its text, so
             // it is compared as the number it spells rather than as text,
             // which orders "9" after "10".
-            ChType::String if field_type == "BigInt" => literal(&integer_key(&integer(text)?)),
+            ChType::String if matches!(field_type, FieldType::BigInt { .. }) => {
+                literal(&integer_key(&integer(text)?))
+            }
             ChType::String => literal(&decimal_key(text)?),
             // Decimals of two scales compare exactly, so the value keeps
             // every digit it has past the column's.
@@ -269,9 +273,9 @@ fn element(text: &str, kind: ValueKind, field_type: &str, ch_type: &ChType) -> R
 /// The column as a filter compares it: a number kept as text is read as the
 /// number it spells, and a list of them as the numbers they spell.
 fn compared(column: &Column, kind: ValueKind) -> String {
-    let name = quoted(&column.name);
-    let as_number = |text: &str| match column.field.field_type.as_str() {
-        "BigInt" => integer_order(text),
+    let name = quoted(column.ch_column());
+    let as_number = |text: &str| match column.field.field_type {
+        FieldType::BigInt { .. } => integer_order(text),
         _ => decimal_order(text),
     };
     match (kind, column.ch_type.base()) {
@@ -291,7 +295,7 @@ fn value(column: &Column, condition: &Condition, value: &[Option<String>]) -> Re
     };
     if condition.is_list {
         let ChType::Array(inner) = column.ch_type.base() else {
-            bail!("`{}` is not a list column", column.row_name);
+            bail!("`{}` is not a list column", column.row_name());
         };
         let inner = inner.base();
         Ok(format!(
@@ -418,7 +422,13 @@ fn key_tuple(key: &[String]) -> String {
 fn as_row_names<'a>(columns: impl IntoIterator<Item = &'a Column>) -> String {
     columns
         .into_iter()
-        .map(|column| format!("{} AS {}", quoted(&column.name), quoted(&column.row_name)))
+        .map(|column| {
+            format!(
+                "{} AS {}",
+                quoted(column.ch_column()),
+                quoted(column.row_name())
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -466,9 +476,7 @@ fn load_sql(
     let mut on_values = Vec::new();
     for filter in conditions {
         let rendered = condition(table, filter, external.as_deref_mut())?;
-        let column = table
-            .column(&filter.column)
-            .map(|column| column.name.as_str());
+        let column = table.column(&filter.column).map(Column::ch_column);
         if column.is_some_and(|column| key.iter().any(|key| key == column)) {
             on_key.push(rendered);
         } else {
@@ -495,9 +503,9 @@ fn load_sql(
     // so they all come from the same row. Grouping on the key outruns sorting
     // each entity's rows to keep the first.
     let latest = table
-        .columns
+        .columns()
         .iter()
-        .map(|column| column.name.as_str())
+        .map(Column::ch_column)
         .filter(|name| !key.iter().any(|key| key == name))
         .chain([CHANGE_COLUMN])
         .collect::<Vec<_>>();
@@ -512,7 +520,7 @@ fn load_sql(
     Ok(format!(
         "SELECT {} FROM (SELECT {key}, {untupled} FROM (SELECT {key}, argMax(tuple({}), {}) AS \
          {LATEST} FROM {source} WHERE {} GROUP BY {key})) WHERE {} FORMAT RowBinary",
-        as_row_names(&table.columns),
+        as_row_names(table.columns()),
         quoted_list(&latest),
         quoted(CHECKPOINT_ID_COLUMN),
         conjunction(&narrowing),
@@ -583,8 +591,8 @@ pub fn rollback_restored(database: &str, table: &Table, bounds: &Bounds) -> Resu
     Ok(format!(
         "SELECT {}, {change} FROM (SELECT {}, {change} FROM {source} WHERE {} AND NOT ({above}) \
          ORDER BY {key}, {} DESC LIMIT 1 BY {key}) FORMAT RowBinary",
-        as_row_names(&table.columns),
-        quoted_list(table.columns.iter().map(|column| &column.name)),
+        as_row_names(table.columns()),
+        quoted_list(table.columns().iter().map(Column::ch_column)),
         key_in(&table.entity.key(), &source, &above),
         quoted(CHECKPOINT_ID_COLUMN),
         change = quoted(CHANGE_COLUMN),
@@ -598,7 +606,7 @@ pub fn history(database: &str, table: &Table, frontier: &Frontier) -> String {
     format!(
         "SELECT {}, {}, {checkpoint} FROM {} WHERE {checkpoint} <= {} ORDER BY {}, {checkpoint} \
          FORMAT RowBinary",
-        as_row_names(&table.columns),
+        as_row_names(table.columns()),
         quoted(CHANGE_COLUMN),
         table_ref(database, &table.entity.history_table),
         frontier_of(table.entity.chain_id_column.as_deref(), frontier),
@@ -863,7 +871,7 @@ mod tests {
     #[test]
     fn an_unbounded_decimal_is_compared_by_its_key() {
         let ratio = Table::new(
-            entity_input(
+            &entity_input(
                 "Ratio",
                 vec![column("id", "String"), column("value", "BigDecimal")],
             ),
@@ -944,8 +952,7 @@ mod tests {
     fn rollback_reads_reach_only_what_a_bound_put_above_it() {
         let bounds = Bounds {
             sequence: Sequence::SharedAcrossChains,
-            chain_ids: vec![1, 137],
-            checkpoint_ids: vec![9, 4],
+            frontier: frontier(&[(1, 9), (137, 4)]),
         };
         assert_eq!(
             (
@@ -972,8 +979,7 @@ mod tests {
     fn per_chain_bounds_name_each_chain() {
         let bounds = Bounds {
             sequence: Sequence::PerChain,
-            chain_ids: vec![1, 137],
-            checkpoint_ids: vec![9, 4],
+            frontier: frontier(&[(1, 9), (137, 4)]),
         };
         assert_eq!(
             (

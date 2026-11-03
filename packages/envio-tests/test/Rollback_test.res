@@ -3401,11 +3401,11 @@ describe("E2E rollback tests", () => {
       // Record an ordering violation instead of relying on timing alone:
       // the rollback must not read checkpoints while a stalled batch
       // write is still pending.
-      getRollbackTargetCheckpoint: (~reorgChainId, ~lastKnownValidBlockNumber, ~sequence) => {
+      getRollbackTargetCheckpoint: (~reorgChainId, ~lastKnownValidBlockNumber) => {
         if stallWriteBatch.contents->Option.isSome {
           rollbackReadBeforeFlush := true
         }
-        storage.getRollbackTargetCheckpoint(~reorgChainId, ~lastKnownValidBlockNumber, ~sequence)
+        storage.getRollbackTargetCheckpoint(~reorgChainId, ~lastKnownValidBlockNumber)
       },
       getRollbackProgressDiff: (~floors) => {
         if stallWriteBatch.contents->Option.isSome {
@@ -3417,7 +3417,6 @@ describe("E2E rollback tests", () => {
         ~batch,
         ~rollback,
         ~config,
-        ~allEntities,
         ~updatedEffectsCache,
         ~updatedEntities,
         ~registeredAddresses,
@@ -3434,7 +3433,6 @@ describe("E2E rollback tests", () => {
             ~batch,
             ~rollback,
             ~config,
-            ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,
             ~registeredAddresses,

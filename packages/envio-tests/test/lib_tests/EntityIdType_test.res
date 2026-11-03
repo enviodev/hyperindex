@@ -25,26 +25,6 @@ let numericIdTable = Table.mkTable(
 )
 
 describe("Non-string entity id support", () => {
-  // Which of these becomes a Decimal and which falls back to String is Rust's
-  // to decide from the precision; what this side owes it is the precision.
-  it("carries a numeric id's precision to ClickHouse", t => {
-    t.expect(
-      [Table.Int32, BigInt({precision: 20}), BigInt({})]->Array.map(
-        fieldType => ClickHouse.column(~name="id", ~fieldType),
-      ),
-    ).toEqual([
-      {name: "id", fieldType: "Int32", isNullable: false, isArray: false},
-      {
-        name: "id",
-        fieldType: "BigInt",
-        isNullable: false,
-        isArray: false,
-        precision: 20,
-      },
-      {name: "id", fieldType: "BigInt", isNullable: false, isArray: false},
-    ])
-  })
-
   it("serializes a history set update keeping the numeric id value", t => {
     let entitySchema = S.object(
       s =>

@@ -111,7 +111,28 @@ describe("A reset", () => {
       ])
       await restarted.getBatchWritePromise()
 
-      t.expect((firstRunCalls, calls.contents, await readCaches(restarted))).toEqual((6, 6, cached))
+      let cacheLogs = restarted.infoAndAboveLogs()->Array.filterMap(
+        ({msg}) =>
+          if msg->String.startsWith("Successfully dumped cache to ") {
+            Some("Successfully dumped cache to <dir>")
+          } else if msg->String.includes("cache") {
+            Some(msg)
+          } else {
+            None
+          },
+      )
+
+      t.expect((firstRunCalls, calls.contents, await readCaches(restarted), cacheLogs)).toEqual((
+        6,
+        6,
+        cached,
+        [
+          "No saved effect cache to load from .envio/cache.",
+          "Dumping cache: envio_1337_effect_resetPerChain (1 rows), envio_effect_resetLookup (5 rows)",
+          "Successfully dumped cache to <dir>",
+          "Successfully uploaded cache.",
+        ],
+      ))
     },
   )
 })
