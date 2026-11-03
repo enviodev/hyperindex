@@ -14,6 +14,7 @@ type storageCtor
 type addressStoreCtor
 type tuiCtor
 type loggerCtor
+type sourceManagerCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
 // Test-only: the ledger behind envio-tests' MockSource.
@@ -71,6 +72,8 @@ type addon = {
   mockSource: mockSourceCtor,
   @as("VirtualClock")
   virtualClock: virtualClockCtor,
+  @as("SourceManager")
+  sourceManager: sourceManagerCtor,
   encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
   normalizeEvmAddress: (~address: string, ~shouldChecksum: bool) => Null.t<Address.t>,
   renderAddresses: (

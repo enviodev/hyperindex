@@ -837,8 +837,8 @@ describe("EvmHyperSyncSource - request accounting", () => {
           let _ = await source->fetch(~addressSet)
           []
         } catch {
-        | Source.GetItemsError(error) =>
-          error->Source.getItemsErrorRequestStats->Array.map(({Source.method: method}) => method)
+        | Source.GetItemsError(FailedGettingItems({requestStats})) =>
+          requestStats->Array.map(({Source.method: method}) => method)
         }
       },
     )

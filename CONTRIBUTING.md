@@ -142,7 +142,7 @@ Data sourcing (fetch side):
 
 - `ChainState.res` – per-chain runtime state (buffer/progress); mutated in place through its setters. (the chain collection now lives on `IndexerState.res`)
 - `FetchState.res` – in-memory buffer and query bookkeeping. (per-chain)
-- `SourceManager.res` – selects data source & handles fallbacks. (per-chain)
+- `SourceManager.res` – selects data source & handles fallbacks, height polling and waits for new blocks. (per-chain) The decisions are the Rust `SourceManager` (`packages/cli/src/source_manager`); the ReScript side makes the source calls and arms the timers it asks for.
 
 Event processing:
 

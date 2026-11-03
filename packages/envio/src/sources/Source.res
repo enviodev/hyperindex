@@ -97,14 +97,6 @@ type getBlockHashesResponse = {
   requestStats: array<requestStat>,
 }
 
-exception InconsistentResponse({
-  method: string,
-  blockNumber: option<int>,
-  storedHash: option<string>,
-  receivedHash: option<string>,
-  missingBlockNumbers: array<int>,
-})
-
 // The queried block hasn't reached the backend instance that served the
 // request. Load-balanced backends drift from each other around the head, so
 // this is expected there and resolves by retrying — SourceManager owns the
@@ -142,13 +134,6 @@ type getItemsError =
     })
 
 exception GetItemsError(getItemsError)
-
-let getItemsErrorRequestStats = (error: getItemsError) =>
-  switch error {
-  // Raised before anything is requested.
-  | UnsupportedSelection(_) => []
-  | FailedGettingFieldSelection({requestStats}) | FailedGettingItems({requestStats}) => requestStats
-  }
 
 type sourceFor = Sync | Fallback | Realtime
 

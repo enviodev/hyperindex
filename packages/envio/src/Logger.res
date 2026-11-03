@@ -317,33 +317,49 @@ let withFields = (logger: t, fields: 'a) => logger->withFieldsJson(fields->param
 // Every line about one chain names it, so the run's lines can be told apart.
 let withChainId = (logger: t, chainId: ChainId.t) => logger->withFields({"chainId": chainId})
 
+let isEnabled = (logger: t, level: level) => levelSeverity(level) >= logger.minLevel
+
+let writeLine = (logger: t, level: level, message: string, ~paramsJson: Null.t<string>) => {
+  let output = logger.output
+  let time = Date.now()
+  output->appendLine(
+    ~handOver,
+    ~setBytes,
+    ~level=levelNumber(level),
+    ~time,
+    ~message,
+    ~boundFieldsJson=logger.boundFieldsJson,
+    ~paramsJson,
+  )
+  if output.lines >= maxPendingLines || time -. output.lastFlushTime >= maxPendingMs {
+    output.lastFlushTime = time
+    output->handOver
+  } else if !output.isFlushScheduled {
+    output.isFlushScheduled = true
+    NodeJs.setImmediate(() => {
+      output.isFlushScheduled = false
+      output.lastFlushTime = Date.now()
+      output->handOver
+    })
+  }
+}
+
 let logAt = (logger: t, level: level, message: string, ~params: option<'a>=?) =>
-  if levelSeverity(level) >= logger.minLevel {
-    let output = logger.output
-    let time = Date.now()
-    output->appendLine(
-      ~handOver,
-      ~setBytes,
-      ~level=levelNumber(level),
-      ~time,
-      ~message,
-      ~boundFieldsJson=logger.boundFieldsJson,
+  if logger->isEnabled(level) {
+    logger->writeLine(
+      level,
+      message,
       ~paramsJson=switch params {
       | Some(params) => Null.Value(params->paramsToJson)
       | None => Null.Null
       },
     )
-    if output.lines >= maxPendingLines || time -. output.lastFlushTime >= maxPendingMs {
-      output.lastFlushTime = time
-      output->handOver
-    } else if !output.isFlushScheduled {
-      output.isFlushScheduled = true
-      NodeJs.setImmediate(() => {
-        output.isFlushScheduled = false
-        output.lastFlushTime = Date.now()
-        output->handOver
-      })
-    }
+  }
+
+// For params some other code already serialized.
+let logAtJson = (logger: t, level: level, message: string, ~paramsJson: option<string>) =>
+  if logger->isEnabled(level) {
+    logger->writeLine(level, message, ~paramsJson=paramsJson->Null.fromOption)
   }
 
 let trace = (logger, message, ~params=?) => logger->logAt(#trace, message, ~params?)

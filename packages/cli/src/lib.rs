@@ -40,6 +40,7 @@ mod registration_start_block;
 mod request_stats;
 pub mod scripts;
 mod service_health;
+mod source_manager;
 mod storage;
 mod svm;
 mod svm_hypersync_source;

@@ -1,13 +1,5 @@
 type t
 
-type sourceRole = Primary | Secondary
-
-let getSourceRole: (
-  ~sourceFor: Source.sourceFor,
-  ~isRealtime: bool,
-  ~hasRealtime: bool,
-) => option<sourceRole>
-
 // Every field defaults to the production value. Only tests set them, to reach
 // a stall, a recovery or a retry schedule without waiting out the real window.
 type timing = {
@@ -16,10 +8,14 @@ type timing = {
   stalledPollingInterval?: int,
   reducedPollingInterval?: int,
   recoveryTimeout?: float,
-  getHeightRetryInterval?: (~retry: int) => int,
+  // The height poll's backoff: the initial delay, multiplied by the retry count
+  // from the second retry on, up to the max.
+  heightRetryInitialMillis?: int,
+  heightRetryMultiplier?: int,
+  heightRetryMaxMillis?: int,
   heightPollTimeout?: int,
-  // Every timer the manager and its height feeds arm, and every time they
-  // read. A test passes one that only moves when the test advances it.
+  // Every timer the manager arms, and every time it reads. A test passes one
+  // that only moves when the test advances it.
   clock?: Clock.t,
 }
 
@@ -47,10 +43,12 @@ type sourceHeightSample = {
 
 let getSourceHeightSamples: t => array<sourceHeightSample>
 
+type streamSample = {connectCount: int, disconnectsByReason: array<(string, int)>}
+
 type heightStreamSample = {
   sourceName: string,
   chainId: ChainId.t,
-  stream: HeightFeed.streamSample,
+  stream: streamSample,
 }
 
 let getHeightStreamSamples: t => array<heightStreamSample>
@@ -80,10 +78,6 @@ let waitForNewBlock: (
   ~reducedPolling: bool,
 ) => promise<int>
 
-// The retry at which a query that no source can answer stops being a hiccup
-// and gets reported as a stalled chain.
-let stallRetries: int
-
 let executeQuery: (
   t,
   ~query: FetchState.query,
@@ -92,16 +86,10 @@ let executeQuery: (
   ~reorgableFrom: option<int>,
 ) => promise<Source.blockRangeFetchResponse>
 
-let makeGetHeightRetryInterval: (
-  ~initialRetryInterval: int,
-  ~backoffMultiplicative: int,
-  ~maxRetryInterval: int,
-) => (~retry: int) => int
-
 let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise<BlockStore.t>
 
 // Total time the indexer spent waiting on rate limits, including any
-// currently-in-progress window measured against Date.now() at call time.
+// currently-in-progress window.
 let getRateLimitTimeMs: t => float
 
 // Milliseconds remaining until the longest active rate-limit window resets,

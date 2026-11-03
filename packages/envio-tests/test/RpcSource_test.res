@@ -349,11 +349,9 @@ describe("RpcSource - field selection end to end", () => {
       let _ = await fetchPayloads(~mock, ~transactionFieldNames=[Gas])
       []
     } catch {
-    | Source.GetItemsError(error) =>
+    | Source.GetItemsError(FailedGettingItems({requestStats})) =>
       let seen = Utils.Set.make()
-      error
-      ->Source.getItemsErrorRequestStats
-      ->Array.forEach(({Source.method: method}) => seen->Utils.Set.add(method)->ignore)
+      requestStats->Array.forEach(({Source.method: method}) => seen->Utils.Set.add(method)->ignore)
       seen->Utils.Set.toArray->Array.toSorted(String.compare)
     }
     mock.close()

@@ -318,7 +318,8 @@ describe("Height subscription", () => {
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10}],
     ~sourceTiming={
       newBlockStallTimeoutRealtime: 5_000,
-      getHeightRetryInterval: (~retry as _) => 300,
+      heightRetryInitialMillis: 300,
+      heightRetryMaxMillis: 300,
     },
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
@@ -445,7 +446,8 @@ describe("Height subscription", () => {
       newBlockStallTimeoutRealtime: 5_000,
       // Retry at the polling cadence, so this stays about whether the loop is
       // still running rather than about how far it backs off.
-      getHeightRetryInterval: (~retry as _) => 20,
+      heightRetryInitialMillis: 20,
+      heightRetryMaxMillis: 20,
     },
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)

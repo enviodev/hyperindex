@@ -217,7 +217,7 @@ describe("start_block: latest against sources that struggle", () => {
             ],
           },
         ],
-        ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
+        ~sourceTiming={heightRetryInitialMillis: 1, heightRetryMaxMillis: 1},
       ),
     ).toEqual([(1337, 777)])
   })
