@@ -25,7 +25,7 @@
 - Rust CLI: `packages/cli`, entry at `lib.rs`, commands at `commands.rs`.
 - Config parsing pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
 - Shared runtime library: `packages/envio`. Its tests: `packages/envio-tests`.
-- Source selection, failover, retries, height polling and new-block waits: `packages/cli/src/source_manager`, a sans-IO state machine. `SourceManager.res` calls the sources and arms the timers it asks for, in the order of the effects it returns.
+- Source selection, failover, retries, height polling, new-block waits and height-stream reconnects: `packages/cli/src/source_manager`, sans-IO state machines. `SourceManager.res` and `HeightStream.res` call the sources and transports and arm the timers they ask for, in the order of the effects they return.
 - Scenario projects: `scenarios/` — `test_codegen`, `e2e_test`, `fuel_test`, `svm_test`.
 - To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.

@@ -322,6 +322,18 @@ describe("HeightStream reconnect driver", () => {
     t.expect((beforeStale, harness.statuses)).toStrictEqual((["live"], ["live", "down:stale"]))
   })
 
+  Async.it("Fails a connection that never reports anything for the stale timeout", async t => {
+    // A socket accepted and then left hanging: no open, no error, no close.
+    let harness = makeHarness()
+
+    await harness.advance(14_999)
+    let beforeStale = harness.statuses->Array.copy
+    await harness.advance(1)
+    harness.unsubscribe()
+
+    t.expect((beforeStale, harness.statuses)).toStrictEqual(([], ["down:stale"]))
+  })
+
   Async.it("Names a stale failure after a message it could not read", async t => {
     let harness = makeHarness()
     let driver = harness->driverAt(0)

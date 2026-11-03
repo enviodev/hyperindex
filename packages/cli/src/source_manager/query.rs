@@ -252,19 +252,14 @@ impl Core {
         self.requests.remove(&request);
     }
 
-    fn no_sources_message(&self, request: &Request) -> String {
-        match request.kind {
-            // Read when the manager runs out, not on the way in: the reason is
-            // recorded by the failure that disabled the last source.
-            Kind::Items { .. } => match &self.disable_reason {
-                Some(reason) => format!(
-                    "The indexer doesn't have data-sources which can continue fetching. The last one was disabled because {reason}"
-                ),
-                None => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.".to_string(),
-            },
-            Kind::BlockHashes { .. } => {
-                "No data-sources available for fetching block hashes.".to_string()
-            }
+    /// Read when the manager runs out, not on the way in: the reason is
+    /// recorded by the failure that disabled the last source.
+    fn no_sources_message(&self) -> String {
+        match &self.disable_reason {
+            Some(reason) => format!(
+                "The indexer doesn't have data-sources which can continue fetching. The last one was disabled because {reason}"
+            ),
+            None => "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.".to_string(),
         }
     }
 
@@ -274,7 +269,7 @@ impl Core {
             return;
         };
         let Some(source) = self.next_source(request.is_realtime, &request.excluded, now) else {
-            let message = self.no_sources_message(request);
+            let message = self.no_sources_message();
             self.requests.remove(&request_id);
             self.emit(Effect::Reject {
                 request: request_id,
@@ -747,13 +742,8 @@ impl Core {
             && (retry - backoff.failover_after_retries).is_multiple_of(2)
             && {
                 self.sources[source].last_failed_at = Some(now);
-                match self.next_source(is_realtime, &excluded, now) {
-                    Some(next) => match self.sources[next].last_failed_at {
-                        None => true,
-                        Some(failed_at) => now - failed_at >= self.timing.recovery_timeout,
-                    },
-                    None => false,
-                }
+                self.next_source(is_realtime, &excluded, now)
+                    .is_some_and(|next| self.is_working(next, now))
             };
         let sleep = if switched_to_working_source {
             // The next attempt goes elsewhere, which is progress on its own.

@@ -424,7 +424,7 @@ impl Core {
         )
     }
 
-    fn is_working(&self, source: usize, now: f64) -> bool {
+    pub fn is_working(&self, source: usize, now: f64) -> bool {
         match self.sources[source].last_failed_at {
             Some(failed_at) => now - failed_at >= self.timing.recovery_timeout,
             None => true,
@@ -432,11 +432,14 @@ impl Core {
     }
 
     /// Working primaries, else working secondaries, else every primary with the
-    /// one closest to recovery first.
+    /// one closest to recovery first. Secondaries take that last place only
+    /// once no primary is left at all: a recovering source is still one that
+    /// can answer, and having none would stop the indexer.
     pub fn next_sources(&self, is_realtime: bool, excluded: &[usize], now: f64) -> Vec<usize> {
         let mut working_primaries = Vec::new();
         let mut all_primaries = Vec::new();
         let mut working_secondaries = Vec::new();
+        let mut all_secondaries = Vec::new();
         for (index, source) in self.sources.iter().enumerate() {
             if source.disabled || excluded.contains(&index) {
                 continue;
@@ -449,8 +452,13 @@ impl Core {
                         working_primaries.push(index);
                     }
                 }
-                Some(Role::Secondary) if working => working_secondaries.push(index),
-                _ => {}
+                Some(Role::Secondary) => {
+                    all_secondaries.push(index);
+                    if working {
+                        working_secondaries.push(index);
+                    }
+                }
+                None => {}
             }
         }
         if !working_primaries.is_empty() {
@@ -458,11 +466,16 @@ impl Core {
         } else if !working_secondaries.is_empty() {
             working_secondaries
         } else {
+            let mut recovering = if all_primaries.is_empty() {
+                all_secondaries
+            } else {
+                all_primaries
+            };
             // Every one of them is recovering, so each has a failure to order
             // by; a source without one would have been working.
             let failed_at = |source: &usize| self.sources[*source].last_failed_at.unwrap_or(0.);
-            all_primaries.sort_by(|a, b| failed_at(a).total_cmp(&failed_at(b)));
-            all_primaries
+            recovering.sort_by(|a, b| failed_at(a).total_cmp(&failed_at(b)));
+            recovering
         }
     }
 

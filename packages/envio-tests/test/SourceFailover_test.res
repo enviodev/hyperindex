@@ -416,6 +416,25 @@ describe("Source failover", () => {
     },
   )
 
+  scenario->Scenario.it(
+    "Keeps retrying the fallback that is all a benched primary left",
+    ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: unsupported}])
+      // Failing enough times to be marked as recovering. With nothing left to
+      // fail over to, it is still the source to try.
+      for retryCount in 0 to 4 {
+        await fallback.expectItemsQueries([{fromBlock: 1, retryCount, reply: withBackoff}])
+        await indexer.advanceTime(100)
+      }
+      await fallback.expectItemsQueries([{fromBlock: 1, retryCount: 5, reply: upTo(100)}])
+      t.expect(sync.pendingItemsQueries).toEqual([])
+    },
+  )
+
   let stopped = []
   scenario->Scenario.it(
     "Stops the indexer once a query is impossible on every source it has",

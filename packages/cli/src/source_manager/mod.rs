@@ -11,6 +11,7 @@
 mod core;
 mod feed;
 mod query;
+mod stream;
 mod wait;
 
 use napi_derive::napi;
