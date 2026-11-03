@@ -161,7 +161,8 @@ type storage = {
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
-  // Update chain metadata
+  // Update chain metadata. Throws `Unwritten` when the connection went: the
+  // upsert lands the same however often it is sent.
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
   pruneStaleCheckpoints: (
@@ -195,6 +196,8 @@ type storage = {
     ~floors: RollbackFloors.t,
   ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
   // Write batch to storage
+  // Throws `Unwritten` when the connection went before anything of the batch
+  // committed.
   writeBatch: (
     ~batch: Batch.t,
     ~rollback: option<rollback>,
@@ -229,6 +232,10 @@ type t = {
 }
 
 exception StorageError({message: string, reason: exn})
+
+// A write the connection dropped before it landed, and that can be sent again
+// as it was once the database answers.
+exception Unwritten(string)
 
 // A start the operator has to act on, not a failure: what it says is all they
 // need, so it's printed once, without a stack trace.

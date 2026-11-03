@@ -51,6 +51,7 @@ type historyPruneStat = {
 type t = {
   config: Config.t,
   logger: Logger.t,
+  clock: Clock.t,
   persistence: Persistence.t,
   // --- In-memory store: entity/effect tables and the pending-write queue. ---
   allEntities: array<Internal.entityConfig>,
@@ -181,6 +182,7 @@ let make = (
   {
     config,
     logger,
+    clock,
     persistence,
     allEntities: persistence.allEntities,
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
@@ -490,6 +492,7 @@ let recordProcessedBatch = (state: t) =>
 
 let config = (state: t) => state.config
 let logger = (state: t) => state.logger
+let clock = (state: t) => state.clock
 let persistence = (state: t) => state.persistence
 let allEntities = (state: t) => state.allEntities
 let entities = (state: t) => state.entities

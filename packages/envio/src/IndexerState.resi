@@ -74,6 +74,7 @@ let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpoin
 // Accessors.
 let config: t => Config.t
 let logger: t => Logger.t
+let clock: t => Clock.t
 let persistence: t => Persistence.t
 let allEntities: t => array<Internal.entityConfig>
 let entities: t => EntityTables.t

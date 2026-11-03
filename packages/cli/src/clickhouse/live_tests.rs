@@ -286,7 +286,9 @@ async fn write(live: &Live, batch: Batch) {
 async fn write_on(storage: &Storage, batch: Batch) {
     if let Err(error) = storage.write_batch(&batch, Handoff::default()).await {
         match error {
-            WriteError::Failed(failure) => panic!("{}: {:#}", failure.context, failure.error),
+            WriteError::Failed(failure) | WriteError::Unwritten(failure) => {
+                panic!("{}: {:#}", failure.context, failure.error)
+            }
             WriteError::Gated => panic!("gated"),
         }
     }

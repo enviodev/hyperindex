@@ -215,6 +215,7 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
+  ~postgresPort=?,
   ~provideClickHouse=?,
   ~chains=?,
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
@@ -307,6 +308,7 @@ let run = async (
     ~onError?,
     ~onExit?,
     ~mapStorage?,
+    ~postgresPort?,
     ~provideClickHouse?,
     ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
@@ -367,6 +369,7 @@ let it = (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
+  ~postgresPort=?,
   ~timeout=?,
   ~retry=?,
   body: (
@@ -397,6 +400,7 @@ let it = (
           ~onError?,
           ~onExit?,
           ~mapStorage?,
+          ~postgresPort?,
           (~indexer, ~source) => body(~t, ~indexer, ~source),
         )
     let register = (name, ~superviseRun) =>

@@ -247,6 +247,9 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
+  // Where the indexer reaches Postgres, for a test standing a proxy in front of
+  // it. The test's own reads still go straight to the server.
+  ~postgresPort=?,
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
@@ -327,7 +330,13 @@ let run = async (
     let sql = TestPgSchema.client(~logger)
     clients->Array.push(sql)->ignore
     // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-    let client = Storage.clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
+    let client = Storage.clientFromEnv(
+      ~config,
+      ~logger,
+      ~pgSchema,
+      ~isHasuraEnabled=false,
+      ~port=?postgresPort,
+    )
     let storage =
       mapStorage(
         Storage.make(~client, ~cacheDir, ~ecosystem=config.ecosystem.name),
