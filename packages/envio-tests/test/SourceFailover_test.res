@@ -83,6 +83,34 @@ describe("Source failover", () => {
   )
 
   scenario->Scenario.it(
+    "Tells the operator each time a query moves to another source",
+    ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      sync.resolveGetHeightOrThrow(100)
+      // Over to the fallback, and back.
+      let attempts = [(sync, 0), (sync, 1), (sync, 2), (fallback, 3), (fallback, 4)]
+      for idx in 0 to attempts->Array.length - 1 {
+        let (mock, retryCount) = attempts->Array.getUnsafe(idx)
+        await mock.expectItemsQueries([{fromBlock: 1, retryCount, reply: withBackoff}])
+      }
+      await sync.expectItemsQueries([{fromBlock: 1, retryCount: 5, reply: LeavePending}])
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filterMap(
+          ({msg, params}) =>
+            msg === "Switching data-source"
+              ? Some((params->Dict.get("source"), params->Dict.get("fromBlock")))
+              : None,
+        ),
+      ).toEqual([
+        (Some(JSON.String("MockSource")), Some(JSON.Number(1.))),
+        (Some(JSON.String("MockSource")), Some(JSON.Number(1.))),
+      ])
+    },
+  )
+
+  scenario->Scenario.it(
     "Keeps retrying a source behind the head for about 10 seconds before failing over",
     ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
     async (~t, ~indexer, ~source) => {
@@ -351,6 +379,173 @@ describe("Source failover", () => {
               ),
         ),
       ).toBe(true)
+    },
+  )
+
+  scenario->Scenario.it(
+    "Tries the primary that failed longest ago first once every source is recovering",
+    ~sources=[
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, pollingInterval: 50},
+      {chain: 1337, sourceFor: Fallback, pollingInterval: 50},
+    ],
+    ~sourceTiming={recoveryTimeout: 1000.},
+    async (~t, ~indexer, ~source) => {
+      let sync0 = source(1337)
+      let sync1 = source(1337, ~index=1)
+      let fallback = source(1337, ~index=2)
+      sync0.resolveGetHeightOrThrow(100)
+      await failOver(~failing=sync0, ~next=sync1, ~fromBlock=1, ~toBlock=100)
+      // Long enough for sync0 to have recovered by the time sync1 fails.
+      sync1.setAutoHeight(101)
+      await indexer.advanceTime(1000)
+      for retryCount in 0 to 2 {
+        await sync1.expectItemsQueries([{fromBlock: 101, retryCount, reply: withBackoff}])
+      }
+      // sync0 fails a little after sync1, then the fallback: every source is
+      // recovering, and sync1 has been at it the longest.
+      await indexer.advanceTime(10)
+      for retryCount in 3 to 4 {
+        await sync0.expectItemsQueries([{fromBlock: 101, retryCount, reply: withBackoff}])
+      }
+      for retryCount in 5 to 6 {
+        await fallback.expectItemsQueries([{fromBlock: 101, retryCount, reply: withBackoff}])
+      }
+      await sync1.expectItemsQueries([{fromBlock: 101, retryCount: 7, reply: LeavePending}])
+      t.expect((sync0.pendingItemsQueries, fallback.pendingItemsQueries)).toEqual(([], []))
+    },
+  )
+
+  let stopped = []
+  scenario->Scenario.it(
+    "Stops the indexer once a query is impossible on every source it has",
+    ~sources=[{chain: 1337}],
+    ~onError=errHandler => stopped->Array.push(errHandler->ErrorHandling.toExn)->ignore,
+    async (~t, ~indexer as _, ~source) => {
+      let sync = source(1337)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: impossible}])
+      await Scenario.waitUntil(() => stopped->Array.length > 0, ~message="the indexer to stop")
+      t.expect(
+        stopped->Array.map(exn => (exn->(Utils.magic: exn => {"message": string}))["message"]),
+      ).toEqual([
+        // Nothing was benched, so there is no reason to give beyond the logs.
+        "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team.",
+      ])
+    },
+  )
+})
+
+let twoPartitions = Scenario.make(
+  ~configYaml=`
+name: source-failover-partitions
+rollback_on_reorg: false
+chains:
+  - id: 1337
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    max_reorg_depth: 0
+    contracts:
+      - name: Gravatar
+        address:
+          - "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+          - "0x0000000000000000000000000000000000000002"
+        events:
+          - event: "TestEvent()"
+`,
+  ~schema=`
+type Gravatar {
+  id: ID!
+  owner: String!
+}
+`,
+)
+
+describe("Source failover across partitions", () => {
+  twoPartitions->Scenario.it(
+    "Benches a source once, and says why once, when every partition finds it can't serve the selection",
+    ~sources=[{chain: 1337}, {chain: 1337, sourceFor: Fallback}],
+    // One partition per address, so both queries fail on the source at once.
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let fallback = source(1337, ~index=1)
+      let fieldSelection = MockSource.Fail(
+        Source.GetItemsError(
+          FailedGettingFieldSelection({
+            message: "The source can't serve the selected fields.",
+            blockNumber: 1,
+            requestStats: [],
+          }),
+        ),
+      )
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([
+        {partitionId: "0", reply: fieldSelection},
+        {partitionId: "1", reply: fieldSelection},
+      ])
+      await fallback.expectItemsQueries([
+        {partitionId: "0", retryCount: 0, reply: LeavePending},
+        {partitionId: "1", retryCount: 0, reply: LeavePending},
+      ])
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filterMap(
+          ({msg, params}) =>
+            msg === "The source can't serve the selected fields."
+              ? Some((params->Dict.get("source"), params->Dict.get("blockNumber")))
+              : None,
+        ),
+      ).toEqual([(Some(JSON.String("MockSource")), Some(JSON.Number(1.)))])
+    },
+  )
+
+  twoPartitions->Scenario.it(
+    "Reports how many partition queries are out on the chain's sources",
+    ~sources=[{chain: 1337}],
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let concurrency = async () =>
+        (await indexer.metric("envio_indexing_concurrency"))->Array.map(({value}) => value)
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([
+        {partitionId: "0", reply: LeavePending},
+        {partitionId: "1", reply: LeavePending},
+      ])
+      let bothOut = await concurrency()
+      await sync.expectItemsQueries([
+        {partitionId: "0", reply: upTo(100)},
+        {partitionId: "1", reply: LeavePending},
+      ])
+      await indexer.advanceTime(0)
+      let oneOut = await concurrency()
+      t.expect((bothOut, oneOut)).toEqual((["2"], ["1"]))
+    },
+  )
+
+  twoPartitions->Scenario.it(
+    "Counts the time the chain spent waiting for a block apart from the time it spent querying",
+    ~sources=[{chain: 1337}],
+    async (~t, ~indexer, ~source) => {
+      let sync = source(1337)
+      let counted = async name =>
+        (await indexer.metric(name))->Array.map(
+          ({value}) => value->Float.fromString->Option.getOr(0.) > 0.,
+        )
+      // Real time: these counters time the source layer on the wall clock.
+      await Utils.delay(20)
+      let whileWaiting = (
+        await counted("envio_indexing_source_waiting_seconds"),
+        await counted("envio_indexing_source_querying_seconds"),
+      )
+      sync.resolveGetHeightOrThrow(100)
+      await sync.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+      // Real time: as above.
+      await Utils.delay(20)
+      let whileQuerying = await counted("envio_indexing_source_querying_seconds")
+      t.expect((whileWaiting, whileQuerying)).toEqual((([true], [false]), [true]))
     },
   )
 })

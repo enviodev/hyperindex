@@ -163,7 +163,7 @@ pub struct HeightRequest {
 }
 
 impl Core {
-    fn feed_fields(&self, source: usize) -> serde_json::Value {
+    fn feed_log_fields(&self, source: usize) -> serde_json::Value {
         json!({ "source": self.sources[source].spec.name })
     }
 
@@ -335,14 +335,14 @@ impl Core {
 
     fn back_off(&mut self, source: usize, what: String, err: Option<u32>) -> u32 {
         let feed = &mut self.sources[source].feed;
-        let retry_interval = self.timing.height_retry.millis(feed.poll_retry);
+        let retry_interval = self.timing.height_retry.millis_for_retry(feed.poll_retry);
         feed.poll_retry += 1;
         let message = format!(
             "Height retrieval from {} source {what}. Retrying in {retry_interval}ms.",
             self.sources[source].spec.name
         );
         self.log_with_err(
-            Some(self.feed_fields(source)),
+            Some(self.feed_log_fields(source)),
             Level::Trace,
             message,
             json!({}),
@@ -526,7 +526,7 @@ impl Core {
         if let Some(detail) = detail {
             params["detail"] = json!(detail);
         }
-        self.log(Some(self.feed_fields(source)), level, message, params);
+        self.log(Some(self.feed_log_fields(source)), level, message, params);
     }
 
     /// Lazy: subscribes when a realtime wait starts wanting heights. Idempotent,

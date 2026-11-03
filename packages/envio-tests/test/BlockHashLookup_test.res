@@ -163,6 +163,32 @@ describe("Block-hash lookups", () => {
     ).toEqual([Number(100.)])
   })
 
+  scenario->Scenario.it("Warns once a lookup has failed four times running", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    await reorgAtHead(~indexer, ~mock)
+    let backoffs = [100, 200, 400, 800, 1600]
+    for retry in 0 to backoffs->Array.length - 1 {
+      await mock->awaitLookup(~count=retry + 1)
+      mock.failGetBlockHashes(JsError.make("connection reset")->(Utils.magic: JsError.t => exn))
+      await indexer.advanceTime(backoffs->Array.getUnsafe(retry))
+    }
+    await mock->finishRollback
+    t.expect(
+      indexer.allLogsAsJson()->Array.filterMap(
+        line =>
+          switch (line->Dict.get("msg"), line->Dict.get("level")) {
+          | (Some(String("Failed to fetch block hashes. Retrying.")), Some(String(level))) =>
+            Some(level)
+          | _ => None
+          },
+      ),
+    ).toEqual(["trace", "trace", "trace", "trace", "warn"])
+  })
+
   scenario->Scenario.it("Counts a lookup that failed behind the head once", ~sources, async (
     ~t,
     ~indexer,

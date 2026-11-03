@@ -22,7 +22,7 @@ pub struct Wait {
 }
 
 impl Core {
-    fn wait_fields(known_height: i64) -> serde_json::Value {
+    fn wait_log_fields(known_height: i64) -> serde_json::Value {
         json!({ "knownHeight": known_height })
     }
 
@@ -43,7 +43,7 @@ impl Core {
                 "Initiating check for new blocks.".to_string()
             };
             self.log(
-                Some(Self::wait_fields(known_height)),
+                Some(Self::wait_log_fields(known_height)),
                 Level::Trace,
                 message,
                 Value::Null,
@@ -194,7 +194,7 @@ impl Core {
         };
         let known_height = self.waits[&wait].known_height;
         self.log(
-            Some(Self::wait_fields(known_height)),
+            Some(Self::wait_log_fields(known_height)),
             Level::Warn,
             message,
             Value::Null,
@@ -229,7 +229,7 @@ impl Core {
             Level::Trace
         };
         self.log(
-            Some(Self::wait_fields(entry.known_height)),
+            Some(Self::wait_log_fields(entry.known_height)),
             level,
             "New blocks successfully found.".to_string(),
             json!({

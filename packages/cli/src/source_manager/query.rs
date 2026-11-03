@@ -130,21 +130,21 @@ pub const STALL_RETRIES: u32 = 13;
 /// Rate-limit windows are capped against pathological server values.
 const MAX_RATE_LIMIT_WAIT_MILLIS: u32 = 300_000;
 
-fn exp_backoff(base: u32, exp: u32, max_millis: u32) -> u32 {
+fn exponential_backoff_millis(base: u32, exp: u32, max_millis: u32) -> u32 {
     let factor = 2u64.saturating_pow(exp);
     (u64::from(base).saturating_mul(factor)).min(u64::from(max_millis)) as u32
 }
 
 /// One schedule for every retry of the same request, whatever made it fail.
 fn retry_backoff_millis(retry: u32) -> u32 {
-    exp_backoff(100, retry, MAX_RETRY_BACKOFF_MILLIS)
+    exponential_backoff_millis(100, retry, MAX_RETRY_BACKOFF_MILLIS)
 }
 
 fn behind_head_backoff_millis(retry: u32) -> u32 {
     if retry < BEHIND_HEAD_FAILOVER_RETRIES {
-        exp_backoff(100, retry, 1_000)
+        exponential_backoff_millis(100, retry, 1_000)
     } else {
-        exp_backoff(
+        exponential_backoff_millis(
             1_000,
             retry - BEHIND_HEAD_FAILOVER_RETRIES,
             MAX_RETRY_BACKOFF_MILLIS,
@@ -154,7 +154,12 @@ fn behind_head_backoff_millis(retry: u32) -> u32 {
 
 /// The level a retry is reported at, and what it says once the retries have
 /// outlasted the rotation.
-fn stalled_log(retry: u32, warn_after: u32, message: String, stalled: &str) -> (Level, String) {
+fn escalate_when_stalled(
+    retry: u32,
+    warn_after: u32,
+    message: String,
+    stalled: &str,
+) -> (Level, String) {
     if retry >= STALL_RETRIES {
         (Level::Error, message + stalled)
     } else if retry >= warn_after {
@@ -166,7 +171,7 @@ fn stalled_log(retry: u32, warn_after: u32, message: String, stalled: &str) -> (
 
 /// Builds a JSON object, leaving out the fields that have no value, as a
 /// JavaScript object with `undefined` fields serializes.
-fn object(entries: Vec<(&str, Value)>) -> Value {
+fn object_without_nulls(entries: Vec<(&str, Value)>) -> Value {
     Value::Object(
         entries
             .into_iter()
@@ -295,7 +300,7 @@ impl Core {
         let request = self.requests.get_mut(&request_id).expect("checked above");
         request.source = source;
         let (to_block, retry) = (request.to_block, request.retry);
-        let fields = self.request_fields(request_id).expect("checked above");
+        let fields = self.request_log_fields(request_id).expect("checked above");
         self.emit(Effect::Attempt {
             request: request_id,
             source,
@@ -306,7 +311,7 @@ impl Core {
     }
 
     /// The fields every line about the request's current attempt carries.
-    fn request_fields(&self, request: u32) -> Option<Value> {
+    fn request_log_fields(&self, request: u32) -> Option<Value> {
         let request = self.requests.get(&request)?;
         let name = &self.sources[request.source].spec.name;
         Some(match &request.kind {
@@ -314,7 +319,7 @@ impl Core {
                 from_block,
                 partition_id,
                 addresses,
-            } => object(vec![
+            } => object_without_nulls(vec![
                 ("logType", json!("Block Range Query")),
                 ("partitionId", json!(partition_id)),
                 ("source", json!(name)),
@@ -373,7 +378,7 @@ impl Core {
         let retry = request.retry;
         // A page that ends in a retry still made requests.
         self.sources[source].record_request_stats(stats);
-        let fields = self.request_fields(request_id);
+        let fields = self.request_log_fields(request_id);
         let name = self.sources[source].spec.name.clone();
         match failure {
             ItemsFailure::RateLimited { reset_ms } => {
@@ -533,7 +538,7 @@ impl Core {
                     Level::Trace
                 };
                 self.log_with_err(
-                    self.request_fields(request_id),
+                    self.request_log_fields(request_id),
                     level,
                     "Failed to fetch block hashes. Retrying.".to_string(),
                     json!({ "retry": retry, "backOffMilliseconds": backoff_millis }),
@@ -585,7 +590,7 @@ impl Core {
             Level::Trace
         };
         self.log(
-            self.request_fields(request_id),
+            self.request_log_fields(request_id),
             level,
             format!(
                 "HyperSync source is rate-limited - not critical, the indexer will retry in {}s. For higher limits upgrade your plan at https://envio.dev/app/api-tokens.",
@@ -632,7 +637,7 @@ impl Core {
             )
         };
         self.log(
-            self.request_fields(request_id),
+            self.request_log_fields(request_id),
             level,
             message,
             json!({ "retry": retry, "backOffMilliseconds": backoff_millis }),
@@ -660,14 +665,14 @@ impl Core {
             "Received a partial indicator of a possible reorg from the {} source while fetching {method}. Retrying the request to better identify whether a reorg happened.",
             self.sources[source].spec.name
         );
-        let (level, message) = stalled_log(
+        let (level, message) = escalate_when_stalled(
             retry,
             2,
             message,
             " It has disagreed with itself on every attempt for several minutes now, so this chain has stopped making progress - the endpoint is likely serving blocks and logs from nodes on different chains.",
         );
         self.log(
-            self.request_fields(request_id),
+            self.request_log_fields(request_id),
             level,
             message,
             json!({
@@ -706,14 +711,14 @@ impl Core {
         let Some(retry) = self.requests.get(&request_id).map(|request| request.retry) else {
             return;
         };
-        let (level, message) = stalled_log(
+        let (level, message) = escalate_when_stalled(
             retry,
             4,
             message,
             " No source available to this chain has served this query on any attempt since, so indexing has stopped making progress.",
         );
         self.log_with_err(
-            self.request_fields(request_id),
+            self.request_log_fields(request_id),
             level,
             message,
             json!({

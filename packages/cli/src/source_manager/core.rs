@@ -49,7 +49,7 @@ pub struct HeightRetry {
 }
 
 impl HeightRetry {
-    pub fn millis(&self, retry: u32) -> u32 {
+    pub fn millis_for_retry(&self, retry: u32) -> u32 {
         let backoff = if retry == 0 {
             1
         } else {

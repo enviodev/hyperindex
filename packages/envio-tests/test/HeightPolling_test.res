@@ -158,10 +158,12 @@ describe("Polling behind a stream", () => {
       mock.triggerHeightSubscription(101)
       mock.resolveGetHeightOrThrow(101)
       mock.setAutoHeight(101)
-      // Still distrusted, it would poll every 5ms. The one poll is the stall
-      // timeout landing at 200ms and distrusting it afresh.
-      await indexer.advanceTime(30)
+      // Still distrusted, it would poll on its 5ms cadence. The one poll is the
+      // stall timeout landing at 200ms and distrusting it afresh.
+      await indexer.advanceTime(2)
       await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(28)
+      await mock.expectNewHeightCalls(0)
     },
   )
 
@@ -481,6 +483,29 @@ describe("Height stream warnings", () => {
       mock.setHeightSubscriptionStatus(Live)
       mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected}))
       t.expect(indexer->warningReasons).toEqual([])
+    },
+  )
+
+  scenario->Scenario.it(
+    "Says once that a stream sends frames nobody can read, with the frame",
+    ~sources=[{chain: 1337, methods: streaming}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1337)
+      await reach(~sync=mock)
+      // Each reconnect reads the same garbled frame again.
+      for _ in 1 to 2 {
+        mock.setHeightSubscriptionStatus(Live)
+        mock.setHeightSubscriptionStatus(Down({reason: Unreadable, detail: "garbled"}))
+      }
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filterMap(
+          ({params}) =>
+            switch (params->Dict.get("reason"), params->Dict.get("detail")) {
+            | (Some(reason), Some(detail)) => Some((reason, detail))
+            | _ => None
+            },
+        ),
+      ).toEqual([(JSON.String("unreadable"), JSON.String("garbled"))])
     },
   )
 })
