@@ -458,18 +458,10 @@ impl Core {
         } else if !working_secondaries.is_empty() {
             working_secondaries
         } else {
-            // Stable, so sources that never failed keep their config order.
-            all_primaries.sort_by(|a, b| {
-                match (
-                    self.sources[*a].last_failed_at,
-                    self.sources[*b].last_failed_at,
-                ) {
-                    (None, Some(_)) => std::cmp::Ordering::Less,
-                    (Some(_), None) => std::cmp::Ordering::Greater,
-                    (Some(a), Some(b)) => a.total_cmp(&b),
-                    (None, None) => std::cmp::Ordering::Equal,
-                }
-            });
+            // Every one of them is recovering, so each has a failure to order
+            // by; a source without one would have been working.
+            let failed_at = |source: &usize| self.sources[*source].last_failed_at.unwrap_or(0.);
+            all_primaries.sort_by(|a, b| failed_at(a).total_cmp(&failed_at(b)));
             all_primaries
         }
     }
