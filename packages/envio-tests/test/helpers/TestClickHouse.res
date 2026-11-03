@@ -85,38 +85,6 @@ let savedEnv = () => {
     )
 }
 
-// A storage that never reaches a server: registering a table only parses its
-// column types, which is all a staging test needs, and neither store connects
-// before its first statement.
-let offlineClient = (~chainIdMode=ChainId.Int32) =>
-  Storage.makeClient(
-    ~logger=Logger.makeInMemory(),
-    ~chainIdMode,
-    ~postgres=Storage.postgresOptions(~maxConnections=1),
-    ~clickhouse={
-      url: "http://127.0.0.1:1",
-      username: "default",
-      password: "",
-      database: "unused",
-      replicated: false,
-    },
-  )
-
-let registered = (client, input: StorageClient.tableInput) => {
-  let registered = client->StorageClient.registerTable(input)
-  ClickHouse.makeTable(
-    ~handle=registered.handle,
-    ~name=input.name,
-    registered.clickhouse->Option.getOrThrow,
-  )
-}
-
-let entityTable = (client, entityConfig: Internal.entityConfig) =>
-  client->registered({
-    name: entityConfig.table.tableName,
-    clickhouse: ClickHouse.entityTable(entityConfig),
-  })
-
 // The database the current run is pointed at, set by `use`.
 let currentDatabase = () =>
   switch %raw(`process.env.ENVIO_CLICKHOUSE_DATABASE`)->Nullable.toOption {

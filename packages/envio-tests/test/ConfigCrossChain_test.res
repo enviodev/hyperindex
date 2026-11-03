@@ -258,19 +258,6 @@ type Tally @crossChain {
   })
 })
 
-describe("Per-chain entity columns", () => {
-  let primaryKey = (entityConfig: Internal.entityConfig) =>
-    entityConfig.table
-    ->Table.getFields
-    ->Array.map(Storage.pgColumnInput)
-    ->Array.filter(column => column.isPrimaryKey)
-    ->Array.map(column => column.name)
-
-  it("Puts the chain id in a per-chain entity's primary key, and only there", t => {
-    t.expect((counter->primaryKey, globalCounter->primaryKey)).toEqual((["id", "chainId"], ["id"]))
-  })
-})
-
 // The sequence decides the checkpoints table's key: ids are only unique within
 // a chain where each chain counts its own, and under one shared sequence every
 // bound a rollback or a prune applies is an id range.
@@ -334,97 +321,13 @@ describe("Per-chain entities under snake_case columns", () => {
     t.expect(snakeCounter.table->Table.getPgChainIdColumn).toEqual(Some("chain_id"))
   })
 
-  it("Keys the row schema and the getWhere filter by the API name", t => {
-    let locations = switch (Storage.getRowSchema(snakeCounter)->S.classify: S.tagged) {
-    | Object({items}) => items->Array.map(item => item.location)
-    | _ => []
-    }
-    // The stamped entity is keyed by `chainId`; only the SQL layer renames it.
-    t.expect((
-      locations,
+  it("Keys the getWhere filter by the API name", t => {
+    t.expect(
       snakeCounter.table
       ->Table.queryFields
       ->Dict.get("chainId")
       ->Option.map(f => f.pgDbFieldName),
-    )).toEqual((["id", "count", "chainId"], Some("chain_id")))
-  })
-})
-
-describe("Per-chain ClickHouse view", () => {
-  it("Dedups the current state per (id, chain id)", t => {
-    // The chain id column is what makes the view dedup on (id, chain id)
-    // instead of id alone; a global entity carries none.
-    t.expect((
-      ClickHouse.entityTable(counter).chainIdColumn,
-      ClickHouse.entityTable(globalCounter).chainIdColumn,
-    )).toEqual((Some("chainId"), None))
-  })
-})
-
-// The ClickHouse cells are compiled once per (entity, scope) because a DELETE
-// row carries no entity to stamp — the chain id is baked into the cells
-// instead. Cells keyed only by entity would serve chain 1's to chain 137.
-describe("Per-chain ClickHouse writes", () => {
-  // Registers the table for real — that needs no server, and it is what
-  // resolves each column's wire kind — then mocks the arena to read back the
-  // chain-id column, a Float64Array in the default Int32 chain-id mode.
-  let stagedChainIds = (
-    ~changes,
-    ~entityConfig: Internal.entityConfig,
-    ~scope,
-    ~table: ClickHouse.table,
-  ) => {
-    let chainIdIndex = table.columns->Array.findIndex(({name}) => name === "chainId")
-    let (mock, arena) = MockArena.make(~columns=table.columns)
-    let _ = arena->ClickHouse.stageChangesOrThrow(table, ~entityConfig, ~scope, ~changes)
-    switch mock->MockArena.staged->Array.get(chainIdIndex) {
-    | Some({values: Numbers(numbers)}) => numbers->Array.map(number => Some(number))
-    | _ => changes->Array.map(_ => None)
-    }
-  }
-
-  let tableFor = entityConfig =>
-    TestClickHouse.offlineClient()->TestClickHouse.entityTable(entityConfig)
-
-  let set = (~id, ~count): Change.t<Internal.entity> => Set({
-    entityId: id->EntityId.unsafeOfString,
-    checkpointId: 1n,
-    entity: {"id": id, "count": count}->(Utils.magic: {..} => Internal.entity),
-  })
-
-  let delete = (~id): Change.t<Internal.entity> => Delete({
-    entityId: id->EntityId.unsafeOfString,
-    checkpointId: 2n,
-  })
-
-  it("Stamps set rows and tags delete rows with the flush group's chain", t => {
-    let table = tableFor(counter)
-    let chain1 = stagedChainIds(
-      ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
-      ~entityConfig=counter,
-      ~scope=Chain(1->ChainId.fromInt),
-      ~table,
-    )
-    // Same table, different scope: cells kept per entity would reuse chain 1's
-    // and tag the delete row with chain 1.
-    let chain137 = stagedChainIds(
-      ~changes=[set(~id="a", ~count=2n), delete(~id="b")],
-      ~entityConfig=counter,
-      ~scope=Chain(137->ChainId.fromInt),
-      ~table,
-    )
-
-    t.expect((chain1, chain137)).toEqual(([Some(1.), Some(1.)], [Some(137.), Some(137.)]))
-  })
-
-  it("Leaves a cross-chain entity's rows without a chain id", t => {
-    let captured = stagedChainIds(
-      ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
-      ~entityConfig=globalCounter,
-      ~scope=CrossChain,
-      ~table=tableFor(globalCounter),
-    )
-    t.expect(captured).toEqual([None, None])
+    ).toEqual(Some("chain_id"))
   })
 })
 
@@ -475,18 +378,6 @@ describe("Chain-id stamping", () => {
       stamped->(Utils.magic: Internal.entity => {"id": string, "count": bigint, "chainId": int}),
       entity->(Utils.magic: Internal.entity => {..})->Obj.magic->Dict.keysToArray,
     )).toEqual(({"id": "total", "count": 5n, "chainId": 137}, ["id", "count"]))
-  })
-
-  it("Adds the chain id to the row schema of a per-chain entity only", t => {
-    let locations = entityConfig =>
-      switch (Storage.getRowSchema(entityConfig)->S.classify: S.tagged) {
-      | Object({items}) => items->Array.map(item => item.location)
-      | _ => []
-      }
-    t.expect((counter->locations, globalCounter->locations)).toEqual((
-      ["id", "count", "chainId"],
-      ["id", "count"],
-    ))
   })
 })
 

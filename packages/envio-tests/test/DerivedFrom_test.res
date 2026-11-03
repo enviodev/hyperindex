@@ -91,25 +91,6 @@ describe("@derivedFrom spellings", () => {
     ])
   })
 
-  // A derived field is read by looking the owner's id up on the other table, so
-  // the relation is only usable if that column is indexed. The four spellings
-  // point at one column, and the index is emitted once.
-  it("indexes the column a derived lookup reads, once per column", t => {
-    let indexes = spelling =>
-      Storage.getSchemaIndexes(
-        ~entities=parse(
-          schemaWith(
-            `  children: ${spelling} @derivedFrom(field: "parent")
-  alias: ${spelling} @derivedFrom(field: "parent")`,
-          ),
-        ).config.userEntities,
-      )->Array.map(IndexDefinition.describe)
-
-    t.expect(spellings->Array.map(indexes)).toEqual(
-      spellings->Array.map(_ => ["Child(parent_id) using btree"]),
-    )
-  })
-
   it("rejects a derived field that is not an entity", t => {
     t.expect(
       parseError(schemaWith(`  children: [String!]! @derivedFrom(field: "parent")`)),

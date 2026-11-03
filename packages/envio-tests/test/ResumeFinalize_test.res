@@ -102,12 +102,12 @@ let makeFlakyFinalize = (~failCount) => {
   let calls = ref(0)
   let mapStorage = (storage: Persistence.storage) => {
     ...storage,
-    finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+    finalizeBackfill: (~chainIds, ~readyAt) => {
       calls := calls.contents + 1
       if calls.contents <= failCount {
         Promise.reject(Utils.Error.make("simulated crash before commit"))
       } else {
-        storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)
+        storage.finalizeBackfill(~chainIds, ~readyAt)
       }
     },
   }
@@ -599,12 +599,12 @@ describe("Resuming a backfill that never finalized", () => {
   let finalizeCalls = ref(0)
   let mapStorage = (storage: Persistence.storage) => {
     ...storage,
-    finalizeBackfill: (~entities, ~chainIds, ~readyAt) => {
+    finalizeBackfill: (~chainIds, ~readyAt) => {
       finalizeCalls := finalizeCalls.contents + 1
       if finalizeCalls.contents == 1 {
         Promise.reject(Utils.Error.make("simulated crash before commit"))
       } else {
-        gate.wait()->Promise.then(() => storage.finalizeBackfill(~entities, ~chainIds, ~readyAt))
+        gate.wait()->Promise.then(() => storage.finalizeBackfill(~chainIds, ~readyAt))
       }
     },
   }

@@ -175,12 +175,6 @@ impl Transaction {
             .note(execute_on(self.connection.client(), sql, params).await)
     }
 
-    pub async fn execute_once(&self, sql: &str, params: &[Param]) -> Result<u64> {
-        let _open = self.connection.open().await?;
-        self.connection
-            .note(execute_once_on(self.connection.client(), sql, params).await)
-    }
-
     #[cfg(test)]
     pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
         let _open = self.connection.open().await?;
@@ -230,8 +224,7 @@ impl Transaction {
     }
 }
 
-/// How many statement shapes a connection keeps prepared. Shapes that don't
-/// recur go through `execute_once` and never land here, so what fills it is a
+/// How many statement shapes a connection keeps prepared. What fills it is a
 /// per-chain entity's loads and history writes — the chain id is written into
 /// those — about a thousand on 10 entities across 30 chains. Past this the
 /// cache is dropped rather than grown without bound, and the shapes that repeat
@@ -258,21 +251,6 @@ async fn execute_on(
     let statement = prepared(client, sql).await?;
     let params = params.iter().map(|param| param as &(dyn ToSql + Sync));
     Ok(client.execute_raw(&statement, params).await?)
-}
-
-/// A statement whose text won't come back, sent unnamed with its parameters'
-/// types left to the server: parsed, planned and run in one round trip, and
-/// nothing kept once it has.
-async fn execute_once_on(
-    client: &deadpool_postgres::Object,
-    sql: &str,
-    params: &[Param],
-) -> Result<u64> {
-    let params = params
-        .iter()
-        .map(|param| (param as &(dyn ToSql + Sync), Type::UNKNOWN))
-        .collect::<Vec<_>>();
-    Ok(client.execute_typed(sql, &params).await?)
 }
 
 /// The rows, and what the statement says its columns are.
@@ -377,11 +355,6 @@ impl PgClient {
     pub async fn execute(&self, sql: &str, params: &[Param]) -> Result<u64> {
         let client = self.client().await?;
         execute_on(&client, sql, params).await
-    }
-
-    pub async fn execute_once(&self, sql: &str, params: &[Param]) -> Result<u64> {
-        let client = self.client().await?;
-        execute_once_on(&client, sql, params).await
     }
 
     pub async fn query(&self, sql: &str, params: &[Param]) -> Result<(Vec<Row>, Vec<Column>)> {
