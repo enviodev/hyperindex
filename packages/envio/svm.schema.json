@@ -220,7 +220,7 @@
           "minimum": 0
         },
         "block_throttle": {
-          "description": "Once the indexer has caught up with the chain head, wait for this many new slots and fetch them together, instead of fetching on every new slot. Set it on chains with very fast slots to send fewer requests. New instructions then reach your handlers up to this many slots later. Leave it unset to fetch every slot; 0 and 1 do the same.",
+          "description": "Once caught up, wait for this many new slots before fetching them. Delays new instructions by up to as many slots.",
           "type": [
             "integer",
             "null"

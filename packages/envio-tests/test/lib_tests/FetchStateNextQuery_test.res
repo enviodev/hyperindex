@@ -60,6 +60,7 @@ let mockFetchState = (
     maxOnBlockBufferSize: targetBufferSize,
     chainId: 0->ChainId.fromInt,
     blockLag: 0,
+    blockThrottle: 0,
     onBlockRegistrations: [],
     knownHeight,
     firstEventBlock: None,

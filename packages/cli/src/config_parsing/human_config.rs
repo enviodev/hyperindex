@@ -871,11 +871,8 @@ pub mod evm {
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Once the indexer has caught up with the chain head, wait for this many \
-                           new blocks and fetch them together, instead of fetching on every new \
-                           block. Set it on chains with very fast blocks to send fewer requests. \
-                           New events then reach your handlers up to this many blocks later. \
-                           Leave it unset to fetch every block; 0 and 1 do the same."
+            description = "Once caught up, wait for this many new blocks before fetching them. \
+                           Delays new events by up to as many blocks."
         )]
         pub block_throttle: Option<u32>,
         #[schemars(
@@ -1065,11 +1062,8 @@ pub mod fuel {
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Once the indexer has caught up with the chain head, wait for this many \
-                           new blocks and fetch them together, instead of fetching on every new \
-                           block. Set it on chains with very fast blocks to send fewer requests. \
-                           New events then reach your handlers up to this many blocks later. \
-                           Leave it unset to fetch every block; 0 and 1 do the same."
+            description = "Once caught up, wait for this many new blocks before fetching them. \
+                           Delays new events by up to as many blocks."
         )]
         pub block_throttle: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1251,11 +1245,8 @@ pub mod svm {
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Once the indexer has caught up with the chain head, wait for this many \
-                           new slots and fetch them together, instead of fetching on every new \
-                           slot. Set it on chains with very fast slots to send fewer requests. New \
-                           instructions then reach your handlers up to this many slots later. \
-                           Leave it unset to fetch every slot; 0 and 1 do the same."
+            description = "Once caught up, wait for this many new slots before fetching them. \
+                           Delays new instructions by up to as many slots."
         )]
         pub block_throttle: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]

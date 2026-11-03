@@ -879,6 +879,7 @@ type t = {
   // How much blocks behind the head we should query
   // Needed to query before entering reorg threshold
   blockLag: int,
+  blockThrottle: int,
   // Buffer of items ordered from earliest to latest
   buffer: array<Internal.item>,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
@@ -1197,6 +1198,7 @@ let updateInternal = (
     optimizedPartitions,
     latestOnBlockBlockNumber,
     blockLag,
+    blockThrottle: fetchState.blockThrottle,
     knownHeight,
     // Single merge point: fold any onBlock items into the sorted base buffer.
     buffer: switch blockItems {
@@ -2387,6 +2389,15 @@ let acceptCandidates = (
   }
 }
 
+// A throttled chain lets `blockThrottle - 1` new blocks build up before it
+// fetches them, so a frontier that far behind the lagged head is waiting, not
+// behind. An end block the head has reached is fetched without waiting.
+let blocksBehindHeadAllowedByThrottle = ({blockThrottle, endBlock, knownHeight, blockLag}: t) =>
+  switch endBlock {
+  | Some(endBlock) if knownHeight - blockLag >= endBlock => 0
+  | _ => Pervasives.max(0, blockThrottle - 1)
+  }
+
 // Candidate queries are sized against chainTargetBlock, the soft querying
 // horizon the owning chain wants to reach this tick — derived by ChainState
 // from its share of the indexer-wide buffer budget and its chain-level event
@@ -2415,7 +2426,7 @@ let acceptCandidates = (
 // rangeTargetDensity × (chainTargetBlock − fromBlock + 1) / inRangeCount — so
 // unknown-density partitions probe in parallel within one budget.
 let getNextQuery = (
-  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock}: t,
+  {optimizedPartitions, blockLag, latestOnBlockBlockNumber, knownHeight, endBlock} as fetchState: t,
   ~chainTargetBlock: int,
   ~chainTargetItems: float,
 ) => {
@@ -2423,7 +2434,8 @@ let getNextQuery = (
   if headBlockNumber <= 0 {
     WaitingForNewBlock
   } else {
-    let isOnBlockBehindTheHead = latestOnBlockBlockNumber < headBlockNumber
+    let caughtUpBlockNumber = headBlockNumber - fetchState->blocksBehindHeadAllowedByThrottle
+    let isOnBlockBehindTheHead = latestOnBlockBlockNumber < caughtUpBlockNumber
     let shouldWaitForNewBlock = ref(
       switch endBlock {
       | Some(endBlock) => headBlockNumber < endBlock
@@ -2468,7 +2480,7 @@ let getNextQuery = (
         }
       }
       inFlightCounts->Array.setUnsafe(idx, inFlightCount.contents)
-      if p.mutPendingQueries->Array.length > 0 || p.latestFetchedBlock < headBlockNumber {
+      if p.mutPendingQueries->Array.length > 0 || p.latestFetchedBlock < caughtUpBlockNumber {
         // Even if there are some partitions waiting for the new block
         // We still want to wait for all partitions reaching the head
         // because they might update knownHeight in their response
@@ -2647,6 +2659,7 @@ let make = (
   ~progressBlockNumber=startBlock - 1,
   ~onBlockRegistrations=[],
   ~blockLag=0,
+  ~blockThrottle=0,
   ~firstEventBlock=None,
   ~clientFilterAddressThreshold=None,
   ~isResumed=false,
@@ -2836,6 +2849,7 @@ let make = (
     latestOnBlockBlockNumber,
     normalSelection,
     blockLag,
+    blockThrottle,
     onBlockRegistrations,
     maxOnBlockBufferSize,
     knownHeight,
@@ -3059,7 +3073,8 @@ let isFetchingAtHead = ({endBlock, blockLag, knownHeight} as fetchState: t) => {
   knownHeight !== 0 &&
     switch endBlock {
     | Some(endBlock) if bufferBlockNumber >= endBlock => true
-    | _ => bufferBlockNumber >= knownHeight - blockLag
+    | _ =>
+      bufferBlockNumber >= knownHeight - blockLag - fetchState->blocksBehindHeadAllowedByThrottle
     }
 }
 
