@@ -313,6 +313,7 @@ let makeInternal = (
       !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : maxReorgDepth,
       chainConfig.blockLag,
     ),
+    ~blockThrottle=chainConfig.blockThrottle,
     ~onBlockRegistrations,
     ~firstEventBlock,
     // Fuel and SVM route through the address store like EVM does, so the

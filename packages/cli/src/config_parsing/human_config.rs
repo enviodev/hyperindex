@@ -851,7 +851,7 @@ pub mod evm {
                                   otherwise, for chains supported by HyperSync, RPC serves as a \
                                   fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
-                                  improvements, up to a 1000x faster than traditional RPC.")]
+                                  improvements, up to 2000x faster than traditional RPC.")]
         pub rpc: Option<RpcSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
@@ -871,10 +871,8 @@ pub mod evm {
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The minimum number of new blocks the chain head must advance by before \
-                           the indexer fetches again once it has caught up. Useful on chains with \
-                           very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 \
-                           all fetch on every new block."
+            description = "Once caught up, wait for this many new blocks before fetching them. \
+                           Delays new events by up to as many blocks."
         )]
         pub block_throttle: Option<u32>,
         #[schemars(
@@ -1064,10 +1062,8 @@ pub mod fuel {
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The minimum number of new blocks the chain head must advance by before \
-                           the indexer fetches again once it has caught up. Useful on chains with \
-                           very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 \
-                           all fetch on every new block."
+            description = "Once caught up, wait for this many new blocks before fetching them. \
+                           Delays new events by up to as many blocks."
         )]
         pub block_throttle: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1249,10 +1245,8 @@ pub mod svm {
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The minimum number of new blocks the chain head must advance by before \
-                           the indexer fetches again once it has caught up. Useful on chains with \
-                           very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 \
-                           all fetch on every new block."
+            description = "Once caught up, wait for this many new slots before fetching them. \
+                           Delays new instructions by up to as many slots."
         )]
         pub block_throttle: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
