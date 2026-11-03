@@ -95,11 +95,44 @@ pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
         })
 }
 
+/// Whether the failure is the connection going rather than anything the
+/// statement or its data did: the server ending the session or shutting down,
+/// the socket dropping, or a new connection refused or cut off while the server
+/// is away. Nothing the failed statement sent is known to have run.
+pub fn is_connection_lost(error: &anyhow::Error) -> bool {
+    if let Some(database) = database_error(error) {
+        let code = database.code().code();
+        return code.starts_with("08") || matches!(code, "57P01" | "57P02" | "57P03");
+    }
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<tokio_postgres::Error>()
+            .is_some_and(tokio_postgres::Error::is_closed)
+            || cause.is::<std::io::Error>()
+            || matches!(
+                cause.downcast_ref::<deadpool_postgres::PoolError>(),
+                Some(deadpool_postgres::PoolError::Timeout(
+                    deadpool_postgres::TimeoutType::Create
+                ))
+            )
+    })
+}
+
+/// What a lost connection crosses the boundary as, whatever the server or the
+/// socket said: the one code the indexer reads, to send an idempotent statement
+/// again.
+pub const CONNECTION_LOST: &str = "08006";
+
 /// napi only puts its own status names in an error's `code`, so the SQLSTATE
 /// travels as the message of a `cause`.
 pub fn to_napi(error: anyhow::Error) -> napi::Error {
     let mut napi_error = napi::Error::from_reason(message_of(&error));
-    if let Some(code) = sql_state(&error) {
+    let code = if is_connection_lost(&error) {
+        Some(CONNECTION_LOST)
+    } else {
+        sql_state(&error)
+    };
+    if let Some(code) = code {
         napi_error.set_cause(napi::Error::from_reason(code));
     }
     napi_error
@@ -108,6 +141,45 @@ pub fn to_napi(error: anyhow::Error) -> napi::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A port that accepts and closes straight away is what a pooler or a
+    /// proxy in front of a restarting database answers with.
+    #[tokio::test]
+    async fn a_connection_cut_off_while_opening_is_lost() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+        let client =
+            super::super::client::PgClient::connect(super::super::client::PgConnectionOptions {
+                host: "127.0.0.1".to_string(),
+                port,
+                user: "postgres".to_string(),
+                password: String::new(),
+                database: "postgres".to_string(),
+                ssl: super::super::client::SslSetting::Disable,
+                max_connections: 1,
+                application_name: None,
+                extra_ca_file: None,
+                connect_timeout: std::time::Duration::from_secs(5),
+            })
+            .unwrap();
+
+        let error = client.begin().await.err().unwrap();
+
+        assert!(is_connection_lost(&error), "{error:#}");
+    }
+
+    /// A failure with nothing from the driver behind it says nothing about the
+    /// connection, and writing again would only fail the same way.
+    #[test]
+    fn a_failure_of_our_own_is_not_a_lost_connection() {
+        let error = anyhow::anyhow!("Internal error: 2 values for 3 columns");
+        assert!(!is_connection_lost(&error));
+    }
 
     /// A statement the client turns away reads as the cascade of the failure
     /// behind it, not as a failure of its own.

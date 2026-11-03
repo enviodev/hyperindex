@@ -11,10 +11,11 @@ let postgresOptions = (
   ~isHasuraEnabled=false,
   ~maxConnections=Env.Db.maxConnections,
   ~isolated=false,
+  ~port=Env.Db.port,
 ): StorageClient.postgresOptions => {
   {
     host: Env.Db.host,
-    port: Env.Db.port,
+    port,
     user: Env.Db.user,
     password: Env.Db.password,
     database: Env.Db.database,
@@ -72,6 +73,19 @@ let toChainConfig = (chainConfig: Config.chain): StorageClient.chainConfig => {
   endBlock: ?chainConfig.endBlock,
   maxReorgDepth: chainConfig.maxReorgDepth,
 }
+
+// The code the addon gives a failure that was the connection going, whatever
+// the server or the socket said.
+let connectionLostCode = "08006"
+
+let isConnectionLost = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(error) =>
+    (error->(Utils.magic: JsExn.t => {"cause": Nullable.t<JsExn.t>}))["cause"]
+    ->Nullable.toOption
+    ->Option.flatMap(JsExn.message) === Some(connectionLostCode)
+  | _ => false
+  }
 
 // A failed operation crosses as what it was doing, with the store's error as
 // its `cause`.
@@ -475,10 +489,12 @@ let make = (
       isHyperSync: meta.isHyperSync,
     })
 
-  let setChainMeta = chainsData =>
-    client
-    ->StorageClient.setChainMeta(chainsData->chainMeta)
-    ->Promise.thenResolve(_ => %raw(`undefined`))
+  let setChainMeta = async chainsData =>
+    switch await client->StorageClient.setChainMeta(chainsData->chainMeta) {
+    | () => %raw(`undefined`)
+    | exception exn if exn->isConnectionLost =>
+      throw(Persistence.Unwritten(exn->Utils.exnMessage->Option.getOr("")))
+    }
 
   let pruneStaleCheckpoints = (~safeCheckpoints) =>
     client->StorageClient.pruneCheckpoints(safeCheckpoints->bounds)
@@ -739,11 +755,15 @@ let make = (
     let postgresStagingSeconds =
       stagingStarted->Performance.secondsSince -. clickHouseOnlyStagingSeconds.contents
 
-    let timings = try await client->StorageClient.writeBatch(input) catch {
+    let {timings, unwritten} = try await client->StorageClient.writeBatch(input) catch {
     | exn =>
       // Batches the addon never took, because it refused the call itself.
       client->StorageClient.discardStaged(handles)
       throw(exn->storageErrorOf)
+    }
+    switch unwritten->Nullable.toOption {
+    | Some(message) => throw(Persistence.Unwritten(message))
+    | None => ()
     }
     timings->Array.forEach(({store, seconds}) =>
       onWrite(
@@ -794,6 +814,7 @@ let clientFromEnv = (
   ~pgSchema=Env.Db.publicSchema,
   ~isHasuraEnabled,
   ~maxConnections=?,
+  ~port=?,
 ) =>
   makeClient(
     ~logger,
@@ -803,6 +824,7 @@ let clientFromEnv = (
       ~isHasuraEnabled,
       ~maxConnections?,
       ~isolated=config.isolated,
+      ~port?,
     ),
     ~clickhouse=?config.storage.clickhouse ? Some(ClickHouse.optionsFromEnvOrThrow()) : None,
   )

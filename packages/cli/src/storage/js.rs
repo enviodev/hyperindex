@@ -16,7 +16,7 @@ use super::schema::{effect_cache_fields, raw_event_fields, Encoding, Field, Sche
 use super::types::{
     Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
 };
-use super::{AddChain, Holding, Initialize, Store};
+use super::{AddChain, Holding, Initialize, Store, WriteError};
 use crate::clickhouse;
 use crate::clickhouse::client::{Connection, Tuning};
 use crate::columnar::{self, Arena, ColumnKind};
@@ -25,7 +25,7 @@ use crate::entity_filter::Condition;
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::postgres;
 use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
-use crate::postgres::error::to_napi;
+use crate::postgres::error::{message_of, to_napi};
 use crate::postgres::indexes::IndexEvent;
 use crate::postgres::param::Param;
 
@@ -277,6 +277,15 @@ pub struct BatchInput {
 pub struct WriteTiming {
     pub store: Store,
     pub seconds: f64,
+}
+
+#[napi(object)]
+pub struct WriteOutcome {
+    pub timings: Vec<WriteTiming>,
+    /// Set, with no timings, when the connection went before anything of the
+    /// batch committed: what failed, for the caller to log before writing the
+    /// same batch again.
+    pub unwritten: Option<String>,
 }
 
 #[napi(js_name = "Storage")]
@@ -821,20 +830,33 @@ impl JsStorage {
 
     /// Writes a batch to every store, answering how long each one took. A
     /// failed write rejects with what it was doing as the message, and the
-    /// store's own error as the `cause`.
+    /// store's own error as the `cause`; one that committed nothing because
+    /// the connection went resolves as `unwritten` instead.
     #[napi]
-    pub async fn write_batch(&self, batch: BatchInput) -> napi::Result<Vec<WriteTiming>> {
+    pub async fn write_batch(&self, batch: BatchInput) -> napi::Result<WriteOutcome> {
         let batch = self.to_batch(batch)?;
         match self.inner.write_batch(batch).await {
-            Ok(timings) => Ok(timings
-                .into_iter()
-                .map(|(store, seconds)| WriteTiming { store, seconds })
-                .collect()),
-            Err(failure) => {
+            Ok(timings) => Ok(WriteOutcome {
+                timings: timings
+                    .into_iter()
+                    .map(|(store, seconds)| WriteTiming { store, seconds })
+                    .collect(),
+                unwritten: None,
+            }),
+            Err(WriteError::Unwritten(failure)) => Ok(WriteOutcome {
+                timings: Vec::new(),
+                unwritten: Some(format!(
+                    "{}: {}",
+                    failure.context,
+                    message_of(&failure.error)
+                )),
+            }),
+            Err(WriteError::Failed(failure)) => {
                 let mut failed = napi::Error::from_reason(failure.context);
                 failed.set_cause(to_napi(failure.error));
                 Err(failed)
             }
+            Err(WriteError::Gated) => unreachable!("the storage reports a gated store as failed"),
         }
     }
 

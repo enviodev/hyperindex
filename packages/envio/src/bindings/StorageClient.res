@@ -401,6 +401,10 @@ external restoreEffectCache: (t, string, bool) => promise<array<storedEffectCach
 // Writes the batch to every store, answering how long each took. A failed
 // write rejects with what it was doing as the message and the store's error as
 // the `cause`.
-@send external writeBatch: (t, batch) => promise<array<writeTiming>> = "writeBatch"
+// `unwritten` says what failed when the connection went before anything of the
+// batch committed, and the timings are then empty.
+type writeOutcome = {timings: array<writeTiming>, unwritten: Nullable.t<string>}
+
+@send external writeBatch: (t, batch) => promise<writeOutcome> = "writeBatch"
 
 @send external close: t => promise<unit> = "close"

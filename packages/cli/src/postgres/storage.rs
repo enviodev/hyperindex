@@ -12,7 +12,7 @@ use tokio_postgres::Row;
 
 use super::client::{PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
-use super::error::sql_state;
+use super::error::{is_connection_lost, sql_state};
 use super::history::{History, CHANGE_TYPE};
 use super::index_definition::{IndexColumn, IndexDefinition, BTREE};
 use super::index_row;
@@ -990,18 +990,29 @@ impl Storage {
     ///
     /// Nothing commits unless every statement succeeded and the handoff says
     /// to.
+    ///
+    /// A connection lost before the COMMIT went out is `Unwritten`: the server
+    /// rolls back a transaction whose session ends. One lost at the COMMIT is
+    /// not, since the server may have committed before it went. Nor is one
+    /// whose caches failed for another reason, which writing again would only
+    /// repeat.
     pub async fn write_batch(
         &self,
         batch: &Batch,
         mut handoff: Handoff,
     ) -> std::result::Result<(), WriteError> {
+        let before_commit = |error: WriteError| match error {
+            WriteError::Failed(failure) if is_connection_lost(&failure.error) => {
+                WriteError::Unwritten(failure)
+            }
+            error => error,
+        };
         // Moved in, so the handoff goes as soon as the transaction is done and a
         // store waiting on its word never waits on the caches too.
         let transactional = async move {
-            let transaction =
-                self.client.begin().await.map_err(|error| {
-                    Failure::new("Failed opening the batch's transaction", error)
-                })?;
+            let transaction = self.client.begin().await.map_err(|error| {
+                before_commit(Failure::new("Failed opening the batch's transaction", error).into())
+            })?;
             let outcome = async {
                 if let Some(rollback) = &batch.rollback {
                     self.write_rollback(&transaction, rollback).await?;
@@ -1024,7 +1035,7 @@ impl Storage {
                     // The statement that failed is what to report; a rollback
                     // failing after it would only say the connection is gone.
                     let _ = transaction.rollback().await;
-                    Err(error)
+                    Err(before_commit(error))
                 }
             }
         };
@@ -1041,8 +1052,18 @@ impl Storage {
             settle(join_all(writes).await)
         };
         let (written, cached) = tokio::join!(transactional, caches);
-        written?;
-        Ok(cached?)
+        // The caches are upserts of the same rows, so writing them again is
+        // harmless; only a failure of their own that isn't the connection
+        // would come back the same.
+        match (written, cached) {
+            (Err(WriteError::Unwritten(failure)), Err(cache_failure))
+                if !is_connection_lost(&cache_failure.error) =>
+            {
+                Err(WriteError::Failed(failure))
+            }
+            (Err(error), _) => Err(error),
+            (Ok(()), cached) => Ok(cached?),
+        }
     }
 
     async fn write_rollback(

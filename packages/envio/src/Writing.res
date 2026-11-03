@@ -77,6 +77,32 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
   acc
 }
 
+// From half a second, doubling, up to five. The exponent stops growing once the
+// cap is reached, so an outage of any length never overflows the delay.
+let retryDelayMillis = (~attempt) =>
+  Math.Int.min(500 * Math.Int.pow(2, ~exp=Math.Int.min(attempt, 4)), 5_000)
+
+// Writes until the write lands, sending it again for as long as the connection
+// goes before it did. Resolves false when the indexer stopped meanwhile: its
+// storage is handed over, so the write is left unwritten.
+let rec writeUntilCommitted = async (state: IndexerState.t, ~attempt=0, write) =>
+  switch await write() {
+  | () => true
+  | exception Persistence.Unwritten(message) =>
+    let clock = state->IndexerState.clock
+    let delayMillis = clock->Clock.jitter(retryDelayMillis(~attempt))
+    state
+    ->IndexerState.logger
+    ->Logger.warn(
+      "Lost the database connection before the write committed. Writing it again",
+      ~params={"err": message, "attempt": attempt + 1, "retryInMillis": delayMillis},
+    )
+    await clock->Clock.delay(~label="Write retry", delayMillis)
+    state->IndexerState.isStopped
+      ? false
+      : await writeUntilCommitted(state, ~attempt=attempt + 1, write)
+  }
+
 let runOneWrite = async (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let config = state->IndexerState.config
@@ -95,7 +121,9 @@ let runOneWrite = async (state: IndexerState.t) => {
     // Metadata only: a cheap upsert, still serialized by the single write loop.
     switch chainMetaData {
     | Some(chainsData) =>
-      await persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+      let _ = await state->writeUntilCommitted(() =>
+        persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+      )
     | None => ()
     }
   | _ =>
@@ -148,32 +176,36 @@ let runOneWrite = async (state: IndexerState.t) => {
     // could overlap the next batch's history writes and lose an anchor (which
     // breaks a later rollback). Rollback writes touch every history table, so
     // they get no concurrent prune at all.
-    let _ = await Promise.all2((
-      persistence.storage.writeBatch(
-        ~batch,
-        ~rollback,
-        ~config,
-        ~updatedEntities,
-        ~registeredAddresses,
-        ~updatedEffectsCache,
-        ~chainMetaData,
-        ~onWrite=(~storage, ~timeSeconds) =>
-          state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
+    let (isCommitted, ()) = await Promise.all2((
+      state->writeUntilCommitted(() =>
+        persistence.storage.writeBatch(
+          ~batch,
+          ~rollback,
+          ~config,
+          ~updatedEntities,
+          ~registeredAddresses,
+          ~updatedEffectsCache,
+          ~chainMetaData,
+          ~onWrite=(~storage, ~timeSeconds) =>
+            state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
+        )
       ),
       PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
     ))
 
-    state->IndexerState.markCommitted(~writtenFrontier)
+    if isCommitted {
+      state->IndexerState.markCommitted(~writtenFrontier)
 
-    switch rollback {
-    | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
-      await RollbackCommit.fire(~progressedChains)
-    | _ => ()
+      switch rollback {
+      | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
+        await RollbackCommit.fire(~progressedChains)
+      | _ => ()
+      }
+
+      // Entities starved of the concurrent prune (eg written in every batch) are
+      // pruned here with no other pg writer running.
+      await PruneStaleHistory.runForced(state, ~targets=pruneTargets)
     }
-
-    // Entities starved of the concurrent prune (eg written in every batch) are
-    // pruned here with no other pg writer running.
-    await PruneStaleHistory.runForced(state, ~targets=pruneTargets)
   }
 }
 

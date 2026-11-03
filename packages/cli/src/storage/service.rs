@@ -366,18 +366,23 @@ impl Storage {
     /// ClickHouse back. Past Postgres's COMMIT, ClickHouse can still fail to
     /// move its frontier: the batch is reported failed though Postgres holds
     /// it, and only a restart, raising the frontier to what Postgres
-    /// committed, makes its rows readable. So a failed write is never retried
-    /// by the process that made it.
+    /// committed, makes its rows readable. So with ClickHouse a failed write
+    /// is never retried by the process that made it, and comes back `Failed`
+    /// even when Postgres alone would call it `Unwritten`: ClickHouse may hold
+    /// the batch's rows already, and only a resume trims them away.
+    ///
+    /// Never `Gated`: a store told not to commit is reported as the other
+    /// store's failure.
     pub async fn write_batch(
         &self,
         batch: Batch,
-    ) -> std::result::Result<Vec<(Store, f64)>, Failure> {
+    ) -> std::result::Result<Vec<(Store, f64)>, WriteError> {
         let Some(clickhouse) = &self.clickhouse else {
             let started = Instant::now();
             return match self.postgres.write_batch(&batch, Handoff::default()).await {
                 Ok(()) => Ok(vec![(Store::Postgres, started.elapsed().as_secs_f64())]),
-                Err(WriteError::Failed(failure)) => Err(failure),
                 Err(WriteError::Gated) => unreachable!("a write with no gate is never gated"),
+                Err(error) => Err(error),
             };
         };
         let (landed, clickhouse_landed) = tokio::sync::oneshot::channel();
@@ -415,25 +420,26 @@ impl Storage {
                 .map(|()| own_seconds(&postgres_waited))
         };
         let (clickhouse_outcome, postgres_outcome) = tokio::join!(clickhouse_write, postgres_write);
+        use WriteError::{Failed, Gated, Unwritten};
         // A store told not to commit was told so because the other failed,
         // and that failure is the one reported.
-        match (clickhouse_outcome, postgres_outcome) {
-            (Err(WriteError::Failed(on_clickhouse)), Err(WriteError::Failed(on_postgres))) => {
-                Err(Failure::new(
-                    "Both stores failed writing the batch",
-                    anyhow!(
-                        "{}: {}\n{}: {}",
-                        on_clickhouse.context,
-                        postgres::error::message_of(&on_clickhouse.error),
-                        on_postgres.context,
-                        postgres::error::message_of(&on_postgres.error)
-                    ),
-                ))
-            }
-            (Err(WriteError::Failed(failure)), _) | (_, Err(WriteError::Failed(failure))) => {
-                Err(failure)
-            }
-            (Err(WriteError::Gated), _) | (_, Err(WriteError::Gated)) => Err(Failure::new(
+        let outcome = match (clickhouse_outcome, postgres_outcome) {
+            (
+                Err(Failed(on_clickhouse) | Unwritten(on_clickhouse)),
+                Err(Failed(on_postgres) | Unwritten(on_postgres)),
+            ) => Err(Failure::new(
+                "Both stores failed writing the batch",
+                anyhow!(
+                    "{}: {}\n{}: {}",
+                    on_clickhouse.context,
+                    postgres::error::message_of(&on_clickhouse.error),
+                    on_postgres.context,
+                    postgres::error::message_of(&on_postgres.error)
+                ),
+            )),
+            (Err(Failed(failure) | Unwritten(failure)), _)
+            | (_, Err(Failed(failure) | Unwritten(failure))) => Err(failure),
+            (Err(Gated), _) | (_, Err(Gated)) => Err(Failure::new(
                 "Failed writing the batch",
                 anyhow!("a store refused its half of the batch"),
             )),
@@ -441,7 +447,8 @@ impl Storage {
                 (Store::ClickHouse, clickhouse_seconds),
                 (Store::Postgres, postgres_seconds),
             ]),
-        }
+        };
+        outcome.map_err(WriteError::Failed)
     }
 
     pub fn close(&self) {
