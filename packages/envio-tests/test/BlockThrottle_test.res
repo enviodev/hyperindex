@@ -1,7 +1,7 @@
 open Vitest
 
-let scenario = Scenario.make(
-  ~configYaml=`
+let makeConfigYaml = (~chainOptions="") =>
+  `
 name: block-throttle
 chains:
   - id: 1337
@@ -10,103 +10,169 @@ chains:
       for: sync
     start_block: 1
     max_reorg_depth: 200
-    block_throttle: 5
+    block_throttle: 5${chainOptions}
     contracts:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
           - event: "TestEvent()"
-`,
-  ~schema=`
+`
+
+let schema = `
 type Gravatar {
   id: ID!
   owner: String!
 }
+`
+
+let scenario = Scenario.make(~configYaml=makeConfigYaml(), ~schema)
+
+let scenarioWithEndBlock = Scenario.make(
+  ~configYaml=makeConfigYaml(~chainOptions="\n    end_block: 303"),
+  ~schema,
+)
+
+let scenarioWithOnBlock = Scenario.make(
+  ~configYaml=makeConfigYaml(),
+  ~schema,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onBlock({ name: "everyBlock" }, async () => {});
 `,
 )
 
+let methods = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
+
+let upTo = (~knownHeight=?, toBlock) => MockSource.Respond({
+  items: [],
+  latestFetchedBlockNumber: toBlock,
+  ?knownHeight,
+})
+
+// Leaves the chain fetched to 300, the head it knows.
+let fetchToHead = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~knownHeight=?) => {
+  await Scenario.enterReorgThreshold(~indexer, ~source)
+  source.resolveGetHeightOrThrow(300)
+  await source.expectItemsQueries([{fromBlock: 101, reply: upTo(300, ~knownHeight?)}])
+  await indexer.getBatchWritePromise()
+}
+
+let chainMetric = async (indexer: IndexerRunner.t, name) =>
+  (await indexer.metric(name))->Array.map(({value}) => value)
+
 describe("E2E blockThrottle tests", () => {
   scenario->Scenario.it(
-    "Chain at the head with blockThrottle=5 fetches again only once the head is 5 blocks further",
-    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
+    "Fetches once the head is blockThrottle blocks past, keeping the known head current meanwhile",
+    ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
+      await fetchToHead(~indexer, ~source=sourceMock)
 
-      sourceMock.resolveGetHeightOrThrow(300)
-      await sourceMock.expectItemsQueries([
-        {
-          partitionId: "0",
-          fromBlock: 101,
-          toBlock: Unbounded,
-          retryCount: 0,
-          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
-        },
-      ])
-      await indexer.getBatchWritePromise()
-
-      // At the head (300). Four new blocks are not enough: the wait keeps
-      // polling instead of handing 304 to the fetch loop.
-      sourceMock.resolveGetHeightOrThrow(304)
-      await sourceMock.expectNewHeightCallsAtLeast(1)
+      sourceMock.setAutoHeight(304)
       await indexer.advanceTime(1000)
-      await sourceMock.expectNewHeightCalls(1)
-      t.expect(
-        sourceMock.pendingItemsQueries->Array.length,
-        ~message="Should not fetch before the head is blockThrottle blocks past the fetched range",
-      ).toBe(0)
+      t.expect((
+        await indexer->chainMetric("envio_indexing_known_height"),
+        sourceMock.pendingItemsQueries,
+      )).toEqual((["304"], []))
 
-      // The fifth block releases one fetch for all five.
-      sourceMock.resolveGetHeightOrThrow(305)
+      sourceMock.setAutoHeight(305)
+      await indexer.advanceTime(1000)
       await sourceMock.expectItemsQueries([
-        {
-          partitionId: "0",
-          fromBlock: 301,
-          toBlock: Unbounded,
-          retryCount: 0,
-          reply: Respond({items: [], latestFetchedBlockNumber: 305}),
-        },
+        {fromBlock: 301, toBlock: Unbounded, reply: LeavePending},
       ])
-      await indexer.getBatchWritePromise()
-      // Back at the head, it waits for the next block.
-      await sourceMock.expectNewHeightCalls(1)
+    },
+  )
+
+  scenarioWithEndBlock->Scenario.it(
+    "Fetches up to end_block once the head reaches it, short of the throttle",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await fetchToHead(~indexer, ~source=sourceMock, ~knownHeight=303)
+
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 301, toBlock: Bounded(303), reply: LeavePending},
+      ])
+      t.expect(await indexer->chainMetric("envio_progress_ready")).toEqual(["0"])
     },
   )
 
   scenario->Scenario.it(
-    "The first height of a chain younger than blockThrottle starts fetching at once",
-    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
-    async (~t, ~indexer as _, ~source) => {
+    "Waiting out the throttle is not counted as processing stalled on fetch",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=3)
+      await fetchToHead(~indexer, ~source=sourceMock)
+      sourceMock.setAutoHeight(304)
+      await indexer.advanceTime(1000)
+
+      let stalledSeconds = () => indexer->chainMetric("envio_processing_stalled_on_fetch_seconds")
+      let stalledAtWait = await stalledSeconds()
+      // Real time: the stall counter reads the process clock, not the source clock.
+      await Utils.delay(20)
+      t.expect(await stalledSeconds()).toEqual(stalledAtWait)
+    },
+  )
+
+  scenario->Scenario.it(
+    "A chain the head has moved past by less than the throttle is synced and waits",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await fetchToHead(~indexer, ~source=sourceMock, ~knownHeight=302)
+      await indexer.waitUntilReady()
+
+      t.expect((
+        await indexer->chainMetric("envio_progress_ready"),
+        sourceMock.pendingItemsQueries,
+      )).toEqual((["1"], []))
+    },
+  )
+
+  scenarioWithOnBlock->Scenario.it(
+    "A chain with a block handler waits for the throttle too",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await fetchToHead(~indexer, ~source=sourceMock)
+
+      sourceMock.setAutoHeight(304)
+      await indexer.advanceTime(1000)
+      t.expect(sourceMock.pendingItemsQueries).toEqual([])
+
+      sourceMock.setAutoHeight(305)
+      await indexer.advanceTime(1000)
+      await sourceMock.expectItemsQueries([{fromBlock: 301, reply: LeavePending}])
+    },
+  )
+
+  scenario->Scenario.it(
+    "A chain younger than blockThrottle starts fetching once it has that many blocks",
+    ~sources=[{chain: 1337, methods}],
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Scenario.resolveInitialHeight(~source=sourceMock, ~head=4)
+      await indexer.advanceTime(1000)
+      let pendingAtFourBlocks = sourceMock.pendingItemsQueries->Array.length
+
+      sourceMock.setAutoHeight(5)
+      await indexer.advanceTime(1000)
       await sourceMock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-      t.expect(sourceMock.pendingItemsQueries->Array.length).toEqual(1)
+      t.expect(pendingAtFourBlocks).toBe(0)
     },
   )
 
   scenario->Scenario.it(
     "A head still advancing towards blockThrottle does not report a stall",
-    ~sources=[
-      {
-        chain: 1337,
-        methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes],
-        pollingInterval: 5,
-      },
-    ],
+    ~sources=[{chain: 1337, methods, pollingInterval: 5}],
     ~sourceTiming={
       newBlockStallTimeout: 200,
       newBlockStallTimeoutRealtime: 200,
-      // A wait with reduced polling stalls after twice this.
-      reducedPollingInterval: 100,
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
-      sourceMock.resolveGetHeightOrThrow(300)
-      await sourceMock.expectItemsQueries([
-        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
-      ])
-      await indexer.getBatchWritePromise()
+      await fetchToHead(~indexer, ~source=sourceMock)
 
       // Four blocks spread over twice the stall window, each inside it.
       for height in 301 to 304 {

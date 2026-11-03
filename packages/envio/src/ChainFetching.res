@@ -333,12 +333,7 @@ let fetchChain = async (
     try {
       await chainState->ChainState.dispatch(
         ~waitForNewBlock=(~knownHeight) =>
-          sourceManager->SourceManager.waitForNewBlock(
-            ~knownHeight,
-            ~isRealtime,
-            ~reducedPolling,
-            ~blockThrottle=(chainState->ChainState.chainConfig).blockThrottle,
-          ),
+          sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
         ~onNewBlock=(~knownHeight) =>
           finishWaitingForNewBlock(
             state,
