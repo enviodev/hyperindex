@@ -464,6 +464,19 @@ describe("HyperSync pages", () => {
     )
   })
 
+  // The server's own height can lag what the page it answers knows, so the
+  // page's archive height is the height the source reports.
+  Async.it("Takes a partial page's archive height as the chain's height", async t => {
+    backfill->serve(~height=50, [{...page, nextBlock: 11, archiveHeight: 60}])
+    await backfill->indexToEnd(
+      async (indexer, error) =>
+        t.expect((error, await indexer->metricValues("envio_source_known_height"))).toEqual((
+          None,
+          ["60"],
+        )),
+    )
+  })
+
   Async.it("Indexes a partial page up to where it reached, and asks for the rest", async t => {
     backfill->serve([{...page, nextBlock: 11, archiveHeight: 60}])
     await backfill->indexToEnd(

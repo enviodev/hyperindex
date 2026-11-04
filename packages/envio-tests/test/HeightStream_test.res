@@ -921,6 +921,33 @@ describe("WebSocket height stream that cannot connect", () => {
       )).toEqual((reconnected, [("connect-failed", true), ("connect-failed", true)]))
     },
   )
+
+  // Indexers sharing a provider lose their streams together, so each waits a
+  // spread share of its backoff rather than all reconnecting on the half.
+  unconnectable->Scenario.it(
+    "Spreads each retry across the upper half of its backoff",
+    ~yamlSources=true,
+    async (~t, ~indexer, ~source as _) => {
+      await indexer->waitForDowns(1)
+      // A url it can't open fails the instant its retry fires, so stepping a
+      // millisecond at a time reads off where each retry landed.
+      let landings = []
+      for step in 0 to 3 {
+        let delay = 250 * Math.Int.pow(2, ~exp=step)
+        let before = indexer->streamDowns->Array.length
+        let waited = ref(0)
+        while indexer->streamDowns->Array.length === before && waited.contents < delay {
+          await indexer.advanceTime(1)
+          waited := waited.contents + 1
+        }
+        landings->Array.push((delay, waited.contents))->ignore
+      }
+      t.expect((
+        landings->Array.every(((delay, landed)) => landed >= delay / 2 && landed < delay),
+        landings->Array.some(((delay, landed)) => landed !== delay / 2),
+      )).toEqual((true, true))
+    },
+  )
 })
 
 describe("HyperSync height stream", () => {
