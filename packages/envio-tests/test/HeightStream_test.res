@@ -218,6 +218,7 @@ let rejection = (~id, ~message) =>
 let latestSocket = () => sockets->Array.at(-1)->Option.getOrThrow(~message="no socket connected")
 
 @send external flushHeaders: MockRpcServer.res => unit = "flushHeaders"
+@send external onResponseClose: (MockRpcServer.res, @as("close") _, unit => unit) => unit = "on"
 // Node holds headers back until the first body write, and the stream opens on
 // the headers alone.
 let openSse = response => {
@@ -886,6 +887,27 @@ describe("HyperSync height stream", () => {
       t.expect(indexer->streamDownReasons).toEqual(["error"])
     },
   )
+
+  sse->Scenario.it("Closes a stream that went quiet, and retries it", ~yamlSources=true, async (
+    ~t,
+    ~indexer,
+    ~source as _,
+  ) => {
+    let closed = ref(false)
+    setUp(
+      ~onSseRequest=response => {
+        if sseResponses->Array.length === 1 {
+          response->onResponseClose(() => closed := true)
+        }
+        response->openSse
+      },
+    )
+    await indexer->waitForConnects(1)
+    await indexer.advanceTime(sseStaleTimeout)
+    await Scenario.waitUntil(() => closed.contents, ~message="the quiet stream to be closed")
+    let retry = await indexer->expectRetryWithin(~delay=250, ~attempts=sseRequests)
+    t.expect((indexer->streamDownReasons, retry)).toEqual((["stale"], reconnected))
+  })
 
   sse->Scenario.it("Keeps a connection alive on keep-alive pings", ~yamlSources=true, async (
     ~t,
