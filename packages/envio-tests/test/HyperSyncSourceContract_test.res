@@ -587,6 +587,7 @@ describe("HyperSync reorg detection", () => {
 // a server can answer that in pages: the client keeps asking until it has all
 // of them, and the rollback lands on the last block whose hash still matches.
 let rolledBackChain = chain(~endBlock=None, ~rollbackOnReorg=true, ~maxReorgDepth=200)
+let behindRollbackChain = chain(~endBlock=None, ~rollbackOnReorg=true, ~maxReorgDepth=200)
 describe("HyperSync rollback", () => {
   Async.it("Pages through the block hashes a rollback asks for", async t => {
     let hashed = numbers =>
@@ -655,6 +656,80 @@ describe("HyperSync rollback", () => {
           ["1"],
           ["11"],
         ))
+      },
+    )
+  })
+
+  // A hash request the server answers from behind the head fails and is retried,
+  // and the failure carries the request it made: counted on the failure and on
+  // its response alike, every request would be counted twice.
+  Async.it("Counts a block-hash request answered from behind the head once", async t => {
+    let hashed = numbers =>
+      numbers->Array.map(
+        number =>
+          JSON.parseOrThrow(
+            `{"number":${number->Int.toString},"hash":"${number === 9
+                ? parentHash
+                : blockHash(number)}"}`,
+          ),
+      )
+    behindRollbackChain->serve(
+      ~height=30,
+      [
+        {
+          ...page,
+          nextBlock: 21,
+          rollbackGuard: JSON.parseOrThrow(
+            `{"blockNumber":20,"timestamp":1700000100,"hash":"${blockHash(
+                20,
+              )}","firstBlockNumber":10,"firstParentHash":"${parentHash}"}`,
+          ),
+        },
+        {
+          nextBlock: 31,
+          rollbackGuard: JSON.parseOrThrow(
+            `{"blockNumber":30,"timestamp":1700000200,"hash":"${blockHash(
+                30,
+              )}","firstBlockNumber":21,"firstParentHash":"${blockHash(99)}"}`,
+          ),
+        },
+        // The replica that answers first hasn't reached block 9.
+        {blocks: [], nextBlock: 9},
+        {blocks: hashed([9, 10, 11]), nextBlock: 12},
+      ],
+    )
+    await behindRollbackChain.scenario->Scenario.run(
+      ~yamlSources=true,
+      async (~indexer, ~source as _) => {
+        let waited = ref(0)
+        while (
+          (await indexer->metricValues("envio_rollback_total")) != ["1"] && waited.contents < 500
+        ) {
+          // Real time: every page comes back over a real socket.
+          await Utils.delay(10)
+          // The rollback waits out a retry on the clock before it asks again.
+          await indexer.advanceTime(100)
+          waited := waited.contents + 1
+        }
+        let hashQueries =
+          queries()
+          ->Array.filter(
+            query =>
+              query
+              ->queryField("field_selection")
+              ->Option.flatMap(JSON.Decode.object)
+              ->Option.mapOr(false, selection => selection->Dict.get("log")->Option.isNone),
+          )
+          ->Array.length
+        let hashRequestsCounted =
+          (await indexer.metric("envio_source_request_total"))->Array.filterMap(
+            ({labels, value}) =>
+              labels->Dict.get("method") === Some("getBlockHashes") ? Some(value) : None,
+          )
+        t.expect((
+          hashRequestsCounted,
+          await indexer->metricValues("envio_rollback_target_block"),
+        )).toEqual(([hashQueries->Int.toString], ["11"]))
       },
     )
   })
