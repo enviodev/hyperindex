@@ -483,13 +483,23 @@ describe("WebSocket height stream", () => {
       await indexer->waitForConnects(2)
       let second = await indexer->dropAndExpectReconnectWithin(~delay=500)
       await indexer->waitForConnects(3)
-      await indexer.advanceTime(wsStaleTimeout)
-      let afterServing = await indexer->expectRetryWithin(
-        ~delay=250,
-        ~attempts=() => sockets->Array.length,
+      // The stale window runs from when the connection went live, which the
+      // clock doesn't pin, so walk up to the failure in steps short enough to
+      // tell the two backoffs apart.
+      let stepped = ref(0)
+      while !(indexer->streamDownReasons->Array.includes("stale")) && stepped.contents < 61_000 {
+        await indexer.advanceTime(100)
+        stepped := stepped.contents + 100
+      }
+      let socketsAtStale = sockets->Array.length
+      // Reset, the retry lands within 250ms of the failure. Still escalated, it
+      // would wait at least 500ms.
+      await indexer.advanceTime(300)
+      await Scenario.waitUntil(
+        () => sockets->Array.length > socketsAtStale,
+        ~message="the stale stream to be retried at the base delay",
       )
-      t.expect((first, second, afterServing, indexer->streamDownReasons)).toEqual((
-        reconnected,
+      t.expect((first, second, indexer->streamDownReasons)).toEqual((
         reconnected,
         reconnected,
         ["closed", "closed", "stale"],
