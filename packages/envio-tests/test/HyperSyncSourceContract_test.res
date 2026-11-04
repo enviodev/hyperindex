@@ -5,9 +5,8 @@ open Vitest
 // write. Query construction, the request and response decoding all live in the
 // native addon, so the server's query log is where a test sees what the source
 // asked for, and the pages queued on it are what comes back. Each scenario has
-// a port of its own, fixed because its config is parsed while vitest collects:
-// a finished run leaves its height stream open, and on a shared port it would
-// reconnect to the next run's server and act on what that serves.
+// a port of its own, fixed because its config is parsed while vitest collects,
+// so a request one run left in flight can't claim a page queued for the next.
 let nextPort = ref(18661)
 
 let tokenAddress = "0x1111111111111111111111111111111111111111"

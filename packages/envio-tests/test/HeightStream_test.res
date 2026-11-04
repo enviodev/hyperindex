@@ -36,8 +36,8 @@ let onSubscribe: ref<option<WsServer.socket => unit>> = ref(None)
 let unansweredSubscribes: array<WsServer.socket> = []
 let onSseRequest: ref<option<MockRpcServer.res => unit>> = ref(None)
 let unansweredSseRequests: array<MockRpcServer.res> = []
-// This test's sockets and streams, oldest first. A finished run leaves its
-// stream open, so the sockets before it are kept apart to be dropped at the end.
+// This test's sockets and streams, oldest first. Earlier tests' sockets are
+// kept apart, to be dropped at the end should a failed test leave one open.
 let sockets: array<WsServer.socket> = []
 let earlierSockets: array<WsServer.socket> = []
 let sseResponses: array<MockRpcServer.res> = []
