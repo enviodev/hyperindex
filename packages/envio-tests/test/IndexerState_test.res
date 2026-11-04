@@ -156,6 +156,52 @@ let advanceChains = (state: IndexerState.t, ~batch) =>
   )
 
 describe("IndexerState", () => {
+  // https://github.com/enviodev/hyperindex/issues/1695
+  it("Reads a cross-chain scope's committed id from the latest commit", t => {
+    let configFor = (~perChain) =>
+      TestConfig.fromUserApi(
+        `
+name: committed-cross-chain
+disable_default_cross_chain: ${perChain ? "true" : "false"}
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+  - id: 137
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+`,
+      )
+    let committedIds = config => {
+      let indexerState = TestIndexerState.make(~config)
+      let read = () => indexerState->IndexerState.committedCheckpointIdFor(~scope=CrossChain)
+      let initial = read()
+      indexerState->IndexerState.markCommitted(
+        ~writtenFrontier=Frontier.fromEntries([
+          (1->ChainId.fromInt, 4n),
+          (137->ChainId.fromInt, 9n),
+        ]),
+      )
+      let afterBoth = read()
+      indexerState->IndexerState.markCommitted(
+        ~writtenFrontier=Frontier.fromEntries([(1->ChainId.fromInt, 12n)]),
+      )
+      (config.checkpointSequence, initial, afterBoth, read())
+    }
+
+    t.expect((
+      configFor(~perChain=false)->committedIds,
+      configFor(~perChain=true)->committedIds,
+    )).toEqual((
+      (CheckpointSequence.SharedAcrossChains, 0n, 9n, 12n),
+      (CheckpointSequence.PerChain, 0n, 4n, 9n),
+    ))
+  })
+
   //Test was previously popBlockBatchItems
   describe("createBatch", () => {
     it(
