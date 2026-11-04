@@ -817,6 +817,8 @@ import { indexer } from "envio";
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async () => {});
 indexer.onEvent({ contract: "PingSource", event: "Ping", wildcard: true }, async () => {});
 indexer.onEvent({ contract: "PongSource", event: "Pong", wildcard: true }, async () => {});
+// Bound to addresses this chain never registers, so no partition selects it.
+indexer.onEvent({ contract: "Unregistered", event: "Skipped" }, async () => {});
 // Any contract's approvals, as long as the owner is one of the Tokens.
 indexer.onEvent(
   {
@@ -842,6 +844,9 @@ contracts:
   - name: PongSource
     events:
       - event: Pong()
+  - name: Unregistered
+    events:
+      - event: Skipped()
 ${chainYaml(~addresses=[tokenAddress])}`,
 )
 
@@ -851,6 +856,7 @@ describe("RPC log filters", () => {
     let outcome = await mixedRegistrations->indexTransferBlock
     let address = tokenAddress->String.toLowerCase
     let addressTopic = "0x000000000000000000000000" ++ address->String.slice(~start=2)
+    // Unregistered's Skipped is in none of them: no partition selects it.
     t.expect((outcome.error, logFiltersSince(~since=outcome.since))).toEqual((
       None,
       [
