@@ -328,13 +328,29 @@ describe("Height poll failures", () => {
   )
 
   scenario->Scenario.it(
-    "Backs off a height call that throws rather than rejects, as one that rejects",
+    "Reports a height call that throws rather than rejects as an error, and backs off",
     // Without getHeightOrThrow, the mock's call throws before returning a promise.
     ~sources=[{chain: 1337, methods: [#getItemsOrThrow]}],
     ~sourceTiming={heightRetryInitialMillis: 100, heightRetryMaxMillis: 100},
     async (~t, ~indexer, ~source as _) => {
       await indexer.advanceTime(250)
-      t.expect(indexer->heightRetryIntervals).toEqual(["100", "100", "100"])
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filterMap(
+          ({msg, params}) =>
+            switch params->Dict.get("err") {
+            | Some(Object(err)) => Some((msg, err->Dict.get("message")))
+            | _ => None
+            },
+        ),
+      ).toEqual(
+        Array.make(
+          ~length=3,
+          (
+            "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.",
+            Some(JSON.String("source.getHeightOrThrow not implemented")),
+          ),
+        ),
+      )
     },
   )
 

@@ -422,6 +422,29 @@ impl Core {
         }
     }
 
+    /// The call itself broke rather than the source answering badly, so it is
+    /// said at error level; the loop still backs off and carries on, since a
+    /// source left uncovered is the one state the feed must never be in. Only
+    /// a poll has a loop to carry on; a connect's catch-up is owed nothing.
+    pub fn height_call_threw(&mut self, request: u32, err: Option<u32>) {
+        let mut entry = self.settle_height_request(request);
+        self.clear_timer(&mut entry.timeout);
+        let source = entry.source;
+        if entry.purpose == HeightPurpose::Poll {
+            let feed = &mut self.sources[source].feed;
+            let retry_interval = self.timing.height_retry.millis_for_retry(feed.poll_retry);
+            feed.poll_retry += 1;
+            self.log_with_err(
+                Some(self.feed_log_fields(source)),
+                Level::Error,
+                "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.".to_string(),
+                json!({}),
+                err,
+            );
+            self.continue_poll_loop(source, SleepKind::Backoff, retry_interval);
+        }
+    }
+
     pub fn height_request_timed_out(&mut self, request: u32) {
         // Cleared when the request settles, so it only fires on one still out.
         let entry = self

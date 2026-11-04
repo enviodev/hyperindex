@@ -395,6 +395,12 @@ impl SourceManager {
             .height_answered(request, height, &to_request_stats(stats));
     }
 
+    /// The source's height call threw instead of returning a promise.
+    #[napi(catch_unwind)]
+    pub fn height_call_threw(&mut self, request: u32, err: Option<u32>) {
+        self.core.height_call_threw(request, err);
+    }
+
     #[napi(catch_unwind)]
     pub fn height_failed(&mut self, request: u32, stats: Vec<SourceRequestStat>, err: Option<u32>) {
         self.core

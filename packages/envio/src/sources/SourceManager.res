@@ -75,6 +75,7 @@ module Native = {
   ) => int = "waitForNewBlock"
   @send
   external heightAnswered: (t, int, int, array<Source.requestStat>) => unit = "heightAnswered"
+  @send external heightCallThrew: (t, int, Nullable.t<int>) => unit = "heightCallThrew"
   @send
   external heightFailed: (t, int, array<Source.requestStat>, Nullable.t<int>) => unit =
     "heightFailed"
@@ -330,10 +331,21 @@ and execute = (sm: t, effect: Native.effect) =>
     )
   }
 
-and requestHeight = (sm: t, ~request, ~source) => {
-  let call = try (sm.sources->Array.getUnsafe(source)).getHeightOrThrow() catch {
-  | exn => Promise.reject(exn)
+and requestHeight = (sm: t, ~request, ~source) =>
+  switch (sm.sources->Array.getUnsafe(source)).getHeightOrThrow() {
+  | call => sm->awaitHeight(~request, call)
+  // Heard after the turn it threw on, as a poll loop awaiting it would.
+  | exception exn =>
+    Promise.resolve()
+    ->Promise.thenResolve(() =>
+      sm->report(~err=exn, err =>
+        sm.native->Native.heightCallThrew(request, err->Nullable.fromOption)
+      )
+    )
+    ->Promise.ignore
   }
+
+and awaitHeight = (sm: t, ~request, call: promise<Source.getHeightResponse>) => {
   // Raced and awaited the way the height feed did before it moved to Rust, so
   // the answer lands as many reactions after the call as it always has: what
   // reacts to the waits it settles still runs where it used to, relative to
