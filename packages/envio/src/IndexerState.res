@@ -1002,6 +1002,10 @@ let recordWriteFailure = (state: t, exn) => {
   )
 }
 
+// Ends the write loop as a failure does, with nothing to report: whatever
+// stopped the indexer has said why.
+let abandonWrites = (state: t) => state.hasFailedWrite = true
+
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)
 let endWriteFiber = (state: t) => state.writeFiber = None
 

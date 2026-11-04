@@ -74,35 +74,38 @@ let toChainConfig = (chainConfig: Config.chain): StorageClient.chainConfig => {
   maxReorgDepth: chainConfig.maxReorgDepth,
 }
 
-// The code the addon gives a failure that was the connection going, whatever
-// the server or the socket said.
+// A failed operation crosses as what it was doing, with the store's error as
+// its `cause`; a failure the server raised, or one standing in for it, carries
+// its SQLSTATE as the message of the cause.
+let causeOf = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(error) =>
+    (error->(Utils.magic: JsExn.t => {"cause": Nullable.t<unknown>}))["cause"]->Nullable.toOption
+  | _ => None
+  }
+
+// What the addon reports a lost connection as, whatever the server or the
+// socket said.
 let connectionLostCode = "08006"
 
 let isConnectionLost = exn =>
-  switch exn->JsExn.anyToExnInternal {
-  | JsExn(error) =>
-    (error->(Utils.magic: JsExn.t => {"cause": Nullable.t<JsExn.t>}))["cause"]
-    ->Nullable.toOption
-    ->Option.flatMap(JsExn.message) === Some(connectionLostCode)
-  | _ => false
-  }
+  exn->causeOf->Option.flatMap(cause => cause->JsExn.anyToExnInternal->Utils.exnMessage) ===
+    Some(connectionLostCode)
 
-// A failed operation crosses as what it was doing, with the store's error as
-// its `cause`.
+// Only for an operation that lands the same however often it runs.
+let throwConnectionLostOr = (exn, ~otherwise) =>
+  exn->isConnectionLost
+    ? throw(Persistence.ConnectionLost(exn->Utils.exnMessage->Option.getOr("")))
+    : otherwise(exn)
+
 let storageErrorOf = exn =>
-  switch exn->JsExn.anyToExnInternal {
-  | JsExn(error) =>
-    switch (
-      error->(Utils.magic: JsExn.t => {"cause": Nullable.t<unknown>})
-    )["cause"]->Nullable.toOption {
-    | Some(cause) =>
-      Persistence.StorageError({
-        message: error->JsExn.message->Option.getOr(""),
-        reason: cause->JsExn.anyToExnInternal,
-      })
-    | None => exn
-    }
-  | _ => exn
+  switch exn->causeOf {
+  | Some(cause) =>
+    Persistence.StorageError({
+      message: exn->Utils.exnMessage->Option.getOr(""),
+      reason: cause->JsExn.anyToExnInternal,
+    })
+  | None => exn
   }
 
 // The chain a rollback row belongs to, read from the chain-id column both
@@ -313,11 +316,13 @@ let make = (
     }
     switch await loading {
     | exception exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by ${conditions->LoadFilter.describe}.`,
-          reason: exn,
-        }),
+      exn->throwConnectionLostOr(~otherwise=exn =>
+        throw(
+          Persistence.StorageError({
+            message: `Failed loading "${table.tableName}" from storage by ${conditions->LoadFilter.describe}.`,
+            reason: exn,
+          }),
+        )
       )
     | rows =>
       try rows->S.parseOrThrow(table->Table.pgEntityRowsSchema) catch {
@@ -492,8 +497,7 @@ let make = (
   let setChainMeta = async chainsData =>
     switch await client->StorageClient.setChainMeta(chainsData->chainMeta) {
     | () => %raw(`undefined`)
-    | exception exn if exn->isConnectionLost =>
-      throw(Persistence.Unwritten(exn->Utils.exnMessage->Option.getOr("")))
+    | exception exn => exn->throwConnectionLostOr(~otherwise=throw)
     }
 
   let pruneStaleCheckpoints = (~safeCheckpoints) =>
@@ -762,7 +766,7 @@ let make = (
       throw(exn->storageErrorOf)
     }
     switch unwritten->Nullable.toOption {
-    | Some(message) => throw(Persistence.Unwritten(message))
+    | Some(message) => throw(Persistence.ConnectionLost(message))
     | None => ()
     }
     timings->Array.forEach(({store, seconds}) =>

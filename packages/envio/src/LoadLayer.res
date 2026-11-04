@@ -6,6 +6,14 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
   | Chain(chainId) => `.${chainId->ChainId.toString}`
   }
 
+// A load reads the same rows however often it runs, so it waits out a database
+// outage. An indexer stopped meanwhile has already reported why.
+let loadUntilReachable = async (indexerState, ~operation, load) =>
+  switch await indexerState->ConnectionRetry.untilReachable(~operation, load) {
+  | Some(rows) => rows
+  | None => JsError.throwWithMessage(`${operation} was cut off: the indexer stopped`)
+  }
+
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
@@ -37,12 +45,14 @@ let loadById = (
       // we can be sure that we load only the new ones.
       let dbEntities = try {
         (
-          await storage.loadOrThrow(
-            ~table=entityConfig.table,
-            ~filter=EntityFilter.byIds(idsToLoad)->EntityFilter.scoped(
+          await indexerState->loadUntilReachable(~operation=key, () =>
+            storage.loadOrThrow(
               ~table=entityConfig.table,
-              ~scope,
-            ),
+              ~filter=EntityFilter.byIds(idsToLoad)->EntityFilter.scoped(
+                ~table=entityConfig.table,
+                ~scope,
+              ),
+            )
           )
         )->(Utils.magic: array<unknown> => array<Internal.entity>)
       } catch {
@@ -383,9 +393,11 @@ let loadByParsedFilter = (
       try {
         let entities =
           (
-            await storage.loadOrThrow(
-              ~table=entityConfig.table,
-              ~filter=filter->EntityFilter.scoped(~table=entityConfig.table, ~scope),
+            await indexerState->loadUntilReachable(~operation=key, () =>
+              storage.loadOrThrow(
+                ~table=entityConfig.table,
+                ~filter=filter->EntityFilter.scoped(~table=entityConfig.table, ~scope),
+              )
             )
           )->(Utils.magic: array<unknown> => array<Internal.entity>)
 

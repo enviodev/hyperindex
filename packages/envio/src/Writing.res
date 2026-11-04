@@ -77,30 +77,15 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
   acc
 }
 
-// From half a second, doubling, up to five. The exponent stops growing once the
-// cap is reached, so an outage of any length never overflows the delay.
-let retryDelayMillis = (~attempt) =>
-  Math.Int.min(500 * Math.Int.pow(2, ~exp=Math.Int.min(attempt, 4)), 5_000)
-
-// Writes until the write lands, sending it again for as long as the connection
-// goes before it did. Resolves false when the indexer stopped meanwhile: its
-// storage is handed over, so the write is left unwritten.
-let rec writeUntilCommitted = async (state: IndexerState.t, ~attempt=0, write) =>
-  switch await write() {
-  | () => true
-  | exception Persistence.Unwritten(message) =>
-    let clock = state->IndexerState.clock
-    let delayMillis = clock->Clock.jitter(retryDelayMillis(~attempt))
-    state
-    ->IndexerState.logger
-    ->Logger.warn(
-      "Lost the database connection before the write committed. Writing it again",
-      ~params={"err": message, "attempt": attempt + 1, "retryInMillis": delayMillis},
-    )
-    await clock->Clock.delay(~label="Write retry", delayMillis)
-    state->IndexerState.isStopped
-      ? false
-      : await writeUntilCommitted(state, ~attempt=attempt + 1, write)
+// False when the indexer stopped while the database was away. The write is then
+// left unwritten and the loop ends as on a failed one, so nothing queued behind
+// it lands and nothing claims progress past it.
+let writeUntilCommitted = async (state: IndexerState.t, ~operation, write) =>
+  switch await state->ConnectionRetry.untilReachable(~operation, write) {
+  | Some() => true
+  | None =>
+    state->IndexerState.abandonWrites
+    false
   }
 
 let runOneWrite = async (state: IndexerState.t) => {
@@ -121,7 +106,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     // Metadata only: a cheap upsert, still serialized by the single write loop.
     switch chainMetaData {
     | Some(chainsData) =>
-      let _ = await state->writeUntilCommitted(() =>
+      let _ = await state->writeUntilCommitted(~operation="chain metadata write", () =>
         persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
       )
     | None => ()
@@ -177,7 +162,7 @@ let runOneWrite = async (state: IndexerState.t) => {
     // breaks a later rollback). Rollback writes touch every history table, so
     // they get no concurrent prune at all.
     let (isCommitted, ()) = await Promise.all2((
-      state->writeUntilCommitted(() =>
+      state->writeUntilCommitted(~operation="batch write", () =>
         persistence.storage.writeBatch(
           ~batch,
           ~rollback,
