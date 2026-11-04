@@ -50,6 +50,7 @@ let makeSources = (
   ~blockStore,
   ~transactionStore,
   ~logger,
+  ~maxAddressesPerRequest,
 ) => {
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
@@ -84,6 +85,7 @@ let makeSources = (
       transactionStore,
       ?ws,
       ?headers,
+      maxAddressesPerRequest,
     })
     let _ = sources->Array.push(source)
   })

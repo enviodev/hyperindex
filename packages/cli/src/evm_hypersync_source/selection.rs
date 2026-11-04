@@ -13,6 +13,10 @@ use crate::evm_hypersync_source::topic_filter::{TopicFilter, TopicFilters};
 pub struct BuiltLogSelection {
     pub addresses: Vec<String>,
     pub topics: Vec<Vec<String>>,
+    /// The client-filtered contracts an address-free selection is made of, and
+    /// nothing else: the same logs can be asked for by these contracts'
+    /// registered addresses instead. Empty for every other selection.
+    pub client_filtered_contracts: Vec<String>,
 }
 
 /// A topic filter's values per position, as a query sends them.
@@ -111,7 +115,12 @@ impl SelectionBuilder {
         // logs (routing never re-applies the sibling's filter). Wildcard
         // events that filter an indexed param by registered addresses fold
         // the addresses into topics, so their query stays address-unbound.
+        // Client-filtered contracts' own events pool apart from the rest of
+        // the address-free selections, so a source can still ask for them by
+        // address when an address-free answer is too large to get.
         let mut no_address: Vec<MaterializedTopics> = Vec::new();
+        let mut client_filtered_topics: Vec<MaterializedTopics> = Vec::new();
+        let mut client_filtered_contracts: Vec<String> = Vec::new();
         let mut by_contract: HashMap<&str, Vec<&TopicFilter>> = HashMap::new();
         let mut wildcard_by_contract: HashMap<&str, Vec<&TopicFilter>> = HashMap::new();
         // First-appearance order of address-bound contracts, so the built
@@ -151,6 +160,12 @@ impl SelectionBuilder {
                     .entry(reg.contract_name.as_str())
                     .or_default()
                     .extend(alternatives.iter());
+            } else if reg.depends_on_addresses && !reg.is_wildcard {
+                if !client_filtered_contracts.contains(&reg.contract_name) {
+                    client_filtered_contracts.push(reg.contract_name.clone());
+                }
+                client_filtered_topics
+                    .extend(alternatives.iter().map(|filter| filter.materialize(&[])));
             } else {
                 // Address-free: genuine wildcards, plus client-filtered contracts
                 // whose ContractAddresses markers materialize to match-any (empty
@@ -161,16 +176,21 @@ impl SelectionBuilder {
         }
 
         let mut log_selections: Vec<BuiltLogSelection> = Vec::new();
-        let mut push_selections = |addresses: &[String], selections: Vec<MaterializedTopics>| {
-            for topics in compress(selections) {
-                log_selections.push(BuiltLogSelection {
-                    addresses: addresses.to_vec(),
-                    topics: topics.into(),
-                });
-            }
-        };
+        let mut push_selections =
+            |addresses: &[String],
+             selections: Vec<MaterializedTopics>,
+             client_filtered_contracts: &[String]| {
+                for topics in compress(selections) {
+                    log_selections.push(BuiltLogSelection {
+                        addresses: addresses.to_vec(),
+                        topics: topics.into(),
+                        client_filtered_contracts: client_filtered_contracts.to_vec(),
+                    });
+                }
+            };
 
-        push_selections(&[], no_address);
+        push_selections(&[], no_address, &[]);
+        push_selections(&[], client_filtered_topics, &client_filtered_contracts);
 
         // The set's per-contract slices carry both the address strings the
         // filter needs and their padded topic forms, materialised once when the
@@ -188,6 +208,7 @@ impl SelectionBuilder {
                         .iter()
                         .map(|filter| filter.materialize(&slice.topics))
                         .collect(),
+                    &[],
                 );
             }
             if let Some(filters) = wildcard_by_contract.get(contract_name) {
@@ -197,6 +218,7 @@ impl SelectionBuilder {
                         .iter()
                         .map(|filter| filter.materialize(&slice.topics))
                         .collect(),
+                    &[],
                 );
             }
         }
@@ -288,6 +310,7 @@ mod tests {
                         vec![],
                         vec![],
                     ],
+                    client_filtered_contracts: vec![],
                 }],
                 true,
             )
@@ -313,6 +336,7 @@ mod tests {
             vec![BuiltLogSelection {
                 addresses: vec![],
                 topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                client_filtered_contracts: vec![],
             }]
         );
     }
@@ -338,6 +362,7 @@ mod tests {
                     vec![],
                     vec![],
                 ],
+                client_filtered_contracts: vec![],
             }]
         );
     }
@@ -376,6 +401,7 @@ mod tests {
                 BuiltLogSelection {
                     addresses: vec![],
                     topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                    client_filtered_contracts: vec![],
                 },
                 BuiltLogSelection {
                     addresses: vec![],
@@ -385,6 +411,7 @@ mod tests {
                         vec![],
                         vec![],
                     ],
+                    client_filtered_contracts: vec![],
                 },
             ]
         );
@@ -416,10 +443,12 @@ mod tests {
                 BuiltLogSelection {
                     addresses: vec![],
                     topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                    client_filtered_contracts: vec![],
                 },
                 BuiltLogSelection {
                     addresses: vec![],
                     topics: vec![vec![], vec![ADDR_TOPIC.to_string()], vec![], vec![]],
+                    client_filtered_contracts: vec![],
                 },
             ]
         );
@@ -496,7 +525,49 @@ mod tests {
             vec![BuiltLogSelection {
                 addresses: vec![],
                 topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                client_filtered_contracts: vec!["C".to_string()],
             }]
+        );
+    }
+
+    #[test]
+    fn client_filtered_contracts_pool_apart_from_wildcards() {
+        // Two client-filtered contracts share one selection, which names them
+        // both. A genuine wildcard event stays in its own selection: no
+        // registered address can stand in for it.
+        let builder = SelectionBuilder::from_registrations(&[
+            reg(0, SIGHASH_A, "C", false, true, Some(vec![])),
+            reg(1, SIGHASH_B, "D", false, true, Some(vec![])),
+            reg(2, SIGHASH_B, "W", true, false, Some(vec![])),
+        ])
+        .unwrap();
+        let client_filtered =
+            crate::client_filtered_contracts::ClientFilteredContracts::from_vec(vec![
+                "C".to_string(),
+                "D".to_string(),
+            ]);
+        let built = builder
+            .build(&[0, 1, 2], &no_addresses().1, &client_filtered)
+            .unwrap();
+        assert_eq!(
+            built.log_selections,
+            vec![
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![vec![SIGHASH_B.to_string()], vec![], vec![], vec![]],
+                    client_filtered_contracts: vec![],
+                },
+                BuiltLogSelection {
+                    addresses: vec![],
+                    topics: vec![
+                        vec![SIGHASH_A.to_string(), SIGHASH_B.to_string()],
+                        vec![],
+                        vec![],
+                        vec![],
+                    ],
+                    client_filtered_contracts: vec!["C".to_string(), "D".to_string()],
+                },
+            ]
         );
     }
 
@@ -520,6 +591,7 @@ mod tests {
             vec![BuiltLogSelection {
                 addresses: vec![],
                 topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                client_filtered_contracts: vec![],
             }]
         );
     }
@@ -541,6 +613,7 @@ mod tests {
             vec![BuiltLogSelection {
                 addresses: vec![ADDR.to_string()],
                 topics: vec![vec![SIGHASH_B.to_string()], vec![], vec![], vec![]],
+                client_filtered_contracts: vec![],
             }]
         );
     }

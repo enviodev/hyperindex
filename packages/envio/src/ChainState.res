@@ -192,10 +192,18 @@ let make = (
 
 let logFetchStateNotice = (logger, notice: FetchState.notice) =>
   switch notice {
-  | SwitchedToClientSideFiltering({contractName, addressCount, threshold}) =>
+  | SwitchedToClientSideFiltering({
+      contractName,
+      reason: AddressThresholdCrossed({addressCount, threshold}),
+    }) =>
     logger->Logger.trace(
       "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
       ~params={"contractName": contractName, "addressCount": addressCount, "threshold": threshold},
+    )
+  | SwitchedToClientSideFiltering({contractName, reason: DynamicContract}) =>
+    logger->Logger.trace(
+      "Switching contract to client-side address filtering: in realtime, dynamic contracts are fetched without their addresses.",
+      ~params={"contractName": contractName},
     )
   | SkippedReRegistration({
       contractName,
@@ -325,6 +333,7 @@ let makeInternal = (
     | Evm => Some(config.clientFilterAddressThreshold)
     | Fuel | Svm => None
     },
+    ~clientFilterAllDynamicContracts=isRealtime,
     ~isResumed,
   )
 
@@ -350,6 +359,7 @@ let makeInternal = (
     ~blockStore,
     ~transactionStore,
     ~logger,
+    ~maxAddressesPerRequest=config.maxAddrInPartition,
   )
 
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
@@ -1337,6 +1347,17 @@ let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
   }
+
+// Realtime fetches each new block in as few queries as possible, of a shape
+// that stays the same while contracts keep being registered: dynamic contracts
+// leave the server-side address filter. A chain resuming in realtime gets the
+// same policy from `make`.
+let enterRealtime = (cs: t) =>
+  cs.fetchState =
+    cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
+      ~addressStore=cs.addressStore,
+      ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
+    )
 
 // Rewind progress to a reorg target. Moving it means the timestamp now belongs
 // to an orphaned block, so it's re-read for the block progress actually lands

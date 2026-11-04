@@ -864,6 +864,17 @@ module OptimizedPartitions = {
   }
 }
 
+// When a contract's addresses leave the server-side filter. A switched contract
+// is fetched by the single address-free partition and gated against the address
+// store on our side. The switch is sticky for the run.
+type clientFilterPolicy = {
+  // Past this many registered addresses. None never switches on count alone.
+  addressThreshold: option<int>,
+  // Every dynamic contract, whatever its address count. Keeps a chain at one
+  // query per block, of one shape, however many contracts it registers.
+  allDynamicContracts: bool,
+}
+
 type t = {
   optimizedPartitions: OptimizedPartitions.t,
   startBlock: int,
@@ -891,10 +902,7 @@ type t = {
   onBlockRegistrations: array<Internal.onBlockRegistration>,
   knownHeight: int,
   firstEventBlock: option<int>,
-  // Per-contract registered-address count past which a dynamic contract is
-  // switched to client-side filtering. None disables the switch, leaving every
-  // contract filtered server-side.
-  clientFilterAddressThreshold: option<int>,
+  clientFilterPolicy: clientFilterPolicy,
 }
 
 // The latest block whose items are all in the buffer: the lowest partition
@@ -1206,16 +1214,20 @@ let updateInternal = (
     | blockItems => base->mergeIntoBuffer(blockItems)
     },
     firstEventBlock: fetchState.firstEventBlock,
-    clientFilterAddressThreshold: fetchState.clientFilterAddressThreshold,
+    clientFilterPolicy: fetchState.clientFilterPolicy,
   }
 
   updatedFetchState
 }
 
+type clientFilterReason =
+  | AddressThresholdCrossed({addressCount: int, threshold: int})
+  | DynamicContract
+
 // What fetch state has to tell an operator. It decides nothing from these; the
 // chain that owns it turns them into log lines.
 type notice =
-  | SwitchedToClientSideFiltering({contractName: string, addressCount: int, threshold: int})
+  | SwitchedToClientSideFiltering({contractName: string, reason: clientFilterReason})
   // The address is already registered for the contract from a later block, and
   // a registration never moves an address's start block earlier.
   | SkippedReRegistration({
@@ -1234,22 +1246,50 @@ type notice =
       requestedFromBlock: int,
     })
 
-// Move a contract to client-side address filtering, recording why.
-let addClientFilteredContract = (
-  clientFilteredContracts: Utils.Set.t<string>,
+let clientFilterReason = (
+  policy: clientFilterPolicy,
   ~contractName,
+  ~dynamicContracts: Utils.Set.t<string>,
+  ~addressStore: AddressStore.t,
+) =>
+  if policy.allDynamicContracts && dynamicContracts->Utils.Set.has(contractName) {
+    Some(DynamicContract)
+  } else {
+    switch policy.addressThreshold {
+    | Some(threshold) =>
+      let addressCount = addressStore->AddressStore.contractCount(contractName)
+      addressCount > threshold ? Some(AddressThresholdCrossed({addressCount, threshold})) : None
+    | None => None
+    }
+  }
+
+// The client-filtered set once `policy` has judged `contractNames`. A copy, so
+// older fetch state snapshots keep theirs: Utils.Set.add mutates in place.
+let switchToClientSideFiltering = (
+  clientFilteredContracts: Utils.Set.t<string>,
+  ~contractNames: array<string>,
+  ~policy: clientFilterPolicy,
+  ~dynamicContracts: Utils.Set.t<string>,
+  ~addressStore: AddressStore.t,
   ~onNotice,
-  ~addressCount,
-  ~threshold,
   // A resumed fetch state re-derives the switch from the persisted addresses,
-  // but it already happened - and was reported - in the run that crossed the
-  // threshold.
+  // but it already happened - and was reported - in an earlier run.
   ~isAlreadyReported=false,
 ) => {
-  clientFilteredContracts->Utils.Set.add(contractName)->ignore
-  if !isAlreadyReported {
-    onNotice(SwitchedToClientSideFiltering({contractName, addressCount, threshold}))
-  }
+  let switched = clientFilteredContracts->Utils.Set.toArray->Utils.Set.fromArray
+  contractNames->Array.forEach(contractName =>
+    if !(switched->Utils.Set.has(contractName)) {
+      switch policy->clientFilterReason(~contractName, ~dynamicContracts, ~addressStore) {
+      | Some(reason) =>
+        switched->Utils.Set.add(contractName)->ignore
+        if !isAlreadyReported {
+          onNotice(SwitchedToClientSideFiltering({contractName, reason}))
+        }
+      | None => ()
+      }
+    }
+  )
+  switched
 }
 
 // The block a partition will have fetched to once everything on its pending
@@ -1864,34 +1904,16 @@ let registerDynamicContracts = (
         }
       }
 
-      // Switch any dynamic contract that has just crossed the server-side
-      // address threshold to client-side filtering. Sticky: the set only grows, and
-      // collapse in createPartitions folds the contract's
-      // partitions into the single address-free partition.
-      // Clone the sticky set before mutating so this update owns its copy and
-      // older fetchState snapshots keep theirs (Utils.Set.add mutates in place).
-      let clientFilteredContracts = switch fetchState.clientFilterAddressThreshold {
-      | Some(threshold) =>
-        let clientFilteredContracts =
-          fetchState.optimizedPartitions.clientFilteredContracts
-          ->Utils.Set.toArray
-          ->Utils.Set.fromArray
-        dynamicContractsRef.contents
-        ->Utils.Set.toArray
-        ->Array.forEach(contractName => {
-          let addressCount = addressStore->AddressStore.contractCount(contractName)
-          if !(clientFilteredContracts->Utils.Set.has(contractName)) && addressCount > threshold {
-            clientFilteredContracts->addClientFilteredContract(
-              ~contractName,
-              ~onNotice,
-              ~addressCount,
-              ~threshold,
-            )
-          }
-        })
-        clientFilteredContracts
-      | None => fetchState.optimizedPartitions.clientFilteredContracts
-      }
+      // Collapse in createPartitions folds a switched contract's partitions
+      // into the single address-free partition.
+      let clientFilteredContracts =
+        fetchState.optimizedPartitions.clientFilteredContracts->switchToClientSideFiltering(
+          ~contractNames=dynamicContractsRef.contents->Utils.Set.toArray,
+          ~policy=fetchState.clientFilterPolicy,
+          ~dynamicContracts=dynamicContractsRef.contents,
+          ~addressStore,
+          ~onNotice,
+        )
 
       // Only this batch's additions need partitions; everything already
       // registered has one.
@@ -1921,6 +1943,55 @@ let registerDynamicContracts = (
     }
   }
 }
+
+// Every dynamic contract, the ones registered from now on included, is fetched
+// address-free and filtered on our side. Its partitions fold into the single
+// address-free partition through the same collapse the address threshold uses.
+let switchDynamicContractsToClientSideFiltering = (
+  fetchState: t,
+  ~addressStore: AddressStore.t,
+  ~onNotice,
+) =>
+  if fetchState.clientFilterPolicy.allDynamicContracts {
+    fetchState
+  } else {
+    let fetchState = {
+      ...fetchState,
+      clientFilterPolicy: {...fetchState.clientFilterPolicy, allDynamicContracts: true},
+    }
+    let {
+      dynamicContracts,
+      clientFilteredContracts,
+      maxAddrInPartition,
+      nextPartitionIndex,
+    } = fetchState.optimizedPartitions
+    let switched =
+      clientFilteredContracts->switchToClientSideFiltering(
+        ~contractNames=dynamicContracts->Utils.Set.toArray,
+        ~policy=fetchState.clientFilterPolicy,
+        ~dynamicContracts,
+        ~addressStore,
+        ~onNotice,
+      )
+    if switched->Utils.Set.size === clientFilteredContracts->Utils.Set.size {
+      fetchState
+    } else {
+      fetchState->updateInternal(
+        ~optimizedPartitions=createPartitions(
+          ~registeringSetsByContract=Dict.make(),
+          ~addressStore,
+          ~dynamicContracts,
+          ~clientFilteredContracts=switched,
+          ~normalSelection=fetchState.normalSelection,
+          ~maxAddrInPartition,
+          ~nextPartitionIndex,
+          ~existingPartitions=fetchState.optimizedPartitions.entities->Dict.valuesToArray,
+          ~progressBlockNumber=0,
+          ~knownHeight=fetchState.knownHeight,
+        ),
+      )
+    }
+  }
 
 /*
 Updates fetchState with a response for a given query.
@@ -2662,6 +2733,7 @@ let make = (
   ~blockThrottle=0,
   ~firstEventBlock=None,
   ~clientFilterAddressThreshold=None,
+  ~clientFilterAllDynamicContracts=false,
   ~isResumed=false,
 ): t => {
   let latestFetchedBlock = progressBlockNumber
@@ -2742,7 +2814,6 @@ let make = (
   })
 
   let dynamicContracts = Utils.Set.make()
-  let clientFilteredContracts = Utils.Set.make()
   let registeringSetsByContract = Dict.make()
 
   // What each contract needs a partition for is read back off the store rather
@@ -2766,25 +2837,23 @@ let make = (
     }
   })
 
-  // Switch any contract already over the server-side address threshold to
-  // client-side filtering at creation — a config contract with a large static
-  // address list, or a dynamic contract restored from a large persisted set.
-  switch clientFilterAddressThreshold {
-  | Some(threshold) =>
-    registeringSetsByContract->Utils.Dict.forEachWithKey((set, contractName) => {
-      let addressCount = set->AddressSet.size
-      if addressCount > threshold {
-        clientFilteredContracts->addClientFilteredContract(
-          ~contractName,
-          ~onNotice,
-          ~addressCount,
-          ~threshold,
-          ~isAlreadyReported=isResumed,
-        )
-      }
-    })
-  | None => ()
+  let clientFilterPolicy = {
+    addressThreshold: clientFilterAddressThreshold,
+    allDynamicContracts: clientFilterAllDynamicContracts,
   }
+
+  // Switch at creation whatever the policy already covers: a config contract
+  // with a large static address list, a dynamic contract restored from a large
+  // persisted set, or every dynamic contract of a chain resuming in realtime.
+  let clientFilteredContracts =
+    Utils.Set.make()->switchToClientSideFiltering(
+      ~contractNames=registeringSetsByContract->Dict.keysToArray,
+      ~policy=clientFilterPolicy,
+      ~dynamicContracts,
+      ~addressStore,
+      ~onNotice,
+      ~isAlreadyReported=isResumed,
+    )
 
   let optimizedPartitions = createPartitions(
     ~registeringSetsByContract,
@@ -2855,7 +2924,7 @@ let make = (
     knownHeight,
     buffer,
     firstEventBlock,
-    clientFilterAddressThreshold,
+    clientFilterPolicy,
   }
 
   fetchState

@@ -1,7 +1,6 @@
 use anyhow::Context;
 use napi_derive::napi;
 use serde::Deserialize;
-use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -12,6 +11,7 @@ mod enrich;
 mod fields;
 mod inflight;
 mod interval;
+mod logs;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
@@ -49,6 +49,9 @@ pub struct EvmRpcClientConfig {
     pub interval_ceiling: i64,
     pub backoff_millis: i64,
     pub query_timeout_millis: i64,
+    /// How many addresses one `eth_getLogs` may carry when an address-free read
+    /// is asked again by address.
+    pub max_addresses_per_request: i64,
 }
 
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
@@ -190,6 +193,8 @@ pub struct NextPageResult {
     pub retry_to_block: Option<i64>,
     /// `Backoff` only: how long to wait first.
     pub backoff_millis: Option<i64>,
+    /// `Ok` only: the address-free reads the page had to ask again by address.
+    pub address_fallbacks: Vec<logs::AddressFallback>,
 }
 
 /// A node that answered badly once may not again, so a transient miss waits
@@ -233,6 +238,7 @@ impl NextPageResult {
             block_number: None,
             retry_to_block: None,
             backoff_millis: None,
+            address_fallbacks: Vec::new(),
         }
     }
 
@@ -278,6 +284,7 @@ pub struct EvmRpcClient {
     decoder: Decoder,
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
+    max_addresses_per_request: usize,
     intervals: IntervalState,
     /// Coalesces block, transaction and receipt reads that overlap in time,
     /// including across the partitions of one chain, which scan the same blocks
@@ -345,6 +352,8 @@ impl EvmRpcClient {
         // instead would cancel reads the provider was answering fine, over a
         // total the caller's only lever — the block range — does not decide.
         let request_timeout_millis = positive_u64(cfg.query_timeout_millis, "queryTimeoutMillis")?;
+        let max_addresses_per_request =
+            positive_u64(cfg.max_addresses_per_request, "maxAddressesPerRequest")? as usize;
         let inner = JsonRpcClient::new(
             cfg.url,
             request_timeout_millis,
@@ -407,6 +416,7 @@ impl EvmRpcClient {
             decoder,
             selection_builder,
             sync_config,
+            max_addresses_per_request,
             intervals: IntervalState::new(),
             fetches: Fetches::default(),
             registration_fields,
@@ -602,7 +612,7 @@ impl EvmRpcClient {
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
         let (result, page) = match outcome {
-            Ok((event_items, block_items, page)) => {
+            Ok((event_items, block_items, address_fallbacks, page)) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -620,6 +630,7 @@ impl EvmRpcClient {
                     NextPageResult {
                         event_items,
                         block_items,
+                        address_fallbacks,
                         ..NextPageResult::new(PageOutcome::Ok, to_block, request_stats)
                     },
                     Some(page),
@@ -628,7 +639,9 @@ impl EvmRpcClient {
             Err(PageError::Logs(err)) => {
                 let provider_message = match &err {
                     RpcError::JsonRpc { message, .. } => Some(message.clone()),
-                    RpcError::Other(_) => None,
+                    RpcError::Timeout(_) | RpcError::MalformedResponse(_) | RpcError::Other(_) => {
+                        None
+                    }
                 };
                 let message = provider_message.clone().unwrap_or_else(|| err.to_string());
                 (
@@ -699,8 +712,16 @@ impl EvmRpcClient {
     async fn read_page(
         &self,
         query: &PageQuery<'_>,
-    ) -> Result<(Vec<EventItem>, Vec<BlockItem>, enrich::EnrichedPage), PageError> {
-        let decoded = self.fetch_page(query).await.map_err(PageError::Logs)?;
+    ) -> Result<
+        (
+            Vec<EventItem>,
+            Vec<BlockItem>,
+            Vec<logs::AddressFallback>,
+            enrich::EnrichedPage,
+        ),
+        PageError,
+    > {
+        let (decoded, address_fallbacks) = self.fetch_page(query).await.map_err(PageError::Logs)?;
 
         let mut refs = PageRefs::default();
         let mut items = Vec::with_capacity(decoded.len());
@@ -772,7 +793,7 @@ impl EvmRpcClient {
             },
         )
         .await?;
-        Ok((items, block_items, page))
+        Ok((items, block_items, address_fallbacks, page))
     }
 
     /// Builds the retry decision for a page that could not be read, updating
@@ -846,32 +867,50 @@ impl EvmRpcClient {
         }
     }
 
-    /// Fans out one `eth_getLogs` per selection concurrently. Every selection
-    /// is awaited even once one has failed, so each request is made and
-    /// billed; the first failure then decides the page.
-    async fn fetch_page(&self, query: &PageQuery<'_>) -> Result<Vec<DecodedItem>, RpcError> {
+    /// Reads every selection concurrently. Every selection is awaited even once
+    /// one has failed, so each request is made and billed; the first failure
+    /// then decides the page.
+    async fn fetch_page(
+        &self,
+        query: &PageQuery<'_>,
+    ) -> Result<(Vec<DecodedItem>, Vec<logs::AddressFallback>), RpcError> {
         if query.selections.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let results =
             futures_util::future::join_all(query.selections.iter().map(|selection| async {
-                self.fetch_logs_raw(
-                    query.from_block as i64,
-                    query.to_block as i64,
+                let read = logs::request_selection_logs(
+                    &self.inner,
+                    query.from_block,
+                    query.to_block,
                     selection,
-                    query.set_cache.clone(),
-                    query.decoder.clone(),
+                    |contract_names| {
+                        let store = query.decoder.lock_store();
+                        contract_names
+                            .iter()
+                            .flat_map(|name| store.contract_addresses(name, false))
+                            .collect()
+                    },
+                    self.max_addresses_per_request,
                 )
-                .await
+                .await?;
+                let items =
+                    Self::route_logs(read.logs, query.set_cache.clone(), query.decoder.clone())
+                        .await?;
+                Ok::<_, RpcError>((items, read.fallback))
             }))
             .await;
 
         let mut items = Vec::new();
+        let mut address_fallbacks = Vec::new();
         let mut first_err = None;
         for result in results {
             match result {
-                Ok(page_items) => items.extend(page_items),
+                Ok((page_items, fallback)) => {
+                    items.extend(page_items);
+                    address_fallbacks.extend(fallback);
+                }
                 Err(e) => {
                     if first_err.is_none() {
                         first_err = Some(e);
@@ -881,45 +920,16 @@ impl EvmRpcClient {
         }
         match first_err {
             Some(e) => Err(e),
-            None => Ok(items),
+            None => Ok((items, address_fallbacks)),
         }
     }
 
-    async fn fetch_logs_raw(
-        &self,
-        from_block: i64,
-        to_block: i64,
-        selection: &BuiltLogSelection,
+    /// Routes raw logs to the registrations they satisfy and decodes them.
+    async fn route_logs(
+        raw_logs: Vec<RawLog>,
         set_cache: Arc<SetCache>,
         decoder: Arc<SelectionDecoder>,
     ) -> Result<Vec<DecodedItem>, RpcError> {
-        // eth_getLogs topic filters: `null` matches any value at a position;
-        // trailing match-any positions are trimmed entirely.
-        let mut topics: Vec<Option<&Vec<String>>> = selection
-            .topics
-            .iter()
-            .map(|values| {
-                if values.is_empty() {
-                    None
-                } else {
-                    Some(values)
-                }
-            })
-            .collect();
-        while matches!(topics.last(), Some(None)) {
-            topics.pop();
-        }
-        let mut filter = json!({
-            "fromBlock": format!("0x{:x}", from_block),
-            "toBlock": format!("0x{:x}", to_block),
-            "topics": topics,
-        });
-        if !selection.addresses.is_empty() {
-            filter["address"] = json!(selection.addresses);
-        }
-
-        let raw_logs: Vec<RawLog> = self.inner.request("eth_getLogs", json!([filter])).await?;
-
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
             let should_checksum = decoder.checksummed_addresses();

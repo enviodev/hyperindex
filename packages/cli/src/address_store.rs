@@ -335,6 +335,21 @@ impl StoreInner {
         self.contract_idx_by_name.get(name).copied()
     }
 
+    /// Every address registered under one contract, in set order, spelled the
+    /// way the chain shows addresses.
+    pub fn contract_addresses(&self, contract_name: &str, should_checksum: bool) -> Vec<String> {
+        match self.contract_idx(contract_name) {
+            None => Vec::new(),
+            Some(contract_idx) => self
+                .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
+                .into_iter()
+                .map(|id| {
+                    shown_address_string(self.ecosystem, should_checksum, &self.entry(id).key)
+                })
+                .collect(),
+        }
+    }
+
     fn sorted_ids(&self, mut ids: Vec<u64>) -> Vec<u64> {
         ids.sort_unstable_by(|&a, &b| self.sort_key(a).cmp(&self.sort_key(b)));
         ids
@@ -786,17 +801,8 @@ impl AddressStore {
     /// with.
     #[napi]
     pub fn contract_addresses(&self, contract_name: String, should_checksum: bool) -> Vec<String> {
-        let store = self.read();
-        match store.contract_idx(&contract_name) {
-            None => Vec::new(),
-            Some(contract_idx) => store
-                .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
-                .into_iter()
-                .map(|id| {
-                    shown_address_string(store.ecosystem, should_checksum, &store.entry(id).key)
-                })
-                .collect(),
-        }
+        self.read()
+            .contract_addresses(&contract_name, should_checksum)
     }
 }
 

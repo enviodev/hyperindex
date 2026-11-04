@@ -10,6 +10,7 @@ let make = (
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
   ~logger: Logger.t,
+  ~maxAddressesPerRequest=Env.maxAddrInPartition,
 ): array<Source.t> => {
   let chainId = chainConfig.id
   switch chainConfig.sourceConfig {
@@ -39,6 +40,7 @@ let make = (
       ~blockStore,
       ~transactionStore,
       ~logger,
+      ~maxAddressesPerRequest,
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({

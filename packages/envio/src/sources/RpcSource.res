@@ -17,6 +17,9 @@ type options = {
   transactionStore: TransactionStore.t,
   ws?: string,
   headers?: dict<string>,
+  // How many addresses one `eth_getLogs` may carry when an address-free query
+  // the provider couldn't answer is read again by address.
+  maxAddressesPerRequest?: int,
 }
 
 let make = (
@@ -33,6 +36,7 @@ let make = (
     transactionStore,
     ?ws,
     ?headers,
+    ?maxAddressesPerRequest,
   }: options,
 ): t => {
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
@@ -53,6 +57,7 @@ let make = (
     ~syncConfig,
     ~headers?,
     ~addressStore,
+    ~maxAddressesPerRequest?,
   )
 
   let getItemsOrThrow = async (
@@ -65,7 +70,7 @@ let make = (
     ~selection: FetchState.selection,
     ~itemsTarget as _,
     ~retry,
-    ~logger as _,
+    ~logger,
   ) => {
     let totalTimeRef = Performance.now()
 
@@ -126,7 +131,19 @@ let make = (
       )
 
     switch result.kind {
-    | Ok => ()
+    | Ok =>
+      result.addressFallbacks->Array.forEach(({contractNames, requests, reason}) =>
+        logger->Logger.trace(
+          "The RPC provider couldn't answer an address-free query, so its range was read again by the contracts' registered addresses.",
+          ~params={
+            "fromBlock": fromBlock,
+            "toBlock": result.toBlock,
+            "contractNames": contractNames,
+            "requests": requests,
+            "reason": reason,
+          },
+        )
+      )
     | FieldSelection =>
       throw(
         Source.GetItemsError(
