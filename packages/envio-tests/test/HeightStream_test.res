@@ -488,6 +488,25 @@ describe("WebSocket height stream", () => {
     },
   )
 
+  ws->Scenario.it("Closes its height stream when the indexer stops", ~yamlSources=true, async (
+    ~t,
+    ~indexer,
+    ~source as _,
+  ) => {
+    let closed = ref(false)
+    setUp(
+      ~onSubscribe=socket => {
+        socket->WsServer.onClose(() => closed := true)
+        socket->confirm
+      },
+    )
+    await indexer->waitForConnects(1)
+    await indexer.stop()
+    // Left open, a stopped indexer goes on taking heights from the provider.
+    await Scenario.waitUntil(() => closed.contents, ~message="the stream to be closed")
+    t.expect(sockets->Array.length).toBe(1)
+  })
+
   ws->Scenario.it("Closes the socket of a connection it gave up on", ~yamlSources=true, async (
     ~t,
     ~indexer,

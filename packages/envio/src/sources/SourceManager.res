@@ -130,6 +130,7 @@ module Native = {
   @send external finishWaiting: (t, int) => bool = "finishWaiting"
   @send external queriesStarted: (t, int) => unit = "queriesStarted"
   @send external queryFinished: t => unit = "queryFinished"
+  @send external shutdown: t => unit = "shutdown"
   @send external activeSource: t => int = "activeSource"
   @send external inFlight: t => int = "inFlight"
   @send external idleSeconds: t => float = "idleSeconds"
@@ -593,6 +594,8 @@ let inFlightCount = (sm: t) => sm.native->Native.inFlight
 let getRateLimitTimeMs = (sm: t) => sm.native->Native.rateLimitTimeMs(sm->now)
 let getRateLimitResetInMs = (sm: t) =>
   sm.native->Native.rateLimitResetInMs(sm->now)->Nullable.toOption
+
+let shutdown = (sm: t) => sm->report(_ => sm.native->Native.shutdown)
 
 let onReorg = (sm: t) =>
   sm.sources->Array.forEach(source => source.onReorg->Option.forEach(cb => cb()))

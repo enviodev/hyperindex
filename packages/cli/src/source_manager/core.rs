@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use serde_json::Value;
 
@@ -294,6 +297,12 @@ pub struct Core {
     rate_limit: RateLimit,
     next_id: u32,
     pub timers: HashMap<TimerId, TimerPurpose>,
+    /// The `timers` entries that come back from a microtask rather than the
+    /// clock, so there is nothing on the clock to clear for them.
+    deferred: HashSet<TimerId>,
+    /// Once shut down, nothing reaches the caller again: whatever the sources
+    /// still report about requests already out goes nowhere.
+    shut_down: bool,
     pub height_requests: HashMap<u32, super::feed::HeightRequest>,
     pub waits: HashMap<u32, super::wait::Wait>,
     pub requests: HashMap<u32, super::query::Request>,
@@ -340,6 +349,8 @@ impl Core {
             rate_limit: RateLimit::default(),
             next_id: 0,
             timers: HashMap::new(),
+            deferred: HashSet::new(),
+            shut_down: false,
             height_requests: HashMap::new(),
             waits: HashMap::new(),
             requests: HashMap::new(),
@@ -353,7 +364,29 @@ impl Core {
     }
 
     pub fn emit(&mut self, effect: Effect) {
-        self.effects.push_back(effect);
+        if !self.shut_down {
+            self.effects.push_back(effect);
+        }
+    }
+
+    /// Closes every stream and clears every timer, for an indexer that stops.
+    pub fn shut_down(&mut self) {
+        for source in 0..self.sources.len() {
+            self.stop_feed(source);
+        }
+        let mut armed: Vec<TimerId> = self
+            .timers
+            .keys()
+            .filter(|timer| !self.deferred.contains(timer))
+            .copied()
+            .collect();
+        armed.sort_unstable();
+        for timer in armed {
+            self.emit(Effect::ClearTimer { timer });
+        }
+        self.timers.clear();
+        self.deferred.clear();
+        self.shut_down = true;
     }
 
     pub fn log(&mut self, fields: Option<Value>, level: Level, message: String, params: Value) {
@@ -406,6 +439,11 @@ impl Core {
     }
 
     pub fn timer_fired(&mut self, timer: TimerId, now: f64) {
+        // A microtask queued before the shutdown still runs.
+        if self.shut_down {
+            return;
+        }
+        self.deferred.remove(&timer);
         // A cleared timer is cleared on the clock too, so only armed ones fire,
         // and each once.
         let purpose = self
@@ -432,6 +470,7 @@ impl Core {
     pub fn defer(&mut self, purpose: TimerPurpose) {
         let token = self.next_id();
         self.timers.insert(token, purpose);
+        self.deferred.insert(token);
         self.emit(Effect::Defer { token });
     }
 

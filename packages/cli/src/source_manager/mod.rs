@@ -547,6 +547,11 @@ impl SourceManager {
     }
 
     #[napi(catch_unwind)]
+    pub fn shutdown(&mut self) {
+        self.core.shut_down();
+    }
+
+    #[napi(catch_unwind)]
     pub fn active_source(&self) -> u32 {
         self.core.active as u32
     }

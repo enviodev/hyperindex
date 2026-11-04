@@ -95,3 +95,6 @@ let getRateLimitTimeMs: t => float
 // Milliseconds remaining until the longest active rate-limit window resets,
 // or None if not currently waiting (or the window has already elapsed).
 let getRateLimitResetInMs: t => option<float>
+// For an indexer that stops: closes every height stream and clears every
+// timer, so nothing it armed keeps asking the sources.
+let shutdown: t => unit
