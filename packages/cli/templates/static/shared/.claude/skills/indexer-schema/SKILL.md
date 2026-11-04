@@ -22,7 +22,8 @@ metadata:
 
 | Schema Type | TypeScript Type | Notes |
 |-------------|----------------|-------|
-| `ID!` | `string` | Recommended entity id; `String!`/`Int!`/`BigInt!` also allowed as id |
+| `ID!` | `string` | Recommended entity id; `String!`/`Int!`/`BigInt!`/`Bytes!`/`Address!` also allowed as id |
+| `Address!` | `Address` (SVM: `string`) | An account or contract address; usable as an id. With `address_format: lowercase` (EVM) and on Fuel it is stored as its raw bytes (`bytea`, `FixedString` in ClickHouse), so values must be `0x` + lowercase hex — `set`, `get` and `getWhere` throw on any other spelling. Checksummed EVM and base58 SVM addresses are stored as text. The GraphQL API (Hasura) serves a bytes-stored address as `bytea`: values read `\x…`, and filters must use that spelling (a `0x…` filter matches nothing) |
 | `String!` | `string` | |
 | `Int!` | `number` | |
 | `Float!` | `number` | |

@@ -12,13 +12,20 @@ pub enum Primitive {
     String,
     Bytes,
     Int32,
-    BigInt { precision: Option<u32> },
+    BigInt {
+        precision: Option<u32>,
+    },
     BigDecimal(Option<(u32, u32)>), // (precision, scale)
     Number,
     Serial,
     Json,
     Date,
     Enum(String),
+    /// An address handlers spell as `0x` and lowercase hex, kept as its
+    /// `length` raw bytes.
+    Address {
+        length: u32,
+    },
 }
 
 impl Primitive {
@@ -42,6 +49,7 @@ impl Primitive {
             Self::Json => "Json".to_string(),
             Self::Date => "Date".to_string(),
             Self::Number => "Number".to_string(),
+            Self::Address { length } => format!("Address({{length: {length}}})"),
             Self::Enum(enum_name) => {
                 let capitalized_enum_name = enum_name.capitalize();
                 format!(

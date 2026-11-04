@@ -32,6 +32,33 @@ pub struct Schema {
     pub entities: HashMap<String, Entity>,
     pub enums: HashMap<String, GraphQLEnum>,
     pub bytes_type: BytesType,
+    pub address_type: AddressType,
+}
+
+/// How the `Address` scalar is typed and kept. It follows the ecosystem and,
+/// on EVM, `address_format`: a value whose spelling a bytea gives back exactly
+/// is kept as its raw bytes, anything else as the text it was written as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AddressType {
+    /// Checksummed: the case is the checksum, which raw bytes don't keep.
+    #[default]
+    EvmChecksum,
+    EvmLowercase,
+    /// A b256, lowercase hex like every Fuel address HyperSync returns.
+    Fuel,
+    /// Base58, which isn't hex.
+    Svm,
+}
+
+impl AddressType {
+    /// The bytes an address is kept as, or `None` when it is kept as text.
+    pub fn byte_length(self) -> Option<u32> {
+        match self {
+            AddressType::EvmLowercase => Some(20),
+            AddressType::Fuel => Some(32),
+            AddressType::EvmChecksum | AddressType::Svm => None,
+        }
+    }
 }
 
 enum TypeDef<'a> {
@@ -45,6 +72,7 @@ impl Schema {
             entities: HashMap::new(),
             enums: HashMap::new(),
             bytes_type: BytesType::Hex,
+            address_type: AddressType::default(),
         }
     }
 
@@ -70,10 +98,24 @@ impl Schema {
         )
         .context("Found enums with duplicate names")?;
 
+        // `Address` became a built-in scalar after schemas could already define
+        // a type of that name, so a schema's own `Address` keeps meaning it.
+        let mut entities = entities;
+        if entities.contains_key(ADDRESS_SCALAR) || enums.contains_key(ADDRESS_SCALAR) {
+            for entity in entities.values_mut() {
+                for field in entity.fields.iter_mut() {
+                    if let FieldType::RegularField { field_type, .. } = &mut field.field_type {
+                        field_type.yield_address_scalar_to_schema_type();
+                    }
+                }
+            }
+        }
+
         Self {
             entities,
             enums,
             bytes_type,
+            address_type: AddressType::default(),
         }
         .validate()
     }
@@ -306,6 +348,7 @@ impl Schema {
             GqlScalar::Int => Some("Int"),
             GqlScalar::BigInt(_) => Some("BigInt"),
             GqlScalar::Bytes => Some("Bytes"),
+            GqlScalar::Address => Some("Address"),
             _ => None,
         }
     }
@@ -1227,11 +1270,12 @@ fn validate_entity_shape(name: &str, fields: &[Field]) -> anyhow::Result<()> {
                     | GqlScalar::String
                     | GqlScalar::Int
                     | GqlScalar::BigInt(_)
-                    | GqlScalar::Bytes => {}
+                    | GqlScalar::Bytes
+                    | GqlScalar::Address => {}
                     other => {
                         return Err(anyhow!(
                             "The 'id' field on entity {name} has unsupported type '{other}'. An \
-                             entity id must be one of: ID, String, Int, BigInt, Bytes."
+                             entity id must be one of: ID, String, Int, BigInt, Bytes, Address."
                         ));
                     }
                 }
@@ -1961,6 +2005,19 @@ pub enum UserDefinedFieldType {
 }
 
 impl UserDefinedFieldType {
+    fn yield_address_scalar_to_schema_type(&mut self) {
+        match self {
+            Self::Single(scalar) => {
+                if *scalar == GqlScalar::Address {
+                    *scalar = GqlScalar::Custom(ADDRESS_SCALAR.to_string());
+                }
+            }
+            Self::ListType(inner) | Self::NonNullType(inner) => {
+                inner.yield_address_scalar_to_schema_type()
+            }
+        }
+    }
+
     fn from_obj_field_type(
         obj_field_type: &ObjType<'_, String>,
         pg_type_modifications: &PgTypeModifications,
@@ -2346,6 +2403,8 @@ impl Serialize for FieldType {
     }
 }
 
+const ADDRESS_SCALAR: &str = "Address";
+
 #[subenum(BuiltInGqlScalar, AdditionalGqlScalar)]
 #[derive(Debug, Clone, PartialEq, strum_macros::Display, Eq, Hash)]
 pub enum GqlScalar {
@@ -2369,6 +2428,8 @@ pub enum GqlScalar {
     Bytes,
     #[subenum(AdditionalGqlScalar)]
     Json,
+    #[subenum(AdditionalGqlScalar)]
+    Address,
     #[strum(to_string = "{0}")]
     Custom(String),
 }
@@ -2414,6 +2475,7 @@ impl GqlScalar {
             "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
             "Json" => GqlScalar::Json,
+            ADDRESS_SCALAR => GqlScalar::Address,
             name => GqlScalar::Custom(name.to_string()),
         }
     }
@@ -2430,6 +2492,10 @@ impl GqlScalar {
                 BytesType::Uint8Array => PGPrimitive::Bytes,
             },
             GqlScalar::Json => PGPrimitive::Json,
+            GqlScalar::Address => match schema.address_type.byte_length() {
+                Some(length) => PGPrimitive::Address { length },
+                None => PGPrimitive::String,
+            },
             GqlScalar::BigInt(precision) => PGPrimitive::BigInt {
                 precision: *precision,
             },
@@ -2463,6 +2529,12 @@ impl GqlScalar {
                 BytesType::Uint8Array => TypeIdent::Bytes,
             },
             GqlScalar::Json => TypeIdent::Json,
+            GqlScalar::Address => match schema.address_type {
+                AddressType::Svm => TypeIdent::String,
+                AddressType::EvmChecksum | AddressType::EvmLowercase | AddressType::Fuel => {
+                    TypeIdent::Address
+                }
+            },
             GqlScalar::Boolean => TypeIdent::Bool,
             GqlScalar::Timestamp => TypeIdent::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
@@ -2498,9 +2570,9 @@ impl GqlScalar {
 #[cfg(test)]
 mod tests {
     use super::{
-        anyhow, ClickHouseEntityStorage, ClickHouseSkippingIndex, ClickHouseTableOptions,
-        DefaultChainScope, Entity, EntityColumn, Field, FieldType, GqlScalar, GraphQLEnum, Schema,
-        UserDefinedFieldType, DEFAULT_SCHEMA_PATH,
+        anyhow, AddressType, ClickHouseEntityStorage, ClickHouseSkippingIndex,
+        ClickHouseTableOptions, DefaultChainScope, Entity, EntityColumn, Field, FieldType,
+        GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType, DEFAULT_SCHEMA_PATH,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use crate::config_parsing::human_config::BytesType;
@@ -2749,6 +2821,77 @@ type Blob {
                 )
             })
             .to_vec()
+    }
+
+    #[test]
+    fn address_scalar_is_raw_bytes_only_where_its_spelling_is_lowercase_hex() {
+        let schema = Schema::from_string(
+            r#"
+type Token {
+  id: Address!
+  optOwner: Address
+  owners: [Address!]!
+}
+"#,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+        )
+        .unwrap();
+        let mappings = |address_type| {
+            let schema = Schema {
+                address_type,
+                ..schema.clone()
+            };
+            let entity = schema.entities.get("Token").unwrap();
+            ["id", "optOwner", "owners"]
+                .map(|name| {
+                    let field_type = &entity.get_field(name).unwrap().field_type;
+                    (
+                        field_type
+                            .to_user_defined_field_type()
+                            .to_underlying_postgres_primitive(&schema)
+                            .unwrap(),
+                        field_type
+                            .to_rescript_type(&schema)
+                            .unwrap()
+                            .to_ts_type_string(),
+                    )
+                })
+                .to_vec()
+        };
+        let address = |length| PGPrimitive::Address { length };
+        assert_eq!(
+            [
+                AddressType::EvmChecksum,
+                AddressType::EvmLowercase,
+                AddressType::Fuel,
+                AddressType::Svm,
+            ]
+            .map(mappings),
+            [
+                [
+                    (PGPrimitive::String, "Address".to_string()),
+                    (PGPrimitive::String, "Address | undefined".to_string()),
+                    (PGPrimitive::String, "readonly Address[]".to_string()),
+                ],
+                [
+                    (address(20), "Address".to_string()),
+                    (address(20), "Address | undefined".to_string()),
+                    (address(20), "readonly Address[]".to_string()),
+                ],
+                [
+                    (address(32), "Address".to_string()),
+                    (address(32), "Address | undefined".to_string()),
+                    (address(32), "readonly Address[]".to_string()),
+                ],
+                [
+                    (PGPrimitive::String, "string".to_string()),
+                    (PGPrimitive::String, "string | undefined".to_string()),
+                    (PGPrimitive::String, "readonly string[]".to_string()),
+                ],
+            ]
+            .map(|mapping| mapping.to_vec())
+        );
     }
 
     #[test]

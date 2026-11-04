@@ -349,7 +349,7 @@ describe("Bytes entity id", () => {
           ~schema=`type Thing { id: Float! }`,
           ~configYaml=configYaml(~bytesType="hex"),
         )->ignore,
-      "schema.graphql:1:1: The 'id' field on entity Thing has unsupported type 'Float'. An entity id must be one of: ID, String, Int, BigInt, Bytes.",
+      "schema.graphql:1:1: The 'id' field on entity Thing has unsupported type 'Float'. An entity id must be one of: ID, String, Int, BigInt, Bytes, Address.",
     )
   })
 })

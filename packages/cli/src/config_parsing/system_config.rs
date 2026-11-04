@@ -1,8 +1,9 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
-        schema_source_label, ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn,
-        GqlScalar, GraphQLEnum, Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
+        schema_source_label, AddressType, ClickHouseEntityStorage, DefaultChainScope, Entity,
+        EntityColumn, GqlScalar, GraphQLEnum, Schema, MAX_PG_IDENTIFIER_LENGTH,
+        RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -1012,6 +1013,22 @@ impl SystemConfig {
     ) -> Result<Self> {
         let mut chains: ChainMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
+
+        let schema = Schema {
+            address_type: match &human_config {
+                HumanConfig::Evm(evm_config) => match evm_config.address_format {
+                    Some(super::human_config::evm::AddressFormat::Lowercase) => {
+                        AddressType::EvmLowercase
+                    }
+                    Some(super::human_config::evm::AddressFormat::Checksum) | None => {
+                        AddressType::EvmChecksum
+                    }
+                },
+                HumanConfig::Fuel(_) => AddressType::Fuel,
+                HumanConfig::Svm(_) => AddressType::Svm,
+            },
+            ..schema
+        };
 
         let base_config = human_config.get_base_config();
         let default_scope = base_config.default_chain_scope();
