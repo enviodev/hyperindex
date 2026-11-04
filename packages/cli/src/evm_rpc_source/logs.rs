@@ -8,14 +8,17 @@ use serde_json::{json, Value};
 use super::classify::is_result_cap_error;
 use super::client::{JsonRpcClient, RpcError};
 use super::RawLog;
-use crate::evm_hypersync_source::selection::BuiltLogSelection;
+use crate::evm_hypersync_source::selection::{
+    AddressFreeOrigin, BuiltLogSelection, Emitters, SelectionByAddress,
+};
 
 /// An address-free request the provider couldn't answer, read again by the
-/// addresses of the contracts it stood in for.
+/// addresses of the client-filtered contracts in it.
 #[napi(object, object_from_js = false)]
 pub struct AddressFallback {
     pub contract_names: Vec<String>,
-    /// The address-chunked `eth_getLogs` requests the range took instead.
+    /// The `eth_getLogs` requests the range took instead: the topic-only part
+    /// still address-free, and one per chunk of addresses.
     pub requests: i64,
     /// What the provider said about the address-free request.
     pub reason: String,
@@ -68,70 +71,73 @@ async fn request(
     client: &JsonRpcClient,
     from_block: u64,
     to_block: u64,
-    topics: &[Vec<String>],
-    addresses: &[String],
+    selection: &BuiltLogSelection,
 ) -> Result<Vec<RawLog>, RpcError> {
     client
         .request(
             "eth_getLogs",
-            json!([log_filter(from_block, to_block, topics, addresses)]),
+            json!([log_filter(
+                from_block,
+                to_block,
+                &selection.topics,
+                selection.addresses()
+            )]),
         )
         .await
 }
 
-/// Reads `selection` over the range. A client-filtered selection whose
-/// address-free answer is too large for the provider is read again by its
-/// contracts' registered addresses, `max_addresses_per_request` at a time.
-/// Nothing is remembered: the next range is asked address-free again.
+/// Reads `selection` over the range. An address-free selection holding
+/// client-filtered registrations whose answer is too large for the provider
+/// is read again the way `by_address` rebuilds it. Nothing is remembered: the
+/// next range is asked address-free again.
 pub(super) async fn request_selection_logs(
     client: &JsonRpcClient,
     from_block: u64,
     to_block: u64,
     selection: &BuiltLogSelection,
-    contract_addresses: impl FnOnce(&[String]) -> Vec<String>,
-    max_addresses_per_request: usize,
+    by_address: impl FnOnce(&AddressFreeOrigin) -> anyhow::Result<SelectionByAddress>,
 ) -> Result<SelectionLogs, RpcError> {
-    match request(
-        client,
-        from_block,
-        to_block,
-        &selection.topics,
-        &selection.addresses,
-    )
-    .await
-    {
-        Ok(logs) => Ok(SelectionLogs {
-            logs,
-            fallback: None,
-        }),
-        Err(error)
-            if !selection.client_filtered_contracts.is_empty() && is_answer_too_large(&error) =>
-        {
-            let addresses = contract_addresses(&selection.client_filtered_contracts);
-            let chunks: Vec<&[String]> = addresses.chunks(max_addresses_per_request).collect();
-            // Every chunk is awaited even once one has failed, so each request
-            // is made and billed; the first failure then decides the read.
-            let results = futures_util::future::join_all(
-                chunks
-                    .iter()
-                    .map(|chunk| request(client, from_block, to_block, &selection.topics, chunk)),
-            )
-            .await;
-            let mut logs = Vec::new();
-            for result in results {
-                logs.extend(result?);
-            }
-            Ok(SelectionLogs {
+    let error = match request(client, from_block, to_block, selection).await {
+        Ok(logs) => {
+            return Ok(SelectionLogs {
                 logs,
-                fallback: Some(AddressFallback {
-                    contract_names: selection.client_filtered_contracts.clone(),
-                    requests: chunks.len() as i64,
-                    reason: error.to_string(),
-                }),
+                fallback: None,
             })
         }
-        Err(error) => Err(error),
+        Err(error) => error,
+    };
+    let origin = match &selection.emitters {
+        Emitters::Any(origin)
+            if !origin.client_filtered_registrations.is_empty() && is_answer_too_large(&error) =>
+        {
+            origin
+        }
+        _ => return Err(error),
+    };
+    let SelectionByAddress {
+        contract_names,
+        log_selections,
+    } = by_address(origin).map_err(RpcError::Other)?;
+    // Every request is awaited even once one has failed, so each is made and
+    // billed; the first failure then decides the read.
+    let results = futures_util::future::join_all(
+        log_selections
+            .iter()
+            .map(|selection| request(client, from_block, to_block, selection)),
+    )
+    .await;
+    let mut logs = Vec::new();
+    for result in results {
+        logs.extend(result?);
     }
+    Ok(SelectionLogs {
+        logs,
+        fallback: Some(AddressFallback {
+            contract_names,
+            requests: log_selections.len() as i64,
+            reason: error.to_string(),
+        }),
+    })
 }
 
 #[cfg(test)]

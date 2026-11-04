@@ -303,22 +303,23 @@ describe("Realtime address-free reads", () => {
             ["3-0", "3-1", "6-1", "7-0", "7-1"],
             [],
             [
+              // The read over the cap, split up: the wildcard event alone,
+              // still address-free, and the Pair events by the two addresses
+              // registered before the block, one per request.
               "6-6 PairCreated any ok",
-              // The address-free read over the cap, read again by the two
-              // addresses registered before the block, one per request.
+              "6-6 PairCreated,Transfer any capped",
               `6-6 Transfer ${pair1} ok`,
               `6-6 Transfer ${pair2} ok`,
               // The contract registered in the block, caught up by its address.
               `6-6 Transfer ${pair3} ok`,
-              "6-6 Transfer any capped",
             ],
-            ["7-7 PairCreated any ok", "7-7 Transfer any ok"],
-            // One trace line for the one fallback.
+            ["7-7 PairCreated,Transfer any ok"],
+            // One trace line for the one fallback, counting its three requests.
             [
               (
                 Some(JSON.String("trace")),
                 JSON.Array([JSON.String("Pair")]),
-                Some(JSON.Number(2.)),
+                Some(JSON.Number(3.)),
               ),
             ],
           ))
@@ -355,11 +356,11 @@ describe("Realtime address-free reads", () => {
           ["3-0", "3-1", "6-1", "7-0", "7-1"],
           [],
           [
-            "6 PairCreated any | Transfer any",
+            "6 PairCreated,Transfer any",
             // The contract registered in the block, caught up by its address.
             `6 Transfer ${pair3}`,
           ],
-          ["7 PairCreated any | Transfer any"],
+          ["7 PairCreated,Transfer any"],
         ))
       },
     )

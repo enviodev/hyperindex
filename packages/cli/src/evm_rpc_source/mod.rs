@@ -315,6 +315,7 @@ struct PageQuery<'a> {
     from_block: u64,
     to_block: u64,
     selections: &'a [BuiltLogSelection],
+    address_set: &'a AddressSet,
     set_cache: &'a Arc<SetCache>,
     decoder: &'a Arc<SelectionDecoder>,
     block_selection: &'a BlockSelection,
@@ -599,6 +600,7 @@ impl EvmRpcClient {
             from_block,
             to_block,
             selections: &built.log_selections,
+            address_set,
             set_cache: &set_cache,
             decoder: &selection_decoder,
             block_selection: &block_selection,
@@ -885,14 +887,17 @@ impl EvmRpcClient {
                     query.from_block,
                     query.to_block,
                     selection,
-                    |contract_names| {
-                        let store = query.decoder.lock_store();
-                        contract_names
-                            .iter()
-                            .flat_map(|name| store.contract_addresses(name, false))
-                            .collect()
+                    |origin| {
+                        self.selection_builder.build_by_address(
+                            origin,
+                            query.address_set,
+                            |contract_names| {
+                                query
+                                    .address_set
+                                    .contract_chunks(contract_names, self.max_addresses_per_request)
+                            },
+                        )
                     },
-                    self.max_addresses_per_request,
                 )
                 .await?;
                 let items =

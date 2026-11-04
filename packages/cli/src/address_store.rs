@@ -335,21 +335,6 @@ impl StoreInner {
         self.contract_idx_by_name.get(name).copied()
     }
 
-    /// Every address registered under one contract, in set order, spelled the
-    /// way the chain shows addresses.
-    pub fn contract_addresses(&self, contract_name: &str, should_checksum: bool) -> Vec<String> {
-        match self.contract_idx(contract_name) {
-            None => Vec::new(),
-            Some(contract_idx) => self
-                .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
-                .into_iter()
-                .map(|id| {
-                    shown_address_string(self.ecosystem, should_checksum, &self.entry(id).key)
-                })
-                .collect(),
-        }
-    }
-
     fn sorted_ids(&self, mut ids: Vec<u64>) -> Vec<u64> {
         ids.sort_unstable_by(|&a, &b| self.sort_key(a).cmp(&self.sort_key(b)));
         ids
@@ -801,8 +786,17 @@ impl AddressStore {
     /// with.
     #[napi]
     pub fn contract_addresses(&self, contract_name: String, should_checksum: bool) -> Vec<String> {
-        self.read()
-            .contract_addresses(&contract_name, should_checksum)
+        let store = self.read();
+        match store.contract_idx(&contract_name) {
+            None => Vec::new(),
+            Some(contract_idx) => store
+                .sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
+                .into_iter()
+                .map(|id| {
+                    shown_address_string(store.ecosystem, should_checksum, &store.entry(id).key)
+                })
+                .collect(),
+        }
     }
 }
 
@@ -1292,6 +1286,21 @@ impl AddressSet {
             ids: ids.into(),
             cache: OnceLock::new(),
         }
+    }
+
+    /// Every address the store holds for `contract_names`, in set order, as
+    /// consecutive sets of at most `max_addresses` each.
+    pub fn contract_chunks(&self, contract_names: &[String], max_addresses: usize) -> Vec<Self> {
+        let store = self.store.read().unwrap();
+        let contract_idxs: Vec<u32> = contract_names
+            .iter()
+            .filter_map(|name| store.contract_idx(name))
+            .collect();
+        let ids = store.sorted_live_ids(0, |entry| contract_idxs.contains(&entry.contract_idx));
+        drop(store);
+        ids.chunks(max_addresses.max(1))
+            .map(|chunk| Self::new(self.store.clone(), chunk.to_vec()))
+            .collect()
     }
 
     pub fn cache(&self) -> &Arc<SetCache> {
@@ -2007,6 +2016,38 @@ mod tests {
                 vec![C.to_string()],
                 2,
                 1,
+            )
+        );
+    }
+
+    #[test]
+    fn contract_chunks_cover_the_named_contracts_in_set_order() {
+        let store = store();
+        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "D", 200)]);
+        let chunks = |names: &[&str], max_addresses| {
+            store
+                .empty_set()
+                .contract_chunks(
+                    &names
+                        .iter()
+                        .map(|name| name.to_string())
+                        .collect::<Vec<_>>(),
+                    max_addresses,
+                )
+                .iter()
+                .map(AddressSet::addresses_for_test)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (
+                chunks(&["C", "D"], 2),
+                chunks(&["C"], 5),
+                chunks(&["Unknown"], 5)
+            ),
+            (
+                vec![vec![B.to_string(), C.to_string()], vec![A.to_string()]],
+                vec![vec![B.to_string(), A.to_string()]],
+                Vec::<Vec<String>>::new(),
             )
         );
     }
