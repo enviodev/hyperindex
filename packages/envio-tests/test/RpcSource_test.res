@@ -914,3 +914,43 @@ chains:
     ])
   })
 })
+
+// A partition's selection is never empty, so no source is ever asked for one:
+// a chain with nothing to fetch is refused before any partition exists.
+let nothingToFetch = Scenario.make(
+  ~schema,
+  ~handlers=handlersSelecting(~block=[], ~transaction=[]),
+  ~configYaml=`
+name: rpc-source-nothing-to-fetch
+rollback_on_reorg: false
+${tokenEvents}
+chains:
+  - id: 1337
+    start_block: ${transferBlock->Int.toString}
+    rpc:
+      url: ${url}
+      for: sync
+    contracts:
+      - name: Token
+`,
+)
+
+describe("RPC source with nothing to fetch", () => {
+  Async.it("Refuses a chain with nothing to fetch before asking the node anything", async t => {
+    answerWith()
+    let since = mock()["requests"]->Array.length
+    let refusal = try {
+      await nothingToFetch->Scenario.run(
+        ~yamlSources=true,
+        async (~indexer as _, ~source as _) => (),
+      )
+      None
+    } catch {
+    | exn => exn->Utils.exnMessage
+    }
+    t.expect((
+      refusal->Option.map(message => message->String.includes("Nothing to fetch on chain 1337")),
+      callCounts(~since, ["eth_getLogs"]),
+    )).toEqual((Some(true), [0]))
+  })
+})
