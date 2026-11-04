@@ -164,6 +164,7 @@ let beginRollbackDiff: (
   ~rolledBackAddresses: array<AddressRows.key>,
 ) => Frontier.t
 let recordWriteFailure: (t, exn) => unit
+let abandonWrites: t => unit
 let beginWriteFiber: (t, promise<unit>) => unit
 let endWriteFiber: t => unit
 let beginFinalizeFiber: (t, promise<unit>) => unit

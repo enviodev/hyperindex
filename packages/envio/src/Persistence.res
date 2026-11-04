@@ -137,6 +137,8 @@ type storage = {
   ) => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
+  // `ConnectionLost` when the connection went, which a load can simply run
+  // again.
   @raises("StorageError")
   loadOrThrow: (~filter: EntityFilter.t, ~table: Table.table) => promise<array<unknown>>,
   // Creates whatever indexes the filters need and aren't there yet, resolving
@@ -161,8 +163,8 @@ type storage = {
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
-  // Update chain metadata. Throws `Unwritten` when the connection went: the
-  // upsert lands the same however often it is sent.
+  // Update chain metadata. Throws `ConnectionLost` when the connection went:
+  // the upsert lands the same however often it is sent.
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
   pruneStaleCheckpoints: (
@@ -195,9 +197,9 @@ type storage = {
     ~entityConfig: Internal.entityConfig,
     ~floors: RollbackFloors.t,
   ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
-  // Write batch to storage
-  // Throws `Unwritten` when the connection went before anything of the batch
-  // committed.
+  // Write batch to storage. Throws `ConnectionLost` only when the connection
+  // went before anything of the batch committed; at the COMMIT, when it may
+  // have landed, it stays a `StorageError`.
   writeBatch: (
     ~batch: Batch.t,
     ~rollback: option<rollback>,
@@ -233,9 +235,10 @@ type t = {
 
 exception StorageError({message: string, reason: exn})
 
-// A write the connection dropped before it landed, and that can be sent again
-// as it was once the database answers.
-exception Unwritten(string)
+// The database connection went before the operation got through. Raised only
+// where sending the operation again as it was is safe: a read, an upsert, or a
+// batch nothing of which committed.
+exception ConnectionLost(string)
 
 // A start the operator has to act on, not a failure: what it says is all they
 // need, so it's printed once, without a stack trace.

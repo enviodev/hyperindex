@@ -99,16 +99,25 @@ pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
 /// statement or its data did: the server ending the session or shutting down,
 /// the socket dropping, or a new connection refused or cut off while the server
 /// is away. Nothing the failed statement sent is known to have run.
+///
+/// Narrow on purpose, since what it accepts is sent again for as long as it
+/// fails. `08P01` is left out: the server raises it for a malformed message,
+/// which a resend repeats. So is a socket error that isn't the peer going, such
+/// as a certificate the trust store refuses.
 pub fn is_connection_lost(error: &anyhow::Error) -> bool {
     if let Some(database) = database_error(error) {
-        let code = database.code().code();
-        return code.starts_with("08") || matches!(code, "57P01" | "57P02" | "57P03");
+        return matches!(
+            database.code().code(),
+            "08000" | "08001" | "08003" | "08004" | "08006" | "57P01" | "57P02" | "57P03"
+        );
     }
     error.chain().any(|cause| {
         cause
             .downcast_ref::<tokio_postgres::Error>()
             .is_some_and(tokio_postgres::Error::is_closed)
-            || cause.is::<std::io::Error>()
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| is_peer_gone(io.kind()))
             || matches!(
                 cause.downcast_ref::<deadpool_postgres::PoolError>(),
                 Some(deadpool_postgres::PoolError::Timeout(
@@ -116,6 +125,20 @@ pub fn is_connection_lost(error: &anyhow::Error) -> bool {
                 ))
             )
     })
+}
+
+fn is_peer_gone(kind: std::io::ErrorKind) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        kind,
+        ConnectionReset
+            | ConnectionRefused
+            | ConnectionAborted
+            | BrokenPipe
+            | UnexpectedEof
+            | NotConnected
+            | TimedOut
+    )
 }
 
 /// What a lost connection crosses the boundary as, whatever the server or the
@@ -179,6 +202,28 @@ mod tests {
     fn a_failure_of_our_own_is_not_a_lost_connection() {
         let error = anyhow::anyhow!("Internal error: 2 values for 3 columns");
         assert!(!is_connection_lost(&error));
+    }
+
+    /// The TLS connector reports a certificate it refuses as a socket error,
+    /// and sending again would be refused the same way, so only the peer going
+    /// counts.
+    #[test]
+    fn only_a_socket_error_that_is_the_peer_going_is_a_lost_connection() {
+        let lost = |kind| {
+            is_connection_lost(
+                &anyhow::Error::new(std::io::Error::new(kind, "socket"))
+                    .context("Failed taking a Postgres connection from the pool"),
+            )
+        };
+        assert_eq!(
+            (
+                lost(std::io::ErrorKind::ConnectionReset),
+                lost(std::io::ErrorKind::UnexpectedEof),
+                lost(std::io::ErrorKind::InvalidData),
+                lost(std::io::ErrorKind::Other),
+            ),
+            (true, true, false, false)
+        );
     }
 
     /// A statement the client turns away reads as the cascade of the failure
