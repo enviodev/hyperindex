@@ -54,6 +54,18 @@ let getLogs = ref(Serve)
 let height = ref(transferBlock)
 let refused = ref(0)
 
+// While set, the node keeps the other Token's eth_getLogs waiting until the
+// test opens the gate, so that partition reads its block only once the
+// indexer has taken in the first one's page.
+let holdOtherPartition = ref(false)
+type gate = {opened: promise<unit>, open_: unit => unit}
+let makeGate = () => {
+  let open_ = ref(() => ())
+  let opened = Promise.make((resolve, _reject) => open_ := resolve)
+  {opened, open_: () => open_.contents()}
+}
+let otherPartitionGate = ref(makeGate())
+
 let answerWith = (
   ~block as blockAnswer=defaultBlock(),
   ~transaction as transactionAnswer=defaultTransaction(),
@@ -61,7 +73,10 @@ let answerWith = (
   ~logs as logsAnswer=[transferFrom(~address=tokenAddress, ~logIndex=0)],
   ~getLogs as getLogsAnswer=Serve,
   ~height as heightAnswer=transferBlock,
+  ~holdOtherPartition as hold=false,
 ) => {
+  holdOtherPartition := hold
+  otherPartitionGate := makeGate()
   block := blockAnswer
   transaction := transactionAnswer
   receipt := receiptAnswer
@@ -90,49 +105,87 @@ let servedLogs = (filter: dict<JSON.t>) => {
   })
 }
 
-let mock = RpcE2eChain.serveDuringSuite(() =>
-  MockRpcServer.start(~port, ~handler=body => {
-    let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
-    let method = request->Dict.getUnsafe("method")->JSON.Decode.string->Option.getOrThrow
-    let arg = index =>
-      request
-      ->Dict.getUnsafe("params")
-      ->JSON.Decode.array
-      ->Option.getOrThrow
-      ->Array.getUnsafe(index)
-    let result = result => (
+let answer = body => {
+  let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
+  let method = request->Dict.getUnsafe("method")->JSON.Decode.string->Option.getOrThrow
+  let arg = index =>
+    request
+    ->Dict.getUnsafe("params")
+    ->JSON.Decode.array
+    ->Option.getOrThrow
+    ->Array.getUnsafe(index)
+  let result = result => (
+    200,
+    JSON.stringify(JSON.Object(dict{"jsonrpc": String("2.0"), "id": Number(1.), "result": result})),
+  )
+  switch (method, getLogs.contents) {
+  | ("eth_getLogs", Refuse({count, error})) if refused.contents < count =>
+    refused := refused.contents + 1
+    (
       200,
       JSON.stringify(
-        JSON.Object(dict{"jsonrpc": String("2.0"), "id": Number(1.), "result": result}),
+        JSON.Object(
+          dict{
+            "jsonrpc": String("2.0"),
+            "id": Number(1.),
+            "error": Object(dict{"code": Number(-32005.), "message": String(error)}),
+          },
+        ),
       ),
     )
-    switch (method, getLogs.contents) {
-    | ("eth_getLogs", Refuse({count, error})) if refused.contents < count =>
-      refused := refused.contents + 1
-      (
-        200,
-        JSON.stringify(
-          JSON.Object(
-            dict{
-              "jsonrpc": String("2.0"),
-              "id": Number(1.),
-              "error": Object(dict{"code": Number(-32005.), "message": String(error)}),
-            },
-          ),
-        ),
-      )
-    | ("eth_getLogs", _) =>
-      result(JSON.Array(arg(0)->JSON.Decode.object->Option.getOrThrow->servedLogs))
-    | ("eth_getBlockByNumber", _) =>
-      let number = arg(0)->RpcE2eChain.hexParam
-      result(number === transferBlock ? block.contents : RpcE2eChain.blockJson(number))
-    | ("eth_getTransactionByHash", _) => result(transaction.contents)
-    | ("eth_getTransactionReceipt", _) => result(receipt.contents)
-    | ("eth_blockNumber", _) => result(JSON.String(RpcE2eChain.hex(height.contents)))
-    | ("eth_chainId", _) => result(JSON.String(RpcE2eChain.hex(1337)))
-    | _ => JsError.throwWithMessage(`Unexpected RPC method ${method}`)
-    }
+  | ("eth_getLogs", _) =>
+    result(JSON.Array(arg(0)->JSON.Decode.object->Option.getOrThrow->servedLogs))
+  | ("eth_getBlockByNumber", _) =>
+    let number = arg(0)->RpcE2eChain.hexParam
+    result(number === transferBlock ? block.contents : RpcE2eChain.blockJson(number))
+  | ("eth_getTransactionByHash", _) => result(transaction.contents)
+  | ("eth_getTransactionReceipt", _) => result(receipt.contents)
+  | ("eth_blockNumber", _) => result(JSON.String(RpcE2eChain.hex(height.contents)))
+  | ("eth_chainId", _) => result(JSON.String(RpcE2eChain.hex(1337)))
+  | _ => JsError.throwWithMessage(`Unexpected RPC method ${method}`)
+  }
+}
+
+let requests: array<string> = []
+let mock = () => {"requests": requests}
+
+let isOtherPartitionsLogs = body =>
+  body->String.includes(`"eth_getLogs"`) &&
+    body->String.toLowerCase->String.includes(otherTokenAddress)
+
+let rpcServer = ref(None)
+Async.beforeAll(async () => {
+  let server = MockRpcServer.createServer((request, response) => {
+    let body = ref("")
+    request->MockRpcServer.setEncoding("utf8")
+    request->MockRpcServer.onData(chunk => body := body.contents ++ chunk)
+    request->MockRpcServer.onEnd(
+      () => {
+        requests->Array.push(body.contents)->ignore
+        let reply = async () => {
+          if holdOtherPartition.contents && body.contents->isOtherPartitionsLogs {
+            await otherPartitionGate.contents.opened
+          }
+          let (status, json) = answer(body.contents)
+          response->MockRpcServer.writeHead(status, dict{"Content-Type": "application/json"})
+          response->MockRpcServer.end_(json)
+        }
+        reply()->ignore
+      },
+    )
   })
+  await Promise.make((resolve, _reject) =>
+    server->MockRpcServer.listenOnHost(port, "127.0.0.1", () => resolve())
+  )
+  rpcServer := Some(server)
+})
+Async.afterAll(async () =>
+  switch rpcServer.contents {
+  | Some(server) =>
+    server->MockRpcServer.closeAllConnections
+    await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
+  | None => ()
+  }
 )
 
 let schema = `
@@ -216,7 +269,7 @@ ${tokenEvents}${chainYaml(~addresses)}`,
 
 // The requests made since `since`, as how many times each method was called.
 let callCounts = (~since, methods) => {
-  let requests = mock().requests->Array.slice(~start=since)
+  let requests = mock()["requests"]->Array.slice(~start=since)
   methods->Array.map(method =>
     requests->Array.filter(body => body->String.includes(`"method":"${method}"`))->Array.length
   )
@@ -255,7 +308,7 @@ let readPayloads = async (indexer: IndexerRunner.t) => {
 // Indexes the transfer block and hands back what came of it: the run either
 // reaches its end block or stops on an error.
 let indexTransferBlock = async (scenario, ~maxAddrInPartition=?, ~whileRunning=?, ~atEnd=?) => {
-  let since = mock().requests->Array.length
+  let since = mock()["requests"]->Array.length
   let exited = ref(false)
   let error = ref(None)
   let payloads = ref([])
@@ -295,6 +348,20 @@ let onlyBlock = outcome => outcome->onlyPayload->Pair.first
 let transactionReads = ["eth_getTransactionByHash", "eth_getTransactionReceipt"]
 
 let parse = JSON.parseOrThrow
+
+// Opens the gate once the indexer has taken in a page: the first partition's,
+// since the other one's is still being held.
+let openGateAfterFirstPage = async (indexer: IndexerRunner.t) => {
+  let pages = async () =>
+    (await indexer.metric("envio_fetching_block_range_total"))->Array.map(({value}) => value)
+  let waited = ref(0)
+  while (await pages()) == [] && waited.contents < 500 {
+    // Real time: the first page comes back over a real socket.
+    await Utils.delay(10)
+    waited := waited.contents + 1
+  }
+  otherPartitionGate.contents.open_()
+}
 
 describe("RPC field selection", () => {
   let transactionOnly = selecting(~transaction=["gas", "input", "nonce"])
@@ -490,8 +557,12 @@ describe("RPC field selection", () => {
         transferFrom(~address=tokenAddress, ~logIndex=0),
         transferFrom(~address=otherTokenAddress, ~logIndex=1),
       ],
+      ~holdOtherPartition=true,
     )
-    let outcome = await gasOverTwoPartitions->indexTransferBlock(~maxAddrInPartition=1)
+    let outcome = await gasOverTwoPartitions->indexTransferBlock(
+      ~maxAddrInPartition=1,
+      ~whileRunning=openGateAfterFirstPage,
+    )
     t.expect((
       outcome.payloads->Array.map(((_, _, transaction)) => transaction),
       callCounts(~since=outcome.since, ["eth_getLogs", "eth_getTransactionByHash"]),
@@ -507,8 +578,12 @@ describe("RPC field selection", () => {
         transferFrom(~address=tokenAddress, ~logIndex=0),
         transferFrom(~address=otherTokenAddress, ~logIndex=1),
       ],
+      ~holdOtherPartition=true,
     )
-    let outcome = await toOverTwoPartitions->indexTransferBlock(~maxAddrInPartition=1)
+    let outcome = await toOverTwoPartitions->indexTransferBlock(
+      ~maxAddrInPartition=1,
+      ~whileRunning=openGateAfterFirstPage,
+    )
     t.expect((
       outcome.payloads->Array.map(((_, _, transaction)) => transaction),
       callCounts(~since=outcome.since, ["eth_getTransactionByHash"]),
@@ -622,7 +697,7 @@ describe("RPC answers worth retrying", () => {
 
 // The eth_getLogs ranges asked for since `since`, as numbers.
 let logRangesSince = (~since) =>
-  mock().requests
+  mock()["requests"]
   ->Array.slice(~start=since)
   ->Array.filterMap(body => {
     let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
@@ -655,7 +730,7 @@ ${tokenEvents}${chainYaml(~startBlock=0, ~endBlock=1_000_000, ~addresses=[tokenA
 )
 
 let pagesAsked = async (~count) => {
-  let since = mock().requests->Array.length
+  let since = mock()["requests"]->Array.length
   let ranges = ref([])
   await longRange->Scenario.run(~yamlSources=true, async (~indexer as _, ~source as _) => {
     await Scenario.waitUntil(
@@ -694,7 +769,7 @@ describe("RPC block ranges", () => {
 
 // The filters a partition's eth_getLogs carry, as `address;topics`, sorted.
 let logFiltersSince = (~since) =>
-  mock().requests
+  mock()["requests"]
   ->Array.slice(~start=since)
   ->Array.filterMap(body => {
     let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
