@@ -108,6 +108,17 @@ let startHyperSyncFront: (
   };
 }`)
 
+// Only a head pushed past it brings the chain to this log, whose transaction
+// the node can't serve the selected `gas` of.
+let unservableBlock = 200
+let unservableLog: ServedEvmChain.log = {
+  blockNumber: unservableBlock,
+  logIndex: 0,
+  address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
+  // keccak256("TestEvent()")
+  topics: ["0x24ec1d3ff24c2f6ff210738839dbc339cd45a5294d85c79361016243157aae7b"],
+}
+
 let rpcServer = ref(None)
 let wsServer = ref(None)
 let hyperSyncServer = ref(None)
@@ -118,7 +129,21 @@ Async.beforeAll(async () => {
       await MockRpcServer.makeWithParams(~port=rpcPort, ~getResult=(~method, ~params) =>
         switch method {
         | "eth_blockNumber" => JSON.String(ServedEvmChain.hex(100))
-        | "eth_getLogs" => JSON.Array([])
+        | "eth_getLogs" =>
+          let filter =
+            params
+            ->JSON.Decode.array
+            ->Option.getOrThrow
+            ->Array.getUnsafe(0)
+            ->JSON.Decode.object
+            ->Option.getOrThrow
+          let block = key => filter->Dict.get(key)->Option.getOrThrow->ServedEvmChain.quantity
+          block("fromBlock") <= unservableBlock && unservableBlock <= block("toBlock")
+            ? JSON.Array([unservableLog->ServedEvmChain.rpcLog])
+            : JSON.Array([])
+        // A node that leaves out a field the config selects.
+        | "eth_getTransactionByHash" =>
+          JSON.Object(dict{"hash": JSON.String(unservableLog->ServedEvmChain.transactionHash)})
         | "eth_getBlockByNumber" =>
           params
           ->JSON.Decode.array
@@ -214,10 +239,10 @@ let handlers = `
 import { indexer } from "envio";
 indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
 `
-let chainYaml = source =>
+let chainYaml = (~fieldSelection="", source) =>
   `
 name: height-stream
-rollback_on_reorg: false
+${fieldSelection}rollback_on_reorg: false
 contracts:
   - name: Gravatar
     events:
@@ -231,11 +256,12 @@ ${source}
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 `
-let wsChain = wsUrl =>
+let wsChain = (~fieldSelection=?, wsUrl) =>
   Scenario.make(
     ~schema,
     ~handlers,
     ~configYaml=chainYaml(
+      ~fieldSelection?,
       `    rpc:
       url: http://127.0.0.1:${rpcPort->Int.toString}
       ws: ${wsUrl}
@@ -245,6 +271,10 @@ let wsChain = wsUrl =>
   )
 
 let ws = wsChain(`ws://127.0.0.1:${wsPort->Int.toString}`)
+let selectingGas = wsChain(
+  ~fieldSelection="field_selection:\n  transaction_fields:\n    - gas\n",
+  `ws://127.0.0.1:${wsPort->Int.toString}`,
+)
 let refused = wsChain(`ws://127.0.0.1:${refusedWsPort->Int.toString}`)
 // Past the last port, so the WebSocket constructor throws on it.
 let unconnectable = wsChain("ws://127.0.0.1:99999")
@@ -476,6 +506,29 @@ describe("WebSocket height stream", () => {
     await Scenario.waitUntil(() => closed.contents, ~message="the stale socket to be closed")
     t.expect(indexer->streamDownReasons).toEqual(["stale"])
   })
+
+  selectingGas->Scenario.it(
+    "Closes the stream of a source it stops using",
+    ~yamlSources=true,
+    // The chain has no other source to turn to, which stops the indexer.
+    ~onError=_ => (),
+    async (~t, ~indexer, ~source as _) => {
+      let closed = ref(false)
+      setUp(~onSubscribe=socket => {
+        socket->WsServer.onClose(() => closed := true)
+        socket->confirm
+      })
+      await indexer->waitForConnects(1)
+      latestSocket()->pushHead(unservableBlock)
+      await Scenario.waitUntil(() => closed.contents, ~message="the stream to be closed")
+      t.expect(
+        (await indexer.metric("envio_source_height_stream_disconnects_total"))->Array.map(({
+          labels,
+          value,
+        }) => (labels->Dict.get("reason"), value)),
+      ).toEqual([(Some("unsubscribed"), "1")])
+    },
+  )
 
   ws->Scenario.it(
     "Counts a connection's service from when it went live, not from its latest head",
