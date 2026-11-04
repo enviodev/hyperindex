@@ -584,6 +584,83 @@ describe("HyperSync reorg detection", () => {
   })
 })
 
+// The rollback a reorg starts asks for the hashes of the blocks it stored, and
+// a server can answer that in pages: the client keeps asking until it has all
+// of them, and the rollback lands on the last block whose hash still matches.
+let rolledBackChain = chain(~endBlock=None, ~rollbackOnReorg=true, ~maxReorgDepth=200)
+describe("HyperSync rollback", () => {
+  Async.it("Pages through the block hashes a rollback asks for", async t => {
+    let hashed = numbers =>
+      numbers->Array.map(
+        number =>
+          JSON.parseOrThrow(
+            `{"number":${number->Int.toString},"hash":"${number === 9
+                ? parentHash
+                : blockHash(number)}"}`,
+          ),
+      )
+    rolledBackChain->serve(
+      ~height=30,
+      [
+        {
+          ...page,
+          nextBlock: 21,
+          rollbackGuard: JSON.parseOrThrow(
+            `{"blockNumber":20,"timestamp":1700000100,"hash":"${blockHash(
+                20,
+              )}","firstBlockNumber":10,"firstParentHash":"${parentHash}"}`,
+          ),
+        },
+        {
+          nextBlock: 31,
+          rollbackGuard: JSON.parseOrThrow(
+            `{"blockNumber":30,"timestamp":1700000200,"hash":"${blockHash(
+                30,
+              )}","firstBlockNumber":21,"firstParentHash":"${blockHash(99)}"}`,
+          ),
+        },
+        // The hashes the rollback asks for, in two pages.
+        {blocks: hashed([9, 10]), nextBlock: 11},
+        {blocks: hashed([9, 10, 11]), nextBlock: 12},
+      ],
+    )
+    await rolledBackChain.scenario->Scenario.run(
+      ~yamlSources=true,
+      async (~indexer, ~source as _) => {
+        let waited = ref(0)
+        while (
+          (await indexer->metricValues("envio_rollback_total")) != ["1"] && waited.contents < 500
+        ) {
+          // Real time: every page comes back over a real socket.
+          await Utils.delay(10)
+          waited := waited.contents + 1
+        }
+        let hashQueries = queries()->Array.filter(
+          query =>
+            query
+            ->queryField("field_selection")
+            ->Option.flatMap(JSON.Decode.object)
+            ->Option.mapOr(false, selection => selection->Dict.get("log")->Option.isNone),
+        )
+        t.expect((
+          hashQueries->Array.map(
+            query => (query->queryField("from_block"), query->queryField("to_block")),
+          ),
+          await indexer->metricValues("envio_rollback_total"),
+          await indexer->metricValues("envio_rollback_target_block"),
+        )).toEqual((
+          [
+            (Some(JSON.Number(9.)), Some(JSON.Number(12.))),
+            (Some(JSON.Number(10.)), Some(JSON.Number(12.))),
+          ],
+          ["1"],
+          ["11"],
+        ))
+      },
+    )
+  })
+})
+
 describe("HyperSync heights", () => {
   Async.it("Reads the height off the server", async t => {
     throughFortyOne->serve(~height=42, [])
