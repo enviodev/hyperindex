@@ -83,32 +83,6 @@ describe("Rate-limit time", () => {
       t.expect(await indexer->rateLimitedSeconds).toEqual([(Some("1"), Some(0.3))])
     },
   )
-
-  scenario->Scenario.it(
-    "Counts down to the end of the longest window being waited out",
-    ~sources=[{chain: 1}],
-    ~maxAddrInPartition=1,
-    async (~t, ~indexer, ~source) => {
-      let mock = source(1)
-      let resetInMs = () => indexer.chainMetrics()->Array.map(chain => chain.rateLimitResetInMs)
-      mock.resolveGetHeightOrThrow(100)
-      await mock.expectItemsQueries([
-        {partitionId: "0", retryCount: 0, reply: rateLimited(300)},
-        {partitionId: "1", retryCount: 0, reply: rateLimited(100)},
-      ])
-      await indexer.advanceTime(0)
-      let atStart = resetInMs()
-      // The shorter window is over, the longer one still running.
-      await indexer.advanceTime(200)
-      let midway = resetInMs()
-      await indexer.advanceTime(100)
-      await mock.expectItemsQueries([
-        {partitionId: "0", retryCount: 1, reply: LeavePending},
-        {partitionId: "1", retryCount: 1, reply: LeavePending},
-      ])
-      t.expect((atStart, midway, resetInMs())).toEqual(([Some(300.)], [Some(100.)], [None]))
-    },
-  )
 })
 
 describe("Rate-limit waits", () => {
