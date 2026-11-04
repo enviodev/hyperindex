@@ -447,9 +447,23 @@ describe("RPC field selection", () => {
   let gas = selecting(~transaction=["gas"])
   Async.it("Stops rather than index an event missing a selected field", async t => {
     answerWith(~transaction=parse(`{"hash":"${txHash}"}`))
-    let outcome = await gas->indexTransferBlock
-    t.expect((outcome.payloads, outcome.error)).toEqual((
+    // The block it happened on is what makes an unservable selection
+    // diagnosable, so the error line names it.
+    let failedAt = ref([])
+    let outcome = await gas->indexTransferBlock(
+      ~atEnd=async indexer =>
+        failedAt :=
+          indexer.allLogsAsJson()->Array.filterMap(
+            line =>
+              switch (line->Dict.get("level"), line->Dict.get("blockNumber")) {
+              | (Some(String("error")), Some(Number(blockNumber))) => Some(blockNumber)
+              | _ => None
+              },
+          ),
+    )
+    t.expect((outcome.payloads, failedAt.contents, outcome.error)).toEqual((
       [],
+      [100.],
       Some(
         "The indexer doesn't have data-sources which can continue fetching. The last one was disabled because the RPC response is missing the selected transaction field: gas. Please double-check your RPC provider returns correct data.",
       ),
@@ -566,8 +580,16 @@ describe("RPC field selection", () => {
     )
     t.expect((
       outcome.payloads->Array.map(((_, _, transaction)) => transaction),
-      callCounts(~since=outcome.since, ["eth_getLogs", "eth_getTransactionByHash"]),
-    )).toEqual(([parse(`{"gas":"21000n"}`), parse(`{"gas":"21000n"}`)], [2, 1]))
+      callCounts(
+        ~since=outcome.since,
+        ["eth_getLogs", "eth_getBlockByNumber", "eth_getTransactionByHash"],
+      ),
+    )).toEqual((
+      [parse(`{"gas":"21000n"}`), parse(`{"gas":"21000n"}`)],
+      // Each partition still reads the block its range ends on: that read is
+      // its own reorg observation. Only the transaction comes from the store.
+      [2, 2, 1],
+    ))
   })
 
   // `to` is null on a contract creation. Judged by stored values alone the

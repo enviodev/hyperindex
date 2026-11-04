@@ -431,6 +431,85 @@ describe("WebSocket height stream", () => {
   )
 
   ws->Scenario.it(
+    "Keeps backing off for a connection that never went live, however long it stayed open",
+    ~yamlSources=true,
+    async (~t, ~indexer, ~source as _) => {
+      setUp()
+      await waitForSockets(1)
+      let first = await indexer->dropAndExpectReconnectWithin(~delay=250)
+      await waitForSockets(2)
+      // Past the bar a live connection would have to clear, but never live.
+      await indexer.advanceTime(15_000)
+      let second = await indexer->dropAndExpectReconnectWithin(~delay=500)
+      t.expect((first, second, indexer->streamDownReasons)).toEqual((
+        reconnected,
+        reconnected,
+        ["closed", "closed"],
+      ))
+    },
+  )
+
+  ws->Scenario.it(
+    "Keeps backing off for short-lived connections that delivered heads",
+    ~yamlSources=true,
+    async (~t, ~indexer, ~source as _) => {
+      setUp(
+        ~onSubscribe=socket => {
+          socket->confirm
+          socket->pushHead(101)
+        },
+      )
+      await indexer->waitForKnownHeight(101)
+      let first = await indexer->dropAndExpectReconnectWithin(~delay=250)
+      await indexer->waitForConnects(2)
+      // A head is proof of delivery, not of a connection worth making.
+      await indexer.advanceTime(1_000)
+      let second = await indexer->dropAndExpectReconnectWithin(~delay=500)
+      t.expect((first, second, indexer->streamDownReasons)).toEqual((
+        reconnected,
+        reconnected,
+        ["closed", "closed"],
+      ))
+    },
+  )
+
+  ws->Scenario.it(
+    "Starts the backoff over when a connection goes stale after serving, however far it had escalated",
+    ~yamlSources=true,
+    async (~t, ~indexer, ~source as _) => {
+      setUp(~onSubscribe=confirm)
+      await indexer->waitForConnects(1)
+      let first = await indexer->dropAndExpectReconnectWithin(~delay=250)
+      await indexer->waitForConnects(2)
+      let second = await indexer->dropAndExpectReconnectWithin(~delay=500)
+      await indexer->waitForConnects(3)
+      await indexer.advanceTime(wsStaleTimeout)
+      let afterServing = await indexer->expectRetryWithin(
+        ~delay=250,
+        ~attempts=() => sockets->Array.length,
+      )
+      t.expect((first, second, afterServing, indexer->streamDownReasons)).toEqual((
+        reconnected,
+        reconnected,
+        reconnected,
+        ["closed", "closed", "stale"],
+      ))
+    },
+  )
+
+  ws->Scenario.it(
+    "Stays down while the node answers the subscribe with nothing it can read",
+    ~yamlSources=true,
+    async (~t, ~indexer, ~source as _) => {
+      setUp(~onSubscribe=socket => socket->WsServer.send("not json at all"))
+      await waitForSockets(1)
+      // Real time: the frame crosses a real socket, and is read to no effect.
+      await letSocketsSettle()
+      t.expect((await indexer->connects, indexer->streamDowns)).toEqual((["0"], []))
+    },
+  )
+
+  ws->Scenario.it(
     "Keeps backing off when live connections die younger than the wait before them",
     ~yamlSources=true,
     async (~t, ~indexer, ~source as _) => {

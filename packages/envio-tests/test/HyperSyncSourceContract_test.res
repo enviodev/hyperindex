@@ -644,15 +644,24 @@ describe("HyperSync rollback", () => {
         )
         t.expect((
           hashQueries->Array.map(
-            query => (query->queryField("from_block"), query->queryField("to_block")),
+            query => (
+              query->queryField("from_block"),
+              query->queryField("to_block"),
+              query->queryField("include_all_blocks"),
+              query->queryField("field_selection"),
+            ),
           ),
           await indexer->metricValues("envio_rollback_total"),
           await indexer->metricValues("envio_rollback_target_block"),
         )).toEqual((
-          [
-            (Some(JSON.Number(9.)), Some(JSON.Number(12.))),
-            (Some(JSON.Number(10.)), Some(JSON.Number(12.))),
-          ],
+          [9., 10.]->Array.map(
+            fromBlock => (
+              Some(JSON.Number(fromBlock)),
+              Some(JSON.Number(12.)),
+              Some(JSON.Boolean(true)),
+              Some(JSON.parseOrThrow(`{"block":["hash","number"]}`)),
+            ),
+          ),
           ["1"],
           ["11"],
         ))
