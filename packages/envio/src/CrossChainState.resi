@@ -46,5 +46,5 @@ let reportFinished: t => unit
 let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
-  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.Dispatched.t) => promise<unit>,
 ) => promise<unit>

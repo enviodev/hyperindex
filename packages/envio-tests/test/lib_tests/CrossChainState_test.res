@@ -292,7 +292,9 @@ describe("CrossChainState fetch control", () => {
     )
 
     t.expect(
-      dispatched->Array.map(((chainId, action)) => (chainId, action === WaitingForNewBlock)),
+      dispatched->Array.map(
+        ((chainId, action)) => (chainId, action === FetchState.Dispatched.WaitingForNewBlock),
+      ),
     ).toEqual([(1, true), (2, true)])
   })
 
@@ -431,7 +433,7 @@ describe("CrossChainState fetch control", () => {
     t.expect(
       dispatched,
       ~message="At 9% free, no chain starts a query or a head poll — a saturated pool guarantees a ready-item batch or landing response re-ticks the scheduler. Only the chain without a known height keeps polling, since height discovery is its sole way in",
-    ).toEqual([(3, FetchState.WaitingForNewBlock)])
+    ).toEqual([(3, FetchState.Dispatched.WaitingForNewBlock)])
   })
 
   Async.it(
@@ -645,7 +647,6 @@ describe("CrossChainState fetch control", () => {
             chainId,
             switch action {
             | WaitingForNewBlock => "waitingForNewBlock"
-            | NothingToQuery => "nothingToQuery"
             | Ready(queries) =>
               "ready:" ++
               queries
@@ -893,7 +894,6 @@ describe("ChainState cold start", () => {
           chainId,
           switch action {
           | WaitingForNewBlock => "waitingForNewBlock"
-          | NothingToQuery => "nothingToQuery"
           | Ready(queries) =>
             "ready:" ++
             queries

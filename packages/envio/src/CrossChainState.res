@@ -387,7 +387,7 @@ let alignmentMargin = 0.2
 // dropped — chains at head only trail each other by real-time block production.
 let checkAndFetch = async (
   crossChainState: t,
-  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.Dispatched.t) => promise<unit>,
 ) => {
   let targetBudget = crossChainState.targetBufferSize->Int.toFloat
   let remaining = ref(
@@ -504,7 +504,12 @@ let checkAndFetch = async (
     switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) => promises->Array.push(dispatchChain(~chainId, ~action))
+    | Some(WaitingForNewBlock) =>
+      promises->Array.push(
+        dispatchChain(~chainId, ~action=FetchState.Dispatched.WaitingForNewBlock),
+      )
+    | Some(Ready(queries)) =>
+      promises->Array.push(dispatchChain(~chainId, ~action=FetchState.Dispatched.Ready(queries)))
     }
   }
   let _ = await promises->Promise.all

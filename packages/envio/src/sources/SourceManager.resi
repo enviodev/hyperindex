@@ -67,7 +67,7 @@ let dispatch: (
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
-  ~action: FetchState.nextQuery,
+  ~action: FetchState.Dispatched.t,
   ~stateId: int,
 ) => promise<unit>
 

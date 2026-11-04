@@ -638,11 +638,10 @@ let dispatch = async (
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~action: FetchState.nextQuery,
+  ~action: FetchState.Dispatched.t,
   ~stateId,
 ) =>
   switch action {
-  | NothingToQuery => ()
   | WaitingForNewBlock =>
     if sm.native->Native.beginWaiting(stateId) {
       let knownHeight = await waitForNewBlock(~knownHeight=fetchState.knownHeight)

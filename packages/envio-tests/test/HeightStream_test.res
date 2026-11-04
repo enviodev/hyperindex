@@ -670,6 +670,26 @@ describe("HyperSyncSSE failures", () => {
 })
 
 describe("EvmRpcWs failures", () => {
+  Async.it("Reports a socket that errors as a transport error, once", async t => {
+    // Nothing listens on the port, so the socket errors and then closes: one
+    // failure, named after the error.
+    let (server, url) = await listenWs(_socket => ())
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+    let statuses = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=Clock.real,
+      ~wsUrl=url,
+      ~onHeight=_ => (),
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+    await Scenario.waitUntil(() => statuses->Array.length > 0, ~message="the height stream")
+    // Real time: the close that follows the error crosses the event loop.
+    await Utils.delay(100)
+    unsubscribe()
+
+    t.expect(statuses).toStrictEqual(["down:error"])
+  })
+
   Async.it("Names a stream that sends binary frames unreadable", async t => {
     let (server, url) = await listenWs(
       socket =>
