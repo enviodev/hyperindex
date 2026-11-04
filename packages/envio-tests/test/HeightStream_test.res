@@ -24,6 +24,7 @@ module WsServer = {
   @send external closeSocket: socket => unit = "close"
   @send external terminate: socket => unit = "terminate"
   @send external toString: 'data => string = "toString"
+  @send external onClose: (socket, @as("close") _, unit => unit) => unit = "on"
 }
 
 // What the node does with each eth_subscribe it is sent, and the HyperSync
@@ -454,6 +455,56 @@ describe("WebSocket height stream", () => {
         ["stale"],
         reconnected,
       ))
+    },
+  )
+
+  ws->Scenario.it("Closes the socket of a connection it gave up on", ~yamlSources=true, async (
+    ~t,
+    ~indexer,
+    ~source as _,
+  ) => {
+    let closed = ref(false)
+    setUp(
+      ~onSubscribe=socket => {
+        socket->WsServer.onClose(() => closed := true)
+        socket->confirm
+      },
+    )
+    await indexer->waitForConnects(1)
+    await indexer.advanceTime(wsStaleTimeout)
+    // Left open, a stale socket would go on holding a slot at the provider.
+    await Scenario.waitUntil(() => closed.contents, ~message="the stale socket to be closed")
+    t.expect(indexer->streamDownReasons).toEqual(["stale"])
+  })
+
+  ws->Scenario.it(
+    "Counts a connection's service from when it went live, not from its latest head",
+    ~yamlSources=true,
+    async (~t, ~indexer, ~source as _) => {
+      setUp(~onSubscribe=confirm)
+      await indexer->waitForConnects(1)
+      await indexer.advanceTime(14_000)
+      latestSocket()->pushHead(101)
+      await indexer->waitForKnownHeight(101)
+      await indexer.advanceTime(1_000)
+      let retry = await indexer->dropAndExpectReconnectWithin(~delay=250)
+      t.expect((retry, indexer->streamDownReasons)).toEqual((reconnected, ["rotated"]))
+    },
+  )
+
+  ws->Scenario.it(
+    "Takes a readable head as the stream being readable again",
+    ~yamlSources=true,
+    async (~t, ~indexer, ~source as _) => {
+      setUp(
+        ~onSubscribe=socket => {
+          socket->WsServer.send("not json at all")
+          socket->pushHead(101)
+        },
+      )
+      await indexer->waitForKnownHeight(101)
+      await indexer.advanceTime(wsStaleTimeout)
+      t.expect(indexer->streamDownReasons).toEqual(["stale"])
     },
   )
 
