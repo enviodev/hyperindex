@@ -349,13 +349,14 @@ let transactionReads = ["eth_getTransactionByHash", "eth_getTransactionReceipt"]
 
 let parse = JSON.parseOrThrow
 
-// Opens the gate once the indexer has taken in a page: the first partition's,
-// since the other one's is still being held.
+// Opens the gate once the first partition's page is in the buffer: its
+// transactions reach the chain's stores before its items are buffered, and no
+// batch can take the item while the other partition is still being held.
 let openGateAfterFirstPage = async (indexer: IndexerRunner.t) => {
-  let pages = async () =>
-    (await indexer.metric("envio_fetching_block_range_total"))->Array.map(({value}) => value)
+  let buffered = async () =>
+    (await indexer.metric("envio_indexing_buffer_size"))->Array.map(({value}) => value)
   let waited = ref(0)
-  while (await pages()) == [] && waited.contents < 500 {
+  while (await buffered()) != ["1"] && waited.contents < 500 {
     // Real time: the first page comes back over a real socket.
     await Utils.delay(10)
     waited := waited.contents + 1
