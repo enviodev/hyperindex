@@ -66,7 +66,7 @@ impl HeightStreamDownReason {
     }
 }
 
-#[napi(discriminant = "kind")]
+#[napi(discriminant = "kind", object_from_js = false)]
 pub enum HeightStreamEffect {
     /// Open a connection whose reports carry `generation`.
     Connect {

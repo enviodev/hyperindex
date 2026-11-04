@@ -22,14 +22,14 @@ use self::{
 };
 use crate::block_store::BlockStore;
 
-#[napi(string_enum)]
+#[napi(string_enum, object_to_js = false)]
 pub enum SourceFor {
     Sync,
     Fallback,
     Realtime,
 }
 
-#[napi(object)]
+#[napi(object, object_to_js = false)]
 pub struct SourceManagerSource {
     pub name: String,
     pub source_for: SourceFor,
@@ -40,7 +40,7 @@ pub struct SourceManagerSource {
 
 /// Every field defaults to the production value. Only tests set them, to reach
 /// a stall, a recovery or a retry schedule without waiting out the real window.
-#[napi(object)]
+#[napi(object, object_to_js = false)]
 #[derive(Default)]
 pub struct SourceManagerTiming {
     pub new_block_stall_timeout: Option<u32>,
@@ -93,7 +93,7 @@ impl From<SourceManagerTiming> for Timing {
 
 /// One backend request a source method made, with the time it took and how
 /// much it brought back.
-#[napi(object)]
+#[napi(object, object_to_js = false)]
 pub struct SourceRequestStat {
     pub method: String,
     pub seconds: f64,
@@ -111,7 +111,7 @@ fn to_request_stats(stats: Vec<SourceRequestStat>) -> Vec<RequestStat> {
         .collect()
 }
 
-#[napi(discriminant = "kind")]
+#[napi(discriminant = "kind", object_from_js = false)]
 pub enum SourceManagerEffect {
     /// `err` names the failure the call that led here reported.
     Log {
@@ -231,7 +231,7 @@ impl From<Effect> for SourceManagerEffect {
     }
 }
 
-#[napi(discriminant = "kind")]
+#[napi(discriminant = "kind", object_to_js = false)]
 pub enum SourceItemsFailure {
     RateLimited {
         reset_ms: u32,
@@ -307,7 +307,7 @@ impl From<SourceItemsFailure> for ItemsFailure {
 
 /// A (source, method) aggregate for the envio_source_request_* and
 /// envio_source_response_* metrics.
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct RequestStatSample {
     pub source: u32,
     pub method: String,
@@ -317,13 +317,13 @@ pub struct RequestStatSample {
     pub empty_response_count: u32,
 }
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct SourceHeightSample {
     pub source: u32,
     pub height: i64,
 }
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct HeightStreamSample {
     pub source: u32,
     pub connect_count: u32,
