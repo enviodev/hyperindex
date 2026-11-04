@@ -230,7 +230,7 @@ let logEffect = (sm: t, ~fieldsJson, ~level, ~message, ~paramsJson, ~err) => {
   | None => sm.logger
   }
   switch err->Option.flatMap(id => sm.errors->Map.get(id)) {
-  | Some(exn) if logger->Logger.isEnabled(level) =>
+  | Some(exn) =>
     let params =
       paramsJson->Option.mapOr(Dict.make(), json =>
         json->JSON.parseOrThrow->(Utils.magic: JSON.t => dict<unknown>)
@@ -241,11 +241,8 @@ let logEffect = (sm: t, ~fieldsJson, ~level, ~message, ~paramsJson, ~err) => {
   }
 }
 
-let requestOrThrow = (sm: t, id) =>
-  switch sm.requests->Map.get(id) {
-  | Some(request) => request
-  | None => JsError.throwWithMessage(`SourceManager has no request ${id->Int.toString}.`)
-  }
+// Rust names only requests it was handed and has not settled.
+let requestOf = (sm: t, id) => sm.requests->Map.get(id)->Option.getUnsafe
 
 // Drained one effect at a time: a call made while carrying one out can queue
 // more, and they still run in the order they were owed.
@@ -289,29 +286,23 @@ and execute = (sm: t, effect: Native.effect) =>
     Promise.resolve()
     ->Promise.thenResolve(() => sm->report(_ => sm.native->Native.timerFired(token, sm->now)))
     ->Promise.ignore
+  // Rust only clears a timer it armed that has not fired, and a fired one
+  // leaves the map before Rust hears of it.
   | ClearTimer({timer}) =>
-    switch sm.timers->Map.get(timer) {
-    | Some(handle) =>
-      sm.clock.clearTimeout(handle)
-      sm.timers->Map.delete(timer)->ignore
-    | None => ()
-    }
+    sm.clock.clearTimeout(sm.timers->Map.get(timer)->Option.getUnsafe)
+    sm.timers->Map.delete(timer)->ignore
   | RequestHeight({request, source}) => sm->requestHeight(~request, ~source)
   | SubscribeStream({source}) => sm->subscribeStream(~source)
+  // Rust closes only a stream it opened, and resolves only a wait it was asked
+  // for, each once.
   | CloseStream({source}) =>
-    switch sm.closeStreams->Map.get(source) {
-    | Some(close) =>
-      sm.closeStreams->Map.delete(source)->ignore
-      close()
-    | None => ()
-    }
+    let close = sm.closeStreams->Map.get(source)->Option.getUnsafe
+    sm.closeStreams->Map.delete(source)->ignore
+    close()
   | ResolveWait({wait, height}) =>
-    switch sm.waits->Map.get(wait) {
-    | Some(resolve) =>
-      sm.waits->Map.delete(wait)->ignore
-      resolve(height)
-    | None => ()
-    }
+    let resolve = sm.waits->Map.get(wait)->Option.getUnsafe
+    sm.waits->Map.delete(wait)->ignore
+    resolve(height)
   | Reorg({source}) => (sm.sources->Array.getUnsafe(source)).onReorg->Option.forEach(cb => cb())
   | Attempt({request, source, ?toBlock, retry, fieldsJson}) =>
     sm->attempt(
@@ -322,16 +313,15 @@ and execute = (sm: t, effect: Native.effect) =>
       ~fieldsJson,
     )
   | Resolve({request}) =>
-    let {kind} = sm->requestOrThrow(request)
+    let {kind} = sm->requestOf(request)
     sm.requests->Map.delete(request)->ignore
+    // Resolved only after the answer it accepted was reported.
     switch kind {
-    | Items({resolveItems, response: Some(response)}) => resolveItems(response)
-    | Hashes({resolveHashes, blockStore: Some(blockStore)}) => resolveHashes(blockStore)
-    | Items(_) | Hashes(_) =>
-      JsError.throwWithMessage("SourceManager resolved a request that has no answer.")
+    | Items({resolveItems, response}) => resolveItems(response->Option.getUnsafe)
+    | Hashes({resolveHashes, blockStore}) => resolveHashes(blockStore->Option.getUnsafe)
     }
   | Reject({request, message}) =>
-    let {reject} = sm->requestOrThrow(request)
+    let {reject} = sm->requestOf(request)
     sm.requests->Map.delete(request)->ignore
     reject(
       try %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger=sm.logger, ~msg=message) catch {
@@ -369,33 +359,33 @@ and requestHeight = (sm: t, ~request, ~source) => {
   reportOutcome()->Promise.ignore
 }
 
-and subscribeStream = (sm: t, ~source) =>
-  switch (sm.sources->Array.getUnsafe(source)).createHeightSubscription {
-  | Some(createSubscription) =>
-    sm.closeStreams->Map.set(
-      source,
-      createSubscription(
-        ~clock=sm.clock,
-        ~onHeight=height => sm->report(_ => sm.native->Native.streamHeight(source, height)),
-        ~onStatus=status =>
-          sm->report(_ =>
-            switch status {
-            | Live => sm.native->Native.streamLive(source)
-            | Down({reason, ?detail}) =>
-              sm.native->Native.streamDown(
-                source,
-                reason->Source.downReasonLabel,
-                detail->Nullable.fromOption,
-              )
-            }
-          ),
-      ),
-    )
-  | None => ()
-  }
+// Rust subscribes only a source that can push heights.
+and subscribeStream = (sm: t, ~source) => {
+  let createSubscription =
+    (sm.sources->Array.getUnsafe(source)).createHeightSubscription->Option.getUnsafe
+  sm.closeStreams->Map.set(
+    source,
+    createSubscription(
+      ~clock=sm.clock,
+      ~onHeight=height => sm->report(_ => sm.native->Native.streamHeight(source, height)),
+      ~onStatus=status =>
+        sm->report(_ =>
+          switch status {
+          | Live => sm.native->Native.streamLive(source)
+          | Down({reason, ?detail}) =>
+            sm.native->Native.streamDown(
+              source,
+              reason->Source.downReasonLabel,
+              detail->Nullable.fromOption,
+            )
+          }
+        ),
+    ),
+  )
+}
 
 and attempt = (sm: t, ~id, ~source: Source.t, ~toBlock, ~retry, ~fieldsJson) => {
-  let request = sm->requestOrThrow(id)
+  let request = sm->requestOf(id)
   let logger = sm.logger->Logger.withFieldsJson(fieldsJson)
   switch request.kind {
   | Items(items) => sm->attemptItems(~id, ~request, ~items, ~source, ~toBlock, ~retry, ~logger)

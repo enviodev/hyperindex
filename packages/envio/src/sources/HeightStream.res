@@ -158,13 +158,11 @@ let subscribe = (
           jitter ? clock->Clock.jitter(millis) : millis,
         ),
       )
+    // Rust only clears a timer it armed that has not fired, and a fired one
+    // leaves the map before Rust hears of it.
     | ClearTimer({timer}) =>
-      switch timers->Map.get(timer) {
-      | Some(handle) =>
-        timers->Map.delete(timer)->ignore
-        clock.clearTimeout(handle)
-      | None => ()
-      }
+      clock.clearTimeout(timers->Map.get(timer)->Option.getUnsafe)
+      timers->Map.delete(timer)->ignore
     | Height({height}) => onHeight(height)
     | Status({?down, ?detail}) =>
       onStatus(

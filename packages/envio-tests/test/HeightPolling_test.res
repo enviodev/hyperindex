@@ -328,6 +328,17 @@ describe("Height poll failures", () => {
   )
 
   scenario->Scenario.it(
+    "Backs off a height call that throws rather than rejects, as one that rejects",
+    // Without getHeightOrThrow, the mock's call throws before returning a promise.
+    ~sources=[{chain: 1337, methods: [#getItemsOrThrow]}],
+    ~sourceTiming={heightRetryInitialMillis: 100, heightRetryMaxMillis: 100},
+    async (~t, ~indexer, ~source as _) => {
+      await indexer.advanceTime(250)
+      t.expect(indexer->heightRetryIntervals).toEqual(["100", "100", "100"])
+    },
+  )
+
+  scenario->Scenario.it(
     "Ignores a failure that arrives after the poll was given up on",
     ~sources=[{chain: 1337, pollingInterval: 10_000}],
     ~sourceTiming={

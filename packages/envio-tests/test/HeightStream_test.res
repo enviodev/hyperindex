@@ -524,6 +524,7 @@ module WsServer = {
   @send external close: (t, unit => unit) => unit = "close"
   @send external onMessage: (socket, @as("message") _, 'data => unit) => unit = "on"
   @send external send: (socket, string) => unit = "send"
+  @send external sendBinary: (socket, NodeJs.Buffer.t) => unit = "send"
   @send external toString: 'data => string = "toString"
 }
 
@@ -610,6 +611,87 @@ describe("HyperSyncSSE", () => {
     await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
 
     t.expect((statuses, heights)).toStrictEqual((["live", "down:closed"], [123]))
+  })
+})
+
+describe("HyperSyncSSE failures", () => {
+  Async.it(
+    "Names a stream that pushes a height it cannot read unreadable, with the frame",
+    async t => {
+      let (server, url) = await listenHttp(
+        (_request, response) => {
+          response->MockRpcServer.writeHead(
+            200,
+            dict{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+          )
+          response->MockRpcServer.write("event: height\ndata: not-a-number\n\n")
+        },
+      )
+      let clock = VirtualClock.make()
+      let statuses = []
+      let unsubscribe = HyperSyncSSE.subscribe(
+        ~clock=clock->VirtualClock.toClock,
+        ~hyperSyncUrl=url,
+        ~apiToken="test-token",
+        ~onHeight=_ => (),
+        ~onStatus=status => statuses->Array.push(status->statusLabel)->ignore,
+      )
+      await Scenario.waitUntil(() => statuses->Array.length > 0, ~message="the stream to open")
+      // The frame follows the open on the same response.
+      await Utils.delay(100)
+      await clock->VirtualClock.advance(HyperSyncSSE.staleTimeout, ~settle=() => Promise.resolve())
+      unsubscribe()
+      await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
+
+      t.expect(statuses).toStrictEqual(["live", "down:unreadable:not-a-number"])
+    },
+  )
+
+  Async.it(
+    "Reports a connection that fails without an HTTP status as a transport error",
+    async t => {
+      // Nothing listens on the port, so the request fails before any response.
+      let (server, url) = await listenHttp((_request, _response) => ())
+      await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
+      let statuses = []
+      let unsubscribe = HyperSyncSSE.subscribe(
+        ~clock=Clock.real,
+        ~hyperSyncUrl=url,
+        ~apiToken="test-token",
+        ~onHeight=_ => (),
+        ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+      )
+      await Scenario.waitUntil(() => statuses->Array.length > 0, ~message="the height stream")
+      unsubscribe()
+
+      t.expect(statuses).toStrictEqual(["down:error"])
+    },
+  )
+})
+
+describe("EvmRpcWs failures", () => {
+  Async.it("Names a stream that sends binary frames unreadable", async t => {
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          _data => socket->WsServer.sendBinary(NodeJs.Buffer.fromHex("2a")),
+        ),
+    )
+    let clock = VirtualClock.make()
+    let statuses = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~clock=clock->VirtualClock.toClock,
+      ~wsUrl=url,
+      ~onHeight=_ => (),
+      ~onStatus=status => statuses->Array.push(status->statusLabel)->ignore,
+    )
+    // Real time: the subscribe and the frame answering it cross a real socket.
+    await Utils.delay(200)
+    await clock->VirtualClock.advance(EvmRpcWs.staleTimeout, ~settle=() => Promise.resolve())
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect(statuses).toStrictEqual(["down:unreadable:binary frame"])
   })
 })
 
