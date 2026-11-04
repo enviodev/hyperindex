@@ -16,14 +16,15 @@ HyperSync supports full trace queries at the data layer, but the Envio Indexer d
 
 ## HyperSync Trace Support
 
-HyperSync can query traces with filtering by:
+HyperSync can query traces with filtering by (keys as in the HyperSync query JSON):
 - `from` / `to` — sender/recipient addresses
 - `address` — contract address
-- `callType` — call, delegatecall, staticcall
+- `call_type` — call, delegatecall, staticcall
+- `reward_type` — block reward type
 - `type` — call, create, suicide, reward
 - `sighash` — function signatures
 
-Available trace fields: `From`, `To`, `CallType`, `Gas`, `Input`, `Value`, `GasUsed`, `Output`, `Subtraces`, `TraceAddress`, `TransactionHash`, `BlockNumber`, `Error`, and more.
+Trace fields for `field_selection.trace`: `transaction_hash`, `block_hash`, `block_number`, `transaction_position`, `type`, `error`, `from`, `to`, `author`, `gas`, `gas_used`, `action_address`, `address`, `balance`, `call_type`, `code`, `init`, `input`, `output`, `refund_address`, `reward_type`, `sighash`, `subtraces`, `trace_address`, `value`.
 
 ## Workaround
 
@@ -38,9 +39,11 @@ const getTraces = createEffect(
     input: S.schema({ blockNumber: S.number }),
     output: S.unknown,
     cache: true,
+    rateLimit: false,
   },
   async ({ input }) => {
-    const res = await fetch(RPC_URL, {
+    // Needs an RPC that supports trace_block (e.g. an archive node with the trace API)
+    const res = await fetch(process.env.ENVIO_RPC_URL!, {
       method: "POST",
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -49,7 +52,8 @@ const getTraces = createEffect(
         id: 1,
       }),
     });
-    return (await res.json()).result;
+    const { result } = (await res.json()) as { result: unknown };
+    return result;
   }
 );
 ```

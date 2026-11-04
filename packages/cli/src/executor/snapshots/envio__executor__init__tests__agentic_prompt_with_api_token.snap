@@ -13,9 +13,11 @@ Leave the rest to your favorite agent:
 pnpx envio init contract-import explorer \
   -n ${indexer-name} \
   -c ${address} \
-  -b ${chainId} \
+  -b ${network} \
   --single-contract \
   --all-events \
   -d ${directory}
+
+For `${network}`, pass a network name such as ethereum-mainnet or base, not a chain ID. `pnpx envio init contract-import explorer --help` lists every name.
 
 Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.

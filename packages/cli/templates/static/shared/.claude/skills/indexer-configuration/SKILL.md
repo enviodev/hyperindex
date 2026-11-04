@@ -3,7 +3,7 @@ name: indexer-configuration
 description: >-
   Use when writing or editing config.yaml. Chain/contract structure, addresses,
   start_block, event selection, field_selection, custom event names, env vars,
-  address_format, bytes_type, strict_hex_type, schema/output paths, YAML validation, and
+  address_format, bytes_type, strict_hex_type, schema path, YAML validation, and
   deprecated options.
 metadata:
   managed-by: envio
@@ -51,12 +51,16 @@ Uses `chains` (not `networks`) and `max_reorg_depth` (not `confirmed_block_thres
     - "0xaaa..."
     - "0xbbb..."
 
-# No address — wildcard indexing (all contracts matching ABI)
+# No address
 - name: Token
-  # address omitted — indexes all matching events chain-wide
-
-# Factory-registered — see indexer-factory skill
+  # address omitted
 ```
+
+A contract without an address indexes nothing until either
+`indexer.contractRegister` adds addresses (see the `indexer-factory` skill) or
+its handler passes `wildcard: true`, which indexes every matching event on the
+chain (see the `indexer-wildcard` skill). Omitting the address alone is not
+wildcard.
 
 For proxied contracts, use the **proxy address** (where events emit), not the implementation.
 
@@ -95,10 +99,12 @@ handler's `fields` option, which lists them next to the code that reads them:
 ```yaml
 field_selection:
   transaction_fields: [hash, from]
-  block_fields: [timestamp]
+  block_fields: [miner]
 ```
 
-See the `indexer-transactions` skill for `fields` and the full field lists.
+`block_fields` can't list `number`, `timestamp` or `hash`: they're always
+included, and codegen rejects them as unknown variants. See the
+`indexer-transactions` skill for `fields` and the full field lists.
 
 ## bytes_type
 
@@ -159,7 +165,7 @@ Add at top of file for IDE schema validation:
 ## Deprecated Options (Do NOT Use)
 
 - `loaders` / `preload_handlers` — replaced by async handler API
-- `preRegisterDynamicContracts` — replaced by `contractRegistrations` in factory pattern
+- `preRegisterDynamicContracts` — removed; register factory-created addresses with `indexer.contractRegister` (see `indexer-factory`)
 - `event_decoder` — removed
 - `rpc_config` — replaced by `rpc:` under chains
 - `unordered_multichain_mode` — removed

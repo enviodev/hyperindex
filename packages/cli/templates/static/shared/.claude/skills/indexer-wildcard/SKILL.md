@@ -12,20 +12,26 @@ metadata:
 
 Index all events matching an event signature across all contract addresses on a chain.
 
-## Config (no address = wildcard)
+## Config (no address)
 
 ```yaml
 contracts:
   - name: ERC20
     events:
-      - event: Transfer(indexed address from, indexed address to, uint256 value)
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
 
 chains:
   - id: 1
+    start_block: 0
     contracts:
       - name: ERC20
-        # No address = wildcard (indexes ALL matching events on the chain)
+        # No address. `wildcard: true` on the handler (below) is what
+        # indexes ALL matching events on the chain
 ```
+
+Leaving out the address alone does not make a contract wildcard: without
+`wildcard: true` on its handlers and without `contractRegister` adding
+addresses, it indexes nothing.
 
 ## Handler with `wildcard: true`
 

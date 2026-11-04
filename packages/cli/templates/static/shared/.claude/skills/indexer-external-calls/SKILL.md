@@ -12,6 +12,8 @@ metadata:
 
 Handlers run twice: parallel **preload pass** (warms caches), then **sequential pass** (state changes). All external I/O (fetch, RPC, APIs) MUST go through `createEffect` + `context.effect()` — otherwise it double-executes and blocks parallelization.
 
+`context.effect` exists in event and block handlers (`indexer.onEvent`, `indexer.onBlock`), not in `indexer.contractRegister`: its context has just `log` and `chain`, so a contract register calls external code directly (see `indexer-factory`).
+
 ## Define and call
 
 ```ts
@@ -27,7 +29,7 @@ const getOwner = createEffect(
   },
   async ({ input }) => {
     const res = await fetch(`https://api.example.com/owner/${input.tokenId}`);
-    return res.json();
+    return (await res.json()) as string | null;
   }
 );
 
