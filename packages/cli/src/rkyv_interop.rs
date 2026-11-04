@@ -48,14 +48,7 @@ pub struct PageBlockItem {
 pub struct Transfer {
     from: String,
     to: String,
-    value: U256,
-}
-
-/// A uint256 as two little-endian halves: rkyv has no wider integer.
-#[derive(rkyv::Archive, rkyv::Serialize)]
-pub struct U256 {
-    lo: u128,
-    hi: u128,
+    value: ruint::aliases::U256,
 }
 
 fn address(seed: u64) -> String {
@@ -113,7 +106,7 @@ fn rkyv_page(count: u32) -> Vec<u8> {
                 params: Transfer {
                     from: address(i * 7),
                     to: address(i * 13),
-                    value: U256 { lo: value(i), hi: 0 },
+                    value: ruint::aliases::U256::from(value(i)),
                 },
             })
             .collect(),

@@ -58,7 +58,7 @@ hypersync-solana-net-types = "0.2.0"
 # Validate user-supplied SVM program and account IDs decode to exactly 32 bytes.
 bs58 = "0.5.1"
 faster-hex = "0.9"
-ruint = "1"
+ruint = { version = "1", features = ["rkyv"] }
 env_logger = "0.11"
 arrayvec = "0.7"
 schemars = { version = "1.2", features = ["preserve_order"] }

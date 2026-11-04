@@ -18,13 +18,8 @@ copyFileSync(process.env.ENVIO_ADDON ?? join(root, "target/release/libenvio.so")
 const addon = createRequire(import.meta.url)(addonPath);
 const S = await import(process.env.SURY ?? "sury");
 
-const U256 = S.schema({
-  lo: S.bigint.with(S.rkyvType, "u128"),
-  hi: S.bigint.with(S.rkyvType, "u128"),
-}).with(S.to, S.bigint, {
-  decode: ({ lo, hi }) => (hi << 128n) | lo,
-  encode: (value) => ({ lo: BigInt.asUintN(128, value), hi: value >> 128n }),
-});
+// alloy's U256, archived by ruint as four u64 limbs.
+const U256 = S.bigint.with(S.rkyvType, "U256");
 
 // The Rust structs in rkyv_interop.rs, field for field. i64 reads into a
 // number, as napi converts it.
