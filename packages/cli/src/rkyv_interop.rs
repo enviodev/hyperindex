@@ -289,7 +289,7 @@ pub fn rkyv_interop_receive_changes(bytes: Buffer) -> napi::Result<u32> {
             })
     };
     // rkyv reads in place only from memory aligned for the archive.
-    let result = if (bytes.as_ptr() as usize) % 16 == 0 {
+    let result = if (bytes.as_ptr() as usize).is_multiple_of(16) {
         validate(&bytes)
     } else {
         let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(bytes.len());
