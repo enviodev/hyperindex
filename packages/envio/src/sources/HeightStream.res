@@ -78,13 +78,6 @@ let subscribe = (
   let timers: Map.t<int, Clock.timer> = Map.make()
   let closeConnection = ref(None)
 
-  // A transport that throws while closing must not be able to stop the retry
-  // that follows, nor escape a timer callback and take the process down.
-  let closeSafely = close =>
-    try close() catch {
-    | _ => ()
-    }
-
   // Drained one effect at a time: a transport can report synchronously from
   // inside `connect`, and what that queues still runs in the order it was owed.
   let rec flush = () => {
@@ -128,7 +121,7 @@ let subscribe = (
         if native->Native.isCurrent(generation) {
           closeConnection := Some(close)
         } else {
-          closeSafely(close)
+          close()
         }
       | Error(exn) =>
         report(() =>
@@ -143,7 +136,7 @@ let subscribe = (
       switch closeConnection.contents {
       | Some(close) =>
         closeConnection := None
-        closeSafely(close)
+        close()
       | None => ()
       }
     | ArmTimer({timer, label, millis, jitter}) =>
