@@ -76,6 +76,7 @@ rustls-native-certs = "0.8"
 webpki-roots = "1"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
+rkyv = "=0.8.18"
 oxc = { version = "0.144.0", features = ["ast_visit", "transformer", "codegen", "semantic"] }
 oxc_resolver = "11.24.3"
 url = "2.5.8"
