@@ -250,6 +250,7 @@ let run = async (
         ~label=?sharesChain ? Some(name) : None,
         ~note=?clock->Option.map(clock => event => clock->VirtualClock.note(`${name}: ${event}`)),
         ~virtualTime,
+        ~ecosystem=scenario.config.ecosystem.name,
       ),
     )
   })

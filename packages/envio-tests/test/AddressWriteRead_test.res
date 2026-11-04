@@ -204,7 +204,84 @@ let run = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~kept, ~dropp
   (loaded.contents, tokens, holders)
 }
 
+let fuelConfigYaml = `
+name: address-write-read-fuel
+ecosystem: fuel
+chains:
+  - id: 0
+    start_block: 0
+    contracts:
+      - name: Greeter
+        address: 0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b
+        abi_file_path: abis/greeter-abi.json
+        events:
+          - name: NewGreeting
+`
+
 describe("Address entity fields", () => {
+  // A Fuel address is a b256, so it is kept as its 32 bytes.
+  Scenario.make(
+    ~schema,
+    ~configYaml=fuelConfigYaml,
+    ~files=dict{"abis/greeter-abi.json": FuelAbiFixtures.greeter},
+  )->Scenario.it(
+    "keeps a Fuel address as its 32 bytes and reads it back as a string",
+    ~sources=[{chain: 0}],
+    async (~t, ~indexer, ~source) => {
+      let kept = {
+        id: "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b",
+        owner: "0x00000000000000000000000000000000000000000000000000000000000000aa",
+        optOwner: Some("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+        owners: ["0x0000000000000000000000000000000000000000000000000000000000000001"],
+      }
+      let dropped = {
+        id: "0x1111111111111111111111111111111111111111111111111111111111111111",
+        owner: "0x00000000000000000000000000000000000000000000000000000000000000bb",
+        optOwner: None,
+        owners: [],
+      }
+      let result = await run(~indexer, ~source=source(0), ~kept, ~dropped)
+      let stored = (
+        await pgColumns(~indexer, ~tableName="Token"),
+        await pgColumns(~indexer, ~tableName="Holder"),
+        await chColumns(~tableName="Token"),
+        await chColumns(~tableName="Holder"),
+      )
+      t.expect((result, stored)).toEqual((
+        (
+          Some({
+            byId: Some(kept),
+            deleted: None,
+            byOwner: [kept],
+            byOwnerIn: [kept],
+            holders: [{id: "h1", tokenId: kept.id}],
+          }),
+          [kept],
+          [{id: "h1", tokenId: kept.id}],
+        ),
+        (
+          onPostgres([
+            {name: "id", type_: "bytea"},
+            {name: "owner", type_: "bytea"},
+            {name: "optOwner", type_: "bytea"},
+            {name: "owners", type_: "bytea[]"},
+          ]),
+          onPostgres([{name: "id", type_: "text"}, {name: "token_id", type_: "bytea"}]),
+          onClickHouse([
+            {name: "id", type_: "FixedString(32)"},
+            {name: "owner", type_: "FixedString(32)"},
+            {name: "optOwner", type_: "Nullable(FixedString(32))"},
+            {name: "owners", type_: "Array(FixedString(32))"},
+          ]),
+          onClickHouse([
+            {name: "id", type_: "String"},
+            {name: "token_id", type_: "FixedString(32)"},
+          ]),
+        ),
+      ))
+    },
+  )
+
   Scenario.make(
     ~schema,
     ~configYaml=configYaml(~addressFormat="lowercase"),
