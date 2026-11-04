@@ -51,7 +51,7 @@ module Native = {
     method: string,
     count: int,
     seconds: float,
-    responseBlocks: Null.t<int>,
+    responseBlocks?: int,
     emptyResponseCount: int,
   }
   type sourceHeightSample = {source: int, height: int}
@@ -533,7 +533,7 @@ type requestStatSample = {
 let getRequestStatSamples = (sm: t) =>
   sm.native
   ->Native.requestStatSamples
-  ->Array.map(({source, method, count, seconds, responseBlocks, emptyResponseCount}) => {
+  ->Array.map(({source, method, count, seconds, ?responseBlocks, emptyResponseCount}) => {
     let source = sm.sources->Array.getUnsafe(source)
     {
       sourceName: source.name,
@@ -541,7 +541,7 @@ let getRequestStatSamples = (sm: t) =>
       method,
       count,
       seconds,
-      responseBlocks: responseBlocks->Null.toOption,
+      responseBlocks,
       emptyResponseCount,
     }
   })
