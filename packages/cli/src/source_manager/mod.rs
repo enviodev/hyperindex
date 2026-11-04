@@ -239,9 +239,6 @@ pub enum SourceItemsFailure {
     BehindHead {
         block_number: i64,
     },
-    UnsupportedSelection {
-        message: String,
-    },
     FieldSelection {
         message: String,
         block_number: i64,
@@ -267,9 +264,6 @@ impl From<SourceItemsFailure> for ItemsFailure {
             SourceItemsFailure::RateLimited { reset_ms } => ItemsFailure::RateLimited { reset_ms },
             SourceItemsFailure::BehindHead { block_number } => {
                 ItemsFailure::BehindHead { block_number }
-            }
-            SourceItemsFailure::UnsupportedSelection { message } => {
-                ItemsFailure::UnsupportedSelection { message }
             }
             SourceItemsFailure::FieldSelection {
                 message,

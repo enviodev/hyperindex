@@ -40,7 +40,6 @@ module Native = {
   type itemsFailure =
     | RateLimited({resetMs: int})
     | BehindHead({blockNumber: int})
-    | UnsupportedSelection({message: string})
     | FieldSelection({message: string, blockNumber: int})
     | SuggestedToBlock({toBlock: int, attemptedToBlock: int})
     | Impossible({message: string, attemptedToBlock: int})
@@ -445,8 +444,6 @@ and attemptItems = (sm: t, ~id, ~request, ~items, ~source: Source.t, ~toBlock, ~
       failed(~requestStats, RateLimited({resetMs: resetMs}))
     | Source.SourceBehindHead({blockNumber, requestStats}) =>
       failed(~requestStats, BehindHead({blockNumber: blockNumber}))
-    | Source.GetItemsError(UnsupportedSelection({message})) =>
-      failed(~requestStats=[], UnsupportedSelection({message: message}))
     | Source.GetItemsError(FailedGettingFieldSelection({
         ?exn,
         message,

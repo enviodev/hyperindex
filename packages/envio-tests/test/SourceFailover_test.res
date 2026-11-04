@@ -47,8 +47,11 @@ let impossible = MockSource.Fail(
   ),
 )
 
-let unsupported = MockSource.Fail(
-  Source.GetItemsError(UnsupportedSelection({message: "test disable"})),
+// A selection the source can never serve, which benches it for good.
+let unservable = MockSource.Fail(
+  Source.GetItemsError(
+    FailedGettingFieldSelection({message: "test disable", blockNumber: 1, requestStats: []}),
+  ),
 )
 
 let upTo = toBlock => MockSource.Respond({items: [], latestFetchedBlockNumber: toBlock})
@@ -317,11 +320,11 @@ describe("Source failover", () => {
       await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
 
       live0.setAutoHeight(101)
-      await live0.expectItemsQueries([{fromBlock: 101, reply: unsupported}])
+      await live0.expectItemsQueries([{fromBlock: 101, reply: unservable}])
       await live1.expectItemsQueries([{fromBlock: 101, reply: upTo(101)}])
 
       live1.setAutoHeight(102)
-      await live1.expectItemsQueries([{fromBlock: 102, reply: unsupported}])
+      await live1.expectItemsQueries([{fromBlock: 102, reply: unservable}])
       await sync.expectItemsQueries([{fromBlock: 102, reply: LeavePending}])
       t.expect((live0.pendingItemsQueries, live1.pendingItemsQueries)).toEqual(([], []))
     },
@@ -340,7 +343,7 @@ describe("Source failover", () => {
       let fallback = source(1337, ~index=2)
       sync.resolveGetHeightOrThrow(100)
       // Live sources play no part in a backfill, so the fallback takes over.
-      await sync.expectItemsQueries([{fromBlock: 1, reply: unsupported}])
+      await sync.expectItemsQueries([{fromBlock: 1, reply: unservable}])
       await fallback.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
 
       live.setAutoHeight(101)
@@ -360,7 +363,7 @@ describe("Source failover", () => {
       await sync.expectItemsQueries([{fromBlock: 1, reply: upTo(100)}])
 
       live.setAutoHeight(101)
-      await live.expectItemsQueries([{fromBlock: 101, reply: unsupported}])
+      await live.expectItemsQueries([{fromBlock: 101, reply: unservable}])
       await sync.expectItemsQueries([{fromBlock: 101, reply: upTo(101)}])
       await live.expectNewHeightCalls(1)
 
@@ -423,7 +426,7 @@ describe("Source failover", () => {
       let sync = source(1337)
       let fallback = source(1337, ~index=1)
       sync.resolveGetHeightOrThrow(100)
-      await sync.expectItemsQueries([{fromBlock: 1, reply: unsupported}])
+      await sync.expectItemsQueries([{fromBlock: 1, reply: unservable}])
       // Failing enough times to be marked as recovering. With nothing left to
       // fail over to, it is still the source to try.
       for retryCount in 0 to 4 {

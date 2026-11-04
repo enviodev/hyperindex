@@ -75,19 +75,6 @@ let make = (
     | None => knownHeight
     }
 
-    if (
-      selection.onEventRegistrations->Utils.Array.isEmpty &&
-        selection.onBlockRegistrations->Utils.Array.isEmpty
-    ) {
-      throw(
-        Source.GetItemsError(
-          UnsupportedSelection({
-            message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
-          }),
-        ),
-      )
-    }
-
     let pageFetchTimeRef = Performance.now()
     let (result, pageBlockStore, pageTransactionStore) = await rpcClient.getNextPage(
       {

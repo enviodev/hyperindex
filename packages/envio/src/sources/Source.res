@@ -117,7 +117,6 @@ exception RateLimited(rateLimited)
 // that ends in a retry still counts towards the source's metrics — the same
 // contract `RateLimited` and `SourceBehindHead` keep.
 type getItemsError =
-  | UnsupportedSelection({message: string})
   | FailedGettingFieldSelection({
       // The cause, where the source has one beyond `message`.
       exn?: exn,

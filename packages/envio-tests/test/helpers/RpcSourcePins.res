@@ -30,7 +30,6 @@ type pinnedRetry =
   | Impossible(string)
 
 type pinnedError =
-  | UnsupportedSelection(string)
   | FailedGettingItems({attemptedToBlock: int, providerMessage: option<string>, retry: pinnedRetry})
   | FailedGettingFieldSelection({blockNumber: int, message: string, causeMessage: option<string>})
   | BehindHead({blockNumber: int})
@@ -149,8 +148,7 @@ let normalizeRetry = retry =>
 
 let normalizeError = error =>
   switch error {
-  | Source.UnsupportedSelection({message}) => UnsupportedSelection(message)
-  | FailedGettingItems({?exn, attemptedToBlock, retry}) =>
+  | Source.FailedGettingItems({?exn, attemptedToBlock, retry}) =>
     FailedGettingItems({
       attemptedToBlock,
       providerMessage: exn->providerMessage,

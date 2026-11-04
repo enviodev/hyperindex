@@ -44,9 +44,6 @@ pub enum ItemsFailure {
         block_number: i64,
     },
     /// The source can never serve this selection.
-    UnsupportedSelection {
-        message: String,
-    },
     FieldSelection {
         message: String,
         block_number: i64,
@@ -376,19 +373,12 @@ impl Core {
             ItemsFailure::BehindHead { block_number } => {
                 self.retry_behind_head(request_id, block_number, now)
             }
-            ItemsFailure::UnsupportedSelection { message } => {
-                // Can never succeed here, so the source is not tried again. With
-                // several partitions failing at once, it is logged once.
-                if self.disable_source(source) {
-                    self.disable_reason = Some(message.clone());
-                    self.log(fields, Level::Error, message, Value::Null);
-                }
-                self.retry_now(request_id, 0, now);
-            }
             ItemsFailure::FieldSelection {
                 message,
                 block_number,
             } => {
+                // Can never succeed here, so the source is not tried again. With
+                // several partitions failing at once, it is logged once.
                 if self.disable_source(source) {
                     self.disable_reason = Some(message.clone());
                     self.log_with_err(
