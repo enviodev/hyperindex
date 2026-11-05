@@ -3132,12 +3132,14 @@ let isFetchingAtHead = ({endBlock, knownHeight} as fetchState: t) => {
 // Counted in blocks whatever the chain's block time: the chain still fetches
 // block by block near the head, and an address-free query must never reach back
 // into a range a partition is still backfilling.
-let addressFreeHeadDistance = 200
+let headClientFilteringDistance = 200
 
-// Every partition is within `addressFreeHeadDistance` of the fetch target. A
+// Every partition is within `headClientFilteringDistance` of the fetch target. A
 // chain with no head to follow never is: no known height yet, or an end block it
 // stops at before the head.
-let isNearHead = ({endBlock, blockLag, knownHeight, optimizedPartitions} as fetchState: t) =>
+let isWithinHeadClientFilteringDistance = (
+  {endBlock, blockLag, knownHeight, optimizedPartitions} as fetchState: t,
+) =>
   knownHeight !== 0 &&
   switch endBlock {
   | Some(endBlock) => endBlock > knownHeight - blockLag
@@ -3145,7 +3147,7 @@ let isNearHead = ({endBlock, blockLag, knownHeight, optimizedPartitions} as fetc
   } &&
   switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
   | Some(latestFetchedBlock) =>
-    fetchState->headFetchTarget - latestFetchedBlock <= addressFreeHeadDistance
+    fetchState->headFetchTarget - latestFetchedBlock <= headClientFilteringDistance
   | None => true
   }
 
