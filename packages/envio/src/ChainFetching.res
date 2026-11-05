@@ -270,12 +270,6 @@ and applyQueryResponse = (
     ~knownHeight,
   )
 
-  // A chain resuming in realtime fetches the blocks it missed while down like
-  // backfill, by address, and goes address-free once it is back at the head.
-  if state->IndexerState.isRealtime && chainState->ChainState.isFetchingAtHead {
-    chainState->ChainState.fetchDynamicContractsAddressFree
-  }
-
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
   if state->IndexerState.exitAfterFirstEventBlock {
     switch newItems->Array.find(item =>

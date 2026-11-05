@@ -13,6 +13,9 @@ contracts:
     events:
       - event: Transfer(uint256 value)
       - event: Deployed()
+  - name: Pool
+    events:
+      - event: Swap()
 chains:
   - id: 1
     rpc:
@@ -50,11 +53,15 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, contex
   context.Counter.set({ id: "total", count: event.params.value });
 });
 
-// Registers a dynamic Token address, like the factory events the incident
-// chain indexed. Re-runs when the block is re-fetched after a rollback.
+// Registers a dynamic Pool address, like the factory events the incident
+// chain indexed. Re-runs when the block is re-fetched after a rollback. A
+// contract of its own, so the config Token addresses stay in their partitions
+// once the chain fetches its dynamic contracts address-free at the head.
 indexer.contractRegister({ contract: "Token", event: "Deployed" }, async ({ context }) => {
-  context.chain.Token.add("0x0000000000000000000000000000000000000003");
+  context.chain.Pool.add("0x0000000000000000000000000000000000000003");
 });
+
+indexer.onEvent({ contract: "Pool", event: "Swap" }, async () => {});
 `
 
 // The default cross-chain Counter keeps this on the global rollback path, where
@@ -80,7 +87,7 @@ let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
   params: dict{"value": count->(Utils.magic: bigint => unknown)},
 }
 
-let registerToken = (~block): MockSource.itemMock => {
+let registerPool = (~block): MockSource.itemMock => {
   event: "Token.Deployed",
   blockNumber: block,
   logIndex: 1,
@@ -120,11 +127,11 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     await indexer.getBatchWritePromise()
 
     // Post-threshold queries reach the head. The victim's response also
-    // registers a dynamic Token address at block 250, spawning a catch-up
+    // registers a dynamic Pool address at block 250, spawning a catch-up
     // partition mid-response like the incident chain's factory events. Both
     // partitions get the same response, the way the incident chain saw the
     // same factory events through every address partition.
-    let victimItems = [setCounter(~block=200, ~count=1n), registerToken(~block=250)]
+    let victimItems = [setCounter(~block=200, ~count=1n), registerPool(~block=250)]
     await victim.expectItemsQueries([
       {
         partitionId: "0",
@@ -241,7 +248,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         {
           partitionId: "0",
           fromBlock: 250,
-          reply: Respond({items: [registerToken(~block=250)], latestFetchedBlockNumber: 302}),
+          reply: Respond({items: [registerPool(~block=250)], latestFetchedBlockNumber: 302}),
         },
       ])
       await sibling.expectItemsQueries([
@@ -255,12 +262,20 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         {
           partitionId: "1",
           fromBlock: 250,
-          reply: Respond({items: [registerToken(~block=250)], latestFetchedBlockNumber: 302}),
+          reply: Respond({items: [registerPool(~block=250)], latestFetchedBlockNumber: 302}),
         },
+        // The address-free partition the Pool contract is fetched in.
         {
           partitionId: "2",
           fromBlock: 250,
-          reply: Respond({items: [registerToken(~block=250)], latestFetchedBlockNumber: 302}),
+          reply: Respond({items: [], latestFetchedBlockNumber: 302}),
+        },
+        // The re-registered Pool address catches up on its own, since the
+        // address-free partition's query went out before it was registered.
+        {
+          partitionId: "3",
+          fromBlock: 250,
+          reply: Respond({items: [], latestFetchedBlockNumber: 302}),
         },
       ])
       await indexer.waitUntilIdle()

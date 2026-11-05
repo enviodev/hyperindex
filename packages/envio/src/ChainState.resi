@@ -173,7 +173,6 @@ let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit
-let fetchDynamicContractsAddressFree: t => unit
 // What a rollback's progress diff says about one chain: the block its surviving
 // checkpoints put it back to, and the events the deleted ones carried away. One
 // record because one diff row yields both — they are never known separately.

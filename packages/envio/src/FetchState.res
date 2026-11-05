@@ -2469,6 +2469,11 @@ let blocksBehindHeadAllowedByThrottle = ({blockThrottle, endBlock, knownHeight, 
   | _ => Pervasives.max(0, blockThrottle - 1)
   }
 
+// The highest block the chain fetches up to right now: the lagged head, less the
+// blocks a throttled chain lets build up first.
+let headFetchTarget = ({knownHeight, blockLag} as fetchState: t) =>
+  knownHeight - blockLag - fetchState->blocksBehindHeadAllowedByThrottle
+
 // Candidate queries are sized against chainTargetBlock, the soft querying
 // horizon the owning chain wants to reach this tick — derived by ChainState
 // from its share of the indexer-wide buffer budget and its chain-level event
@@ -3136,14 +3141,54 @@ let isActivelyIndexing = ({endBlock} as fetchState: t) => {
 // True once the fetch frontier has reached the (lagged) head or endBlock,
 // regardless of whether the buffer has been consumed yet. Unlike
 // isReadyToEnterReorgThreshold, fetched-but-unprocessed items still count.
-let isFetchingAtHead = ({endBlock, blockLag, knownHeight} as fetchState: t) => {
+let isFetchingAtHead = ({endBlock, knownHeight} as fetchState: t) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   knownHeight !== 0 &&
     switch endBlock {
     | Some(endBlock) if bufferBlockNumber >= endBlock => true
-    | _ =>
-      bufferBlockNumber >= knownHeight - blockLag - fetchState->blocksBehindHeadAllowedByThrottle
+    | _ => bufferBlockNumber >= fetchState->headFetchTarget
     }
+}
+
+// Counted in blocks whatever the chain's block time: the chain still fetches
+// block by block near the head, and an address-free query must never reach back
+// into a range a partition is still backfilling.
+let addressFreeHeadDistance = 200
+
+type headProximity =
+  // Every partition is within `addressFreeHeadDistance` of the fetch target.
+  | NearHead
+  // Some partition is near the head, but this one, the furthest behind, isn't.
+  | HeldBack({partitionId: string, latestFetchedBlock: int, fetchTarget: int})
+  // Also a chain with no head to follow: no known height yet, or an end block
+  // it stops at before the head.
+  | FarFromHead
+
+let headProximity = ({endBlock, blockLag, knownHeight, optimizedPartitions} as fetchState: t) => {
+  let fetchTarget = fetchState->headFetchTarget
+  let isWithinDistance = latestFetchedBlock =>
+    fetchTarget - latestFetchedBlock <= addressFreeHeadDistance
+  let followsHead =
+    knownHeight !== 0 &&
+      switch endBlock {
+      | Some(endBlock) => endBlock > knownHeight - blockLag
+      | None => true
+      }
+  let ids = optimizedPartitions.idsInAscOrder
+  switch (ids->Array.get(0), ids->Array.at(-1)) {
+  | _ if !followsHead => FarFromHead
+  | (Some(furthestBehindId), Some(furthestAheadId)) =>
+    let partition = id => optimizedPartitions.entities->Dict.getUnsafe(id)
+    let {latestFetchedBlock} = partition(furthestBehindId)
+    if isWithinDistance(latestFetchedBlock) {
+      NearHead
+    } else if isWithinDistance(partition(furthestAheadId).latestFetchedBlock) {
+      HeldBack({partitionId: furthestBehindId, latestFetchedBlock, fetchTarget})
+    } else {
+      FarFromHead
+    }
+  | _ => NearHead
+  }
 }
 
 // Frontier at (or within `tolerance` of) the lagged head with no processable

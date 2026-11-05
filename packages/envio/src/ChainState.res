@@ -73,6 +73,9 @@ type t = {
   // Timestamp of the committed progress block itself. See
   // `Batch.chainAfterBatch.progressBlockTime`.
   mutable committedProgressBlockTime: option<int>,
+  // The partition last named as keeping dynamic contracts by address, so it
+  // is named once rather than on every response.
+  mutable heldBackPartitionId: option<string>,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -187,6 +190,7 @@ let make = (
     rollbackTargetBlock: None,
     progressLatencyMs: None,
     committedProgressBlockTime,
+    heldBackPartitionId: None,
   }
 }
 
@@ -202,7 +206,7 @@ let logFetchStateNotice = (logger, notice: FetchState.notice) =>
     )
   | SwitchedToClientSideFiltering({contractName, reason: DynamicContract}) =>
     logger->Logger.trace(
-      "Switching contract to client-side address filtering: in realtime, dynamic contracts are fetched without their addresses.",
+      "Switching contract to client-side address filtering: near the head, dynamic contracts are fetched without their addresses.",
       ~params={"contractName": contractName},
     )
   | SkippedReRegistration({
@@ -987,6 +991,35 @@ let materializePageItems = async (
   ))
 }
 
+// Near the head: each new block in as few queries as possible, of a shape that
+// stays the same while contracts keep being registered. Once every partition is
+// close enough, the chain's dynamic contracts leave the server-side address
+// filter for the rest of the run.
+let fetchDynamicContractsAddressFreeNearHead = (cs: t) =>
+  if !cs.fetchState.clientFilterPolicy.allDynamicContracts {
+    switch cs.fetchState->FetchState.headProximity {
+    | NearHead =>
+      cs.fetchState =
+        cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
+          ~addressStore=cs.addressStore,
+          ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
+        )
+    | HeldBack({partitionId, latestFetchedBlock, fetchTarget})
+      if cs.heldBackPartitionId !== Some(partitionId) &&
+        cs.fetchState.optimizedPartitions.dynamicContracts->Utils.Set.size > 0 =>
+      cs.heldBackPartitionId = Some(partitionId)
+      cs.logger->Logger.trace(
+        `Dynamic contracts are still fetched by address: a partition is still catching up to within ${FetchState.addressFreeHeadDistance->Int.toString} blocks of the head.`,
+        ~params={
+          "partitionId": partitionId,
+          "latestFetchedBlock": latestFetchedBlock,
+          "fetchTarget": fetchTarget,
+        },
+      )
+    | HeldBack(_) | FarFromHead => ()
+    }
+  }
+
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
@@ -1017,6 +1050,7 @@ let handleQueryResult = (
 
   // The query is no longer in flight, so release its reservation.
   cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsEst->Int.toFloat)
+  cs->fetchDynamicContractsAddressFreeNearHead
 }
 
 // Run reorg detection against a fetch response by merging its block-store page
@@ -1051,8 +1085,11 @@ let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
   cs->resetPendingQueries
 }
 
-let updateKnownHeight = (cs: t, ~knownHeight) =>
+// A chain resuming near the head goes address-free before its first query.
+let updateKnownHeight = (cs: t, ~knownHeight) => {
   cs.fetchState = cs.fetchState->FetchState.updateKnownHeight(~knownHeight)
+  cs->fetchDynamicContractsAddressFreeNearHead
+}
 
 // In auto-exit mode, pin the endBlock to the earliest observed event block.
 let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
@@ -1346,17 +1383,6 @@ let markReady = (cs: t, ~readyAt) =>
   if !(cs->isReady) {
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
   }
-
-// For a realtime chain at the head: each new block in as few queries as
-// possible, of a shape that stays the same while contracts keep being
-// registered. Its dynamic contracts leave the server-side address filter, for
-// the rest of the run.
-let fetchDynamicContractsAddressFree = (cs: t) =>
-  cs.fetchState =
-    cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
-      ~addressStore=cs.addressStore,
-      ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
-    )
 
 // Rewind progress to a reorg target. Moving it means the timestamp now belongs
 // to an orphaned block, so it's re-read for the block progress actually lands

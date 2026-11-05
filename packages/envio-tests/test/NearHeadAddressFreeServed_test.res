@@ -1,10 +1,10 @@
 open Vitest
 
-// Realtime against real sources: dynamic contracts are read in one address-free
-// query per block, routed against the address store on our side. Over RPC, a
-// block too large for the provider's result cap is read again by the
-// contracts' addresses, and the block after it is address-free again. Backfill
-// keeps sending addresses.
+// Near the head against real sources: dynamic contracts are read in one
+// address-free query per block, routed against the address store on our side.
+// Over RPC, a block too large for the provider's result cap is read again by
+// the contracts' addresses, and the block after it is address-free again.
+// Backfill more than 200 blocks from the head keeps sending addresses.
 let rpcPort = 18731
 let hyperSyncPort = 18732
 
@@ -37,7 +37,10 @@ let transferred = (~blockNumber, ~logIndex, token): ServedEvmChain.log => {
 // providers cap eth_getLogs at 10,000 results.
 let resultCap = 5
 
-let lastBlock = 7
+// The backfill ends here, more than 200 blocks past the factory's events.
+let backfillHead = 300
+let headBlock = 301
+let lastBlock = 302
 let logs = Array.flat([
   [
     created(~blockNumber=2, ~logIndex=0, pair1),
@@ -45,12 +48,12 @@ let logs = Array.flat([
     transferred(~blockNumber=3, ~logIndex=0, pair1),
     transferred(~blockNumber=3, ~logIndex=1, pair2),
     // Registered at the head, emitting in its registration block.
-    created(~blockNumber=6, ~logIndex=0, pair3),
-    transferred(~blockNumber=6, ~logIndex=1, pair3),
+    created(~blockNumber=headBlock, ~logIndex=0, pair3),
+    transferred(~blockNumber=headBlock, ~logIndex=1, pair3),
   ],
-  // A spam token flooding block 6 past the cap.
+  // A spam token flooding the head block past the cap.
   Array.fromInitializer(~length=resultCap + 1, i =>
-    transferred(~blockNumber=6, ~logIndex=2 + i, spamToken)
+    transferred(~blockNumber=headBlock, ~logIndex=2 + i, spamToken)
   ),
   [
     transferred(~blockNumber=lastBlock, ~logIndex=0, pair1),
@@ -58,7 +61,7 @@ let logs = Array.flat([
   ],
 ])
 
-let rpcHeight = ref(5)
+let rpcHeight = ref(backfillHead)
 
 // Every eth_getLogs the provider was asked, as `from-to address outcome`.
 let getLogsCalls: array<string> = []
@@ -145,7 +148,7 @@ let _ = RpcE2eChain.serveDuringSuite(() =>
 
 let hyperSync: ref<option<MockHyperSyncServer.t>> = ref(None)
 Async.beforeAll(async () => {
-  let server = MockHyperSyncServer.make(~height=5, ~port=hyperSyncPort)
+  let server = MockHyperSyncServer.make(~height=backfillHead, ~port=hyperSyncPort)
   server->MockHyperSyncServer.serveChain(ServedEvmChain.hyperSyncChain(~logs, ~height=lastBlock))
   hyperSync := Some(server)
 })
@@ -198,7 +201,7 @@ indexer.onEvent({ contract: "Pair", event: "Transfer" }, async ({ event, context
   )
 
 let rpcScenario = scenario(
-  ~name="realtime-address-free-rpc",
+  ~name="near-head-address-free-rpc",
   ~source=`
     rpc:
       url: ${ServedEvmChain.url(rpcPort)}
@@ -207,7 +210,7 @@ let rpcScenario = scenario(
 )
 
 let hyperSyncScenario = scenario(
-  ~name="realtime-address-free-hypersync",
+  ~name="near-head-address-free-hypersync",
   ~source=`
     hypersync_config:
       url: ${ServedEvmChain.url(hyperSyncPort)}`,
@@ -261,7 +264,7 @@ let takeHyperSyncQueries = () =>
   })
   ->Array.toSorted(String.compare)
 
-describe("Realtime address-free reads", () => {
+describe("Near-head address-free reads", () => {
   Async.it(
     "reads dynamic contracts over RPC address-free, by address over the result cap",
     async t => {
@@ -279,7 +282,7 @@ describe("Realtime address-free reads", () => {
 
           // Two new blocks at once, the first of them over the cap.
           rpcHeight := lastBlock
-          await indexer->waitForSeen("7-1")
+          await indexer->waitForSeen("302-1")
           let headBlocks = takeRpcCalls()
 
           t.expect((
@@ -296,23 +299,23 @@ describe("Realtime address-free reads", () => {
                 },
             ),
           )).toEqual((
-            ["3-0", "3-1", "6-1", "7-0", "7-1"],
+            ["3-0", "3-1", "301-1", "302-0", "302-1"],
             [],
             [
               // The capped block alone, still over the cap, is split up: the
               // wildcard event alone, still address-free, and the Pair events
               // by the two addresses registered before it, one per request.
-              "6-6 PairCreated any ok",
-              "6-6 PairCreated,Transfer any capped",
-              `6-6 Transfer ${pair1} ok`,
-              `6-6 Transfer ${pair2} ok`,
+              "301-301 PairCreated any ok",
+              "301-301 PairCreated,Transfer any capped",
+              `301-301 Transfer ${pair1} ok`,
+              `301-301 Transfer ${pair2} ok`,
               // The contract registered in the block, caught up by its address.
-              `6-6 Transfer ${pair3} ok`,
+              `301-301 Transfer ${pair3} ok`,
               // Over the cap on two blocks: the range shrinks before anything
               // is asked by address.
-              "6-7 PairCreated,Transfer any capped",
+              "301-302 PairCreated,Transfer any capped",
               // The next block is asked address-free again.
-              "7-7 PairCreated,Transfer any ok",
+              "302-302 PairCreated,Transfer any ok",
             ],
             // One trace line for the one fallback, counting its three requests.
             [
@@ -339,12 +342,12 @@ describe("Realtime address-free reads", () => {
         await indexer.waitUntilReady()
         let backfill = takeHyperSyncQueries()
 
-        hyperSyncServer()->MockHyperSyncServer.setHeight(6)
-        await indexer->waitForSeen("6-1")
+        hyperSyncServer()->MockHyperSyncServer.setHeight(headBlock)
+        await indexer->waitForSeen("301-1")
         let headBlock = takeHyperSyncQueries()
 
         hyperSyncServer()->MockHyperSyncServer.setHeight(lastBlock)
-        await indexer->waitForSeen("7-1")
+        await indexer->waitForSeen("302-1")
         let nextBlock = takeHyperSyncQueries()
 
         t.expect((
@@ -353,14 +356,14 @@ describe("Realtime address-free reads", () => {
           headBlock,
           nextBlock,
         )).toEqual((
-          ["3-0", "3-1", "6-1", "7-0", "7-1"],
+          ["3-0", "3-1", "301-1", "302-0", "302-1"],
           [],
           [
-            "6 PairCreated,Transfer any",
+            "301 PairCreated,Transfer any",
             // The contract registered in the block, caught up by its address.
-            `6 Transfer ${pair3}`,
+            `301 Transfer ${pair3}`,
           ],
-          ["7 PairCreated,Transfer any"],
+          ["302 PairCreated,Transfer any"],
         ))
       },
     )

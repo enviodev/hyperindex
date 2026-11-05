@@ -272,7 +272,6 @@ let markReady = (crossChainState: t, ~readyAt) => {
     let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     let wasReady = cs->ChainState.isReady
     cs->ChainState.markReady(~readyAt)
-    cs->ChainState.fetchDynamicContractsAddressFree
 
     // One line per chain, because `ready_at` is one column per chain: what the
     // log says and what a reader finds in the row are the same fact.
