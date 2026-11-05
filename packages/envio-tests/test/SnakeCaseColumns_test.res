@@ -22,7 +22,8 @@ chains:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
-          - event: "TestEvent()"
+          - event: "Write()"
+          - event: "ReadBack()"
 `,
   ~schema=`
 type Snapshot {
@@ -35,24 +36,26 @@ type User {
   id: ID!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "Write" }, async ({ context }) => {
+  context.User.set({ id: "user-1" });
+  context.Snapshot.set({ id: "1", transactionIndex: 5, tokenOwner_id: "user-1" });
+});
+
+indexer.onEvent({ contract: "Gravatar", event: "ReadBack" }, async ({ context }) => {
+  const snapshot = await context.Snapshot.get("1");
+  if (snapshot) {
+    context.Snapshot.set({ ...snapshot, id: "got" });
+  }
+  const found = await context.Snapshot.getWhere({ transactionIndex: { _eq: 5 } });
+  for (const snapshot of found) {
+    context.Snapshot.set({ ...snapshot, id: "where" });
+  }
+});
+`,
 )
-
-type snapshot = {id: string, transactionIndex: int, tokenOwner_id: string}
-type user = {id: string}
-type snapshotOps = {
-  set: snapshot => unit,
-  get: string => promise<option<snapshot>>,
-  getWhere: {"transactionIndex": {"_eq": int}} => promise<array<snapshot>>,
-}
-type userOps = {set: user => unit}
-type handlerContext = {@as("Snapshot") snapshot: snapshotOps, @as("User") user: userOps}
-
-let at = (~block, handler: handlerContext => promise<unit>): MockSource.itemMock => {
-  blockNumber: block,
-  logIndex: 0,
-  handler: async args =>
-    await args.context->(Utils.magic: Internal.handlerContext => handlerContext)->handler,
-}
 
 describe("Snake-case columns", () => {
   scenario->Scenario.it(
@@ -66,15 +69,7 @@ describe("Snake-case columns", () => {
         {
           fromBlock: 1,
           reply: Respond({
-            items: [
-              at(
-                ~block=1,
-                async context => {
-                  context.user.set({id: "user-1"})
-                  context.snapshot.set({id: "1", transactionIndex: 5, tokenOwner_id: "user-1"})
-                },
-              ),
-            ],
+            items: [{event: "Gravatar.Write", blockNumber: 1, logIndex: 0}],
             latestFetchedBlockNumber: 1,
           }),
         },
@@ -87,19 +82,7 @@ describe("Snake-case columns", () => {
         {
           coversBlock: 2,
           reply: Respond({
-            items: [
-              at(
-                ~block=2,
-                async context => {
-                  switch await context.snapshot.get("1") {
-                  | Some(snapshot) => context.snapshot.set({...snapshot, id: "got"})
-                  | None => ()
-                  }
-                  let found = await context.snapshot.getWhere({"transactionIndex": {"_eq": 5}})
-                  found->Array.forEach(snapshot => context.snapshot.set({...snapshot, id: "where"}))
-                },
-              ),
-            ],
+            items: [{event: "Gravatar.ReadBack", blockNumber: 2, logIndex: 0}],
             latestFetchedBlockNumber: 2,
           }),
         },

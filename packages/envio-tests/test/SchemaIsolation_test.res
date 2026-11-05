@@ -17,7 +17,7 @@ chains:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
-          - event: "TestEvent()"
+          - event: "TestEvent(string value)"
 `,
   ~schema=`
 type SimpleEntity {
@@ -25,11 +25,16 @@ type SimpleEntity {
   value: String!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  context.SimpleEntity.set({ id: "1", value: event.params.value });
+});
+`,
 )
 
 type simpleEntity = {id: string, value: string}
-type simpleEntityOps = {set: simpleEntity => unit}
-type handlerContext = {@as("SimpleEntity") simpleEntity: simpleEntityOps}
 
 describe("Schema isolation between indexers in one process", () => {
   let writeEntity = async (~value, ~onError) => {
@@ -45,13 +50,10 @@ describe("Schema isolation between indexers in one process", () => {
           reply: Respond({
             items: [
               {
+                event: "Gravatar.TestEvent",
                 blockNumber: 1,
                 logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.simpleEntity.set({id: "1", value})
-                },
+                params: dict{"value": value->(Utils.magic: string => unknown)},
               },
             ],
           }),

@@ -10,17 +10,19 @@ type counter = {
   count: bigint,
 }
 
-type counterOps = {set: {"id": string, "count": bigint} => unit}
-type handlerContext = {@as("Counter") counter: counterOps}
-
-let asContext = (context: Internal.handlerContext) =>
-  context->(Utils.magic: Internal.handlerContext => handlerContext)
-
 let schema = `
 type Counter {
   id: ID!
   count: BigInt!
 }
+`
+
+let handlers = `
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count });
+});
 `
 
 let chainYaml = (chainId, ~maxReorgDepth) =>
@@ -40,13 +42,14 @@ let chainYaml = (chainId, ~maxReorgDepth) =>
 let singleChainScenario = Scenario.make(
   ~supervised=false,
   ~schema,
+  ~handlers,
   ~configYaml=`
 name: zero-reorg-depth-history
 rollback_on_reorg: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100, ~maxReorgDepth=0)}
 `,
 )
@@ -56,6 +59,7 @@ chains:${chainYaml(100, ~maxReorgDepth=0)}
 let perChainScenario = Scenario.make(
   ~supervised=false,
   ~schema,
+  ~handlers,
   ~configYaml=`
 name: zero-reorg-depth-history-per-chain
 rollback_on_reorg: true
@@ -63,7 +67,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100, ~maxReorgDepth=200)}${chainYaml(1337, ~maxReorgDepth=0)}
 `,
 )
@@ -71,11 +75,10 @@ chains:${chainYaml(100, ~maxReorgDepth=200)}${chainYaml(1337, ~maxReorgDepth=0)}
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    (args.context->asContext).counter.set({"id": "total", "count": count})
-  },
+  params: dict{"count": count->(Utils.magic: bigint => unknown)},
 }
 
 let checkpointChains = async (indexer: IndexerRunner.t) =>

@@ -22,11 +22,19 @@ type EntityWithTimestamp {
   timestamp: Timestamp!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  context.EntityWithTimestamp.set({
+    id: "testEntity",
+    timestamp: new Date("1970-01-01T00:02:03.456Z"),
+  });
+});
+`,
 )
 
 type entityWithTimestamp = {id: string, timestamp: Date.t}
-type entityOps = {set: entityWithTimestamp => unit}
-type handlerContext = {@as("EntityWithTimestamp") entityWithTimestamp: entityOps}
 
 describe("Load and save an entity with a Timestamp from DB", () => {
   scenario->Scenario.it(
@@ -41,20 +49,7 @@ describe("Load and save an entity with a Timestamp from DB", () => {
           fromBlock: 1,
           toBlock: Bounded(100),
           reply: Respond({
-            items: [
-              {
-                blockNumber: 100,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.entityWithTimestamp.set({
-                    id: "testEntity",
-                    timestamp: Date.fromString("1970-01-01T00:02:03.456Z"),
-                  })
-                },
-              },
-            ],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 100, logIndex: 0}],
           }),
         },
       ])
