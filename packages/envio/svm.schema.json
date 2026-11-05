@@ -303,7 +303,7 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "A unique project-wide name for this program (used in generated code).",
+          "description": "A unique project-wide name for this program (used in the generated types).",
           "type": "string"
         },
         "program_id": {
@@ -357,7 +357,7 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "Name of the instruction in the HyperIndex generated code. Should be unique per program.",
+          "description": "Name of the instruction in the generated types. Should be unique per program.",
           "type": "string"
         },
         "discriminator": {
