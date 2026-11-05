@@ -9,14 +9,15 @@ let makeClient = (
   ~addressStore=?,
   ~maxConcurrentRequests=?,
   ~queryTimeoutMillis=?,
+  ~syncConfig=switch queryTimeoutMillis {
+  | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
+  | None => syncConfig
+  },
 ) =>
   EvmRpcClient.make(
     ~url,
     ~checksumAddresses=false,
-    ~syncConfig=switch queryTimeoutMillis {
-    | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
-    | None => syncConfig
-    },
+    ~syncConfig,
     ~headers?,
     ~maxConcurrentRequests?,
     ~eventRegistrations?,
@@ -255,11 +256,19 @@ describe("EvmRpcClient - getNextPage via napi", () => {
   let blockReply = (~number) =>
     MockRpcServer.expectCall(~method="eth_getBlockByNumber", ~reply=RpcResult(blockResult(~number)))
 
-  let callNextPage = (client: EvmRpcClient.t, ~fromBlock, ~toBlockCeiling, ~indexes, ~addressSet) =>
+  let callNextPage = (
+    client: EvmRpcClient.t,
+    ~fromBlock,
+    ~toBlockCeiling,
+    ~knownHeight=toBlockCeiling,
+    ~indexes,
+    ~addressSet,
+  ) =>
     client.getNextPage(
       {
         fromBlock,
         toBlockCeiling,
+        knownHeight,
         partitionId: "0",
         onEventRegistrationIndexes: indexes,
         onBlockRegistrationIndexes: [],
@@ -501,6 +510,63 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     )
 
     t.expect(outcome).toEqual((EvmRpcClient.Ok, blockCount))
+  })
+
+  it("Defaults to a longer timeout for backfill than near the head", t => {
+    let timeouts = (options: Config.sourceSyncOptions) => {
+      let {queryTimeoutMillis, headQueryTimeoutMillis}: Config.sourceSync = EvmChain.getSyncConfig(
+        options,
+      )
+      (queryTimeoutMillis, headQueryTimeoutMillis)
+    }
+    t.expect(
+      (timeouts({}), timeouts({queryTimeoutMillis: 5_000})),
+      ~message="a configured timeout applies to both",
+    ).toEqual(((30_000, 10_000), (5_000, 5_000)))
+  })
+
+  Async.it("Gives up sooner on a read near the head than on a backfill read", async t => {
+    // Every read takes 400ms: past the head timeout, inside the backfill one.
+    let slowly = reply => MockRpcServer.Delayed({millis: 400, reply})
+    let firstBlock = 100
+
+    let outcome = await MockRpcServer.withScenario(
+      ~name="head and backfill timeouts",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~times=2,
+          ~reply=slowly(RpcResult(JSON.Array([]))),
+        ),
+        heightCall(~reply=slowly(RpcResult(JSON.String("0x64")))),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[makeRegistration()],
+          ~addressStore,
+          ~syncConfig={...syncConfig, queryTimeoutMillis: 800, headQueryTimeoutMillis: 200},
+        )
+        let page = (~knownHeight) =>
+          client->callNextPage(
+            ~fromBlock=firstBlock,
+            ~toBlockCeiling=firstBlock,
+            ~knownHeight,
+            ~indexes=[3],
+            ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          )
+        let (backfill, _, _) = await page(~knownHeight=firstBlock + 1_000)
+        let (atHead, _, _) = await page(~knownHeight=firstBlock)
+        (backfill.kind, (atHead.kind, atHead.providerMessage), await getHeightErrorMessage(client))
+      },
+    )
+
+    t.expect(outcome).toEqual((
+      EvmRpcClient.Ok,
+      (EvmRpcClient.Backoff, Some("eth_getLogs took longer than 200ms")),
+      Some("eth_blockNumber took longer than 200ms"),
+    ))
   })
 
   Async.it("Backs off when one read outlasts the timeout on its own", async t => {

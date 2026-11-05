@@ -18,7 +18,14 @@ let getSyncConfig = (
     ?pollingInterval,
   }: Config.sourceSyncOptions,
 ): Config.sourceSync => {
-  let queryTimeoutMillis = queryTimeoutMillis->Option.getOr(20_000)
+  // A backfill page can span thousands of blocks, so a slow answer is still
+  // worth waiting for. Near the head a read covers a block or a few, and a
+  // provider that hasn't answered in 10s is better retried. A configured
+  // timeout applies to both.
+  let (queryTimeoutMillis, headQueryTimeoutMillis) = switch queryTimeoutMillis {
+  | Some(queryTimeoutMillis) => (queryTimeoutMillis, queryTimeoutMillis)
+  | None => (30_000, 10_000)
+  }
   {
     initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getOr(
       initialBlockInterval->Option.getOr(10_000),
@@ -34,6 +41,7 @@ let getSyncConfig = (
     ),
     backoffMillis: backoffMillis->Option.getOr(2000),
     queryTimeoutMillis,
+    headQueryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),
   }

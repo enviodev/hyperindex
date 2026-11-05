@@ -101,6 +101,7 @@ let make = (
       {
         fromBlock,
         toBlockCeiling: toBlock,
+        knownHeight,
         partitionId,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),

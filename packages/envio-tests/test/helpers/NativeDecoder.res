@@ -97,6 +97,7 @@ let decodeLogs = async (
         {
           fromBlock: 0,
           toBlockCeiling: 0,
+          knownHeight: 0,
           partitionId: "0",
           onEventRegistrationIndexes: eventRegistrations->Array.map(reg => reg.index),
           onBlockRegistrationIndexes: [],

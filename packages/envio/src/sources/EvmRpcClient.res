@@ -8,12 +8,14 @@ type cfg = {
   intervalCeiling: int,
   backoffMillis: int,
   queryTimeoutMillis: int,
+  headQueryTimeoutMillis: int,
   maxAddressesPerRequest: int,
 }
 
 type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
+  knownHeight: int,
   partitionId: string,
   onEventRegistrationIndexes: array<int>,
   onBlockRegistrationIndexes: array<int>,
@@ -105,6 +107,7 @@ let make = (
       intervalCeiling: syncConfig.intervalCeiling,
       backoffMillis: syncConfig.backoffMillis,
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
+      headQueryTimeoutMillis: syncConfig.headQueryTimeoutMillis,
       maxAddressesPerRequest,
     },
     eventRegistrations,
