@@ -13,8 +13,8 @@ use crate::evm_hypersync_source::selection::{
 };
 use crate::logger::{BoundLogger, Level};
 
-/// What a read is reported as when it asks a head block again by its hash, so
-/// the source's request metrics count those apart from the range reads.
+/// What a read is reported as when it asks a head block again, so the source's
+/// request metrics count those apart from the range reads.
 pub(super) const HEAD_BLOCK_RECHECK_STAT: &str = "eth_getLogs (head block recheck)";
 
 /// The blocks one `eth_getLogs` asks about.
@@ -31,6 +31,11 @@ pub(super) enum LogBlocks<'a> {
         block_number: u64,
         hash: &'a str,
     },
+    /// One block asked again by its number, for a provider that refuses
+    /// reads by hash.
+    RecheckByNumber {
+        block_number: u64,
+    },
 }
 
 impl LogBlocks<'_> {
@@ -40,14 +45,16 @@ impl LogBlocks<'_> {
                 from_block,
                 to_block,
             } => (from_block, to_block),
-            LogBlocks::Hash { block_number, .. } => (block_number, block_number),
+            LogBlocks::Hash { block_number, .. } | LogBlocks::RecheckByNumber { block_number } => {
+                (block_number, block_number)
+            }
         }
     }
 
     fn stat_method(&self) -> &'static str {
         match self {
             LogBlocks::Range { .. } => "eth_getLogs",
-            LogBlocks::Hash { .. } => HEAD_BLOCK_RECHECK_STAT,
+            LogBlocks::Hash { .. } | LogBlocks::RecheckByNumber { .. } => HEAD_BLOCK_RECHECK_STAT,
         }
     }
 }
@@ -64,14 +71,14 @@ fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -
         topics.pop();
     }
     let mut filter = match blocks {
-        LogBlocks::Range {
-            from_block,
-            to_block,
-        } => json!({
-            "fromBlock": format!("0x{from_block:x}"),
-            "toBlock": format!("0x{to_block:x}"),
-            "topics": topics,
-        }),
+        LogBlocks::Range { .. } | LogBlocks::RecheckByNumber { .. } => {
+            let (from_block, to_block) = blocks.bounds();
+            json!({
+                "fromBlock": format!("0x{from_block:x}"),
+                "toBlock": format!("0x{to_block:x}"),
+                "topics": topics,
+            })
+        }
         LogBlocks::Hash { hash, .. } => json!({
             "blockHash": hash,
             "topics": topics,

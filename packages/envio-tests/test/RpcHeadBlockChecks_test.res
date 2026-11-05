@@ -45,6 +45,9 @@ type fault =
   // The next range touching `block` answers it from a branch the chain left:
   // under another hash, with another value.
   | ReplacedBranch({block: int, mutable answers: int})
+  // Refuses every eth_getLogs by blockHash, the way publicnode's Polygon
+  // endpoint does, while reads by number work.
+  | NoBlockHashReads
 
 type chain = {mutable height: int, mutable logs: array<ServedEvmChain.log>, mutable fault: fault}
 let chain = {height: backfillHeight, logs: [], fault: Honest}
@@ -102,6 +105,17 @@ let getLogs = (request, filter, ~fault, ~calls) => {
   let honest = () => envelope(request, "result", JSON.Array(matched->Array.map(log => rpcLog(log))))
   let touches = block => fromBlock <= block && block <= toBlock
   switch fault {
+  | NoBlockHashReads if filter->Dict.has("blockHash") =>
+    envelope(
+      request,
+      "error",
+      JSON.Object(
+        dict{
+          "code": JSON.Number(-32602.),
+          "message": JSON.String("Archive requests require a personal token."),
+        },
+      ),
+    )
   | LaggingReplica(lag) if lag.answers > 0 && touches(lag.block) =>
     lag.answers = lag.answers - 1
     if filter->Dict.has("blockHash") {
@@ -506,6 +520,53 @@ describe("RPC head block checks", () => {
       },
     )
   })
+
+  Async.it(
+    "keeps indexing on a provider that refuses reads by hash, asking again by number",
+    async t => {
+      await runAtHead(
+        ~logs=[
+          event(~blockNumber=22),
+          // The bloom can't rule our logs out, so the block is asked again.
+          event(~blockNumber=23, ~address=token, ~topic=approvalTopic),
+          event(~blockNumber=23, ~logIndex=1, ~address=otherToken),
+          event(~blockNumber=24),
+        ],
+        ~height=24,
+        ~fault=NoBlockHashReads,
+        ~waitFor="24-0-24",
+        async (~indexer, ~backfill as _, ~head) => {
+          t.expect((
+            await indexer->seenIds,
+            head->Array.filter(call => call->String.startsWith("getLogs")),
+            indexer.allLogsAsJson()->Array.filterMap(
+              line =>
+                switch (line->Dict.get("level"), line->Dict.get("msg")) {
+                | (Some(String("warn")), Some(String(msg)))
+                  if msg->String.includes("by block hash") =>
+                  Some(msg)
+                | _ => None
+                },
+            ),
+          )).toEqual((
+            ["22-0-22", "24-0-24", "3-0-3"],
+            [
+              // Block 21 holds no logs at all, so its zero bloom rules nothing
+              // out either.
+              "getLogs 21-21",
+              "getLogs 21-24",
+              "getLogs 23-23",
+              "getLogs block 21",
+              "getLogs block 23",
+            ],
+            [
+              "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
+            ],
+          ))
+        },
+      )
+    },
+  )
 
   Async.it(
     "keeps the canonical event when a range answers a block from a replaced branch",

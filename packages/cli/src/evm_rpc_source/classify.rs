@@ -47,6 +47,22 @@ pub fn is_result_cap_message(message: &str) -> bool {
     RESULT_CAP.is_match(message) && !RATE_LIMITED.is_match(message)
 }
 
+// Refusals of the request itself rather than of the block it names, as
+// providers word them: publicnode's Polygon endpoint answers every
+// `eth_getLogs` by `blockHash` with "Archive requests require a personal token".
+static UNSUPPORTED_REQUEST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)archive|not supported|unsupported|not available|not allowed|method not found")
+        .unwrap()
+});
+
+/// Whether a provider refused a request as one it doesn't serve, invalid
+/// params and missing methods included, so asking again the same way is
+/// futile. Anything else, a block it doesn't know included, may answer on a
+/// later attempt.
+pub fn is_unsupported_request(code: i64, message: &str) -> bool {
+    code == -32601 || code == -32602 || UNSUPPORTED_REQUEST.is_match(message)
+}
+
 // Unknown provider: "retry with the range 123-456"
 static SUGGESTED_RANGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"retry with the range (\d+)-(\d+)").unwrap());
@@ -241,6 +257,24 @@ mod tests {
         assert_eq!(
             messages.map(is_result_cap_message),
             [true, true, true, true, false, false, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn unsupported_requests_are_told_from_a_block_the_node_does_not_know() {
+        let refusals = [
+            (-32602, "Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode"),
+            (-32601, "the method eth_getLogs does not exist/is not available"),
+            (-32000, "blockHash filter not supported"),
+            // A node that hasn't got the block, as geth, op-geth and erigon word it.
+            (-32000, "unknown block"),
+            (-32001, "block not found: hash 0x11"),
+            (-32000, "header not found"),
+            (-32005, "rate limit exceeded"),
+        ];
+        assert_eq!(
+            refusals.map(|(code, message)| is_unsupported_request(code, message)),
+            [true, true, true, false, false, false, false]
         );
     }
 }

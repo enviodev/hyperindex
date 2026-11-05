@@ -2,6 +2,7 @@ use anyhow::Context;
 use napi_derive::napi;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -31,7 +32,9 @@ use crate::js_value::JsTape;
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
-use classify::{is_response_too_large_message, suggested_block_interval_from_message};
+use classify::{
+    is_response_too_large_message, is_unsupported_request, suggested_block_interval_from_message,
+};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use enrich::{BlockRead, EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
 use hypersync_client::format::{self, Hex};
@@ -308,6 +311,9 @@ pub struct EvmRpcClient {
     /// Whether a head block's `logsBloom` can rule out logs the range answer
     /// didn't return. Off on chains that publish blocks before computing it.
     has_reliable_blooms: bool,
+    /// Whether the provider has been seen refusing reads by block hash, which
+    /// is said once per source rather than on every block.
+    warned_block_hash_refusal: AtomicBool,
 }
 
 /// How many blocks a page reads for its block handlers at most: each costs an
@@ -441,6 +447,7 @@ impl EvmRpcClient {
                     .context("chainId must be non-negative")
                     .map_err(map_err)?,
             ),
+            warned_block_hash_refusal: AtomicBool::new(false),
         })
     }
 
@@ -1000,25 +1007,8 @@ impl EvmRpcClient {
                         ))
                     })?;
                     let found = self
-                        .request_logs(
-                            query,
-                            logs::LogBlocks::Hash {
-                                block_number: block,
-                                hash,
-                            },
-                            &query.selections[index],
-                        )
-                        .await
-                        .map_err(|error| match error {
-                            RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_) => {
-                                EnrichError::BehindHead {
-                                    block_number: block,
-                                }
-                            }
-                            RpcError::Timeout(_) | RpcError::Other(_) => {
-                                EnrichError::Rpc(Arc::new(error))
-                            }
-                        })?;
+                        .recheck_block(query, &query.selections[index], block, hash)
+                        .await?;
                     self.logger.log(
                         Level::TRACE,
                         "Asked the RPC again for a head block its range answer held none of the selection's logs for.",
@@ -1036,6 +1026,51 @@ impl EvmRpcClient {
             logs[index].extend(found);
         }
         Ok(())
+    }
+
+    /// Asks for one checked block again by its hash. A provider that refuses
+    /// reads by hash altogether is asked by number instead: that still catches
+    /// a range that left the block out, but not a node lagging on every
+    /// answer, so it is said once.
+    async fn recheck_block(
+        &self,
+        query: &PageQuery<'_>,
+        selection: &BuiltLogSelection,
+        block: u64,
+        hash: &str,
+    ) -> Result<Vec<RawLog>, EnrichError> {
+        let by_hash = logs::LogBlocks::Hash {
+            block_number: block,
+            hash,
+        };
+        let refusal = match self.request_logs(query, by_hash, selection).await {
+            Ok(found) => return Ok(found),
+            Err(RpcError::JsonRpc { code, message }) if is_unsupported_request(code, &message) => {
+                message
+            }
+            Err(RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_)) => {
+                return Err(EnrichError::BehindHead {
+                    block_number: block,
+                })
+            }
+            Err(error) => return Err(EnrichError::Rpc(Arc::new(error))),
+        };
+        if !self.warned_block_hash_refusal.swap(true, Ordering::Relaxed) {
+            self.logger.log(
+                Level::WARN,
+                "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
+                &serde_json::json!({ "providerMessage": refusal }),
+            );
+        }
+        self.request_logs(
+            query,
+            logs::LogBlocks::RecheckByNumber {
+                block_number: block,
+            },
+            selection,
+        )
+        .await
+        .map_err(|error| EnrichError::Rpc(Arc::new(error)))
     }
 
     async fn route_logs(
