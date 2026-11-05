@@ -25,6 +25,7 @@ type nextPageParams = {
   // blocks-only page with no handler block in range. None when the range is
   // final.
   reorgableFrom?: int,
+  knownHeight: int,
 }
 
 // Rust reports what to do about a page it could not read rather than throwing

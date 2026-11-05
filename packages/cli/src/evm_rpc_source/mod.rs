@@ -152,6 +152,8 @@ pub struct NextPageParams {
     /// blocks-only page with no handler block in range. Absent when the whole
     /// range is final.
     pub reorgable_from: Option<i64>,
+    /// The chain's height as last seen, which the head checks reach down from.
+    pub known_height: i64,
 }
 
 /// What a page read came back as, and so which of `NextPageResult`'s optional
@@ -305,7 +307,7 @@ pub struct EvmRpcClient {
     block_registrations: BlockRegistrations,
     /// Whether a head block's `logsBloom` can rule out logs the range answer
     /// didn't return. Off on chains that publish blocks before computing it.
-    blooms_are_reliable: bool,
+    has_reliable_blooms: bool,
 }
 
 /// How many blocks a page reads for its block handlers at most: each costs an
@@ -320,6 +322,7 @@ struct PageQuery<'a> {
     from_block: u64,
     to_block: u64,
     reorgable_from: Option<u64>,
+    known_height: u64,
     selections: &'a [BuiltLogSelection],
     address_set: &'a AddressSet,
     set_cache: &'a Arc<SetCache>,
@@ -433,7 +436,7 @@ impl EvmRpcClient {
             block_read: BlockRead::for_chain(chain_fields.block_mask),
             chain_tx_mask: chain_fields.tx_mask,
             block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
-            blooms_are_reliable: head_checks::blooms_are_reliable(
+            has_reliable_blooms: head_checks::has_reliable_blooms(
                 u64::try_from(cfg.chain_id)
                     .context("chainId must be non-negative")
                     .map_err(map_err)?,
@@ -616,6 +619,7 @@ impl EvmRpcClient {
             reorgable_from: params
                 .reorgable_from
                 .map(|reorgable_from| reorgable_from.max(0) as u64),
+            known_height: params.known_height.max(0) as u64,
             selections: &built.log_selections,
             address_set,
             set_cache: &set_cache,
@@ -730,8 +734,12 @@ impl EvmRpcClient {
         &self,
         query: &PageQuery<'_>,
     ) -> Result<(Vec<EventItem>, Vec<BlockItem>, enrich::EnrichedPage), PageError> {
-        let checked_blocks =
-            head_checks::checked_blocks(query.from_block, query.to_block, query.reorgable_from);
+        let checked_blocks = head_checks::blocks_to_check(
+            query.from_block,
+            query.to_block,
+            query.reorgable_from,
+            (!query.selections.is_empty()).then_some(query.known_height),
+        );
         // Both are awaited before either is judged: a failed range is what
         // decides the retry, so it wins over a header that failed beside it.
         let (logs, headers) = futures_util::future::join(
@@ -972,8 +980,8 @@ impl EvmRpcClient {
                     checked_blocks,
                     &answered,
                     &checked_headers,
-                    head_checks::SelectionBloom::new(selection).as_ref(),
-                    self.blooms_are_reliable,
+                    selection,
+                    self.has_reliable_blooms,
                 )
                 .into_iter()
                 .map(move |(block, reason)| (index, block, reason))

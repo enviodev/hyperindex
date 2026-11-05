@@ -108,6 +108,7 @@ let make = (
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
         ?reorgableFrom,
+        knownHeight,
       },
       addressSet,
       blockStore,

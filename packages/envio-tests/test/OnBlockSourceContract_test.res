@@ -99,7 +99,8 @@ let fetch = (
   ~fromBlock=10,
   ~onBlockRegistrations=named("headers"),
   ~toBlock=Some(13),
-  ~knownHeight=100,
+  // Far below the head, where a page's blocks aren't checked one by one.
+  ~knownHeight=1_000,
   ~reorgableFrom=None,
   ~itemsTarget=None,
 ) =>
@@ -431,6 +432,7 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
           ~addressSet,
           ~onBlockRegistrations=named("sparse"),
           ~toBlock=None,
+          ~knownHeight=100,
         )
         (server->MockHyperSyncServer.takeQueries, page.latestFetchedBlockNumber)
       },
@@ -460,6 +462,7 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
           ~addressSet,
           ~onBlockRegistrations=named("sparse"),
           ~toBlock=Some(20_000),
+          ~knownHeight=100,
         )
         page.latestFetchedBlockNumber
       },

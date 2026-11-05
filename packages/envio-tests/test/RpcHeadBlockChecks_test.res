@@ -88,7 +88,7 @@ let filterBlocks = filter =>
     )
   }
 
-let getLogs = (request, filter) => {
+let getLogs = (request, filter, ~fault, ~calls) => {
   let (fromBlock, toBlock) = filter->filterBlocks
   calls
   ->Array.push(
@@ -101,7 +101,7 @@ let getLogs = (request, filter) => {
   let matched = chain.logs->Array.filter(log => ServedEvmChain.rpcFilterMatches(filter, log))
   let honest = () => envelope(request, "result", JSON.Array(matched->Array.map(log => rpcLog(log))))
   let touches = block => fromBlock <= block && block <= toBlock
-  switch chain.fault {
+  switch fault {
   | LaggingReplica(lag) if lag.answers > 0 && touches(lag.block) =>
     lag.answers = lag.answers - 1
     if filter->Dict.has("blockHash") {
@@ -151,14 +151,23 @@ let getLogs = (request, filter) => {
   }
 }
 
-let getServer = RpcE2eChain.serveDuringSuite(() =>
-  MockRpcServer.start(~port=rpcPort, ~handler=body => {
+// The same chain behind a second provider, which always answers honestly.
+let fallbackRpcPort = 18742
+let fallbackCalls: array<string> = []
+
+let serve = (~port, ~fault, ~calls) =>
+  MockRpcServer.start(~port, ~handler=body => {
     let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
     let params = request->Dict.getUnsafe("params")->JSON.Decode.array->Option.getOrThrow
     switch request->Dict.getUnsafe("method")->JSON.Decode.string->Option.getOrThrow {
     | "eth_getLogs" => (
         200,
-        getLogs(request, params->Array.getUnsafe(0)->JSON.Decode.object->Option.getOrThrow),
+        getLogs(
+          request,
+          params->Array.getUnsafe(0)->JSON.Decode.object->Option.getOrThrow,
+          ~fault=fault(),
+          ~calls,
+        ),
       )
     | "eth_getBlockByNumber" =>
       let blockNumber = params->Array.getUnsafe(0)->ServedEvmChain.quantity
@@ -171,41 +180,75 @@ let getServer = RpcE2eChain.serveDuringSuite(() =>
     | method => JsError.throwWithMessage(`Unexpected RPC method ${method}`)
     }
   })
+
+let getServer = RpcE2eChain.serveDuringSuite(() =>
+  serve(~port=rpcPort, ~fault=() => chain.fault, ~calls)
+)
+let getFallbackServer = RpcE2eChain.serveDuringSuite(() =>
+  serve(~port=fallbackRpcPort, ~fault=() => Honest, ~calls=fallbackCalls)
 )
 
-let scenario = Scenario.make(
-  ~configYaml=`
-name: rpc-head-block-checks
+let makeScenario = (~name, ~rpc, ~maxReorgDepth=5) =>
+  Scenario.make(
+    ~configYaml=`
+name: ${name}
 contracts:
   - name: Token
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
 chains:
   - id: 1337
-    rpc:
-      url: ${ServedEvmChain.url(rpcPort)}
-      for: sync
-      polling_interval: 10
+    rpc:${rpc}
     start_block: 1
-    max_reorg_depth: 5
+    max_reorg_depth: ${maxReorgDepth->Int.toString}
     contracts:
       - name: Token
         address: "${token}"
 `,
-  ~schema=`
+    ~schema=`
 type Seen {
   id: ID!
 }
 `,
-  ~handlers=`
+    ~handlers=`
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
   context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 `,
-  // A real RPC source against a local server: its requests resolve on real I/O.
-  ~virtualTime=false,
+    // A real RPC source against a local server: its requests resolve on real I/O.
+    ~virtualTime=false,
+  )
+
+let scenario = makeScenario(
+  ~name="rpc-head-block-checks",
+  ~rpc=`
+      url: ${ServedEvmChain.url(rpcPort)}
+      for: sync
+      polling_interval: 10`,
+)
+
+// Arbitrum and Optimism default to this: they don't reorg, but their providers
+// lag all the same.
+let noReorgScenario = makeScenario(
+  ~name="rpc-head-block-checks-no-reorg",
+  ~maxReorgDepth=0,
+  ~rpc=`
+      url: ${ServedEvmChain.url(rpcPort)}
+      for: sync
+      polling_interval: 10`,
+)
+
+let failoverScenario = makeScenario(
+  ~name="rpc-head-block-checks-failover",
+  ~rpc=`
+      - url: ${ServedEvmChain.url(rpcPort)}
+        for: sync
+        polling_interval: 10
+      - url: ${ServedEvmChain.url(fallbackRpcPort)}
+        for: fallback
+        polling_interval: 10`,
 )
 
 type seen = {id: string}
@@ -215,8 +258,8 @@ let seenIds = async (indexer: IndexerRunner.t) => {
   rows->Array.map(row => row.id)->Array.toSorted(String.compare)
 }
 
-let waitForSeen = async (indexer, id) => {
-  let deadline = Date.now() +. 10_000.
+let waitForSeen = async (indexer, id, ~timeoutMs=10_000.) => {
+  let deadline = Date.now() +. timeoutMs
   while !((await indexer->seenIds)->Array.includes(id)) {
     if Date.now() > deadline {
       JsError.throwWithMessage(
@@ -229,28 +272,57 @@ let waitForSeen = async (indexer, id) => {
   }
 }
 
+// The progress block's timestamp once progress has reached `atLeast`: the
+// metric moves with the batch write, a moment after the batch's events land.
+let progressBlockTime = async (indexer: IndexerRunner.t, ~atLeast) => {
+  let read = async name =>
+    (await indexer.metric(name))->Array.map(metric => metric.value)->Array.join(",")
+  let deadline = Date.now() +. 5_000.
+  while (
+    (await read("envio_progress_block"))->Int.fromString->Option.getOr(0) < atLeast &&
+      Date.now() < deadline
+  ) {
+    await Utils.delay(10)
+  }
+  await read("envio_progress_block_time_seconds")
+}
+
 let takeCalls = () => {
   let taken = calls->Array.toSorted(String.compare)
   calls->Utils.Array.clearInPlace
   taken
 }
 
-// Indexes up to the backfill height, then lets the chain grow to `height` with
-// `logs` and the provider answering the way `fault` says, and runs `body` once
-// the event `waitFor` names is indexed.
-let runAtHead = async (~logs, ~height, ~fault, ~waitFor, body) => {
+// Indexes up to the backfill height with the provider answering the way
+// `startupFault` says, then lets the chain grow to `height` with `logs` and the
+// provider answering the way `fault` says, and runs `body` once the event
+// `waitFor` names is indexed.
+let runAtHead = async (
+  ~scenario=scenario,
+  ~backfillHeight=backfillHeight,
+  ~startupFault=Honest,
+  ~logs,
+  ~height,
+  ~fault,
+  ~waitFor,
+  ~waitForTimeoutMs=?,
+  body,
+) => {
   let _ = getServer()
+  let _ = getFallbackServer()
   chain.height = backfillHeight
   chain.logs = [event(~blockNumber=3), ...logs]
-  chain.fault = Honest
+  chain.fault = startupFault
   calls->Utils.Array.clearInPlace
+  fallbackCalls->Utils.Array.clearInPlace
   await scenario->Scenario.run(~yamlSources=true, async (~indexer, ~source as _) => {
     await indexer->waitForSeen("3-0-3")
     await indexer.waitUntilReady()
     let backfill = takeCalls()
+    fallbackCalls->Utils.Array.clearInPlace
     chain.fault = fault
     chain.height = height
-    await indexer->waitForSeen(waitFor)
+    await indexer->waitForSeen(waitFor, ~timeoutMs=?waitForTimeoutMs)
     await body(~indexer, ~backfill, ~head=takeCalls())
   })
 }
@@ -279,44 +351,28 @@ describe("RPC head block checks", () => {
         ~height=24,
         ~fault=Honest,
         ~waitFor="21-0-21",
-        async (~indexer, ~backfill, ~head) => {
-          let backfillRanges =
-            backfill
-            ->Array.filter(
-              call => call->String.startsWith("getLogs ") && !(call->String.includes("block")),
-            )
-            ->Array.map(blockOf)
-          let isRangeEnd = block =>
-            backfillRanges->Array.some(range => range->Array.includes(block))
+        async (~indexer, ~backfill as _, ~head) => {
           t.expect((
             await indexer->seenIds,
             head,
-            // Below the last `max_reorg_depth` blocks, backfill reads only the
-            // headers its ranges start and end on, and those of blocks holding
-            // an event, for the event's block fields.
-            backfill->Array.filter(
-              call =>
-                call->String.startsWith("header ") && {
-                    let block = call->blockOf->Array.getUnsafe(0)
-                    block < backfillHeight - 5 &&
-                    !isRangeEnd(block) &&
-                    !(chain.logs->Array.some(log => log.blockNumber == block))
-                  },
-            ),
+            // Block 24 holds no event, yet its header was read, so progress
+            // there has its timestamp. The mock stamps each block with its
+            // number.
+            await indexer->progressBlockTime(~atLeast=24),
           )).toEqual((
             ["21-0-21", "3-0-3"],
             [
               "getLogs 21-24",
+              "getLogs block 23",
               // An empty block has an all-zero bloom, which some chains serve
               // whatever the block holds, so it says nothing.
-              "getLogs block 23",
               "getLogs block 24",
               "header 21",
               "header 22",
               "header 23",
               "header 24",
             ],
-            [],
+            "24",
           ))
         },
       )
@@ -366,6 +422,79 @@ describe("RPC head block checks", () => {
     },
   )
 
+  Async.it(
+    "keeps an event a lagging replica answers as empty on a chain that never reorgs",
+    async t => {
+      await runAtHead(
+        ~scenario=noReorgScenario,
+        ~logs=[event(~blockNumber=22), event(~blockNumber=24)],
+        ~height=24,
+        ~fault=LaggingReplica({block: 22, answers: 2}),
+        ~waitFor="24-0-24",
+        async (~indexer, ~backfill as _, ~head as _) => {
+          t.expect(await indexer->seenIds).toEqual(["22-0-22", "24-0-24", "3-0-3"])
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "keeps an event a lagging replica answers as empty while the backfill reaches the head",
+    async t => {
+      await runAtHead(
+        ~scenario=noReorgScenario,
+        ~startupFault=LaggingReplica({block: 19, answers: 2}),
+        ~logs=[event(~blockNumber=19)],
+        ~height=backfillHeight,
+        ~fault=Honest,
+        ~waitFor="19-0-19",
+        async (~indexer, ~backfill as _, ~head as _) => {
+          t.expect(await indexer->seenIds).toEqual(["19-0-19", "3-0-3"])
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "reads only range ends and event blocks during a backfill more than 200 blocks below the head",
+    async t => {
+      let backfillHeight = 400
+      await runAtHead(
+        ~backfillHeight,
+        ~logs=[event(~blockNumber=150), event(~blockNumber=401)],
+        ~height=401,
+        ~fault=Honest,
+        ~waitFor="401-0-401",
+        async (~indexer as _, ~backfill, ~head as _) => {
+          let headers =
+            backfill->Array.filterMap(
+              call =>
+                call->String.startsWith("header ") ? Some(call->blockOf->Array.getUnsafe(0)) : None,
+            )
+          let rangeEnds =
+            backfill
+            ->Array.filter(
+              call => call->String.startsWith("getLogs ") && !(call->String.includes("block")),
+            )
+            ->Array.flatMap(blockOf)
+          let isEventBlock = block => chain.logs->Array.some(log => log.blockNumber == block)
+          t.expect((
+            headers->Array.filter(
+              block => block < backfillHeight - 200 && !(rangeEnds->Array.includes(block)),
+            ),
+            Array.fromInitializer(~length=201, i => backfillHeight - 200 + i)->Array.filter(
+              block => !(headers->Array.includes(block)),
+            ),
+          )).toEqual((
+            // Read for the event's block fields.
+            headers->Array.filter(block => block < backfillHeight - 200 && isEventBlock(block)),
+            [],
+          ))
+        },
+      )
+    },
+  )
+
   Async.it("keeps an event a range answer leaves out of a block in its middle", async t => {
     await runAtHead(
       ~logs=[event(~blockNumber=22), event(~blockNumber=24)],
@@ -391,5 +520,37 @@ describe("RPC head block checks", () => {
         },
       )
     },
+  )
+
+  Async.it(
+    "never accepts the empty answer of a replica that stays behind, failing over instead",
+    async t => {
+      await runAtHead(
+        ~scenario=failoverScenario,
+        ~logs=[event(~blockNumber=22)],
+        ~height=22,
+        ~fault=LaggingReplica({block: 22, answers: 1_000_000}),
+        ~waitFor="22-0-22",
+        // The source gives a node behind the head about ten seconds of retries
+        // before it fails over.
+        ~waitForTimeoutMs=30_000.,
+        async (~indexer, ~backfill as _, ~head) => {
+          t.expect((
+            await indexer->seenIds,
+            head->Array.some(call => call == "getLogs block 22"),
+            fallbackCalls->Array.some(call => call == "getLogs 21-22"),
+            indexer.allLogsAsJson()->Array.some(
+              line =>
+                switch (line->Dict.get("level"), line->Dict.get("msg")) {
+                | (Some(String("warn")), Some(String(msg))) =>
+                  msg->String.includes("still catching up to block 22")
+                | _ => false
+                },
+            ),
+          )).toEqual((["22-0-22", "3-0-3"], true, true, true))
+        },
+      )
+    },
+    ~timeout=60_000,
   )
 })

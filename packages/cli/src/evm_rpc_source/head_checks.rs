@@ -18,26 +18,39 @@ use crate::evm_hypersync_source::selection::BuiltLogSelection;
 /// its testnet), so a header there can't rule out any logs.
 const ASYNC_EXECUTION_CHAIN_IDS: [u64; 2] = [143, 10143];
 
-pub(crate) fn blooms_are_reliable(chain_id: u64) -> bool {
+pub(crate) fn has_reliable_blooms(chain_id: u64) -> bool {
     !ASYNC_EXECUTION_CHAIN_IDS.contains(&chain_id)
 }
 
-/// The blocks of `from_block..=to_block` that can still be reorged, which are
-/// the ones near enough to the head for the provider's nodes to disagree on.
-pub(crate) fn checked_blocks(
+/// How far below the head blocks are checked, whatever the chain's reorg
+/// depth: a chain that never reorgs, which Arbitrum and Optimism are
+/// configured as, has providers that lag all the same.
+const HEAD_CHECK_DISTANCE: u64 = 200;
+
+/// The blocks of `from_block..=to_block` to check: every block that can still
+/// be reorged, and for a page reading logs every block within
+/// `HEAD_CHECK_DISTANCE` of the head, the backfill's last page included. A page
+/// reading no logs, `log_page_known_height` `None`, has nothing a lagging node
+/// could leave out, so only the hashes linking its reorgable blocks are read.
+pub(crate) fn blocks_to_check(
     from_block: u64,
     to_block: u64,
     reorgable_from: Option<u64>,
+    log_page_known_height: Option<u64>,
 ) -> Vec<u64> {
-    match reorgable_from {
-        Some(reorgable_from) => (from_block.max(reorgable_from)..=to_block).collect(),
-        None => Vec::new(),
-    }
+    let near_head_from =
+        log_page_known_height.map(|known_height| known_height.saturating_sub(HEAD_CHECK_DISTANCE));
+    let check_from = match (reorgable_from, near_head_from) {
+        (Some(reorgable_from), Some(near_head_from)) => reorgable_from.min(near_head_from),
+        (Some(check_from), None) | (None, Some(check_from)) => check_from,
+        (None, None) => return Vec::new(),
+    };
+    (from_block.max(check_from)..=to_block).collect()
 }
 
 /// The bloom bits each value a selection filters on sets, so a header's bloom
 /// is tested without hashing the selection again for every block.
-pub(crate) struct SelectionBloom {
+struct SelectionBloom {
     /// Empty for an address-free selection.
     addresses: Vec<Bloom>,
     /// Per topic position; empty where the position matches anything.
@@ -47,7 +60,7 @@ pub(crate) struct SelectionBloom {
 impl SelectionBloom {
     /// `None` when a value isn't hex, which leaves the selection's blocks
     /// unruled-out rather than failing the page.
-    pub(crate) fn new(selection: &BuiltLogSelection) -> Option<Self> {
+    fn new(selection: &BuiltLogSelection) -> Option<Self> {
         let blooms = |values: &[String]| -> Option<Vec<Bloom>> {
             values
                 .iter()
@@ -81,7 +94,6 @@ impl SelectionBloom {
     }
 }
 
-/// What the checks read off a block header.
 pub(crate) struct CheckedHeader {
     pub hash: Option<String>,
     bloom: Option<Bloom>,
@@ -121,25 +133,34 @@ pub(crate) fn blocks_to_recheck(
     checked: &[u64],
     answered: &HashSet<u64>,
     headers: &HashMap<u64, CheckedHeader>,
-    selection: Option<&SelectionBloom>,
-    blooms_are_reliable: bool,
+    selection: &BuiltLogSelection,
+    has_reliable_blooms: bool,
 ) -> Vec<(u64, RecheckReason)> {
-    checked
-        .iter()
-        .filter(|block| !answered.contains(block))
-        .filter_map(|&block| {
-            let bloom = headers
-                .get(&block)
-                .and_then(|header| header.bloom)
-                .filter(|bloom| blooms_are_reliable && *bloom != Bloom::ZERO);
-            match (bloom, selection) {
-                (Some(bloom), Some(selection)) => selection
-                    .may_match(&bloom)
-                    .then_some((block, RecheckReason::BloomMatches)),
-                _ => Some((block, RecheckReason::BloomSaysNothing)),
+    // Hashing a selection costs a keccak per address, which only a block whose
+    // bloom has something to say is worth paying for.
+    let mut selection_bloom: Option<Option<SelectionBloom>> = None;
+    let mut rechecks = Vec::new();
+    for &block in checked {
+        if answered.contains(&block) {
+            continue;
+        }
+        let bloom = headers
+            .get(&block)
+            .and_then(|header| header.bloom)
+            .filter(|bloom| has_reliable_blooms && *bloom != Bloom::ZERO);
+        let reason = match bloom {
+            Some(bloom) => {
+                match selection_bloom.get_or_insert_with(|| SelectionBloom::new(selection)) {
+                    Some(selection_bloom) if !selection_bloom.may_match(&bloom) => continue,
+                    Some(_) => RecheckReason::BloomMatches,
+                    None => RecheckReason::BloomSaysNothing,
+                }
             }
-        })
-        .collect()
+            None => RecheckReason::BloomSaysNothing,
+        };
+        rechecks.push((block, reason));
+    }
+    rechecks
 }
 
 #[cfg(test)]
@@ -166,27 +187,52 @@ mod tests {
         }
     }
 
-    fn selection(emitters: Emitters, topics: &[&[&str]]) -> SelectionBloom {
-        SelectionBloom::new(&BuiltLogSelection {
+    fn selection(emitters: Emitters, topics: &[&[&str]]) -> BuiltLogSelection {
+        BuiltLogSelection {
             emitters,
             topics: topics
                 .iter()
                 .map(|values| values.iter().map(|value| value.to_string()).collect())
                 .collect(),
-        })
-        .unwrap()
+        }
+    }
+
+    fn may_match(selection: BuiltLogSelection, bloom: &Bloom) -> bool {
+        SelectionBloom::new(&selection).unwrap().may_match(bloom)
     }
 
     #[test]
-    fn checks_the_blocks_of_a_range_that_can_still_be_reorged() {
+    fn checks_reorgable_blocks_and_at_least_the_last_two_hundred() {
+        let range = |from: u64, to: u64| (from..=to).collect::<Vec<_>>();
         assert_eq!(
             (
-                checked_blocks(21, 24, None),
-                checked_blocks(21, 24, Some(23)),
-                checked_blocks(21, 24, Some(5)),
-                checked_blocks(21, 24, Some(30)),
+                // Backfill reaching the head, and far below it.
+                blocks_to_check(500, 1000, None, Some(1000)),
+                blocks_to_check(100, 500, None, Some(1000)),
+                // A reorg depth past the distance.
+                blocks_to_check(500, 1000, Some(700), Some(1000)),
+                // A reorg depth inside it, down to 0.
+                blocks_to_check(500, 1000, Some(990), Some(1000)),
+                blocks_to_check(500, 1000, Some(1000), Some(1000)),
+                // A page catching up far below the head.
+                blocks_to_check(100, 500, Some(1000), Some(1000)),
+                // A chain younger than the distance.
+                blocks_to_check(21, 24, Some(24), Some(24)),
+                // A page reading no logs.
+                blocks_to_check(500, 1000, Some(990), None),
+                blocks_to_check(500, 1000, None, None),
             ),
-            (vec![], vec![23, 24], vec![21, 22, 23, 24], vec![]),
+            (
+                range(800, 1000),
+                vec![],
+                range(700, 1000),
+                range(800, 1000),
+                range(800, 1000),
+                vec![],
+                range(21, 24),
+                range(990, 1000),
+                vec![],
+            ),
         );
     }
 
@@ -216,16 +262,17 @@ mod tests {
         let answered = HashSet::from([21]);
         let by_address = selection(Emitters::Listed(vec![TOKEN.to_string()]), &[&[TRANSFER]]);
         let address_free = selection(Emitters::Any(AddressFreeOrigin::default()), &[&[TRANSFER]]);
+        let not_hex = selection(Emitters::Listed(vec!["token".to_string()]), &[&[TRANSFER]]);
         let recheck = |selection, reliable| {
             blocks_to_recheck(&checked, &answered, &headers, selection, reliable)
         };
         use RecheckReason::*;
         assert_eq!(
             (
-                recheck(Some(&by_address), true),
-                recheck(Some(&address_free), true),
-                recheck(Some(&by_address), false),
-                recheck(None, true),
+                recheck(&by_address, true),
+                recheck(&address_free, true),
+                recheck(&by_address, false),
+                recheck(&not_hex, true),
             ),
             (
                 vec![
@@ -253,14 +300,21 @@ mod tests {
         let bloom = header(&[(TOKEN, &[TRANSFER, &from_other])]).bloom.unwrap();
         assert_eq!(
             (
-                selection(Emitters::Listed(vec![]), &[&[TRANSFER], &[&from_token]])
-                    .may_match(&bloom),
-                selection(Emitters::Listed(vec![]), &[&[TRANSFER], &[], &[]]).may_match(&bloom),
-                selection(
-                    Emitters::Listed(vec![]),
-                    &[&[TRANSFER], &[&from_token, &from_other]]
-                )
-                .may_match(&bloom),
+                may_match(
+                    selection(Emitters::Listed(vec![]), &[&[TRANSFER], &[&from_token]]),
+                    &bloom
+                ),
+                may_match(
+                    selection(Emitters::Listed(vec![]), &[&[TRANSFER], &[], &[]]),
+                    &bloom
+                ),
+                may_match(
+                    selection(
+                        Emitters::Listed(vec![]),
+                        &[&[TRANSFER], &[&from_token, &from_other]]
+                    ),
+                    &bloom
+                ),
             ),
             (false, true, true),
         );

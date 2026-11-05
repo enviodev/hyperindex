@@ -70,8 +70,14 @@ let resultFor = (~transfers, ~height, ~blockFields=_ => "", ~receiptFor=?, ~meth
     }
   | "eth_getLogs" =>
     let filter = arg(0)->JSON.Decode.object->Option.getOrThrow
-    let fromBlock = filter->Dict.getUnsafe("fromBlock")->hexParam
-    let toBlock = filter->Dict.getUnsafe("toBlock")->hexParam
+    // A block's hash is its number, so a read by hash is a one-block range.
+    let (fromBlock, toBlock) = switch filter->Dict.get("blockHash") {
+    | Some(hash) => (hash->hexParam, hash->hexParam)
+    | None => (
+        filter->Dict.getUnsafe("fromBlock")->hexParam,
+        filter->Dict.getUnsafe("toBlock")->hexParam,
+      )
+    }
     JSON.Array(
       transfers
       ->Array.filter(({blockNumber}) => blockNumber >= fromBlock && blockNumber <= toBlock)
@@ -156,9 +162,13 @@ let callSummary = (mock: MockRpcServer.t) =>
         ->Array.getUnsafe(0)
         ->JSON.Decode.object
         ->Option.getOrThrow
-      `eth_getLogs ${filter->Dict.getUnsafe("fromBlock")->JSON.stringify}-${filter
-        ->Dict.getUnsafe("toBlock")
-        ->JSON.stringify}`
+      switch filter->Dict.get("blockHash") {
+      | Some(hash) => `eth_getLogs block ${hash->hexParam->Int.toString}`
+      | None =>
+        `eth_getLogs ${filter->Dict.getUnsafe("fromBlock")->JSON.stringify}-${filter
+          ->Dict.getUnsafe("toBlock")
+          ->JSON.stringify}`
+      }
     | _ => method
     }
   })
@@ -166,7 +176,8 @@ let callSummary = (mock: MockRpcServer.t) =>
 
 // The eth_getLogs ranges in the order they were asked for. Pages are sequential,
 // so unlike the concurrent block reads their order is meaningful: it shows how a
-// failed page narrows the ones that follow it.
+// failed page narrows the ones that follow it. A block asked for again by its
+// hash is no range.
 let logRanges = (mock: MockRpcServer.t) =>
   mock.requests->Array.filterMap(body => {
     let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
@@ -180,9 +191,11 @@ let logRanges = (mock: MockRpcServer.t) =>
         ->Array.getUnsafe(0)
         ->JSON.Decode.object
         ->Option.getOrThrow
-      let field = name =>
-        filter->Dict.getUnsafe(name)->JSON.Decode.string->Option.getOrThrow
-      Some(`${field("fromBlock")}-${field("toBlock")}`)
+      let field = name => filter->Dict.get(name)->Option.flatMap(JSON.Decode.string)
+      switch (field("fromBlock"), field("toBlock")) {
+      | (Some(fromBlock), Some(toBlock)) => Some(`${fromBlock}-${toBlock}`)
+      | _ => None
+      }
     | _ => None
     }
   })

@@ -103,6 +103,7 @@ let decodeLogs = async (
           onBlockRegistrationIndexes: [],
           clientFilteredContracts: None,
           retry: 0,
+          knownHeight: 0,
         },
         addressSet,
         BlockStore.make(~ecosystem=Ecosystem.Evm),
