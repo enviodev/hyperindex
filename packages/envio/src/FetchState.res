@@ -1246,7 +1246,7 @@ type notice =
       requestedFromBlock: int,
     })
 
-let clientFilterReason = (
+let findClientFilterReason = (
   policy: clientFilterPolicy,
   ~contractName,
   ~dynamicContracts: Utils.Set.t<string>,
@@ -1279,7 +1279,7 @@ let switchToClientSideFiltering = (
   let switched = clientFilteredContracts->Utils.Set.toArray->Utils.Set.fromArray
   contractNames->Array.forEach(contractName =>
     if !(switched->Utils.Set.has(contractName)) {
-      switch policy->clientFilterReason(~contractName, ~dynamicContracts, ~addressStore) {
+      switch policy->findClientFilterReason(~contractName, ~dynamicContracts, ~addressStore) {
       | Some(reason) =>
         switched->Utils.Set.add(contractName)->ignore
         if !isAlreadyReported {

@@ -177,27 +177,26 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
           fromBlock: 1,
           reply: Respond({
             items: [{blockNumber: 10, logIndex: 0, contractRegister: register([first])}],
-            latestFetchedBlockNumber: 749,
+            latestFetchedBlockNumber: 950,
           }),
         },
       ])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 10, where: hasAddresses([first]), reply: upTo(749)},
-        {fromBlock: 750, where: hasAddresses([configAddress]), reply: LeavePending},
+        {fromBlock: 10, where: hasAddresses([first]), reply: upTo(950)},
       ])
 
-      // Fetched to 749, 201 blocks short of the fetchable head: the next
-      // queries still carry addresses. The config partition goes on to the
-      // fetchable head.
+      // Fetchable head 1151, 201 blocks past the chain: still by address.
+      sourceMock.resolveGetHeightOrThrow(1201)
       await sourceMock.expectItemsQueries([
-        {fromBlock: 750, where: hasAddresses([configAddress]), reply: upTo(950)},
-        {fromBlock: 750, where: hasAddresses([first]), reply: upTo(750)},
+        {fromBlock: 951, where: hasAddresses([configAddress]), reply: upTo(1151)},
+        {fromBlock: 951, where: hasAddresses([first]), reply: upTo(1151)},
       ])
 
-      // 200 short: one address-free query. Measured from the known head, the
-      // chain would still be 250 blocks away.
+      // Fetchable head 1351, 200 blocks past the chain: one address-free query.
+      // Measured from the known head, the chain would still be 250 blocks away.
+      sourceMock.resolveGetHeightOrThrow(1401)
       await sourceMock.expectItemsQueries([
-        {fromBlock: 751, where: hasAddresses([]), reply: upTo(950)},
+        {fromBlock: 1152, where: hasAddresses([]), reply: upTo(1351)},
       ])
 
       t.expect(
@@ -225,6 +224,8 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
           }),
         },
       ])
+      // The response reports a newer head, as HyperSync's do, while the
+      // partition is still 500 blocks behind it.
       let laggardPartitionId = ref("")
       await sourceMock.expectItemsQueries([
         {
@@ -233,15 +234,19 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
           reply: RespondWith(
             query => {
               laggardPartitionId := query.partitionId
-              {items: [], latestFetchedBlockNumber: 1000}
+              {items: [], latestFetchedBlockNumber: 500, knownHeight: 1001}
             },
           ),
         },
       ])
-
-      sourceMock.resolveGetHeightOrThrow(1001)
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1001, where: hasAddresses([]), reply: upTo(1001, ~knownHeight=1001)},
+        {fromBlock: 501, where: hasAddresses([first]), reply: upTo(1001)},
+        {fromBlock: 1001, where: hasAddresses([configAddress]), reply: upTo(1001)},
+      ])
+
+      sourceMock.resolveGetHeightOrThrow(1002)
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1002, where: hasAddresses([]), reply: upTo(1002, ~knownHeight=1002)},
       ])
 
       t.expect(
@@ -263,10 +268,52 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
         (
           Some(JSON.String("trace")),
           Some(JSON.String(laggardPartitionId.contents)),
-          Some(JSON.Number(9.)),
-          Some(JSON.Number(1000.)),
+          Some(JSON.Number(500.)),
+          Some(JSON.Number(1001.)),
         ),
       ])
+    },
+  )
+
+  scenario->Scenario.it(
+    "judges the distance against a head it just learned, not one a response repeats",
+    ~sources=[{chain: 1337}],
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer as _, ~source) => {
+      let sourceMock = source(1337)
+      // Like an RPC source, the responses below repeat the height their query
+      // went out with, however long the backfill took.
+      sourceMock.resolveGetHeightOrThrow(1000)
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 10, logIndex: 0, contractRegister: register([first])}],
+            latestFetchedBlockNumber: 1000,
+          }),
+        },
+      ])
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 10, where: hasAddresses([first]), reply: upTo(1000)},
+      ])
+
+      // Back at the head it knew, the chain learns the real one: 1000 blocks
+      // went by meanwhile, and they are fetched by address.
+      sourceMock.resolveGetHeightOrThrow(2000)
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 1001, where: hasAddresses([configAddress]), reply: upTo(2000)},
+        {fromBlock: 1001, where: hasAddresses([first]), reply: upTo(2000)},
+      ])
+
+      sourceMock.resolveGetHeightOrThrow(2001)
+      await sourceMock.expectItemsQueries([
+        {fromBlock: 2001, where: hasAddresses([]), reply: upTo(2001, ~knownHeight=2001)},
+      ])
+
+      t.expect(
+        sourceMock.pendingItemsQueries,
+        ~message="the next head block is one address-free query",
+      ).toEqual([])
     },
   )
 

@@ -995,7 +995,12 @@ let materializePageItems = async (
 // stays the same while contracts keep being registered. Once every partition is
 // close enough, the chain's dynamic contracts leave the server-side address
 // filter for the rest of the run.
-let fetchDynamicContractsAddressFreeNearHead = (cs: t) =>
+//
+// Judged only when the chain learns a newer head. An RPC response repeats the
+// height its query went out with, which can be hours old by the end of a
+// backfill: judged against it, every block produced since would be fetched
+// address-free.
+let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
   if !cs.fetchState.clientFilterPolicy.allDynamicContracts {
     switch cs.fetchState->FetchState.headProximity {
     | NearHead =>
@@ -1043,6 +1048,7 @@ let handleQueryResult = (
     )
   }
 
+  let previousKnownHeight = cs.fetchState.knownHeight
   cs.fetchState =
     fs
     ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
@@ -1050,7 +1056,9 @@ let handleQueryResult = (
 
   // The query is no longer in flight, so release its reservation.
   cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsEst->Int.toFloat)
-  cs->fetchDynamicContractsAddressFreeNearHead
+  if cs.fetchState.knownHeight > previousKnownHeight {
+    cs->switchDynamicContractsToClientSideFilteringNearHead
+  }
 }
 
 // Run reorg detection against a fetch response by merging its block-store page
@@ -1085,10 +1093,10 @@ let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
   cs->resetPendingQueries
 }
 
-// A chain resuming near the head goes address-free before its first query.
+// A chain waiting at its head goes address-free before querying the new block.
 let updateKnownHeight = (cs: t, ~knownHeight) => {
   cs.fetchState = cs.fetchState->FetchState.updateKnownHeight(~knownHeight)
-  cs->fetchDynamicContractsAddressFreeNearHead
+  cs->switchDynamicContractsToClientSideFilteringNearHead
 }
 
 // In auto-exit mode, pin the endBlock to the earliest observed event block.
