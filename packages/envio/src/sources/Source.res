@@ -191,7 +191,7 @@ let downReasonFromLabel = label =>
   | "unsubscribed" => Unsubscribed
   | label =>
     switch label->String.startsWith("http-")
-      ? label->String.sliceToEnd(~start=5)->Int.fromString
+      ? label->String.slice(~start=5)->Int.fromString
       : None {
     | Some(code) => Http(code)
     | None => TransportError
