@@ -116,9 +116,35 @@ const decodeColumns = S.decodeOrThrow(
 );
 const rkyvColumns = (bytes) => ({ eventItems: rowsFromColumns(decodeColumns(bytes)) });
 
+// The same page as protobuf messages (PbPage in rkyv_interop.rs), read by
+// Sury's S.protobuf.
+const F = (schema, number) => schema.with(S.protobufField, number);
+const decodeProtobuf = S.decodeOrThrow(
+  S.protobuf,
+  S.schema({
+    archiveHeight: F(S.optional(S.int32), 1),
+    nextBlock: F(S.int32, 2),
+    eventItems: F(
+      S.array(
+        S.schema({
+          logIndex: F(S.int32, 1),
+          srcAddress: F(S.string, 2),
+          blockNumber: F(S.int32, 3),
+          transactionIndex: F(S.int32, 4),
+          onEventRegistrationIndex: F(S.int32, 5),
+          params: F(S.schema({ from: F(S.string, 1), to: F(S.string, 2), value: F(S.string.with(S.to, S.bigint), { number: 3, type: "string" }) }), 6),
+        }),
+      ),
+      3,
+    ),
+    responseBlocks: F(S.int32, 5),
+  }),
+);
+
 const paths = {
   napi: { prepare: (n) => addon.rkyvInteropPrepareNapi(n), take: () => addon.rkyvInteropTakeNapi(), read: (x) => x },
   rkyv: { prepare: (n) => addon.rkyvInteropPrepareRkyv(n), take: () => addon.rkyvInteropTakeRkyv(), read: decode },
+  protobuf: { prepare: (n) => addon.rkyvInteropPrepareProtobuf(n), take: () => addon.rkyvInteropTakeProtobuf(), read: decodeProtobuf },
   rkyvColumns: { prepare: (n) => addon.rkyvInteropPrepareColumns(n), take: () => addon.rkyvInteropTakeColumns(), read: rkyvColumns },
   arena: { prepare: (n) => addon.rkyvInteropPrepareArena(n), take: () => addon.rkyvInteropTakeArena(), read: arenaRows },
   arenaSury: { prepare: (n) => addon.rkyvInteropPrepareArena(n), take: () => addon.rkyvInteropTakeArena(), read: arenaSury },

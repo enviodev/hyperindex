@@ -38,6 +38,21 @@ const Change = S.union([
 const encodeChanges = S.encodeOrThrow(S.array(Change), S.rkyv);
 const decodeAccounts = S.decodeOrThrow(S.rkyv, S.array(Account));
 
+// The same entities as protobuf messages (PbChanges and PbAccounts in
+// rkyv_interop.rs): a change is one message, a delete without its entity.
+const F = (schema, number) => schema.with(S.protobufField, number);
+const PbAccount = S.schema({
+  id: F(S.string, 1),
+  owner: F(S.string, 2),
+  balance: F(S.string.with(S.to, S.bigint), { number: 3, type: "string" }),
+  transfers: F(S.int32, 4),
+  active: F(S.boolean, 5),
+  ratio: F(S.optional(S.number), 6),
+});
+const PbChange = S.schema({ type: F(S.string, 4), entityId: F(S.string, 1), entity: F(S.optional(PbAccount), 3), checkpointId: F(S.bigint, 2) });
+const encodeChangesProtobuf = S.encodeOrThrow(S.schema({ changes: F(S.array(PbChange), 1) }), S.protobuf);
+const decodeAccountsProtobuf = S.decodeOrThrow(S.protobuf, S.schema({ accounts: F(S.array(PbAccount), 1) }));
+
 const address = (seed) => "0x" + (BigInt(seed) * 0x9e3779b97f4a7c15n % (1n << 160n)).toString(16).padStart(40, "0");
 const changesOf = (count) =>
   Array.from({ length: count }, (_, i) =>
@@ -64,7 +79,7 @@ const show = (x) => JSON.stringify(x, (_, v) => (typeof v === "bigint" ? `${v}n`
 
 const measure = async (count, runs) => {
   const changes = changesOf(count);
-  const t = { arenaWrite: [], rkyvWrite: [], arenaRead: [], rkyvRead: [] };
+  const t = { arenaWrite: [], rkyvWrite: [], protobufWrite: [], arenaRead: [], rkyvRead: [], protobufRead: [] };
   for (let run = 0; run < runs; run++) {
     let start = now();
     const handle = bench.stage(changes);
@@ -76,6 +91,11 @@ const measure = async (count, runs) => {
     t.rkyvWrite.push(Number(now() - start));
     if (sets !== changes.filter((change) => change.type === "SET").length) throw new Error(`Rust read ${sets} sets`);
 
+    start = now();
+    const pbSets = addon.rkyvInteropReceiveChangesProtobuf(encodeChangesProtobuf({ changes }));
+    t.protobufWrite.push(Number(now() - start));
+    if (pbSets !== sets) throw new Error(`Rust read ${pbSets} sets from protobuf`);
+
     const result = await bench.query(count);
     start = now();
     const viaArena = bench.read(result);
@@ -86,9 +106,15 @@ const measure = async (count, runs) => {
     const viaRkyv = decodeAccounts(addon.rkyvInteropTakeAccounts());
     t.rkyvRead.push(Number(now() - start));
 
+    addon.rkyvInteropPrepareAccountsProtobuf(count);
+    start = now();
+    const viaProtobuf = decodeAccountsProtobuf(addon.rkyvInteropTakeAccountsProtobuf()).accounts;
+    t.protobufRead.push(Number(now() - start));
+
     if (run === 0) {
-      const a = viaArena.at(-1), b = viaRkyv.at(-1);
-      if (viaArena.length !== count || show(a) !== show(b)) throw new Error(`the reads disagree: ${show([a, b])}`);
+      const a = viaArena.at(-1);
+      for (const b of [viaRkyv.at(-1), viaProtobuf.at(-1)])
+        if (viaArena.length !== count || show(a) !== show(b)) throw new Error(`the reads disagree: ${show([a, b])}`);
     }
   }
   const us = (xs) => median(xs) / 1000;
@@ -97,13 +123,13 @@ const measure = async (count, runs) => {
 
 for (const count of [100, 1_000, 10_000]) await measure(count, 10);
 const results = [];
-console.log("entities | write: arena / rkyv (µs) | read: arena / rkyv (µs)");
+console.log("entities | write: arena / rkyv / protobuf (µs) | read: arena / rkyv / protobuf (µs)");
 for (const count of [100, 1_000, 10_000, 50_000]) {
   const r = await measure(count, count >= 10_000 ? 15 : 60);
   results.push(r);
   const f = (x) => x.toFixed(0);
   console.log(
-    `${String(count).padStart(8)} | ${f(r.arenaWrite)} / ${f(r.rkyvWrite)} (${(r.arenaWrite / r.rkyvWrite).toFixed(2)}x) | ${f(r.arenaRead)} / ${f(r.rkyvRead)} (${(r.arenaRead / r.rkyvRead).toFixed(2)}x)`,
+    `${String(count).padStart(8)} | ${f(r.arenaWrite)} / ${f(r.rkyvWrite)} / ${f(r.protobufWrite)} | ${f(r.arenaRead)} / ${f(r.rkyvRead)} / ${f(r.protobufRead)}`,
   );
 }
 if (process.env.RESULTS) writeFileSync(process.env.RESULTS, JSON.stringify(results, null, 2));

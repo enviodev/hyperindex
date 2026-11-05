@@ -327,3 +327,168 @@ pub fn rkyv_interop_prepare_accounts(count: u32) {
 pub fn rkyv_interop_take_accounts() -> Buffer {
     Buffer::from(ACCOUNTS.lock().unwrap().take().expect("prepared"))
 }
+
+// The same three crossings as protobuf messages, for Sury's `S.protobuf`. The
+// numbers are int32 on the wire: Sury reads an int64 only into a bigint or its
+// digits, and every value here fits.
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct PbTransfer {
+    #[prost(string, tag = "1")]
+    from: String,
+    #[prost(string, tag = "2")]
+    to: String,
+    /// uint256 has no protobuf type: its digits.
+    #[prost(string, tag = "3")]
+    value: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct PbEventItem {
+    #[prost(int32, tag = "1")]
+    log_index: i32,
+    #[prost(string, tag = "2")]
+    src_address: String,
+    #[prost(int32, tag = "3")]
+    block_number: i32,
+    #[prost(int32, tag = "4")]
+    transaction_index: i32,
+    #[prost(int32, tag = "5")]
+    on_event_registration_index: i32,
+    #[prost(message, optional, tag = "6")]
+    params: Option<PbTransfer>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct PbPage {
+    #[prost(int32, optional, tag = "1")]
+    archive_height: Option<i32>,
+    #[prost(int32, tag = "2")]
+    next_block: i32,
+    #[prost(message, repeated, tag = "3")]
+    event_items: Vec<PbEventItem>,
+    #[prost(int32, tag = "5")]
+    response_blocks: i32,
+}
+
+fn protobuf_page(count: u32) -> Vec<u8> {
+    use prost::Message;
+    PbPage {
+        archive_height: Some((BLOCK + 100_000) as i32),
+        next_block: (BLOCK + i64::from(count) / 10 + 1) as i32,
+        event_items: (0..u64::from(count))
+            .map(|i| PbEventItem {
+                log_index: i as i32,
+                src_address: address(i % 16),
+                block_number: (BLOCK + (i / 10) as i64) as i32,
+                transaction_index: (i % 200) as i32,
+                on_event_registration_index: 0,
+                params: Some(PbTransfer {
+                    from: address(i * 7),
+                    to: address(i * 13),
+                    value: value(i).to_string(),
+                }),
+            })
+            .collect(),
+        response_blocks: (i64::from(count) / 10) as i32,
+    }
+    .encode_to_vec()
+}
+
+static PROTOBUF_PAGE: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+#[napi]
+pub fn rkyv_interop_prepare_protobuf(count: u32) {
+    *PROTOBUF_PAGE.lock().unwrap() = Some(protobuf_page(count));
+}
+
+#[napi]
+pub fn rkyv_interop_take_protobuf() -> Buffer {
+    Buffer::from(PROTOBUF_PAGE.lock().unwrap().take().expect("prepared"))
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct PbAccount {
+    #[prost(string, tag = "1")]
+    id: String,
+    #[prost(string, tag = "2")]
+    owner: String,
+    #[prost(string, tag = "3")]
+    balance: String,
+    #[prost(int32, tag = "4")]
+    transfers: i32,
+    #[prost(bool, tag = "5")]
+    active: bool,
+    #[prost(double, optional, tag = "6")]
+    ratio: Option<f64>,
+}
+
+/// `Change.t`: a delete carries no entity.
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct PbChange {
+    #[prost(string, tag = "1")]
+    entity_id: String,
+    #[prost(int64, tag = "2")]
+    checkpoint_id: i64,
+    #[prost(message, optional, tag = "3")]
+    entity: Option<PbAccount>,
+    #[prost(string, tag = "4")]
+    kind: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct PbChanges {
+    #[prost(message, repeated, tag = "1")]
+    changes: Vec<PbChange>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct PbAccounts {
+    #[prost(message, repeated, tag = "1")]
+    accounts: Vec<PbAccount>,
+}
+
+/// What a write hands Rust: protobuf can't be read in place, so the changes
+/// are decoded into owned values. Returns how many rows set an entity.
+#[napi]
+pub fn rkyv_interop_receive_changes_protobuf(bytes: Buffer) -> napi::Result<u32> {
+    use prost::Message;
+    PbChanges::decode(bytes.as_ref())
+        .map(|changes| {
+            changes
+                .changes
+                .iter()
+                .filter(|change| change.entity.is_some())
+                .count() as u32
+        })
+        .map_err(|err| napi::Error::from_reason(err.to_string()))
+}
+
+fn protobuf_accounts(count: u32) -> Vec<u8> {
+    use prost::Message;
+    PbAccounts {
+        accounts: (0..u64::from(count))
+            .map(|i| PbAccount {
+                id: format!("account-{i}"),
+                owner: format!("0x{:040x}", i * 7),
+                balance: value(i).to_string(),
+                transfers: (i % 1000) as i32,
+                active: i % 3 != 0,
+                ratio: (i % 2 == 0).then_some(i as f64 / 7.0),
+            })
+            .collect(),
+    }
+    .encode_to_vec()
+}
+
+static PROTOBUF_ACCOUNTS: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+#[napi]
+pub fn rkyv_interop_prepare_accounts_protobuf(count: u32) {
+    *PROTOBUF_ACCOUNTS.lock().unwrap() = Some(protobuf_accounts(count));
+}
+
+#[napi]
+pub fn rkyv_interop_take_accounts_protobuf() -> Buffer {
+    Buffer::from(PROTOBUF_ACCOUNTS.lock().unwrap().take().expect("prepared"))
+}
