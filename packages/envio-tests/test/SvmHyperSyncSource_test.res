@@ -1,14 +1,12 @@
 open Vitest
 
-// Regression coverage for SvmHyperSyncSource.getItemsOrThrow response
-// parsing, driven through a mocked napi client (no network). Query building,
-// routing, and the isCommitted filter live in Rust now (covered by the
-// svm_hypersync_source unit tests); this test asserts:
-//   1. The per-query input passed to the client: registration indexes,
-//      addresses, and the inclusive slot range.
-//   2. Item building: registrations resolved by index, `block` omitted on the
-//      payload (materialised from the block store at batch prep), synthesized
-//      logIndex, and Rust-decoded params passed through as values.
+// Regression coverage for how the SVM source turns a page into items, and for
+// what it hands the client at construction, with a mocked napi client (no
+// network). The query each page asks for, routing and the isCommitted filter
+// live in Rust (covered by the svm_hypersync_source unit tests); this test
+// asserts item building: registrations resolved by index, `block` omitted on
+// the payload (materialised from the block store at batch prep), synthesized
+// logIndex, and Rust-decoded params passed through as values.
 
 let metaplexProgramId = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 let chainId = 0->ChainId.fromInt
@@ -76,7 +74,6 @@ let mockResponse: SvmHyperSyncClient.Items.response = {
   ],
 }
 
-let capturedQueries: array<SvmHyperSyncClient.Items.query> = []
 let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
 
 // The chain's address index; created outside the mock-addon window below so it
@@ -97,17 +94,13 @@ let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   getBlockHashes: (~blockNumbers as _) =>
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
-  getItems: (~query, ~addressSet as _) => {
-    capturedQueries->Array.push(query)
-    // The real Rust client builds the stores from raw transactions/blocks; the
-    // mock returns empty pages (materialisation is covered by the Rust unit
-    // tests).
+  getItems: (~query as _, ~addressSet as _) =>
     Promise.resolve((
       response,
       TransactionStore.make(~ecosystem=Ecosystem.Svm),
       BlockStore.make(~ecosystem=Ecosystem.Svm),
-    ))
-  },
+    )),
+  source: (_, _, _) => %raw(`{}`),
 }
 
 let mockClient = makeMockClient()
@@ -157,27 +150,30 @@ let makeSource = (
 // The Metaplex program, registered under the TokenMetadata program name.
 let programSet = addressStore->AddressStore.makeSet(~contractName="TokenMetadata")
 
-describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
-  Async.it("passes the selection to the client and builds items by registration index", async t => {
+// The page a source built in Rust hands over, decoded the way the source
+// manager decodes it.
+let decode = (source: Source.t, page: SvmHyperSyncClient.Items.page) =>
+  switch source.implementation {
+  | Rust({decodeItemsPage}) =>
+    page
+    ->(Utils.magic: SvmHyperSyncClient.Items.page => NativeSource.page)
+    ->decodeItemsPage(~knownHeight=slot + 1000)
+  | ReScript(_) => JsError.throwWithMessage("The SVM source is built in Rust.")
+  }
+
+describe("SvmHyperSyncSource (mocked client)", () => {
+  it("builds items by registration index", t => {
     let reg = makeReg()
     let source = makeSource(~onEventRegistrations=[reg])
 
-    let response = await source->SourceCalls.getItemsOrThrow(
-      ~reorgableFrom=None,
-      ~fromBlock=slot - 10,
-      ~toBlock=Some(slot + 10),
-      ~addressSet=programSet,
-      ~knownHeight=slot + 1000,
-      ~partitionId="0",
-      ~itemsTarget=Some(5000),
-      ~selection={
-        onEventRegistrations: [(reg :> Internal.onEventRegistration)],
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-      },
-      ~retry=0,
-      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SvmHyperSyncSource"}),
-    )
+    let response = source->decode({
+      toBlock: slot,
+      eventItems: mockResponse.eventItems,
+      blockItems: [],
+      blocks: BlockStore.make(~ecosystem=Ecosystem.Svm),
+      transactions: TransactionStore.make(~ecosystem=Ecosystem.Svm),
+      fetchSeconds: 0.,
+    })
 
     let item = switch response.parsedQueueItems {
     | [
@@ -208,11 +204,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     | _ => None
     }
 
-    t.expect({
-      "item": item,
-      "query": capturedQueries->Array.getUnsafe(0),
-    }).toEqual({
-      "item": Some({
+    t.expect((item, response.latestFetchedBlockNumber)).toEqual((
+      Some({
         "blockNumber": slot,
         "logIndex": 965,
         "orderPath": [1],
@@ -222,19 +215,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         "accounts": None,
         "usesSourceRegistration": true,
       }),
-      // The slot range stays inclusive on the boundary; Rust converts to the
-      // wire's exclusive `toSlot`.
-      "query": (
-        {
-          fromSlot: slot - 10,
-          toSlot: Some(slot + 10),
-          itemsTarget: 5000,
-          onEventRegistrationIndexes: [0],
-          onBlockRegistrationIndexes: [],
-          clientFilteredContracts: None,
-        }: SvmHyperSyncClient.Items.query
-      ),
-    })
+      slot,
+    ))
   })
 
   // The whole registration set crosses the boundary once at construction,
@@ -331,85 +313,18 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
   })
 })
 
-describe("SvmHyperSyncSource reorgable range", () => {
-  // The client is told where slots can still be reorged; it reads every slot
-  // of a range reaching them, which is also what lets a skipped slot fall back
-  // to the last real one's time.
-  Async.it("passes where slots can still be reorged to the client", async t => {
-    let source = makeSource()
-    capturedQueries->Utils.Array.clearInPlace
-
-    let _ = await source->SourceCalls.getItemsOrThrow(
-      ~reorgableFrom=Some(slot),
-      ~fromBlock=slot,
-      ~toBlock=Some(slot + 1),
-      ~addressSet=programSet,
-      ~knownHeight=slot + 1,
-      ~partitionId="0",
-      ~itemsTarget=None,
-      ~selection={
-        onEventRegistrations: [(makeReg() :> Internal.onEventRegistration)],
-        dependsOnAddresses: true,
-        onBlockRegistrations: [],
-      },
-      ~retry=0,
-      ~logger=Logger.makeInMemory()->Logger.withFields({"test": "SvmHyperSyncSource"}),
-    )
-
-    t.expect(capturedQueries->Array.map(query => query.reorgableFrom)).toEqual([Some(slot)])
-  })
-})
-
 describe("SvmHyperSyncSource height subscription", () => {
-  Async.it("Streams heights over HyperSync SSE the same way the EVM source does", async t => {
-    let (server, url) = await Promise.make(
-      (resolve, _reject) => {
-        let server = MockRpcServer.createServer(
-          (_req, res) => {
-            res->MockRpcServer.writeHead(
-              200,
-              dict{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
-            )
-            res->MockRpcServer.write("event: height\ndata: 445073332\n\n")
-            res->MockRpcServer.write("event: ping\ndata: \n\n")
-            res->MockRpcServer.write("event: height\ndata: 445073335\n\n")
-          },
-        )
-        server->MockRpcServer.listenOnHost(
-          0,
-          "127.0.0.1",
-          () =>
-            resolve((
-              server,
-              `http://127.0.0.1:${(server->MockRpcServer.address).port->Int.toString}`,
-            )),
-        )
-      },
-    )
+  it("Pushes slots over HyperSync's stream the same way the EVM source does", t => {
+    let source = SvmHyperSyncSource.make({
+      chainId,
+      endpointUrl: "http://127.0.0.1:1",
+      apiToken: Some("test-token"),
+      onEventRegistrations: [makeReg()],
+      clientTimeoutMillis: 10_000,
+      addressStore,
+    })
 
-    let source = makeSource(~endpointUrl=url)
-    let statuses = []
-    let heights = []
-    let unsubscribe = ((source->SourceCalls.calls).createHeightSubscription->Option.getOrThrow)(
-      ~clock=Clock.real,
-      ~onHeight=height => heights->Array.push(height)->ignore,
-      ~onStatus=status =>
-        statuses
-        ->Array.push(
-          switch status {
-          | Live => "live"
-          | Down({reason}) => `down:${reason->Source.downReasonLabel}`
-          },
-        )
-        ->ignore,
-    )
-
-    await Scenario.waitUntil(() => heights->Array.length === 2, ~message="the SVM height stream")
-    unsubscribe()
-    server->MockRpcServer.closeAllConnections
-    await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
-
-    t.expect((statuses, heights)).toStrictEqual((["live"], [445073332, 445073335]))
+    t.expect(source->Source.canStream).toBe(true)
   })
 })
 

@@ -1,7 +1,7 @@
 //! The HyperSync client as a source the manager calls itself, and the napi
 //! class ReScript builds it from.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,12 +14,13 @@ use crate::address_store::{AddressSet, AddressStore};
 use crate::block_selection::{BlockItem, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::height_stream::{driver::Transport, sse::Sse};
-use crate::request_stats::{read_native_failure, Marker, RequestStat};
+use crate::request_stats::RequestStat;
 use crate::source_manager::source::{
-    request_stat, request_stats, BoxFuture, HashesOutcome, HeightOutcome, ItemsOutcome,
+    hashes_outcome, items_failure, missing_fields, request_stat, unauthorized_alert,
+    unexplained_backoff_millis, BoxFuture, HashesOutcome, HeightOutcome, ItemsOutcome,
     NativeSource, Source,
 };
-use crate::source_manager::{HashesFailure, Inconsistent, ItemsFailure};
+use crate::source_manager::{Inconsistent, ItemsFailure};
 use crate::transaction_store::TransactionStore;
 
 #[napi]
@@ -110,19 +111,6 @@ struct HyperSyncSource {
     unauthorized_warned: Arc<AtomicBool>,
 }
 
-/// The line saying the token was rejected, the first time a failure says so.
-/// The failure itself still goes to the retries: a token can be replaced
-/// without restarting, so they go on asking, and saying it on every retry would
-/// bury the log.
-fn unauthorized_alert(message: &str, warned: &AtomicBool) -> Option<String> {
-    (message.contains("401 Unauthorized") && !warned.swap(true, Ordering::Relaxed)).then(|| {
-        "Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not \
-         be able to fetch events. Update the token and try again using 'envio start' or 'envio \
-         dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens"
-            .to_string()
-    })
-}
-
 impl Source for HyperSyncSource {
     fn get_height(&self) -> BoxFuture<HeightOutcome> {
         let client = self.client.clone();
@@ -134,7 +122,7 @@ impl Source for HyperSyncSource {
             match result {
                 Ok(height) => HeightOutcome::Answered { height, stats },
                 Err(err) => {
-                    let alert = unauthorized_alert(&err.reason, &warned);
+                    let alert = unauthorized_alert("HyperSync", &err.reason, &warned);
                     HeightOutcome::Failed {
                         stats,
                         cause: err.reason.clone(),
@@ -212,49 +200,30 @@ impl Source for HyperSyncSource {
                         }),
                     }
                 }
-                Err(err) => {
-                    let failure = read_native_failure(&err);
-                    match failure.marker {
-                        Marker::RateLimited { reset_ms } => ItemsOutcome::Failed {
-                            failure: ItemsFailure::RateLimited { reset_ms },
-                            stats: request_stats(failure.request_stats),
-                            cause: None,
+                Err(err) => items_failure(&err, |message| match missing_fields(&message) {
+                    Some(fields) => ItemsOutcome::Failed {
+                        failure: ItemsFailure::Impossible {
+                            message: format!(
+                                "Source returned invalid data with missing required fields: {}",
+                                fields.join(", ")
+                            ),
+                            attempted_to_block,
                         },
-                        Marker::BehindHead { block_number } => ItemsOutcome::Failed {
-                            failure: ItemsFailure::BehindHead { block_number },
-                            stats: request_stats(failure.request_stats),
-                            cause: None,
+                        stats: fetch_stats(),
+                        cause: None,
+                    },
+                    None => ItemsOutcome::Failed {
+                        failure: ItemsFailure::Backoff {
+                            message: "Unexpected issue while fetching events from HyperSync \
+                                      client. Attempt a retry."
+                                .to_string(),
+                            backoff_millis: unexplained_backoff_millis(query.retry),
+                            attempted_to_block,
                         },
-                        Marker::None => match missing_fields(&failure.message) {
-                            Some(fields) => ItemsOutcome::Failed {
-                                failure: ItemsFailure::Impossible {
-                                    message: format!(
-                                        "Source returned invalid data with missing required \
-                                         fields: {}",
-                                        fields.join(", ")
-                                    ),
-                                    attempted_to_block,
-                                },
-                                stats: fetch_stats(),
-                                cause: None,
-                            },
-                            None => ItemsOutcome::Failed {
-                                failure: ItemsFailure::Backoff {
-                                    message: "Unexpected issue while fetching events from \
-                                              HyperSync client. Attempt a retry."
-                                        .to_string(),
-                                    backoff_millis: match query.retry {
-                                        0 => 500,
-                                        retry => retry.saturating_mul(1000),
-                                    },
-                                    attempted_to_block,
-                                },
-                                stats: fetch_stats(),
-                                cause: Some(failure.message),
-                            },
-                        },
-                    }
-                }
+                        stats: fetch_stats(),
+                        cause: Some(message),
+                    },
+                }),
             }
         })
     }
@@ -262,91 +231,14 @@ impl Source for HyperSyncSource {
     fn get_block_hashes(&self, block_numbers: Vec<i64>) -> BoxFuture<HashesOutcome> {
         let client = self.client.clone();
         Box::pin(async move {
-            match client.get_block_hashes(block_numbers.clone()).await {
-                Ok((blocks, stats)) => HashesOutcome::Answered {
-                    stats: request_stats(stats),
-                    inconsistent: Inconsistent::check(
-                        blocks.response_conflict(),
-                        blocks.missing_hashes(block_numbers),
-                    ),
-                    blocks,
-                },
-                Err(err) => {
-                    let failure = read_native_failure(&err);
-                    HashesOutcome::Failed {
-                        failure: match failure.marker {
-                            Marker::RateLimited { reset_ms } => {
-                                HashesFailure::RateLimited { reset_ms }
-                            }
-                            Marker::BehindHead { block_number } => {
-                                HashesFailure::BehindHead { block_number }
-                            }
-                            Marker::None => HashesFailure::Other,
-                        },
-                        stats: request_stats(failure.request_stats),
-                        cause: failure.message,
-                    }
-                }
-            }
+            hashes_outcome(
+                client.get_block_hashes(block_numbers.clone()).await,
+                block_numbers,
+            )
         })
     }
 
     fn height_transport(&self) -> Option<Arc<dyn Transport>> {
         Some(self.stream.clone() as Arc<dyn Transport>)
-    }
-}
-
-/// The fields a response lacked, when that is what it failed with.
-fn missing_fields(message: &str) -> Option<Vec<String>> {
-    let payload: serde_json::Value = serde_json::from_str(message).ok()?;
-    (payload["kind"] == "MissingFields").then(|| {
-        payload["fields"]
-            .as_array()
-            .map(|fields| {
-                fields
-                    .iter()
-                    .filter_map(|field| field.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn alerts_on_a_rejected_token_once() {
-        let warned = AtomicBool::new(false);
-        let rejected = "Failed to get HyperSync height: http response status code 401 Unauthorized";
-        assert_eq!(
-            [
-                unauthorized_alert("connection reset", &warned).is_some(),
-                unauthorized_alert(rejected, &warned).is_some(),
-                unauthorized_alert(rejected, &warned).is_some(),
-            ],
-            [false, true, false]
-        );
-    }
-
-    #[test]
-    fn reads_the_fields_a_response_lacked() {
-        assert_eq!(
-            [
-                r#"{"kind":"MissingFields","fields":["block.timestamp","transaction.hash"]}"#,
-                "some unrelated message",
-                r#"{"kind":"SomethingElse","fields":["x"]}"#,
-            ]
-            .map(missing_fields),
-            [
-                Some(vec![
-                    "block.timestamp".to_string(),
-                    "transaction.hash".to_string()
-                ]),
-                None,
-                None,
-            ]
-        );
     }
 }

@@ -171,6 +171,16 @@ module Items = {
     eventItems: array<item>,
     blockItems: array<BlockItem.t>,
   }
+
+  // A page the client's source answered with.
+  type page = {
+    toBlock: int,
+    eventItems: array<item>,
+    blockItems: array<BlockItem.t>,
+    blocks: BlockStore.t,
+    transactions: TransactionStore.t,
+    fetchSeconds: float,
+  }
 }
 
 type t = {
@@ -185,6 +195,9 @@ type t = {
     ~query: Items.query,
     ~addressSet: AddressSet.t,
   ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
+  // The client as a source the source manager calls itself, pushing slots
+  // over the server's stream at the url, with the token and user agent given.
+  source: (string, string, string) => NativeSource.t,
 }
 
 @send
@@ -207,7 +220,6 @@ let make = (
   ~onBlockRegistrations,
   ~addressStore,
 ) => {
-  let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
     {
       url,
@@ -216,7 +228,7 @@ let make = (
       ?retryBaseMs,
       ?retryCeilingMs,
     },
-    `hyperindex/${envioVersion}`,
+    HyperSyncClient.userAgent(),
     programs,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
     addressStore,

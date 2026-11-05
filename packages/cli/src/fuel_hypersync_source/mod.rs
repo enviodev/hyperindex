@@ -5,6 +5,7 @@ use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
 mod config;
+mod native;
 mod selection;
 mod types;
 
@@ -18,8 +19,7 @@ use hyperfuel_client::net_types;
 use selection::{BuiltSelection, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
-#[napi]
-pub struct FuelHyperSyncClient {
+pub struct FuelClient {
     inner: hyperfuel_client::Client,
     selection_builder: SelectionBuilder,
     /// The chain's address index, shared with the fetch state. Read by the
@@ -27,15 +27,13 @@ pub struct FuelHyperSyncClient {
     address_store: std::sync::Arc<std::sync::RwLock<StoreInner>>,
 }
 
-#[napi]
-impl FuelHyperSyncClient {
-    #[napi(factory)]
+impl FuelClient {
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<FuelOnEventRegistrationInput>,
         address_store: &AddressStore,
-    ) -> napi::Result<FuelHyperSyncClient> {
+    ) -> napi::Result<FuelClient> {
         let handle = address_store.handle();
         let selection_builder = {
             let store = handle.read().unwrap();
@@ -48,14 +46,13 @@ impl FuelHyperSyncClient {
         let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
             .context("build client")
             .map_err(map_err)?;
-        Ok(FuelHyperSyncClient {
+        Ok(FuelClient {
             inner,
             selection_builder,
             address_store: handle,
         })
     }
 
-    #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
         let height = self
             .inner
@@ -65,7 +62,6 @@ impl FuelHyperSyncClient {
         height.try_into().context("convert height").map_err(map_err)
     }
 
-    #[napi]
     pub async fn get_event_items(
         &self,
         params: EventItemsQuery,

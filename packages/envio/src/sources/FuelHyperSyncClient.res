@@ -109,6 +109,16 @@ module EventItems = {
     items: array<item>,
     rejectedLogData: array<rejectedLogData>,
   }
+
+  // A page the client's source answered with.
+  type page = {
+    toBlock: int,
+    knownHeight: int,
+    items: array<item>,
+    rejectedLogData: array<rejectedLogData>,
+    blocks: BlockStore.t,
+    fetchSeconds: float,
+  }
 }
 
 @send
@@ -121,10 +131,9 @@ external classNew: (
 ) => t = "new"
 
 let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
-  let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
-    ~userAgent=`hyperindex/${envioVersion}`,
+    ~userAgent=HyperSyncClient.userAgent(),
     eventRegistrations,
     addressStore,
   )
@@ -141,3 +150,6 @@ external getEventItems: (
 
 @send
 external getHeight: t => promise<int> = "getHeight"
+
+// The client as a source the source manager calls itself.
+@send external source: t => NativeSource.t = "source"

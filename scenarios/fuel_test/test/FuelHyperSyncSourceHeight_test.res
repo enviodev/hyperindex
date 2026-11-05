@@ -60,7 +60,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
           addressStore,
           logger: Logger.makeInMemory(),
         })
-        let {height} = await source.getHeightOrThrow()
+        let height = await source->Source.getHeightOrThrow
 
         let headers = capturedHeaders.contents->Option.getOrThrow
         t.expect((
@@ -115,7 +115,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
         // Generous, so a slow debug build of the native client can't pass this by
         // failing to answer inside the window.
         let result = await Promise.race([
-          source.getHeightOrThrow()
+          source
+          ->Source.getHeightOrThrow
           ->Promise.thenResolve(_ => "resolved")
           ->Promise.catch(_ => Promise.resolve("threw")),
           Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)->Promise.thenResolve(() => "hung"),

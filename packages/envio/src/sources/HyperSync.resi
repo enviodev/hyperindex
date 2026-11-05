@@ -6,27 +6,3 @@ let pollingInterval: int
 // missing one fails at construction with the message that says how to get one,
 // rather than as a 401 per request.
 let requireApiToken: option<string> => string
-
-// Surfaced by the native clients when the edge rejects the API token. The
-// corrupted-token test feeds the real server error (from the query endpoint;
-// the edge no longer 401s malformed tokens on /height) through this so it can't
-// silently drift away from the message shape a 401 actually produces.
-let isUnauthorizedError: string => bool
-
-// Rethrows every failure unchanged, adding one loud line the first time a source
-// sees a 401. Never swallows it: the caller's retry ramp has to keep asking,
-// because a token can be replaced without restarting the indexer.
-let rethrowLoggingUnauthorized: (exn, ~logger: Logger.t, ~warned: ref<bool>, ~product: string) => 'a
-
-// Map a native client's `PREFIX:<int>` failure marker onto the exception
-// SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
-// the original cause.
-let mapNativeFailure: Source.nativeRequestFailure => exn
-let mapNativeFailureExn: exn => exn
-let reraiseIfRecoverable: exn => unit
-
-// Wrap a native client's paginated block-hash query as a `Source.getBlockHashes`,
-// keeping the request timings whether it succeeds or fails.
-let makeGetBlockHashes: (
-  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
-) => (~blockNumbers: array<int>, ~logger: Logger.t) => promise<Source.getBlockHashesResponse>

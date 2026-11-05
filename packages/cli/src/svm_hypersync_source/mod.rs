@@ -8,6 +8,7 @@ use napi_derive::napi;
 mod borsh_decoder;
 mod config;
 mod fields;
+mod native;
 mod query;
 mod selection;
 pub(crate) mod types;
@@ -83,7 +84,7 @@ fn map_query_error(error: anyhow::Error, rate_limit: Option<RateLimitInfo>) -> n
     rate_limited_err(reset_secs * 1000)
 }
 
-impl SvmHyperSyncClient {
+impl SvmClient {
     /// Run one query, surfacing a rate limit to the source manager rather than
     /// sleeping it out inside the call.
     async fn run_query(&self, query: &SolanaQuery) -> napi::Result<simple::SolanaResponse> {
@@ -105,8 +106,7 @@ impl SvmHyperSyncClient {
     }
 }
 
-#[napi]
-pub struct SvmHyperSyncClient {
+pub struct SvmClient {
     inner: Arc<hypersync_client_solana::Client>,
     selection_builder: SelectionBuilder,
     /// The chain's address index, shared with the fetch state. Read by the
@@ -115,16 +115,14 @@ pub struct SvmHyperSyncClient {
     block_registrations: BlockRegistrations,
 }
 
-#[napi]
-impl SvmHyperSyncClient {
-    #[napi(factory)]
+impl SvmClient {
     pub fn from_config(
         cfg: SvmClientConfig,
         user_agent: String,
         programs: Vec<SvmProgramInput>,
         block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
-    ) -> napi::Result<SvmHyperSyncClient> {
+    ) -> napi::Result<SvmClient> {
         let handle = address_store.handle();
         let selection_builder = {
             let store = handle.read().unwrap();
@@ -135,7 +133,7 @@ impl SvmHyperSyncClient {
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
-        Ok(SvmHyperSyncClient {
+        Ok(SvmClient {
             inner: Arc::new(inner),
             selection_builder,
             address_store: handle,
@@ -143,7 +141,6 @@ impl SvmHyperSyncClient {
         })
     }
 
-    #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
         let h = self.inner.get_height().await.map_err(map_err)?;
         i64::try_from(h)
@@ -154,7 +151,6 @@ impl SvmHyperSyncClient {
     /// Fetch the inclusive range spanning `block_numbers` into one response
     /// store. Each advancing cursor proves its half-open range was processed;
     /// missing block rows inside that coverage are skipped slots.
-    #[napi]
     pub async fn get_block_hashes(
         &self,
         block_numbers: Vec<i64>,
@@ -203,7 +199,6 @@ impl SvmHyperSyncClient {
         .await?;
         Ok((aggregate, request_stats))
     }
-    #[napi]
     pub async fn get_items(
         &self,
         params: ItemsQuery,
@@ -699,7 +694,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_query_token_metadata() {
-        let client = SvmHyperSyncClient::from_config(
+        let client = SvmClient::from_config(
             SvmClientConfig {
                 url: "https://solana.hypersync.xyz".into(),
                 ..Default::default()

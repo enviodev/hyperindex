@@ -2,7 +2,12 @@
 //! round trip through JavaScript, which only ever sees the pages a query
 //! resolved with.
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
+    sync::Arc,
+};
 
 use napi::bindgen_prelude::ToNapiValue;
 use napi_derive::napi;
@@ -13,6 +18,7 @@ use super::{
     query::{HashesFailure, Inconsistent, ItemsFailure},
     SourceItemsFailure, SourceManagerItemsQuery, SourceRequestStat,
 };
+use crate::request_stats::{read_native_failure, Marker};
 use crate::{address_store::AddressSet, block_store::BlockStore, height_stream::driver::Transport};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -298,6 +304,96 @@ impl NativeSource {
     }
 }
 
+/// A HyperSync client's paginated block-hash read, which names a recoverable
+/// failure in its error.
+pub fn hashes_outcome(
+    result: napi::Result<(BlockStore, Vec<crate::request_stats::RequestStat>)>,
+    block_numbers: Vec<i64>,
+) -> HashesOutcome {
+    match result {
+        Ok((blocks, stats)) => HashesOutcome::Answered {
+            stats: request_stats(stats),
+            inconsistent: Inconsistent::check(
+                blocks.response_conflict(),
+                blocks.missing_hashes(block_numbers),
+            ),
+            blocks,
+        },
+        Err(err) => {
+            let failure = read_native_failure(&err);
+            HashesOutcome::Failed {
+                failure: match failure.marker {
+                    Marker::RateLimited { reset_ms } => HashesFailure::RateLimited { reset_ms },
+                    Marker::BehindHead { block_number } => {
+                        HashesFailure::BehindHead { block_number }
+                    }
+                    Marker::None => HashesFailure::Other,
+                },
+                stats: request_stats(failure.request_stats),
+                cause: failure.message,
+            }
+        }
+    }
+}
+
+/// A HyperSync client's failed items read: the rate limit or lagging replica
+/// its error names, or what `otherwise` makes of anything else.
+pub fn items_failure(
+    err: &napi::Error,
+    otherwise: impl FnOnce(String) -> ItemsOutcome,
+) -> ItemsOutcome {
+    let failure = read_native_failure(err);
+    let recoverable = match failure.marker {
+        Marker::RateLimited { reset_ms } => ItemsFailure::RateLimited { reset_ms },
+        Marker::BehindHead { block_number } => ItemsFailure::BehindHead { block_number },
+        Marker::None => return otherwise(failure.message),
+    };
+    ItemsOutcome::Failed {
+        failure: recoverable,
+        stats: request_stats(failure.request_stats),
+        cause: None,
+    }
+}
+
+/// The wait before retrying a page that failed for no reason a source could
+/// name.
+pub fn unexplained_backoff_millis(retry: u32) -> u32 {
+    match retry {
+        0 => 500,
+        retry => retry.saturating_mul(1000),
+    }
+}
+
+/// The line saying a HyperSync product rejected the token, the first time a
+/// failure says so. The failure itself still goes to the retries: a token can
+/// be replaced without restarting, so they go on asking, and saying it on every
+/// retry would bury the log.
+pub fn unauthorized_alert(product: &str, message: &str, warned: &AtomicBool) -> Option<String> {
+    (message.contains("401 Unauthorized") && !warned.swap(true, Ordering::Relaxed)).then(|| {
+        format!(
+            "Your ENVIO_API_TOKEN was rejected by {product} (401 Unauthorized). The indexer will \
+             not be able to fetch events. Update the token and try again using 'envio start' or \
+             'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens"
+        )
+    })
+}
+
+/// The fields a HyperSync response lacked, when that is what it failed with.
+pub fn missing_fields(message: &str) -> Option<Vec<String>> {
+    let payload: serde_json::Value = serde_json::from_str(message).ok()?;
+    (payload["kind"] == "MissingFields").then(|| {
+        payload["fields"]
+            .as_array()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(|field| field.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
 pub fn request_stat(method: &str, seconds: f64) -> RequestStat {
     RequestStat {
         method: method.to_string(),
@@ -315,4 +411,82 @@ pub fn request_stats(stats: Vec<crate::request_stats::RequestStat>) -> Vec<Reque
             response_blocks: None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alerts_on_a_rejected_token_once() {
+        let warned = AtomicBool::new(false);
+        let rejected = "Failed to get HyperSync height: http response status code 401 Unauthorized";
+        assert_eq!(
+            [
+                unauthorized_alert("HyperSync", "connection reset", &warned),
+                unauthorized_alert("HyperSync", rejected, &warned),
+                unauthorized_alert("HyperSync", rejected, &warned),
+            ]
+            .map(|alert| alert.is_some()),
+            [false, true, false]
+        );
+    }
+
+    #[test]
+    fn reads_the_fields_a_response_lacked() {
+        assert_eq!(
+            [
+                r#"{"kind":"MissingFields","fields":["block.timestamp","transaction.hash"]}"#,
+                "some unrelated message",
+                r#"{"kind":"SomethingElse","fields":["x"]}"#,
+            ]
+            .map(missing_fields),
+            [
+                Some(vec![
+                    "block.timestamp".to_string(),
+                    "transaction.hash".to_string()
+                ]),
+                None,
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn narrows_to_the_registrations_started_by_the_end_of_the_range() {
+        let selection = Selection {
+            on_event_registrations: vec![
+                EventRegistration {
+                    index: 0,
+                    start_block: None,
+                },
+                EventRegistration {
+                    index: 1,
+                    start_block: Some(200),
+                },
+                EventRegistration {
+                    index: 2,
+                    start_block: Some(100),
+                },
+            ],
+            on_block_registration_indexes: Vec::new(),
+            client_filtered_contracts: None,
+        };
+        let starting_late = Selection {
+            on_event_registrations: vec![EventRegistration {
+                index: 1,
+                start_block: Some(200),
+            }],
+            on_block_registration_indexes: Vec::new(),
+            client_filtered_contracts: None,
+        };
+        assert_eq!(
+            [
+                selection.event_registration_indexes_through(Some(150)),
+                selection.event_registration_indexes_through(None),
+                starting_late.event_registration_indexes_through(Some(150)),
+            ],
+            [vec![0, 2], vec![0, 1, 2], vec![1]]
+        );
+    }
 }

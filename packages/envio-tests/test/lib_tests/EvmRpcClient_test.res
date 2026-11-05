@@ -33,7 +33,7 @@ let getHeightErrorMessage = async (client: EvmRpcClient.t) =>
     let _ = await client.getHeight()
     None
   } catch {
-  | exn => (exn->Source.unpackNativeRequestFailure).message
+  | exn => (exn->NativeRequestFailure.unpack).message
   }
 
 // The request a failed poll made still counts towards the source's metrics,
@@ -43,8 +43,7 @@ let getHeightErrorStats = async (client: EvmRpcClient.t) =>
     let _ = await client.getHeight()
     []
   } catch {
-  | exn =>
-    (exn->Source.unpackNativeRequestFailure).requestStats->Array.map(({Source.method: m}) => m)
+  | exn => (exn->NativeRequestFailure.unpack).requestStats->Array.map(({Source.method: m}) => m)
   }
 
 describe("EvmRpcClient - getHeight via napi", () => {

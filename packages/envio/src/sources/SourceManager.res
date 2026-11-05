@@ -331,11 +331,8 @@ and awaitHeight = (sm: t, ~request, call: promise<Source.getHeightResponse>) => 
     | Ok({height, requestStats}: Source.getHeightResponse) =>
       sm->report(_ => sm.native->Native.heightAnswered(request, height, requestStats))
     | Error(exn) =>
-      // Billed whether or not it answered; unwrapping also keeps the log the
-      // provider's own message rather than the envelope carrying it.
-      let failure = exn->Source.unpackNativeRequestFailure
-      sm->report(~err=failure.cause, err =>
-        sm.native->Native.heightFailed(request, failure.requestStats, err->Nullable.fromOption)
+      sm->report(~err=exn, err =>
+        sm.native->Native.heightFailed(request, [], err->Nullable.fromOption)
       )
     }
   reportOutcome()->Promise.ignore

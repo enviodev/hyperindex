@@ -183,15 +183,15 @@ describe("HyperSync client with corrupted token", () => {
     t.expect(height > 0).toEqual(true)
   })
 
-  Async.it("query error is detected by HyperSync.isUnauthorizedError", async t => {
-    // The query endpoint still replies 401. Feed that real server error
-    // through isUnauthorizedError so the check can't silently drift away from
-    // the message shape the client produces for a 401.
+  Async.it("query error says 401 Unauthorized", async t => {
+    // The query endpoint still replies 401. The sources recognise a rejected
+    // token by this phrase, so the real server error pins the message shape the
+    // client produces for one.
     let detected = try {
       let _ = await runQuery(~client=makeCorruptedTokenClient())
       false
     } catch {
-    | JsExn(e) => e->JsExn.message->Option.getOr("")->HyperSync.isUnauthorizedError
+    | JsExn(e) => e->JsExn.message->Option.getOr("")->String.includes("401 Unauthorized")
     | _ => false
     }
 

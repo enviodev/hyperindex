@@ -13,63 +13,6 @@ type blockRangeFetchStats = {
 // envio_source_request_* and envio_source_response_* metrics.
 type requestStat = RequestStat.t = {method: string, seconds: float, responseBlocks?: int}
 
-// Native clients wrap a failure of a multi-request operation in a structured
-// payload, so the source can still return timings when SourceManager retries
-// it. `cause` carries the inner message as a plain error, ready for logging.
-type nativeRequestFailure = {
-  cause: exn,
-  message: option<string>,
-  requestStats: array<requestStat>,
-}
-
-// Prefix marking a napi error reason as a structured native-failure envelope.
-// Keep in sync with `request_stats.rs` `NATIVE_FAILURE_PREFIX`.
-let nativeFailurePrefix = "ENVIO_NATIVE_FAILURE:"
-
-// The envelope `request_stats.rs` writes after the prefix.
-type nativeFailurePayload = {message: string, requestStats: array<requestStat>}
-
-let nativeFailurePayloadSchema = S.schema(s => {
-  message: s.matches(S.string),
-  requestStats: s.matches(
-    S.array(
-      S.schema(s => {
-        method: s.matches(S.string),
-        seconds: s.matches(S.float),
-      }),
-    ),
-  ),
-})
-
-let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
-  let originalMessage = switch exn->JsExn.anyToExnInternal {
-  | JsExn(jsExn) => jsExn->JsExn.message
-  | _ => None
-  }
-  // Only a reason carrying our prefix is one of our envelopes; anything else
-  // keeps its original message and cause untouched.
-  let decoded = switch originalMessage {
-  | Some(message) if message->String.startsWith(nativeFailurePrefix) =>
-    try Some(
-      message
-      ->String.slice(~start=nativeFailurePrefix->String.length, ~end=message->String.length)
-      ->JSON.parseOrThrow
-      ->S.parseOrThrow(nativeFailurePayloadSchema),
-    ) catch {
-    | _ => None
-    }
-  | _ => None
-  }
-  switch decoded {
-  | Some({message, requestStats}) => {
-      cause: JsError.make(message)->(Utils.magic: JsError.t => exn),
-      message: Some(message),
-      requestStats,
-    }
-  | None => {cause: exn, message: originalMessage, requestStats: []}
-  }
-}
-
 /**
 Thes response returned from a block range fetch
 */
@@ -177,25 +120,6 @@ let downReasonLabel = reason =>
   | TransportError => "error"
   | Http(code) => `http-${code->Int.toString}`
   | Unsubscribed => "unsubscribed"
-  }
-
-// The reason a label names, as the addon reports it.
-let downReasonFromLabel = label =>
-  switch label {
-  | "rotated" => Rotated
-  | "closed" => Closed
-  | "stale" => Stale
-  | "unreadable" => Unreadable
-  | "connect-failed" => ConnectFailed
-  | "subscribe-rejected" => SubscribeRejected
-  | "unsubscribed" => Unsubscribed
-  | label =>
-    switch label->String.startsWith("http-")
-      ? label->String.slice(~start=5)->Int.fromString
-      : None {
-    | Some(code) => Http(code)
-    | None => TransportError
-    }
   }
 
 // Connection state of a height subscription, reported by every transport.
