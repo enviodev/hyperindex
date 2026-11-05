@@ -289,7 +289,7 @@
           "type": "string"
         },
         "name": {
-          "description": "Name of the event in the HyperIndex generated code. When ommitted, the event field will be used. Should be unique per contract",
+          "description": "Name of the event in the generated types. When ommitted, the event field will be used. Should be unique per contract",
           "type": [
             "string",
             "null"
