@@ -12,6 +12,7 @@ let makeClient = (
 ) =>
   EvmRpcClient.make(
     ~url,
+    ~chainId=ChainId.fromInt(1),
     ~checksumAddresses=false,
     ~syncConfig=switch queryTimeoutMillis {
     | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})

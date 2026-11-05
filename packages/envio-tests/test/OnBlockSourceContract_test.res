@@ -250,12 +250,13 @@ describe("A block handler with no block to read, fetched from an RPC", () => {
     t.expect(latestFetchedBlockNumber).toEqual(5009)
   })
 
-  // Where blocks can still be reorged the page's boundary blocks are its reorg
-  // observation, so they are read even with no handler block between them.
-  Async.it("still reads the boundary blocks of a reorgable range", async t => {
+  // Where blocks can still be reorged the page's boundary blocks, and every
+  // block that can still be reorged, are its reorg observation, so they are
+  // read even with no handler block between them.
+  Async.it("still reads the boundary and reorgable blocks of a range", async t => {
     let latestFetchedBlockNumber = await MockRpcServer.withScenario(
       ~name="reorgable range without a handler block",
-      ~calls=[110, 11]->Array.map(getBlockCall),
+      ~calls=[11, ...Array.fromInitializer(~length=11, i => 100 + i)]->Array.map(getBlockCall),
       async mock => {
         let (source, addressSet) = makeRpcSource(~url=mock.url)
 
@@ -266,7 +267,7 @@ describe("A block handler with no block to read, fetched from an RPC", () => {
             ~onBlockRegistrations=named("sparse"),
             ~toBlock=Some(20_000),
             ~knownHeight=20_000,
-            ~reorgableFrom=Some(11),
+            ~reorgableFrom=Some(100),
           )
         ).latestFetchedBlockNumber
       },
