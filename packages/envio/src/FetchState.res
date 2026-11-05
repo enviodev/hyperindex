@@ -1220,14 +1220,10 @@ let updateInternal = (
   updatedFetchState
 }
 
-type clientFilterReason =
-  | AddressThresholdCrossed({addressCount: int, threshold: int})
-  | DynamicContract
-
 // What fetch state has to tell an operator. It decides nothing from these; the
 // chain that owns it turns them into log lines.
 type notice =
-  | SwitchedToClientSideFiltering({contractName: string, reason: clientFilterReason})
+  | SwitchedToClientSideFiltering({contractName: string, addressCount: int, threshold: int})
   // The address is already registered for the contract from a later block, and
   // a registration never moves an address's start block earlier.
   | SkippedReRegistration({
@@ -1246,23 +1242,6 @@ type notice =
       requestedFromBlock: int,
     })
 
-let findClientFilterReason = (
-  policy: clientFilterPolicy,
-  ~contractName,
-  ~dynamicContracts: Utils.Set.t<string>,
-  ~addressStore: AddressStore.t,
-) =>
-  if policy.allDynamicContracts && dynamicContracts->Utils.Set.has(contractName) {
-    Some(DynamicContract)
-  } else {
-    switch policy.addressThreshold {
-    | Some(threshold) =>
-      let addressCount = addressStore->AddressStore.contractCount(contractName)
-      addressCount > threshold ? Some(AddressThresholdCrossed({addressCount, threshold})) : None
-    | None => None
-    }
-  }
-
 // The client-filtered set once `policy` has judged `contractNames`. A copy, so
 // older fetch state snapshots keep theirs: Utils.Set.add mutates in place.
 let switchToClientSideFiltering = (
@@ -1279,13 +1258,20 @@ let switchToClientSideFiltering = (
   let switched = clientFilteredContracts->Utils.Set.toArray->Utils.Set.fromArray
   contractNames->Array.forEach(contractName =>
     if !(switched->Utils.Set.has(contractName)) {
-      switch policy->findClientFilterReason(~contractName, ~dynamicContracts, ~addressStore) {
-      | Some(reason) =>
+      if policy.allDynamicContracts && dynamicContracts->Utils.Set.has(contractName) {
         switched->Utils.Set.add(contractName)->ignore
-        if !isAlreadyReported {
-          onNotice(SwitchedToClientSideFiltering({contractName, reason}))
+      } else {
+        switch policy.addressThreshold {
+        | Some(threshold) =>
+          let addressCount = addressStore->AddressStore.contractCount(contractName)
+          if addressCount > threshold {
+            switched->Utils.Set.add(contractName)->ignore
+            if !isAlreadyReported {
+              onNotice(SwitchedToClientSideFiltering({contractName, addressCount, threshold}))
+            }
+          }
+        | None => ()
         }
-      | None => ()
       }
     }
   )
@@ -1947,11 +1933,7 @@ let registerDynamicContracts = (
 // Every dynamic contract, the ones registered from now on included, is fetched
 // address-free and filtered on our side. Its partitions fold into the single
 // address-free partition through the same collapse the address threshold uses.
-let switchDynamicContractsToClientSideFiltering = (
-  fetchState: t,
-  ~addressStore: AddressStore.t,
-  ~onNotice,
-) =>
+let switchDynamicContractsToClientSideFiltering = (fetchState: t, ~addressStore: AddressStore.t) =>
   if fetchState.clientFilterPolicy.allDynamicContracts {
     fetchState
   } else {
@@ -1966,13 +1948,10 @@ let switchDynamicContractsToClientSideFiltering = (
       nextPartitionIndex,
     } = fetchState.optimizedPartitions
     let switched =
-      clientFilteredContracts->switchToClientSideFiltering(
-        ~contractNames=dynamicContracts->Utils.Set.toArray,
-        ~policy=fetchState.clientFilterPolicy,
-        ~dynamicContracts,
-        ~addressStore,
-        ~onNotice,
-      )
+      clientFilteredContracts
+      ->Utils.Set.toArray
+      ->Array.concat(dynamicContracts->Utils.Set.toArray)
+      ->Utils.Set.fromArray
     if switched->Utils.Set.size === clientFilteredContracts->Utils.Set.size {
       fetchState
     } else {

@@ -22,6 +22,7 @@ let makeClient = (
     ~eventRegistrations?,
     ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
     ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    ~logger=Logger.makeInMemory(),
   )
 
 let heightCall = (~reply, ~headers=?) =>

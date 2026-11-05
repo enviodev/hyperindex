@@ -158,9 +158,25 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (processed, sourceMock.pendingItemsQueries),
-        ~message="both block-301 events are processed once, and no other query is in flight",
-      ).toEqual(([(301, 0), (301, 1)], []))
+        (
+          processed,
+          sourceMock.pendingItemsQueries,
+          indexer.allLogsAsJson()->Array.filterMap(
+            line =>
+              switch (line->Dict.get("msg"), line->Dict.get("contractNames")) {
+              | (Some(String(msg)), Some(contractNames))
+                if msg->String.startsWith("Near the head") =>
+                Some((line->Dict.get("level"), contractNames))
+              | _ => None
+              },
+          ),
+        ),
+        ~message="both block-301 events are processed once, no other query is in flight, and the switch is logged once",
+      ).toEqual((
+        [(301, 0), (301, 1)],
+        [],
+        [(Some(JSON.String("trace")), JSON.Array([JSON.String("Gravatar")]))],
+      ))
     },
   )
 

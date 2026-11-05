@@ -27,6 +27,7 @@ use crate::evm_hypersync_source::types::{
 };
 use crate::evm_hypersync_source::EventItem;
 use crate::js_value::JsTape;
+use crate::logger::{BoundLogger, Logger};
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
@@ -193,8 +194,6 @@ pub struct NextPageResult {
     pub retry_to_block: Option<i64>,
     /// `Backoff` only: how long to wait first.
     pub backoff_millis: Option<i64>,
-    /// `Ok` only: the address-free reads the page had to ask again by address.
-    pub address_fallbacks: Vec<logs::AddressFallback>,
 }
 
 /// A node that answered badly once may not again, so a transient miss waits
@@ -238,7 +237,6 @@ impl NextPageResult {
             block_number: None,
             retry_to_block: None,
             backoff_millis: None,
-            address_fallbacks: Vec::new(),
         }
     }
 
@@ -285,6 +283,7 @@ pub struct EvmRpcClient {
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     max_addresses_per_request: usize,
+    logger: BoundLogger,
     intervals: IntervalState,
     /// Coalesces block, transaction and receipt reads that overlap in time,
     /// including across the partitions of one chain, which scan the same blocks
@@ -333,6 +332,8 @@ impl EvmRpcClient {
         block_registrations: Vec<OnBlockRegistrationInput>,
         checksum_addresses: bool,
         address_store: &AddressStore,
+        logger: &Logger,
+        bound_fields_json: Vec<String>,
     ) -> napi::Result<EvmRpcClient> {
         let max_concurrent_requests = cfg
             .max_concurrent_requests
@@ -418,6 +419,7 @@ impl EvmRpcClient {
             selection_builder,
             sync_config,
             max_addresses_per_request,
+            logger: logger.bind(bound_fields_json),
             intervals: IntervalState::new(),
             fetches: Fetches::default(),
             registration_fields,
@@ -614,7 +616,7 @@ impl EvmRpcClient {
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
         let (result, page) = match outcome {
-            Ok((event_items, block_items, address_fallbacks, page)) => {
+            Ok((event_items, block_items, page)) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -632,7 +634,6 @@ impl EvmRpcClient {
                     NextPageResult {
                         event_items,
                         block_items,
-                        address_fallbacks,
                         ..NextPageResult::new(PageOutcome::Ok, to_block, request_stats)
                     },
                     Some(page),
@@ -641,9 +642,7 @@ impl EvmRpcClient {
             Err(PageError::Logs(err)) => {
                 let provider_message = match &err {
                     RpcError::JsonRpc { message, .. } => Some(message.clone()),
-                    RpcError::Timeout(_) | RpcError::MalformedResponse(_) | RpcError::Other(_) => {
-                        None
-                    }
+                    _ => None,
                 };
                 let message = provider_message.clone().unwrap_or_else(|| err.to_string());
                 (
@@ -714,16 +713,8 @@ impl EvmRpcClient {
     async fn read_page(
         &self,
         query: &PageQuery<'_>,
-    ) -> Result<
-        (
-            Vec<EventItem>,
-            Vec<BlockItem>,
-            Vec<logs::AddressFallback>,
-            enrich::EnrichedPage,
-        ),
-        PageError,
-    > {
-        let (decoded, address_fallbacks) = self.fetch_page(query).await.map_err(PageError::Logs)?;
+    ) -> Result<(Vec<EventItem>, Vec<BlockItem>, enrich::EnrichedPage), PageError> {
+        let decoded = self.fetch_page(query).await.map_err(PageError::Logs)?;
 
         let mut refs = PageRefs::default();
         let mut items = Vec::with_capacity(decoded.len());
@@ -795,7 +786,7 @@ impl EvmRpcClient {
             },
         )
         .await?;
-        Ok((items, block_items, address_fallbacks, page))
+        Ok((items, block_items, page))
     }
 
     /// Builds the retry decision for a page that could not be read, updating
@@ -872,18 +863,16 @@ impl EvmRpcClient {
     /// Reads every selection concurrently. Every selection is awaited even once
     /// one has failed, so each request is made and billed; the first failure
     /// then decides the page.
-    async fn fetch_page(
-        &self,
-        query: &PageQuery<'_>,
-    ) -> Result<(Vec<DecodedItem>, Vec<logs::AddressFallback>), RpcError> {
+    async fn fetch_page(&self, query: &PageQuery<'_>) -> Result<Vec<DecodedItem>, RpcError> {
         if query.selections.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(Vec::new());
         }
 
         let results =
             futures_util::future::join_all(query.selections.iter().map(|selection| async {
-                let read = logs::request_selection_logs(
+                let logs = logs::request_selection_logs(
                     &self.inner,
+                    &self.logger,
                     query.from_block,
                     query.to_block,
                     selection,
@@ -900,22 +889,15 @@ impl EvmRpcClient {
                     },
                 )
                 .await?;
-                let items =
-                    Self::route_logs(read.logs, query.set_cache.clone(), query.decoder.clone())
-                        .await?;
-                Ok::<_, RpcError>((items, read.fallback))
+                Self::route_logs(logs, query.set_cache.clone(), query.decoder.clone()).await
             }))
             .await;
 
         let mut items = Vec::new();
-        let mut address_fallbacks = Vec::new();
         let mut first_err = None;
         for result in results {
             match result {
-                Ok((page_items, fallback)) => {
-                    items.extend(page_items);
-                    address_fallbacks.extend(fallback);
-                }
+                Ok(page_items) => items.extend(page_items),
                 Err(e) => {
                     if first_err.is_none() {
                         first_err = Some(e);
@@ -925,7 +907,7 @@ impl EvmRpcClient {
         }
         match first_err {
             Some(e) => Err(e),
-            None => Ok((items, address_fallbacks)),
+            None => Ok(items),
         }
     }
 

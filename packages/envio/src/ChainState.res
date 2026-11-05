@@ -192,18 +192,10 @@ let make = (
 
 let logFetchStateNotice = (logger, notice: FetchState.notice) =>
   switch notice {
-  | SwitchedToClientSideFiltering({
-      contractName,
-      reason: AddressThresholdCrossed({addressCount, threshold}),
-    }) =>
+  | SwitchedToClientSideFiltering({contractName, addressCount, threshold}) =>
     logger->Logger.trace(
       "Switching contract to client-side address filtering: registered address count crossed the server-side threshold.",
       ~params={"contractName": contractName, "addressCount": addressCount, "threshold": threshold},
-    )
-  | SwitchedToClientSideFiltering({contractName, reason: DynamicContract}) =>
-    logger->Logger.trace(
-      "Switching contract to client-side address filtering: near the head, dynamic contracts are fetched without their addresses.",
-      ~params={"contractName": contractName},
     )
   | SkippedReRegistration({
       contractName,
@@ -1001,8 +993,15 @@ let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
     cs.fetchState =
       cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
         ~addressStore=cs.addressStore,
-        ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
       )
+    if cs.onEventRegistrations->Array.some(registration => registration.contractRegister !== None) {
+      cs.logger->Logger.trace(
+        "Near the head: dynamic contracts are fetched without their addresses for the rest of the run, and filtered on our side.",
+        ~params={
+          "contractNames": cs.fetchState.optimizedPartitions.dynamicContracts->Utils.Set.toArray,
+        },
+      )
+    }
   }
 
 let handleQueryResult = (

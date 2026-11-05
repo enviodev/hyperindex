@@ -36,14 +36,6 @@ type pageOutcome =
   | @as("FieldSelection") FieldSelection
   | @as("BehindHead") BehindHead
 
-// An address-free read the provider couldn't answer, read again by the
-// addresses of the contracts it stood in for.
-type addressFallback = {
-  contractNames: array<string>,
-  requests: int,
-  reason: string,
-}
-
 type nextPageResult = {
   kind: pageOutcome,
   requestStats: array<Source.requestStat>,
@@ -55,7 +47,6 @@ type nextPageResult = {
   blockNumber: option<int>,
   retryToBlock: option<int>,
   backoffMillis: option<int>,
-  addressFallbacks: array<addressFallback>,
 }
 
 // `message` is set when the read failed, in which case the page returned
@@ -87,6 +78,8 @@ external classNew: (
   array<BlockItem.registrationInput>,
   ~checksumAddresses: bool,
   ~addressStore: AddressStore.t,
+  Logger.native,
+  array<string>,
 ) => t = "new"
 
 let make = (
@@ -99,6 +92,7 @@ let make = (
   ~onBlockRegistrations=[],
   ~addressStore,
   ~maxAddressesPerRequest,
+  ~logger: Logger.t,
 ) =>
   Core.getAddon().evmRpcClient->classNew(
     {
@@ -117,4 +111,6 @@ let make = (
     onBlockRegistrations->BlockItem.toRegistrationInputs,
     ~checksumAddresses,
     ~addressStore,
+    logger.output.native,
+    logger.boundFieldsJson,
   )

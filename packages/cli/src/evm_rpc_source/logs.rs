@@ -2,7 +2,6 @@
 //! them to registrations is the caller's next step: everything here stays in
 //! the provider's own terms, `blockHash` included.
 
-use napi_derive::napi;
 use serde_json::{json, Value};
 
 use super::classify::is_result_cap_message;
@@ -11,23 +10,7 @@ use super::RawLog;
 use crate::evm_hypersync_source::selection::{
     AddressFreeOrigin, BuiltLogSelection, Emitters, SelectionByAddress,
 };
-
-/// An address-free request the provider couldn't answer, read again by the
-/// addresses of the client-filtered contracts in it.
-#[napi(object, object_from_js = false)]
-pub struct AddressFallback {
-    pub contract_names: Vec<String>,
-    /// The `eth_getLogs` requests the range took instead: the topic-only part
-    /// still address-free, and one per chunk of addresses.
-    pub requests: i64,
-    /// What the provider said about the address-free request.
-    pub reason: String,
-}
-
-pub(super) struct SelectionLogs {
-    pub logs: Vec<RawLog>,
-    pub fallback: Option<AddressFallback>,
-}
+use crate::logger::{BoundLogger, Level};
 
 /// The `eth_getLogs` filter for a range: `null` matches any value at a topic
 /// position, trailing match-any positions are trimmed, and no addresses means
@@ -114,18 +97,14 @@ async fn request(
 /// remembered: the next range is asked address-free again.
 pub(super) async fn request_selection_logs(
     client: &JsonRpcClient,
+    logger: &BoundLogger,
     from_block: u64,
     to_block: u64,
     selection: &BuiltLogSelection,
     by_address: impl FnOnce(&AddressFreeOrigin) -> anyhow::Result<SelectionByAddress>,
-) -> Result<SelectionLogs, RpcError> {
+) -> Result<Vec<RawLog>, RpcError> {
     let error = match request(client, from_block, to_block, selection).await {
-        Ok(logs) => {
-            return Ok(SelectionLogs {
-                logs,
-                fallback: None,
-            })
-        }
+        Ok(logs) => return Ok(logs),
         Err(error) => error,
     };
     let origin = match &selection.emitters {
@@ -147,14 +126,18 @@ pub(super) async fn request_selection_logs(
     // request is spent on a read that fails anyway.
     let mut logs = request_all(client, from_block, to_block, &address_free).await?;
     logs.extend(request_all(client, from_block, to_block, &by_address).await?);
-    Ok(SelectionLogs {
-        logs,
-        fallback: Some(AddressFallback {
-            contract_names,
-            requests: (address_free.len() + by_address.len()) as i64,
-            reason: error.to_string(),
+    logger.log(
+        Level::TRACE,
+        "The RPC provider couldn't answer an address-free query, so its range was read again by the contracts' registered addresses.",
+        &json!({
+            "fromBlock": from_block,
+            "toBlock": to_block,
+            "contractNames": contract_names,
+            "requests": address_free.len() + by_address.len(),
+            "reason": error.to_string(),
         }),
-    })
+    );
+    Ok(logs)
 }
 
 #[cfg(test)]

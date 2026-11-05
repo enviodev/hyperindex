@@ -86,6 +86,7 @@ let makeSources = (
       ?ws,
       ?headers,
       maxAddressesPerRequest,
+      logger,
     })
     let _ = sources->Array.push(source)
   })

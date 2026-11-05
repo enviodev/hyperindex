@@ -86,6 +86,7 @@ let makeSource = (
     blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
     transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
     maxAddressesPerRequest: Env.maxAddrInPartition,
+    logger: Logger.makeInMemory(),
   }
   (RpcSource.make(options), addressStore)
 }
@@ -579,6 +580,7 @@ describe("RPC source public contract", () => {
           blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
           transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
           maxAddressesPerRequest: Env.maxAddrInPartition,
+          logger: Logger.makeInMemory(),
         }
         let source = RpcSource.make(options)
         let call = () =>
@@ -843,6 +845,7 @@ describe("RPC source public contract", () => {
           blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
           transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
           maxAddressesPerRequest: Env.maxAddrInPartition,
+          logger: Logger.makeInMemory(),
         }
         let source = RpcSource.make(options)
         switch await RpcSourcePins.capture(
@@ -948,6 +951,7 @@ describe("RPC source public contract", () => {
             blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
             transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
             maxAddressesPerRequest: Env.maxAddrInPartition,
+            logger: Logger.makeInMemory(),
           })
           await RpcSourcePins.capture(
             () =>
