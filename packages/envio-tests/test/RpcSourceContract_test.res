@@ -85,6 +85,8 @@ let makeSource = (
     addressStore,
     blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
     transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+    maxAddressesPerRequest: Env.maxAddrInPartition,
+    logger: Logger.makeInMemory(),
   }
   (RpcSource.make(options), addressStore)
 }
@@ -577,6 +579,8 @@ describe("RPC source public contract", () => {
           addressStore,
           blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
           transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+          maxAddressesPerRequest: Env.maxAddrInPartition,
+          logger: Logger.makeInMemory(),
         }
         let source = RpcSource.make(options)
         let call = () =>
@@ -840,6 +844,8 @@ describe("RPC source public contract", () => {
           addressStore,
           blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
           transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+          maxAddressesPerRequest: Env.maxAddrInPartition,
+          logger: Logger.makeInMemory(),
         }
         let source = RpcSource.make(options)
         switch await RpcSourcePins.capture(
@@ -878,4 +884,113 @@ describe("RPC source public contract", () => {
       page.events->Array.map(event => (event.contractName, event.srcAddress, event.logIndex)),
     ).toEqual([("ContractA", addressAString, 2), ("ContractB", addressBString, 3)])
   })
+
+  Async.it(
+    "spends no address request when the wildcard part of an over-cap block is over the cap too",
+    async t => {
+      let wildcardSighash = "0x1111111111111111111111111111111111111111111111111111111111111111"
+      let clientFiltered = makeRoutingRegistration(~index=0)
+      let wildcard = {
+        ...EventRegistration.evmOnEventRegistration(
+          ~id=wildcardSighash,
+          ~contractName="Spam",
+          ~isWildcard=true,
+          ~blockFieldNames=[Number],
+          ~eventFilters=[
+            {
+              Internal.topic0: Values([wildcardSighash->EvmTypes.Hex.fromStringUnsafe]),
+              topic1: Any,
+              topic2: Any,
+              topic3: Any,
+            },
+          ],
+        ),
+        index: 1,
+      }
+      let cap = MockRpcServer.RpcError({
+        code: -32005,
+        message: "query returned more than 10000 results",
+      })
+      let error = await MockRpcServer.withScenario(
+        ~name="wildcard part over the cap",
+        ~calls=[
+          MockRpcServer.expectCall(
+            ~label="pooled address-free",
+            ~method="eth_getLogs",
+            ~params=JSON.parseOrThrow(
+              `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}","${wildcardSighash}"]]}]`,
+            ),
+            ~reply=cap,
+          ),
+          MockRpcServer.expectCall(
+            ~label="wildcard part alone",
+            ~method="eth_getLogs",
+            ~params=JSON.parseOrThrow(
+              `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${wildcardSighash}"]]}]`,
+            ),
+            ~reply=cap,
+            ~phase=1,
+          ),
+        ],
+        async mock => {
+          let addressStore = TestAddresses.makeStore(
+            ~onEventRegistrations=[
+              (clientFiltered :> Internal.onEventRegistration),
+              (wildcard :> Internal.onEventRegistration),
+            ],
+            ~addresses=[{address, contractName: "ERC20", registrationBlock: -1}],
+          )
+          let source = RpcSource.make({
+            url: mock.url,
+            chainId,
+            onEventRegistrations: [clientFiltered, wildcard],
+            sourceFor: Sync,
+            syncConfig,
+            lowercaseAddresses: true,
+            addressStore,
+            blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
+            transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+            maxAddressesPerRequest: Env.maxAddrInPartition,
+            logger: Logger.makeInMemory(),
+          })
+          await RpcSourcePins.capture(
+            () =>
+              source.getItemsOrThrow(
+                ~reorgableFrom=None,
+                ~fromBlock=100,
+                ~toBlock=Some(100),
+                ~addressSet=addressStore->AddressStore.emptySet,
+                ~knownHeight=100,
+                ~partitionId="address-free",
+                ~selection={
+                  dependsOnAddresses: false,
+                  onBlockRegistrations: [],
+                  onEventRegistrations: [
+                    (clientFiltered :> Internal.onEventRegistration),
+                    (wildcard :> Internal.onEventRegistration),
+                  ],
+                  clientFilteredContracts: ["ERC20"],
+                },
+                ~itemsTarget=None,
+                ~retry=0,
+                ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC address fallback"}),
+              ),
+          )
+        },
+      )
+
+      t.expect(error).toEqual(
+        Error(
+          RpcSourcePins.FailedGettingItems({
+            attemptedToBlock: 100,
+            providerMessage: Some("query returned more than 10000 results"),
+            retry: Backoff({
+              message: "Failed getting data for the block range. Will try smaller block range for the next attempt.",
+              backoffMillis: 1,
+            }),
+          }),
+        ),
+      )
+    },
+  )
 })

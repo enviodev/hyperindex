@@ -64,7 +64,7 @@ let mockFetchState = (
     onBlockRegistrations: [],
     knownHeight,
     firstEventBlock: None,
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
 }
 

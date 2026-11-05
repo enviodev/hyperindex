@@ -26,6 +26,27 @@ pub fn is_response_too_large_message(message: &str) -> bool {
     TOO_LARGE_PATTERNS.iter().any(|re| re.is_match(message))
 }
 
+// Caps on how much one answer may hold, as providers word them. Matched by
+// message rather than by code: -32005 also means throttling on geth-based
+// endpoints, and a request split into more requests is the wrong answer to
+// that. Range-width limits are left out too, since asking by address doesn't
+// narrow the range.
+static RESULT_CAP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)more than \d+ (logs|results)|\d+ logs returned|too many (logs|results)|exceeds max results|response size|result size|response too large|logs matched by query exceeds limit",
+    )
+    .unwrap()
+});
+static RATE_LIMITED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)rate.?limit|too many requests|request rate|compute units|throughput").unwrap()
+});
+
+/// Whether a provider refused an `eth_getLogs` for what the answer would hold,
+/// as opposed to throttling the caller or limiting the range.
+pub fn is_result_cap_message(message: &str) -> bool {
+    RESULT_CAP.is_match(message) && !RATE_LIMITED.is_match(message)
+}
+
 // Unknown provider: "retry with the range 123-456"
 static SUGGESTED_RANGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"retry with the range (\d+)-(\d+)").unwrap());
@@ -198,6 +219,28 @@ mod tests {
         assert_eq!(
             messages.map(is_response_too_large_message),
             [true, true, true, true, true, false, false]
+        );
+    }
+
+    #[test]
+    fn result_caps_exclude_throttling_and_range_limits() {
+        let messages = [
+            "query returned more than 10000 results",
+            "Log response size exceeded. You can make eth_getLogs requests with up to a 2K \
+             block range and no limit on the response size",
+            "too many results",
+            "More than 50000 logs returned",
+            // Geth-based endpoints' throttling, under the same -32005 code.
+            "limit exceeded",
+            "project ID request rate exceeded",
+            "Your app has exceeded its compute units per second capacity",
+            "Too Many Requests",
+            "block range is too wide",
+            "header not found",
+        ];
+        assert_eq!(
+            messages.map(is_result_cap_message),
+            [true, true, true, true, false, false, false, false, false, false]
         );
     }
 }

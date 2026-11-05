@@ -166,6 +166,8 @@ let makeRpcSource = (~url) => {
     addressStore,
     blockStore: BlockStore.make(~ecosystem=Evm),
     transactionStore: TransactionStore.make(~ecosystem=Evm),
+    maxAddressesPerRequest: Env.maxAddrInPartition,
+    logger: Logger.makeInMemory(),
   })
   (source, addressStore->AddressStore.emptySet)
 }

@@ -1288,6 +1288,26 @@ impl AddressSet {
         }
     }
 
+    /// Every address the store holds for `contract_names`, each contract on
+    /// its own, in set order, as sets of at most `max_addresses` each. A chunk
+    /// holding one contract becomes one request rather than one per contract.
+    pub fn contract_chunks(&self, contract_names: &[String], max_addresses: usize) -> Vec<Self> {
+        let store = self.store.read().unwrap();
+        let ids_by_contract: Vec<Vec<u64>> = contract_names
+            .iter()
+            .filter_map(|name| store.contract_idx(name))
+            .map(|contract_idx| {
+                store.sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
+            })
+            .collect();
+        drop(store);
+        ids_by_contract
+            .iter()
+            .flat_map(|ids| ids.chunks(max_addresses.max(1)))
+            .map(|chunk| Self::new(self.store.clone(), chunk.to_vec()))
+            .collect()
+    }
+
     pub fn cache(&self) -> &Arc<SetCache> {
         self.cache.get_or_init(|| {
             let store = self.store.read().unwrap();
@@ -2001,6 +2021,40 @@ mod tests {
                 vec![C.to_string()],
                 2,
                 1,
+            )
+        );
+    }
+
+    #[test]
+    fn contract_chunks_split_each_contract_on_its_own_in_set_order() {
+        let store = store();
+        store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "D", 200)]);
+        let chunks = |names: &[&str], max_addresses| {
+            store
+                .empty_set()
+                .contract_chunks(
+                    &names
+                        .iter()
+                        .map(|name| name.to_string())
+                        .collect::<Vec<_>>(),
+                    max_addresses,
+                )
+                .iter()
+                .map(AddressSet::addresses_for_test)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (
+                chunks(&["C", "D"], 2),
+                chunks(&["C"], 5),
+                chunks(&["Unknown"], 5)
+            ),
+            (
+                // A chunk holds one contract's addresses, so a request built
+                // from it carries a single contract's selection.
+                vec![vec![B.to_string(), A.to_string()], vec![C.to_string()]],
+                vec![vec![B.to_string(), A.to_string()]],
+                Vec::<Vec<String>>::new(),
             )
         );
     }

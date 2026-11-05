@@ -90,6 +90,8 @@ let decodeLogs = async (
         ~syncConfig=EvmChain.getSyncConfig({}),
         ~eventRegistrations,
         ~addressStore,
+        ~maxAddressesPerRequest=Env.maxAddrInPartition,
+        ~logger=Logger.makeInMemory(),
       )
       let (result, _, _) = await client.getNextPage(
         {

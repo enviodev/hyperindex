@@ -8,6 +8,7 @@ type cfg = {
   intervalCeiling: int,
   backoffMillis: int,
   queryTimeoutMillis: int,
+  maxAddressesPerRequest: int,
 }
 
 type nextPageParams = {
@@ -77,6 +78,8 @@ external classNew: (
   array<BlockItem.registrationInput>,
   ~checksumAddresses: bool,
   ~addressStore: AddressStore.t,
+  Logger.native,
+  array<string>,
 ) => t = "new"
 
 let make = (
@@ -88,6 +91,8 @@ let make = (
   ~eventRegistrations=[],
   ~onBlockRegistrations=[],
   ~addressStore,
+  ~maxAddressesPerRequest,
+  ~logger: Logger.t,
 ) =>
   Core.getAddon().evmRpcClient->classNew(
     {
@@ -100,9 +105,12 @@ let make = (
       intervalCeiling: syncConfig.intervalCeiling,
       backoffMillis: syncConfig.backoffMillis,
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
+      maxAddressesPerRequest,
     },
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
     ~checksumAddresses,
     ~addressStore,
+    logger.output.native,
+    logger.boundFieldsJson,
   )

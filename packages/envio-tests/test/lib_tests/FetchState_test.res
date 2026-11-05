@@ -295,7 +295,7 @@ describe("FetchState.make", () => {
         onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
-        clientFilterAddressThreshold: None,
+        clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
       }->TestAddresses.fetchState,
     )
   })
@@ -413,7 +413,7 @@ describe("FetchState.make", () => {
         onBlockRegistrations: [],
         knownHeight,
         firstEventBlock: None,
-        clientFilterAddressThreshold: None,
+        clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
       }->TestAddresses.fetchState,
     )
   })
@@ -487,7 +487,7 @@ describe("FetchState.make", () => {
           onBlockRegistrations: [],
           knownHeight,
           firstEventBlock: None,
-          clientFilterAddressThreshold: None,
+          clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
         }->TestAddresses.fetchState,
       )
 
@@ -600,7 +600,7 @@ describe("FetchState.make", () => {
           onBlockRegistrations: [],
           knownHeight,
           firstEventBlock: None,
-          clientFilterAddressThreshold: None,
+          clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
         }->TestAddresses.fetchState,
       )
     },
@@ -1723,7 +1723,7 @@ describe("FetchState.registerDynamicContracts", () => {
           onBlockRegistrations: [],
           knownHeight,
           firstEventBlock: None,
-          clientFilterAddressThreshold: None,
+          clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
         }->TestAddresses.fetchState,
       )
     },
@@ -1787,7 +1787,7 @@ describe("FetchState.getNextQuery & integration", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
-      clientFilterAddressThreshold: None,
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
     }
   }
 
@@ -1848,7 +1848,7 @@ describe("FetchState.getNextQuery & integration", () => {
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
-      clientFilterAddressThreshold: None,
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
     }
   }
 
@@ -4314,7 +4314,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       onBlockRegistrations: [],
       knownHeight: 10000,
       firstEventBlock: Some(0),
-      clientFilterAddressThreshold: None,
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
     }
   }
 
@@ -4392,7 +4392,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
 
   it("fills each partition toward the shared target, then stops at its range end", t => {
@@ -4480,7 +4480,7 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     onBlockRegistrations: [],
     knownHeight: 10000,
     firstEventBlock: Some(0),
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
 
   it("hands a known-density partition only the fresh budget, not the mean footprint", t => {
@@ -4708,7 +4708,7 @@ describe("FetchState.getNextQuery target containment", () => {
     onBlockRegistrations: [],
     knownHeight: 10000,
     firstEventBlock: Some(0),
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
 
   it("gates chunk starts at the target block even when a far mergeBlock allows more", t => {
@@ -4846,7 +4846,7 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
 
   let getChunks = (fetchState: FetchState.t, ~chainTargetItems) =>
@@ -4947,7 +4947,7 @@ describe("Response density and source range capacity update independently", () =
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
 
   let makeQuery = (~isChunk): FetchState.query => {
@@ -5143,7 +5143,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     onBlockRegistrations: [],
     knownHeight: 100000,
     firstEventBlock: Some(0),
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
 
   let countQueries = (fetchState: FetchState.t) =>
