@@ -3155,41 +3155,20 @@ let isFetchingAtHead = ({endBlock, knownHeight} as fetchState: t) => {
 // into a range a partition is still backfilling.
 let addressFreeHeadDistance = 200
 
-type headProximity =
-  // Every partition is within `addressFreeHeadDistance` of the fetch target.
-  | NearHead
-  // Some partition is near the head, but this one, the furthest behind, isn't.
-  | HeldBack({partitionId: string, latestFetchedBlock: int, fetchTarget: int})
-  // Also a chain with no head to follow: no known height yet, or an end block
-  // it stops at before the head.
-  | FarFromHead
-
-let headProximity = ({endBlock, blockLag, knownHeight, optimizedPartitions} as fetchState: t) => {
-  let fetchTarget = fetchState->headFetchTarget
-  let isWithinDistance = latestFetchedBlock =>
-    fetchTarget - latestFetchedBlock <= addressFreeHeadDistance
-  let followsHead =
-    knownHeight !== 0 &&
-      switch endBlock {
-      | Some(endBlock) => endBlock > knownHeight - blockLag
-      | None => true
-      }
-  let ids = optimizedPartitions.idsInAscOrder
-  switch (ids->Array.get(0), ids->Array.at(-1)) {
-  | _ if !followsHead => FarFromHead
-  | (Some(furthestBehindId), Some(furthestAheadId)) =>
-    let partition = id => optimizedPartitions.entities->Dict.getUnsafe(id)
-    let {latestFetchedBlock} = partition(furthestBehindId)
-    if isWithinDistance(latestFetchedBlock) {
-      NearHead
-    } else if isWithinDistance(partition(furthestAheadId).latestFetchedBlock) {
-      HeldBack({partitionId: furthestBehindId, latestFetchedBlock, fetchTarget})
-    } else {
-      FarFromHead
-    }
-  | _ => NearHead
+// Every partition is within `addressFreeHeadDistance` of the fetch target. A
+// chain with no head to follow never is: no known height yet, or an end block it
+// stops at before the head.
+let isNearHead = ({endBlock, blockLag, knownHeight, optimizedPartitions} as fetchState: t) =>
+  knownHeight !== 0 &&
+  switch endBlock {
+  | Some(endBlock) => endBlock > knownHeight - blockLag
+  | None => true
+  } &&
+  switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
+  | Some(latestFetchedBlock) =>
+    fetchState->headFetchTarget - latestFetchedBlock <= addressFreeHeadDistance
+  | None => true
   }
-}
 
 // Frontier at (or within `tolerance` of) the lagged head with no processable
 // items left — the moment the chain can cross into the reorg threshold.

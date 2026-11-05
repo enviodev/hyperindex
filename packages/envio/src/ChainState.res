@@ -73,9 +73,6 @@ type t = {
   // Timestamp of the committed progress block itself. See
   // `Batch.chainAfterBatch.progressBlockTime`.
   mutable committedProgressBlockTime: option<int>,
-  // The partition last named as keeping dynamic contracts by address, so it
-  // is named once rather than on every response.
-  mutable heldBackPartitionId: option<string>,
 }
 
 // The chain's config-declared addresses as storage rows: what a clean run
@@ -190,7 +187,6 @@ let make = (
     rollbackTargetBlock: None,
     progressLatencyMs: None,
     committedProgressBlockTime,
-    heldBackPartitionId: None,
   }
 }
 
@@ -1001,28 +997,12 @@ let materializePageItems = async (
 // backfill: judged against it, every block produced since would be fetched
 // address-free.
 let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
-  if !cs.fetchState.clientFilterPolicy.allDynamicContracts {
-    switch cs.fetchState->FetchState.headProximity {
-    | NearHead =>
-      cs.fetchState =
-        cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
-          ~addressStore=cs.addressStore,
-          ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
-        )
-    | HeldBack({partitionId, latestFetchedBlock, fetchTarget})
-      if cs.heldBackPartitionId !== Some(partitionId) &&
-        cs.fetchState.optimizedPartitions.dynamicContracts->Utils.Set.size > 0 =>
-      cs.heldBackPartitionId = Some(partitionId)
-      cs.logger->Logger.trace(
-        `Dynamic contracts are still fetched by address: a partition is still catching up to within ${FetchState.addressFreeHeadDistance->Int.toString} blocks of the head.`,
-        ~params={
-          "partitionId": partitionId,
-          "latestFetchedBlock": latestFetchedBlock,
-          "fetchTarget": fetchTarget,
-        },
+  if !cs.fetchState.clientFilterPolicy.allDynamicContracts && cs.fetchState->FetchState.isNearHead {
+    cs.fetchState =
+      cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
+        ~addressStore=cs.addressStore,
+        ~onNotice=notice => cs.logger->logFetchStateNotice(notice),
       )
-    | HeldBack(_) | FarFromHead => ()
-    }
   }
 
 let handleQueryResult = (
