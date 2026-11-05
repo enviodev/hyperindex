@@ -124,7 +124,7 @@ let makeRpcSource = () =>
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
-  try await source.getItemsOrThrow(
+  try await source->SourceCalls.getItemsOrThrow(
     ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),

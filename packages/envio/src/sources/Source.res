@@ -205,13 +205,7 @@ let downReasonFromLabel = label =>
 // message, or the frame nobody could read.
 type heightSubscriptionStatus = Live | Down({reason: heightSubscriptionDownReason, detail?: string})
 
-type t = {
-  name: string,
-  sourceFor: sourceFor,
-  chainId: ChainId.t,
-  poweredByHyperSync: bool,
-  /* Frequency (in ms) used when polling for new events on this network. */
-  pollingInterval: int,
+type calls = {
   getBlockHashes: (~blockNumbers: array<int>, ~logger: Logger.t) => promise<getBlockHashesResponse>,
   getHeightOrThrow: unit => promise<getHeightResponse>,
   getItemsOrThrow: (
@@ -258,3 +252,96 @@ type t = {
   // through this very state.
   onReorg?: unit => unit,
 }
+
+type nativeEventRegistration = {index: int, startBlock: option<int>}
+type nativeSelection = {
+  onEventRegistrations: array<nativeEventRegistration>,
+  onBlockRegistrationIndexes: array<int>,
+  clientFilteredContracts: option<array<string>>,
+}
+
+// Everything a source built in Rust needs to answer any attempt at a query.
+type nativeItemsQuery = {
+  fromBlock: int,
+  toBlock: option<int>,
+  partitionId: string,
+  knownHeight: int,
+  reorgableFrom: option<int>,
+  itemsTarget: option<int>,
+  selection: nativeSelection,
+}
+
+let toNativeItemsQuery = (
+  ~fromBlock,
+  ~toBlock,
+  ~partitionId,
+  ~knownHeight,
+  ~reorgableFrom,
+  ~itemsTarget,
+  ~selection: FetchState.selection,
+) => {
+  fromBlock,
+  toBlock,
+  partitionId,
+  knownHeight,
+  reorgableFrom,
+  itemsTarget,
+  selection: {
+    onEventRegistrations: selection.onEventRegistrations->Array.map(registration => {
+      index: registration.index,
+      startBlock: registration.startBlock,
+    }),
+    onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(registration =>
+      registration.index
+    ),
+    clientFilteredContracts: selection.clientFilteredContracts,
+  },
+}
+
+// How an items attempt failed, in the terms the source manager retries on.
+module ItemsFailure = {
+  @tag("kind")
+  type t =
+    | RateLimited({resetMs: int})
+    | BehindHead({blockNumber: int})
+    | FieldSelection({message: string, blockNumber: int})
+    | SuggestedToBlock({toBlock: int, attemptedToBlock: int})
+    | Impossible({message: string, attemptedToBlock: int})
+    | Backoff({message: string, backoffMillis: int, attemptedToBlock: int})
+}
+
+type native = {
+  source: NativeSource.t,
+  // Turns a page into the indexer's items. `knownHeight` is the query's.
+  decodeItemsPage: (NativeSource.page, ~knownHeight: int) => blockRangeFetchResponse,
+}
+
+type implementation = ReScript(calls) | Rust(native)
+
+type t = {
+  name: string,
+  sourceFor: sourceFor,
+  chainId: ChainId.t,
+  poweredByHyperSync: bool,
+  /* Frequency (in ms) used when polling for new events on this network. */
+  pollingInterval: int,
+  implementation: implementation,
+}
+
+let canStream = (source: t) =>
+  switch source.implementation {
+  | ReScript({createHeightSubscription: ?subscription}) => subscription->Option.isSome
+  | Rust({source}) => source->NativeSource.canStream
+  }
+
+let onReorg = (source: t) =>
+  switch source.implementation {
+  | ReScript({?onReorg}) => onReorg->Option.forEach(onReorg => onReorg())
+  | Rust({source}) => source->NativeSource.onReorg
+  }
+
+let getHeightOrThrow = async (source: t) =>
+  switch source.implementation {
+  | ReScript({getHeightOrThrow}) => (await getHeightOrThrow()).height
+  | Rust({source}) => await source->NativeSource.getHeight
+  }

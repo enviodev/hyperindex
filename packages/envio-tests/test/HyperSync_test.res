@@ -15,36 +15,36 @@ let addressStore = AddressStore.make(
 describe_skip("Test Hyperliquid broken transaction response", () => {
   Async.it("should handle broken transaction response", async _t => {
     let transferSighash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-    let _ = await HyperSync.GetItems.query(
-      ~client=HyperSyncClient.make(
-        ~url="https://645749.hypersync.xyz",
-        ~apiToken=testApiToken,
-        ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-        ~eventRegistrations=[
-          {
-            index: 0,
-            sighash: Some(transferSighash),
-            topicCount: 3,
-            eventName: "Transfer",
-            contractName: "ERC20",
-            isWildcard: true,
-            dependsOnAddresses: false,
-            startBlock: None,
-            params: [],
-            topicFilters: [
-              {
-                topic0: Some([transferSighash]),
-                topic1: Some([]),
-                topic2: Some([]),
-                topic3: Some([]),
-              },
-            ],
-            blockFields: [],
-            transactionFields: ["Hash"],
-          },
-        ],
-        ~addressStore,
-      ),
+    let client = HyperSyncClient.make(
+      ~url="https://645749.hypersync.xyz",
+      ~apiToken=testApiToken,
+      ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+      ~eventRegistrations=[
+        {
+          index: 0,
+          sighash: Some(transferSighash),
+          topicCount: 3,
+          eventName: "Transfer",
+          contractName: "ERC20",
+          isWildcard: true,
+          dependsOnAddresses: false,
+          startBlock: None,
+          params: [],
+          topicFilters: [
+            {
+              topic0: Some([transferSighash]),
+              topic1: Some([]),
+              topic2: Some([]),
+              topic3: Some([]),
+            },
+          ],
+          blockFields: [],
+          transactionFields: ["Hash"],
+        },
+      ],
+      ~addressStore,
+    )
+    let _ = await client.getItems(
       ~query={
         fromBlock: 12403138,
         toBlock: Some(12403139),

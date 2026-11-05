@@ -1,13 +1,3 @@
-type itemsPage = {
-  eventItems: array<EvmEventItem.t>,
-  blockItems: array<BlockItem.t>,
-  nextBlock: int,
-  archiveHeight: int,
-  responseBlocks: int,
-  transactionStore: TransactionStore.t,
-  blockStore: BlockStore.t,
-}
-
 // How often a HyperSync source is asked for the height while nothing is pushing
 // one. Every ecosystem's client talks to the same service, so they wait alike.
 let pollingInterval: int
@@ -40,19 +30,3 @@ let reraiseIfRecoverable: exn => unit
 let makeGetBlockHashes: (
   ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
 ) => (~blockNumbers: array<int>, ~logger: Logger.t) => promise<Source.getBlockHashesResponse>
-
-module GetItems: {
-  type error =
-    | UnexpectedMissingParams({missingParams: array<string>})
-    | WrongInstance
-
-  exception Error(error)
-
-  let extractMissingParams: exn => option<array<string>>
-
-  let query: (
-    ~client: HyperSyncClient.t,
-    ~query: HyperSyncClient.Items.query,
-    ~addressSet: AddressSet.t,
-  ) => promise<itemsPage>
-}

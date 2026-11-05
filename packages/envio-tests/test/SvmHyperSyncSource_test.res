@@ -162,7 +162,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     let reg = makeReg()
     let source = makeSource(~onEventRegistrations=[reg])
 
-    let response = await source.getItemsOrThrow(
+    let response = await source->SourceCalls.getItemsOrThrow(
       ~reorgableFrom=None,
       ~fromBlock=slot - 10,
       ~toBlock=Some(slot + 10),
@@ -339,7 +339,7 @@ describe("SvmHyperSyncSource reorgable range", () => {
     let source = makeSource()
     capturedQueries->Utils.Array.clearInPlace
 
-    let _ = await source.getItemsOrThrow(
+    let _ = await source->SourceCalls.getItemsOrThrow(
       ~reorgableFrom=Some(slot),
       ~fromBlock=slot,
       ~toBlock=Some(slot + 1),
@@ -390,7 +390,7 @@ describe("SvmHyperSyncSource height subscription", () => {
     let source = makeSource(~endpointUrl=url)
     let statuses = []
     let heights = []
-    let unsubscribe = (source.createHeightSubscription->Option.getOrThrow)(
+    let unsubscribe = ((source->SourceCalls.calls).createHeightSubscription->Option.getOrThrow)(
       ~clock=Clock.real,
       ~onHeight=height => heights->Array.push(height)->ignore,
       ~onStatus=status =>

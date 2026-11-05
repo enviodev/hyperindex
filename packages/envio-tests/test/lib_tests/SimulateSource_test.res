@@ -67,7 +67,7 @@ let getItems = async (
     ~chainId,
     ~addressStore=store,
   )
-  let response = await source.getItemsOrThrow(
+  let response = await source->SourceCalls.getItemsOrThrow(
     ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),

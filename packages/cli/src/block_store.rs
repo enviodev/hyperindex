@@ -6,7 +6,7 @@
 //! plain JS objects. The store lives on the ReScript `ChainState`; fetch
 //! responses merge in, and rows are pruned or rolled back by block.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use hypersync_client::format::{Hash, Hex, Quantity};
@@ -496,7 +496,7 @@ struct Inner {
 
 #[napi]
 pub struct BlockStore {
-    inner: Mutex<Inner>,
+    inner: Arc<Mutex<Inner>>,
     // Fixed at construction; drives the decoder in `materialize`.
     ecosystem: Ecosystem,
 }
@@ -908,11 +908,19 @@ impl BlockStore {
             Ecosystem::Fuel => FuelBlockField::VARIANTS.len(),
         };
         Self {
-            inner: Mutex::new(Inner {
+            inner: Arc::new(Mutex::new(Inner {
                 table: Table::new(n_fields),
                 page: ResponsePage::default(),
-            }),
+            })),
             ecosystem,
+        }
+    }
+
+    /// The same store, for a source that reads it off the JavaScript thread.
+    pub(crate) fn share(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            ecosystem: self.ecosystem,
         }
     }
 

@@ -63,8 +63,8 @@ let readHeadOnceOrThrow = async (chainConfig: Config.chain, ~sources): int => {
   for i in 0 to candidates->Array.length - 1 {
     if head.contents->Option.isNone {
       let source = candidates->Array.getUnsafe(i)
-      switch await source.getHeightOrThrow() {
-      | {height} => head := Some(height)
+      switch await source->Source.getHeightOrThrow {
+      | height => head := Some(height)
       | exception exn =>
         failures
         ->Array.push(`${source.name}: ${exn->Utils.exnMessage->Option.getOr("unknown error")}`)

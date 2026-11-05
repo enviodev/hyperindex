@@ -2,10 +2,10 @@
 //! retries and staleness, and [`driver`] runs it on a clock and hands what it
 //! reports to a sink.
 
-mod driver;
-mod machine;
-mod sse;
-mod ws;
+pub(crate) mod driver;
+pub(crate) mod machine;
+pub(crate) mod sse;
+pub(crate) mod ws;
 
 use std::sync::Arc;
 

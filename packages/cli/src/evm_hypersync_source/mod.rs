@@ -14,6 +14,7 @@ use crate::transaction_store::TransactionStore;
 
 mod config;
 pub(crate) mod decode;
+mod native;
 pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod topic_filter;
@@ -48,8 +49,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
     rate_limited_err(info.suggested_wait_secs().unwrap_or(1) * 1000)
 }
 
-#[napi]
-pub struct EvmHyperSyncClient {
+pub struct HyperSyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
     decoder: Decoder,
@@ -57,7 +57,7 @@ pub struct EvmHyperSyncClient {
     block_registrations: BlockRegistrations,
 }
 
-impl EvmHyperSyncClient {
+impl HyperSyncClient {
     /// Execute one raw HyperSync page. Public methods decide how much of the
     /// response to convert for their specific caller.
     async fn get_raw(&self, query: Query) -> napi::Result<hypersync_client::QueryResponse> {
@@ -75,16 +75,14 @@ impl EvmHyperSyncClient {
     }
 }
 
-#[napi]
-impl EvmHyperSyncClient {
-    #[napi(factory)]
+impl HyperSyncClient {
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
         event_registrations: Vec<OnEventRegistrationInput>,
         block_registrations: Vec<OnBlockRegistrationInput>,
         address_store: &AddressStore,
-    ) -> napi::Result<EvmHyperSyncClient> {
+    ) -> napi::Result<HyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
         let block_registrations = BlockRegistrations::new(&block_registrations).map_err(map_err)?;
 
@@ -106,7 +104,7 @@ impl EvmHyperSyncClient {
             .context("build client")
             .map_err(map_err)?;
 
-        Ok(EvmHyperSyncClient {
+        Ok(HyperSyncClient {
             inner,
             enable_checksum_addresses,
             decoder,
@@ -115,7 +113,6 @@ impl EvmHyperSyncClient {
         })
     }
 
-    #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
         let height = self.inner.get_height().await.map_err(|e| {
             // The client embeds a `{:?}` debug dump (a full backtrace when
@@ -128,7 +125,6 @@ impl EvmHyperSyncClient {
         height.try_into().context("convert height").map_err(map_err)
     }
 
-    #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
         convert_response(self.get_raw(query).await?, self.enable_checksum_addresses)
             .context("convert response")
@@ -139,7 +135,6 @@ impl EvmHyperSyncClient {
     /// response store. Query construction, pagination, and the no-progress
     /// retry stay on the Rust side so block-only response data never needs to
     /// cross into ReScript.
-    #[napi]
     pub async fn get_block_hashes(
         &self,
         block_numbers: Vec<i64>,
@@ -175,7 +170,6 @@ impl EvmHyperSyncClient {
         Ok((aggregate, request_stats))
     }
 
-    #[napi]
     pub async fn get_items(
         &self,
         params: ItemsQuery,

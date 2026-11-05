@@ -283,6 +283,17 @@ module Items = {
   }
 }
 
+// A page the client's source answered with.
+type itemsPage = {
+  toBlock: int,
+  knownHeight: int,
+  eventItems: array<EvmEventItem.t>,
+  blockItems: array<BlockItem.t>,
+  blocks: BlockStore.t,
+  transactions: TransactionStore.t,
+  fetchSeconds: float,
+}
+
 type t = {
   // Block-hash query construction and pagination live in Rust; only the
   // aggregate response store crosses the boundary.
@@ -294,7 +305,12 @@ type t = {
     ~addressSet: AddressSet.t,
   ) => promise<(Items.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
+  // The client as a source the source manager calls itself, pushing heights
+  // over the server's stream at the url, with the token and user agent given.
+  source: (string, string, string) => NativeSource.t,
 }
+
+let userAgent = () => `hyperindex/${Utils.EnvioPackage.value.version}`
 
 @send
 external classNew: (
@@ -333,7 +349,6 @@ let make = (
   ~logLevel=#info,
   ~addressStore,
 ) => {
-  let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().evmHyperSyncClient->classNew(
     {
       url,
@@ -347,7 +362,7 @@ let make = (
       ?retryCeilingMs,
       logLevel: logLevelToString(logLevel),
     },
-    `hyperindex/${envioVersion}`,
+    userAgent(),
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
     addressStore,

@@ -103,7 +103,7 @@ let fetch = (
   ~reorgableFrom=None,
   ~itemsTarget=None,
 ) =>
-  source.getItemsOrThrow(
+  source->SourceCalls.getItemsOrThrow(
     ~fromBlock,
     ~toBlock,
     ~addressSet,

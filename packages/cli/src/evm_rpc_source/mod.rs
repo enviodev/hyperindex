@@ -12,6 +12,7 @@ mod enrich;
 mod fields;
 mod inflight;
 mod interval;
+mod native;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
@@ -272,8 +273,7 @@ pub struct BlockHashResult {
     pub request_stats: Vec<RequestStat>,
 }
 
-#[napi]
-pub struct EvmRpcClient {
+pub struct RpcClient {
     inner: Arc<JsonRpcClient>,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
@@ -316,16 +316,14 @@ struct PageQuery<'a> {
     known_transactions: &'a TransactionStore,
 }
 
-#[napi]
-impl EvmRpcClient {
-    #[napi(factory)]
+impl RpcClient {
     pub fn new(
         cfg: EvmRpcClientConfig,
         event_registrations: Vec<OnEventRegistrationInput>,
         block_registrations: Vec<OnBlockRegistrationInput>,
         checksum_addresses: bool,
         address_store: &AddressStore,
-    ) -> napi::Result<EvmRpcClient> {
+    ) -> napi::Result<RpcClient> {
         let max_concurrent_requests = cfg
             .max_concurrent_requests
             .filter(|v| *v > 0)
@@ -402,7 +400,7 @@ impl EvmRpcClient {
                     block_mask: acc.block_mask | fields.block_mask,
                     tx_mask: acc.tx_mask | fields.tx_mask,
                 });
-        Ok(EvmRpcClient {
+        Ok(RpcClient {
             inner: Arc::new(inner),
             decoder,
             selection_builder,
@@ -421,7 +419,6 @@ impl EvmRpcClient {
     /// issued afterwards must observe the chain again rather than join one.
     /// The stores are rolled back separately, which is what retires the data
     /// already merged from that fork.
-    #[napi]
     pub fn on_reorg(&self) {
         self.fetches.clear();
     }
@@ -430,7 +427,6 @@ impl EvmRpcClient {
     /// observations, for the rollback-depth search. Never served from the
     /// store: the whole question being asked is whether the stored hashes still
     /// match the chain.
-    #[napi]
     pub async fn get_block_hashes(
         &self,
         block_numbers: Vec<i64>,
@@ -467,7 +463,6 @@ impl EvmRpcClient {
     }
 
     /// The chain's height, with the timing of the request it took.
-    #[napi]
     pub async fn get_height(&self) -> napi::Result<(i64, Vec<RequestStat>)> {
         let result = self.inner.get_height().await;
         let request_stats = self.inner.take_stats();
@@ -494,7 +489,6 @@ impl EvmRpcClient {
     /// — a narrower range to retry, a backoff, a selection the provider cannot
     /// serve — comes back as a value; the stores returned alongside a non-"ok"
     /// result are empty.
-    #[napi]
     pub async fn get_next_page(
         &self,
         params: NextPageParams,

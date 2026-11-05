@@ -1131,6 +1131,18 @@ pub struct AddressSet {
     cache: OnceLock<Arc<SetCache>>,
 }
 
+impl AddressSet {
+    /// The same set, for a query that outlives the JavaScript call handing it
+    /// over.
+    pub(crate) fn share(&self) -> Self {
+        AddressSet {
+            store: self.store.clone(),
+            ids: self.ids.clone(),
+            cache: self.cache.clone(),
+        }
+    }
+}
+
 #[napi]
 impl AddressSet {
     #[napi]

@@ -1018,124 +1018,128 @@ let make = (
         poweredByHyperSync: false,
         chainId,
         pollingInterval,
-        getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
-          getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
-          let promise = Promise.make((resolve, _reject) => blockHashCallers->Map.set(id, resolve))
-          notifyArrival()
-          promise
-        }),
-        getHeightOrThrow: implement(#getHeightOrThrow, () => {
-          getHeightOrThrowCalls->Array.push(true)->ignore
-          notifyArrival()
-          let {index, height, failure} = ledger->Ledger.takeHeightCall
-          note(
-            `height call ${(index + 1)->Int.toString} (${switch (
-                height->Nullable.toOption,
-                failure->Nullable.toOption,
-              ) {
-              | (Some(height), _) => `answered ${height->Int.toString}`
-              | (None, Some(_)) => "failed"
-              | (None, None) => "pending"
-              }})`,
-          )
-          switch (height->Nullable.toOption, failure->Nullable.toOption) {
-          | (Some(height), _) => Promise.resolve({Source.height, requestStats: []})
-          | (None, Some(message)) =>
-            Promise.reject(JsError.make(message)->(Utils.magic: JsError.t => exn))
-          | (None, None) =>
-            Promise.make((resolve, reject) =>
-              heightCallers->Map.set(index, {"resolve": resolve, "reject": reject})
+        implementation: ReScript({
+          getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
+            getBlockHashesCalls->Array.push(blockNumbers)->ignore
+            let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
+            let promise = Promise.make((resolve, _reject) => blockHashCallers->Map.set(id, resolve))
+            notifyArrival()
+            promise
+          }),
+          getHeightOrThrow: implement(#getHeightOrThrow, () => {
+            getHeightOrThrowCalls->Array.push(true)->ignore
+            notifyArrival()
+            let {index, height, failure} = ledger->Ledger.takeHeightCall
+            note(
+              `height call ${(index + 1)->Int.toString} (${switch (
+                  height->Nullable.toOption,
+                  failure->Nullable.toOption,
+                ) {
+                | (Some(height), _) => `answered ${height->Int.toString}`
+                | (None, Some(_)) => "failed"
+                | (None, None) => "pending"
+                }})`,
             )
-          }
-        }),
-        getItemsOrThrow: implement(#getItemsOrThrow, (
-          ~fromBlock,
-          ~toBlock,
-          ~addressSet,
-          ~reorgableFrom,
-          ~knownHeight,
-          ~partitionId,
-          ~selection,
-          ~itemsTarget as _,
-          ~retry,
-          ~logger as _,
-        ) => {
-          let id =
-            ledger->Ledger.takeItemsQuery(partitionId, fromBlock, toBlock->Null.fromOption, retry)
-          note(
-            `items query ${fromBlock->Int.toString}..${toBlock->Option.mapOr("", toBlock =>
-                toBlock->Int.toString
-              )} (partition ${partitionId})`,
-          )
-          let promise = Promise.make((resolve, reject) => {
-            let query: pendingItemsQuery = {
-              partitionId,
-              fromBlock,
-              toBlock: switch toBlock {
-              | Some(toBlock) => Bounded(toBlock)
-              | None => Unbounded
-              },
-              retryCount: retry,
+            switch (height->Nullable.toOption, failure->Nullable.toOption) {
+            | (Some(height), _) => Promise.resolve({Source.height, requestStats: []})
+            | (None, Some(message)) =>
+              Promise.reject(JsError.make(message)->(Utils.magic: JsError.t => exn))
+            | (None, None) =>
+              Promise.make((resolve, reject) =>
+                heightCallers->Map.set(index, {"resolve": resolve, "reject": reject})
+              )
             }
-            let settle = () => {
-              ledger->Ledger.settleItemsQuery(id)
-              queriesById->Map.delete(id)->ignore
-              switch pendingItemsQueries->Array.indexOf(query) {
-              | -1 => ()
-              | index =>
-                pendingItemsQueries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+          }),
+          getItemsOrThrow: implement(#getItemsOrThrow, (
+            ~fromBlock,
+            ~toBlock,
+            ~addressSet,
+            ~reorgableFrom,
+            ~knownHeight,
+            ~partitionId,
+            ~selection,
+            ~itemsTarget as _,
+            ~retry,
+            ~logger as _,
+          ) => {
+            let id =
+              ledger->Ledger.takeItemsQuery(partitionId, fromBlock, toBlock->Null.fromOption, retry)
+            note(
+              `items query ${fromBlock->Int.toString}..${toBlock->Option.mapOr("", toBlock =>
+                  toBlock->Int.toString
+                )} (partition ${partitionId})`,
+            )
+            let promise = Promise.make((resolve, reject) => {
+              let query: pendingItemsQuery = {
+                partitionId,
+                fromBlock,
+                toBlock: switch toBlock {
+                | Some(toBlock) => Bounded(toBlock)
+                | None => Unbounded
+                },
+                retryCount: retry,
               }
-            }
-            let queryControl = {
-              respond: response => {
-                settle()
-                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight, ~selection))
-              },
-              fail: exn => {
-                settle()
-                reject(exn)
-              },
-            }
-            let addresses = addressSet->AddressSet.addressesForTest
-            query
-            ->Utils.Object.definePropertyWithValue("__id", {enumerable: false, value: id})
-            ->Utils.Object.definePropertyWithValue(
-              "addresses",
-              {enumerable: false, value: addresses},
-            )
-            ->Utils.Object.definePropertyWithValue(
-              "reorgableFrom",
-              {enumerable: false, value: reorgableFrom},
-            )
-            ->Utils.Object.definePropertyWithValue(
-              "__control",
-              {enumerable: false, value: queryControl},
-            )
-            ->ignore
-            queriesById->Map.set(id, query)
-            pendingItemsQueries->Array.push(query)
-          })
-          notifyArrival()
-          promise
-        }),
-        onReorg: () => ledger->Ledger.recordReorg,
-        createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
-        | true =>
-          Some(
-            (~clock as _, ~onHeight, ~onStatus) => {
-              heightSubscriptionCalls->Array.push(true)->ignore
-              heightSubscriptionCallbacks->Array.push(onHeight)->ignore
-              heightSubscriptionStatusCallbacks->Array.push(onStatus)->ignore
-              heightSubscriptionUnsubscribed := false
-              () => {
-                heightSubscriptionCloseCalls->Array.push(true)->ignore
-                teardownHeightSubscription()
+              let settle = () => {
+                ledger->Ledger.settleItemsQuery(id)
+                queriesById->Map.delete(id)->ignore
+                switch pendingItemsQueries->Array.indexOf(query) {
+                | -1 => ()
+                | index =>
+                  pendingItemsQueries->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+                }
               }
-            },
-          )
-        | false => None
-        },
+              let queryControl = {
+                respond: response => {
+                  settle()
+                  resolve(
+                    makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight, ~selection),
+                  )
+                },
+                fail: exn => {
+                  settle()
+                  reject(exn)
+                },
+              }
+              let addresses = addressSet->AddressSet.addressesForTest
+              query
+              ->Utils.Object.definePropertyWithValue("__id", {enumerable: false, value: id})
+              ->Utils.Object.definePropertyWithValue(
+                "addresses",
+                {enumerable: false, value: addresses},
+              )
+              ->Utils.Object.definePropertyWithValue(
+                "reorgableFrom",
+                {enumerable: false, value: reorgableFrom},
+              )
+              ->Utils.Object.definePropertyWithValue(
+                "__control",
+                {enumerable: false, value: queryControl},
+              )
+              ->ignore
+              queriesById->Map.set(id, query)
+              pendingItemsQueries->Array.push(query)
+            })
+            notifyArrival()
+            promise
+          }),
+          onReorg: () => ledger->Ledger.recordReorg,
+          createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
+          | true =>
+            Some(
+              (~clock as _, ~onHeight, ~onStatus) => {
+                heightSubscriptionCalls->Array.push(true)->ignore
+                heightSubscriptionCallbacks->Array.push(onHeight)->ignore
+                heightSubscriptionStatusCallbacks->Array.push(onStatus)->ignore
+                heightSubscriptionUnsubscribed := false
+                () => {
+                  heightSubscriptionCloseCalls->Array.push(true)->ignore
+                  teardownHeightSubscription()
+                }
+              },
+            )
+          | false => None
+          },
+        }),
       }
       setMockSourceState(source, state)
       source

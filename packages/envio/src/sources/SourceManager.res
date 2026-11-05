@@ -23,6 +23,7 @@ module Native = {
         message: string,
         paramsJson?: string,
         err?: int,
+        errMessage?: string,
       })
     | Defer({token: int})
     | RequestHeight({request: int, source: int})
@@ -31,17 +32,8 @@ module Native = {
     | ResolveWait({wait: int, height: int})
     | Reorg({source: int})
     | Attempt({request: int, source: int, toBlock?: int, retry: int, fieldsJson: string})
-    | Resolve({request: int})
-    | Reject({request: int, message: string})
-
-  @tag("kind")
-  type itemsFailure =
-    | RateLimited({resetMs: int})
-    | BehindHead({blockNumber: int})
-    | FieldSelection({message: string, blockNumber: int})
-    | SuggestedToBlock({toBlock: int, attemptedToBlock: int})
-    | Impossible({message: string, attemptedToBlock: int})
-    | Backoff({message: string, backoffMillis: int, attemptedToBlock: int})
+    | Resolve({request: int, nativeSource?: int})
+    | Reject({request: int, message: string, cause?: string})
 
   type requestStatSample = {
     source: int,
@@ -81,6 +73,9 @@ module Native = {
     unit => unit,
   ) => t = "make"
   @send external takeEffect: t => Nullable.t<effect> = "takeEffect"
+  @send external attachSource: (t, int, NativeSource.t) => unit = "attachSource"
+  @send external takeItemsPage: (t, int) => NativeSource.page = "takeItemsPage"
+  @send external takeHashesPage: (t, int) => BlockStore.t = "takeHashesPage"
   @send external timerFired: (t, int) => unit = "timerFired"
   @send
   external waitForNewBlock: (
@@ -99,22 +94,21 @@ module Native = {
   @send external streamLive: (t, int) => unit = "streamLive"
   @send external streamDown: (t, int, string, Nullable.t<string>) => unit = "streamDown"
   @send
-  external startItemsQuery: (
-    t,
-    ~fromBlock: int,
-    ~toBlock: Nullable.t<int>,
-    ~partitionId: string,
-    ~addresses: int,
-    ~isRealtime: bool,
-  ) => int = "startItemsQuery"
+  external startItemsQuery: (t, Source.nativeItemsQuery, AddressSet.t, ~isRealtime: bool) => int =
+    "startItemsQuery"
   @send
   external itemsAnswered: (t, int, BlockStore.t, int, array<Source.requestStat>) => unit =
     "itemsAnswered"
   @send
-  external itemsFailed: (t, int, itemsFailure, array<Source.requestStat>, Nullable.t<int>) => unit =
-    "itemsFailed"
+  external itemsFailed: (
+    t,
+    int,
+    Source.ItemsFailure.t,
+    array<Source.requestStat>,
+    Nullable.t<int>,
+  ) => unit = "itemsFailed"
   @send
-  external startBlockHashes: (t, bool) => int = "startBlockHashes"
+  external startBlockHashes: (t, array<int>, ~isRealtime: bool) => int = "startBlockHashes"
   @send
   external hashesAnswered: (t, int, BlockStore.t, array<int>, array<Source.requestStat>) => unit =
     "hashesAnswered"
@@ -203,12 +197,16 @@ let holdError = (sm: t, exn) => {
   id
 }
 
-let logEffect = (sm: t, ~fieldsJson, ~level, ~message, ~paramsJson, ~err) => {
+let logEffect = (sm: t, ~fieldsJson, ~level, ~message, ~paramsJson, ~err, ~errMessage) => {
   let logger = switch fieldsJson {
   | Some(fieldsJson) => sm.logger->Logger.withFieldsJson(fieldsJson)
   | None => sm.logger
   }
-  switch err->Option.flatMap(id => sm.errors->Map.get(id)) {
+  let exn = switch errMessage {
+  | Some(message) => Some(JsError.make(message)->JsExn.anyToExnInternal)
+  | None => err->Option.flatMap(id => sm.errors->Map.get(id))
+  }
+  switch exn {
   | Some(exn) =>
     let params =
       paramsJson->Option.mapOr(Dict.make(), json =>
@@ -222,6 +220,13 @@ let logEffect = (sm: t, ~fieldsJson, ~level, ~message, ~paramsJson, ~err) => {
 
 // Rust names only requests it was handed and has not settled.
 let requestOf = (sm: t, id) => sm.requests->Map.get(id)->Option.getUnsafe
+
+// Rust carries out every call to a source built in Rust itself.
+let callsOf = (sm: t, source) =>
+  switch (sm.sources->Array.getUnsafe(source)).implementation {
+  | ReScript(calls) => calls
+  | Rust(_) => JsError.throwWithMessage("A source built in Rust was handed to ReScript to call.")
+  }
 
 // Drained one effect at a time: a call made while carrying one out can queue
 // more, and they still run in the order they were owed.
@@ -246,8 +251,8 @@ and report = (sm: t, ~err=?, call: option<int> => unit) => {
 
 and execute = (sm: t, effect: Native.effect) =>
   switch effect {
-  | Log({?fieldsJson, level, message, ?paramsJson, ?err}) =>
-    sm->logEffect(~fieldsJson, ~level, ~message, ~paramsJson, ~err)
+  | Log({?fieldsJson, level, message, ?paramsJson, ?err, ?errMessage}) =>
+    sm->logEffect(~fieldsJson, ~level, ~message, ~paramsJson, ~err, ~errMessage)
   | Defer({token}) =>
     Promise.resolve()
     ->Promise.thenResolve(() => sm->report(_ => sm.native->Native.timerFired(token)))
@@ -264,35 +269,40 @@ and execute = (sm: t, effect: Native.effect) =>
     let resolve = sm.waits->Map.get(wait)->Option.getUnsafe
     sm.waits->Map.delete(wait)->ignore
     resolve(height)
-  | Reorg({source}) => (sm.sources->Array.getUnsafe(source)).onReorg->Option.forEach(cb => cb())
+  | Reorg({source}) => (sm->callsOf(source)).onReorg->Option.forEach(cb => cb())
   | Attempt({request, source, ?toBlock, retry, fieldsJson}) =>
-    sm->attempt(
-      ~id=request,
-      ~source=sm.sources->Array.getUnsafe(source),
-      ~toBlock,
-      ~retry,
-      ~fieldsJson,
-    )
-  | Resolve({request}) =>
+    sm->attempt(~id=request, ~calls=sm->callsOf(source), ~toBlock, ~retry, ~fieldsJson)
+  | Resolve({request, ?nativeSource}) =>
     let {kind} = sm->requestOf(request)
     sm.requests->Map.delete(request)->ignore
     // Resolved only after the answer it accepted was reported.
-    switch kind {
-    | Items({resolveItems, response}) => resolveItems(response->Option.getUnsafe)
-    | Hashes({resolveHashes, blockStore}) => resolveHashes(blockStore->Option.getUnsafe)
+    switch (kind, nativeSource) {
+    | (Items({resolveItems, knownHeight}), Some(source)) =>
+      switch (sm.sources->Array.getUnsafe(source)).implementation {
+      | Rust({decodeItemsPage}) =>
+        resolveItems(sm.native->Native.takeItemsPage(request)->decodeItemsPage(~knownHeight))
+      | ReScript(_) => JsError.throwWithMessage("A page came from a source built in ReScript.")
+      }
+    | (Items({resolveItems, response}), None) => resolveItems(response->Option.getUnsafe)
+    | (Hashes({resolveHashes}), Some(_)) => resolveHashes(sm.native->Native.takeHashesPage(request))
+    | (Hashes({resolveHashes, blockStore}), None) => resolveHashes(blockStore->Option.getUnsafe)
     }
-  | Reject({request, message}) =>
+  | Reject({request, message, ?cause}) =>
     let {reject} = sm->requestOf(request)
     sm.requests->Map.delete(request)->ignore
+    let exn = switch cause {
+    | Some(cause) => JsError.make(cause)->(Utils.magic: JsError.t => exn)
+    | None => %raw(`null`)
+    }
     reject(
-      try %raw(`null`)->ErrorHandling.mkLogAndRaise(~logger=sm.logger, ~msg=message) catch {
+      try exn->ErrorHandling.mkLogAndRaise(~logger=sm.logger, ~msg=message) catch {
       | exn => exn
       },
     )
   }
 
 and requestHeight = (sm: t, ~request, ~source) =>
-  switch (sm.sources->Array.getUnsafe(source)).getHeightOrThrow() {
+  switch (sm->callsOf(source)).getHeightOrThrow() {
   | call => sm->awaitHeight(~request, call)
   // Heard after the turn it threw on, as a poll loop awaiting it would.
   | exception exn =>
@@ -333,8 +343,7 @@ and awaitHeight = (sm: t, ~request, call: promise<Source.getHeightResponse>) => 
 
 // Rust subscribes only a source that can push heights.
 and subscribeStream = (sm: t, ~source) => {
-  let createSubscription =
-    (sm.sources->Array.getUnsafe(source)).createHeightSubscription->Option.getUnsafe
+  let createSubscription = (sm->callsOf(source)).createHeightSubscription->Option.getUnsafe
   sm.closeStreams->Map.set(
     source,
     createSubscription(
@@ -356,18 +365,27 @@ and subscribeStream = (sm: t, ~source) => {
   )
 }
 
-and attempt = (sm: t, ~id, ~source: Source.t, ~toBlock, ~retry, ~fieldsJson) => {
+and attempt = (sm: t, ~id, ~calls, ~toBlock, ~retry, ~fieldsJson) => {
   let request = sm->requestOf(id)
   let logger = sm.logger->Logger.withFieldsJson(fieldsJson)
   switch request.kind {
-  | Items(items) => sm->attemptItems(~id, ~request, ~items, ~source, ~toBlock, ~retry, ~logger)
-  | Hashes(hashes) => sm->attemptHashes(~id, ~hashes, ~source, ~logger)
+  | Items(items) => sm->attemptItems(~id, ~request, ~items, ~calls, ~toBlock, ~retry, ~logger)
+  | Hashes(hashes) => sm->attemptHashes(~id, ~hashes, ~calls, ~logger)
   }
 }
 
-and attemptItems = (sm: t, ~id, ~request, ~items, ~source: Source.t, ~toBlock, ~retry, ~logger) => {
+and attemptItems = (
+  sm: t,
+  ~id,
+  ~request,
+  ~items,
+  ~calls: Source.calls,
+  ~toBlock,
+  ~retry,
+  ~logger,
+) => {
   let {query, knownHeight, reorgableFrom} = items
-  let call = try source.getItemsOrThrow(
+  let call = try calls.getItemsOrThrow(
     ~fromBlock=query.fromBlock,
     ~toBlock,
     ~addressSet=query.addresses,
@@ -435,8 +453,8 @@ and attemptItems = (sm: t, ~id, ~request, ~items, ~source: Source.t, ~toBlock, ~
   ->Promise.ignore
 }
 
-and attemptHashes = (sm: t, ~id, ~hashes, ~source: Source.t, ~logger) => {
-  let call = try source.getBlockHashes(~blockNumbers=hashes.blockNumbers, ~logger) catch {
+and attemptHashes = (sm: t, ~id, ~hashes, ~calls: Source.calls, ~logger) => {
+  let call = try calls.getBlockHashes(~blockNumbers=hashes.blockNumbers, ~logger) catch {
   | exn => Promise.reject(exn)
   }
   let failed = (~requestStats, exn) =>
@@ -488,7 +506,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
       name: source.name,
       sourceFor: source.sourceFor,
       pollingInterval: source.pollingInterval,
-      canStream: source.createHeightSubscription->Option.isSome,
+      canStream: source->Source.canStream,
     }),
     isRealtime,
     {
@@ -516,6 +534,12 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
     errors: Map.make(),
     nextErrorId: 0,
   }
+  sources->Array.forEachWithIndex((source, index) =>
+    switch source.implementation {
+    | Rust({source}) => native->Native.attachSource(index, source)
+    | ReScript(_) => ()
+    }
+  )
   onEffects := (() => sm->flush)
   sm
 }
@@ -597,8 +621,7 @@ let getRateLimitResetInMs = (sm: t) => sm.native->Native.rateLimitResetInMs->Nul
 
 let shutdown = (sm: t) => sm->report(_ => sm.native->Native.shutdown)
 
-let onReorg = (sm: t) =>
-  sm.sources->Array.forEach(source => source.onReorg->Option.forEach(cb => cb()))
+let onReorg = (sm: t) => sm.sources->Array.forEach(Source.onReorg)
 
 let waitForNewBlock = (sm: t, ~knownHeight, ~isRealtime, ~reducedPolling) =>
   Promise.make((resolve, _reject) =>
@@ -613,10 +636,16 @@ let executeQuery = (sm: t, ~query: FetchState.query, ~knownHeight, ~isRealtime, 
     sm->report(_ => {
       let id =
         sm.native->Native.startItemsQuery(
-          ~fromBlock=query.fromBlock,
-          ~toBlock=query.toBlock->Nullable.fromOption,
-          ~partitionId=query.partitionId,
-          ~addresses=query.addresses->AddressSet.size,
+          Source.toNativeItemsQuery(
+            ~fromBlock=query.fromBlock,
+            ~toBlock=query.toBlock,
+            ~partitionId=query.partitionId,
+            ~knownHeight,
+            ~reorgableFrom,
+            ~itemsTarget=query.itemsTarget,
+            ~selection=query.selection,
+          ),
+          query.addresses,
           ~isRealtime,
         )
       sm.requests->Map.set(
@@ -632,7 +661,7 @@ let executeQuery = (sm: t, ~query: FetchState.query, ~knownHeight, ~isRealtime, 
 let getBlockHashes = (sm: t, ~blockNumbers, ~isRealtime) =>
   Promise.make((resolve, reject) =>
     sm->report(_ => {
-      let id = sm.native->Native.startBlockHashes(isRealtime)
+      let id = sm.native->Native.startBlockHashes(blockNumbers, ~isRealtime)
       sm.requests->Map.set(
         id,
         {

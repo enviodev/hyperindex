@@ -565,7 +565,7 @@ describe("MockSource waits for a burst to fully arrive", () => {
   Async.it("matches a fan-out of item queries only once all of it is pending", async t => {
     let mock = MockSource.make([#getItemsOrThrow])
     let query = partitionId =>
-      mock.source.getItemsOrThrow(
+      (mock.source->SourceCalls.calls).getItemsOrThrow(
         ~fromBlock=0,
         ~toBlock=None,
         ~addressSet=TestAddresses.setOf([]),
@@ -593,9 +593,9 @@ Give each query its own entry, told apart by partitionId:
 
   Async.it("counts height calls only once all of them have arrived", async t => {
     let mock = MockSource.make([#getHeightOrThrow])
-    let _ = mock.source.getHeightOrThrow()
+    let _ = (mock.source->SourceCalls.calls).getHeightOrThrow()
     let expectation = mock.expectNewHeightCalls(1)
-    let _ = mock.source.getHeightOrThrow()
+    let _ = (mock.source->SourceCalls.calls).getHeightOrThrow()
     t.expect(await failureOf(expectation)).toEqual(
       Some(
         "expectNewHeightCalls expected 1 new height calls, but source for chain 1 has taken 2 since the last expectation (2 in all)",
@@ -606,7 +606,10 @@ Give each query its own entry, told apart by partitionId:
   Async.it("answers a block-hash lookup only once all of them have arrived", async t => {
     let mock = MockSource.make([#getBlockHashes])
     let lookUp = blockNumbers =>
-      mock.source.getBlockHashes(~blockNumbers, ~logger=Logger.makeInMemory())->ignore
+      (mock.source->SourceCalls.calls).getBlockHashes(
+        ~blockNumbers,
+        ~logger=Logger.makeInMemory(),
+      )->ignore
     lookUp([10])
     let expectation = mock.expectBlockHashLookup({blockNumbers: [10], reply: []})
     lookUp([20])

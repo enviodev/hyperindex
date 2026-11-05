@@ -8,7 +8,7 @@
 //! The store lives on the ReScript `ChainState`; fetch responses merge in,
 //! and rows are pruned/rolled back by block.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use hypersync_client::simple_types;
@@ -552,7 +552,7 @@ fn bigint_to_u64(value: BigInt, field: &str) -> napi::Result<u64> {
 
 #[napi]
 pub struct TransactionStore {
-    inner: Mutex<Stores>,
+    inner: Arc<Mutex<Stores>>,
     // Fixed at construction; drives the decoder in `materialize`.
     ecosystem: Ecosystem,
 }
@@ -797,11 +797,19 @@ impl TransactionStore {
             Ecosystem::Fuel => 0,
         };
         Self {
-            inner: Mutex::new(Stores {
+            inner: Arc::new(Mutex::new(Stores {
                 txs: Table::new(n_fields),
                 account_activity: Table::new(ACCOUNT_ACTIVITY_FIELDS),
-            }),
+            })),
             ecosystem,
+        }
+    }
+
+    /// The same store, for a source that reads it off the JavaScript thread.
+    pub(crate) fn share(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            ecosystem: self.ecosystem,
         }
     }
 

@@ -269,15 +269,17 @@ let make = (
     chainId,
     pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
-    getBlockHashes,
-    getHeightOrThrow: async () => {
-      let timer = Performance.now()
-      let height = await client.getHeight()
-      let seconds = timer->Performance.secondsSince
-      {height, requestStats: [{method: "getHeight", seconds}]}
-    },
-    getItemsOrThrow,
-    createHeightSubscription: (~clock, ~onHeight, ~onStatus) =>
-      HeightSubscription.sse(~clock, ~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
+    implementation: ReScript({
+      getBlockHashes,
+      getHeightOrThrow: async () => {
+        let timer = Performance.now()
+        let height = await client.getHeight()
+        let seconds = timer->Performance.secondsSince
+        {height, requestStats: [{method: "getHeight", seconds}]}
+      },
+      getItemsOrThrow,
+      createHeightSubscription: (~clock, ~onHeight, ~onStatus) =>
+        HeightSubscription.sse(~clock, ~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
+    }),
   }
 }

@@ -144,7 +144,7 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
   })
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
-  source.getItemsOrThrow(
+  source->SourceCalls.getItemsOrThrow(
     ~reorgableFrom=None,
     ~fromBlock,
     ~toBlock=Some(toBlock),

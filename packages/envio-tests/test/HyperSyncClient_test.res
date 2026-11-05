@@ -198,27 +198,3 @@ describe("HyperSync client with corrupted token", () => {
     t.expect(detected).toEqual(true)
   })
 })
-
-describe("HyperSync GetItems.extractMissingParams", () => {
-  it("parses the JSON payload Rust emits for MissingFields", t => {
-    let jsErr = %raw(`(msg) => { const e = new Error(msg); return e; }`)(`{"kind":"MissingFields","fields":["block.timestamp","transaction.hash"]}`)
-    let exn = jsErr->JsExn.anyToExnInternal
-
-    t.expect(HyperSync.GetItems.extractMissingParams(exn)).toEqual(
-      Some(["block.timestamp", "transaction.hash"]),
-    )
-  })
-
-  it("returns None for unrelated errors", t => {
-    let exn = %raw(`new Error("some unrelated message")`)->JsExn.anyToExnInternal
-
-    t.expect(HyperSync.GetItems.extractMissingParams(exn)).toEqual(None)
-  })
-
-  it("returns None when JSON parses but kind doesn't match", t => {
-    let exn =
-      %raw(`(msg) => new Error(msg)`)(`{"kind":"SomethingElse","fields":["x"]}`)->JsExn.anyToExnInternal
-
-    t.expect(HyperSync.GetItems.extractMissingParams(exn)).toEqual(None)
-  })
-})

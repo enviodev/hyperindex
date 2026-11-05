@@ -93,7 +93,7 @@ let makeSource = (~url) => {
 }
 
 let fetch = (source: Source.t, ~addressSet) =>
-  source.getItemsOrThrow(
+  source->SourceCalls.getItemsOrThrow(
     ~reorgableFrom=None,
     ~fromBlock=10,
     ~toBlock=Some(10),

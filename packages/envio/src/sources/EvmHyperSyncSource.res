@@ -1,5 +1,3 @@
-open Source
-
 type options = {
   chainId: ChainId.t,
   endpointUrl: string,
@@ -32,13 +30,8 @@ let make = (
     addressStore,
     logger,
   }: options,
-): t => {
-  let name = "HyperSync"
+): Source.t => {
   let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
-
-  // Per source, so one rejected token is reported once rather than on every
-  // height retry for the life of the process.
-  let unauthorizedWarned = ref(false)
 
   let apiToken = apiToken->HyperSync.requireApiToken
 
@@ -62,147 +55,44 @@ let make = (
     )
   }
 
-  let getItemsOrThrow = async (
-    ~fromBlock,
-    ~toBlock,
-    ~addressSet,
-    ~reorgableFrom,
-    ~knownHeight,
-    ~partitionId as _,
-    ~selection: FetchState.selection,
-    ~itemsTarget,
-    ~retry,
-    ~logger as _,
-  ) => {
-    let totalTimeRef = Performance.now()
-
-    let startFetchingBatchTimeRef = Performance.now()
-
-    let fetchStats = () => RequestStat.single(~method="getLogs", ~sentAt=startFetchingBatchTimeRef)
-
-    //fetch batch
-    let pageUnsafe = try await HyperSync.GetItems.query(
-      ~client,
-      ~query={
-        fromBlock,
-        toBlock: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
-        ?itemsTarget,
-        onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
-        onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
-        clientFilteredContracts: selection.clientFilteredContracts,
-        ?reorgableFrom,
-      },
-      ~addressSet,
-    ) catch {
-    | HyperSync.GetItems.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
-    | HyperSync.GetItems.Error(UnexpectedMissingParams({missingParams})) =>
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            requestStats: fetchStats(),
-            attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: ImpossibleForTheQuery({
-              message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                  ", ",
-                )}`,
-            }),
-          }),
-        ),
-      )
-    | (Source.RateLimited(_) | Source.SourceBehindHead(_)) as exn => throw(exn)
-    | exn =>
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            requestStats: fetchStats(),
-            exn,
-            attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: WithBackoff({
-              message: `Unexpected issue while fetching events from HyperSync client. Attempt a retry.`,
-              backoffMillis: switch retry {
-              | 0 => 500
-              | _ => 1000 * retry
-              },
-            }),
-          }),
-        ),
-      )
-    }
-
-    let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
-    let requestStats = [
-      {Source.method: "getLogs", seconds: pageFetchTime, responseBlocks: pageUnsafe.responseBlocks},
-    ]
-
-    //set height and next from block
-    let knownHeight = pageUnsafe.archiveHeight
-
-    //The heighest (biggest) blocknumber that was accounted for in
-    //Our query. Not necessarily the blocknumber of the last log returned
-    //In the query
-    let heighestBlockQueried = pageUnsafe.nextBlock - 1
-
+  let decodeItemsPage = (
+    page: NativeSource.page,
+    ~knownHeight as _,
+  ): Source.blockRangeFetchResponse => {
+    let page = page->(Utils.magic: NativeSource.page => HyperSyncClient.itemsPage)
     let parsingTimeRef = Performance.now()
-
     let parsedQueueItems =
-      pageUnsafe.eventItems
+      page.eventItems
       ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
-      ->Array.concat(pageUnsafe.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
-
+      ->Array.concat(page.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
-    let totalTimeElapsed = totalTimeRef->Performance.secondsSince
-
-    let stats = {
-      totalTimeElapsed,
-      parsingTimeElapsed,
-      pageFetchTime,
-    }
-
     {
       parsedQueueItems,
-      transactionStore: Some(pageUnsafe.transactionStore),
+      transactionStore: Some(page.transactions),
       // The page store also carries the rollbackGuard's blocks (head block and
       // parent of the range's first block), inserted on the Rust side.
-      blockStore: pageUnsafe.blockStore,
-      latestFetchedBlockNumber: heighestBlockQueried,
-      stats,
-      knownHeight,
-      requestStats,
+      blockStore: page.blocks,
+      latestFetchedBlockNumber: page.toBlock,
+      stats: {
+        totalTimeElapsed: page.fetchSeconds +. parsingTimeElapsed,
+        parsingTimeElapsed,
+        pageFetchTime: page.fetchSeconds,
+      },
+      knownHeight: page.knownHeight,
+      // Already reported by the source manager.
+      requestStats: [],
     }
   }
 
-  // Called through the client rather than passed as a value: the client is a
-  // napi class, so a detached method reference loses the instance it belongs to.
-  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
-    client.getBlockHashes(~blockNumbers)
-  )
-
   {
-    name,
+    name: "HyperSync",
     sourceFor: Sync,
     chainId,
     pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
-    getBlockHashes,
-    getHeightOrThrow: async () => {
-      let timerRef = Performance.now()
-      let height = try {
-        await client.getHeight()
-      } catch {
-      | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(
-          ~logger,
-          ~warned=unauthorizedWarned,
-          ~product="HyperSync",
-        )
-      }
-      let seconds = timerRef->Performance.secondsSince
-      {height, requestStats: [{method: "getHeight", seconds}]}
-    },
-    getItemsOrThrow,
-    createHeightSubscription: (~clock, ~onHeight, ~onStatus) =>
-      HeightSubscription.sse(~clock, ~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
+    implementation: Rust({
+      source: client.source(endpointUrl, apiToken, HyperSyncClient.userAgent()),
+      decodeItemsPage,
+    }),
   }
 }

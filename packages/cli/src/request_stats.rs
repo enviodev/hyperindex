@@ -34,6 +34,7 @@ pub(crate) const NATIVE_FAILURE_PREFIX: &str = "ENVIO_NATIVE_FAILURE:";
 /// Timing for one backend request. Multiple entries may be returned for a
 /// single source operation when that operation paginates internally.
 #[napi(object)]
+#[derive(Debug, PartialEq)]
 pub struct RequestStat {
     pub method: String,
     pub seconds: f64,
@@ -60,6 +61,68 @@ pub(crate) fn error_with_request_stats(
         "requestStats": request_stats,
     });
     napi::Error::from_reason(format!("{NATIVE_FAILURE_PREFIX}{payload}"))
+}
+
+/// A recoverable condition a native call's error names.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Marker {
+    RateLimited { reset_ms: u32 },
+    BehindHead { block_number: i64 },
+    None,
+}
+
+/// What a failed native call reported, read back off its error.
+#[derive(Debug, PartialEq)]
+pub(crate) struct NativeFailure {
+    pub message: String,
+    pub request_stats: Vec<RequestStat>,
+    pub marker: Marker,
+}
+
+fn marker_value<T: std::str::FromStr>(message: &str, prefix: &str) -> Option<Option<T>> {
+    message
+        .strip_prefix(prefix)
+        .map(|value| value.parse::<T>().ok())
+}
+
+/// Undoes [`error_with_request_stats`] and the marker prefixes. An error that
+/// is neither keeps its message whole.
+pub(crate) fn read_native_failure(error: &napi::Error) -> NativeFailure {
+    let (message, request_stats) = error
+        .reason
+        .strip_prefix(NATIVE_FAILURE_PREFIX)
+        .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+        .and_then(|payload| {
+            let message = payload["message"].as_str()?.to_string();
+            let request_stats = payload["requestStats"]
+                .as_array()?
+                .iter()
+                .map(|stat| {
+                    Some(RequestStat {
+                        method: stat["method"].as_str()?.to_string(),
+                        seconds: stat["seconds"].as_f64()?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some((message, request_stats))
+        })
+        .unwrap_or_else(|| (error.reason.clone(), Vec::new()));
+    let marker = if let Some(reset_ms) = marker_value(&message, RATE_LIMITED_PREFIX) {
+        Marker::RateLimited {
+            reset_ms: reset_ms.unwrap_or(1000),
+        }
+    } else if let Some(block_number) = marker_value(&message, SOURCE_BEHIND_HEAD_PREFIX) {
+        Marker::BehindHead {
+            block_number: block_number.unwrap_or(0),
+        }
+    } else {
+        Marker::None
+    };
+    NativeFailure {
+        message,
+        request_stats,
+        marker,
+    }
 }
 
 /// Collects request timings until a source operation reports them.
@@ -102,5 +165,47 @@ mod tests {
             QUERY_BLOCK_HASHES_METHOD
         );
         assert_eq!(payload["requestStats"][0]["seconds"], 0.25);
+    }
+
+    #[test]
+    fn reads_back_a_marked_failure_with_its_timings() {
+        let error = error_with_request_stats(
+            source_behind_head_err(42),
+            &[RequestStat {
+                method: QUERY_BLOCK_HASHES_METHOD.to_string(),
+                seconds: 0.25,
+            }],
+        );
+        assert_eq!(
+            read_native_failure(&error),
+            NativeFailure {
+                message: "SOURCE_BEHIND_HEAD:42".to_string(),
+                request_stats: vec![RequestStat {
+                    method: QUERY_BLOCK_HASHES_METHOD.to_string(),
+                    seconds: 0.25,
+                }],
+                marker: Marker::BehindHead { block_number: 42 },
+            }
+        );
+    }
+
+    #[test]
+    fn reads_a_failure_without_an_envelope() {
+        assert_eq!(
+            read_native_failure(&rate_limited_err(2500)),
+            NativeFailure {
+                message: "RATE_LIMITED:2500".to_string(),
+                request_stats: Vec::new(),
+                marker: Marker::RateLimited { reset_ms: 2500 },
+            }
+        );
+        assert_eq!(
+            read_native_failure(&napi::Error::from_reason("connection refused")),
+            NativeFailure {
+                message: "connection refused".to_string(),
+                request_stats: Vec::new(),
+                marker: Marker::None,
+            }
+        );
     }
 }

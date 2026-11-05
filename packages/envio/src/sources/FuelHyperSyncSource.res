@@ -215,22 +215,24 @@ let make = (
     name,
     sourceFor: Sync,
     chainId,
-    getBlockHashes,
     pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
-    getHeightOrThrow: async () => {
-      let timerRef = Performance.now()
-      let height = try await client->FuelHyperSyncClient.getHeight catch {
-      | exn =>
-        exn->HyperSync.rethrowLoggingUnauthorized(
-          ~logger,
-          ~warned=unauthorizedWarned,
-          ~product="HyperFuel",
-        )
-      }
-      let seconds = timerRef->Performance.secondsSince
-      {height, requestStats: [{method: "getHeight", seconds}]}
-    },
-    getItemsOrThrow,
+    implementation: ReScript({
+      getBlockHashes,
+      getHeightOrThrow: async () => {
+        let timerRef = Performance.now()
+        let height = try await client->FuelHyperSyncClient.getHeight catch {
+        | exn =>
+          exn->HyperSync.rethrowLoggingUnauthorized(
+            ~logger,
+            ~warned=unauthorizedWarned,
+            ~product="HyperFuel",
+          )
+        }
+        let seconds = timerRef->Performance.secondsSince
+        {height, requestStats: [{method: "getHeight", seconds}]}
+      },
+      getItemsOrThrow,
+    }),
   }
 }

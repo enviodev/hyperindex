@@ -95,7 +95,7 @@ let invoke = (
   ~addressStore,
   ~retry=0,
 ) => {
-  source.getItemsOrThrow(
+  source->SourceCalls.getItemsOrThrow(
     ~reorgableFrom=None,
     ~fromBlock=100,
     ~toBlock=Some(100),
@@ -367,8 +367,7 @@ describe("RPC source public contract", () => {
         let registration = makeRegistration()
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
         let _ = await source->invoke(~registration, ~addressStore)
-        let onReorg = source.onReorg->Option.getOrThrow(~message="RPC source must expose onReorg")
-        onReorg()
+        source->Source.onReorg
         let _ = await source->invoke(~registration, ~addressStore)
         mock.transcript()->Array.filterMap(
           entry => entry.request.method === "eth_getLogs" ? Some(entry.request.params) : None,
@@ -438,7 +437,7 @@ describe("RPC source public contract", () => {
       async mock => {
         let registration = makeRegistration()
         let (source, _) = makeSource(~url=mock.url, ~registration)
-        let {result} = await source.getBlockHashes(
+        let {result} = await source->SourceCalls.getBlockHashes(
           ~blockNumbers=[100],
           ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC source contract pin"}),
         )
@@ -581,7 +580,7 @@ describe("RPC source public contract", () => {
         let call = () =>
           RpcSourcePins.capture(
             () =>
-              source.getItemsOrThrow(
+              source->SourceCalls.getItemsOrThrow(
                 ~reorgableFrom=None,
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
@@ -717,7 +716,7 @@ describe("RPC source public contract", () => {
         )
         switch await RpcSourcePins.capture(
           () =>
-            source.getItemsOrThrow(
+            source->SourceCalls.getItemsOrThrow(
               ~reorgableFrom=None,
               ~fromBlock=0,
               ~toBlock=Some(100),
@@ -843,7 +842,7 @@ describe("RPC source public contract", () => {
         let source = RpcSource.make(options)
         switch await RpcSourcePins.capture(
           () =>
-            source.getItemsOrThrow(
+            source->SourceCalls.getItemsOrThrow(
               ~reorgableFrom=None,
               ~fromBlock=100,
               ~toBlock=Some(100),

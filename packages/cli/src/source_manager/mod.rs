@@ -3,17 +3,19 @@
 //! and the waits for a new block.
 //!
 //! The core decides and keeps no time. This module runs it: its timers sleep
-//! on the manager's clock, and everything else it asks for (calling a source,
-//! settling a wait or a query) waits in an outbox for ReScript, which reports
-//! how each went.
+//! on the manager's clock, and a source built in Rust is called from here and
+//! reports straight back. Everything else it asks for (calling a ReScript
+//! source, settling a wait or a query) waits in an outbox for ReScript, which
+//! reports how each went.
 
 mod core;
 mod feed;
 mod query;
+pub(crate) mod source;
 mod wait;
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard, Weak},
     task::{Poll, Waker},
 };
@@ -21,13 +23,23 @@ use std::{
 use napi::bindgen_prelude::Function;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
+use tokio::sync::mpsc;
 
+pub(crate) use self::query::{HashesFailure, Inconsistent, ItemsFailure};
 use self::{
     core::{Core, Effect, HeightRetry, RequestStat, SourceSpec, Status, Timing},
-    query::{HashesFailure, Inconsistent, ItemsFailure},
+    source::{
+        EventRegistration, HashesOutcome, HeightOutcome, ItemsOutcome, ItemsQuery, JsPage,
+        NativePage, NativeSource, Selection, Source,
+    },
 };
+use crate::address_store::AddressSet;
 use crate::block_store::BlockStore;
-use crate::clock::{jittered, Clock, RealClock, Sleep, VirtualClockHandle};
+use crate::clock::{jittered, Clock, Hold, RealClock, Sleep, VirtualClockHandle};
+use crate::height_stream::{
+    driver::{self, Sink, Subscription},
+    machine::DownReason,
+};
 
 #[napi(string_enum, object_to_js = false)]
 pub enum SourceFor {
@@ -100,11 +112,105 @@ impl From<SourceManagerTiming> for Timing {
 
 /// One backend request a source method made, with the time it took and how
 /// much it brought back.
-#[napi(object, object_to_js = false)]
+#[napi(object)]
 pub struct SourceRequestStat {
     pub method: String,
     pub seconds: f64,
     pub response_blocks: Option<i64>,
+}
+
+#[napi(object, object_to_js = false)]
+pub struct SourceManagerEventRegistration {
+    pub index: i64,
+    pub start_block: Option<i64>,
+}
+
+#[napi(object, object_to_js = false)]
+pub struct SourceManagerSelection {
+    pub on_event_registrations: Vec<SourceManagerEventRegistration>,
+    pub on_block_registration_indexes: Vec<i64>,
+    pub client_filtered_contracts: Option<Vec<String>>,
+}
+
+impl From<SourceManagerSelection> for Selection {
+    fn from(selection: SourceManagerSelection) -> Self {
+        Selection {
+            on_event_registrations: selection
+                .on_event_registrations
+                .into_iter()
+                .map(|registration| EventRegistration {
+                    index: registration.index,
+                    start_block: registration.start_block,
+                })
+                .collect(),
+            on_block_registration_indexes: selection.on_block_registration_indexes,
+            client_filtered_contracts: selection.client_filtered_contracts,
+        }
+    }
+}
+
+/// Everything a source needs to answer any attempt at the query.
+#[napi(object, object_to_js = false)]
+pub struct SourceManagerItemsQuery {
+    pub from_block: i64,
+    pub to_block: Option<i64>,
+    pub partition_id: String,
+    pub known_height: i64,
+    pub reorgable_from: Option<i64>,
+    pub items_target: Option<u32>,
+    pub selection: SourceManagerSelection,
+}
+
+impl From<ItemsFailure> for SourceItemsFailure {
+    fn from(failure: ItemsFailure) -> Self {
+        match failure {
+            ItemsFailure::RateLimited { reset_ms } => SourceItemsFailure::RateLimited { reset_ms },
+            ItemsFailure::BehindHead { block_number } => {
+                SourceItemsFailure::BehindHead { block_number }
+            }
+            ItemsFailure::FieldSelection {
+                message,
+                block_number,
+            } => SourceItemsFailure::FieldSelection {
+                message,
+                block_number,
+            },
+            ItemsFailure::SuggestedToBlock {
+                to_block,
+                attempted_to_block,
+            } => SourceItemsFailure::SuggestedToBlock {
+                to_block,
+                attempted_to_block,
+            },
+            ItemsFailure::Impossible {
+                message,
+                attempted_to_block,
+            } => SourceItemsFailure::Impossible {
+                message,
+                attempted_to_block,
+            },
+            ItemsFailure::Backoff {
+                message,
+                backoff_millis,
+                attempted_to_block,
+            } => SourceItemsFailure::Backoff {
+                message,
+                backoff_millis,
+                attempted_to_block,
+            },
+        }
+    }
+}
+
+fn from_request_stats(stats: Vec<RequestStat>) -> Vec<SourceRequestStat> {
+    stats
+        .into_iter()
+        .map(|stat| SourceRequestStat {
+            method: stat.method,
+            seconds: stat.seconds,
+            response_blocks: stat.response_blocks,
+        })
+        .collect()
 }
 
 fn to_request_stats(stats: Vec<SourceRequestStat>) -> Vec<RequestStat> {
@@ -120,22 +226,15 @@ fn to_request_stats(stats: Vec<SourceRequestStat>) -> Vec<RequestStat> {
 
 #[napi(discriminant = "kind", object_from_js = false)]
 pub enum SourceManagerEffect {
-    /// `err` names the failure the call that led here reported.
+    /// `err` names the failure the call that led here reported; a source built
+    /// in Rust describes its own as `err_message`.
     Log {
         fields_json: Option<String>,
         level: String,
         message: String,
         params_json: Option<String>,
         err: Option<u32>,
-    },
-    ArmTimer {
-        timer: u32,
-        label: String,
-        millis: u32,
-        jitter: bool,
-    },
-    ClearTimer {
-        timer: u32,
+        err_message: Option<String>,
     },
     /// Hand `token` back to `timer_fired` from a microtask.
     Defer {
@@ -165,17 +264,23 @@ pub enum SourceManagerEffect {
         retry: u32,
         fields_json: String,
     },
+    /// `native_source` is the source built in Rust whose page `take_items_page`
+    /// or `take_hashes_page` hands over; absent when ReScript holds the answer.
     Resolve {
         request: u32,
+        native_source: Option<u32>,
     },
+    /// `cause` is what a source built in Rust failed with.
     Reject {
         request: u32,
         message: String,
+        cause: Option<String>,
     },
 }
 
-impl From<Effect> for SourceManagerEffect {
-    fn from(effect: Effect) -> Self {
+impl SourceManagerEffect {
+    /// Only for what ReScript carries out.
+    fn from_core(effect: Effect) -> Self {
         match effect {
             Effect::Log {
                 fields,
@@ -189,19 +294,11 @@ impl From<Effect> for SourceManagerEffect {
                 message,
                 params_json: (!params.is_null()).then(|| params.to_string()),
                 err,
+                err_message: None,
             },
-            Effect::ArmTimer {
-                timer,
-                label,
-                millis,
-                jitter,
-            } => SourceManagerEffect::ArmTimer {
-                timer,
-                label: label.to_string(),
-                millis,
-                jitter,
-            },
-            Effect::ClearTimer { timer } => SourceManagerEffect::ClearTimer { timer },
+            Effect::ArmTimer { .. } | Effect::ClearTimer { .. } => {
+                unreachable!("timers run in Rust")
+            }
             Effect::Defer { token } => SourceManagerEffect::Defer { token },
             Effect::RequestHeight { request, source } => SourceManagerEffect::RequestHeight {
                 request,
@@ -232,13 +329,20 @@ impl From<Effect> for SourceManagerEffect {
                 retry,
                 fields_json: fields.to_string(),
             },
-            Effect::Resolve { request } => SourceManagerEffect::Resolve { request },
-            Effect::Reject { request, message } => SourceManagerEffect::Reject { request, message },
+            Effect::Resolve { request } => SourceManagerEffect::Resolve {
+                request,
+                native_source: None,
+            },
+            Effect::Reject { request, message } => SourceManagerEffect::Reject {
+                request,
+                message,
+                cause: None,
+            },
         }
     }
 }
 
-#[napi(discriminant = "kind", object_to_js = false)]
+#[napi(discriminant = "kind")]
 pub enum SourceItemsFailure {
     RateLimited {
         reset_ms: u32,
@@ -342,51 +446,189 @@ struct Timers {
     waker: Option<Waker>,
 }
 
+/// What an items query was started with, for a source built in Rust to answer
+/// any of its attempts.
+struct QueryContext {
+    from_block: i64,
+    known_height: i64,
+    reorgable_from: Option<i64>,
+    partition_id: String,
+    selection: Arc<Selection>,
+    items_target: Option<u32>,
+    addresses: AddressSet,
+}
+
+enum RequestContext {
+    Items(QueryContext),
+    Hashes(Vec<i64>),
+}
+
+/// What a source built in Rust answered with, before JavaScript takes it.
+enum Answer {
+    Items(Box<dyn JsPage>),
+    Hashes(BlockStore),
+}
+
+/// What a source built in Rust came back with, applied in the order it came.
+enum Event {
+    Height {
+        request: u32,
+        outcome: HeightOutcome,
+    },
+    Items {
+        request: u32,
+        source: usize,
+        outcome: ItemsOutcome,
+    },
+    Hashes {
+        request: u32,
+        source: usize,
+        outcome: HashesOutcome,
+    },
+    StreamHeight {
+        source: usize,
+        stream: u32,
+        height: i64,
+    },
+    StreamStatus {
+        source: usize,
+        stream: u32,
+        down: Option<DownReason>,
+        detail: Option<String>,
+    },
+}
+
+type Events = mpsc::UnboundedSender<(Event, Hold)>;
+
+/// Ids for the failures a source built in Rust reports, clear of the ones
+/// ReScript hands over.
+const FIRST_NATIVE_ERROR: u32 = 1 << 31;
+
+enum Queued {
+    /// Carried out here once it reaches the front.
+    Here(Effect),
+    ForJs(SourceManagerEffect),
+}
+
 struct Inner {
     core: Core,
     clock: Arc<dyn Clock>,
     timers: Timers,
     /// What the core asked for and nobody has carried out yet, in the order it
-    /// is owed. JavaScript drains it; a timer waits here behind whatever
+    /// is owed. JavaScript drains it; what runs here waits behind whatever
     /// JavaScript has still to do, so the two sides act in the core's order.
-    outbox: VecDeque<Effect>,
+    outbox: VecDeque<Queued>,
     /// Tells JavaScript there is something in the outbox, when it wasn't the
     /// one that just called in.
     poke: Callback,
     stopped: bool,
+    natives: Vec<Option<Arc<dyn Source>>>,
+    requests: HashMap<u32, RequestContext>,
+    answers: HashMap<u32, (usize, Answer)>,
+    /// Each open stream with the id its reports carry, so a closed stream's
+    /// last reports can't pass for a newer one's.
+    streams: HashMap<usize, (u32, Subscription)>,
+    next_stream: u32,
+    errors: HashMap<u32, String>,
+    next_error: u32,
+    events: Events,
 }
 
 /// Weak, so a manager nobody shut down doesn't keep the process alive.
 type Callback = ThreadsafeFunction<(), (), (), napi::Status, false, true>;
 
 impl Inner {
-    /// Takes what the last call left. A timer is armed or cleared here as soon
-    /// as nothing is waiting ahead of it; everything else waits for
-    /// JavaScript.
+    /// Takes what the last call left. What runs here runs at once when nothing
+    /// is waiting ahead of it; everything else waits for JavaScript.
     fn pump(&mut self) {
         while let Some(effect) = self.core.take_effect() {
-            if self.outbox.is_empty() && is_timer(&effect) {
-                self.run_timer_effect(effect);
+            if self.runs_here(&effect) {
+                if self.outbox.is_empty() {
+                    self.run_here(effect);
+                } else {
+                    self.outbox.push_back(Queued::Here(effect));
+                }
             } else {
-                self.outbox.push_back(effect);
+                let effect = self.for_js(effect);
+                self.outbox.push_back(Queued::ForJs(effect));
             }
         }
     }
 
-    /// The next effect JavaScript has to carry out, running the timers queued
-    /// ahead of it on the way.
+    /// The next effect JavaScript has to carry out, running what is queued
+    /// ahead of it here on the way.
     fn next_for_js(&mut self) -> Option<SourceManagerEffect> {
-        while let Some(effect) = self.outbox.pop_front() {
-            if is_timer(&effect) {
-                self.run_timer_effect(effect);
-            } else {
-                return Some(effect.into());
+        while let Some(queued) = self.outbox.pop_front() {
+            match queued {
+                Queued::Here(effect) => self.run_here(effect),
+                Queued::ForJs(effect) => return Some(effect),
             }
         }
         None
     }
 
-    fn run_timer_effect(&mut self, effect: Effect) {
+    fn native(&self, source: usize) -> Option<Arc<dyn Source>> {
+        self.natives.get(source).cloned().flatten()
+    }
+
+    fn runs_here(&self, effect: &Effect) -> bool {
+        match effect {
+            Effect::ArmTimer { .. } | Effect::ClearTimer { .. } => true,
+            Effect::RequestHeight { source, .. }
+            | Effect::SubscribeStream { source }
+            | Effect::CloseStream { source }
+            | Effect::Reorg { source }
+            | Effect::Attempt { source, .. } => self.native(*source).is_some(),
+            _ => false,
+        }
+    }
+
+    /// Converted as it is queued, so a failure it names is described while it
+    /// is still held.
+    fn for_js(&mut self, effect: Effect) -> SourceManagerEffect {
+        match effect {
+            Effect::Log { err, .. } => {
+                let err_message = err.and_then(|err| self.errors.get(&err).cloned());
+                match SourceManagerEffect::from_core(effect) {
+                    SourceManagerEffect::Log {
+                        fields_json,
+                        level,
+                        message,
+                        params_json,
+                        ..
+                    } if err_message.is_some() => SourceManagerEffect::Log {
+                        fields_json,
+                        level,
+                        message,
+                        params_json,
+                        err: None,
+                        err_message,
+                    },
+                    effect => effect,
+                }
+            }
+            // An answer an earlier attempt left is not this one's.
+            Effect::Attempt { request, .. } => {
+                self.answers.remove(&request);
+                SourceManagerEffect::from_core(effect)
+            }
+            Effect::Resolve { request } => {
+                self.requests.remove(&request);
+                SourceManagerEffect::Resolve {
+                    request,
+                    native_source: self.answers.get(&request).map(|(source, _)| *source as u32),
+                }
+            }
+            Effect::Reject { request, .. } => {
+                self.requests.remove(&request);
+                self.answers.remove(&request);
+                SourceManagerEffect::from_core(effect)
+            }
+            effect => SourceManagerEffect::from_core(effect),
+        }
+    }
+
+    fn run_here(&mut self, effect: Effect) {
         match effect {
             Effect::ArmTimer {
                 timer,
@@ -409,8 +651,229 @@ impl Inner {
             Effect::ClearTimer { timer } => {
                 self.timers.armed.remove(&timer);
             }
-            _ => unreachable!("only timer effects run here"),
+            Effect::RequestHeight { request, source } => {
+                let call = self.native(source).expect("checked").get_height();
+                self.deliver(async move {
+                    Event::Height {
+                        request,
+                        outcome: call.await,
+                    }
+                });
+            }
+            Effect::SubscribeStream { source } => {
+                let transport = self
+                    .native(source)
+                    .and_then(|native| native.height_transport())
+                    .expect("the core streams only a source that can push heights");
+                self.next_stream += 1;
+                let stream = self.next_stream;
+                let subscription = driver::subscribe(
+                    transport,
+                    self.clock.clone(),
+                    Arc::new(ManagerSink {
+                        source,
+                        stream,
+                        clock: self.clock.clone(),
+                        events: self.events.clone(),
+                    }),
+                );
+                self.streams.insert(source, (stream, subscription));
+            }
+            Effect::CloseStream { source } => {
+                self.streams.remove(&source);
+            }
+            Effect::Reorg { source } => self.native(source).expect("checked").on_reorg(),
+            Effect::Attempt {
+                request,
+                source,
+                to_block,
+                retry,
+                ..
+            } => {
+                self.answers.remove(&request);
+                let native = self.native(source).expect("checked");
+                match self.requests.get(&request) {
+                    Some(RequestContext::Items(context)) => {
+                        let call = native.get_items(ItemsQuery {
+                            from_block: context.from_block,
+                            to_block,
+                            known_height: context.known_height,
+                            reorgable_from: context.reorgable_from,
+                            partition_id: context.partition_id.clone(),
+                            selection: context.selection.clone(),
+                            items_target: context.items_target,
+                            retry,
+                            addresses: context.addresses.share(),
+                        });
+                        self.deliver(async move {
+                            Event::Items {
+                                request,
+                                source,
+                                outcome: call.await,
+                            }
+                        });
+                    }
+                    Some(RequestContext::Hashes(block_numbers)) => {
+                        let call = native.get_block_hashes(block_numbers.clone());
+                        self.deliver(async move {
+                            Event::Hashes {
+                                request,
+                                source,
+                                outcome: call.await,
+                            }
+                        });
+                    }
+                    None => unreachable!("an attempt is made only for a live request"),
+                }
+            }
+            _ => unreachable!("only what runs here gets here"),
         }
+    }
+
+    /// Runs a source's call off the lock. Its answer counts as work in progress
+    /// on the clock from the moment it arrives until the core has taken it.
+    fn deliver(&self, call: impl std::future::Future<Output = Event> + Send + 'static) {
+        let clock = self.clock.clone();
+        let events = self.events.clone();
+        napi::bindgen_prelude::spawn(async move {
+            let event = call.await;
+            let _ = events.send((event, clock.hold()));
+        });
+    }
+
+    fn hold_error(&mut self, cause: String) -> u32 {
+        let id = self.next_error;
+        self.next_error = self.next_error.wrapping_add(1).max(FIRST_NATIVE_ERROR);
+        self.errors.insert(id, cause);
+        id
+    }
+
+    fn apply(&mut self, event: Event) {
+        let now = self.now();
+        match event {
+            Event::Height { request, outcome } => {
+                if !self.core.height_requests.contains_key(&request) {
+                    return;
+                }
+                match outcome {
+                    HeightOutcome::Answered { height, stats } => {
+                        self.core.height_answered(request, height, &stats);
+                    }
+                    HeightOutcome::Failed {
+                        stats,
+                        cause,
+                        alert,
+                    } => {
+                        if let Some(alert) = alert {
+                            self.core
+                                .log(None, core::Level::Error, alert, serde_json::Value::Null);
+                        }
+                        let err = self.hold_error(cause);
+                        self.core.height_failed(request, &stats, Some(err));
+                    }
+                }
+            }
+            Event::Items {
+                request,
+                source,
+                outcome,
+            } => {
+                if !self.core.requests.contains_key(&request) {
+                    return;
+                }
+                match outcome {
+                    ItemsOutcome::Answered {
+                        known_height,
+                        stats,
+                        inconsistent,
+                        page,
+                    } => {
+                        self.answers.insert(request, (source, Answer::Items(page)));
+                        self.core
+                            .items_answered(request, known_height, &stats, inconsistent, now);
+                    }
+                    ItemsOutcome::Failed {
+                        failure,
+                        stats,
+                        cause,
+                    } => {
+                        let err = cause.map(|cause| self.hold_error(cause));
+                        self.core.items_failed(request, failure, &stats, err, now);
+                    }
+                    ItemsOutcome::Unexpected { cause } => {
+                        self.core.abandon_request(request);
+                        self.requests.remove(&request);
+                        self.pump();
+                        self.outbox
+                            .push_back(Queued::ForJs(SourceManagerEffect::Reject {
+                                request,
+                                message: "Failed to fetch block Range".to_string(),
+                                cause: Some(cause),
+                            }));
+                    }
+                }
+            }
+            Event::Hashes {
+                request,
+                source,
+                outcome,
+            } => {
+                if !self.core.requests.contains_key(&request) {
+                    return;
+                }
+                match outcome {
+                    HashesOutcome::Answered {
+                        stats,
+                        inconsistent,
+                        blocks,
+                    } => {
+                        self.answers
+                            .insert(request, (source, Answer::Hashes(blocks)));
+                        self.core
+                            .hashes_answered(request, &stats, inconsistent, now);
+                    }
+                    HashesOutcome::Failed {
+                        failure,
+                        stats,
+                        cause,
+                    } => {
+                        let err = self.hold_error(cause);
+                        self.core
+                            .hashes_failed(request, failure, &stats, Some(err), now);
+                    }
+                }
+            }
+            Event::StreamHeight {
+                source,
+                stream,
+                height,
+            } => {
+                if self.is_current_stream(source, stream) {
+                    self.core.stream_height(source, height);
+                }
+            }
+            Event::StreamStatus {
+                source,
+                stream,
+                down,
+                detail,
+            } => {
+                if self.is_current_stream(source, stream) {
+                    match down {
+                        None => self.core.stream_live(source),
+                        Some(reason) => self.core.stream_down(source, &reason.label(), detail),
+                    }
+                }
+            }
+        }
+        self.pump();
+        self.errors.clear();
+    }
+
+    fn is_current_stream(&self, source: usize, stream: u32) -> bool {
+        self.streams
+            .get(&source)
+            .is_some_and(|(current, _)| *current == stream)
     }
 
     fn now(&self) -> f64 {
@@ -435,8 +898,37 @@ impl Inner {
     }
 }
 
-fn is_timer(effect: &Effect) -> bool {
-    matches!(effect, Effect::ArmTimer { .. } | Effect::ClearTimer { .. })
+/// A stream's reports, queued for the manager like every other answer.
+struct ManagerSink {
+    source: usize,
+    stream: u32,
+    clock: Arc<dyn Clock>,
+    events: Events,
+}
+
+impl Sink for ManagerSink {
+    fn height(&self, height: i64) {
+        let _ = self.events.send((
+            Event::StreamHeight {
+                source: self.source,
+                stream: self.stream,
+                height,
+            },
+            self.clock.hold(),
+        ));
+    }
+
+    fn status(&self, down: Option<DownReason>, detail: Option<String>) {
+        let _ = self.events.send((
+            Event::StreamStatus {
+                source: self.source,
+                stream: self.stream,
+                down,
+                detail,
+            },
+            self.clock.hold(),
+        ));
+    }
 }
 
 fn lock(inner: &Mutex<Inner>) -> MutexGuard<'_, Inner> {
@@ -490,6 +982,22 @@ async fn run_timers(inner: Weak<Mutex<Inner>>) {
     }
 }
 
+/// Applies what sources built in Rust came back with, in the order it came.
+async fn run_events(inner: Weak<Mutex<Inner>>, mut events: mpsc::UnboundedReceiver<(Event, Hold)>) {
+    while let Some((event, hold)) = events.recv().await {
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
+        let mut inner = lock(&inner);
+        if inner.stopped {
+            return;
+        }
+        inner.apply(event);
+        inner.poke();
+        drop(hold);
+    }
+}
+
 #[napi]
 pub struct SourceManager {
     inner: Arc<Mutex<Inner>>,
@@ -523,7 +1031,7 @@ impl SourceManager {
         clock: Option<&VirtualClockHandle>,
         on_effects: Function<(), ()>,
     ) -> napi::Result<Self> {
-        let specs = sources
+        let specs: Vec<SourceSpec> = sources
             .into_iter()
             .map(|source| SourceSpec {
                 name: source.name,
@@ -536,8 +1044,10 @@ impl SourceManager {
                 can_stream: source.can_stream,
             })
             .collect();
+        let source_count = specs.len();
         let core = Core::new(specs, is_realtime, timing.unwrap_or_default().into())
             .map_err(napi::Error::from_reason)?;
+        let (events, received) = mpsc::unbounded_channel();
         let inner = Arc::new(Mutex::new(Inner {
             core,
             clock: clock.map_or_else(RealClock::shared, VirtualClockHandle::shared),
@@ -552,9 +1062,42 @@ impl SourceManager {
                 .weak::<true>()
                 .build()?,
             stopped: false,
+            natives: vec![None; source_count],
+            requests: HashMap::new(),
+            answers: HashMap::new(),
+            streams: HashMap::new(),
+            next_stream: 0,
+            errors: HashMap::new(),
+            next_error: FIRST_NATIVE_ERROR,
+            events,
         }));
         napi::bindgen_prelude::spawn(run_timers(Arc::downgrade(&inner)));
+        napi::bindgen_prelude::spawn(run_events(Arc::downgrade(&inner), received));
         Ok(SourceManager { inner })
+    }
+
+    /// Has the manager call the source at `index` itself. Made before any
+    /// request, so every effect naming it runs here.
+    #[napi(catch_unwind)]
+    pub fn attach_source(&self, index: u32, source: &NativeSource) {
+        lock(&self.inner).natives[index as usize] = Some(source.source.clone());
+    }
+
+    /// The page a source built in Rust answered `request` with.
+    #[napi(catch_unwind)]
+    pub fn take_items_page(&self, request: u32) -> Option<NativePage> {
+        match lock(&self.inner).answers.remove(&request) {
+            Some((_, Answer::Items(page))) => Some(NativePage(page)),
+            _ => None,
+        }
+    }
+
+    #[napi(catch_unwind)]
+    pub fn take_hashes_page(&self, request: u32) -> Option<BlockStore> {
+        match lock(&self.inner).answers.remove(&request) {
+            Some((_, Answer::Hashes(blocks))) => Some(blocks),
+            _ => None,
+        }
     }
 
     /// The next thing JavaScript has to do, in the order it is owed.
@@ -617,22 +1160,46 @@ impl SourceManager {
     #[napi(catch_unwind)]
     pub fn start_items_query(
         &self,
-        from_block: i64,
-        to_block: Option<i64>,
-        partition_id: String,
-        addresses: u32,
+        query: SourceManagerItemsQuery,
+        addresses: &AddressSet,
         is_realtime: bool,
     ) -> u32 {
-        self.report(|core, now| {
-            core.start_items_query(
+        let mut inner = lock(&self.inner);
+        let now = inner.now();
+        let SourceManagerItemsQuery {
+            from_block,
+            to_block,
+            partition_id,
+            known_height,
+            reorgable_from,
+            items_target,
+            selection,
+        } = query;
+        // Known before the first attempt runs, which may be on a source here.
+        let request = inner.core.next_request_id();
+        inner.requests.insert(
+            request,
+            RequestContext::Items(QueryContext {
                 from_block,
-                to_block,
-                partition_id,
-                addresses,
-                is_realtime,
-                now,
-            )
-        })
+                known_height,
+                reorgable_from,
+                partition_id: partition_id.clone(),
+                selection: Arc::new(selection.into()),
+                items_target,
+                addresses: addresses.share(),
+            }),
+        );
+        let started = inner.core.start_items_query(
+            from_block,
+            to_block,
+            partition_id,
+            addresses.size() as u32,
+            is_realtime,
+            now,
+        );
+        debug_assert_eq!(started, request);
+        inner.pump();
+        request
     }
 
     /// A response is trusted only once its page has proved internally coherent.
@@ -670,8 +1237,17 @@ impl SourceManager {
     }
 
     #[napi(catch_unwind)]
-    pub fn start_block_hashes(&self, is_realtime: bool) -> u32 {
-        self.report(|core, now| core.start_block_hashes(is_realtime, now))
+    pub fn start_block_hashes(&self, block_numbers: Vec<i64>, is_realtime: bool) -> u32 {
+        let mut inner = lock(&self.inner);
+        let now = inner.now();
+        let request = inner.core.next_request_id();
+        inner
+            .requests
+            .insert(request, RequestContext::Hashes(block_numbers));
+        let started = inner.core.start_block_hashes(is_realtime, now);
+        debug_assert_eq!(started, request);
+        inner.pump();
+        request
     }
 
     /// Also rejects a response that simply omitted one of the requested hashes.
@@ -717,7 +1293,11 @@ impl SourceManager {
     /// raises it.
     #[napi(catch_unwind)]
     pub fn abandon_request(&self, request: u32) {
-        self.report(|core, _| core.abandon_request(request));
+        let mut inner = lock(&self.inner);
+        inner.requests.remove(&request);
+        inner.answers.remove(&request);
+        inner.core.abandon_request(request);
+        inner.pump();
     }
 
     #[napi(catch_unwind)]
@@ -746,6 +1326,7 @@ impl SourceManager {
         inner.core.shut_down();
         inner.pump();
         inner.timers.armed.clear();
+        inner.streams.clear();
         inner.stopped = true;
         if let Some(waker) = inner.timers.waker.take() {
             waker.wake();

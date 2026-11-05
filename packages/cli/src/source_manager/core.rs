@@ -363,6 +363,11 @@ impl Core {
         self.next_id
     }
 
+    /// The id the next request will get.
+    pub fn next_request_id(&self) -> u32 {
+        self.next_id + 1
+    }
+
     pub fn emit(&mut self, effect: Effect) {
         if !self.shut_down {
             self.effects.push_back(effect);

@@ -35,6 +35,16 @@ type pageOutcome =
   | @as("FieldSelection") FieldSelection
   | @as("BehindHead") BehindHead
 
+// A page the client's source answered with.
+type itemsPage = {
+  toBlock: int,
+  eventItems: array<EvmEventItem.t>,
+  blockItems: array<BlockItem.t>,
+  blocks: BlockStore.t,
+  transactions: TransactionStore.t,
+  fetchSeconds: float,
+}
+
 type nextPageResult = {
   kind: pageOutcome,
   requestStats: array<Source.requestStat>,
@@ -67,6 +77,9 @@ type t = {
   ) => promise<(nextPageResult, BlockStore.t, TransactionStore.t)>,
   getBlockHashes: array<int> => promise<(blockHashResult, BlockStore.t)>,
   onReorg: unit => unit,
+  // The client as a source the source manager calls itself, planning against
+  // the chain's stores and pushing heights over the WebSocket url if given.
+  source: (BlockStore.t, TransactionStore.t, Nullable.t<string>) => NativeSource.t,
 }
 
 @send
