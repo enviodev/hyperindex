@@ -14,27 +14,99 @@
 //! meaningful while the source layer moves from one side to the other.
 
 use std::{
+    collections::HashSet,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, MutexGuard, OnceLock,
+    },
     task::{Context, Poll, Waker},
+    time::{Duration, Instant},
 };
 
 use napi_derive::napi;
 
-// The Rust side of the queue has no caller outside the tests until the first
-// source code that sleeps moves here; it is built now so that code lands on the
-// same timeline as the ReScript timers rather than on tokio's.
-#[cfg_attr(not(test), allow(dead_code))]
-pub type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
+/// Rust work a test's advance has to wait out: a sleep the virtual clock woke,
+/// until the code it woke has done what it does, or a call on its way to
+/// JavaScript. Dropping it says the work is done. On the real clock it counts
+/// nothing.
+pub struct Hold(Option<Arc<AtomicUsize>>);
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        if let Some(busy) = &self.0 {
+            busy.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Resolves with the hold on what the timer woke, which the sleeper keeps until
+/// it has reacted.
+pub type Sleep = Pin<Box<dyn Future<Output = Hold> + Send>>;
 
 pub trait Clock: Send + Sync {
     fn now_ms(&self) -> f64;
     /// `label` names the timer in a virtual clock's timeline.
-    #[cfg_attr(not(test), allow(dead_code))]
     fn sleep(&self, label: &str, millis: u64) -> Sleep;
     /// Uniform in `[0, 1)`.
     fn random(&self) -> f64;
+    /// Held for as long as a call to JavaScript is on its way.
+    fn hold(&self) -> Hold;
+}
+
+/// The clock outside tests: tokio's timers, and time measured from when the
+/// process first asked.
+pub struct RealClock {
+    start: Instant,
+    random_state: Mutex<u32>,
+}
+
+impl RealClock {
+    pub fn shared() -> Arc<dyn Clock> {
+        static CLOCK: OnceLock<Arc<dyn Clock>> = OnceLock::new();
+        CLOCK
+            .get_or_init(|| {
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "seeding the real clock's jitter, which no test replays"
+                )]
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(1, |since| since.subsec_nanos());
+                Arc::new(RealClock {
+                    start: Instant::now(),
+                    random_state: Mutex::new(seed),
+                })
+            })
+            .clone()
+    }
+}
+
+impl Clock for RealClock {
+    fn now_ms(&self) -> f64 {
+        self.start.elapsed().as_secs_f64() * 1000.
+    }
+
+    fn sleep(&self, _label: &str, millis: u64) -> Sleep {
+        Box::pin(async move {
+            #[allow(clippy::disallowed_methods, reason = "the real clock's own timer")]
+            tokio::time::sleep(Duration::from_millis(millis)).await;
+            Hold(None)
+        })
+    }
+
+    fn random(&self) -> f64 {
+        let mut state = self
+            .random_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        mulberry32(&mut state)
+    }
+
+    fn hold(&self) -> Hold {
+        Hold(None)
+    }
 }
 
 /// mulberry32: small, and the same sequence on every platform, so a seed means
@@ -51,7 +123,6 @@ enum Owner {
     /// Armed from ReScript, which runs the callback once `fire_next` names it.
     Js,
     /// A Rust `sleep`, woken in place when it fires.
-    #[cfg_attr(not(test), allow(dead_code))]
     Rust(Option<Waker>),
 }
 
@@ -70,6 +141,8 @@ struct State {
     seed: u32,
     random_state: u32,
     timeline: Vec<String>,
+    /// Rust sleeps that fired and whose sleeper hasn't taken its hold yet.
+    woken: HashSet<u32>,
 }
 
 fn format_ms(ms: f64) -> String {
@@ -122,6 +195,9 @@ const TIMELINE_TAIL: usize = 40;
 #[derive(Clone)]
 pub struct VirtualClock {
     state: Arc<Mutex<State>>,
+    /// Kept outside `state` so a hold can be dropped from inside a poll that
+    /// holds the lock.
+    busy: Arc<AtomicUsize>,
 }
 
 impl VirtualClock {
@@ -134,8 +210,17 @@ impl VirtualClock {
                 seed,
                 random_state: seed,
                 timeline: Vec::new(),
+                woken: HashSet::new(),
             })),
+            busy: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// How much Rust work a test still has to wait out before its advance has
+    /// settled: sleeps woken and not yet reacted to, and calls to JavaScript
+    /// not yet delivered.
+    pub fn busy(&self) -> usize {
+        self.busy.load(Ordering::SeqCst)
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -170,6 +255,12 @@ impl VirtualClock {
             let timer = state.timers.remove(position);
             state.now = timer.due;
             state.record(format!("fired {}", timer.label));
+            if matches!(timer.owner, Owner::Rust(_)) {
+                // Counted before the sleeper wakes, so the advance that woke it
+                // can't see it idle in between.
+                self.busy.fetch_add(1, Ordering::SeqCst);
+                state.woken.insert(timer.id);
+            }
             timer
         };
         // Woken with the lock released: an executor that polls on wake would
@@ -251,7 +342,7 @@ impl Clock for VirtualClock {
         // ReScript side runs its zero-delay timers on the next turn the same way.
         if millis == 0 {
             self.note(format!("ran {label} with no delay"));
-            return Box::pin(std::future::ready(()));
+            return Box::pin(std::future::ready(Hold(None)));
         }
         let id = self.state().arm(label, millis as f64, Owner::Rust(None));
         Box::pin(VirtualSleep {
@@ -263,22 +354,31 @@ impl Clock for VirtualClock {
     fn random(&self) -> f64 {
         mulberry32(&mut self.state().random_state)
     }
+
+    fn hold(&self) -> Hold {
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        Hold(Some(self.busy.clone()))
+    }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 struct VirtualSleep {
     clock: VirtualClock,
     id: u32,
 }
 
 impl Future for VirtualSleep {
-    type Output = ();
+    type Output = Hold;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Hold> {
         let mut state = self.clock.state();
         match state.timers.iter_mut().find(|timer| timer.id == self.id) {
             // Off the queue means fired: a sleep is only cleared by dropping it.
-            None => Poll::Ready(()),
+            // The hold `fire_next` counted passes to the sleeper.
+            None => Poll::Ready(if state.woken.remove(&self.id) {
+                Hold(Some(self.clock.busy.clone()))
+            } else {
+                Hold(None)
+            }),
             Some(timer) => {
                 timer.owner = Owner::Rust(Some(cx.waker().clone()));
                 Poll::Pending
@@ -289,7 +389,14 @@ impl Future for VirtualSleep {
 
 impl Drop for VirtualSleep {
     fn drop(&mut self) {
-        self.clock.clear(self.id);
+        // Fired but never polled again: nobody is left to react, so the hold
+        // `fire_next` counted is given back here.
+        let woken = self.clock.state().woken.remove(&self.id);
+        if woken {
+            self.clock.busy.fetch_sub(1, Ordering::SeqCst);
+        } else {
+            self.clock.clear(self.id);
+        }
     }
 }
 
@@ -305,6 +412,13 @@ pub struct FiredTimer {
 #[napi(js_name = "VirtualClock")]
 pub struct VirtualClockHandle {
     clock: VirtualClock,
+}
+
+impl VirtualClockHandle {
+    /// The clock for Rust code a test runs on this handle's time.
+    pub fn shared(&self) -> Arc<dyn Clock> {
+        Arc::new(self.clock.clone())
+    }
 }
 
 #[napi]
@@ -359,6 +473,11 @@ impl VirtualClockHandle {
     #[napi]
     pub fn describe(&self) -> String {
         self.clock.describe()
+    }
+
+    #[napi]
+    pub fn busy(&self) -> u32 {
+        self.clock.busy() as u32
     }
 }
 
@@ -446,6 +565,38 @@ mod tests {
             (clock.now_ms(), fire_all(&clock, 0.)),
             (0., Vec::<String>::new())
         );
+    }
+
+    #[tokio::test]
+    async fn counts_a_woken_sleeper_busy_until_it_drops_its_hold() {
+        let clock = VirtualClock::new(1);
+        let sleep = clock.sleep("retry", 10);
+        let before = clock.busy();
+        fire_all(&clock, 10.);
+        let woken = clock.busy();
+        let hold = sleep.await;
+        let held = clock.busy();
+        drop(hold);
+        assert_eq!((before, woken, held, clock.busy()), (0, 1, 1, 0));
+    }
+
+    #[test]
+    fn gives_back_the_hold_of_a_sleep_dropped_after_it_fired() {
+        let clock = VirtualClock::new(1);
+        let sleep = clock.sleep("raced", 10);
+        fire_all(&clock, 10.);
+        let woken = clock.busy();
+        drop(sleep);
+        assert_eq!((woken, clock.busy()), (1, 0));
+    }
+
+    #[test]
+    fn counts_a_call_on_its_way_until_delivered() {
+        let clock = VirtualClock::new(1);
+        let hold = clock.hold();
+        let held = clock.busy();
+        drop(hold);
+        assert_eq!((held, clock.busy()), (1, 0));
     }
 
     #[test]

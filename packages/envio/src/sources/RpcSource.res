@@ -206,7 +206,8 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~clock, ~onHeight, ~onStatus) => EvmRpcWs.subscribe(~clock, ~wsUrl, ~onHeight, ~onStatus)
+      (~clock, ~onHeight, ~onStatus) =>
+        HeightSubscription.ws(~clock, ~url=wsUrl, ~onHeight, ~onStatus)
     )
 
   {

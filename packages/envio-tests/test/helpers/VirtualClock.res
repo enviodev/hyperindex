@@ -18,6 +18,7 @@ module Native = {
   @send external endAdvance: (t, float) => unit = "endAdvance"
   @send external note: (t, string) => unit = "note"
   @send external describe: t => string = "describe"
+  @send external busy: t => int = "busy"
 }
 
 type t = {
@@ -87,7 +88,12 @@ let toClock = (clock: t): Clock.t => {
     }
   },
   random: () => clock.native->Native.random,
+  native: clock.native->(Utils.magic: Native.t => Clock.native),
 }
+
+// Rust work a fired timer woke, or a call on its way back here, that the
+// indexer hasn't finished with yet.
+let busy = (clock: t) => clock.native->Native.busy
 
 // Puts something the test did on the timeline, between the timers around it.
 let note = (clock: t, event) => {

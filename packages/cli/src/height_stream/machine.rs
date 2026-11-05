@@ -1,16 +1,14 @@
-//! Reconnect driver shared by every height subscription transport. A transport
-//! connects a socket and reports what it sees; this owns retries, staleness
-//! detection and status reporting, so SSE and WebSocket streams behave
-//! identically. Like the source manager, it performs no IO and keeps no time:
-//! the caller connects, closes and arms timers when told to.
+//! Retries, staleness detection and status reporting for one height
+//! subscription. A transport connects a socket and reports what it sees; this
+//! decides what happens next, so SSE and WebSocket streams behave identically.
+//! It performs no IO and keeps no time: the driver connects, closes and arms
+//! timers when told to.
 //!
 //! Nothing here logs. A height stream failing is not something an operator has
 //! to act on — the indexer polls for the height instead — so a failure travels
 //! out as a status, where its reason becomes a metric label.
 
 use std::collections::VecDeque;
-
-use napi_derive::napi;
 
 /// While a stream is down its consumer polls instead, so the retry delay is
 /// what that fallback costs: a load balancer rotating a connection heals on
@@ -25,7 +23,7 @@ const MAX_RETRY_MILLIS: u32 = 60_000;
 /// apart.
 const PROVEN_STALE_FRACTION: u32 = 4;
 /// A frame nobody could read ends up in a log line, so cap what a provider can
-/// put there. In UTF-16 units, as the JavaScript that reports it counts.
+/// put there. In UTF-16 units, as the JavaScript that reads it counts.
 const MAX_DETAIL_LENGTH: usize = 200;
 
 /// The wait that follows `count` consecutive failures. Deterministic: the bar a
@@ -48,49 +46,66 @@ fn truncate_detail(detail: String) -> String {
     }
 }
 
-/// Why a connection ended, by the name of `Source.heightSubscriptionDownReason`'s
-/// constructor; `code` carries the status of an `Http` one.
-#[napi(object)]
-#[derive(Clone)]
-pub struct HeightStreamDownReason {
-    pub name: String,
-    pub code: Option<u32>,
+/// Why a connection ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownReason {
+    /// Ended cleanly after serving long enough to have been worth making: a
+    /// load balancer moving a connection, and routine.
+    Rotated,
+    /// Ended cleanly without having served.
+    Closed,
+    /// Delivered nothing at all for a whole staleness window.
+    Stale,
+    /// Sent frames nobody could read. Alone among these it never heals on its
+    /// own.
+    Unreadable,
+    /// No connection was established to begin with.
+    ConnectFailed,
+    /// The provider refused the subscription.
+    SubscribeRejected,
+    /// The socket itself reported an error.
+    TransportError,
+    /// Refused with an HTTP status, which is all an SSE stream is told.
+    Http(u16),
 }
 
-impl HeightStreamDownReason {
-    fn named(name: &str) -> Self {
-        HeightStreamDownReason {
-            name: name.to_string(),
-            code: None,
+impl DownReason {
+    /// Bounded, so it is safe as a metric label.
+    pub fn label(self) -> String {
+        match self {
+            DownReason::Rotated => "rotated".into(),
+            DownReason::Closed => "closed".into(),
+            DownReason::Stale => "stale".into(),
+            DownReason::Unreadable => "unreadable".into(),
+            DownReason::ConnectFailed => "connect-failed".into(),
+            DownReason::SubscribeRejected => "subscribe-rejected".into(),
+            DownReason::TransportError => "error".into(),
+            DownReason::Http(code) => format!("http-{code}"),
         }
     }
 }
 
-#[napi(discriminant = "kind", object_from_js = false)]
-pub enum HeightStreamEffect {
+#[derive(Debug, PartialEq)]
+pub enum Effect {
     /// Open a connection whose reports carry `generation`.
     Connect {
         generation: u32,
     },
-    /// Close the connection in place, `generation` being the one that ended.
-    Close {
-        generation: u32,
-    },
+    /// Close the connection in place.
+    Close,
     ArmTimer {
         timer: u32,
-        label: String,
+        label: &'static str,
         millis: u32,
         jitter: bool,
     },
     ClearTimer {
         timer: u32,
     },
-    Height {
-        height: i64,
-    },
+    Height(i64),
     /// Live when `down` is absent.
     Status {
-        down: Option<HeightStreamDownReason>,
+        down: Option<DownReason>,
         detail: Option<String>,
     },
 }
@@ -101,10 +116,9 @@ enum Pending {
     Retry,
 }
 
-#[napi]
 pub struct HeightStream {
     stale_timeout: u32,
-    /// Bumped on every failure, reconnect and unsubscribe. Reports from a
+    /// Bumped on every failure and reconnect. Reports from a
     /// superseded connection carry an older one and are ignored, so a socket
     /// that errors and then closes counts as one failure.
     generation: u32,
@@ -120,13 +134,11 @@ pub struct HeightStream {
     /// never both, so one slot holds whichever timer is pending.
     pending: Option<(u32, Pending)>,
     next_timer: u32,
-    effects: VecDeque<HeightStreamEffect>,
+    effects: VecDeque<Effect>,
 }
 
-#[napi]
 impl HeightStream {
-    #[napi(factory, catch_unwind)]
-    pub fn make(stale_timeout: u32) -> Self {
+    pub fn new(stale_timeout: u32) -> Self {
         HeightStream {
             stale_timeout,
             generation: 0,
@@ -139,17 +151,14 @@ impl HeightStream {
         }
     }
 
-    #[napi(catch_unwind)]
-    pub fn take_effect(&mut self) -> Option<HeightStreamEffect> {
+    pub fn take_effect(&mut self) -> Option<Effect> {
         self.effects.pop_front()
     }
 
-    #[napi(catch_unwind)]
     pub fn is_current(&self, generation: u32) -> bool {
         generation == self.generation
     }
 
-    #[napi(catch_unwind)]
     pub fn start(&mut self) {
         self.generation += 1;
         self.unreadable_detail = None;
@@ -157,23 +166,13 @@ impl HeightStream {
         // Armed before connecting, so it covers a connect that never reports
         // anything, and a failure inside connect replaces it with the retry.
         self.arm(Pending::Stale);
-        self.effects.push_back(HeightStreamEffect::Connect {
-            generation: self.generation,
-        });
-    }
-
-    #[napi(catch_unwind)]
-    pub fn unsubscribe(&mut self) {
-        self.generation += 1;
-        self.clear_pending();
-        self.effects.push_back(HeightStreamEffect::Close {
+        self.effects.push_back(Effect::Connect {
             generation: self.generation,
         });
     }
 
     /// The stream is usable: for SSE the connection opened, for WebSocket the
     /// subscription was confirmed.
-    #[napi(catch_unwind)]
     pub fn connected(&mut self, generation: u32, now: f64) {
         if self.is_current(generation) {
             self.go_live(now);
@@ -183,7 +182,6 @@ impl HeightStream {
     /// Stops counting once anything unreadable has arrived: a stream whose
     /// heights are all malformed is otherwise held open by the keep-alives
     /// between them, never failing and so never reporting anything.
-    #[napi(catch_unwind)]
     pub fn keep_alive(&mut self, generation: u32) {
         if self.is_current(generation) && self.unreadable_detail.is_none() {
             self.arm(Pending::Stale);
@@ -192,28 +190,24 @@ impl HeightStream {
 
     /// A height is proof the stream is delivering, so it reports live as
     /// connecting does, and proves the shape readable again.
-    #[napi(catch_unwind)]
     pub fn height(&mut self, generation: u32, height: i64, now: f64) {
         if self.is_current(generation) {
             self.unreadable_detail = None;
             self.go_live(now);
-            self.effects
-                .push_back(HeightStreamEffect::Height { height });
+            self.effects.push_back(Effect::Height(height));
         }
     }
 
-    #[napi(catch_unwind)]
     pub fn unreadable(&mut self, generation: u32, detail: String) {
         if self.is_current(generation) {
             self.unreadable_detail = Some(detail);
         }
     }
 
-    #[napi(catch_unwind)]
     pub fn failure(
         &mut self,
         generation: u32,
-        reason: HeightStreamDownReason,
+        reason: DownReason,
         detail: Option<String>,
         now: f64,
     ) {
@@ -222,16 +216,13 @@ impl HeightStream {
         }
     }
 
-    /// A transport that throws while connecting, which is the only account of
-    /// why its url can't be connected to.
-    #[napi(catch_unwind)]
+    /// A url the transport can't even try, which is the only account of why.
     pub fn connect_failed(&mut self, generation: u32, detail: Option<String>, now: f64) {
         if self.is_current(generation) {
-            self.fail(HeightStreamDownReason::named("ConnectFailed"), detail, now);
+            self.fail(DownReason::ConnectFailed, detail, now);
         }
     }
 
-    #[napi(catch_unwind)]
     pub fn timer_fired(&mut self, timer: u32, now: f64) {
         // Every timer this replaces is cleared on the clock, so the one that
         // fires is the one pending.
@@ -244,23 +235,16 @@ impl HeightStream {
             // Tells a provider whose messages we don't understand apart from a
             // chain that simply has nothing to report.
             Pending::Stale => match self.unreadable_detail.clone() {
-                Some(detail) => self.fail(
-                    HeightStreamDownReason::named("Unreadable"),
-                    Some(detail),
-                    now,
-                ),
-                None => self.fail(HeightStreamDownReason::named("Stale"), None, now),
+                Some(detail) => self.fail(DownReason::Unreadable, Some(detail), now),
+                None => self.fail(DownReason::Stale, None, now),
             },
             Pending::Retry => self.start(),
         }
     }
-}
 
-impl HeightStream {
     fn clear_pending(&mut self) {
         if let Some((timer, _)) = self.pending.take() {
-            self.effects
-                .push_back(HeightStreamEffect::ClearTimer { timer });
+            self.effects.push_back(Effect::ClearTimer { timer });
         }
     }
 
@@ -277,9 +261,9 @@ impl HeightStream {
             Pending::Stale => "height stream stale",
             Pending::Retry => "height stream retry",
         };
-        self.effects.push_back(HeightStreamEffect::ArmTimer {
+        self.effects.push_back(Effect::ArmTimer {
             timer,
-            label: label.to_string(),
+            label,
             millis,
             jitter,
         });
@@ -289,19 +273,17 @@ impl HeightStream {
         self.arm(Pending::Stale);
         if self.live_at.is_none() {
             self.live_at = Some(now);
-            self.effects.push_back(HeightStreamEffect::Status {
+            self.effects.push_back(Effect::Status {
                 down: None,
                 detail: None,
             });
         }
     }
 
-    fn fail(&mut self, reason: HeightStreamDownReason, detail: Option<String>, now: f64) {
+    fn fail(&mut self, reason: DownReason, detail: Option<String>, now: f64) {
         self.generation += 1;
         self.clear_pending();
-        self.effects.push_back(HeightStreamEffect::Close {
-            generation: self.generation,
-        });
+        self.effects.push_back(Effect::Close);
 
         // A connection that served longer than the wait it cost was worth
         // making, whatever ended it, so the backoff starts over. The bar rises
@@ -323,12 +305,12 @@ impl HeightStream {
 
         // A clean end to a connection that had proven itself is a rotation:
         // routine, unlike the same clean end arriving early.
-        let reason = if reason.name == "Closed" && proven {
-            HeightStreamDownReason::named("Rotated")
+        let reason = if reason == DownReason::Closed && proven {
+            DownReason::Rotated
         } else {
             reason
         };
-        self.effects.push_back(HeightStreamEffect::Status {
+        self.effects.push_back(Effect::Status {
             down: Some(reason),
             detail: detail.map(truncate_detail),
         });

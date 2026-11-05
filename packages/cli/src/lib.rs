@@ -26,6 +26,7 @@ mod field_table;
 mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
+mod height_stream;
 mod hex;
 mod js_value;
 mod logger;

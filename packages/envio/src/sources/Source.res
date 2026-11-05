@@ -179,6 +179,25 @@ let downReasonLabel = reason =>
   | Unsubscribed => "unsubscribed"
   }
 
+// The reason a label names, as the addon reports it.
+let downReasonFromLabel = label =>
+  switch label {
+  | "rotated" => Rotated
+  | "closed" => Closed
+  | "stale" => Stale
+  | "unreadable" => Unreadable
+  | "connect-failed" => ConnectFailed
+  | "subscribe-rejected" => SubscribeRejected
+  | "unsubscribed" => Unsubscribed
+  | label =>
+    switch label->String.startsWith("http-")
+      ? label->String.sliceToEnd(~start=5)->Int.fromString
+      : None {
+    | Some(code) => Http(code)
+    | None => TransportError
+    }
+  }
+
 // Connection state of a height subscription, reported by every transport.
 // `Down` repeats on each failed retry while the stream stays broken, and `Live`
 // fires on every (re)connect, so consumers must treat both as idempotent.

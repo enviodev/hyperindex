@@ -700,8 +700,12 @@ let run = async (
               state->IndexerState.writeFiber->Option.isSome || storageCallsInFlight.contents > 0
                 ? 500
                 : 50
-            while idle.contents < 5 && still.contents < quietLimit() {
-              idle := if isQuiet() {
+            // Rust work a timer woke isn't held: it is the very thing the
+            // advance is waiting on, and it finishes on its own.
+            while (
+              clock->VirtualClock.busy > 0 || (idle.contents < 5 && still.contents < quietLimit())
+            ) {
+              idle := if isQuiet() && clock->VirtualClock.busy === 0 {
                   idle.contents + 1
                 } else {
                   0
