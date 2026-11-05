@@ -2,17 +2,24 @@
 //! doesn't: failover, retry schedules, rate-limit windows, the height feeds
 //! and the waits for a new block.
 //!
-//! Nothing here performs IO or keeps time. ReScript makes every call to a
-//! source and arms every timer on the clock it was given, reports how each
-//! went, and carries out the effects this leaves in return, in order. That
-//! keeps the sources themselves (and the test doubles standing in for them)
-//! on the JavaScript side, and every timer on the one timeline a test moves.
+//! The core decides and keeps no time. This module runs it: its timers sleep
+//! on the manager's clock, and everything else it asks for (calling a source,
+//! settling a wait or a query) waits in an outbox for ReScript, which reports
+//! how each went.
 
 mod core;
 mod feed;
 mod query;
 mod wait;
 
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::{Arc, Mutex, MutexGuard, Weak},
+    task::{Poll, Waker},
+};
+
+use napi::bindgen_prelude::Function;
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
 use self::{
@@ -20,6 +27,7 @@ use self::{
     query::{HashesFailure, Inconsistent, ItemsFailure},
 };
 use crate::block_store::BlockStore;
+use crate::clock::{jittered, Clock, RealClock, Sleep, VirtualClockHandle};
 
 #[napi(string_enum, object_to_js = false)]
 pub enum SourceFor {
@@ -326,18 +334,194 @@ pub struct HeightStreamSample {
     pub disconnect_counts: Vec<u32>,
 }
 
+/// The timers the core armed, each sleeping on the manager's clock. Polled by
+/// one task, so a cleared timer leaves the clock's queue the moment it is
+/// cleared rather than whenever a task of its own would next run.
+struct Timers {
+    armed: BTreeMap<u32, Sleep>,
+    waker: Option<Waker>,
+}
+
+struct Inner {
+    core: Core,
+    clock: Arc<dyn Clock>,
+    timers: Timers,
+    /// What the core asked for and nobody has carried out yet, in the order it
+    /// is owed. JavaScript drains it; a timer waits here behind whatever
+    /// JavaScript has still to do, so the two sides act in the core's order.
+    outbox: VecDeque<Effect>,
+    /// Tells JavaScript there is something in the outbox, when it wasn't the
+    /// one that just called in.
+    poke: Callback,
+    stopped: bool,
+}
+
+/// Weak, so a manager nobody shut down doesn't keep the process alive.
+type Callback = ThreadsafeFunction<(), (), (), napi::Status, false, true>;
+
+impl Inner {
+    /// Takes what the last call left. A timer is armed or cleared here as soon
+    /// as nothing is waiting ahead of it; everything else waits for
+    /// JavaScript.
+    fn pump(&mut self) {
+        while let Some(effect) = self.core.take_effect() {
+            if self.outbox.is_empty() && is_timer(&effect) {
+                self.run_timer_effect(effect);
+            } else {
+                self.outbox.push_back(effect);
+            }
+        }
+    }
+
+    /// The next effect JavaScript has to carry out, running the timers queued
+    /// ahead of it on the way.
+    fn next_for_js(&mut self) -> Option<SourceManagerEffect> {
+        while let Some(effect) = self.outbox.pop_front() {
+            if is_timer(&effect) {
+                self.run_timer_effect(effect);
+            } else {
+                return Some(effect.into());
+            }
+        }
+        None
+    }
+
+    fn run_timer_effect(&mut self, effect: Effect) {
+        match effect {
+            Effect::ArmTimer {
+                timer,
+                label,
+                millis,
+                jitter,
+            } => {
+                let millis = if jitter {
+                    jittered(millis, self.clock.random())
+                } else {
+                    millis
+                };
+                self.timers
+                    .armed
+                    .insert(timer, self.clock.sleep(label, u64::from(millis)));
+                if let Some(waker) = self.timers.waker.take() {
+                    waker.wake();
+                }
+            }
+            Effect::ClearTimer { timer } => {
+                self.timers.armed.remove(&timer);
+            }
+            _ => unreachable!("only timer effects run here"),
+        }
+    }
+
+    fn now(&self) -> f64 {
+        self.clock.now_ms()
+    }
+
+    /// Held until JavaScript has drained the outbox, so a test's advance waits
+    /// for what a timer set off.
+    fn poke(&self) {
+        if self.outbox.is_empty() {
+            return;
+        }
+        let hold = self.clock.hold();
+        self.poke.call_with_return_value(
+            (),
+            ThreadsafeFunctionCallMode::NonBlocking,
+            move |_, _| {
+                drop(hold);
+                Ok(())
+            },
+        );
+    }
+}
+
+fn is_timer(effect: &Effect) -> bool {
+    matches!(effect, Effect::ArmTimer { .. } | Effect::ClearTimer { .. })
+}
+
+fn lock(inner: &Mutex<Inner>) -> MutexGuard<'_, Inner> {
+    // A panic while holding the lock can only come from a bug in the core, and
+    // what it left is still the best account of the sources.
+    inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Fires the core's timers, one at a time, in the order they come due.
+async fn run_timers(inner: Weak<Mutex<Inner>>) {
+    loop {
+        let fired = std::future::poll_fn(|cx| {
+            let Some(inner) = inner.upgrade() else {
+                return Poll::Ready(None);
+            };
+            let mut inner = lock(&inner);
+            if inner.stopped {
+                return Poll::Ready(None);
+            }
+            inner.timers.waker = Some(cx.waker().clone());
+            let fired = inner.timers.armed.iter_mut().find_map(|(timer, sleep)| {
+                match sleep.as_mut().poll(cx) {
+                    Poll::Ready(hold) => Some((*timer, hold)),
+                    Poll::Pending => None,
+                }
+            });
+            match fired {
+                Some((timer, hold)) => {
+                    inner.timers.armed.remove(&timer);
+                    Poll::Ready(Some((timer, hold)))
+                }
+                None => Poll::Pending,
+            }
+        })
+        .await;
+        let Some((timer, hold)) = fired else {
+            return;
+        };
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
+        let mut inner = lock(&inner);
+        let now = inner.now();
+        inner.core.timer_fired(timer, now);
+        inner.pump();
+        inner.poke();
+        // Given back once JavaScript has been told, which holds its own.
+        drop(hold);
+    }
+}
+
 #[napi]
 pub struct SourceManager {
-    core: Core,
+    inner: Arc<Mutex<Inner>>,
+}
+
+impl SourceManager {
+    /// Runs `call` on the core with the current time, then takes what it left.
+    fn report<T>(&self, call: impl FnOnce(&mut Core, f64) -> T) -> T {
+        let mut inner = lock(&self.inner);
+        let now = inner.now();
+        let result = call(&mut inner.core, now);
+        inner.pump();
+        result
+    }
+
+    fn read<T>(&self, read: impl FnOnce(&Core, f64) -> T) -> T {
+        let inner = lock(&self.inner);
+        read(&inner.core, inner.now())
+    }
 }
 
 #[napi]
 impl SourceManager {
+    /// `clock` is a test's virtual clock; without one, real time. `on_effects`
+    /// is called when a timer leaves work in the outbox.
     #[napi(factory, catch_unwind)]
     pub fn make(
         sources: Vec<SourceManagerSource>,
         is_realtime: bool,
         timing: Option<SourceManagerTiming>,
+        clock: Option<&VirtualClockHandle>,
+        on_effects: Function<(), ()>,
     ) -> napi::Result<Self> {
         let specs = sources
             .into_iter()
@@ -352,240 +536,266 @@ impl SourceManager {
                 can_stream: source.can_stream,
             })
             .collect();
-        Core::new(specs, is_realtime, timing.unwrap_or_default().into())
-            .map(|core| SourceManager { core })
-            .map_err(napi::Error::from_reason)
+        let core = Core::new(specs, is_realtime, timing.unwrap_or_default().into())
+            .map_err(napi::Error::from_reason)?;
+        let inner = Arc::new(Mutex::new(Inner {
+            core,
+            clock: clock.map_or_else(RealClock::shared, VirtualClockHandle::shared),
+            timers: Timers {
+                armed: BTreeMap::new(),
+                waker: None,
+            },
+            outbox: VecDeque::new(),
+            poke: on_effects
+                .build_threadsafe_function()
+                .callee_handled::<false>()
+                .weak::<true>()
+                .build()?,
+            stopped: false,
+        }));
+        napi::bindgen_prelude::spawn(run_timers(Arc::downgrade(&inner)));
+        Ok(SourceManager { inner })
     }
 
-    /// The next thing the caller has to do, in the order it is owed.
+    /// The next thing JavaScript has to do, in the order it is owed.
     #[napi(catch_unwind)]
-    pub fn take_effect(&mut self) -> Option<SourceManagerEffect> {
-        self.core.take_effect().map(SourceManagerEffect::from)
+    pub fn take_effect(&self) -> Option<SourceManagerEffect> {
+        lock(&self.inner).next_for_js()
     }
 
+    /// A `Defer` token coming back from its microtask.
     #[napi(catch_unwind)]
-    pub fn timer_fired(&mut self, timer: u32, now: f64) {
-        self.core.timer_fired(timer, now);
+    pub fn timer_fired(&self, timer: u32) {
+        self.report(|core, now| core.timer_fired(timer, now));
     }
 
     /// Resolves through a `ResolveWait` effect, which can already be queued
     /// when this returns.
     #[napi(catch_unwind)]
     pub fn wait_for_new_block(
-        &mut self,
+        &self,
         known_height: i64,
         is_realtime: bool,
         reduced_polling: bool,
-        now: f64,
     ) -> u32 {
-        self.core
-            .wait_for_new_block(known_height, is_realtime, reduced_polling, now)
+        self.report(|core, now| {
+            core.wait_for_new_block(known_height, is_realtime, reduced_polling, now)
+        })
     }
 
     #[napi(catch_unwind)]
-    pub fn height_answered(&mut self, request: u32, height: i64, stats: Vec<SourceRequestStat>) {
-        self.core
-            .height_answered(request, height, &to_request_stats(stats));
+    pub fn height_answered(&self, request: u32, height: i64, stats: Vec<SourceRequestStat>) {
+        self.report(|core, _| core.height_answered(request, height, &to_request_stats(stats)));
     }
 
     /// The source's height call threw instead of returning a promise.
     #[napi(catch_unwind)]
-    pub fn height_call_threw(&mut self, request: u32, err: Option<u32>) {
-        self.core.height_call_threw(request, err);
+    pub fn height_call_threw(&self, request: u32, err: Option<u32>) {
+        self.report(|core, _| core.height_call_threw(request, err));
     }
 
     #[napi(catch_unwind)]
-    pub fn height_failed(&mut self, request: u32, stats: Vec<SourceRequestStat>, err: Option<u32>) {
-        self.core
-            .height_failed(request, &to_request_stats(stats), err);
+    pub fn height_failed(&self, request: u32, stats: Vec<SourceRequestStat>, err: Option<u32>) {
+        self.report(|core, _| core.height_failed(request, &to_request_stats(stats), err));
     }
 
     #[napi(catch_unwind)]
-    pub fn stream_height(&mut self, source: u32, height: i64) {
-        self.core.stream_height(source as usize, height);
+    pub fn stream_height(&self, source: u32, height: i64) {
+        self.report(|core, _| core.stream_height(source as usize, height));
     }
 
     #[napi(catch_unwind)]
-    pub fn stream_live(&mut self, source: u32) {
-        self.core.stream_live(source as usize);
+    pub fn stream_live(&self, source: u32) {
+        self.report(|core, _| core.stream_live(source as usize));
     }
 
     #[napi(catch_unwind)]
-    pub fn stream_down(&mut self, source: u32, reason: String, detail: Option<String>) {
-        self.core.stream_down(source as usize, &reason, detail);
+    pub fn stream_down(&self, source: u32, reason: String, detail: Option<String>) {
+        self.report(|core, _| core.stream_down(source as usize, &reason, detail));
     }
 
     #[napi(catch_unwind)]
     pub fn start_items_query(
-        &mut self,
+        &self,
         from_block: i64,
         to_block: Option<i64>,
         partition_id: String,
         addresses: u32,
         is_realtime: bool,
-        now: f64,
     ) -> u32 {
-        self.core.start_items_query(
-            from_block,
-            to_block,
-            partition_id,
-            addresses,
-            is_realtime,
-            now,
-        )
+        self.report(|core, now| {
+            core.start_items_query(
+                from_block,
+                to_block,
+                partition_id,
+                addresses,
+                is_realtime,
+                now,
+            )
+        })
     }
 
     /// A response is trusted only once its page has proved internally coherent.
     #[napi(catch_unwind)]
     pub fn items_answered(
-        &mut self,
+        &self,
         request: u32,
         block_store: &BlockStore,
         known_height: i64,
         stats: Vec<SourceRequestStat>,
-        now: f64,
     ) {
         let inconsistent = Inconsistent::check(block_store.response_conflict(), Vec::new());
-        self.core.items_answered(
-            request,
-            known_height,
-            &to_request_stats(stats),
-            inconsistent,
-            now,
-        );
+        self.report(|core, now| {
+            core.items_answered(
+                request,
+                known_height,
+                &to_request_stats(stats),
+                inconsistent,
+                now,
+            )
+        });
     }
 
     #[napi(catch_unwind)]
     pub fn items_failed(
-        &mut self,
+        &self,
         request: u32,
         failure: SourceItemsFailure,
         stats: Vec<SourceRequestStat>,
         err: Option<u32>,
-        now: f64,
     ) {
-        self.core
-            .items_failed(request, failure.into(), &to_request_stats(stats), err, now);
+        self.report(|core, now| {
+            core.items_failed(request, failure.into(), &to_request_stats(stats), err, now)
+        });
     }
 
     #[napi(catch_unwind)]
-    pub fn start_block_hashes(&mut self, is_realtime: bool, now: f64) -> u32 {
-        self.core.start_block_hashes(is_realtime, now)
+    pub fn start_block_hashes(&self, is_realtime: bool) -> u32 {
+        self.report(|core, now| core.start_block_hashes(is_realtime, now))
     }
 
     /// Also rejects a response that simply omitted one of the requested hashes.
     #[napi(catch_unwind)]
     pub fn hashes_answered(
-        &mut self,
+        &self,
         request: u32,
         block_store: &BlockStore,
         block_numbers: Vec<i64>,
         stats: Vec<SourceRequestStat>,
-        now: f64,
     ) {
         let inconsistent = Inconsistent::check(
             block_store.response_conflict(),
             block_store.missing_hashes(block_numbers),
         );
-        self.core
-            .hashes_answered(request, &to_request_stats(stats), inconsistent, now);
+        self.report(|core, now| {
+            core.hashes_answered(request, &to_request_stats(stats), inconsistent, now)
+        });
     }
 
     /// A failure that is neither rate-limiting nor a source behind the head is
     /// retried on the shared schedule.
     #[napi(catch_unwind)]
     pub fn hashes_failed(
-        &mut self,
+        &self,
         request: u32,
         rate_limit_reset_ms: Option<u32>,
         behind_head_block: Option<i64>,
         stats: Vec<SourceRequestStat>,
         err: Option<u32>,
-        now: f64,
     ) {
         let failure = match (rate_limit_reset_ms, behind_head_block) {
             (Some(reset_ms), _) => HashesFailure::RateLimited { reset_ms },
             (None, Some(block_number)) => HashesFailure::BehindHead { block_number },
             (None, None) => HashesFailure::Other,
         };
-        self.core
-            .hashes_failed(request, failure, &to_request_stats(stats), err, now);
+        self.report(|core, now| {
+            core.hashes_failed(request, failure, &to_request_stats(stats), err, now)
+        });
     }
 
     /// The attempt failed in a way nothing here can retry, and the caller
     /// raises it.
     #[napi(catch_unwind)]
-    pub fn abandon_request(&mut self, request: u32) {
-        self.core.abandon_request(request);
+    pub fn abandon_request(&self, request: u32) {
+        self.report(|core, _| core.abandon_request(request));
     }
 
     #[napi(catch_unwind)]
-    pub fn begin_waiting(&mut self, state_id: i64) -> bool {
-        self.core.begin_waiting(state_id)
+    pub fn begin_waiting(&self, state_id: i64) -> bool {
+        self.report(|core, _| core.begin_waiting(state_id))
     }
 
     #[napi(catch_unwind)]
-    pub fn finish_waiting(&mut self, state_id: i64) -> bool {
-        self.core.finish_waiting(state_id)
+    pub fn finish_waiting(&self, state_id: i64) -> bool {
+        self.report(|core, _| core.finish_waiting(state_id))
     }
 
     #[napi(catch_unwind)]
-    pub fn queries_started(&mut self, count: u32) {
-        self.core.queries_started(count);
+    pub fn queries_started(&self, count: u32) {
+        self.report(|core, _| core.queries_started(count));
     }
 
     #[napi(catch_unwind)]
-    pub fn query_finished(&mut self) {
-        self.core.query_finished();
+    pub fn query_finished(&self) {
+        self.report(|core, _| core.query_finished());
     }
 
     #[napi(catch_unwind)]
-    pub fn shutdown(&mut self) {
-        self.core.shut_down();
+    pub fn shutdown(&self) {
+        let mut inner = lock(&self.inner);
+        inner.core.shut_down();
+        inner.pump();
+        inner.timers.armed.clear();
+        inner.stopped = true;
+        if let Some(waker) = inner.timers.waker.take() {
+            waker.wake();
+        }
     }
 
     #[napi(catch_unwind)]
     pub fn active_source(&self) -> u32 {
-        self.core.active as u32
+        self.read(|core, _| core.active as u32)
     }
 
     /// Partition queries in flight on this chain's sources. Summed across
     /// chains to enforce the indexer-wide concurrency budget.
     #[napi(catch_unwind)]
     pub fn in_flight(&self) -> u32 {
-        self.core.in_flight()
+        self.read(|core, _| core.in_flight())
     }
 
     #[napi(catch_unwind)]
     pub fn idle_seconds(&self) -> f64 {
-        self.core.seconds_in(Status::Idle)
+        self.read(|core, _| core.seconds_in(Status::Idle))
     }
 
     #[napi(catch_unwind)]
     pub fn waiting_for_new_block_seconds(&self) -> f64 {
-        self.core.seconds_in(Status::WaitingForNewBlock)
+        self.read(|core, _| core.seconds_in(Status::WaitingForNewBlock))
     }
 
     #[napi(catch_unwind)]
     pub fn querying_seconds(&self) -> f64 {
-        self.core.seconds_in(Status::Querying)
+        self.read(|core, _| core.seconds_in(Status::Querying))
     }
 
     /// Total time spent waiting on rate limits, including a window in progress.
     #[napi(catch_unwind)]
-    pub fn rate_limit_time_ms(&self, now: f64) -> f64 {
-        self.core.rate_limit_time_ms(now)
+    pub fn rate_limit_time_ms(&self) -> f64 {
+        self.read(|core, now| core.rate_limit_time_ms(now))
     }
 
     /// Until the longest active rate-limit window resets.
     #[napi(catch_unwind)]
-    pub fn rate_limit_reset_in_ms(&self, now: f64) -> Option<f64> {
-        self.core.rate_limit_reset_in_ms(now)
+    pub fn rate_limit_reset_in_ms(&self) -> Option<f64> {
+        self.read(|core, now| core.rate_limit_reset_in_ms(now))
     }
 
     #[napi(catch_unwind)]
     pub fn request_stat_samples(&self) -> Vec<RequestStatSample> {
-        self.core
+        let inner = lock(&self.inner);
+        inner
+            .core
             .sources
             .iter()
             .enumerate()
@@ -608,7 +818,9 @@ impl SourceManager {
     /// Per-source known heights. A source with none observed yet is left out.
     #[napi(catch_unwind)]
     pub fn source_height_samples(&self) -> Vec<SourceHeightSample> {
-        self.core
+        let inner = lock(&self.inner);
+        inner
+            .core
             .sources
             .iter()
             .enumerate()
@@ -625,7 +837,9 @@ impl SourceManager {
     /// renders none of it rather than sitting at zero.
     #[napi(catch_unwind)]
     pub fn height_stream_samples(&self) -> Vec<HeightStreamSample> {
-        self.core
+        let inner = lock(&self.inner);
+        inner
+            .core
             .sources
             .iter()
             .enumerate()

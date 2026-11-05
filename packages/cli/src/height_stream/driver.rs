@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 use super::machine::{DownReason, Effect, HeightStream};
-use crate::clock::{Clock, Hold, Sleep};
+use crate::clock::{jittered, Clock, Hold, Sleep};
 
 /// What a connection saw, in the order it saw it.
 #[derive(Debug, PartialEq)]
@@ -203,10 +203,4 @@ impl Driver {
             }
         }
     }
-}
-
-/// Half the delay fixed, half spread across it, as the ReScript clock does.
-fn jittered(millis: u32, random: f64) -> u32 {
-    let half = millis / 2;
-    half + (random * f64::from(half)) as u32
 }

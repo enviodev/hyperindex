@@ -109,6 +109,15 @@ impl Clock for RealClock {
     }
 }
 
+/// Half the delay fixed, half spread across it. Every indexer pointed at one
+/// provider loses its stream, or gives up on a quiet chain, in the same instant
+/// that provider blinks, and putting them all back on the same schedule is how
+/// a blip becomes a stampede.
+pub fn jittered(millis: u32, random: f64) -> u32 {
+    let half = millis / 2;
+    half + (random * f64::from(half)) as u32
+}
+
 /// mulberry32: small, and the same sequence on every platform, so a seed means
 /// the same run wherever it is replayed.
 fn mulberry32(state: &mut u32) -> f64 {

@@ -1,6 +1,6 @@
 // Rust decides which source answers, how a failure is retried and when a wait
-// for a new block is over (`source_manager/`). This side makes the calls it
-// asks for, arms its timers on the clock, and tells it how each one went.
+// for a new block is over, and runs its own timers (`source_manager/`). This
+// side makes the calls it asks for and tells it how each one went.
 
 module Native = {
   // Effects are only ever built by Rust.
@@ -24,8 +24,6 @@ module Native = {
         paramsJson?: string,
         err?: int,
       })
-    | ArmTimer({timer: int, label: string, millis: int, jitter: bool})
-    | ClearTimer({timer: int})
     | Defer({token: int})
     | RequestHeight({request: int, source: int})
     | SubscribeStream({source: int})
@@ -61,16 +59,35 @@ module Native = {
     disconnectCounts: array<int>,
   }
 
-  @send external make: (Core.sourceManagerCtor, array<sourceSpec>, bool, 'timing) => t = "make"
+  type timing = {
+    newBlockStallTimeout?: int,
+    newBlockStallTimeoutRealtime?: int,
+    stalledPollingInterval?: int,
+    reducedPollingInterval?: int,
+    recoveryTimeout?: float,
+    heightRetryInitialMillis?: int,
+    heightRetryMultiplier?: int,
+    heightRetryMaxMillis?: int,
+    heightPollTimeout?: int,
+  }
+
+  @send
+  external make: (
+    Core.sourceManagerCtor,
+    array<sourceSpec>,
+    bool,
+    timing,
+    Nullable.t<Clock.native>,
+    unit => unit,
+  ) => t = "make"
   @send external takeEffect: t => Nullable.t<effect> = "takeEffect"
-  @send external timerFired: (t, int, float) => unit = "timerFired"
+  @send external timerFired: (t, int) => unit = "timerFired"
   @send
   external waitForNewBlock: (
     t,
     ~knownHeight: int,
     ~isRealtime: bool,
     ~reducedPolling: bool,
-    ~now: float,
   ) => int = "waitForNewBlock"
   @send
   external heightAnswered: (t, int, int, array<Source.requestStat>) => unit = "heightAnswered"
@@ -89,31 +106,18 @@ module Native = {
     ~partitionId: string,
     ~addresses: int,
     ~isRealtime: bool,
-    ~now: float,
   ) => int = "startItemsQuery"
   @send
-  external itemsAnswered: (t, int, BlockStore.t, int, array<Source.requestStat>, float) => unit =
+  external itemsAnswered: (t, int, BlockStore.t, int, array<Source.requestStat>) => unit =
     "itemsAnswered"
   @send
-  external itemsFailed: (
-    t,
-    int,
-    itemsFailure,
-    array<Source.requestStat>,
-    Nullable.t<int>,
-    float,
-  ) => unit = "itemsFailed"
+  external itemsFailed: (t, int, itemsFailure, array<Source.requestStat>, Nullable.t<int>) => unit =
+    "itemsFailed"
   @send
-  external startBlockHashes: (t, bool, float) => int = "startBlockHashes"
+  external startBlockHashes: (t, bool) => int = "startBlockHashes"
   @send
-  external hashesAnswered: (
-    t,
-    int,
-    BlockStore.t,
-    array<int>,
-    array<Source.requestStat>,
-    float,
-  ) => unit = "hashesAnswered"
+  external hashesAnswered: (t, int, BlockStore.t, array<int>, array<Source.requestStat>) => unit =
+    "hashesAnswered"
   @send
   external hashesFailed: (
     t,
@@ -122,7 +126,6 @@ module Native = {
     ~behindHeadBlock: Nullable.t<int>,
     array<Source.requestStat>,
     Nullable.t<int>,
-    float,
   ) => unit = "hashesFailed"
   @send external abandonRequest: (t, int) => unit = "abandonRequest"
   @send external beginWaiting: (t, int) => bool = "beginWaiting"
@@ -135,8 +138,8 @@ module Native = {
   @send external idleSeconds: t => float = "idleSeconds"
   @send external waitingForNewBlockSeconds: t => float = "waitingForNewBlockSeconds"
   @send external queryingSeconds: t => float = "queryingSeconds"
-  @send external rateLimitTimeMs: (t, float) => float = "rateLimitTimeMs"
-  @send external rateLimitResetInMs: (t, float) => Nullable.t<float> = "rateLimitResetInMs"
+  @send external rateLimitTimeMs: t => float = "rateLimitTimeMs"
+  @send external rateLimitResetInMs: t => Nullable.t<float> = "rateLimitResetInMs"
   @send external requestStatSamples: t => array<requestStatSample> = "requestStatSamples"
   @send external sourceHeightSamples: t => array<sourceHeightSample> = "sourceHeightSamples"
   @send external heightStreamSamples: t => array<heightStreamSample> = "heightStreamSamples"
@@ -169,7 +172,6 @@ type t = {
   sources: array<Source.t>,
   logger: Logger.t,
   clock: Clock.t,
-  timers: Map.t<int, Clock.timer>,
   waits: Map.t<int, int => unit>,
   requests: Map.t<int, request>,
   closeStreams: Map.t<int, unit => unit>,
@@ -193,30 +195,6 @@ type timing = {
   heightPollTimeout?: int,
   clock?: Clock.t,
 }
-
-let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: timing={}) => {
-  native: Core.getAddon().sourceManager->Native.make(
-    sources->Array.map((source): Native.sourceSpec => {
-      name: source.name,
-      sourceFor: source.sourceFor,
-      pollingInterval: source.pollingInterval,
-      canStream: source.createHeightSubscription->Option.isSome,
-    }),
-    isRealtime,
-    timing,
-  ),
-  sources,
-  logger,
-  clock: timing.clock->Option.getOr(Clock.real),
-  timers: Map.make(),
-  waits: Map.make(),
-  requests: Map.make(),
-  closeStreams: Map.make(),
-  errors: Map.make(),
-  nextErrorId: 0,
-}
-
-let now = (sm: t) => sm.clock.now()
 
 let holdError = (sm: t, exn) => {
   sm.nextErrorId = sm.nextErrorId + 1
@@ -270,28 +248,10 @@ and execute = (sm: t, effect: Native.effect) =>
   switch effect {
   | Log({?fieldsJson, level, message, ?paramsJson, ?err}) =>
     sm->logEffect(~fieldsJson, ~level, ~message, ~paramsJson, ~err)
-  | ArmTimer({timer, label, millis, jitter}) =>
-    let millis = jitter ? sm.clock->Clock.jitter(millis) : millis
-    sm.timers->Map.set(
-      timer,
-      sm.clock.setTimeout(
-        ~label,
-        () => {
-          sm.timers->Map.delete(timer)->ignore
-          sm->report(_ => sm.native->Native.timerFired(timer, sm->now))
-        },
-        millis,
-      ),
-    )
   | Defer({token}) =>
     Promise.resolve()
-    ->Promise.thenResolve(() => sm->report(_ => sm.native->Native.timerFired(token, sm->now)))
+    ->Promise.thenResolve(() => sm->report(_ => sm.native->Native.timerFired(token)))
     ->Promise.ignore
-  // Rust only clears a timer it armed that has not fired, and a fired one
-  // leaves the map before Rust hears of it.
-  | ClearTimer({timer}) =>
-    sm.clock.clearTimeout(sm.timers->Map.get(timer)->Option.getUnsafe)
-    sm.timers->Map.delete(timer)->ignore
   | RequestHeight({request, source}) => sm->requestHeight(~request, ~source)
   | SubscribeStream({source}) => sm->subscribeStream(~source)
   // Rust closes only a stream it opened, and resolves only a wait it was asked
@@ -430,14 +390,13 @@ and attemptItems = (sm: t, ~id, ~request, ~items, ~source: Source.t, ~toBlock, ~
         response.blockStore,
         response.knownHeight,
         response.requestStats,
-        sm->now,
       )
     )
   })
   ->Promise.catch(exn => {
     let failed = (~err=?, ~requestStats, failure) =>
       sm->report(~err?, err =>
-        sm.native->Native.itemsFailed(id, failure, requestStats, err->Nullable.fromOption, sm->now)
+        sm.native->Native.itemsFailed(id, failure, requestStats, err->Nullable.fromOption)
       )
     switch exn {
     | Source.RateLimited({resetMs, requestStats}) =>
@@ -493,7 +452,6 @@ and attemptHashes = (sm: t, ~id, ~hashes, ~source: Source.t, ~logger) => {
         ~behindHeadBlock,
         requestStats,
         err->Nullable.fromOption,
-        sm->now,
       )
     })
   call
@@ -502,7 +460,7 @@ and attemptHashes = (sm: t, ~id, ~hashes, ~source: Source.t, ~logger) => {
     | Ok(blockStore) =>
       hashes.blockStore = Some(blockStore)
       sm->report(_ =>
-        sm.native->Native.hashesAnswered(id, blockStore, hashes.blockNumbers, requestStats, sm->now)
+        sm.native->Native.hashesAnswered(id, blockStore, hashes.blockNumbers, requestStats)
       )
     | Error(exn) => failed(~requestStats, exn)
     }
@@ -514,6 +472,52 @@ and attemptHashes = (sm: t, ~id, ~hashes, ~source: Source.t, ~logger) => {
     Promise.resolve()
   })
   ->Promise.ignore
+}
+
+let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: timing={}) => {
+  let clock = timing.clock->Option.getOr(Clock.real)
+  if Clock.refuseReal.contents && clock.native->Option.isNone {
+    JsError.throwWithMessage(
+      "A source manager made on virtual time without the clock's native handle, so its timers would run on real time.",
+    )
+  }
+  // Rust calls this when one of its timers leaves something to do here.
+  let onEffects = ref(() => ())
+  let native = Core.getAddon().sourceManager->Native.make(
+    sources->Array.map((source): Native.sourceSpec => {
+      name: source.name,
+      sourceFor: source.sourceFor,
+      pollingInterval: source.pollingInterval,
+      canStream: source.createHeightSubscription->Option.isSome,
+    }),
+    isRealtime,
+    {
+      newBlockStallTimeout: ?timing.newBlockStallTimeout,
+      newBlockStallTimeoutRealtime: ?timing.newBlockStallTimeoutRealtime,
+      stalledPollingInterval: ?timing.stalledPollingInterval,
+      reducedPollingInterval: ?timing.reducedPollingInterval,
+      recoveryTimeout: ?timing.recoveryTimeout,
+      heightRetryInitialMillis: ?timing.heightRetryInitialMillis,
+      heightRetryMultiplier: ?timing.heightRetryMultiplier,
+      heightRetryMaxMillis: ?timing.heightRetryMaxMillis,
+      heightPollTimeout: ?timing.heightPollTimeout,
+    },
+    clock.native->Nullable.fromOption,
+    () => onEffects.contents(),
+  )
+  let sm = {
+    native,
+    sources,
+    logger,
+    clock,
+    waits: Map.make(),
+    requests: Map.make(),
+    closeStreams: Map.make(),
+    errors: Map.make(),
+    nextErrorId: 0,
+  }
+  onEffects := (() => sm->flush)
+  sm
 }
 
 let getActiveSource = (sm: t) => sm.sources->Array.getUnsafe(sm.native->Native.activeSource)
@@ -588,9 +592,8 @@ let idleSeconds = (sm: t) => sm.native->Native.idleSeconds
 let waitingForNewBlockSeconds = (sm: t) => sm.native->Native.waitingForNewBlockSeconds
 let queryingSeconds = (sm: t) => sm.native->Native.queryingSeconds
 let inFlightCount = (sm: t) => sm.native->Native.inFlight
-let getRateLimitTimeMs = (sm: t) => sm.native->Native.rateLimitTimeMs(sm->now)
-let getRateLimitResetInMs = (sm: t) =>
-  sm.native->Native.rateLimitResetInMs(sm->now)->Nullable.toOption
+let getRateLimitTimeMs = (sm: t) => sm.native->Native.rateLimitTimeMs
+let getRateLimitResetInMs = (sm: t) => sm.native->Native.rateLimitResetInMs->Nullable.toOption
 
 let shutdown = (sm: t) => sm->report(_ => sm.native->Native.shutdown)
 
@@ -600,8 +603,7 @@ let onReorg = (sm: t) =>
 let waitForNewBlock = (sm: t, ~knownHeight, ~isRealtime, ~reducedPolling) =>
   Promise.make((resolve, _reject) =>
     sm->report(_ => {
-      let wait =
-        sm.native->Native.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling, ~now=sm->now)
+      let wait = sm.native->Native.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling)
       sm.waits->Map.set(wait, resolve)
     })
   )
@@ -616,7 +618,6 @@ let executeQuery = (sm: t, ~query: FetchState.query, ~knownHeight, ~isRealtime, 
           ~partitionId=query.partitionId,
           ~addresses=query.addresses->AddressSet.size,
           ~isRealtime,
-          ~now=sm->now,
         )
       sm.requests->Map.set(
         id,
@@ -631,7 +632,7 @@ let executeQuery = (sm: t, ~query: FetchState.query, ~knownHeight, ~isRealtime, 
 let getBlockHashes = (sm: t, ~blockNumbers, ~isRealtime) =>
   Promise.make((resolve, reject) =>
     sm->report(_ => {
-      let id = sm.native->Native.startBlockHashes(isRealtime, sm->now)
+      let id = sm.native->Native.startBlockHashes(isRealtime)
       sm.requests->Map.set(
         id,
         {
