@@ -6,21 +6,6 @@ open Vitest
 // id of its own: two chains can be handed the same one, and a chain that
 // committed behind its sibling is handed an id the sibling has already used.
 
-type counter = {
-  id: string,
-  count: bigint,
-  @as("chainId") chainId: int,
-}
-
-type counterOps = {set: {"id": string, "count": bigint} => unit}
-type handlerContext = {
-  @as("Counter") counter: counterOps,
-  @as("Total") total: counterOps,
-}
-
-let asContext = (context: Internal.handlerContext) =>
-  context->(Utils.magic: Internal.handlerContext => handlerContext)
-
 let chainYaml = chainId =>
   `
   - id: ${chainId->Int.toString}
@@ -55,21 +40,26 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:${chainYaml(100)}${chainYaml(1337)}
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count });
+  context.Total.set({ id: "total", count: event.params.count });
+});
 `,
 )
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let setCounterAndTotal = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->asContext
-    context.counter.set({"id": "total", "count": count})
-    context.total.set({"id": "total", "count": count})
-  },
+  params: dict{"count": count->(Utils.magic: bigint => unknown)},
 }
 
 // Installed by `mapStorage`, which is an argument to the test rather than part

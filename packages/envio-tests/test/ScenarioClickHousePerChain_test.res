@@ -46,20 +46,23 @@ type Counter {
   count: BigInt!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.value });
+});
+`,
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
-type counter = {id: string, count: bigint}
-type counterOps = {set: counter => unit}
-type counterContext = {@as("Counter") counter: counterOps}
+external toUnknown: bigint => unknown = "%identity"
 
-let setCounter = (~count) => {
-  MockSource.blockNumber: 5,
+let setCounter = (~count): MockSource.itemMock => {
+  event: "Token.Transfer",
+  blockNumber: 5,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-    context.counter.set({id: "total", count})
-  },
+  params: dict{"value": count->toUnknown},
 }
 
 describe("Scenario ClickHouse per-chain entity", () => {
