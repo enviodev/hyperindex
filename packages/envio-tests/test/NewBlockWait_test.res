@@ -108,11 +108,9 @@ describe("Waiting for the first height", () => {
     "Backs a failing height poll off further each time, starting over after an answer",
     ~sources=[{chain: 1337, pollingInterval: 1}],
     ~sourceTiming={
-      getHeightRetryInterval: SourceManager.makeGetHeightRetryInterval(
-        ~initialRetryInterval=4,
-        ~backoffMultiplicative=2,
-        ~maxRetryInterval=10,
-      ),
+      heightRetryInitialMillis: 4,
+      heightRetryMultiplier: 2,
+      heightRetryMaxMillis: 10,
     },
     async (~t, ~indexer, ~source) => {
       let sync = source(1337)
@@ -141,11 +139,9 @@ describe("Waiting for the first height", () => {
     "Keeps polling a healthy source at its own interval while another one's polls fail",
     ~sources=[{chain: 1337, pollingInterval: 1}, {chain: 1337, pollingInterval: 1}],
     ~sourceTiming={
-      getHeightRetryInterval: SourceManager.makeGetHeightRetryInterval(
-        ~initialRetryInterval=4,
-        ~backoffMultiplicative=2,
-        ~maxRetryInterval=10,
-      ),
+      heightRetryInitialMillis: 4,
+      heightRetryMultiplier: 2,
+      heightRetryMaxMillis: 10,
     },
     async (~t, ~indexer, ~source) => {
       let failing = source(1337)

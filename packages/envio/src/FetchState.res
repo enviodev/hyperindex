@@ -1954,6 +1954,13 @@ type nextQuery =
   | NothingToQuery
   | Ready(array<query>)
 
+// What a chain is dispatched to do: one with nothing to query is not dispatched.
+module Dispatched = {
+  type t =
+    | WaitingForNewBlock
+    | Ready(array<query>)
+}
+
 let startFetchingQueries = ({optimizedPartitions}: t, ~queries: array<query>) => {
   for qIdx in 0 to queries->Array.length - 1 {
     let q = queries->Array.getUnsafe(qIdx)

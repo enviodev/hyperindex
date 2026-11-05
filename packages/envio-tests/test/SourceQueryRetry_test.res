@@ -295,6 +295,22 @@ describe("Items query retries on a single source", () => {
     },
   )
 
+  let thrown = []
+  scenario->Scenario.it(
+    "Stops the indexer on a query that throws rather than rejects, as on one that rejects",
+    // Without getItemsOrThrow, the mock's call throws before returning a promise.
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow]}],
+    ~onError=errHandler => thrown->Array.push(errHandler->ErrorHandling.toExn)->ignore,
+    async (~t, ~indexer as _, ~source) => {
+      let sync = source(1337)
+      sync.resolveGetHeightOrThrow(100)
+      await Scenario.waitUntil(() => thrown->Array.length > 0, ~message="the indexer to stop")
+      t.expect(
+        thrown->Array.map(exn => (exn->(Utils.magic: exn => {"message": string}))["message"]),
+      ).toEqual(["source.getItemsOrThrow not implemented"])
+    },
+  )
+
   let stopped = []
   scenario->Scenario.it(
     "Stops the indexer with an error the source doesn't classify",

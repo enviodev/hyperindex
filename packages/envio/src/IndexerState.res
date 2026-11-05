@@ -357,10 +357,16 @@ settleStalledOnFetch = (state: t) =>
   | None => ()
   }
 
+let shutDownSources = (state: t) =>
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Dict.forEach(chainState => chainState->ChainState.sourceManager->SourceManager.shutdown)
+
 let errorExit = (state: t, errHandler) =>
   if !state.isStopped {
     state->settleStalledOnFetch
     state.isStopped = true
+    state->shutDownSources
     state.onError(errHandler)
   }
 
@@ -371,6 +377,7 @@ let unexpectedErrorMsg = "Indexer has failed with an unexpected error"
 let stop = (state: t) => {
   state->settleStalledOnFetch
   state.isStopped = true
+  state->shutDownSources
 }
 
 let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>

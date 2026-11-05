@@ -4,11 +4,17 @@
 // names a timer in that clock's timeline; the real clock ignores it.
 type timer
 
+// The addon's handle on a virtual clock, for timers Rust arms itself.
+type native
+
 type t = {
   now: unit => float,
   setTimeout: (~label: string, unit => unit, int) => timer,
   clearTimeout: timer => unit,
   random: unit => float,
+  // Set on a virtual clock: Rust code given this clock sleeps on the same
+  // timeline. Absent, Rust runs on real time.
+  native?: native,
 }
 
 // Test-only. Set while a test drives a run on virtual time, so code that reaches

@@ -42,20 +42,11 @@ type retry =
 // Sources that can serve historical sync, primaries first - the same ordering a
 // backfill would use. A realtime-only source is left out: it isn't what this
 // chain reads its history from.
-let candidateSources = (sources: array<Source.t>) => {
-  let hasRealtime = sources->Array.some(source => source.sourceFor === Realtime)
-  let roleOf = (source: Source.t) =>
-    SourceManager.getSourceRole(~sourceFor=source.sourceFor, ~isRealtime=false, ~hasRealtime)
-  sources
-  ->Array.filter(source => roleOf(source)->Option.isSome)
-  ->Array.toSorted((a, b) =>
-    switch (roleOf(a), roleOf(b)) {
-    | (Some(Primary), Some(Secondary)) => Ordering.less
-    | (Some(Secondary), Some(Primary)) => Ordering.greater
-    | _ => Ordering.equal
-    }
+let candidateSources = (sources: array<Source.t>) =>
+  Array.concat(
+    sources->Array.filter(source => source.sourceFor === Sync),
+    sources->Array.filter(source => source.sourceFor === Fallback),
   )
-}
 
 // One attempt per source. Trying the next source is not a retry - it's the
 // failover the config asked for - but no source is asked twice.

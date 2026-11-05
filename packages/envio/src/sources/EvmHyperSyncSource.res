@@ -203,6 +203,6 @@ let make = (
     },
     getItemsOrThrow,
     createHeightSubscription: (~clock, ~onHeight, ~onStatus) =>
-      HyperSyncSSE.subscribe(~clock, ~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
+      HeightSubscription.sse(~clock, ~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
   }
 }

@@ -163,6 +163,57 @@ describe("Block-hash lookups", () => {
     ).toEqual([Number(100.)])
   })
 
+  scenario->Scenario.it(
+    "Retries a lookup whose call throws rather than resolving to a failure",
+    // Without getBlockHashes, the mock's call throws before returning a promise.
+    ~sources=[{chain: 1, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      await reorgAtHead(~indexer, ~mock)
+      let retryErrors = () =>
+        indexer.allLogsAsJson()->Array.filterMap(
+          line =>
+            switch (line->Dict.get("msg"), line->Dict.get("err")) {
+            | (Some(String("Failed to fetch block hashes. Retrying.")), Some(Object(err))) =>
+              err->Dict.get("message")
+            | _ => None
+            },
+        )
+      await Scenario.waitUntil(() => retryErrors()->Array.length > 0, ~message="the lookup to fail")
+      await indexer.advanceTime(100)
+      t.expect(retryErrors()).toEqual([
+        String("source.getBlockHashes not implemented"),
+        String("source.getBlockHashes not implemented"),
+      ])
+    },
+  )
+
+  scenario->Scenario.it("Warns once a lookup has failed four times running", ~sources, async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let mock = source(1)
+    await reorgAtHead(~indexer, ~mock)
+    let backoffs = [100, 200, 400, 800, 1600]
+    for retry in 0 to backoffs->Array.length - 1 {
+      await mock->awaitLookup(~count=retry + 1)
+      mock.failGetBlockHashes(JsError.make("connection reset")->(Utils.magic: JsError.t => exn))
+      await indexer.advanceTime(backoffs->Array.getUnsafe(retry))
+    }
+    await mock->finishRollback
+    t.expect(
+      indexer.allLogsAsJson()->Array.filterMap(
+        line =>
+          switch (line->Dict.get("msg"), line->Dict.get("level")) {
+          | (Some(String("Failed to fetch block hashes. Retrying.")), Some(String(level))) =>
+            Some(level)
+          | _ => None
+          },
+      ),
+    ).toEqual(["trace", "trace", "trace", "trace", "warn"])
+  })
+
   scenario->Scenario.it("Counts a lookup that failed behind the head once", ~sources, async (
     ~t,
     ~indexer,

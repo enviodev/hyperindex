@@ -97,14 +97,6 @@ type getBlockHashesResponse = {
   requestStats: array<requestStat>,
 }
 
-exception InconsistentResponse({
-  method: string,
-  blockNumber: option<int>,
-  storedHash: option<string>,
-  receivedHash: option<string>,
-  missingBlockNumbers: array<int>,
-})
-
 // The queried block hasn't reached the backend instance that served the
 // request. Load-balanced backends drift from each other around the head, so
 // this is expected there and resolves by retrying — SourceManager owns the
@@ -125,7 +117,6 @@ exception RateLimited(rateLimited)
 // that ends in a retry still counts towards the source's metrics — the same
 // contract `RateLimited` and `SourceBehindHead` keep.
 type getItemsError =
-  | UnsupportedSelection({message: string})
   | FailedGettingFieldSelection({
       // The cause, where the source has one beyond `message`.
       exn?: exn,
@@ -142,13 +133,6 @@ type getItemsError =
     })
 
 exception GetItemsError(getItemsError)
-
-let getItemsErrorRequestStats = (error: getItemsError) =>
-  switch error {
-  // Raised before anything is requested.
-  | UnsupportedSelection(_) => []
-  | FailedGettingFieldSelection({requestStats}) | FailedGettingItems({requestStats}) => requestStats
-  }
 
 type sourceFor = Sync | Fallback | Realtime
 
@@ -193,6 +177,25 @@ let downReasonLabel = reason =>
   | TransportError => "error"
   | Http(code) => `http-${code->Int.toString}`
   | Unsubscribed => "unsubscribed"
+  }
+
+// The reason a label names, as the addon reports it.
+let downReasonFromLabel = label =>
+  switch label {
+  | "rotated" => Rotated
+  | "closed" => Closed
+  | "stale" => Stale
+  | "unreadable" => Unreadable
+  | "connect-failed" => ConnectFailed
+  | "subscribe-rejected" => SubscribeRejected
+  | "unsubscribed" => Unsubscribed
+  | label =>
+    switch label->String.startsWith("http-")
+      ? label->String.slice(~start=5)->Int.fromString
+      : None {
+    | Some(code) => Http(code)
+    | None => TransportError
+    }
   }
 
 // Connection state of a height subscription, reported by every transport.

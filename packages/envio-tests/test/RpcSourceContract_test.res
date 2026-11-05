@@ -499,7 +499,6 @@ describe("RPC source public contract", () => {
       | RpcSourcePins.FailedGettingFieldSelection({message}) =>
         message->String.includes("gasUsed") ? "unservable" : message
       | FailedGettingItems(_) | BehindHead(_) => "reported the transient miss instead"
-      | UnsupportedSelection(message) => message
       },
     ).toEqual("unservable")
   })

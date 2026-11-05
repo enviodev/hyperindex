@@ -30,11 +30,11 @@ type Gravatar {
 
 let fail = (mock: MockSource.t) => mock.rejectGetHeightOrThrow(JsError.make("height unavailable"))
 
-let ramp = SourceManager.makeGetHeightRetryInterval(
-  ~initialRetryInterval=50,
-  ~backoffMultiplicative=2,
-  ~maxRetryInterval=10_000,
-)
+let ramp: SourceManager.timing = {
+  heightRetryInitialMillis: 50,
+  heightRetryMultiplier: 2,
+  heightRetryMaxMillis: 10_000,
+}
 
 describe("Polling only for someone", () => {
   scenario->Scenario.it(
@@ -158,17 +158,19 @@ describe("Polling behind a stream", () => {
       mock.triggerHeightSubscription(101)
       mock.resolveGetHeightOrThrow(101)
       mock.setAutoHeight(101)
-      // Still distrusted, it would poll every 5ms. The one poll is the stall
-      // timeout landing at 200ms and distrusting it afresh.
-      await indexer.advanceTime(30)
+      // Still distrusted, it would poll on its 5ms cadence. The one poll is the
+      // stall timeout landing at 200ms and distrusting it afresh.
+      await indexer.advanceTime(2)
       await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(28)
+      await mock.expectNewHeightCalls(0)
     },
   )
 
   scenario->Scenario.it(
     "Keeps polling a new connection until a poll made after it accounts for its head",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 5}],
-    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
+    ~sourceTiming={heightRetryInitialMillis: 1, heightRetryMaxMillis: 1},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
@@ -252,7 +254,7 @@ describe("Polling behind a stream", () => {
   scenario->Scenario.it(
     "Sits out the backoff when the stream drops while polls are failing",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
-    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 10_000},
+    ~sourceTiming={heightRetryInitialMillis: 10_000, heightRetryMaxMillis: 10_000},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
@@ -269,7 +271,7 @@ describe("Polling behind a stream", () => {
   scenario->Scenario.it(
     "Keeps polling when a replaced connection's catch-up lands late",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 5}],
-    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
+    ~sourceTiming={heightRetryInitialMillis: 1, heightRetryMaxMillis: 1},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
@@ -295,7 +297,7 @@ describe("Height poll failures", () => {
   scenario->Scenario.it(
     "Gives up on a poll that never answers and polls again",
     ~sources=[{chain: 1337, pollingInterval: 10_000}],
-    ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 1},
+    ~sourceTiming={heightPollTimeout: 50, heightRetryInitialMillis: 1, heightRetryMaxMillis: 1},
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await mock.expectNewHeightCalls(1)
@@ -311,7 +313,7 @@ describe("Height poll failures", () => {
   scenario->Scenario.it(
     "Waits the whole poll timeout before giving up on a poll",
     ~sources=[{chain: 1337, pollingInterval: 10_000}],
-    ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 1},
+    ~sourceTiming={heightPollTimeout: 50, heightRetryInitialMillis: 1, heightRetryMaxMillis: 1},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await mock.expectNewHeightCalls(1)
@@ -326,9 +328,60 @@ describe("Height poll failures", () => {
   )
 
   scenario->Scenario.it(
+    "Reports a height call that throws rather than rejects as an error, and backs off",
+    // Without getHeightOrThrow, the mock's call throws before returning a promise.
+    ~sources=[{chain: 1337, methods: [#getItemsOrThrow]}],
+    ~sourceTiming={heightRetryInitialMillis: 100, heightRetryMaxMillis: 100},
+    async (~t, ~indexer, ~source as _) => {
+      await indexer.advanceTime(250)
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filterMap(
+          ({msg, params}) =>
+            switch params->Dict.get("err") {
+            | Some(Object(err)) => Some((msg, err->Dict.get("message")))
+            | _ => None
+            },
+        ),
+      ).toEqual(
+        Array.make(
+          ~length=3,
+          (
+            "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.",
+            Some(JSON.String("source.getHeightOrThrow not implemented")),
+          ),
+        ),
+      )
+    },
+  )
+
+  scenario->Scenario.it(
+    "Ignores a failure that arrives after the poll was given up on",
+    ~sources=[{chain: 1337, pollingInterval: 10_000}],
+    ~sourceTiming={
+      heightPollTimeout: 50,
+      heightRetryInitialMillis: 10_000,
+      heightRetryMaxMillis: 10_000,
+    },
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1337)
+      await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(80)
+      // The timeout already earned the backoff; failing late earns nothing more.
+      mock->fail
+      await indexer.advanceTime(0)
+      await mock.expectNewHeightCalls(0)
+      t.expect(indexer->heightRetryIntervals).toEqual(["10000"])
+    },
+  )
+
+  scenario->Scenario.it(
     "Uses a height that answers after the poll was given up on",
     ~sources=[{chain: 1337, pollingInterval: 10_000}],
-    ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 10_000},
+    ~sourceTiming={
+      heightPollTimeout: 50,
+      heightRetryInitialMillis: 10_000,
+      heightRetryMaxMillis: 10_000,
+    },
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await mock.expectNewHeightCalls(1)
@@ -343,7 +396,7 @@ describe("Height poll failures", () => {
   scenario->Scenario.it(
     "Lets any answer reset the poll backoff, even one that proves no connection",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 5}],
-    ~sourceTiming={getHeightRetryInterval: ramp},
+    ~sourceTiming=ramp,
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
@@ -369,7 +422,7 @@ describe("Height poll failures", () => {
   scenario->Scenario.it(
     "Resets the poll backoff when a push recovers the stream after failed polls",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
-    ~sourceTiming={getHeightRetryInterval: ramp},
+    ~sourceTiming=ramp,
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
@@ -394,7 +447,7 @@ describe("Height poll failures", () => {
   scenario->Scenario.it(
     "Keeps the backoff a failing endpoint earned when its stream flaps",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
-    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 10_000},
+    ~sourceTiming={heightRetryInitialMillis: 10_000, heightRetryMaxMillis: 10_000},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
@@ -428,7 +481,7 @@ describe("Height poll failures", () => {
   scenario->Scenario.it(
     "Drops the backoff when a push shows the source answering after all",
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10_000}],
-    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 60_000},
+    ~sourceTiming={heightRetryInitialMillis: 60_000, heightRetryMaxMillis: 60_000},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await reach(~sync=mock)
@@ -477,6 +530,29 @@ describe("Height stream warnings", () => {
       mock.setHeightSubscriptionStatus(Live)
       mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected}))
       t.expect(indexer->warningReasons).toEqual([])
+    },
+  )
+
+  scenario->Scenario.it(
+    "Says once that a stream sends frames nobody can read, with the frame",
+    ~sources=[{chain: 1337, methods: streaming}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1337)
+      await reach(~sync=mock)
+      // Each reconnect reads the same garbled frame again.
+      for _ in 1 to 2 {
+        mock.setHeightSubscriptionStatus(Live)
+        mock.setHeightSubscriptionStatus(Down({reason: Unreadable, detail: "garbled"}))
+      }
+      t.expect(
+        indexer.infoAndAboveLogs()->Array.filterMap(
+          ({params}) =>
+            switch (params->Dict.get("reason"), params->Dict.get("detail")) {
+            | (Some(reason), Some(detail)) => Some((reason, detail))
+            | _ => None
+            },
+        ),
+      ).toEqual([(JSON.String("unreadable"), JSON.String("garbled"))])
     },
   )
 })

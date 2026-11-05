@@ -692,7 +692,7 @@ let dispatch = (
   ~executeQuery,
   ~waitForNewBlock,
   ~onNewBlock,
-  ~action: FetchState.nextQuery,
+  ~action: FetchState.Dispatched.t,
   ~stateId,
 ) =>
   cs.sourceManager->SourceManager.dispatch(

@@ -179,10 +179,9 @@ describe("Resuming a backfill that never finalized", () => {
       // replaced rather than left to time out. A re-parked waiter is one the next
       // head still reaches, so answering the poll that follows the flip has to
       // put the chain back to work on the range it opened up.
-      // Both runs' polls up to the flip.
+      // The resumed run's poll, still out. The first run stopped polling when
+      // it stopped.
       await source.expectNewHeightCallsAtLeast(1)
-      await restarted.advanceTime(1000)
-      await source.expectNewHeightCalls(1)
       source.resolveGetHeightOrThrow(200)
       await source.expectItemsQueries([{fromBlock: 101, reply: LeavePending}])
 

@@ -350,6 +350,8 @@ let it = (
   name,
   ~unsupported=[],
   ~sources: array<sourceMock>=[],
+  // Leaves every chain on the source its YAML names. See `run`.
+  ~yamlSources=?,
   // Shortens the stall, recovery and polling windows a test would otherwise
   // have to wait out in real time.
   ~sourceTiming=?,
@@ -386,6 +388,7 @@ let it = (
       async (t: Vitest.testContext) =>
         await scenario->run(
           ~sources,
+          ~yamlSources?,
           ~sourceTiming?,
           ~virtualTime?,
           ~targetBufferSize?,

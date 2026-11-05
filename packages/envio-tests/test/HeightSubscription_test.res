@@ -211,7 +211,15 @@ describe("Height subscription", () => {
       await mock.expectItemsQueries([
         {
           fromBlock: 101,
-          reply: Fail(Source.GetItemsError(UnsupportedSelection({message: "test disable"}))),
+          reply: Fail(
+            Source.GetItemsError(
+              FailedGettingFieldSelection({
+                message: "test disable",
+                blockNumber: 101,
+                requestStats: [],
+              }),
+            ),
+          ),
         },
       ])
       await fallback->answerQuery(~fromBlock=101, ~toBlock=101)
@@ -318,7 +326,8 @@ describe("Height subscription", () => {
     ~sources=[{chain: 1337, methods: streaming, pollingInterval: 10}],
     ~sourceTiming={
       newBlockStallTimeoutRealtime: 5_000,
-      getHeightRetryInterval: (~retry as _) => 300,
+      heightRetryInitialMillis: 300,
+      heightRetryMaxMillis: 300,
     },
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
@@ -445,7 +454,8 @@ describe("Height subscription", () => {
       newBlockStallTimeoutRealtime: 5_000,
       // Retry at the polling cadence, so this stays about whether the loop is
       // still running rather than about how far it backs off.
-      getHeightRetryInterval: (~retry as _) => 20,
+      heightRetryInitialMillis: 20,
+      heightRetryMaxMillis: 20,
     },
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
@@ -689,6 +699,21 @@ describe("Height subscription", () => {
         ([("-", "0")], []),
         ([("-", "1")], []),
       ))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Counts a connection a transport reports live twice as one connect",
+    ~sources=[{chain: 1337, methods: streaming}],
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1337)
+      await reachRealtime(~sync=mock)
+      mock.setHeightSubscriptionStatus(Live)
+      mock.setHeightSubscriptionStatus(Live)
+      // The poll the backfill left in flight covers both: neither sends a
+      // catch-up of its own.
+      await mock.expectNewHeightCalls(0)
+      t.expect(await indexer->streamMetrics).toEqual(([("-", "1")], []))
     },
   )
 
