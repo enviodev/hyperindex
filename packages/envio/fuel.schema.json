@@ -241,7 +241,7 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "Name of the event in the HyperIndex generated code",
+          "description": "Name of the event in the generated types",
           "type": "string"
         },
         "type": {
