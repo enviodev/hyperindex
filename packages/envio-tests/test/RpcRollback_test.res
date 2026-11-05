@@ -141,6 +141,7 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
     addressStore: sourceAddressStore,
     blockStore,
     transactionStore,
+    maxAddressesPerRequest: Env.maxAddrInPartition,
   })
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>

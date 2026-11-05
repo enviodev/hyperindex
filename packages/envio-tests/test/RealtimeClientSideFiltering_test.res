@@ -145,4 +145,78 @@ describe("Realtime client-side filtering of dynamic contracts", () => {
       ).toEqual(([(301, 0), (301, 1)], []))
     },
   )
+
+  scenario->Scenario.it(
+    "resumes a realtime chain by address until it is back at the head",
+    ~sources=[{chain: 1337}],
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      sourceMock.resolveGetHeightOrThrow(300)
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [{blockNumber: 10, logIndex: 0, contractRegister: register([first, second])}],
+            latestFetchedBlockNumber: 300,
+          }),
+        },
+      ])
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 10,
+          address: first->Address.toString,
+          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+        },
+        {
+          fromBlock: 10,
+          address: second->Address.toString,
+          reply: Respond({items: [], latestFetchedBlockNumber: 300}),
+        },
+      ])
+      await indexer.waitUntilReady()
+
+      // Down for 20 blocks: the gap is backfill, so it keeps the addresses.
+      let _ = await indexer.restart()
+      sourceMock.resolveGetHeightOrThrow(320)
+      // The partitions may go out one after another, so each is answered as it comes.
+      let gapAddresses = []
+      for _ in 1 to 3 {
+        await sourceMock.expectItemsQueries([
+          {
+            fromBlock: 301,
+            where: query => query->MockSource.addresses != [],
+            reply: RespondWith(
+              query => {
+                gapAddresses->Array.push(query->MockSource.addresses)->ignore
+                {items: [], latestFetchedBlockNumber: 320, knownHeight: 320}
+              },
+            ),
+          },
+        ])
+      }
+
+      // Back at the head, the chain goes address-free.
+      sourceMock.resolveGetHeightOrThrow(321)
+      await sourceMock.expectItemsQueries([
+        {
+          fromBlock: 321,
+          where: hasAddresses([]),
+          reply: Respond({items: [], latestFetchedBlockNumber: 321, knownHeight: 321}),
+        },
+      ])
+
+      let lowercase = addresses =>
+        addresses->Array.map(address => address->Address.toString->String.toLowerCase)
+      t.expect(
+        (
+          gapAddresses
+          ->Array.map(lowercase)
+          ->Array.toSorted((a, b) => Array.compare(a, b, String.compare)),
+          sourceMock.pendingItemsQueries,
+        ),
+        ~message="the gap is fetched one address per query, and the head block is the chain's one address-free query",
+      ).toEqual(([[first], [second], [configAddress]]->Array.map(lowercase), []))
+    },
+  )
 })

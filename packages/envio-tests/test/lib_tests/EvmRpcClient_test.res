@@ -21,6 +21,7 @@ let makeClient = (
     ~maxConcurrentRequests?,
     ~eventRegistrations?,
     ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
+    ~maxAddressesPerRequest=Env.maxAddrInPartition,
   )
 
 let heightCall = (~reply, ~headers=?) =>

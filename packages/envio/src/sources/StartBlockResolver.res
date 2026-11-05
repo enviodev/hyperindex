@@ -25,6 +25,7 @@ let makeProbeSources = (chainConfig: Config.chain, ~logger, ~lowercaseAddresses)
     ~blockStore=BlockStore.make(~ecosystem=chainConfig.ecosystem),
     ~transactionStore=TransactionStore.make(~ecosystem=chainConfig.ecosystem),
     ~logger,
+    ~maxAddressesPerRequest=Env.maxAddrInPartition,
   )
 }
 

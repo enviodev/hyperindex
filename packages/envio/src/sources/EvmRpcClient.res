@@ -98,7 +98,7 @@ let make = (
   ~eventRegistrations=[],
   ~onBlockRegistrations=[],
   ~addressStore,
-  ~maxAddressesPerRequest=Env.maxAddrInPartition,
+  ~maxAddressesPerRequest,
 ) =>
   Core.getAddon().evmRpcClient->classNew(
     {

@@ -19,7 +19,7 @@ type options = {
   headers?: dict<string>,
   // How many addresses one `eth_getLogs` may carry when an address-free query
   // the provider couldn't answer is read again by address.
-  maxAddressesPerRequest?: int,
+  maxAddressesPerRequest: int,
 }
 
 let make = (
@@ -36,7 +36,7 @@ let make = (
     transactionStore,
     ?ws,
     ?headers,
-    ?maxAddressesPerRequest,
+    maxAddressesPerRequest,
   }: options,
 ): t => {
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
@@ -57,7 +57,7 @@ let make = (
     ~syncConfig,
     ~headers?,
     ~addressStore,
-    ~maxAddressesPerRequest?,
+    ~maxAddressesPerRequest,
   )
 
   let getItemsOrThrow = async (

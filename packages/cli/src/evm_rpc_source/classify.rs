@@ -26,24 +26,25 @@ pub fn is_response_too_large_message(message: &str) -> bool {
     TOO_LARGE_PATTERNS.iter().any(|re| re.is_match(message))
 }
 
-// Caps on what one answer may hold, beyond the range-shrinking patterns above:
-// Alchemy's "Log response size exceeded" and the like.
-static RESPONSE_SIZE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)response size|result size|too many results").unwrap());
-
-// Providers reuse result-cap codes such as -32005 for throttling, and a request
-// split into more requests is the wrong answer to being throttled.
+// Caps on how much one answer may hold, as providers word them. Matched by
+// message rather than by code: -32005 also means throttling on geth-based
+// endpoints, and a request split into more requests is the wrong answer to
+// that. Range-width limits are left out too, since asking by address doesn't
+// narrow the range.
+static RESULT_CAP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)more than \d+ (logs|results)|\d+ logs returned|too many (logs|results)|exceeds max results|response size|result size|response too large|logs matched by query exceeds limit",
+    )
+    .unwrap()
+});
 static RATE_LIMITED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)rate.?limit|too many requests|request rate|compute units|throughput").unwrap()
 });
 
 /// Whether a provider refused an `eth_getLogs` for what the answer would hold,
-/// as opposed to throttling the caller.
-pub fn is_result_cap_error(code: i64, message: &str) -> bool {
-    !RATE_LIMITED.is_match(message)
-        && (code == -32005
-            || is_response_too_large_message(message)
-            || RESPONSE_SIZE.is_match(message))
+/// as opposed to throttling the caller or limiting the range.
+pub fn is_result_cap_message(message: &str) -> bool {
+    RESULT_CAP.is_match(message) && !RATE_LIMITED.is_match(message)
 }
 
 // Unknown provider: "retry with the range 123-456"
@@ -222,27 +223,24 @@ mod tests {
     }
 
     #[test]
-    fn result_cap_errors_exclude_throttling() {
-        let errors = [
-            (-32005, "query returned more than 10000 results"),
-            (-32005, "limit exceeded"),
-            (
-                -32602,
-                "Log response size exceeded. You can make eth_getLogs requests with up to a 2K \
-                 block range and no limit on the response size",
-            ),
-            (-32000, "too many results"),
-            (-32005, "project ID request rate exceeded"),
-            (
-                -32005,
-                "Your app has exceeded its compute units per second capacity",
-            ),
-            (429, "Too Many Requests"),
-            (-32000, "header not found"),
+    fn result_caps_exclude_throttling_and_range_limits() {
+        let messages = [
+            "query returned more than 10000 results",
+            "Log response size exceeded. You can make eth_getLogs requests with up to a 2K \
+             block range and no limit on the response size",
+            "too many results",
+            "More than 50000 logs returned",
+            // Geth-based endpoints' throttling, under the same -32005 code.
+            "limit exceeded",
+            "project ID request rate exceeded",
+            "Your app has exceeded its compute units per second capacity",
+            "Too Many Requests",
+            "block range is too wide",
+            "header not found",
         ];
         assert_eq!(
-            errors.map(|(code, message)| is_result_cap_error(code, message)),
-            [true, true, true, true, false, false, false, false]
+            messages.map(is_result_cap_message),
+            [true, true, true, true, false, false, false, false, false, false]
         );
     }
 }

@@ -121,6 +121,7 @@ let makeRpcSource = () =>
     addressStore,
     blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
     transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+    maxAddressesPerRequest: Env.maxAddrInPartition,
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {

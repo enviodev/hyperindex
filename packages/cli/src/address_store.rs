@@ -1288,17 +1288,22 @@ impl AddressSet {
         }
     }
 
-    /// Every address the store holds for `contract_names`, in set order, as
-    /// consecutive sets of at most `max_addresses` each.
+    /// Every address the store holds for `contract_names`, each contract on
+    /// its own, in set order, as sets of at most `max_addresses` each. A chunk
+    /// holding one contract becomes one request rather than one per contract.
     pub fn contract_chunks(&self, contract_names: &[String], max_addresses: usize) -> Vec<Self> {
         let store = self.store.read().unwrap();
-        let contract_idxs: Vec<u32> = contract_names
+        let ids_by_contract: Vec<Vec<u64>> = contract_names
             .iter()
             .filter_map(|name| store.contract_idx(name))
+            .map(|contract_idx| {
+                store.sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
+            })
             .collect();
-        let ids = store.sorted_live_ids(0, |entry| contract_idxs.contains(&entry.contract_idx));
         drop(store);
-        ids.chunks(max_addresses.max(1))
+        ids_by_contract
+            .iter()
+            .flat_map(|ids| ids.chunks(max_addresses.max(1)))
             .map(|chunk| Self::new(self.store.clone(), chunk.to_vec()))
             .collect()
     }
@@ -2021,7 +2026,7 @@ mod tests {
     }
 
     #[test]
-    fn contract_chunks_cover_the_named_contracts_in_set_order() {
+    fn contract_chunks_split_each_contract_on_its_own_in_set_order() {
         let store = store();
         store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 100), reg(C, "D", 200)]);
         let chunks = |names: &[&str], max_addresses| {
@@ -2045,7 +2050,9 @@ mod tests {
                 chunks(&["Unknown"], 5)
             ),
             (
-                vec![vec![B.to_string(), C.to_string()], vec![A.to_string()]],
+                // A chunk holds one contract's addresses, so a request built
+                // from it carries a single contract's selection.
+                vec![vec![B.to_string(), A.to_string()], vec![C.to_string()]],
                 vec![vec![B.to_string(), A.to_string()]],
                 Vec::<Vec<String>>::new(),
             )

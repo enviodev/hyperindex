@@ -48,7 +48,10 @@ impl BuiltLogSelection {
 /// addresses of its client-filtered contracts.
 pub(crate) struct SelectionByAddress {
     pub contract_names: Vec<String>,
-    pub log_selections: Vec<BuiltLogSelection>,
+    /// Its topic-only registrations, still address-free.
+    pub address_free: Vec<BuiltLogSelection>,
+    /// Its client-filtered registrations, per chunk of addresses.
+    pub by_address: Vec<BuiltLogSelection>,
 }
 
 /// A topic filter's values per position, as a query sends them.
@@ -311,21 +314,23 @@ impl SelectionBuilder {
             }
         }
         let server_side = Default::default();
-        let mut log_selections = if origin.topic_only_registrations.is_empty() {
+        let address_free = if origin.topic_only_registrations.is_empty() {
             Vec::new()
         } else {
             self.build(&origin.topic_only_registrations, address_set, &server_side)?
                 .log_selections
         };
+        let mut by_address = Vec::new();
         for chunk in address_chunks(&contract_names) {
-            log_selections.extend(
+            by_address.extend(
                 self.build(&origin.client_filtered_registrations, &chunk, &server_side)?
                     .log_selections,
             );
         }
         Ok(SelectionByAddress {
             contract_names,
-            log_selections,
+            address_free,
+            by_address,
         })
     }
 
@@ -679,10 +684,10 @@ mod tests {
 
     #[test]
     fn by_address_keeps_wildcards_address_free_and_splits_the_rest_per_chunk() {
-        // ADDR sorts before ADDR_2, so the one-address chunks come out C's
-        // first, then D's.
+        // C's two addresses take a one-address chunk each, then D's.
         const ADDR_2: &str = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
-        let (_store, set) = addresses(&[("C", &[ADDR]), ("D", &[ADDR_2])]);
+        const ADDR_3: &str = "0x0000000000000000000000000000000000000003";
+        let (_store, set) = addresses(&[("C", &[ADDR, ADDR_2]), ("D", &[ADDR_3])]);
         let origin = AddressFreeOrigin {
             topic_only_registrations: vec![2],
             client_filtered_registrations: vec![0, 1],
@@ -692,22 +697,31 @@ mod tests {
                 set.contract_chunks(contract_names, 1)
             })
             .unwrap();
+        let topic0 = |sighash: &str| vec![vec![sighash.to_string()], vec![], vec![], vec![]];
         assert_eq!(
-            (by_address.contract_names, by_address.log_selections),
+            (
+                by_address.contract_names,
+                by_address.address_free,
+                by_address.by_address
+            ),
             (
                 vec!["C".to_string(), "D".to_string()],
+                vec![BuiltLogSelection {
+                    emitters: any(&[2], &[]),
+                    topics: topic0(SIGHASH_B),
+                }],
                 vec![
                     BuiltLogSelection {
-                        emitters: any(&[2], &[]),
-                        topics: vec![vec![SIGHASH_B.to_string()], vec![], vec![], vec![]],
-                    },
-                    BuiltLogSelection {
                         emitters: listed(&[ADDR]),
-                        topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+                        topics: topic0(SIGHASH_A),
                     },
                     BuiltLogSelection {
                         emitters: listed(&[ADDR_2]),
-                        topics: vec![vec![SIGHASH_B.to_string()], vec![], vec![], vec![]],
+                        topics: topic0(SIGHASH_A),
+                    },
+                    BuiltLogSelection {
+                        emitters: listed(&[ADDR_3]),
+                        topics: topic0(SIGHASH_B),
                     },
                 ],
             )
@@ -734,7 +748,7 @@ mod tests {
                     set.contract_chunks(contract_names, 10)
                 })
                 .unwrap()
-                .log_selections
+                .by_address
         };
         assert_eq!(
             (

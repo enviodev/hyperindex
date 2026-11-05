@@ -277,19 +277,15 @@ describe("Realtime address-free reads", () => {
           await indexer.waitUntilReady()
           let backfill = takeRpcCalls()
 
-          rpcHeight := 6
-          await indexer->waitForSeen("6-1")
-          let cappedBlock = takeRpcCalls()
-
+          // Two new blocks at once, the first of them over the cap.
           rpcHeight := lastBlock
           await indexer->waitForSeen("7-1")
-          let nextBlock = takeRpcCalls()
+          let headBlocks = takeRpcCalls()
 
           t.expect((
             await indexer->seenIds,
             backfill->Array.filter(call => call->String.includes("Transfer any")),
-            cappedBlock,
-            nextBlock,
+            headBlocks,
             indexer.allLogsAsJson()->Array.filterMap(
               line =>
                 switch (line->Dict.get("msg"), line->Dict.get("contractNames")) {
@@ -303,17 +299,21 @@ describe("Realtime address-free reads", () => {
             ["3-0", "3-1", "6-1", "7-0", "7-1"],
             [],
             [
-              // The read over the cap, split up: the wildcard event alone,
-              // still address-free, and the Pair events by the two addresses
-              // registered before the block, one per request.
+              // The capped block alone, still over the cap, is split up: the
+              // wildcard event alone, still address-free, and the Pair events
+              // by the two addresses registered before it, one per request.
               "6-6 PairCreated any ok",
               "6-6 PairCreated,Transfer any capped",
               `6-6 Transfer ${pair1} ok`,
               `6-6 Transfer ${pair2} ok`,
               // The contract registered in the block, caught up by its address.
               `6-6 Transfer ${pair3} ok`,
+              // Over the cap on two blocks: the range shrinks before anything
+              // is asked by address.
+              "6-7 PairCreated,Transfer any capped",
+              // The next block is asked address-free again.
+              "7-7 PairCreated,Transfer any ok",
             ],
-            ["7-7 PairCreated,Transfer any ok"],
             // One trace line for the one fallback, counting its three requests.
             [
               (

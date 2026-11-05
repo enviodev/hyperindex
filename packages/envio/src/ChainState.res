@@ -333,7 +333,6 @@ let makeInternal = (
     | Evm => Some(config.clientFilterAddressThreshold)
     | Fuel | Svm => None
     },
-    ~clientFilterAllDynamicContracts=isRealtime,
     ~isResumed,
   )
 
@@ -1348,11 +1347,11 @@ let markReady = (cs: t, ~readyAt) =>
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
   }
 
-// Realtime fetches each new block in as few queries as possible, of a shape
-// that stays the same while contracts keep being registered: dynamic contracts
-// leave the server-side address filter. A chain resuming in realtime gets the
-// same policy from `make`.
-let enterRealtime = (cs: t) =>
+// For a realtime chain at the head: each new block in as few queries as
+// possible, of a shape that stays the same while contracts keep being
+// registered. Its dynamic contracts leave the server-side address filter, for
+// the rest of the run.
+let fetchDynamicContractsAddressFree = (cs: t) =>
   cs.fetchState =
     cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
       ~addressStore=cs.addressStore,

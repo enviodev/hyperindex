@@ -929,7 +929,6 @@ impl EvmRpcClient {
         }
     }
 
-    /// Routes raw logs to the registrations they satisfy and decodes them.
     async fn route_logs(
         raw_logs: Vec<RawLog>,
         set_cache: Arc<SetCache>,

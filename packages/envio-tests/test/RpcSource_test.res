@@ -41,6 +41,7 @@ let makeSource = (
     addressStore,
     blockStore,
     transactionStore,
+    maxAddressesPerRequest: Env.maxAddrInPartition,
   })
 }
 
@@ -1024,6 +1025,7 @@ describe("RpcSource - height subscription", () => {
       blockStore,
       transactionStore,
       ?ws,
+      maxAddressesPerRequest: Env.maxAddrInPartition,
     })
   }
 

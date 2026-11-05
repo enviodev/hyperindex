@@ -10,7 +10,7 @@ let make = (
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
   ~logger: Logger.t,
-  ~maxAddressesPerRequest=Env.maxAddrInPartition,
+  ~maxAddressesPerRequest: int,
 ): array<Source.t> => {
   let chainId = chainConfig.id
   switch chainConfig.sourceConfig {

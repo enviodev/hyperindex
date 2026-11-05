@@ -2733,7 +2733,6 @@ let make = (
   ~blockThrottle=0,
   ~firstEventBlock=None,
   ~clientFilterAddressThreshold=None,
-  ~clientFilterAllDynamicContracts=false,
   ~isResumed=false,
 ): t => {
   let latestFetchedBlock = progressBlockNumber
@@ -2839,12 +2838,12 @@ let make = (
 
   let clientFilterPolicy = {
     addressThreshold: clientFilterAddressThreshold,
-    allDynamicContracts: clientFilterAllDynamicContracts,
+    allDynamicContracts: false,
   }
 
-  // Switch at creation whatever the policy already covers: a config contract
-  // with a large static address list, a dynamic contract restored from a large
-  // persisted set, or every dynamic contract of a chain resuming in realtime.
+  // Switch at creation whatever the threshold already covers: a config
+  // contract with a large static address list, or a dynamic contract restored
+  // from a large persisted set.
   let clientFilteredContracts =
     Utils.Set.make()->switchToClientSideFiltering(
       ~contractNames=registeringSetsByContract->Dict.keysToArray,
