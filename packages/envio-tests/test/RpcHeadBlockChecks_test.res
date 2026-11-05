@@ -48,6 +48,10 @@ type fault =
   // Refuses every eth_getLogs by blockHash, the way publicnode's Polygon
   // endpoint does, while reads by number work.
   | NoBlockHashReads
+  // A lagging replica that refuses a hash it doesn't know with the same
+  // "archive" error, the way publicnode's Base and BSC endpoints do, while it
+  // answers the hashes it has.
+  | LaggingReplicaRefusingAsArchive({block: int, mutable answers: int})
 
 type chain = {mutable height: int, mutable logs: array<ServedEvmChain.log>, mutable fault: fault}
 let chain = {height: backfillHeight, logs: [], fault: Honest}
@@ -104,8 +108,7 @@ let getLogs = (request, filter, ~fault, ~calls) => {
   let matched = chain.logs->Array.filter(log => ServedEvmChain.rpcFilterMatches(filter, log))
   let honest = () => envelope(request, "result", JSON.Array(matched->Array.map(log => rpcLog(log))))
   let touches = block => fromBlock <= block && block <= toBlock
-  switch fault {
-  | NoBlockHashReads if filter->Dict.has("blockHash") =>
+  let archiveRefusal = () =>
     envelope(
       request,
       "error",
@@ -116,6 +119,21 @@ let getLogs = (request, filter, ~fault, ~calls) => {
         },
       ),
     )
+  switch fault {
+  | NoBlockHashReads if filter->Dict.has("blockHash") => archiveRefusal()
+  | LaggingReplicaRefusingAsArchive(lag) if lag.answers > 0 && touches(lag.block) =>
+    lag.answers = lag.answers - 1
+    if filter->Dict.has("blockHash") {
+      archiveRefusal()
+    } else {
+      envelope(
+        request,
+        "result",
+        JSON.Array(
+          matched->Array.filter(log => log.blockNumber < lag.block)->Array.map(log => rpcLog(log)),
+        ),
+      )
+    }
   | LaggingReplica(lag) if lag.answers > 0 && touches(lag.block) =>
     lag.answers = lag.answers - 1
     if filter->Dict.has("blockHash") {
@@ -522,6 +540,23 @@ describe("RPC head block checks", () => {
   })
 
   Async.it(
+    "keeps an event a lagging replica hides behind an archive refusal of its hash",
+    async t => {
+      await runAtHead(
+        ~logs=[event(~blockNumber=22), event(~blockNumber=23)],
+        ~height=23,
+        // Longer than a few retries, so giving up on reads by hash would
+        // accept the replica's empty answer by number.
+        ~fault=LaggingReplicaRefusingAsArchive({block: 22, answers: 12}),
+        ~waitFor="23-0-23",
+        async (~indexer, ~backfill as _, ~head as _) => {
+          t.expect(await indexer->seenIds).toEqual(["22-0-22", "23-0-23", "3-0-3"])
+        },
+      )
+    },
+  )
+
+  Async.it(
     "keeps indexing on a provider that refuses reads by hash, asking again by number",
     async t => {
       await runAtHead(
@@ -533,12 +568,22 @@ describe("RPC head block checks", () => {
           event(~blockNumber=24),
         ],
         ~height=24,
+        // From the start, as the provider does: a source that has answered a
+        // read by hash takes a later refusal as a block it doesn't know yet.
+        ~startupFault=NoBlockHashReads,
         ~fault=NoBlockHashReads,
         ~waitFor="24-0-24",
         async (~indexer, ~backfill as _, ~head) => {
           t.expect((
             await indexer->seenIds,
-            head->Array.filter(call => call->String.startsWith("getLogs")),
+            // Each block is refused by hash on every attempt, and read by
+            // number once the page has been retried long enough.
+            [
+              "getLogs 21-21",
+              "getLogs 23-23",
+              "getLogs block 21",
+              "getLogs block 23",
+            ]->Array.filter(call => !(head->Array.includes(call))),
             indexer.allLogsAsJson()->Array.filterMap(
               line =>
                 switch (line->Dict.get("level"), line->Dict.get("msg")) {
@@ -550,15 +595,7 @@ describe("RPC head block checks", () => {
             ),
           )).toEqual((
             ["22-0-22", "24-0-24", "3-0-3"],
-            [
-              // Block 21 holds no logs at all, so its zero bloom rules nothing
-              // out either.
-              "getLogs 21-21",
-              "getLogs 21-24",
-              "getLogs 23-23",
-              "getLogs block 21",
-              "getLogs block 23",
-            ],
+            [],
             [
               "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
             ],

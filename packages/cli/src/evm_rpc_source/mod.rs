@@ -314,7 +314,15 @@ pub struct EvmRpcClient {
     /// Whether the provider has been seen refusing reads by block hash, which
     /// is said once per source rather than on every block.
     warned_block_hash_refusal: AtomicBool,
+    /// Whether the provider has ever answered a read by block hash, which
+    /// makes any later refusal one of a hash it doesn't know yet.
+    answered_block_hash_read: AtomicBool,
 }
+
+/// How many times a page is retried, a node behind the head taking about a
+/// second over them, before a refusal of reads by hash is taken to mean the
+/// provider doesn't serve them.
+const RETRIES_BEFORE_RECHECKING_BY_NUMBER: i64 = 3;
 
 /// How many blocks a page reads for its block handlers at most: each costs an
 /// `eth_getBlockByNumber`, which the log range's size says nothing about.
@@ -329,6 +337,7 @@ struct PageQuery<'a> {
     to_block: u64,
     reorgable_from: Option<u64>,
     known_height: u64,
+    retry: i64,
     selections: &'a [BuiltLogSelection],
     address_set: &'a AddressSet,
     set_cache: &'a Arc<SetCache>,
@@ -448,6 +457,7 @@ impl EvmRpcClient {
                     .map_err(map_err)?,
             ),
             warned_block_hash_refusal: AtomicBool::new(false),
+            answered_block_hash_read: AtomicBool::new(false),
         })
     }
 
@@ -627,6 +637,7 @@ impl EvmRpcClient {
                 .reorgable_from
                 .map(|reorgable_from| reorgable_from.max(0) as u64),
             known_height: params.known_height.max(0) as u64,
+            retry: params.retry,
             selections: &built.log_selections,
             address_set,
             set_cache: &set_cache,
@@ -1032,6 +1043,12 @@ impl EvmRpcClient {
     /// reads by hash altogether is asked by number instead: that still catches
     /// a range that left the block out, but not a node lagging on every
     /// answer, so it is said once.
+    ///
+    /// Some providers refuse a hash they don't know yet with the same
+    /// "unsupported" error they would give a request they never serve, so that
+    /// refusal is only taken at its word from a source that has never answered
+    /// a read by hash, and only once the page has been retried for longer than
+    /// a node takes to catch up.
     async fn recheck_block(
         &self,
         query: &PageQuery<'_>,
@@ -1044,8 +1061,15 @@ impl EvmRpcClient {
             hash,
         };
         let refusal = match self.request_logs(query, by_hash, selection).await {
-            Ok(found) => return Ok(found),
-            Err(RpcError::JsonRpc { code, message }) if is_unsupported_request(code, &message) => {
+            Ok(found) => {
+                self.answered_block_hash_read.store(true, Ordering::Relaxed);
+                return Ok(found);
+            }
+            Err(RpcError::JsonRpc { code, message })
+                if is_unsupported_request(code, &message)
+                    && !self.answered_block_hash_read.load(Ordering::Relaxed)
+                    && query.retry >= RETRIES_BEFORE_RECHECKING_BY_NUMBER =>
+            {
                 message
             }
             Err(RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_)) => {
