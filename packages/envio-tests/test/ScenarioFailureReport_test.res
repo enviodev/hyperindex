@@ -185,12 +185,12 @@ Mock source for chain 1 at the failure:
 
 Virtual time at the failure: t=0ms, seed 1 (ENVIO_TEST_SEED=1 replays it)
   pending timers:
-    height poll timeout due t=60000ms (in 60000ms), armed t=0ms
+    height poll timeout due t=20000ms (in 20000ms), armed t=0ms
     stall poke due t=60164ms (in 60164ms), armed t=0ms
     stall timeout due t=120000ms (in 120000ms), armed t=0ms
   timeline:
     t=0ms source(1): height call 1 (pending)
-    t=0ms armed height poll timeout for t=60000ms
+    t=0ms armed height poll timeout for t=20000ms
     t=0ms armed stall poke for t=48812ms
     t=0ms armed stall timeout for t=60000ms
     t=0ms source(1): test answered heights with 300
@@ -199,11 +199,11 @@ Virtual time at the failure: t=0ms, seed 1 (ENVIO_TEST_SEED=1 replays it)
     t=0ms cleared stall timeout
     t=0ms source(1): items query 1..100 (partition 0)
     t=0ms source(1): height call 2 (pending)
-    t=0ms armed height poll timeout for t=60000ms
+    t=0ms armed height poll timeout for t=20000ms
     t=0ms armed stall poke for t=60164ms
     t=0ms armed stall timeout for t=120000ms
     t=0ms source(1): items query 101.. (partition 0)
-  Nothing the indexer schedules runs until the test advances time: \`await indexer.advanceTime(60000)\` fires the next timer (height poll timeout).`),
+  Nothing the indexer schedules runs until the test advances time: \`await indexer.advanceTime(20000)\` fires the next timer (height poll timeout).`),
       ),
     )
   })
