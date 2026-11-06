@@ -490,7 +490,8 @@ let make = (
   // where a source has to fail first.
   ~startupHeights: array<startupHeight>=[],
   // How long a height poll may go unanswered before the manager gives up on it.
-  ~nearHeadRequestTimeoutMillis=20_000,
+  // Unset, the default a source without a configured timeout has.
+  ~nearHeadRequestTimeoutMillis=?,
   // What failures call this mock, for a chain with several: the way the test
   // reaches it.
   ~label=?,
@@ -1083,7 +1084,10 @@ let make = (
         poweredByHyperSync: false,
         chainId,
         pollingInterval,
-        requestTimeouts: {nearHeadMillis: nearHeadRequestTimeoutMillis, backfillMillis: 60_000},
+        requestTimeouts: Source.makeRequestTimeouts(
+          ~configuredMillis=nearHeadRequestTimeoutMillis,
+          ~backfillMillis=Source.hyperSyncBackfillTimeoutMillis,
+        ),
         getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
           getBlockHashesCalls->Array.push(blockNumbers)->ignore
           let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
