@@ -111,7 +111,7 @@ describe("generated code under a data source and ABI name no manifest has", () =
       },
     });
 
-    t.expect((await indexer.Pool.getAll()).map((pool) => pool.id)).toEqual([
+    t.expect((await indexer.Pool.getAll()).map((pool) => "0x" + Buffer.from(pool.id).toString("hex"))).toEqual([
       "0x4444444444444444444444444444444444444444",
     ]);
   });

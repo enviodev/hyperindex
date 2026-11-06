@@ -109,7 +109,13 @@ const plain = (row: any) =>
   Object.fromEntries(
     Object.entries(row).map(([key, value]: [string, any]) => [
         key,
-        value instanceof Date ? value.getTime() / 1000 : value === null || value === undefined ? value : String(value),
+        value instanceof Date
+          ? value.getTime() / 1000
+          : value instanceof Uint8Array
+            ? "0x" + Buffer.from(value).toString("hex")
+            : value === null || value === undefined
+              ? value
+              : String(value),
       ]),
   );
 const order = (a: any, b: any) => (a.timestamp === b.timestamp ? (a.token_id < b.token_id ? -1 : 1) : a.timestamp - b.timestamp);

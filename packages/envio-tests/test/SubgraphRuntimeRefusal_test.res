@@ -139,13 +139,14 @@ describe("subgraph runtime", () => {
       },
     });
 
-    const stored = await indexer.Pair.getOrThrow(pair.toLowerCase());
+    const pairId = Uint8Array.from(Buffer.from(pair.slice(2), "hex"));
+    const stored = await indexer.Pair.getOrThrow(pairId);
     t.expect({
       id: stored.id,
       createdAt: stored.createdAt.toISOString(),
       score: stored.score,
     }).toEqual({
-      id: pair.toLowerCase(),
+      id: pairId,
       createdAt: "2023-11-14T22:13:20.000Z",
       score: 7n,
     });
@@ -165,7 +166,8 @@ describe("subgraph runtime", () => {
       },
     });
     t.expect(
-      (await indexer.Pair.getOrThrow("0x0000000000000000000000000000000000000005")).score,
+      (await indexer.Pair.getOrThrow(Uint8Array.from(Buffer.from("0000000000000000000000000000000000000005", "hex"))))
+        .score,
     ).toBe(7n);
   });
 

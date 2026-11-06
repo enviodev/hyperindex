@@ -96,8 +96,10 @@ describe("gravatar subgraph", () => {
       },
     });
 
-    t.expect(await indexer.Gravatar.getOrThrow("0x01000000")).toEqual({
-      id: "0x01000000",
+    // The Bytes id is stored as the bytes too.
+    const id = Uint8Array.from([1, 0, 0, 0]);
+    t.expect(await indexer.Gravatar.getOrThrow(id)).toEqual({
+      id,
       // A Bytes column holds the bytes: subgraph mode runs with
       // bytes_type uint8array.
       owner: Uint8Array.from(Buffer.from(owner.slice(2), "hex")),

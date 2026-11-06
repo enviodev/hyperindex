@@ -100,7 +100,8 @@ describe("event.logIndex bytes", () => {
       },
     });
     const rows = await indexer.Activity.getAll();
-    t.expect(rows.map((row) => [row.id, row.note]).sort()).toEqual([
+    const hex = (id: Uint8Array) => "0x" + Buffer.from(id).toString("hex");
+    t.expect(rows.map((row) => [hex(row.id), row.note]).sort()).toEqual([
       [hash + "7e", "1 0x7e 0x0201"],
       [hash + "bd00", "2 0xbd00 0x0201"],
     ]);
