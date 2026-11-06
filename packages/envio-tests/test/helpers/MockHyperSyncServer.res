@@ -31,6 +31,8 @@ type page = {
   // Defaults to the server's height.
   archiveHeight?: int,
   rollbackGuard?: JSON.t,
+  // How long the server waits before answering.
+  delayMillis?: int,
 }
 
 // A fixed `~port` is for a url that has to be known before the server starts,

@@ -50,6 +50,10 @@ let make = (
         onEventRegistrations,
         addressStore,
         logger,
+        requestTimeouts: Source.makeRequestTimeouts(
+          ~configuredMillis=Env.hyperFuelClientTimeoutMillis,
+          ~backfillMillis=Source.hyperSyncBackfillTimeoutMillis,
+        ),
       }),
     ]
   | Config.SvmSourceConfig({hypersync}) => [
@@ -61,7 +65,10 @@ let make = (
           Utils.magic: array<Internal.onEventRegistration> => array<Internal.svmOnEventRegistration>
         ),
         onBlockRegistrations,
-        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        requestTimeouts: Source.makeRequestTimeouts(
+          ~configuredMillis=Env.hyperSyncClientTimeoutMillis,
+          ~backfillMillis=Source.hyperSyncBackfillTimeoutMillis,
+        ),
         addressStore,
       }),
     ]

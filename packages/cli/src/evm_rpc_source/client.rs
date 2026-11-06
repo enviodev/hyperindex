@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
@@ -63,9 +64,11 @@ struct JsonRpcResponse {
     error: Option<JsonRpcErrorObject>,
 }
 
+/// Cheap to clone into a view with another request timeout: the views share
+/// the connection pool, the turns and the stats.
 pub struct JsonRpcClient {
     http: reqwest::Client,
-    url: String,
+    url: Arc<str>,
     /// Reported back on a timeout, where naming the limit that was hit is the
     /// whole of what the caller can act on.
     request_timeout_millis: u64,
@@ -73,12 +76,12 @@ pub struct JsonRpcClient {
     /// transaction and receipt reads a page fans out to scale with how many logs
     /// its range holds, which no block interval can express: a single dense
     /// block plans thousands of reads.
-    permits: Semaphore,
+    permits: Arc<Semaphore>,
     /// The timing of every request that finished and has not been reported
     /// yet. Requests are billed per source rather than per call, so whichever
     /// call reports next carries what finished since the last one did — a
     /// read that several partitions shared counts once, whoever issued it.
-    stats: Stats,
+    stats: Arc<Stats>,
 }
 
 impl JsonRpcClient {
@@ -102,8 +105,7 @@ impl JsonRpcClient {
         max_concurrent_requests: usize,
         headers: Option<HashMap<String, String>>,
     ) -> Result<Self> {
-        let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(request_timeout_millis));
+        let mut builder = reqwest::Client::builder();
         if let Some(headers) = headers {
             let mut header_map = HeaderMap::with_capacity(headers.len());
             for (name, value) in headers {
@@ -118,11 +120,21 @@ impl JsonRpcClient {
         let http = builder.build().context("build http client")?;
         Ok(Self {
             http,
-            url,
+            url: url.into(),
             request_timeout_millis,
-            permits: Semaphore::new(max_concurrent_requests),
-            stats: Stats::default(),
+            permits: Arc::new(Semaphore::new(max_concurrent_requests)),
+            stats: Arc::default(),
         })
+    }
+
+    pub fn with_request_timeout(&self, request_timeout_millis: u64) -> Self {
+        Self {
+            http: self.http.clone(),
+            url: self.url.clone(),
+            request_timeout_millis,
+            permits: self.permits.clone(),
+            stats: self.stats.clone(),
+        }
     }
 
     /// The requests that finished since the last call, for the caller to
@@ -176,7 +188,10 @@ impl JsonRpcClient {
         });
         let response = self
             .http
-            .post(&self.url)
+            .post(&*self.url)
+            .timeout(std::time::Duration::from_millis(
+                self.request_timeout_millis,
+            ))
             .json(&body)
             .send()
             .await

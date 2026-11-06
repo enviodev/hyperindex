@@ -69,6 +69,7 @@ let make = (
     ~addressSet,
     ~reorgableFrom,
     ~knownHeight,
+    ~isNearHead,
     ~partitionId,
     ~selection: FetchState.selection,
     ~itemsTarget as _,
@@ -101,6 +102,7 @@ let make = (
       {
         fromBlock,
         toBlockCeiling: toBlock,
+        isNearHead,
         partitionId,
         onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
         onBlockRegistrationIndexes: selection.onBlockRegistrations->Array.map(reg => reg.index),
@@ -237,6 +239,10 @@ let make = (
     chainId,
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
+    requestTimeouts: {
+      nearHeadMillis: syncConfig.nearHeadQueryTimeoutMillis,
+      backfillMillis: syncConfig.backfillQueryTimeoutMillis,
+    },
     getBlockHashes,
     onReorg: () => rpcClient.onReorg(),
     getHeightOrThrow: async () => {

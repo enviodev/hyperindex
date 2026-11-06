@@ -86,12 +86,24 @@ fn map_query_error(error: anyhow::Error, rate_limit: Option<RateLimitInfo>) -> n
 impl SvmHyperSyncClient {
     /// Run one query, surfacing a rate limit to the source manager rather than
     /// sleeping it out inside the call.
-    async fn run_query(&self, query: &SolanaQuery) -> napi::Result<simple::SolanaResponse> {
-        self.inner
+    async fn run_query(
+        &self,
+        query: &SolanaQuery,
+        is_near_head: bool,
+    ) -> napi::Result<simple::SolanaResponse> {
+        let client = self.client(is_near_head);
+        client
             .get(query)
             .await
             .context("solana get")
-            .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))
+            .map_err(|e| map_query_error(e, client.rate_limit_info()))
+    }
+
+    fn client(&self, is_near_head: bool) -> &hypersync_client_solana::Client {
+        match &self.near_head {
+            Some(near_head) if is_near_head => near_head,
+            _ => &self.inner,
+        }
     }
 
     /// Execute one raw Solana HyperSync page. Event queries and block-hash
@@ -101,13 +113,17 @@ impl SvmHyperSyncClient {
             .try_into()
             .context("parse solana query")
             .map_err(map_err)?;
-        self.run_query(&query).await
+        self.run_query(&query, true).await
     }
 }
 
 #[napi]
 pub struct SvmHyperSyncClient {
     inner: Arc<hypersync_client_solana::Client>,
+    /// The same server with the near-head request timeout: heights, block
+    /// hashes, and item queries that say they are near the head. Absent, `inner`
+    /// serves those too.
+    near_head: Option<hypersync_client_solana::Client>,
     selection_builder: SelectionBuilder,
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-instruction owner gate.
@@ -132,11 +148,27 @@ impl SvmHyperSyncClient {
                 .context("build selection builder")
                 .map_err(map_err)?
         };
+        let near_head = cfg
+            .near_head_req_timeout_millis
+            .map(|millis| {
+                hypersync_client_solana::Client::new_with_agent(
+                    SvmClientConfig {
+                        http_req_timeout_millis: Some(millis),
+                        ..cfg.clone()
+                    }
+                    .into(),
+                    user_agent.clone(),
+                )
+            })
+            .transpose()
+            .context("build near-head solana client")
+            .map_err(map_err)?;
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
         Ok(SvmHyperSyncClient {
             inner: Arc::new(inner),
+            near_head,
             selection_builder,
             address_store: handle,
             block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
@@ -145,7 +177,7 @@ impl SvmHyperSyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let h = self.inner.get_height().await.map_err(map_err)?;
+        let h = self.client(true).get_height().await.map_err(map_err)?;
         i64::try_from(h)
             .with_context(|| format!("height {} does not fit in i64", h))
             .map_err(map_err)
@@ -285,7 +317,7 @@ impl SvmHyperSyncClient {
             ..Default::default()
         };
 
-        let mut resp = self.run_query(&query).await?;
+        let mut resp = self.run_query(&query, params.is_near_head).await?;
 
         // The replica serving this request has not reached the queried range,
         // so it would report negative progress. Expected around the head of a
@@ -390,6 +422,9 @@ fn block_hash_page(mut response: simple::SolanaResponse) -> Result<(i64, Option<
 #[napi(object)]
 pub struct ItemsQuery {
     pub from_slot: i64,
+    /// Whether the chain is near its head, so the query is given up on after
+    /// the client's near-head timeout.
+    pub is_near_head: bool,
     /// Inclusive; `None` queries to the end of available data.
     pub to_slot: Option<i64>,
     /// Soft cap on the page's items: the instructions it selects, or for a query
@@ -1551,6 +1586,43 @@ mod tests {
                 Some(blockhash(42).to_string()),
                 Some(blockhash(43).to_string()),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn asks_for_a_height_with_the_near_head_timeout() {
+        // Takes the connection and never answers it.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        let client = SvmHyperSyncClient::from_config(
+            SvmClientConfig {
+                url,
+                http_req_timeout_millis: Some(10_000),
+                near_head_req_timeout_millis: Some(50),
+                ..Default::default()
+            },
+            "hyperindex-test".into(),
+            vec![],
+            vec![],
+            &svm_store(&[]),
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let failed = client.get_height().await.is_err();
+        // Well short of the backfill timeout: the server never answers, so only
+        // the near-head one can have ended it.
+        assert_eq!(
+            (
+                failed,
+                started.elapsed() < std::time::Duration::from_secs(5)
+            ),
+            (true, true)
         );
     }
 }

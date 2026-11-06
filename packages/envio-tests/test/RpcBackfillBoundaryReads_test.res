@@ -41,11 +41,11 @@ describe("Backfilling over RPC below the checked head blocks", () => {
 `,
 )
 
-// The run's head is its end block, 600, so blocks 400 to 600 are checked one by
-// one. Below them only the event's block is read: the pages 100-199, 200-299
-// and 300-399 read none of their own boundaries.
+// The run's head is its end block, 600, so blocks 500 to 600 are checked one by
+// one. Below them only the event's block is read: the pages 100-199 to 400-499
+// read none of their own boundaries.
 Vitest.it("reads only the event's block below the checked head blocks", t => {
   t.expect(mock()->RpcE2eChain.distinctBlocksRead).toEqual(
-    [105]->Array.concat(Array.fromInitializer(~length=201, i => 400 + i)),
+    [105]->Array.concat(Array.fromInitializer(~length=101, i => 500 + i)),
   )
 })

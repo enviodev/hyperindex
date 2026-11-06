@@ -9,14 +9,15 @@ let makeClient = (
   ~addressStore=?,
   ~maxConcurrentRequests=?,
   ~queryTimeoutMillis=?,
+  ~syncConfig=switch queryTimeoutMillis {
+  | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
+  | None => syncConfig
+  },
 ) =>
   EvmRpcClient.make(
     ~url,
     ~checksumAddresses=false,
-    ~syncConfig=switch queryTimeoutMillis {
-    | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
-    | None => syncConfig
-    },
+    ~syncConfig,
     ~headers?,
     ~maxConcurrentRequests?,
     ~eventRegistrations?,
@@ -250,11 +251,19 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       `{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x${block}","transactionHash":"${hash}","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}`
     })->Array.join(",")
 
-  let callNextPage = (client: EvmRpcClient.t, ~fromBlock, ~toBlockCeiling, ~indexes, ~addressSet) =>
+  let callNextPage = (
+    client: EvmRpcClient.t,
+    ~fromBlock,
+    ~toBlockCeiling,
+    ~isNearHead=false,
+    ~indexes,
+    ~addressSet,
+  ) =>
     client.getNextPage(
       {
         fromBlock,
         toBlockCeiling,
+        isNearHead,
         partitionId: "0",
         onEventRegistrationIndexes: indexes,
         onBlockRegistrationIndexes: [],
@@ -496,6 +505,68 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     )
 
     t.expect(outcome).toEqual((EvmRpcClient.Ok, blockCount))
+  })
+
+  it("Defaults to a longer timeout for backfill than near the head", t => {
+    let timeouts = (options: Config.sourceSyncOptions) => {
+      let {
+        backfillQueryTimeoutMillis,
+        nearHeadQueryTimeoutMillis,
+      }: Config.sourceSync = EvmChain.getSyncConfig(options)
+      (backfillQueryTimeoutMillis, nearHeadQueryTimeoutMillis)
+    }
+    t.expect(
+      (timeouts({}), timeouts({queryTimeoutMillis: 5_000})),
+      ~message="a configured timeout applies to both",
+    ).toEqual(((30_000, 20_000), (5_000, 5_000)))
+  })
+
+  Async.it("Gives up sooner on a read near the head than on a backfill read", async t => {
+    // Every read takes 400ms: past the head timeout, inside the backfill one.
+    let slowly = reply => MockRpcServer.Delayed({millis: 400, reply})
+    let firstBlock = 100
+
+    let outcome = await MockRpcServer.withScenario(
+      ~name="head and backfill timeouts",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~times=2,
+          ~reply=slowly(RpcResult(JSON.Array([]))),
+        ),
+        heightCall(~reply=slowly(RpcResult(JSON.String("0x64")))),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[makeRegistration()],
+          ~addressStore,
+          ~syncConfig={
+            ...syncConfig,
+            backfillQueryTimeoutMillis: 800,
+            nearHeadQueryTimeoutMillis: 200,
+          },
+        )
+        let page = (~isNearHead) =>
+          client->callNextPage(
+            ~fromBlock=firstBlock,
+            ~toBlockCeiling=firstBlock,
+            ~isNearHead,
+            ~indexes=[3],
+            ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+          )
+        let (backfill, _, _) = await page(~isNearHead=false)
+        let (atHead, _, _) = await page(~isNearHead=true)
+        (backfill.kind, (atHead.kind, atHead.providerMessage), await getHeightErrorMessage(client))
+      },
+    )
+
+    t.expect(outcome).toEqual((
+      EvmRpcClient.Ok,
+      (EvmRpcClient.Backoff, Some("eth_getLogs took longer than 200ms")),
+      Some("eth_blockNumber took longer than 200ms"),
+    ))
   })
 
   Async.it("Backs off when one read outlasts the timeout on its own", async t => {

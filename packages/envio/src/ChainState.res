@@ -789,6 +789,7 @@ let getHighestBlockBelowThreshold = (cs: t): int =>
 
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
+let isNearHead = (cs: t) => cs.fetchState->FetchState.isWithinHeadClientFilteringDistance
 
 // Reached head on a chain with no configured endBlock - used by auto-exit to
 // detect that no events were found in the start..head range.

@@ -500,7 +500,7 @@ describe("RPC head block checks", () => {
   )
 
   Async.it(
-    "reads only range ends and event blocks during a backfill more than 200 blocks below the head",
+    "reads only range ends and event blocks during a backfill more than 100 blocks below the head",
     async t => {
       let backfillHeight = 400
       await runAtHead(
@@ -524,14 +524,14 @@ describe("RPC head block checks", () => {
           let isEventBlock = block => chain.logs->Array.some(log => log.blockNumber == block)
           t.expect((
             headers->Array.filter(
-              block => block < backfillHeight - 200 && !(rangeEnds->Array.includes(block)),
+              block => block < backfillHeight - 100 && !(rangeEnds->Array.includes(block)),
             ),
-            Array.fromInitializer(~length=201, i => backfillHeight - 200 + i)->Array.filter(
+            Array.fromInitializer(~length=101, i => backfillHeight - 100 + i)->Array.filter(
               block => !(headers->Array.includes(block)),
             ),
           )).toEqual((
             // Read for the event's block fields.
-            headers->Array.filter(block => block < backfillHeight - 200 && isEventBlock(block)),
+            headers->Array.filter(block => block < backfillHeight - 100 && isEventBlock(block)),
             [],
           ))
         },

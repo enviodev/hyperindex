@@ -4,7 +4,7 @@ open Vitest
 // address-free query per block, routed against the address store on our side.
 // Over RPC, a block too large for the provider's result cap is read again by
 // the contracts' addresses, and the block after it is address-free again.
-// Backfill more than 200 blocks from the head keeps sending addresses.
+// Backfill more than 100 blocks from the head keeps sending addresses.
 let rpcPort = 18731
 let hyperSyncPort = 18732
 
@@ -37,7 +37,7 @@ let transferred = (~blockNumber, ~logIndex, token): ServedEvmChain.log => {
 // providers cap eth_getLogs at 10,000 results.
 let resultCap = 5
 
-// The backfill ends here, more than 200 blocks past the factory's events.
+// The backfill ends here, more than 100 blocks past the factory's events.
 let backfillHead = 300
 let headBlock = 301
 let lastBlock = 302

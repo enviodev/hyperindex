@@ -19,7 +19,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
       ~client=HyperSyncClient.make(
         ~url="https://645749.hypersync.xyz",
         ~apiToken=testApiToken,
-        ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+        ~httpReqTimeoutMillis=Source.hyperSyncBackfillTimeoutMillis,
         ~eventRegistrations=[
           {
             index: 0,
@@ -47,6 +47,7 @@ describe_skip("Test Hyperliquid broken transaction response", () => {
       ),
       ~query={
         fromBlock: 12403138,
+        isNearHead: false,
         toBlock: Some(12403139),
         itemsTarget: 5000,
         onEventRegistrationIndexes: [0],

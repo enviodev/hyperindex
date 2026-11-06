@@ -73,6 +73,7 @@ let getItems = async (
     ~toBlock=Some(toBlock),
     ~addressSet,
     ~knownHeight=1000,
+    ~isNearHead=false,
     ~partitionId="0",
     ~selection,
     ~itemsTarget=None,

@@ -24,7 +24,7 @@ use config::ClientConfig;
 use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{encode_address, Block, OnEventRegistrationInput, RollbackGuard};
+use types::{encode_address, OnEventRegistrationInput, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -51,6 +51,10 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 #[napi]
 pub struct EvmHyperSyncClient {
     inner: hypersync_client::Client,
+    /// The same server with the near-head request timeout: heights, block
+    /// hashes, and item queries that say they are near the head. Absent, `inner`
+    /// serves those too.
+    near_head: Option<hypersync_client::Client>,
     enable_checksum_addresses: bool,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
@@ -58,13 +62,21 @@ pub struct EvmHyperSyncClient {
 }
 
 impl EvmHyperSyncClient {
-    /// Execute one raw HyperSync page. Public methods decide how much of the
-    /// response to convert for their specific caller.
-    async fn get_raw(&self, query: Query) -> napi::Result<hypersync_client::QueryResponse> {
-        let query = query.try_into().context("parse query").map_err(map_err)?;
+    fn client(&self, is_near_head: bool) -> &hypersync_client::Client {
+        match &self.near_head {
+            Some(near_head) if is_near_head => near_head,
+            _ => &self.inner,
+        }
+    }
+
+    async fn run_query(
+        &self,
+        query: &hypersync_client::net_types::Query,
+        is_near_head: bool,
+    ) -> napi::Result<hypersync_client::QueryResponse> {
         let res = self
-            .inner
-            .get_with_rate_limit(&query)
+            .client(is_near_head)
+            .get_with_rate_limit(query)
             .await
             .context("run inner query")
             .map_err(map_err)?;
@@ -72,6 +84,17 @@ impl EvmHyperSyncClient {
             RateLimitResponse::Success { response, .. } => Ok(response),
             RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
         }
+    }
+
+    /// Execute one raw HyperSync page. Public methods decide how much of the
+    /// response to convert for their specific caller.
+    async fn get_raw(
+        &self,
+        query: Query,
+        is_near_head: bool,
+    ) -> napi::Result<hypersync_client::QueryResponse> {
+        let query = query.try_into().context("parse query").map_err(map_err)?;
+        self.run_query(&query, is_near_head).await
     }
 }
 
@@ -102,12 +125,28 @@ impl EvmHyperSyncClient {
             .context("build selection builder")
             .map_err(map_err)?;
 
+        let near_head = cfg
+            .near_head_req_timeout_millis
+            .map(|millis| {
+                hypersync_client::Client::new_with_agent(
+                    ClientConfig {
+                        http_req_timeout_millis: Some(millis),
+                        ..cfg.clone()
+                    }
+                    .into(),
+                    user_agent.clone(),
+                )
+            })
+            .transpose()
+            .context("build near-head client")
+            .map_err(map_err)?;
         let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
             .context("build client")
             .map_err(map_err)?;
 
         Ok(EvmHyperSyncClient {
             inner,
+            near_head,
             enable_checksum_addresses,
             decoder,
             selection_builder,
@@ -117,7 +156,7 @@ impl EvmHyperSyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.inner.get_height().await.map_err(|e| {
+        let height = self.client(true).get_height().await.map_err(|e| {
             // The client embeds a `{:?}` debug dump (a full backtrace when
             // RUST_BACKTRACE is set) in its error message; keep only the first
             // line so it stays readable when the indexer surfaces it on retries.
@@ -126,13 +165,6 @@ impl EvmHyperSyncClient {
             napi::Error::from_reason(format!("Failed to get HyperSync height: {summary}"))
         })?;
         height.try_into().context("convert height").map_err(map_err)
-    }
-
-    #[napi]
-    pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
-        convert_response(self.get_raw(query).await?, self.enable_checksum_addresses)
-            .context("convert response")
-            .map_err(map_err)
     }
 
     /// Fetch the complete inclusive range spanning `block_numbers` into one
@@ -160,7 +192,7 @@ impl EvmHyperSyncClient {
                     },
                     ..Default::default()
                 };
-                let response = self.get_raw(query).await?;
+                let response = self.get_raw(query, true).await?;
                 let (next, store) = block_hash_page(response).map_err(map_err)?;
                 // `include_all_blocks` leaves no gaps, so the last block the
                 // page covered is the one before where it stopped.
@@ -181,6 +213,7 @@ impl EvmHyperSyncClient {
         params: ItemsQuery,
         address_set: &AddressSet,
     ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
+        let is_near_head = params.is_near_head;
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
@@ -297,17 +330,7 @@ impl EvmHyperSyncClient {
         };
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
-
-        let response = match res {
-            RateLimitResponse::Success { response, .. } => response,
-            RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
-        };
+        let response = self.run_query(&query, is_near_head).await?;
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
@@ -378,6 +401,9 @@ impl EvmHyperSyncClient {
 #[napi(object)]
 pub struct ItemsQuery {
     pub from_block: i64,
+    /// Whether the chain is near its head, so the query is given up on after
+    /// the client's near-head timeout.
+    pub is_near_head: bool,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
     /// Soft cap on the page's items: the logs it selects, or for a query
@@ -410,22 +436,6 @@ fn log_selection_from_built(
     })
 }
 
-// Generic query DTO retained for direct native-addon callers. HyperIndex's
-// event and block-hash paths use their dedicated lean methods instead.
-#[napi(object)]
-pub struct QueryResponseData {
-    pub blocks: Vec<Block>,
-}
-
-#[napi(object)]
-pub struct QueryResponse {
-    pub archive_height: Option<i64>,
-    pub next_block: i64,
-    pub total_execution_time: i64,
-    pub data: QueryResponseData,
-    pub rollback_guard: Option<RollbackGuard>,
-}
-
 #[napi(object, object_from_js = false)]
 pub struct EventItem {
     pub log_index: i64,
@@ -454,39 +464,6 @@ pub struct ItemsResponse {
     /// no item joins to. The server returns one block per number, so this is a
     /// distinct count.
     pub response_blocks: i64,
-}
-
-fn convert_response(
-    res: hypersync_client::QueryResponse,
-    should_checksum: bool,
-) -> Result<QueryResponse> {
-    let blocks = res
-        .data
-        .blocks
-        .into_iter()
-        .flatten()
-        .map(|b| Block::from_simple(&b, should_checksum))
-        .collect::<Result<Vec<_>>>()
-        .context("mapping blocks")?;
-
-    Ok(QueryResponse {
-        archive_height: res
-            .archive_height
-            .map(|h| h.try_into())
-            .transpose()
-            .context("convert height")?,
-        next_block: res.next_block.try_into().context("convert next_block")?,
-        total_execution_time: res
-            .total_execution_time
-            .try_into()
-            .context("convert total_execution_time")?,
-        data: QueryResponseData { blocks },
-        rollback_guard: res
-            .rollback_guard
-            .map(RollbackGuard::try_from)
-            .transpose()
-            .context("convert rollback guard")?,
-    })
 }
 
 /// Convert only the two values needed by the block-hash paginator. Raw blocks

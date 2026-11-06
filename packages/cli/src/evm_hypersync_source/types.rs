@@ -3,7 +3,7 @@ use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use hypersync_client::{
     format::{self, FixedSizeData, Hex},
-    net_types, simple_types,
+    net_types,
 };
 use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
@@ -25,29 +25,6 @@ pub struct Log {
     pub address: Option<String>,
     pub data: Option<String>,
     pub topics: Vec<Option<String>>,
-}
-
-/// Evm withdrawal object
-///
-/// See ethereum rpc spec for the meaning of fields
-#[napi(object)]
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Withdrawal {
-    pub index: Option<String>,
-    pub validator_index: Option<String>,
-    pub address: Option<String>,
-    pub amount: Option<String>,
-}
-
-impl From<&format::Withdrawal> for Withdrawal {
-    fn from(w: &format::Withdrawal) -> Self {
-        Self {
-            index: map_hex_string(&w.index),
-            validator_index: map_hex_string(&w.validator_index),
-            address: map_hex_string(&w.address),
-            amount: map_hex_string(&w.amount),
-        }
-    }
 }
 
 /// Evm access list object
@@ -114,49 +91,6 @@ impl TryFrom<&format::Authorization> for Authorization {
     }
 }
 
-/// Evm block header object
-///
-/// See ethereum rpc spec for the meaning of fields
-#[napi(object)]
-#[derive(Default, Clone)]
-pub struct Block {
-    pub number: Option<i64>,
-    pub hash: Option<String>,
-    pub parent_hash: Option<String>,
-    pub nonce: Option<BigInt>,
-    pub sha3_uncles: Option<String>,
-    pub logs_bloom: Option<String>,
-    pub transactions_root: Option<String>,
-    pub state_root: Option<String>,
-    pub receipts_root: Option<String>,
-    pub miner: Option<String>,
-    pub difficulty: Option<BigInt>,
-    pub total_difficulty: Option<BigInt>,
-    pub extra_data: Option<String>,
-    pub size: Option<BigInt>,
-    pub gas_limit: Option<BigInt>,
-    pub gas_used: Option<BigInt>,
-    pub timestamp: Option<i64>,
-    pub uncles: Option<Vec<String>>,
-    pub base_fee_per_gas: Option<BigInt>,
-    pub blob_gas_used: Option<BigInt>,
-    pub excess_blob_gas: Option<BigInt>,
-    pub parent_beacon_block_root: Option<String>,
-    pub withdrawals_root: Option<String>,
-    pub withdrawals: Option<Vec<Withdrawal>>,
-    pub l1_block_number: Option<i64>,
-    pub send_count: Option<String>,
-    pub send_root: Option<String>,
-    pub mix_hash: Option<String>,
-}
-
-pub(crate) fn map_address_string(
-    v: &Option<FixedSizeData<20>>,
-    should_checksum: bool,
-) -> Option<String> {
-    v.as_ref().map(|v| encode_address(v, should_checksum))
-}
-
 pub(crate) fn encode_address(addr: &FixedSizeData<20>, should_checksum: bool) -> String {
     if should_checksum {
         alloy_primitives::Address(alloy_primitives::FixedBytes(***addr)).to_checksum(None)
@@ -181,55 +115,6 @@ pub(crate) fn map_i64<T: AsRef<[u8]>>(opt: &Option<T>) -> Result<Option<i64>> {
 pub(crate) fn map_bigint<T: AsRef<[u8]>>(opt: &Option<T>) -> Option<BigInt> {
     opt.as_ref()
         .map(|v| convert_bigint_unsigned(ruint::aliases::U256::from_be_slice(v.as_ref())))
-}
-
-impl Block {
-    pub fn from_simple(b: &simple_types::Block, should_checksum: bool) -> Result<Self> {
-        Ok(Self {
-            number: b
-                .number
-                .map(i64::try_from)
-                .transpose()
-                .context("mapping block.number")?,
-            hash: map_hex_string(&b.hash),
-            parent_hash: map_hex_string(&b.parent_hash),
-            nonce: map_bigint(&b.nonce),
-            sha3_uncles: map_hex_string(&b.sha3_uncles),
-            logs_bloom: map_hex_string(&b.logs_bloom),
-            transactions_root: map_hex_string(&b.transactions_root),
-            state_root: map_hex_string(&b.state_root),
-            receipts_root: map_hex_string(&b.receipts_root),
-            miner: map_address_string(&b.miner, should_checksum),
-            difficulty: map_bigint(&b.difficulty),
-            total_difficulty: map_bigint(&b.total_difficulty),
-            extra_data: map_hex_string(&b.extra_data),
-            size: map_bigint(&b.size),
-            gas_limit: map_bigint(&b.gas_limit),
-            gas_used: map_bigint(&b.gas_used),
-            timestamp: map_i64(&b.timestamp).context("mapping block.timestamp")?,
-            uncles: b
-                .uncles
-                .as_ref()
-                .map(|arr| arr.iter().map(|u| u.encode_hex()).collect()),
-            base_fee_per_gas: map_bigint(&b.base_fee_per_gas),
-            blob_gas_used: map_bigint(&b.blob_gas_used),
-            excess_blob_gas: map_bigint(&b.excess_blob_gas),
-            parent_beacon_block_root: map_hex_string(&b.parent_beacon_block_root),
-            withdrawals_root: map_hex_string(&b.withdrawals_root),
-            withdrawals: b
-                .withdrawals
-                .as_ref()
-                .map(|w| w.iter().map(Withdrawal::from).collect()),
-            l1_block_number: b
-                .l1_block_number
-                .map(|n| u64::from(n).try_into())
-                .transpose()
-                .context("mapping l1_block_number")?,
-            send_count: map_hex_string(&b.send_count),
-            send_root: map_hex_string(&b.send_root),
-            mix_hash: map_hex_string(&b.mix_hash),
-        })
-    }
 }
 
 #[napi(object)]

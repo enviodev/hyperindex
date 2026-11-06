@@ -106,6 +106,7 @@ let invoke = (
     ),
     // Far below the head, where a page's blocks aren't checked one by one.
     ~knownHeight=1_100,
+    ~isNearHead=false,
     ~partitionId="pin-partition",
     ~selection={
       dependsOnAddresses: true,
@@ -595,6 +596,7 @@ describe("RPC source public contract", () => {
                   ~contractName=registration.eventConfig.contractName,
                 ),
                 ~knownHeight=1_000_000,
+                ~isNearHead=false,
                 ~partitionId="pin-partition",
                 ~selection={
                   dependsOnAddresses: true,
@@ -720,6 +722,7 @@ describe("RPC source public contract", () => {
               // Far below the head, where a page's blocks aren't checked one
               // by one.
               ~knownHeight=1_100,
+              ~isNearHead=false,
               ~partitionId="skip-all",
               ~selection={
                 dependsOnAddresses: false,
@@ -850,6 +853,7 @@ describe("RPC source public contract", () => {
               ->AddressStore.makeSet(~contractName="ContractA")
               ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="ContractB")),
               ~knownHeight=100,
+              ~isNearHead=false,
               ~partitionId="contract-scope",
               ~selection={
                 dependsOnAddresses: true,
@@ -955,6 +959,7 @@ describe("RPC source public contract", () => {
                 // Far below the head, where a page's blocks aren't checked one
                 // by one.
                 ~knownHeight=1_100,
+                ~isNearHead=false,
                 ~partitionId="address-free",
                 ~selection={
                   dependsOnAddresses: false,

@@ -294,8 +294,8 @@ describe("Polling behind a stream", () => {
 describe("Height poll failures", () => {
   scenario->Scenario.it(
     "Gives up on a poll that never answers and polls again",
-    ~sources=[{chain: 1337, pollingInterval: 10_000}],
-    ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 1},
+    ~sources=[{chain: 1337, pollingInterval: 10_000, nearHeadRequestTimeoutMillis: 50}],
+    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
     async (~t, ~indexer, ~source) => {
       let mock = source(1337)
       await mock.expectNewHeightCalls(1)
@@ -309,9 +309,26 @@ describe("Height poll failures", () => {
   )
 
   scenario->Scenario.it(
+    "Gives up on a poll after 20 seconds by default",
+    ~sources=[{chain: 1337, pollingInterval: 100_000}],
+    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
+    async (~t as _, ~indexer, ~source) => {
+      let mock = source(1337)
+      await mock.expectNewHeightCalls(1)
+      await indexer.advanceTime(19_999)
+      await mock.expectNewHeightCalls(0)
+      // The timeout at 20s, then the 1ms retry interval.
+      await indexer.advanceTime(2)
+      await mock.expectNewHeightCalls(1)
+      mock.resolveGetHeightOrThrow(100)
+      await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
+    },
+  )
+
+  scenario->Scenario.it(
     "Waits the whole poll timeout before giving up on a poll",
-    ~sources=[{chain: 1337, pollingInterval: 10_000}],
-    ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 1},
+    ~sources=[{chain: 1337, pollingInterval: 10_000, nearHeadRequestTimeoutMillis: 50}],
+    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 1},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await mock.expectNewHeightCalls(1)
@@ -327,8 +344,8 @@ describe("Height poll failures", () => {
 
   scenario->Scenario.it(
     "Uses a height that answers after the poll was given up on",
-    ~sources=[{chain: 1337, pollingInterval: 10_000}],
-    ~sourceTiming={heightPollTimeout: 50, getHeightRetryInterval: (~retry as _) => 10_000},
+    ~sources=[{chain: 1337, pollingInterval: 10_000, nearHeadRequestTimeoutMillis: 50}],
+    ~sourceTiming={getHeightRetryInterval: (~retry as _) => 10_000},
     async (~t as _, ~indexer, ~source) => {
       let mock = source(1337)
       await mock.expectNewHeightCalls(1)
