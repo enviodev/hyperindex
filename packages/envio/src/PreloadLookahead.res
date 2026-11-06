@@ -134,7 +134,7 @@ let isActive = () => active.contents->Option.isSome
 // How many of `writes` (sorted by item) are by an item before `item`. An entity
 // every event of a batch touches (a popular holder) gathers a write per event,
 // and a scan of them per read was quadratic in the batch.
-let countBefore = (writes: array<(int, option<Internal.entity>)>, item) => {
+let countWritesBeforeItem = (writes: array<(int, option<Internal.entity>)>, item) => {
   let low = ref(0)
   let high = ref(writes->Array.length)
   while low.contents < high.contents {
@@ -158,7 +158,7 @@ let overlaySet = (~item: Internal.item, ~entityName, ~scope, ~entityId, ~entity)
       let key = entityKey(~entityName, ~scope, ~entityId)
       switch t.overlay->Map.get(key) {
       | Some(writes) =>
-        let at = writes->countBefore(writer)
+        let at = writes->countWritesBeforeItem(writer)
         switch writes->Array.get(at) {
         | Some((idx, _)) if idx === writer => writes->Array.setUnsafe(at, (writer, entity))
         | _ => writes->Array.splice(~start=at, ~remove=0, ~insert=[(writer, entity)])
@@ -180,7 +180,7 @@ let overlayGet = (~item: Internal.item, ~entityName, ~scope, ~entityId) =>
       t.overlay->Map.get(entityKey(~entityName, ~scope, ~entityId)),
     ) {
     | (Some(reader), Some(writes)) =>
-      switch writes->Array.get(writes->countBefore(reader) - 1) {
+      switch writes->Array.get(writes->countWritesBeforeItem(reader) - 1) {
       | Some((writer, entity)) if writer > t.executed => Some(entity)
       | _ => None
       }

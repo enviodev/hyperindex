@@ -1685,7 +1685,7 @@ export function resetRegisterStore(): void {
  * needs it spelled out — a list column refuses a missing value.
  */
 function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, unknown>) {
-  for (const column of entityColumns(scope, entityType)) {
+  for (const column of storedColumnsOfEntity(scope, entityType)) {
     if (!(column in row)) row[column] = null;
   }
   return row;
@@ -1694,7 +1694,7 @@ function withUnsetAsNull(scope: Scope, entityType: string, row: Record<string, u
 const columnsBySchema = new WeakMap<object, Map<string, string[]>>();
 
 /** An entity's stored columns: a reference field's is `<field>_id`, a derived one has none. */
-function entityColumns(scope: Scope, entityType: string): string[] {
+function storedColumnsOfEntity(scope: Scope, entityType: string): string[] {
   let byType = columnsBySchema.get(scope.schema);
   if (!byType) {
     byType = new Map();
@@ -1814,7 +1814,7 @@ const storeImpl = {
     // lookup and a second preload round per event.
     const replacesWhole =
       !scope.schema.skipDuplicateEntities.includes(entityType) &&
-      entityColumns(scope, entityType).every((column) => column in row);
+      storedColumnsOfEntity(scope, entityType).every((column) => column in row);
     const stored = own === false || replacesWhole ? undefined : table.getSync(id);
     assertRequiredFields(scope, entityType, id, data, stored);
     // graph-node inserts a skipDuplicates type with ON CONFLICT DO NOTHING, so
