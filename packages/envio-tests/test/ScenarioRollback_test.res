@@ -29,19 +29,24 @@ type Counter {
   count: BigInt!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.value });
+});
+`,
 )
 
 type counter = {id: string, count: bigint}
-type counterOps = {set: counter => unit}
-type counterContext = {@as("Counter") counter: counterOps}
+
+external toUnknown: bigint => unknown = "%identity"
 
 let setCounter = (~block, ~count): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-    context.counter.set({id: "total", count})
-  },
+  params: dict{"value": count->toUnknown},
 }
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
@@ -115,8 +120,8 @@ describe("Scenario rollback and history", () => {
         history->Array.map(
           change =>
             switch change {
-            | Set({entityId, entity}) => (entityId->EntityId.toKey, Some(entity.count))
-            | Delete({entityId}) => (entityId->EntityId.toKey, None)
+            | Set({entityId, entity}) => (entityId->EntityId.unsafeToAny, Some(entity.count))
+            | Delete({entityId}) => (entityId->EntityId.unsafeToAny, None)
             },
         ),
       ).toEqual([("total", Some(1n))])

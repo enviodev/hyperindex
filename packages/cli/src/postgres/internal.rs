@@ -2,7 +2,8 @@
 
 use super::ddl::{ColumnSpec, TableSpec};
 use super::history::bounds;
-use super::pg_type::{pg_field_type, ChainIdMode, FieldType};
+use super::pg_type::{pg_field_type, ChainIdMode};
+use crate::storage::schema::FieldType;
 use crate::storage::types::{
     ChainConfig, Sequence, CHAINS_TABLE as CHAINS, CHECKPOINTS_TABLE as CHECKPOINTS,
     INFO_TABLE as INFO,
@@ -438,7 +439,7 @@ pub fn effect_cache_tables(pg_schema: &str) -> String {
          {}\nAND t.table_name ~ '^envio_([0-9]+_)?effect_.+'\nAND (\n  SELECT \
          array_agg(c.column_name::text ORDER BY c.column_name::text)\n  FROM \
          information_schema.columns c\n  WHERE c.table_schema = t.table_schema AND c.table_name \
-         = t.table_name\n) = ARRAY['id', 'output'];",
+         = t.table_name\n) = ARRAY['id', 'output']\nORDER BY t.table_name;",
         quote_literal(pg_schema)
     )
 }

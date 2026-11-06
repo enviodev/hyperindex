@@ -26,6 +26,47 @@ pub fn is_response_too_large_message(message: &str) -> bool {
     TOO_LARGE_PATTERNS.iter().any(|re| re.is_match(message))
 }
 
+// Caps on how much one answer may hold, as providers word them. Matched by
+// message rather than by code: -32005 also means throttling on geth-based
+// endpoints, and a request split into more requests is the wrong answer to
+// that. Range-width limits are left out too, since asking by address doesn't
+// narrow the range.
+static RESULT_CAP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)more than \d+ (logs|results)|\d+ logs returned|too many (logs|results)|exceeds max results|response size|result size|response too large|logs matched by query exceeds limit",
+    )
+    .unwrap()
+});
+static RATE_LIMITED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)rate.?limit|too many requests|request rate|compute units|throughput").unwrap()
+});
+
+pub fn is_rate_limited_message(message: &str) -> bool {
+    RATE_LIMITED.is_match(message)
+}
+
+/// Whether a provider refused an `eth_getLogs` for what the answer would hold,
+/// as opposed to throttling the caller or limiting the range.
+pub fn is_result_cap_message(message: &str) -> bool {
+    RESULT_CAP.is_match(message) && !RATE_LIMITED.is_match(message)
+}
+
+// Refusals of the request itself rather than of the block it names, as
+// providers word them: publicnode's Polygon endpoint answers every
+// `eth_getLogs` by `blockHash` with "Archive requests require a personal token".
+static UNSUPPORTED_REQUEST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)archive|not supported|unsupported|not available|not allowed|method not found")
+        .unwrap()
+});
+
+/// Whether a provider refused a request as one it doesn't serve, invalid
+/// params and missing methods included, so asking again the same way is
+/// futile. Anything else, a block it doesn't know included, may answer on a
+/// later attempt.
+pub fn is_unsupported_request(code: i64, message: &str) -> bool {
+    code == -32601 || code == -32602 || UNSUPPORTED_REQUEST.is_match(message)
+}
+
 // Unknown provider: "retry with the range 123-456"
 static SUGGESTED_RANGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"retry with the range (\d+)-(\d+)").unwrap());
@@ -212,6 +253,46 @@ mod tests {
         assert_eq!(
             messages.map(is_response_too_large_message),
             [true, true, true, true, true, false, false]
+        );
+    }
+
+    #[test]
+    fn result_caps_exclude_throttling_and_range_limits() {
+        let messages = [
+            "query returned more than 10000 results",
+            "Log response size exceeded. You can make eth_getLogs requests with up to a 2K \
+             block range and no limit on the response size",
+            "too many results",
+            "More than 50000 logs returned",
+            // Geth-based endpoints' throttling, under the same -32005 code.
+            "limit exceeded",
+            "project ID request rate exceeded",
+            "Your app has exceeded its compute units per second capacity",
+            "Too Many Requests",
+            "block range is too wide",
+            "header not found",
+        ];
+        assert_eq!(
+            messages.map(is_result_cap_message),
+            [true, true, true, true, false, false, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn unsupported_requests_are_told_from_a_block_the_node_does_not_know() {
+        let refusals = [
+            (-32602, "Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode"),
+            (-32601, "the method eth_getLogs does not exist/is not available"),
+            (-32000, "blockHash filter not supported"),
+            // A node that hasn't got the block, as geth, op-geth and erigon word it.
+            (-32000, "unknown block"),
+            (-32001, "block not found: hash 0x11"),
+            (-32000, "header not found"),
+            (-32005, "rate limit exceeded"),
+        ];
+        assert_eq!(
+            refusals.map(|(code, message)| is_unsupported_request(code, message)),
+            [true, true, true, false, false, false, false]
         );
     }
 }

@@ -527,7 +527,7 @@ let rec runSyncRound = async (params: params, sync: syncRun, fn: unit => unit, ~
             ~item=run.item,
             ~entityName=entityConfig.name,
             ~scope,
-            ~entityId=change->Change.getEntityId->EntityId.toKey,
+            ~entityId=entityConfig.table.entityIdToKey(change->Change.getEntityId),
             ~entity=change->InMemoryTable.Entity.mapChangeToEntity,
           )
         )

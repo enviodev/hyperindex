@@ -405,7 +405,7 @@ fn log_selection_from_built(
     built: BuiltLogSelection,
 ) -> napi::bindgen_prelude::Either<LogSelection, LogFilter> {
     napi::bindgen_prelude::Either::B(LogFilter {
-        address: Some(built.addresses),
+        address: Some(built.addresses().to_vec()),
         topics: Some(built.topics),
     })
 }

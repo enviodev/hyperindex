@@ -141,6 +141,8 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
     addressStore: sourceAddressStore,
     blockStore,
     transactionStore,
+    maxAddressesPerRequest: Env.maxAddrInPartition,
+    logger: Logger.makeInMemory(),
   })
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
@@ -294,7 +296,14 @@ describe("Rollback against a real RPC server", () => {
     let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
 
-    let page = await source->fetchRange(~fromBlock=100, ~toBlock=104, ~knownHeight=state.height)
+    // The source is told it is far below the head, where a page's blocks
+    // aren't checked one by one and the store can serve them.
+    let sourceKnownHeight = 1_000
+    let page = await source->fetchRange(
+      ~fromBlock=100,
+      ~toBlock=104,
+      ~knownHeight=sourceKnownHeight,
+    )
     let firstGuard =
       chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=110)
 
@@ -305,7 +314,7 @@ describe("Rollback against a real RPC server", () => {
     let reorgedPage = await source->fetchRange(
       ~fromBlock=101,
       ~toBlock=104,
-      ~knownHeight=state.height,
+      ~knownHeight=sourceKnownHeight,
     )
     let refetchedBlocks =
       mock.requests

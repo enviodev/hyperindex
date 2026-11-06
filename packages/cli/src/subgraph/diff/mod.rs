@@ -5,6 +5,10 @@
 //! reference is pinned to it with `block: {number: N}`. Per entity type it
 //! compares the full id sets (every reference id is paged in by cursor) and a
 //! deterministic sample of entities field by field, in graph-node's encodings.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: waiting on the indexer being compared"
+)]
 
 pub mod graph;
 pub mod model;

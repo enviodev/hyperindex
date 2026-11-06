@@ -241,7 +241,7 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "Name of the event in the HyperIndex generated code",
+          "description": "Name of the event in the generated types",
           "type": "string"
         },
         "type": {
@@ -337,7 +337,7 @@
           "minimum": 0
         },
         "block_throttle": {
-          "description": "The minimum number of new blocks the chain head must advance by before the indexer fetches again once it has caught up. Useful on chains with very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 all fetch on every new block.",
+          "description": "Once caught up, wait for this many new blocks before fetching them. Delays new events by up to as many blocks.",
           "type": [
             "integer",
             "null"

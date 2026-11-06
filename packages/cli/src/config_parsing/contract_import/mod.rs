@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: the `envio init` contract import"
+)]
+
 pub mod converters;
 
 use std::env;

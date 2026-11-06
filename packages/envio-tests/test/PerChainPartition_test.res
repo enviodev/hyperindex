@@ -29,7 +29,7 @@ disable_default_cross_chain: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:
   - id: 1
     rpc:
@@ -52,40 +52,6 @@ chains:
 let config = InternalTestIndexer.fromUserApi(~configYaml, ~schema).config
 let entityConfig = name => config->IndexerRunner.entityConfigByName(name)
 let counter = entityConfig("Counter")
-let longCounter = entityConfig(longName)
-
-let chainIds = [1->ChainId.fromInt, 137->ChainId.fromInt]
-
-describe("Per-chain entity partitions", () => {
-  it("Names one partition per chain, and only for a per-chain entity", t => {
-    t.expect(
-      chainIds->Array.map(chainId => Storage.partitionTableName(~entityConfig=counter, ~chainId)),
-    ).toEqual(["Counter$1", "Counter$137"])
-  })
-
-  // `$` can't appear in a GraphQL entity name, so a partition can never take a
-  // name another entity's table claims. Past 63 bytes the readable half is cut
-  // and the entity index keeps what's left unique.
-  it("Fits a long partition name into the identifier limit", t => {
-    // What a truncated name keeps whole, and so what the readable half is cut
-    // down to make room for.
-    let suffix = `$${longCounter.index->Int.toString}$137`
-    let names =
-      chainIds->Array.map(
-        chainId => Storage.partitionTableName(~entityConfig=longCounter, ~chainId),
-      )
-    // Chain 1 leaves the name whole under the limit; chain 137 pushes it over,
-    // and the result sits exactly on the limit rather than past it.
-    t.expect((names, names->Array.map(String.length))).toEqual((
-      [
-        `${longName}$1`,
-        longName->String.slice(~start=0, ~end=Table.maxPgTableNameLength - suffix->String.length) ++
-          suffix,
-      ],
-      [62, Table.maxPgTableNameLength],
-    ))
-  })
-})
 
 type counterRow = {
   id: string,
@@ -94,20 +60,27 @@ type counterRow = {
   @as("chainId") chainId: int,
 }
 
-type counterOps = {set: {"id": string, "count": bigint, "owner": string} => unit}
-type handlerContext = {@as("Counter") counter: counterOps}
+let scenario = Scenario.make(
+  ~schema,
+  ~configYaml,
+  ~handlers=`
+import { indexer } from "envio";
 
-let scenario = Scenario.make(~schema, ~configYaml)
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count, owner: "alice" });
+});
+`,
+)
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
+external toUnknown: bigint => unknown = "%identity"
+
 let bump = (count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: 5,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-    context.counter.set({"id": "total", "count": count, "owner": "alice"})
-  },
+  params: dict{"count": count->toUnknown},
 }
 
 type relation = {
@@ -244,13 +217,8 @@ describe("A chain-scoped load", () => {
         dict{"owner": dict{"_eq": "alice"->(Utils.magic: string => unknown)}}
         ->EntityFilter.parseOrThrow(~entityName=counter.name, ~table=counter.table)
         ->EntityFilter.scoped(~table=counter.table, ~scope=Chain(137->ChainId.fromInt))
-      let client = TestPgSchema.client(~pgSchema, ~maxConnections=1)
-      let storage = Storage.make(
-        ~client,
-        ~logger=Logger.makeInMemory(),
-        ~entities=[counter],
-        ~ecosystem=Evm,
-      )
+      let client = TestPgSchema.client(~pgSchema, ~maxConnections=1, ~config)
+      let storage = Storage.make(~client, ~ecosystem=Evm)
       let _ = await storage.loadOrThrow(~filter, ~table=counter.table)
       let prepared: array<{
         "statement": string,

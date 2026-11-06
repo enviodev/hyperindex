@@ -1,5 +1,9 @@
 //! A graph-node GraphQL endpoint, read the way a parity check needs: its
 //! `_meta`, its collection names, every id of a type, and entities by id.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "real time outside the source layer: backing off a remote graph-node endpoint"
+)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

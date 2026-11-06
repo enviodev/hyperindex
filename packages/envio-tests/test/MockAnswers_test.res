@@ -248,7 +248,10 @@ Reply to them in this list, or keep them pending:
     let mock = source(1)
     t.expect(
       await failureOf(
-        mock.expectItemsQueries([{partitionId: "0", toBlock: Unbounded, reply: LeavePending}]),
+        mock.expectItemsQueries(
+          [{partitionId: "0", toBlock: Unbounded, reply: LeavePending}],
+          ~within=50.,
+        ),
       ),
       ~message="nothing is pending before the chain knows the head",
     ).toEqual(
@@ -259,12 +262,14 @@ Pending:
     )
 
     mock.resolveGetHeightOrThrow(300)
+    // The query is in before the deadline starts, so the report names it.
+    await mock.expectItemsQueries([{partitionId: "0", reply: LeavePending}])
     t.expect(
       await failureOf(
-        mock.expectItemsQueries([
-          {fromBlock: 1, reply: Respond({items: []})},
-          {partitionId: "0", reply: LeavePending},
-        ]),
+        mock.expectItemsQueries(
+          [{fromBlock: 1, reply: Respond({items: []})}, {partitionId: "0", reply: LeavePending}],
+          ~within=50.,
+        ),
       ),
       ~message="a single pending query can't be both replied to and left pending",
     ).toEqual(
@@ -277,6 +282,117 @@ Pending:
     await mock.respondEmptyUpTo(300)
     await indexer.getBatchWritePromise()
   })
+
+  // A partition asks for its next range only once its last one is answered, so a
+  // list naming both waits for a query that can't come yet.
+  scenario->Scenario.it(
+    "times out naming a query that may only follow an earlier reply",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      t.expect(
+        await failureOf(
+          mock.expectItemsQueries([
+            {partitionId: "0", fromBlock: 1, reply: Respond({items: []})},
+            {partitionId: "1", reply: LeavePending},
+            {partitionId: "0", fromBlock: 101, reply: Respond({items: []})},
+          ]),
+        ),
+      ).toEqual(
+        Some(`expectItemsQueries timed out. Expected:
+  #0 {partitionId: "0", fromBlock: 1, reply: Respond(…)}
+  #1 {partitionId: "1", reply: LeavePending}
+  #2 {partitionId: "0", fromBlock: 101, reply: Respond(…)} (matches no pending query)
+Pending:
+  {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
+  {partitionId: "1", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}
+The list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call.`),
+      )
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+    },
+  )
+
+  scenario->Scenario.it(
+    "keeps the queries it replied to, in entry order",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {partitionId: "1", reply: Respond({items: []})},
+        {partitionId: "0", reply: LeavePending},
+      ])
+      await mock.expectItemsQueries([{partitionId: "0", reply: Respond({items: []})}])
+      let replied = mock.repliedItemsQueries->Array.copy
+      let _ = await failureOf(
+        mock.expectItemsQueries([
+          {
+            partitionId: "0",
+            fromBlock: 101,
+            reply: Respond({items: [{blockNumber: 50, logIndex: 0}]}),
+          },
+          {partitionId: "1", reply: LeavePending},
+        ]),
+      )
+      t.expect(
+        (replied, mock.repliedItemsQueries),
+        ~message="a call that replied to nothing leaves nothing behind from the one before",
+      ).toEqual(([{partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}], []))
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+    },
+  )
+
+  scenario->Scenario.it(
+    "matches a query by an address it covers, in any letter case",
+    ~sources,
+    ~maxAddrInPartition=1,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {address: "0X0000000000000000000000000000000000000002", reply: Respond({items: []})},
+        {partitionId: "0", reply: LeavePending},
+      ])
+      t.expect(mock.repliedItemsQueries->Array.map(query => query.partitionId)).toEqual(["1"])
+      await mock.respondEmptyUpTo(300)
+      await indexer.getBatchWritePromise()
+    },
+  )
+
+  scenario->Scenario.it(
+    "says how far to reply when an unbounded query can't take an item",
+    ~sources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([{fromBlock: 1, reply: Respond({items: []})}])
+      await indexer.getBatchWritePromise()
+      let refusalFor = async blockNumber =>
+        await failureOf(
+          mock.expectItemsQueries([
+            {fromBlock: 101, reply: Respond({items: [{blockNumber, logIndex: 0}]})},
+          ]),
+        )
+      let pastFromBlock = await refusalFor(150)
+      let beforeFromBlock = await refusalFor(100)
+      t.expect(
+        (pastFromBlock, beforeFromBlock),
+        ~message="only an item past the reply's end is fixed by fetching further",
+      ).toEqual((
+        Some(`expectItemsQueries can't reply an item at block 150 to {partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101). The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: 300`),
+        Some(`expectItemsQueries can't reply an item at block 100 to {partitionId: "0", fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101)`),
+      ))
+      await mock.expectItemsQueries([
+        {fromBlock: 101, reply: Respond({items: [], latestFetchedBlockNumber: 300})},
+      ])
+      await indexer.getBatchWritePromise()
+    },
+  )
 
   // A real source never reports having fetched past the range it was asked for,
   // so a reply that does describes a source that doesn't exist.
@@ -346,7 +462,7 @@ Pending:
     await mock.expectItemsQueries([
       {fromBlock: 1, reply: Fail(Source.SourceBehindHead({blockNumber: 50, requestStats: []}))},
     ])
-    // The retry comes after a backoff; the wait covers it without knowing how long.
+    await indexer.advanceTime(100)
     await mock.expectItemsQueries([{retryCount: 1, reply: LeavePending}])
     t.expect(mock.pendingItemsQueries).toEqual([
       {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 1},
@@ -417,29 +533,6 @@ Pending:
     },
   )
 
-  // A test that fakes the clock still gets the timeout message instead of a
-  // suite-level hang, so the deadline can't run on the faked setTimeout.
-  scenario->Scenario.it("times out on the real clock while timers are faked", ~sources, async (
-    ~t,
-    ~indexer,
-    ~source,
-  ) => {
-    let mock = source(1)
-    mock.resolveGetHeightOrThrow(300)
-    await mock.expectItemsQueries([{fromBlock: 1, reply: LeavePending}])
-    Vi.useFakeTimers()
-    let failure = await failureOf(mock.expectItemsQueries([{fromBlock: 2, reply: LeavePending}]))
-    Vi.useRealTimers()
-    t.expect(failure).toEqual(
-      Some(`expectItemsQueries timed out. Expected:
-  #0 {fromBlock: 2, reply: LeavePending} (matches no pending query)
-Pending:
-  {partitionId: "0", fromBlock: 1, toBlock: Bounded(100), retryCount: 0}`),
-    )
-    await mock.respondEmptyUpTo(300)
-    await indexer.getBatchWritePromise()
-  })
-
   scenario->Scenario.it("voids the stopped indexer's pending query on restart", ~sources, async (
     ~t,
     ~indexer,
@@ -463,20 +556,135 @@ Pending:
   })
 })
 
-describe("MockSource.expectHeightCalls", () => {
+let handlersScenario = Scenario.make(
+  ~configYaml=`
+name: mock-answers-handlers
+contracts:
+  - name: Token
+    events:
+      - event: Transfer(uint256 value)
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+`,
+  ~schema=`
+type Counter {
+  id: ID!
+  total: BigInt!
+}
+
+type Sender {
+  id: ID!
+}
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  const existing = await context.Counter.get("c");
+  context.Counter.set({ id: "c", total: (existing?.total ?? 0n) + event.params.value });
+});
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Sender.set({ id: event.srcAddress });
+});
+`,
+)
+
+type counterTotal = {id: string, total: bigint}
+type sender = {id: string}
+
+describe("MockSource items naming an event", () => {
+  handlersScenario->Scenario.it(
+    "run every handler the scenario registered for it, with the params and address given",
+    ~sources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await mock.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              {
+                event: "Token.Transfer",
+                blockNumber: 5,
+                logIndex: 0,
+                params: dict{"value": 7n->(Utils.magic: bigint => unknown)},
+              },
+              {
+                event: "Token.Transfer",
+                blockNumber: 6,
+                logIndex: 0,
+                srcAddress: "0x0000000000000000000000000000000000000001",
+                params: dict{"value": 5n->(Utils.magic: bigint => unknown)},
+              },
+            ],
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      t.expect((
+        await (indexer.query("Counter"): promise<array<counterTotal>>),
+        (await (indexer.query("Sender"): promise<array<sender>>))
+        ->Array.map(sender => sender.id)
+        ->Array.toSorted(String.compare),
+      )).toEqual((
+        [{id: "c", total: 12n}],
+        [
+          "0x0000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000001",
+        ],
+      ))
+    },
+  )
+
+  handlersScenario->Scenario.it(
+    "refuse an event the scenario has no handler for, naming the ones it has",
+    ~sources,
+    async (~t, ~indexer as _, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      let failure = await failureOf(
+        mock.expectItemsQueries([
+          {
+            fromBlock: 1,
+            reply: Respond({items: [{event: "Token.Approval", blockNumber: 5, logIndex: 0}]}),
+          },
+        ]),
+      )
+      t.expect(
+        (failure, mock.repliedItemsQueries),
+        ~message="a reply that can't be built answers nothing",
+      ).toEqual((
+        Some(`An item names event "Token.Approval", but chain 1 has no handler registered for it. Registered: "Token.Transfer"`),
+        [],
+      ))
+    },
+  )
+})
+
+describe("MockSource.expectNewHeightCalls", () => {
   scenario->Scenario.it("waits for the chain's first height call", ~sources, async (
     ~t,
     ~indexer,
     ~source,
   ) => {
     let mock = source(1)
-    await mock.expectHeightCalls(1)
-    t.expect(await failureOf(mock.expectHeightCalls(0))).toEqual(
-      Some("expectHeightCalls expected 0 height calls, but the source has taken 1"),
-    )
+    await mock.expectNewHeightCalls(1)
+    // Counted from the call it just accounted for, not from the start.
+    t.expect(await failureOf(mock.expectNewHeightCalls(0))).toEqual(None)
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
     await indexer.getBatchWritePromise()
+    // Back at the head, it waits for the next block.
+    await mock.expectNewHeightCalls(1)
   })
 
   scenario->Scenario.it("times out naming the count it waited for", ~sources, async (
@@ -485,13 +693,17 @@ describe("MockSource.expectHeightCalls", () => {
     ~source,
   ) => {
     let mock = source(1)
-    await mock.expectHeightCalls(1)
-    t.expect(await failureOf(mock.expectHeightCalls(2))).toEqual(
-      Some("expectHeightCalls timed out waiting for 2 height calls; the source has taken 1"),
+    await mock.expectNewHeightCalls(1)
+    t.expect(await failureOf(mock.expectNewHeightCalls(1, ~within=50.))).toEqual(
+      Some(
+        "expectNewHeightCalls timed out waiting for 1 new height calls; source for chain 1 has taken 0 since the last expectation (1 in all)",
+      ),
     )
     mock.resolveGetHeightOrThrow(300)
     await mock.respondEmptyUpTo(300)
     await indexer.getBatchWritePromise()
+    // Back at the head, it waits for the next block.
+    await mock.expectNewHeightCalls(1)
   })
 })
 
@@ -555,10 +767,13 @@ describe("MockSource.expectBlockHashLookup", () => {
       mock.resolveGetHeightOrThrow(300)
       t.expect(
         await failureOf(
-          mock.expectBlockHashLookup({
-            blockNumbers: [200],
-            reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
-          }),
+          mock.expectBlockHashLookup(
+            {
+              blockNumbers: [200],
+              reply: [{blockNumber: 200, blockHash: "0x200", blockTimestamp: 200}],
+            },
+            ~within=50.,
+          ),
         ),
       ).toEqual(
         Some(`expectBlockHashLookup timed out waiting for a lookup of [200]. No lookup is pending.`),
@@ -604,10 +819,12 @@ Give each query its own entry, told apart by partitionId:
   Async.it("counts height calls only once all of them have arrived", async t => {
     let mock = MockSource.make([#getHeightOrThrow])
     let _ = mock.source.getHeightOrThrow()
-    let expectation = mock.expectHeightCalls(1)
+    let expectation = mock.expectNewHeightCalls(1)
     let _ = mock.source.getHeightOrThrow()
     t.expect(await failureOf(expectation)).toEqual(
-      Some("expectHeightCalls expected 1 height calls, but the source has taken 2"),
+      Some(
+        "expectNewHeightCalls expected 1 new height calls, but source for chain 1 has taken 2 since the last expectation (2 in all)",
+      ),
     )
   })
 

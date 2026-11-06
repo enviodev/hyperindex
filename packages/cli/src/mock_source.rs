@@ -44,6 +44,10 @@ pub struct MockItemsQuery {
     /// Absent for a query that runs to the head.
     pub to_block: Option<i64>,
     pub retry_count: u32,
+    /// Lowercase, as an entry's `address` is compared.
+    pub addresses: Vec<String>,
+    /// The chain height the indexer knew when it sent the query.
+    pub known_height: i64,
 }
 
 /// One entry of a test's `expectItemsQueries` list, as data. `where_ids` are
@@ -58,6 +62,8 @@ pub struct MockExpectedQuery {
     pub to_block_unbounded: Option<bool>,
     pub retry_count: Option<u32>,
     pub covers_block: Option<i64>,
+    /// An address the query fetches for, in any letter case.
+    pub address: Option<String>,
     pub where_ids: Option<Vec<u32>>,
     /// The reply's constructor name: `Respond`, `RespondWith`,
     /// `RespondUnchecked`, `Fail` or `LeavePending`.
@@ -121,11 +127,15 @@ const QUERY_FIELDS: [&str; 4] = ["partitionId", "fromBlock", "toBlock", "retryCo
 #[derive(Default)]
 struct Ledger {
     chain_id: u32,
+    label: Option<String>,
     auto_height: Option<i64>,
     startup_heights: VecDeque<MockStartupHeight>,
     /// One entry per height call taken, in arrival order, so an index is the
     /// call number a test counted. `true` while it waits for an answer.
     height_calls: Vec<bool>,
+    /// How many of `height_calls` an expectation has accounted for. A test
+    /// names the calls it expects next rather than counting from the first.
+    claimed_height_calls: u32,
     /// Height answers given before their call arrived, claimed in order.
     deferred_heights: VecDeque<DeferredHeight>,
     next_id: u32,
@@ -203,6 +213,9 @@ fn describe_expected(entry: &MockExpectedQuery) -> String {
     if let Some(covers_block) = entry.covers_block {
         parts.push(format!("coversBlock: {covers_block}"));
     }
+    if let Some(address) = &entry.address {
+        parts.push(format!("address: \"{address}\""));
+    }
     if entry.where_ids.is_some() {
         parts.push("where: <fn>".to_string());
     }
@@ -241,6 +254,10 @@ fn fields_match(entry: &MockExpectedQuery, query: &MockItemsQuery) -> bool {
         && entry
             .covers_block
             .is_none_or(|block| covers_block(query, block))
+        && entry.address.as_ref().is_none_or(|address| {
+            let address = address.to_lowercase();
+            query.addresses.contains(&address)
+        })
 }
 
 fn entry_matches(entry: &MockExpectedQuery, query: &MockItemsQuery) -> bool {
@@ -379,28 +396,76 @@ impl Ledger {
         indices
     }
 
-    fn check_height_calls(&self, count: u32) -> MockHeightCallsCheck {
+    /// Calls taken since the last expectation that accounted for some.
+    fn new_height_calls(&self) -> u32 {
         let taken = self.height_calls.len() as u32;
-        if taken > count {
+        taken - self.claimed_height_calls.min(taken)
+    }
+
+    /// Met once exactly `count` calls have arrived since the last expectation,
+    /// which it then accounts for.
+    fn check_new_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
+        let taken = self.height_calls.len() as u32;
+        let new = self.new_height_calls();
+        if new > count {
             MockHeightCallsCheck {
                 done: true,
                 error: Some(format!(
-                    "expectHeightCalls expected {count} height calls, but the source has taken {taken}"
+                    "expectNewHeightCalls expected {count} new height calls, but {} has taken {new} since the last expectation ({taken} in all)",
+                    self.source_name(),
                 )),
             }
         } else {
-            MockHeightCallsCheck {
-                done: taken == count,
-                error: None,
+            let count = self.claimed_height_calls + count;
+            let done = taken == count;
+            if done {
+                self.claimed_height_calls = self.claimed_height_calls.max(count);
             }
+            MockHeightCallsCheck { done, error: None }
         }
     }
 
-    fn height_calls_timeout_message(&self, count: u32) -> String {
+    /// For a step whose number of polls rides on the clock's jitter: met once
+    /// `count` calls are in, and then accounts for every call so far.
+    fn check_new_height_calls_at_least(&mut self, count: u32) -> bool {
+        let taken = self.height_calls.len() as u32;
+        let done = self.new_height_calls() >= count;
+        if done {
+            self.claimed_height_calls = self.claimed_height_calls.max(taken);
+        }
+        done
+    }
+
+    /// How messages name this mock: the way the test reaches it when one chain
+    /// has several, otherwise by its chain.
+    fn source_name(&self) -> String {
+        match &self.label {
+            Some(label) => label.clone(),
+            None => format!("source for chain {}", self.chain_id),
+        }
+    }
+
+    fn new_height_calls_timeout_message(&self, count: u32, at_least: bool) -> String {
         format!(
-            "expectHeightCalls timed out waiting for {count} height calls; the source has taken {}",
-            self.height_calls.len()
+            "expectNewHeightCalls{} timed out waiting for {count} new height calls; {} has taken {} since the last expectation ({} in all)",
+            if at_least { "AtLeast" } else { "" },
+            self.source_name(),
+            self.new_height_calls(),
+            self.height_calls.len(),
         )
+    }
+
+    fn unclaimed_height_calls_message(&self) -> Option<String> {
+        let taken = self.height_calls.len() as u32;
+        if taken <= self.claimed_height_calls {
+            return None;
+        }
+        let unclaimed = taken - self.claimed_height_calls;
+        Some(format!(
+            "Height calls no expectation accounted for on {}: {unclaimed} (calls {} to {taken}). Name each poll where the test causes it with `expectNewHeightCalls(n)`, so one nobody planned for fails at the step that caused it.",
+            self.source_name(),
+            self.claimed_height_calls + 1,
+        ))
     }
 
     fn unclaimed_answers_message(&self) -> Option<String> {
@@ -425,6 +490,8 @@ impl Ledger {
         from_block: i64,
         to_block: Option<i64>,
         retry_count: u32,
+        addresses: Vec<String>,
+        known_height: i64,
     ) -> u32 {
         let id = self.next_id();
         self.pending_queries.push(MockItemsQuery {
@@ -433,6 +500,8 @@ impl Ledger {
             from_block,
             to_block,
             retry_count,
+            addresses,
+            known_height,
         });
         id
     }
@@ -443,6 +512,14 @@ impl Ledger {
     }
 
     fn timeout_message(&self, entries: &[MockExpectedQuery], replied: Option<&[u32]>) -> String {
+        let matches_some = |entry: &MockExpectedQuery| {
+            self.pending_queries
+                .iter()
+                .any(|query| entry_matches(entry, query))
+        };
+        let every_reply_matches = entries
+            .iter()
+            .all(|entry| !is_replying(entry) || matches_some(entry));
         let lines: Vec<String> = entries
             .iter()
             .enumerate()
@@ -456,7 +533,7 @@ impl Ledger {
                     " (matches no pending query)"
                 } else {
                     match replied {
-                        None if is_replying(entry) => {
+                        None if is_replying(entry) && every_reply_matches => {
                             " (no query left for it once the other replies pick)"
                         }
                         Some(replied)
@@ -471,8 +548,15 @@ impl Ledger {
                 format!("  #{index} {}{reason}", describe_expected(entry))
             })
             .collect();
+        let some_match = entries.iter().any(matches_some);
+        let some_unmatched = !entries.iter().all(matches_some);
+        let follow_up_hint = if some_match && some_unmatched {
+            "\nThe list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call."
+        } else {
+            ""
+        };
         format!(
-            "expectItemsQueries timed out. Expected:\n{}\nPending:\n{}",
+            "expectItemsQueries timed out. Expected:\n{}\nPending:\n{}{follow_up_hint}",
             lines.join("\n"),
             describe_queries(&self.pending_queries)
         )
@@ -630,8 +714,19 @@ impl Ledger {
                 .iter()
                 .find(|block| **block < query.from_block || **block > latest)
             {
+                let hint = if query.to_block.is_none()
+                    && reply.latest_fetched_block_number.is_none()
+                    && *block > latest
+                {
+                    format!(
+                        ". The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: {}",
+                        query.known_height
+                    )
+                } else {
+                    String::new()
+                };
                 return Some(format!(
-                    "expectItemsQueries can't reply an item at block {block} to {describe}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies ({latest})"
+                    "expectItemsQueries can't reply an item at block {block} to {describe}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies ({latest}){hint}"
                 ));
             }
         }
@@ -743,8 +838,8 @@ impl Ledger {
                 .join(", ")
         };
         format!(
-            "Mock source for chain {} at the failure:\n  pending item queries:{queries}\n  pending block-hash lookups: {lookups}\n  height calls taken: {}",
-            self.chain_id,
+            "Mock {} at the failure:\n  pending item queries:{queries}\n  pending block-hash lookups: {lookups}\n  height calls taken: {}",
+            self.source_name(),
             self.height_calls.len()
         )
     }
@@ -794,12 +889,14 @@ impl MockSource {
     #[napi(factory)]
     pub fn new(
         chain_id: u32,
+        label: Option<String>,
         auto_height: Option<i64>,
         startup_heights: Vec<MockStartupHeight>,
     ) -> Self {
         MockSource {
             ledger: Ledger {
                 chain_id,
+                label,
                 auto_height,
                 startup_heights: startup_heights.into(),
                 ..Ledger::default()
@@ -835,13 +932,24 @@ impl MockSource {
     }
 
     #[napi]
-    pub fn check_height_calls(&self, count: u32) -> MockHeightCallsCheck {
-        self.ledger.check_height_calls(count)
+    pub fn check_new_height_calls(&mut self, count: u32) -> MockHeightCallsCheck {
+        self.ledger.check_new_height_calls(count)
     }
 
     #[napi]
-    pub fn height_calls_timeout_message(&self, count: u32) -> String {
-        self.ledger.height_calls_timeout_message(count)
+    pub fn new_height_calls_timeout_message(&self, count: u32, at_least: bool) -> String {
+        self.ledger
+            .new_height_calls_timeout_message(count, at_least)
+    }
+
+    #[napi]
+    pub fn check_new_height_calls_at_least(&mut self, count: u32) -> bool {
+        self.ledger.check_new_height_calls_at_least(count)
+    }
+
+    #[napi]
+    pub fn unclaimed_height_calls_message(&self) -> Option<String> {
+        self.ledger.unclaimed_height_calls_message()
     }
 
     #[napi]
@@ -856,9 +964,17 @@ impl MockSource {
         from_block: i64,
         to_block: Option<i64>,
         retry_count: u32,
+        addresses: Vec<String>,
+        known_height: i64,
     ) -> u32 {
-        self.ledger
-            .take_items_query(partition_id, from_block, to_block, retry_count)
+        self.ledger.take_items_query(
+            partition_id,
+            from_block,
+            to_block,
+            retry_count,
+            addresses,
+            known_height,
+        )
     }
 
     #[napi]
@@ -958,6 +1074,16 @@ mod tests {
         }
     }
 
+    fn take(
+        ledger: &mut Ledger,
+        partition_id: String,
+        from_block: i64,
+        to_block: Option<i64>,
+        retry_count: u32,
+    ) -> u32 {
+        ledger.take_items_query(partition_id, from_block, to_block, retry_count, vec![], 0)
+    }
+
     fn reply(name: &str) -> MockExpectedQuery {
         MockExpectedQuery {
             reply: name.to_string(),
@@ -1021,6 +1147,47 @@ mod tests {
     }
 
     #[test]
+    fn names_the_height_calls_past_the_last_expectation() {
+        let mut ledger = ledger();
+        ledger.take_height_call();
+        ledger.take_height_call();
+        let met = ledger.check_new_height_calls(2).done;
+        ledger.take_height_call();
+        ledger.take_height_call();
+        assert_eq!(
+            (
+                met,
+                ledger.claimed_height_calls,
+                ledger.unclaimed_height_calls_message().as_deref()
+            ),
+            (
+                true,
+                2,
+                Some("Height calls no expectation accounted for on source for chain 1: 2 (calls 3 to 4). Name each poll where the test causes it with `expectNewHeightCalls(n)`, so one nobody planned for fails at the step that caused it.")
+            )
+        );
+    }
+
+    #[test]
+    fn accounts_for_every_call_once_at_least_the_count_is_in() {
+        let mut ledger = ledger();
+        ledger.take_height_call();
+        let short = ledger.check_new_height_calls_at_least(2);
+        ledger.take_height_call();
+        ledger.take_height_call();
+        let met = ledger.check_new_height_calls_at_least(2);
+        assert_eq!(
+            (
+                short,
+                met,
+                ledger.claimed_height_calls,
+                ledger.unclaimed_height_calls_message()
+            ),
+            (false, true, 3, None)
+        );
+    }
+
+    #[test]
     fn resolves_one_call_by_index_once() {
         let mut ledger = ledger();
         ledger.take_height_call();
@@ -1046,8 +1213,8 @@ mod tests {
     #[test]
     fn refuses_a_reply_two_queries_could_take() {
         let mut ledger = ledger();
-        ledger.take_items_query("0".to_string(), 0, None, 0);
-        ledger.take_items_query("1".to_string(), 0, None, 0);
+        take(&mut ledger, "0".to_string(), 0, None, 0);
+        take(&mut ledger, "1".to_string(), 0, None, 0);
         let outcome = ledger.match_items_queries(&[reply("Respond")]);
         assert_eq!(
             (outcome.status.as_str(), outcome.message.as_deref()),
@@ -1061,8 +1228,8 @@ mod tests {
     #[test]
     fn leaves_pending_every_query_an_entry_accounts_for() {
         let mut ledger = ledger();
-        let a = ledger.take_items_query("0".to_string(), 1, Some(10), 0);
-        let b = ledger.take_items_query("1".to_string(), 1, Some(10), 0);
+        let a = take(&mut ledger, "0".to_string(), 1, Some(10), 0);
+        let b = take(&mut ledger, "1".to_string(), 1, Some(10), 0);
         let outcome = ledger.match_items_queries(&[
             MockExpectedQuery {
                 partition_id: Some("0".to_string()),
@@ -1083,8 +1250,8 @@ mod tests {
     #[test]
     fn names_queries_no_entry_accounts_for() {
         let mut ledger = ledger();
-        ledger.take_items_query("0".to_string(), 1, None, 0);
-        ledger.take_items_query("1".to_string(), 5, None, 0);
+        take(&mut ledger, "0".to_string(), 1, None, 0);
+        take(&mut ledger, "1".to_string(), 5, None, 0);
         let outcome = ledger.match_items_queries(&[MockExpectedQuery {
             from_block: Some(1),
             ..reply("Respond")
@@ -1098,7 +1265,7 @@ mod tests {
     #[test]
     fn waits_with_the_reason_each_entry_is_unmatched() {
         let mut ledger = ledger();
-        ledger.take_items_query("0".to_string(), 1, Some(100), 0);
+        take(&mut ledger, "0".to_string(), 1, Some(100), 0);
         let outcome = ledger.match_items_queries(&[MockExpectedQuery {
             from_block: Some(101),
             to_block_unbounded: Some(true),
@@ -1114,9 +1281,80 @@ mod tests {
     }
 
     #[test]
+    fn matches_an_address_in_any_letter_case() {
+        let mut ledger = ledger();
+        ledger.take_items_query(
+            "0".to_string(),
+            1,
+            None,
+            0,
+            vec!["0x00000000000000000000000000000000000000aa".to_string()],
+            0,
+        );
+        let b = ledger.take_items_query(
+            "1".to_string(),
+            1,
+            None,
+            0,
+            vec!["0x00000000000000000000000000000000000000bb".to_string()],
+            0,
+        );
+        let outcome = ledger.match_items_queries(&[
+            MockExpectedQuery {
+                address: Some("0x00000000000000000000000000000000000000BB".to_string()),
+                ..reply("Respond")
+            },
+            reply("LeavePending"),
+        ]);
+        assert_eq!(
+            (outcome.status.as_str(), outcome.assignment),
+            ("matched", vec![b])
+        );
+    }
+
+    #[test]
+    fn hints_that_an_unmatched_entry_may_be_a_follow_up() {
+        let mut ledger = ledger();
+        take(&mut ledger, "0".to_string(), 1, None, 0);
+        let outcome = ledger.match_items_queries(&[
+            MockExpectedQuery {
+                partition_id: Some("0".to_string()),
+                ..reply("Respond")
+            },
+            MockExpectedQuery {
+                partition_id: Some("1".to_string()),
+                address: Some("0xAb".to_string()),
+                ..reply("Respond")
+            },
+        ]);
+        assert_eq!(
+            outcome.message.as_deref(),
+            Some("expectItemsQueries timed out. Expected:\n  #0 {partitionId: \"0\", reply: Respond(…)}\n  #1 {partitionId: \"1\", address: \"0xAb\", reply: Respond(…)} (matches no pending query)\nPending:\n  {partitionId: \"0\", fromBlock: 1, toBlock: Unbounded, retryCount: 0}\nThe list replies only once every entry matches, but the indexer may send a query only after an earlier one is answered. If an unmatched entry is such a follow-up, expect it in a later expectItemsQueries call.")
+        );
+    }
+
+    #[test]
+    fn names_the_known_height_for_an_unbounded_reply_cut_short() {
+        let mut ledger = ledger();
+        let id = ledger.take_items_query("0".to_string(), 101, None, 0, vec![], 300);
+        assert_eq!(
+            ledger
+                .check_replies(&[MockItemsReply {
+                    id,
+                    checked: true,
+                    is_failure: false,
+                    latest_fetched_block_number: None,
+                    item_block_numbers: vec![200],
+                }])
+                .as_deref(),
+            Some("expectItemsQueries can't reply an item at block 200 to {partitionId: \"0\", fromBlock: 101, toBlock: Unbounded, retryCount: 0}: a source only returns items between the query's fromBlock and the latestFetchedBlockNumber it replies (101). The query is unbounded, so a reply without latestFetchedBlockNumber stops at its fromBlock. To fetch up to the height the indexer knew, reply latestFetchedBlockNumber: 300")
+        );
+    }
+
+    #[test]
     fn refuses_a_reply_past_the_query_range() {
         let mut ledger = ledger();
-        let id = ledger.take_items_query("0".to_string(), 1, Some(100), 0);
+        let id = take(&mut ledger, "0".to_string(), 1, Some(100), 0);
         let past_to_block = MockItemsReply {
             id,
             checked: true,
@@ -1161,7 +1399,7 @@ mod tests {
     fn voids_everything_in_flight() {
         let mut ledger = ledger();
         ledger.take_height_call();
-        ledger.take_items_query("0".to_string(), 1, None, 0);
+        take(&mut ledger, "0".to_string(), 1, None, 0);
         ledger.take_lookup(vec![1]);
         assert_eq!(
             (ledger.drop_pending(), ledger.describe_state()),

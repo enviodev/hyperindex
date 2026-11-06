@@ -59,7 +59,7 @@ let makeChainState = (
     knownHeight,
     latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
     buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
   }
   let mockSource = MockSource.make([], ~chainId=1)
@@ -135,10 +135,11 @@ let makeFetchingChainState = (
     maxOnBlockBufferSize: 10000,
     chainId,
     blockLag,
+    blockThrottle: 0,
     onBlockRegistrations: [],
     knownHeight,
     firstEventBlock,
-    clientFilterAddressThreshold: None,
+    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
@@ -546,10 +547,11 @@ describe("CrossChainState fetch control", () => {
       maxOnBlockBufferSize: 10000,
       chainId: 1->ChainId.fromInt,
       blockLag: 0,
+      blockThrottle: 0,
       onBlockRegistrations: [],
       knownHeight: 1000,
       firstEventBlock: Some(0),
-      clientFilterAddressThreshold: None,
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
     }
     let mockSource1 = MockSource.make([], ~chainId=1)
     let a = ChainState.make(

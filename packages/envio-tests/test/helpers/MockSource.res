@@ -116,7 +116,13 @@ type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 // `isWildcard` decides whether the chain's mock registration depends on
 // addresses, and so whether its partition is an address partition or a wildcard
 // one — the two take different paths through a rollback.
-type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef, isWildcard: bool}
+type mockSourceState = {
+  onEventRegistrationRef: mockSourceRegistrationRef,
+  // The chain's own registrations, for items that name the event they are.
+  chainRegistrationsRef: ref<array<Internal.onEventRegistration>>,
+  isWildcard: bool,
+}
+
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
 
 let setMockSourceState = (source: Source.t, state: mockSourceState) => {
@@ -159,8 +165,12 @@ let installMockSourceRegistrations = (
         // address-dependent partition of a real contract.
         ~contractName=contract.name,
       )
+      let chainRegistrations = registrations.onEventRegistrations->Array.copy
       registrations.onEventRegistrations->Array.push(mockRegistration)->ignore
-      sourceStates->Array.forEach(state => state.onEventRegistrationRef := Some(mockRegistration))
+      sourceStates->Array.forEach(state => {
+        state.onEventRegistrationRef := Some(mockRegistration)
+        state.chainRegistrationsRef := chainRegistrations
+      })
     | _ => ()
     }
   })
@@ -180,6 +190,13 @@ type itemMock = {
   // only runs once preloading is done.
   preloadHandler?: mockSourceHandler,
   contractRegister?: mockSourceContractRegister,
+  // "Contract.Event": the item runs the handler and contract register the
+  // scenario's own handlers registered for it, with `params` as its params,
+  // instead of `handler` and `contractRegister`.
+  event?: string,
+  params?: dict<unknown>,
+  // The emitting contract's address handlers see. Defaults to the zero address.
+  srcAddress?: string,
   // Laid over the number, timestamp and hash every item's block carries.
   blockFields?: dict<unknown>,
   transactionFields?: dict<unknown>,
@@ -238,6 +255,9 @@ type expectedItemsQuery = {
   toBlock?: toBlock,
   retryCount?: int,
   coversBlock?: int,
+  // An address the query fetches for, in any letter case: queries carry the
+  // lowercase spelling, so a checksummed one would otherwise never match.
+  address?: string,
   where?: pendingItemsQuery => bool,
   reply: reply,
 }
@@ -271,9 +291,20 @@ type t = {
   // settled does nothing. An index for a call the source never took throws.
   resolveGetHeightOrThrowAt: (~index: int, int) => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
-  // Waits until the source has taken `count` height calls in all, then fails
-  // if it has taken more. Answering them is still up to the resolvers above.
-  expectHeightCalls: int => promise<unit>,
+  // Waits for exactly `count` height calls past the ones the last expectation
+  // accounted for, so a test names the polls a step causes without counting
+  // from the first. On virtual time, once a test accounts for this source's
+  // height calls this way, one no expectation accounts for fails the scenario.
+  // Answering them is still up to the resolvers above.
+  expectNewHeightCalls: (int, ~within: float=?) => promise<unit>,
+  // Waits for at least `count` new height calls and accounts for all of them.
+  // For a step whose number of polls rides on the clock's jitter, such as a
+  // polling cadence started by a stall poke anywhere in its window.
+  expectNewHeightCallsAtLeast: int => promise<unit>,
+  // Helpers only: waits for the next height call without accounting for the
+  // test's height calls, for a step such as answering the first height. The
+  // lint refuses it in test files, where `expectNewHeightCalls` names them.
+  waitForHeightCall: unit => promise<unit>,
   // Answer every height call with `height` from now on, one answer covering any
   // number of polls. A restarted indexer learns the head on its own this way,
   // before the test body gets a chance to resolve anything.
@@ -289,7 +320,12 @@ type t = {
   // them in list order. An entry that replies needs exactly one matching query;
   // `LeavePending` accounts for every remaining query it matches. A pending
   // query no entry accounts for, and no earlier list left pending, fails it.
-  expectItemsQueries: array<expectedItemsQuery> => promise<unit>,
+  // `~within` is how long any expectation waits, 2s by default. A test about
+  // the timeout itself shortens it, since a real wait proves nothing more.
+  expectItemsQueries: (array<expectedItemsQuery>, ~within: float=?) => promise<unit>,
+  // The queries the last `expectItemsQueries` replied to, in entry order, for an
+  // assert on what the indexer asked.
+  repliedItemsQueries: array<pendingItemsQuery>,
   // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
   // queries and answers every one up to its own toBlock, never past
   // `blockNumber`, until every partition it answers gets there. A query starting
@@ -310,11 +346,14 @@ type t = {
   // replies with `reply`. A lookup of other blocks, or more than one pending,
   // fails at once naming what was asked. A rollback only looks up hashes when
   // the chain has a stored block between its threshold and the reorged block.
-  expectBlockHashLookup: expectedBlockHashLookup => promise<unit>,
+  expectBlockHashLookup: (expectedBlockHashLookup, ~within: float=?) => promise<unit>,
   // What the source has been asked and not answered, for a failure report.
   describeState: unit => string,
   // Throws if a height answer given before its call arrived is still waiting
-  // for one, naming the call sites. Run at the end of a passing scenario.
+  // for one, naming the call sites — or, on virtual time and in a test that
+  // accounts for height calls with `expectNewHeightCalls`, if the source
+  // took one no expectation accounted for. Run at the end of a passing
+  // scenario.
   validateAnswersClaimed: unit => unit,
   // Voids the queries the indexer has in flight. A restarted indexer re-issues
   // its own, and answering a stopped indexer's leftovers instead is a bug the
@@ -346,6 +385,7 @@ module Ledger = {
     toBlockUnbounded?: bool,
     retryCount?: int,
     coversBlock?: int,
+    address?: string,
     whereIds?: array<int>,
     reply: string,
   }
@@ -367,17 +407,28 @@ module Ledger = {
   type lookupMatch = {status: string, id: Nullable.t<int>, message: Nullable.t<string>}
 
   @send
-  external make: (Core.mockSourceCtor, int, Null.t<int>, array<startupHeight>) => t = "new"
+  external make: (
+    Core.mockSourceCtor,
+    int,
+    Null.t<string>,
+    Null.t<int>,
+    array<startupHeight>,
+  ) => t = "new"
   @send external takeHeightCall: t => heightCall = "takeHeightCall"
   @send external resolveHeight: (t, int, string) => array<int> = "resolveHeight"
   @send external resolveHeightAt: (t, int) => bool = "resolveHeightAt"
   @send external setAutoHeight: (t, int) => array<int> = "setAutoHeight"
   @send external rejectHeights: t => array<int> = "rejectHeights"
-  @send external checkHeightCalls: (t, int) => heightCallsCheck = "checkHeightCalls"
-  @send external heightCallsTimeoutMessage: (t, int) => string = "heightCallsTimeoutMessage"
+  @send external checkNewHeightCalls: (t, int) => heightCallsCheck = "checkNewHeightCalls"
+  @send
+  external newHeightCallsTimeoutMessage: (t, int, bool) => string = "newHeightCallsTimeoutMessage"
+  @send external checkNewHeightCallsAtLeast: (t, int) => bool = "checkNewHeightCallsAtLeast"
+  @send
+  external unclaimedHeightCallsMessage: t => Nullable.t<string> = "unclaimedHeightCallsMessage"
   @send external unclaimedAnswersMessage: t => Nullable.t<string> = "unclaimedAnswersMessage"
   @send
-  external takeItemsQuery: (t, string, int, Null.t<int>, int) => int = "takeItemsQuery"
+  external takeItemsQuery: (t, string, int, Null.t<int>, int, array<string>, int) => int =
+    "takeItemsQuery"
   @send external settleItemsQuery: (t, int) => unit = "settleItemsQuery"
   @send external entryCandidates: (t, array<expected>) => array<array<int>> = "entryCandidates"
   @send external matchItemsQueries: (t, array<expected>) => itemsMatch = "matchItemsQueries"
@@ -408,17 +459,7 @@ let blockHashesResponse = (blocks: array<BlockStore.inputBlock>) => {
   requestStats: [],
 }
 
-// Taken at module load, before a test can fake the clock: a deadline on faked
-// timers never fires, and a mismatched expectation would hang the suite instead
-// of failing with what it was waiting for.
-let realSetTimeout: (
-  unit => unit,
-  int,
-) => timeoutId = %raw(`globalThis.setTimeout.bind(globalThis)`)
-let realClearTimeout: timeoutId => unit = %raw(`globalThis.clearTimeout.bind(globalThis)`)
 @val external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
-
-let realNow: unit => float = %raw(`Date.now.bind(Date)`)
 
 // The ledger's id for a query, kept off the enumerable fields a test compares.
 @get external queryId: pendingItemsQuery => int = "__id"
@@ -447,6 +488,12 @@ let make = (
   // `autoHeight`. For calls startup makes before a test body can answer them,
   // where a source has to fail first.
   ~startupHeights: array<startupHeight>=[],
+  // What failures call this mock, for a chain with several: the way the test
+  // reaches it.
+  ~label=?,
+  // Hears what the source is asked and told, for the virtual clock's timeline.
+  ~note: string => unit=_ => (),
+  ~virtualTime=false,
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -458,6 +505,7 @@ let make = (
 
   let ledger = Core.getAddon().mockSource->Ledger.make(
     chainId,
+    label->Null.fromOption,
     autoHeight->Null.fromOption,
     startupHeights->Array.map((answer): Ledger.startupHeight =>
       switch answer {
@@ -507,12 +555,17 @@ let make = (
     heightSubscriptionCallbacks->Utils.Array.clearInPlace
     heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
   }
-  let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
+  let state: mockSourceState = {
+    onEventRegistrationRef: ref(None),
+    chainRegistrationsRef: ref([]),
+    isWildcard,
+  }
 
   // The ledger's pending queries as the objects a test holds, in the same
   // arrival order, so the same query stays the same object while it's pending.
   let pendingItemsQueries: array<pendingItemsQuery> = []
   let queriesById: Map.t<int, pendingItemsQuery> = Map.make()
+  let repliedItemsQueries: array<pendingItemsQuery> = []
 
   let arrivalListeners: array<unit => unit> = []
   // A chain fans out one query per partition, and each await on the way to the
@@ -546,13 +599,13 @@ let make = (
   }
   let nextArrival = (~deadline) =>
     Promise.make((resolve, _reject) => {
-      let timer = realSetTimeout(
+      let timer = setTimeout(
         () => resolve(false),
-        Math.max(0., deadline -. realNow())->Float.toInt,
+        Math.max(0., deadline -. Date.now())->Float.toInt,
       )
       arrivalListeners
       ->Array.push(() => {
-        realClearTimeout(timer)
+        clearTimeout(timer)
         resolve(true)
       })
       ->ignore
@@ -576,6 +629,7 @@ let make = (
     },
     retryCount: ?entry.retryCount,
     coversBlock: ?entry.coversBlock,
+    address: ?entry.address,
     reply: entry.reply->replyName,
   }
 
@@ -597,6 +651,46 @@ let make = (
       | None => entry
       }
     )
+  }
+
+  let makeEventItem = (item: itemMock, onEventRegistration: Internal.onEventRegistration) => {
+    let payload: Evm.payload = {
+      contractName: onEventRegistration.eventConfig.contractName,
+      eventName: onEventRegistration.eventConfig.name,
+      params: item.params
+      ->Option.getOr(Dict.make())
+      ->(Utils.magic: dict<unknown> => Internal.eventParams),
+      chainId,
+      srcAddress: item.srcAddress
+      ->Option.getOr("0x0000000000000000000000000000000000000000")
+      ->Address.unsafeFromString,
+      logIndex: item.logIndex,
+      block: Dict.fromArray([
+        ("number", item.blockNumber->(Utils.magic: int => unknown)),
+        ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
+        ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
+      ])
+      ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
+      ->(Utils.magic: dict<unknown> => Internal.eventBlock),
+      transaction: ?(
+        item.transactionFields->Option.map(fields =>
+          fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+        )
+      ),
+    }
+    let _ = %raw(`Object.defineProperties(payload, {
+      __mockHandler: {value: item.handler},
+      __mockPreloadHandler: {value: item.preloadHandler},
+      __mockContractRegister: {value: item.contractRegister},
+    })`)
+    Internal.Event({
+      onEventRegistration,
+      chainId,
+      blockNumber: item.blockNumber,
+      logIndex: item.logIndex,
+      transactionIndex: 0,
+      payload: payload->Evm.fromPayload,
+    })
   }
 
   let makeItemsResponse = (
@@ -678,44 +772,32 @@ let make = (
     {
       knownHeight: response.knownHeight->Option.getOr(knownHeight),
       parsedQueueItems: items
-      ->Array.map(item => {
-        let onEventRegistration =
-          state.onEventRegistrationRef.contents->Option.getOrThrow(
-            ~message="MockSource on-event registration was not installed before resolving items",
-          )
-        let payload: Evm.payload = {
-          contractName: onEventRegistration.eventConfig.contractName,
-          eventName: onEventRegistration.eventConfig.name,
-          params: %raw(`{}`),
-          chainId,
-          srcAddress: "0x0000000000000000000000000000000000000000"->Address.unsafeFromString,
-          logIndex: item.logIndex,
-          block: Dict.fromArray([
-            ("number", item.blockNumber->(Utils.magic: int => unknown)),
-            ("timestamp", item.blockNumber->(Utils.magic: int => unknown)),
-            ("hash", `0x${item.blockNumber->Int.toString}`->(Utils.magic: string => unknown)),
-          ])
-          ->Dict.assign(item.blockFields->Option.getOr(Dict.make()))
-          ->(Utils.magic: dict<unknown> => Internal.eventBlock),
-          transaction: ?(
-            item.transactionFields->Option.map(fields =>
-              fields->(Utils.magic: dict<unknown> => Internal.eventTransaction)
+      ->Array.flatMap(item => {
+        let registrations = switch item.event {
+        | None => [
+            state.onEventRegistrationRef.contents->Option.getOrThrow(
+              ~message="MockSource on-event registration was not installed before resolving items",
+            ),
+          ]
+        | Some(event) =>
+          let name = (registration: Internal.onEventRegistration) =>
+            `${registration.eventConfig.contractName}.${registration.eventConfig.name}`
+          // Like a real source, one item per handler registered for the event.
+          switch state.chainRegistrationsRef.contents->Array.filter(registration =>
+            registration->name === event
+          ) {
+          | [] =>
+            JsError.throwWithMessage(
+              `An item names event "${event}", but chain ${chainId->ChainId.toString} has no handler registered for it. Registered: ${state.chainRegistrationsRef.contents
+                ->Array.map(registration => `"${registration->name}"`)
+                ->Utils.Set.fromArray
+                ->Utils.Set.toArray
+                ->Array.join(", ")}`,
             )
-          ),
+          | registrations => registrations
+          }
         }
-        let _ = %raw(`Object.defineProperties(payload, {
-          __mockHandler: {value: item.handler},
-          __mockPreloadHandler: {value: item.preloadHandler},
-          __mockContractRegister: {value: item.contractRegister},
-        })`)
-        Internal.Event({
-          onEventRegistration,
-          chainId,
-          blockNumber: item.blockNumber,
-          logIndex: item.logIndex,
-          transactionIndex: 0,
-          payload: payload->Evm.fromPayload,
-        })
+        registrations->Array.map(onEventRegistration => makeEventItem(item, onEventRegistration))
       })
       ->Array.concat(
         blocks->Array.flatMap(({blockNumber, ?blockFields}) =>
@@ -744,8 +826,9 @@ let make = (
     }
   }
 
-  let expectItemsQueries = async expected => {
-    let deadline = realNow() +. 2000.
+  let expectItemsQueries = async (expected, ~within=2000.) => {
+    repliedItemsQueries->Utils.Array.clearInPlace
+    let deadline = Date.now() +. within
     let rec awaitMatch = async () => {
       await awaitSettled(~deadline)
       let outcome = ledger->Ledger.matchItemsQueries(expected->toLedgerEntries)
@@ -793,50 +876,84 @@ let make = (
     | Some(message) => JsError.throwWithMessage(message)
     | None => ()
     }
-    replies->Array.forEach(((query, reply, _)) =>
+    replies->Array.forEach(((query, reply, _)) => {
       switch reply {
       | Ok(response) => (query->control).respond(response)
       | Error(exn) => (query->control).fail(exn)
       }
-    )
+      repliedItemsQueries->Array.push(query)->ignore
+    })
+  }
+
+  // A test that accounts for height calls step by step is one about polling,
+  // and owes an account of every call. One that only waits for a call to
+  // arrive is about something else.
+  let countsHeightCalls = ref(false)
+
+  let awaitNewHeightCalls = async (count, ~within=2000.) => {
+    let deadline = Date.now() +. within
+    let rec awaitCount = async () => {
+      await awaitSettled(~deadline)
+      let {done, error} = ledger->Ledger.checkNewHeightCalls(count)
+      switch error->Nullable.toOption {
+      | Some(message) => JsError.throwWithMessage(message)
+      | None =>
+        if !done {
+          if await nextArrival(~deadline) {
+            await awaitCount()
+          } else {
+            JsError.throwWithMessage(ledger->Ledger.newHeightCallsTimeoutMessage(count, false))
+          }
+        }
+      }
+    }
+    await awaitCount()
+  }
+
+  let expectNewHeightCallsAtLeast = async count => {
+    countsHeightCalls := true
+    let deadline = Date.now() +. 2000.
+    let rec awaitCount = async () => {
+      await awaitSettled(~deadline)
+      if !(ledger->Ledger.checkNewHeightCallsAtLeast(count)) {
+        if await nextArrival(~deadline) {
+          await awaitCount()
+        } else {
+          JsError.throwWithMessage(ledger->Ledger.newHeightCallsTimeoutMessage(count, true))
+        }
+      }
+    }
+    await awaitCount()
   }
 
   {
     getHeightOrThrowCalls,
-    resolveGetHeightOrThrow: height =>
+    resolveGetHeightOrThrow: height => {
+      note(`test answered heights with ${height->Int.toString}`)
       ledger
       ->Ledger.resolveHeight(height, UserModule.callSite())
-      ->settleHeightCalls(answerHeight(height)),
+      ->settleHeightCalls(answerHeight(height))
+    },
     resolveGetHeightOrThrowAt: (~index, height) =>
       if ledger->Ledger.resolveHeightAt(index) {
         [index]->settleHeightCalls(answerHeight(height))
       },
-    setAutoHeight: height =>
-      ledger->Ledger.setAutoHeight(height)->settleHeightCalls(answerHeight(height)),
+    setAutoHeight: height => {
+      note(`test answers every height with ${height->Int.toString}`)
+      ledger->Ledger.setAutoHeight(height)->settleHeightCalls(answerHeight(height))
+    },
     rejectGetHeightOrThrow: exn =>
       ledger->Ledger.rejectHeights->settleHeightCalls(caller => caller["reject"](exn->Obj.magic)),
-    expectHeightCalls: async count => {
-      let deadline = realNow() +. 2000.
-      let rec awaitCount = async () => {
-        await awaitSettled(~deadline)
-        let {done, error} = ledger->Ledger.checkHeightCalls(count)
-        switch error->Nullable.toOption {
-        | Some(message) => JsError.throwWithMessage(message)
-        | None =>
-          if !done {
-            if await nextArrival(~deadline) {
-              await awaitCount()
-            } else {
-              JsError.throwWithMessage(ledger->Ledger.heightCallsTimeoutMessage(count))
-            }
-          }
-        }
-      }
-      await awaitCount()
+    expectNewHeightCalls: (count, ~within=?) => {
+      countsHeightCalls := true
+      awaitNewHeightCalls(count, ~within?)
     },
+    waitForHeightCall: () => awaitNewHeightCalls(1),
+    expectNewHeightCallsAtLeast,
     reorgCallCount: () => ledger->Ledger.reorgCallCount,
     pendingItemsQueries,
     expectItemsQueries,
+    repliedItemsQueries,
     respondEmptyUpTo: async blockNumber => {
       let rec wave = async (~count) => {
         if count > 1000 {
@@ -895,8 +1012,8 @@ let make = (
       ledger
       ->Ledger.settleAllBlockHashLookups("failGetBlockHashes")
       ->settleBlockHashLookups({Source.result: Error(exn), requestStats}),
-    expectBlockHashLookup: async ({blockNumbers, reply}) => {
-      let deadline = realNow() +. 2000.
+    expectBlockHashLookup: async ({blockNumbers, reply}, ~within=2000.) => {
+      let deadline = Date.now() +. within
       let rec awaitLookup = async () => {
         await awaitSettled(~deadline)
         let {status, id, message} = ledger->Ledger.matchBlockHashLookup(blockNumbers)
@@ -915,11 +1032,18 @@ let make = (
       let id = await awaitLookup()
       [id]->settleBlockHashLookups(reply->blockHashesResponse)
     },
-    validateAnswersClaimed: () =>
+    validateAnswersClaimed: () => {
       switch ledger->Ledger.unclaimedAnswersMessage->Nullable.toOption {
       | Some(message) => JsError.throwWithMessage(message)
       | None => ()
-      },
+      }
+      if virtualTime && countsHeightCalls.contents {
+        switch ledger->Ledger.unclaimedHeightCallsMessage->Nullable.toOption {
+        | Some(message) => JsError.throwWithMessage(message)
+        | None => ()
+        }
+      }
+    },
     describeState: () => ledger->Ledger.describeState,
     dropPendingCalls: () => {
       ledger
@@ -933,11 +1057,18 @@ let make = (
     heightSubscriptionCloseCalls,
     triggerHeightSubscription: height => {
       if !heightSubscriptionUnsubscribed.contents {
+        note(`stream pushed ${height->Int.toString}`)
         heightSubscriptionCallbacks->Array.forEach(callback => callback(height))
       }
     },
     setHeightSubscriptionStatus: status => {
       if !heightSubscriptionUnsubscribed.contents {
+        note(
+          switch status {
+          | Live => "stream live"
+          | Down({reason}) => `stream down (${reason->Source.downReasonLabel})`
+          },
+        )
         heightSubscriptionStatusCallbacks->Array.forEach(callback => callback(status))
       }
     },
@@ -960,6 +1091,16 @@ let make = (
           getHeightOrThrowCalls->Array.push(true)->ignore
           notifyArrival()
           let {index, height, failure} = ledger->Ledger.takeHeightCall
+          note(
+            `height call ${(index + 1)->Int.toString} (${switch (
+                height->Nullable.toOption,
+                failure->Nullable.toOption,
+              ) {
+              | (Some(height), _) => `answered ${height->Int.toString}`
+              | (None, Some(_)) => "failed"
+              | (None, None) => "pending"
+              }})`,
+          )
           switch (height->Nullable.toOption, failure->Nullable.toOption) {
           | (Some(height), _) => Promise.resolve({Source.height, requestStats: []})
           | (None, Some(message)) =>
@@ -982,8 +1123,21 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
+          let addresses = addressSet->AddressSet.addressesForTest
           let id =
-            ledger->Ledger.takeItemsQuery(partitionId, fromBlock, toBlock->Null.fromOption, retry)
+            ledger->Ledger.takeItemsQuery(
+              partitionId,
+              fromBlock,
+              toBlock->Null.fromOption,
+              retry,
+              addresses->Array.map(address => address->Address.toString->String.toLowerCase),
+              knownHeight,
+            )
+          note(
+            `items query ${fromBlock->Int.toString}..${toBlock->Option.mapOr("", toBlock =>
+                toBlock->Int.toString
+              )} (partition ${partitionId})`,
+          )
           let promise = Promise.make((resolve, reject) => {
             let query: pendingItemsQuery = {
               partitionId,
@@ -1005,15 +1159,22 @@ let make = (
             }
             let queryControl = {
               respond: response => {
+                // Built first, so a reply that can't be built leaves the query pending.
+                let built = makeItemsResponse(
+                  response,
+                  ~fromBlock,
+                  ~toBlock,
+                  ~knownHeight,
+                  ~selection,
+                )
                 settle()
-                resolve(makeItemsResponse(response, ~fromBlock, ~toBlock, ~knownHeight, ~selection))
+                resolve(built)
               },
               fail: exn => {
                 settle()
                 reject(exn)
               },
             }
-            let addresses = addressSet->AddressSet.addressesForTest
             query
             ->Utils.Object.definePropertyWithValue("__id", {enumerable: false, value: id})
             ->Utils.Object.definePropertyWithValue(
@@ -1039,7 +1200,7 @@ let make = (
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
         | true =>
           Some(
-            (~onHeight, ~onStatus) => {
+            (~clock as _, ~onHeight, ~onStatus) => {
               heightSubscriptionCalls->Array.push(true)->ignore
               heightSubscriptionCallbacks->Array.push(onHeight)->ignore
               heightSubscriptionStatusCallbacks->Array.push(onStatus)->ignore
@@ -1058,25 +1219,3 @@ let make = (
     },
   }
 }
-
-// Bounded, so a call that never arrives fails saying what it was waiting for
-// rather than as a suite-level timeout.
-let waitForCall = async (~arrived, ~message) => {
-  let attempts = ref(0)
-  while !arrived() && attempts.contents < 3000 {
-    attempts := attempts.contents + 1
-    await Utils.delay(1)
-  }
-  if !arrived() {
-    JsError.throwWithMessage(`Timed out waiting for ${message}`)
-  }
-}
-
-// Wait until the source takes a height call beyond the `since`th, for a test
-// that can't know how many polls a feed makes while it sleeps out its interval.
-// Where the count is known, `expectHeightCalls` checks it exactly.
-let waitHeightQuery = (sourceMock: t, ~since) =>
-  waitForCall(
-    ~arrived=() => sourceMock.getHeightOrThrowCalls->Array.length > since,
-    ~message=`a getHeightOrThrow call beyond ${since->Int.toString}`,
-  )

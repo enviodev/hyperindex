@@ -16,7 +16,7 @@ chains:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
         events:
-          - event: "TestEvent()"
+          - event: "TestEvent(address contractAddress)"
       - name: NftFactory
         address: "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c4"
         events:
@@ -36,6 +36,16 @@ import { indexer } from "envio";
 
 indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async () => {});
 indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async () => {});
+
+indexer.contractRegister({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  context.chain.Gravatar.add(event.params.contractAddress);
+});
+indexer.contractRegister(
+  { contract: "NftFactory", event: "SimpleNftCreated" },
+  async ({ event, context }) => {
+    context.chain.NftFactory.add(event.params.contractAddress);
+  },
+);
 `,
 )
 
@@ -51,16 +61,11 @@ let lateDcAddress = "0x2222222222222222222222222222222222222222"->Address.unsafe
 
 let row = (address, contractName, registrationBlock) => (address, contractName, registrationBlock)
 
-type contractOps = {add: Address.t => unit}
-type registerContext = {chain: {"Gravatar": contractOps, "NftFactory": contractOps}}
-
-// An event whose only job is to register `address` for `contractName`.
-let registeringItem = (~blockNumber, ~register): MockSource.itemMock => {
+let registeringItem = (~blockNumber, ~event, address: Address.t): MockSource.itemMock => {
+  event,
   blockNumber,
   logIndex: 0,
-  handler: async _ => (),
-  contractRegister: async args =>
-    register(args.context->(Utils.magic: Internal.contractRegisterContext => registerContext)),
+  params: dict{"contractAddress": address->(Utils.magic: Address.t => unknown)},
 }
 
 let firstQuery = (items): MockSource.expectedItemsQuery => {
@@ -89,14 +94,8 @@ describe("Dynamic contract persistence", () => {
         // duplicate the store rejects, so only the first is ever written.
         await sourceMock.expectItemsQueries([
           firstQuery([
-            registeringItem(
-              ~blockNumber=10,
-              ~register=context => context.chain["Gravatar"].add(dcAddress),
-            ),
-            registeringItem(
-              ~blockNumber=11,
-              ~register=context => context.chain["Gravatar"].add(dcAddress),
-            ),
+            registeringItem(~blockNumber=10, ~event="Gravatar.TestEvent", dcAddress),
+            registeringItem(~blockNumber=11, ~event="Gravatar.TestEvent", dcAddress),
           ]),
         ])
         await indexer.getBatchWritePromise()
@@ -121,14 +120,8 @@ describe("Dynamic contract persistence", () => {
         // row, so a resume restores both.
         await sourceMock.expectItemsQueries([
           firstQuery([
-            registeringItem(
-              ~blockNumber=10,
-              ~register=context => context.chain["Gravatar"].add(dcAddress),
-            ),
-            registeringItem(
-              ~blockNumber=11,
-              ~register=context => context.chain["NftFactory"].add(dcAddress),
-            ),
+            registeringItem(~blockNumber=10, ~event="Gravatar.TestEvent", dcAddress),
+            registeringItem(~blockNumber=11, ~event="NftFactory.SimpleNftCreated", dcAddress),
           ]),
         ])
         await indexer.getBatchWritePromise()
@@ -154,14 +147,8 @@ describe("Dynamic contract persistence", () => {
         // pending until a later batch covers it.
         await sourceMock.expectItemsQueries([
           firstQuery([
-            registeringItem(
-              ~blockNumber=10,
-              ~register=context => context.chain["Gravatar"].add(dcAddress),
-            ),
-            registeringItem(
-              ~blockNumber=150,
-              ~register=context => context.chain["Gravatar"].add(lateDcAddress),
-            ),
+            registeringItem(~blockNumber=10, ~event="Gravatar.TestEvent", dcAddress),
+            registeringItem(~blockNumber=150, ~event="Gravatar.TestEvent", lateDcAddress),
           ]),
         ])
         await indexer.getBatchWritePromise()

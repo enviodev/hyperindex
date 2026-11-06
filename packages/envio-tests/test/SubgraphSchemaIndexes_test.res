@@ -69,9 +69,7 @@ describe("A subgraph's schema indexes", () => {
     let _ = await storage.initialize(
       ~chainConfigs=config.chainMap->ChainMap.values,
       ~contractMapping=config.contractMapping,
-      ~entities=config.userEntities,
-      ~enums=config.allEnums,
-      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~envioInfo=config.envioInfo,
     )
     let indexes = await sql->PgCatalog.indexes(~pgSchema)
     await sql->TestPgSchema.drop(~pgSchema)

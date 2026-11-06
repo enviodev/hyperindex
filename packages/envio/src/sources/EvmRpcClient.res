@@ -8,6 +8,7 @@ type cfg = {
   intervalCeiling: int,
   backoffMillis: int,
   queryTimeoutMillis: int,
+  maxAddressesPerRequest: int,
 }
 
 type nextPageParams = {
@@ -18,10 +19,12 @@ type nextPageParams = {
   onBlockRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
-  // Blocks at or above this one can still be reorged, so a blocks-only page
-  // reaching them is read for the hashes of its boundary blocks even with no
-  // handler block in range. None when the range is final.
+  // Blocks at or above this one can still be reorged, so each of them in the
+  // page has its header read and its logs checked against it, even a
+  // blocks-only page with no handler block in range. None when the range is
+  // final.
   reorgableFrom?: int,
+  knownHeight: int,
 }
 
 // Rust reports what to do about a page it could not read rather than throwing
@@ -77,6 +80,8 @@ external classNew: (
   array<BlockItem.registrationInput>,
   ~checksumAddresses: bool,
   ~addressStore: AddressStore.t,
+  Logger.native,
+  array<string>,
 ) => t = "new"
 
 let make = (
@@ -88,6 +93,8 @@ let make = (
   ~eventRegistrations=[],
   ~onBlockRegistrations=[],
   ~addressStore,
+  ~maxAddressesPerRequest,
+  ~logger: Logger.t,
 ) =>
   Core.getAddon().evmRpcClient->classNew(
     {
@@ -100,9 +107,12 @@ let make = (
       intervalCeiling: syncConfig.intervalCeiling,
       backoffMillis: syncConfig.backoffMillis,
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
+      maxAddressesPerRequest,
     },
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
     ~checksumAddresses,
     ~addressStore,
+    logger.output.native,
+    logger.boundFieldsJson,
   )

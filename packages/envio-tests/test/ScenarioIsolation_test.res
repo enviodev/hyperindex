@@ -30,7 +30,7 @@ type Account {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
-  context.Account.set({ id: "unreachable", balance: 1n });
+  context.Account.set({ id: "token-1", balance: 7n });
 });
 `,
 )
@@ -60,19 +60,13 @@ type Owner {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "Nft", event: "Minted" }, async ({ context }) => {
-  context.Owner.set({ id: "unreachable", count: 1n });
+  context.Owner.set({ id: "owner-1", count: 3n });
 });
 `,
 )
 
 type account = {id: string, balance: bigint}
 type owner = {id: string, count: bigint}
-
-type accountOps = {set: account => unit}
-type accountContext = {@as("Account") account: accountOps}
-type ownerOps = {set: owner => unit}
-type ownerContext = {@as("Owner") owner: ownerOps}
-
 describe("Scenario isolation", () => {
   Async.it("runs the first scenario against its own config and schema", async t => {
     await tokenScenario->Scenario.run(
@@ -86,17 +80,7 @@ describe("Scenario isolation", () => {
             fromBlock: 0,
             toBlock: Unbounded,
             reply: Respond({
-              items: [
-                {
-                  blockNumber: 5,
-                  logIndex: 0,
-                  handler: async args => {
-                    let context =
-                      args.context->(Utils.magic: Internal.handlerContext => accountContext)
-                    context.account.set({id: "token-1", balance: 7n})
-                  },
-                },
-              ],
+              items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
               latestFetchedBlockNumber: 10,
             }),
           },
@@ -124,17 +108,7 @@ describe("Scenario isolation", () => {
             fromBlock: 0,
             toBlock: Unbounded,
             reply: Respond({
-              items: [
-                {
-                  blockNumber: 5,
-                  logIndex: 0,
-                  handler: async args => {
-                    let context =
-                      args.context->(Utils.magic: Internal.handlerContext => ownerContext)
-                    context.owner.set({id: "owner-1", count: 3n})
-                  },
-                },
-              ],
+              items: [{event: "Nft.Minted", blockNumber: 5, logIndex: 0}],
               latestFetchedBlockNumber: 10,
             }),
           },

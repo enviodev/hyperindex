@@ -289,7 +289,7 @@
           "type": "string"
         },
         "name": {
-          "description": "Name of the event in the HyperIndex generated code. When ommitted, the event field will be used. Should be unique per contract",
+          "description": "Name of the event in the generated types. When ommitted, the event field will be used. Should be unique per contract",
           "type": [
             "string",
             "null"
@@ -421,7 +421,7 @@
           ]
         },
         "rpc": {
-          "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
+          "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to 2000x faster than traditional RPC.",
           "anyOf": [
             {
               "$ref": "#/$defs/RpcSelection"
@@ -461,7 +461,7 @@
           "minimum": 0
         },
         "block_throttle": {
-          "description": "The minimum number of new blocks the chain head must advance by before the indexer fetches again once it has caught up. Useful on chains with very fast blocks, where fetching every block is wasteful. Unset, 0 and 1 all fetch on every new block.",
+          "description": "Once caught up, wait for this many new blocks before fetching them. Delays new events by up to as many blocks.",
           "type": [
             "integer",
             "null"

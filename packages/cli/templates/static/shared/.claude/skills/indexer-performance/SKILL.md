@@ -11,7 +11,7 @@ metadata:
 
 ## HyperSync (Default — Fastest)
 
-HyperSync is the default data source for supported chains. Up to 1000x faster than RPC. No configuration needed — automatic for supported networks.
+HyperSync is the default data source for supported chains. Up to 2000x faster than RPC. No configuration needed — automatic for supported networks.
 
 ## Batch Size
 

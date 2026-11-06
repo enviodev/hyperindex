@@ -2,7 +2,7 @@
 
 ## Overview
 
-Envio's licensing reflects open source ethos but is not OSI recognized. Developers can use Envio's services without vendor lock-in, either by self-hosting or specifying an RPC URL. The generated code is open and public and so is this repository that generates the generated code.
+Envio's licensing reflects open source ethos but is not OSI recognized. Developers can use Envio's services without vendor lock-in, either by self-hosting or specifying an RPC URL. The code in this repository is public.
 
 Our licenses allows self-hosting but restricts third-party hosting with Envio's hosted service. Envio may consider open-sourcing in the future but prioritizes stakeholder interests and market traction. Please reach out to us on discord if you would like to explore hosting indexers as a third-party.
 

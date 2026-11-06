@@ -227,9 +227,7 @@ let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 // Head 300 against maxReorgDepth 200: one query opens at block 1, and its
 // response is what every case below rides in on.
 let reachFirstQuery = async (~source: MockSource.t) => {
-  // The initial height comes from a single getHeightOrThrow call.
-  await source.expectHeightCalls(1)
-  source.resolveGetHeightOrThrow(300)
+  await Scenario.resolveInitialHeight(~source, ~head=300)
 }
 
 let firstQuery = (items): MockSource.expectedItemsQuery => {
@@ -459,7 +457,7 @@ describe("Write/read tests", () => {
     let makeEntity = (id): Internal.entity =>
       {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-    let table = InMemoryTable.Entity.make()
+    let table = InMemoryTable.Entity.make(~entityIdToKey=Table.stringEntityIdToKey)
     let add = (id, checkpointId) =>
       table->InMemoryTable.Entity.set(
         ~committedCheckpointId=Internal.initialCheckpointId,
@@ -484,7 +482,7 @@ describe("Write/read tests", () => {
     let makeEntity = (id): Internal.entity =>
       {"id": id}->(Utils.magic: {"id": string} => Internal.entity)
 
-    let table = InMemoryTable.Entity.make()
+    let table = InMemoryTable.Entity.make(~entityIdToKey=Table.stringEntityIdToKey)
     let add = (id, checkpointId) =>
       table->InMemoryTable.Entity.set(
         ~committedCheckpointId=Internal.initialCheckpointId,

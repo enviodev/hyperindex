@@ -160,34 +160,6 @@ let fitPgTableName = (fullName, ~uniqueSuffix) =>
     fullName
   }
 
-// The variant's name and whichever of precision, scale and enum name it
-// carries. They travel to the addon separately because napi has no tagged
-// union of its own.
-let pgFieldTypeParts = (fieldType: fieldType) =>
-  switch fieldType {
-  | String => ("String", None, None, None)
-  | Boolean => ("Boolean", None, None, None)
-  | Uint32 => ("Uint32", None, None, None)
-  | UInt52 => ("UInt52", None, None, None)
-  | SmallInt => ("SmallInt", None, None, None)
-  | Bytea => ("Bytea", None, None, None)
-  | UInt64 => ("UInt64", None, None, None)
-  | Int32 => ("Int32", None, None, None)
-  | ChainId => ("ChainId", None, None, None)
-  | Number => ("Number", None, None, None)
-  | BigInt({?precision}) => ("BigInt", precision, None, None)
-  | BigDecimal({?config}) =>
-    switch config {
-    | Some((precision, scale)) => ("BigDecimal", Some(precision), Some(scale), None)
-    | None => ("BigDecimal", None, None, None)
-    }
-  | Serial => ("Serial", None, None, None)
-  | BigSerial => ("BigSerial", None, None, None)
-  | Json => ("Json", None, None, None)
-  | Date => ("Date", None, None, None)
-  | Enum({config}) => ("Enum", None, None, Some(config.name))
-  }
-
 type indexFieldDirection = Asc | Desc
 
 type compositeIndexField = {
@@ -200,13 +172,37 @@ type table = {
   fields: array<fieldOrDerived>,
   compositeIndexes: array<array<compositeIndexField>>,
   description: option<string>,
+  // The string an id keys a dict or Set by, picked from the id column's type
+  // so a string id, the common case, is its own key.
+  entityIdToKey: EntityId.t => string,
 }
+
+let stringEntityIdToKey = (Utils.magic: EntityId.t => string)
+// Always a string, never the raw number: a Set tells 7 from "7".
+let numericEntityIdToKey = (String.make: EntityId.t => string)
+// Hex rather than `String`, which decodes a Buffer as UTF-8 and so collides
+// distinct byte sequences.
+let bytesEntityIdToKey =
+  Utils.Bytes.toHex->(Utils.magic: (Uint8Array.t => string) => EntityId.t => string)
+
+let entityIdToKeyFor = (fields: array<fieldOrDerived>) =>
+  switch fields->Array.findMap(field =>
+    switch field {
+    | Field({fieldName, fieldType}) if fieldName === idFieldName => Some(fieldType)
+    | _ => None
+    }
+  ) {
+  | Some(Bytea) => bytesEntityIdToKey
+  | Some(String) | None => stringEntityIdToKey
+  | Some(_) => numericEntityIdToKey
+  }
 
 let mkTable = (tableName, ~compositeIndexes=[], ~fields, ~description=?) => {
   tableName,
   fields,
   compositeIndexes,
   description,
+  entityIdToKey: entityIdToKeyFor(fields),
 }
 
 let getFields = table =>
@@ -274,15 +270,6 @@ let getIdFieldOrThrow = (table): field =>
 // ids regardless of the underlying scalar.
 let getIdSchema = (table): S.t<EntityId.t> =>
   (table->getIdFieldOrThrow).fieldSchema->(Utils.magic: S.t<unknown> => S.t<EntityId.t>)
-
-// Serializes an array of ids to the JSON form the SQL layer binds. The array
-// schema is memoized per table so its serializer compiles once, not on every
-// (high-frequency) delete/history write.
-let idsArraySchema: table => S.t<array<EntityId.t>> = Utils.WeakMap.memoize(table =>
-  S.array(table->getIdSchema)
-)
-let encodeIdsToJson = (table, ids: array<EntityId.t>): JSON.t =>
-  ids->S.reverseConvertToJsonOrThrow(table->idsArraySchema)
 
 // TODO: Test whether it should be passed via args and match the column type
 
@@ -368,116 +355,3 @@ let pgEntityRowsSchema: table => S.t<array<unknown>> = Utils.WeakMap.memoize(tab
 )
 
 exception NonExistingTableField(string)
-
-/*
-Gets all composite indexes (whether they are single indexes or not)
-And maps the fields defined to their actual db name (some have _id suffix)
-*/
-let getUnfilteredCompositeIndexesUnsafe = (table): array<array<compositeIndexField>> => {
-  table.compositeIndexes->Array.map(compositeIndex =>
-    compositeIndex->Array.map(indexField => {
-      let dbFieldName = switch table->getFieldByName(indexField.fieldName) {
-      | Some(field) => field->getPgFieldName
-      | None => throw(NonExistingTableField(indexField.fieldName)) //Unexpected should be validated in schema parser
-      }
-      {fieldName: dbFieldName, direction: indexField.direction}
-    })
-  )
-}
-
-// The table's fields in the order the schema names them, which is the order an
-// insert names its columns and binds its values.
-//
-// A `@derivedFrom` field is not one of them: it is resolved from the other side
-// of the relationship rather than stored, so no row schema carries one and
-// there is no column for it to be.
-let schemaOrderedFields = (table: table, ~schema): array<field> =>
-  switch schema->S.classify {
-  | Object({items}) =>
-    items->Array.map(({location}) =>
-      switch table->getFieldByApiName(location) {
-      | Some(Field(field)) => field
-      | Some(DerivedFrom(_)) | None => throw(NonExistingTableField(location))
-      }
-    )
-  | _ =>
-    JsError.throwWithMessage(
-      `Failed reading the columns of "${table.tableName}". Expected an object schema for a table.`,
-    )
-  }
-
-let toDbSchema = (table: table, ~schema): S.t<'entity> => {
-  let dbSchema: S.t<dict<unknown>> = S.schema(s =>
-    switch schema->S.classify {
-    | Object({items}) =>
-      let dict = Dict.make()
-      items->Array.forEach(({location, schema}) => {
-        let rec coerceSchema = schema =>
-          switch schema->S.classify {
-          | BigInt => Utils.BigInt.schema->S.toUnknown
-          | Option(child)
-          | Null(child) =>
-            Utils.Schema.nullTolerant(child->coerceSchema)->S.toUnknown
-          | Array(child) => S.array(child->coerceSchema)->S.toUnknown
-          | Bool =>
-            // Booleans travel as 1/0; the insert casts them back.
-            S.union([
-              S.literal(1)->S.shape(_ => true),
-              S.literal(0)->S.shape(_ => false),
-            ])->S.toUnknown
-          | _ => schema
-          }
-
-        if table->getFieldByApiName(location)->Option.isNone {
-          throw(NonExistingTableField(location))
-        }
-
-        dict->Dict.set(location, s.matches(schema->coerceSchema))
-      })
-      dict
-    | _ =>
-      JsError.throwWithMessage("Failed creating db schema. Expected an object schema for table")
-    }
-  )
-
-  dbSchema->(Utils.magic: S.t<dict<unknown>> => S.t<'entity>)
-}
-
-/*
-Gets all single indexes
-And maps the fields defined to their actual db name (some have _id suffix)
-*/
-let getSingleIndexes = (table): array<string> => {
-  let indexFields = table.fields->Array.filterMap(field =>
-    switch field {
-    | Field(field) if field.isIndex => Some(field->getPgDbFieldName)
-    | _ => None
-    }
-  )
-
-  table
-  ->getUnfilteredCompositeIndexesUnsafe
-  //get all composite indexes with only 1 field defined
-  //this is still a single index
-  ->Array.filterMap(cidx =>
-    switch cidx {
-    | [{fieldName}] => Some([fieldName])
-    | _ => None
-    }
-  )
-  ->Array.concat([indexFields])
-  ->Array.flat
-  ->Set.fromArray
-  ->Set.toArray
-  ->Array.toSorted(String.compare)
-}
-
-/*
-Gets all composite indexes
-And maps the fields defined to their actual db name (some have _id suffix)
-*/
-let getCompositeIndexes = (table): array<array<compositeIndexField>> => {
-  table
-  ->getUnfilteredCompositeIndexesUnsafe
-  ->Array.filter(ind => ind->Array.length > 1)
-}

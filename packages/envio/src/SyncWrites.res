@@ -17,9 +17,6 @@ type t = dict<table>
 
 let make = (): t => Dict.make()
 
-// A Map doesn't coerce its keys, so an id is looked up by its key form.
-let keyOf = (entityId: string) => entityId->EntityId.unsafeOfString->EntityId.toKey
-
 let record = (writes: t, ~entityConfig: Internal.entityConfig, ~scope, change) => {
   let table = switch writes->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
   | Some(table) => table
@@ -28,7 +25,7 @@ let record = (writes: t, ~entityConfig: Internal.entityConfig, ~scope, change) =
     writes->Dict.set(entityConfig.name, table)
     table
   }
-  table.changes->Map.set(change->Change.getEntityId->EntityId.toKey, change)
+  table.changes->Map.set(entityConfig.table.entityIdToKey(change->Change.getEntityId), change)
 }
 
 let changesOf = (writes: t, ~entityConfig: Internal.entityConfig) =>
@@ -38,11 +35,11 @@ let changesOf = (writes: t, ~entityConfig: Internal.entityConfig) =>
   }
 
 // `Some(None)` is a delete this round made: the entity is known not to exist.
-let getById = (writes: t, ~entityConfig, ~entityId: string) =>
+let getById = (writes: t, ~entityConfig: Internal.entityConfig, ~entityId: string) =>
   switch writes->changesOf(~entityConfig) {
   | Some(changes) =>
     changes
-    ->Map.get(entityId->keyOf)
+    ->Map.get(entityConfig.table.entityIdToKey(entityId->EntityId.unsafeOfString))
     ->Option.map(InMemoryTable.Entity.mapChangeToEntity)
   | None => None
   }
@@ -61,7 +58,13 @@ let overlayFilter = (
     let matches = filter->EntityFilter.makeMatcher(~table=entityConfig.table)
     let untouched =
       entities->Array.filter(entity =>
-        !(changes->Map.has(entity->InMemoryTable.Entity.getEntityIdUnsafe->keyOf))
+        !(
+          changes->Map.has(
+            entityConfig.table.entityIdToKey(
+              (entity->(Utils.magic: Internal.entity => {"id": EntityId.t}))["id"],
+            ),
+          )
+        )
       )
     let written = []
     changes->Map.forEach(change =>
@@ -81,7 +84,7 @@ let write = (indexerState, ~entityConfig: Internal.entityConfig, ~scope, change)
     PreloadLookahead.onSet(
       ~entityName=entityConfig.name,
       ~scope,
-      ~entityId=entityId->EntityId.toKey,
+      ~entityId=entityConfig.table.entityIdToKey(entityId),
     )
   | Delete(_) => ()
   }

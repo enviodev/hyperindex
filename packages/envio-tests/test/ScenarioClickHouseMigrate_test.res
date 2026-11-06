@@ -26,21 +26,23 @@ type Counter {
   count: BigInt!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.value });
+});
+`,
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
-type counter = {id: string, count: bigint}
-type counterOps = {set: counter => unit}
-type counterContext = {@as("Counter") counter: counterOps}
+external toUnknown: bigint => unknown = "%identity"
 
-let setCounter = (~block, ~count): MockSource.itemMock => {
+let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args =>
-    (args.context->(Utils.magic: Internal.handlerContext => counterContext)).counter.set({
-      id: "total",
-      count,
-    }),
+  params: dict{"value": count->toUnknown},
 }
 
 describe("A migration beside a run that is indexing", () => {

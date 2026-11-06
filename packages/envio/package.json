@@ -50,15 +50,15 @@
   "dependencies": {
     "bignumber.js": "9.3.1",
     "eventsource": "4.1.0",
-    "express": "4.19.2",
-    "@rescript/runtime": "12.2.0",
+    "express": "4.22.3",
+    "@rescript/runtime": "12.3.1",
     "rescript-schema": "9.5.1",
     "dotenv": "16.4.5",
     "yaml": "2.8.1"
   },
   "devDependencies": {
-    "rescript": "12.2.0",
-    "vitest": "4.1.0",
+    "rescript": "12.3.1",
+    "vitest": "4.1.12",
     "@graphprotocol/graph-ts": "0.38.1",
     "typescript": "6.0.3",
     "@types/node": "24.12.2"

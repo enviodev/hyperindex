@@ -17,6 +17,10 @@ type options = {
   transactionStore: TransactionStore.t,
   ws?: string,
   headers?: dict<string>,
+  // How many addresses one `eth_getLogs` may carry when an address-free query
+  // the provider couldn't answer is read again by address.
+  maxAddressesPerRequest: int,
+  logger: Logger.t,
 }
 
 let make = (
@@ -33,6 +37,8 @@ let make = (
     transactionStore,
     ?ws,
     ?headers,
+    maxAddressesPerRequest,
+    logger,
   }: options,
 ): t => {
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
@@ -53,6 +59,8 @@ let make = (
     ~syncConfig,
     ~headers?,
     ~addressStore,
+    ~maxAddressesPerRequest,
+    ~logger,
   )
 
   let getItemsOrThrow = async (
@@ -99,6 +107,7 @@ let make = (
         clientFilteredContracts: selection.clientFilteredContracts,
         retry,
         ?reorgableFrom,
+        knownHeight,
       },
       addressSet,
       blockStore,
@@ -219,7 +228,7 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight, ~onStatus) => EvmRpcWs.subscribe(~wsUrl, ~onHeight, ~onStatus)
+      (~clock, ~onHeight, ~onStatus) => EvmRpcWs.subscribe(~clock, ~wsUrl, ~onHeight, ~onStatus)
     )
 
   {

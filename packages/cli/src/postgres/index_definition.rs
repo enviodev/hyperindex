@@ -6,12 +6,9 @@
 //! an index actually covers.
 
 pub const BTREE: &str = "btree";
+pub const GIN: &str = "gin";
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Direction {
-    Asc,
-    Desc,
-}
+use crate::storage::schema::Direction;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct IndexColumn {

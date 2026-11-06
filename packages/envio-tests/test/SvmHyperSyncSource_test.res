@@ -391,6 +391,7 @@ describe("SvmHyperSyncSource height subscription", () => {
     let statuses = []
     let heights = []
     let unsubscribe = (source.createHeightSubscription->Option.getOrThrow)(
+      ~clock=Clock.real,
       ~onHeight=height => heights->Array.push(height)->ignore,
       ~onStatus=status =>
         statuses
