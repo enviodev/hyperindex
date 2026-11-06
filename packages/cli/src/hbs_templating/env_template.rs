@@ -11,7 +11,10 @@ pub fn write(path: impl AsRef<Path>, token: &Option<String>) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             let Some(token) = token else { return Ok(()) };
             let values = crate::utils::dotenv::from_path(path).map_err(io::Error::other)?;
-            if values.contains_key("ENVIO_API_TOKEN") {
+            if values
+                .get("ENVIO_API_TOKEN")
+                .is_some_and(|value| !value.is_empty() || token.is_empty())
+            {
                 return Ok(());
             }
             let existing = fs::read_to_string(path)?;

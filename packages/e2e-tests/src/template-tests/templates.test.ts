@@ -233,6 +233,10 @@ describe.each(TEMPLATES.filter(({ name }) =>
       existing: "ENVIO_API_TOKEN=\"existing-token\"\r\nKEEP_VALUE=unchanged\r\n",
       expected: "ENVIO_API_TOKEN=\"existing-token\"\r\nKEEP_VALUE=unchanged\r\n",
     },
+    {
+      existing: "ENVIO_API_TOKEN=\nKEEP_VALUE=unchanged\n",
+      expected: "ENVIO_API_TOKEN=\nKEEP_VALUE=unchanged\nENVIO_API_TOKEN=\"provided-token\"\n",
+    },
   ])("preserves existing settings ($existing)", async ({ existing, expected }) => {
     // https://github.com/enviodev/hyperindex/issues/1035
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "envio-existing-env-"));
