@@ -14,7 +14,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 700
+    max_reorg_depth: 699
     block_lag: 700
     contracts:
       - name: Gravatar
@@ -24,7 +24,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     block_lag: 0
     contracts:
       - name: Gravatar
@@ -42,11 +42,11 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
   scenario->Scenario.it(
     "a chain at its lagged head does not prevent another chain from reaching readiness",
     ~sources=[
-      // This chain's configured lag is the same as its pre-threshold reorg
-      // depth. Once it reaches block 300 it has no newly exposed work when the
+      // This chain's configured lag is the same as its pre-threshold lag of
+      // max_reorg_depth + 1. Once it reaches block 300 it has no newly exposed work when the
       // indexer enters the threshold, so it parks in WaitingForNewBlock.
       {chain: 100, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},
-      // This chain initially stops at 1000 - 200 = 800. Entering the threshold
+      // This chain initially stops at 1000 - (199 + 1) = 800. Entering the threshold
       // removes its lag, exposing blocks 801..1000 that must still be queried
       // before the multichain indexer can become ready.
       {chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]},

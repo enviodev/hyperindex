@@ -18,8 +18,8 @@ type Gravatar {
 }
 `
 
-// Two chains, each lagging maxReorgDepth (200) below head before the
-// threshold. Head starts at 1000, so the pre-threshold head is 800.
+// Two chains, each lagging one block more than maxReorgDepth (199) below head
+// before the threshold. Head starts at 1000, so the pre-threshold head is 800.
 let multichain = Scenario.make(
   ~supervised=false,
   ~configYaml=`
@@ -34,7 +34,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     block_lag: 0
     contracts:
       - name: Gravatar
@@ -44,7 +44,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     block_lag: 0
     contracts:
       - name: Gravatar
@@ -63,7 +63,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     block_lag: 0
     contracts:
       - name: Gravatar

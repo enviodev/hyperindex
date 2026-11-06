@@ -68,7 +68,7 @@ contracts:
   - name: Token
     events:
       - event: Transfer(uint256 count)
-chains:${chainYaml(100, ~maxReorgDepth=200)}${chainYaml(1337, ~maxReorgDepth=0)}
+chains:${chainYaml(100, ~maxReorgDepth=199)}${chainYaml(1337, ~maxReorgDepth=0)}
 `,
 )
 

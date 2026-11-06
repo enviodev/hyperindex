@@ -18,7 +18,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     contracts:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
@@ -126,8 +126,9 @@ describe("A batch keeps the history decision it was created with", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      // max_reorg_depth holds the chain 200 blocks below the head of 300, so
-      // everything up to block 100 is fetched and processed below the threshold.
+      // max_reorg_depth holds the chain one block below its 199-block window
+      // under the head of 300, so everything up to block 100 is fetched and
+      // processed below the threshold.
       await Scenario.resolveInitialHeight(~source=sourceMock, ~head=300)
 
       // Stall the first write so the batches behind it stay queued.

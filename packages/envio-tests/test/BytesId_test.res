@@ -20,7 +20,7 @@ chains:
     rpc:
       url: https://rpc.example.test
       for: sync
-    start_block: 0${rollback ? "\n    max_reorg_depth: 200" : ""}
+    start_block: 0${rollback ? "\n    max_reorg_depth: 199" : ""}
     contracts:
       - name: Token
         address: "0x0000000000000000000000000000000000000001"

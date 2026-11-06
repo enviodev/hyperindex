@@ -63,12 +63,11 @@ describe("Backfilling a chain that rolls back over RPC", () => {
       },
     )
 
-    // Reorg detection compares from 600 - 300. Block 300 itself is where the
-    // last page before the reorg threshold ends, which no query marks
-    // reorgable, so it is not read; 301's parent hash observes it instead.
+    // Reorg detection compares from 600 - 300. Catch-up stops one block below
+    // that, so block 300 is read by a page that already knows it is reorgable.
     t.expect(mock()->RpcE2eChain.distinctBlocksRead).toEqual(
       [105]->Array.concat(
-        Array.fromInitializer(~length=maxReorgDepth, i => head - maxReorgDepth + 1 + i),
+        Array.fromInitializer(~length=maxReorgDepth + 1, i => head - maxReorgDepth + i),
       ),
     )
   })

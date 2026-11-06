@@ -75,7 +75,7 @@ let rollbackScenario = Scenario.make(
   ~schema,
   ~configYaml=makeConfigYaml(~rollback="\nrollback_on_reorg: true")->String.replaceAll(
     "    start_block: 1\n",
-    "    start_block: 1\n    max_reorg_depth: 200\n",
+    "    start_block: 1\n    max_reorg_depth: 199\n",
   ),
 )
 
