@@ -1,6 +1,5 @@
 type cfg = {
   url: string,
-  chainId: int,
   maxConcurrentRequests?: int,
   headers?: dict<string>,
   initialBlockInterval: int,
@@ -87,7 +86,6 @@ external classNew: (
 
 let make = (
   ~url,
-  ~chainId: ChainId.t,
   ~checksumAddresses,
   ~syncConfig: Config.sourceSync,
   ~maxConcurrentRequests=?,
@@ -101,7 +99,6 @@ let make = (
   Core.getAddon().evmRpcClient->classNew(
     {
       url,
-      chainId: chainId->ChainId.toInt,
       ?maxConcurrentRequests,
       ?headers,
       initialBlockInterval: syncConfig.initialBlockInterval,

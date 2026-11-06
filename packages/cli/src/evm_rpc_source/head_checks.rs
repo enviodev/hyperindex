@@ -14,14 +14,6 @@ use serde_json::Value as Json;
 
 use crate::evm_hypersync_source::selection::BuiltLogSelection;
 
-/// Chains that publish a block before its `logsBloom` is computed (Monad and
-/// its testnet), so a header there can't rule out any logs.
-const ASYNC_EXECUTION_CHAIN_IDS: [u64; 2] = [143, 10143];
-
-pub(crate) fn has_reliable_blooms(chain_id: u64) -> bool {
-    !ASYNC_EXECUTION_CHAIN_IDS.contains(&chain_id)
-}
-
 /// How far below the head blocks are checked, whatever the chain's reorg
 /// depth: a chain that never reorgs, which Arbitrum and Optimism are
 /// configured as, has providers that lag all the same.
@@ -113,8 +105,8 @@ impl CheckedHeader {
 pub(crate) enum RecheckReason {
     /// The bloom has the selection's bits set.
     BloomMatches,
-    /// The bloom is missing, all zero, or not yet computed on this chain.
-    /// Some chains serve a zero bloom whatever the block holds.
+    /// The bloom is missing or all zero, which some chains serve whatever
+    /// the block holds.
     BloomSaysNothing,
 }
 
@@ -134,7 +126,6 @@ pub(crate) fn blocks_to_recheck(
     answered: &HashSet<u64>,
     headers: &HashMap<u64, CheckedHeader>,
     selection: &BuiltLogSelection,
-    has_reliable_blooms: bool,
 ) -> Vec<(u64, RecheckReason)> {
     // Hashing a selection costs a keccak per address, which only a block whose
     // bloom has something to say is worth paying for.
@@ -147,7 +138,7 @@ pub(crate) fn blocks_to_recheck(
         let bloom = headers
             .get(&block)
             .and_then(|header| header.bloom)
-            .filter(|bloom| has_reliable_blooms && *bloom != Bloom::ZERO);
+            .filter(|bloom| *bloom != Bloom::ZERO);
         let reason = match bloom {
             Some(bloom) => {
                 match selection_bloom.get_or_insert_with(|| SelectionBloom::new(selection)) {
@@ -263,16 +254,13 @@ mod tests {
         let by_address = selection(Emitters::Listed(vec![TOKEN.to_string()]), &[&[TRANSFER]]);
         let address_free = selection(Emitters::Any(AddressFreeOrigin::default()), &[&[TRANSFER]]);
         let not_hex = selection(Emitters::Listed(vec!["token".to_string()]), &[&[TRANSFER]]);
-        let recheck = |selection, reliable| {
-            blocks_to_recheck(&checked, &answered, &headers, selection, reliable)
-        };
+        let recheck = |selection| blocks_to_recheck(&checked, &answered, &headers, selection);
         use RecheckReason::*;
         assert_eq!(
             (
-                recheck(&by_address, true),
-                recheck(&address_free, true),
-                recheck(&by_address, false),
-                recheck(&not_hex, true),
+                recheck(&by_address),
+                recheck(&address_free),
+                recheck(&not_hex),
             ),
             (
                 vec![
@@ -287,7 +275,6 @@ mod tests {
                     (25, BloomSaysNothing),
                     (27, BloomSaysNothing),
                 ],
-                (22..=27).map(|block| (block, BloomSaysNothing)).collect(),
                 (22..=27).map(|block| (block, BloomSaysNothing)).collect(),
             ),
         );

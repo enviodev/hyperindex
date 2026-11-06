@@ -43,7 +43,6 @@ use interval::{IntervalState, SyncConfig};
 #[napi(object)]
 pub struct EvmRpcClientConfig {
     pub url: String,
-    pub chain_id: i64,
     pub max_concurrent_requests: Option<i64>,
     pub headers: Option<HashMap<String, String>>,
     // Sync-tuning knobs for the paging AIMD state (see `interval::SyncConfig`).
@@ -308,9 +307,6 @@ pub struct EvmRpcClient {
     block_read: BlockRead,
     chain_tx_mask: u64,
     block_registrations: BlockRegistrations,
-    /// Whether a head block's `logsBloom` can rule out logs the range answer
-    /// didn't return. Off on chains that publish blocks before computing it.
-    has_reliable_blooms: bool,
     /// Whether the provider has been seen refusing reads by block hash, which
     /// is said once per source rather than on every block.
     warned_block_hash_refusal: AtomicBool,
@@ -451,11 +447,6 @@ impl EvmRpcClient {
             block_read: BlockRead::for_chain(chain_fields.block_mask),
             chain_tx_mask: chain_fields.tx_mask,
             block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
-            has_reliable_blooms: head_checks::has_reliable_blooms(
-                u64::try_from(cfg.chain_id)
-                    .context("chainId must be non-negative")
-                    .map_err(map_err)?,
-            ),
             warned_block_hash_refusal: AtomicBool::new(false),
             answered_block_hash_read: AtomicBool::new(false),
         })
@@ -999,7 +990,6 @@ impl EvmRpcClient {
                     &answered,
                     &checked_headers,
                     selection,
-                    self.has_reliable_blooms,
                 )
                 .into_iter()
                 .map(move |(block, reason)| (index, block, reason))

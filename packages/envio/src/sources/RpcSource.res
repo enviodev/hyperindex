@@ -53,7 +53,6 @@ let make = (
 
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~chainId,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~onBlockRegistrations,
     ~checksumAddresses=!lowercaseAddresses,
