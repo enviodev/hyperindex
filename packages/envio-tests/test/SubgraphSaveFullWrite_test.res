@@ -86,33 +86,41 @@ import { createTestIndexer } from "envio";
 
 const TRANSFERS = 8;
 
-describe("saving every field of an entity", () => {
-  it("runs the mapping once to preload and once to process, and stores what a merge would", async (t) => {
-    const indexer = createTestIndexer();
-    (globalThis as any).transferRuns = 0;
-    await indexer.process({
-      chains: {
-        1: {
-          startBlock: 0,
-          endBlock: 100,
-          simulate: [
-            ...Array.from({ length: TRANSFERS }, (_, index) => ({
-              contract: "Token",
-              event: "Transfer",
-              params: { value: BigInt(index + 1) },
-              block: { number: index + 1 },
-            })),
-            { contract: "Token", event: "Touch", params: { value: 0n }, block: { number: 50 } },
-          ],
-        },
+const run = async () => {
+  const indexer = createTestIndexer();
+  (globalThis as any).transferRuns = 0;
+  await indexer.process({
+    chains: {
+      1: {
+        startBlock: 0,
+        endBlock: 100,
+        simulate: [
+          ...Array.from({ length: TRANSFERS }, (_, index) => ({
+            contract: "Token",
+            event: "Transfer",
+            params: { value: BigInt(index + 1) },
+            block: { number: index + 1 },
+          })),
+          { contract: "Token", event: "Touch", params: { value: 0n }, block: { number: 50 } },
+        ],
       },
-    });
+    },
+  });
+  return indexer;
+};
+
+describe("saving every field of an entity", () => {
+  it("is preloaded with the others in one round, then processed", async (t) => {
+    await run();
+    t.expect((globalThis as any).transferRuns).toBe(2 * TRANSFERS);
+  });
+
+  it("stores what a merge onto the stored entity would", async (t) => {
+    const indexer = await run();
     t.expect({
-      runs: (globalThis as any).transferRuns,
       transfers: (await indexer.TransferEvent.getAll()).length,
       holder: await indexer.Holder.get("h"),
     }).toEqual({
-      runs: 2 * TRANSFERS,
       transfers: TRANSFERS,
       holder: { id: "h", amount: BigInt(TRANSFERS), memo: "touched" },
     });
