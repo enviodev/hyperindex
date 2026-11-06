@@ -1588,4 +1588,41 @@ mod tests {
             ]
         );
     }
+
+    #[tokio::test]
+    async fn asks_for_a_height_with_the_near_head_timeout() {
+        // Takes the connection and never answers it.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        let client = SvmHyperSyncClient::from_config(
+            SvmClientConfig {
+                url,
+                http_req_timeout_millis: Some(10_000),
+                near_head_req_timeout_millis: Some(50),
+                ..Default::default()
+            },
+            "hyperindex-test".into(),
+            vec![],
+            vec![],
+            &svm_store(&[]),
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let failed = client.get_height().await.is_err();
+        // Well short of the backfill timeout: the server never answers, so only
+        // the near-head one can have ended it.
+        assert_eq!(
+            (
+                failed,
+                started.elapsed() < std::time::Duration::from_secs(5)
+            ),
+            (true, true)
+        );
+    }
 }
