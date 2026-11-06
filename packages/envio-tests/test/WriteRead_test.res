@@ -17,7 +17,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     contracts:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
@@ -224,7 +224,7 @@ type tokenContext = {
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
-// Head 300 against maxReorgDepth 200: one query opens at block 1, and its
+// Head 300 against maxReorgDepth 199: one query opens at block 1, and its
 // response is what every case below rides in on.
 let reachFirstQuery = async (~source: MockSource.t) => {
   await Scenario.resolveInitialHeight(~source, ~head=300)
@@ -445,7 +445,7 @@ describe("Write/read tests", () => {
           entity: {id: "updated", value: "batch1"},
         }),
         Set({
-          checkpointId: 3n,
+          checkpointId: 2n,
           entityId: "updated"->EntityId.unsafeOfString,
           entity: {id: "updated", value: "batch2"},
         }),

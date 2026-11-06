@@ -75,7 +75,7 @@ let rollbackScenario = Scenario.make(
   ~schema,
   ~configYaml=makeConfigYaml(~rollback="\nrollback_on_reorg: true")->String.replaceAll(
     "    start_block: 1\n",
-    "    start_block: 1\n    max_reorg_depth: 200\n",
+    "    start_block: 1\n    max_reorg_depth: 199\n",
   ),
 )
 
@@ -223,11 +223,8 @@ describe("Chain-scoped rollback", () => {
       ])
 
       await source1.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        reply: [{blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101}],
       })
       await indexer.getRollbackReadyPromise()
 
@@ -423,11 +420,8 @@ describe("Per-chain history and removal", () => {
         {partitionId: "0", reply: LeavePending},
       ])
       await source1.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        reply: [{blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101}],
       })
       await indexer.getRollbackReadyPromise()
       await source1.expectItemsQueries([

@@ -61,7 +61,7 @@ let addressStore = () =>
 // The store the source routes against, and the one a query's address set is cut
 // from. It has to be seeded: an unseeded store matches none of the logs the mock
 // serves, and a page with no items references no blocks, so nothing but the
-// range's boundary blocks is ever fetched. `makeChainState` keeps an unseeded
+// checked head blocks is ever fetched. `makeChainState` keeps an unseeded
 // store instead and lets `FetchState.make` seed it, as production does.
 let sourceAddressStore = TestAddresses.makeStore(
   ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
@@ -307,8 +307,8 @@ describe("Rollback against a real RPC server", () => {
     let firstGuard =
       chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=110)
 
-    // 102 and 103 are now interior to the refetched range and fully covered by
-    // the store, so neither is read again — yet both moved to the other fork.
+    // 102 and 103 are fully covered by the store, and below the checked head
+    // blocks no other block is read either — yet both moved to the other fork.
     state.forkFrom = 102
     let requestsBefore = mock.requests->Array.length
     let reorgedPage = await source->fetchRange(
@@ -344,7 +344,7 @@ describe("Rollback against a real RPC server", () => {
       ),
     )).toEqual((
       ReorgDetection.NoReorg,
-      [101, 104],
+      [],
       ReorgDetection.ReorgDetected({
         scannedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="a")},
         receivedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="b")},

@@ -320,9 +320,13 @@ let makeInternal = (
     // FIXME: Shouldn't set with full history
     // The resumed depth, not the config one: the pre-threshold lag must match
     // the window reorg detection compares, or a reduced config depth would let
-    // fetching enter the stored rollback window without history.
+    // fetching enter the stored rollback window without history. One block
+    // more than the window, so the last pre-threshold page ends below it and
+    // the window's first block is read by a page that knows it is reorgable.
     ~blockLag=Pervasives.max(
-      !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : maxReorgDepth,
+      !config.shouldRollbackOnReorg || isInReorgThreshold || maxReorgDepth == 0
+        ? 0
+        : maxReorgDepth + 1,
       chainConfig.blockLag,
     ),
     ~blockThrottle=chainConfig.blockThrottle,
@@ -854,10 +858,10 @@ let takeFinished = (cs: t) =>
     }
   }
 
-let getHighestBlockBelowThreshold = (cs: t): int => {
-  let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.maxReorgDepth
-  highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
-}
+// The block reorg detection compares from is itself in the window, so the
+// highest block below it is the one before, where catch-up stops.
+let getHighestBlockBelowThreshold = (cs: t): int =>
+  Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth - 1, 0)
 
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead

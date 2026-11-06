@@ -22,7 +22,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     contracts:
       - name: Token
         address:
@@ -33,7 +33,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     contracts:
       - name: Token
         address: "0x0000000000000000000000000000000000000001"
