@@ -307,8 +307,8 @@ describe("Rollback against a real RPC server", () => {
     let firstGuard =
       chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=110)
 
-    // 102 and 103 are now interior to the refetched range and fully covered by
-    // the store, so neither is read again — yet both moved to the other fork.
+    // 102 and 103 are fully covered by the store, and below the checked head
+    // blocks no other block is read either — yet both moved to the other fork.
     state.forkFrom = 102
     let requestsBefore = mock.requests->Array.length
     let reorgedPage = await source->fetchRange(
@@ -344,7 +344,7 @@ describe("Rollback against a real RPC server", () => {
       ),
     )).toEqual((
       ReorgDetection.NoReorg,
-      [101, 104],
+      [],
       ReorgDetection.ReorgDetected({
         scannedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="a")},
         receivedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="b")},

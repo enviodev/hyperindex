@@ -678,11 +678,6 @@ describe("RPC source public contract", () => {
           ),
           ~reply=RpcResult(JSON.Array([orFanOutLog])),
         ),
-        MockRpcServer.expectCall(
-          ~method="eth_getBlockByNumber",
-          ~params=blockParams("0x64"),
-          ~reply=RpcResult(block100),
-        ),
       ],
       async mock => {
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
@@ -698,21 +693,15 @@ describe("RPC source public contract", () => {
       "requestCounts": page.requestCounts,
     }).toEqual({
       "eventLogIndexes": [2],
-      "requestCounts": Dict.fromArray([("eth_getLogs", 2), ("eth_getBlockByNumber", 1)]),
+      "requestCounts": Dict.fromArray([("eth_getLogs", 2)]),
     })
   })
 
-  Async.it("pins skip-all filters advancing without an eth_getLogs request", async t => {
+  Async.it("pins skip-all filters advancing without a request", async t => {
     let registration = makeRoutingRegistration(~isWildcard=true, ~eventFilters=[])
     let page = await MockRpcServer.withScenario(
       ~name="skip-all filter",
-      ~calls=[
-        MockRpcServer.expectCall(
-          ~method="eth_getBlockByNumber",
-          ~params=blockParams("0x64"),
-          ~reply=RpcResult(block100),
-        ),
-      ],
+      ~calls=[],
       async mock => {
         // A real paging interval, so the range the cursor advances over is the
         // whole query rather than the one block a ceiling of 1 would allow.
@@ -755,7 +744,7 @@ describe("RPC source public contract", () => {
     }).toEqual({
       "events": 0,
       "latestFetchedBlockNumber": 100,
-      "requestCounts": Dict.fromArray([("eth_getBlockByNumber", 1)]),
+      "requestCounts": Dict.make(),
     })
   })
 

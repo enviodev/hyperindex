@@ -829,8 +829,6 @@ impl EvmRpcClient {
             &self.inner,
             &self.fetches,
             EnrichRequest {
-                from_block: query.from_block,
-                to_block: query.to_block,
                 checked_blocks: &checked_blocks,
                 prefetched_blocks: &headers,
                 refs,

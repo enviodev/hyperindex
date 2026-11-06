@@ -151,19 +151,6 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   }
 }
 
-let assertContainsBlockHash = (
-  ~t: Vitest.testContext,
-  ~blockStore: BlockStore.t,
-  ~blockNumber,
-  ~message,
-) => {
-  let found = switch blockStore->BlockStore.getHash(blockNumber) {
-  | Null.Value(_) => true
-  | Null.Null => false
-  }
-  t.expect(found, ~message).toBe(true)
-}
-
 let storedBlockNumbers = (blockStore: BlockStore.t) =>
   blockStore->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=2147483647)
 
@@ -192,28 +179,22 @@ describe("Source.blockHashes integration - empty range", () => {
   )
 
   Async.itWithOptions(
-    "RpcSource: empty parsedQueueItems but the block page still contains toBlock + parent",
+    "RpcSource: empty parsedQueueItems and empty block page for confirmed empty range",
     {retry: 3},
     async t => {
       let source = makeRpcSource()
       let response = await source->invoke(~fromBlock, ~toBlock)
 
-      t.expect(response.parsedQueueItems->Array.length).toBe(0)
-
-      // RpcSource always loads toBlock to get its timestamp, so its hash and the
-      // parent hash are free.
-      assertContainsBlockHash(
-        ~t,
-        ~blockStore=response.blockStore,
-        ~blockNumber=toBlock,
-        ~message="the block page must contain the latest fetched block (toBlock)",
-      )
-      assertContainsBlockHash(
-        ~t,
-        ~blockStore=response.blockStore,
-        ~blockNumber=toBlock - 1,
-        ~message="the block page must contain the parent of the latest fetched block",
-      )
+      t.expect({
+        "parsedQueueItems": response.parsedQueueItems->Array.length,
+        "blockNumbers": response.blockStore->storedBlockNumbers,
+      }).toEqual({
+        "parsedQueueItems": 0,
+        // https://github.com/enviodev/hyperindex/issues/1782
+        // Far below the checked head blocks, no block is read for the range's
+        // boundaries.
+        "blockNumbers": [],
+      })
     },
   )
 })

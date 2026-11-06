@@ -13,8 +13,9 @@
 //! mode, or a fork deeper than the configured window — such a row keeps the
 //! dead fork's values until it is pruned.
 //!
-//! The range's own boundary blocks are the exception. The comparison rests on
-//! them, so they are never answered from the store.
+//! The checked head blocks are the exception. The comparison rests on them, so
+//! they are never answered from the store. Each one's parent hash observes the
+//! block below it, the seam to the previous range included.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -250,10 +251,8 @@ impl PageRefs {
 }
 
 pub(crate) struct EnrichRequest<'a> {
-    pub from_block: u64,
-    pub to_block: u64,
-    /// Blocks read fresh like the range's boundary blocks, whatever the store
-    /// holds: the head blocks whose logs were checked against these headers.
+    /// Blocks read fresh, whatever the store holds: the head blocks whose logs
+    /// were checked against these headers, in ascending order.
     pub checked_blocks: &'a [u64],
     /// Block responses already read for this page, by number.
     pub prefetched_blocks: &'a HashMap<u64, Arc<Json>>,
@@ -348,8 +347,6 @@ pub(crate) async fn page(
     request: EnrichRequest<'_>,
 ) -> Result<EnrichedPage, EnrichError> {
     let EnrichRequest {
-        from_block,
-        to_block,
         checked_blocks,
         prefetched_blocks,
         refs,
@@ -359,7 +356,7 @@ pub(crate) async fn page(
         chain_tx_mask,
     } = request;
 
-    let block_numbers = plan_blocks(&refs, from_block, to_block, checked_blocks, known_blocks);
+    let block_numbers = plan_blocks(&refs, checked_blocks, known_blocks);
     let tx_plan = plan_transactions(&refs, known_transactions, chain_tx_mask);
 
     // Both sides are awaited, then judged together. Taking whichever failed
@@ -458,18 +455,6 @@ fn fill_block_page(
     page.insert_evm_blocks_covering(fetched, covering);
 }
 
-/// The range's own boundary blocks, which are read fresh however much the
-/// store already holds. `from_block` stands in for the seam below it: reading
-/// the seam directly would be answered from the previous range's view of it,
-/// whereas `from_block`'s parent hash is this response's.
-fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
-    let mut blocks = vec![to_block];
-    if from_block > 0 && from_block < to_block {
-        blocks.push(from_block);
-    }
-    blocks
-}
-
 /// What a page's blocks are decoded for: the chain's registrations, widened by
 /// the block handlers the page runs. One response carries the whole header, so
 /// every block of the page reads the same fields and merges into the store in a
@@ -515,31 +500,22 @@ struct TxReadPlan {
 }
 
 /// Which blocks to read. A referenced block is skipped when the store was
-/// already asked for everything this page needs of it; a boundary or checked
-/// block never is.
-fn plan_blocks(
-    refs: &PageRefs,
-    from_block: u64,
-    to_block: u64,
-    checked: &[u64],
-    known: &BlockStore,
-) -> Vec<u64> {
-    let mut boundary = boundary_blocks(from_block, to_block);
-    for &block in checked {
-        if !boundary.contains(&block) {
-            boundary.push(block);
-        }
-    }
+/// already asked for everything this page needs of it; a checked block never
+/// is. Below the checked blocks the range's boundaries are not read at all:
+/// the checked range reaches at least as deep as the reorg window, so nothing
+/// below it is ever compared.
+fn plan_blocks(refs: &PageRefs, checked: &[u64], known: &BlockStore) -> Vec<u64> {
+    let is_checked = |number: &u64| checked.binary_search(number).is_ok();
     let mut numbers: Vec<u64> = refs
         .blocks
         .iter()
-        .filter(|(&number, block_ref)| {
-            boundary.contains(&number) || !known.covers(number, block_ref.mask & !BLOCK_KEY_MASK)
+        .filter(|(number, block_ref)| {
+            is_checked(number) || !known.covers(**number, block_ref.mask & !BLOCK_KEY_MASK)
         })
         .map(|(&number, _)| number)
         .collect();
     numbers.extend(
-        boundary
+        checked
             .iter()
             .filter(|number| !refs.blocks.contains_key(number)),
     );
@@ -799,8 +775,8 @@ mod tests {
             }],
             wanted,
         );
-        let plan = plan_blocks(&refs_for(50, wanted, 0), 40, 60, &[], &known);
-        assert_eq!(planned_numbers(&plan), vec![40, 60]);
+        let plan = plan_blocks(&refs_for(50, wanted, 0), &[], &known);
+        assert_eq!(planned_numbers(&plan), Vec::<u64>::new());
     }
 
     #[test]
@@ -814,31 +790,22 @@ mod tests {
             block_bit(EvmBlockField::GasUsed),
         );
         let miner = block_bit(EvmBlockField::Miner);
-        let plan = plan_blocks(&refs_for(50, miner, 0), 40, 60, &[], &known);
-        assert_eq!(planned_numbers(&plan), vec![40, 50, 60]);
+        let plan = plan_blocks(&refs_for(50, miner, 0), &[], &known);
+        assert_eq!(planned_numbers(&plan), vec![50]);
     }
 
     #[test]
-    fn a_boundary_block_is_read_even_when_the_store_covers_it() {
-        // The boundary blocks are this range's reorg observations, so a stored
-        // answer — which is some earlier response's view of them — will not do.
-        let known = BlockStore::new_evm();
-        for number in [40u64, 60] {
-            known.insert_evm_blocks_covering(
-                vec![Block {
-                    number: Some(number),
-                    hash: Some(hash(1)),
-                    ..Default::default()
-                }],
-                BLOCK_OBSERVATION_MASK,
-            );
-        }
-        let plan = plan_blocks(&PageRefs::default(), 40, 60, &[], &known);
-        assert_eq!(planned_numbers(&plan), vec![40, 60]);
+    fn a_page_with_no_checked_blocks_and_no_wanted_fields_reads_nothing() {
+        // Below the checked head blocks no reorg can reach the range, so its
+        // boundaries are not worth a request.
+        let plan = plan_blocks(&PageRefs::default(), &[], &BlockStore::new_evm());
+        assert_eq!(planned_numbers(&plan), Vec::<u64>::new());
     }
 
     #[test]
     fn a_checked_head_block_is_read_once_even_when_the_store_covers_it() {
+        // A checked block is this range's reorg observation, so a stored answer
+        // — which is some earlier response's view of it — will not do.
         let known = BlockStore::new_evm();
         known.insert_evm_blocks_covering(
             vec![Block {
@@ -848,30 +815,24 @@ mod tests {
             }],
             BLOCK_OBSERVATION_MASK,
         );
-        let plan = plan_blocks(&refs_for(59, 0, 0), 40, 60, &[58, 59, 60], &known);
-        assert_eq!(planned_numbers(&plan), vec![40, 58, 59, 60]);
+        let plan = plan_blocks(&refs_for(59, 0, 0), &[58, 59, 60], &known);
+        assert_eq!(planned_numbers(&plan), vec![58, 59, 60]);
     }
 
     #[test]
     fn a_block_no_item_wants_fields_from_is_not_read() {
         // Its hash still reaches the page as an observation off the log, which
         // is all reorg detection needs from it.
-        let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &[], &BlockStore::new_evm());
-        assert_eq!(planned_numbers(&plan), vec![40, 60]);
+        let plan = plan_blocks(&refs_for(50, 0, 0), &[], &BlockStore::new_evm());
+        assert_eq!(planned_numbers(&plan), Vec::<u64>::new());
     }
 
     #[test]
-    fn a_boundary_block_an_item_wants_nothing_from_is_still_read() {
+    fn a_checked_block_an_item_wants_nothing_from_is_still_read() {
         // The item makes the block referenced but selects no field of it; it is
-        // still the range's boundary, so its reorg observation is read.
-        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &[], &BlockStore::new_evm());
-        assert_eq!(planned_numbers(&plan), vec![40]);
-    }
-
-    #[test]
-    fn a_single_block_range_reads_that_block_once() {
-        let plan = plan_blocks(&PageRefs::default(), 40, 40, &[], &BlockStore::new_evm());
-        assert_eq!(planned_numbers(&plan), vec![40]);
+        // still checked, so its reorg observation is read.
+        let plan = plan_blocks(&refs_for(60, 0, 0), &[60], &BlockStore::new_evm());
+        assert_eq!(planned_numbers(&plan), vec![60]);
     }
 
     #[test]
@@ -1027,7 +988,7 @@ mod tests {
         let gas_used = block_bit(EvmBlockField::GasUsed);
         let read = BlockRead::for_chain(miner | gas_used);
         let known = BlockStore::new_evm();
-        let first = plan_blocks(&refs_for(50, miner, 0), 40, 60, &[], &known);
+        let first = plan_blocks(&refs_for(50, miner, 0), &[], &known);
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(50),
@@ -1035,10 +996,10 @@ mod tests {
             }],
             read.covering,
         );
-        let second = plan_blocks(&refs_for(50, gas_used, 0), 40, 60, &[], &known);
+        let second = plan_blocks(&refs_for(50, gas_used, 0), &[], &known);
         assert_eq!(
             (planned_numbers(&first), planned_numbers(&second)),
-            (vec![40, 50, 60], vec![40, 60])
+            (vec![50], vec![])
         );
     }
 
