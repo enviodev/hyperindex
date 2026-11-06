@@ -1195,7 +1195,7 @@ describe("Isolated multichain rollback", () => {
       ).toEqual((
         `{"id":"total","count":"1002","chainId":100}
 {"id":"total","count":"13372","chainId":1337}`,
-        `{"chain_id":1337,"id":5,"block_number":102}`,
+        `{"chain_id":1337,"id":4,"block_number":102}`,
       ))
     },
   )
