@@ -102,6 +102,8 @@ let decodeLogs = async (
           onBlockRegistrationIndexes: [],
           clientFilteredContracts: None,
           retry: 0,
+          // Far below the head, where a page's blocks aren't checked one by one.
+          knownHeight: 1_000,
         },
         addressSet,
         BlockStore.make(~ecosystem=Ecosystem.Evm),

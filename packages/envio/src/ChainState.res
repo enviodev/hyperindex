@@ -989,7 +989,10 @@ let materializePageItems = async (
 // backfill: judged against it, every block produced since would be fetched
 // address-free.
 let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
-  if !cs.fetchState.clientFilterPolicy.allDynamicContracts && cs.fetchState->FetchState.isNearHead {
+  if (
+    !cs.fetchState.clientFilterPolicy.allDynamicContracts &&
+    cs.fetchState->FetchState.isWithinHeadClientFilteringDistance
+  ) {
     cs.fetchState =
       cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
         ~addressStore=cs.addressStore,

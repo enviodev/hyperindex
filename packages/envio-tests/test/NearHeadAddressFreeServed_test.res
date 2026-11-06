@@ -107,12 +107,18 @@ let _ = RpcE2eChain.serveDuringSuite(() =>
         ->Option.getOrThrow
       let matched = logs->Array.filter(log => ServedEvmChain.rpcFilterMatches(filter, log))
       let capped = matched->Array.length > resultCap
-      getLogsCalls
-      ->Array.push(
+      // A served block's hash is its number.
+      let blocks = switch filter->Dict.get("blockHash") {
+      | Some(hash) => `block ${hash->ServedEvmChain.quantity->Int.toString}`
+      | None =>
         `${filter->Dict.getUnsafe("fromBlock")->ServedEvmChain.quantity->Int.toString}-${filter
           ->Dict.getUnsafe("toBlock")
           ->ServedEvmChain.quantity
-          ->Int.toString} ${filter->ServedEvmChain.logFilter->describeLogFilter} ${capped
+          ->Int.toString}`
+      }
+      getLogsCalls
+      ->Array.push(
+        `${blocks} ${filter->ServedEvmChain.logFilter->describeLogFilter} ${capped
             ? "capped"
             : "ok"}`,
       )

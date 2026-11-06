@@ -1,6 +1,7 @@
-//! Reads the raw logs one log selection matches over a block range. Routing
-//! them to registrations is the caller's next step: everything here stays in
-//! the provider's own terms, `blockHash` included.
+//! Reads the raw logs one log selection matches over a block range, or in one
+//! block named by its hash. Routing them to registrations is the caller's next
+//! step: everything here stays in the provider's own terms, `blockHash`
+//! included.
 
 use serde_json::{json, Value};
 
@@ -12,15 +13,56 @@ use crate::evm_hypersync_source::selection::{
 };
 use crate::logger::{BoundLogger, Level};
 
-/// The `eth_getLogs` filter for a range: `null` matches any value at a topic
-/// position, trailing match-any positions are trimmed, and no addresses means
-/// any emitter.
-fn log_filter(
-    from_block: u64,
-    to_block: u64,
-    topics: &[Vec<String>],
-    addresses: &[String],
-) -> Value {
+/// The blocks one `eth_getLogs` asks about.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum LogBlocks<'a> {
+    Range {
+        from_block: u64,
+        to_block: u64,
+    },
+    /// One block by its hash (EIP-234). A node that doesn't have that block
+    /// answers with an error rather than with no logs, which is the point of
+    /// asking this way.
+    Hash {
+        block_number: u64,
+        hash: &'a str,
+    },
+    /// One block asked again by its number, for a provider that refuses
+    /// reads by hash.
+    RecheckByNumber {
+        block_number: u64,
+    },
+}
+
+impl LogBlocks<'_> {
+    fn bounds(&self) -> (u64, u64) {
+        match *self {
+            LogBlocks::Range {
+                from_block,
+                to_block,
+            } => (from_block, to_block),
+            LogBlocks::Hash { block_number, .. } | LogBlocks::RecheckByNumber { block_number } => {
+                (block_number, block_number)
+            }
+        }
+    }
+
+    /// What the read is reported as, so the source's request metrics count a
+    /// head block asked again apart from the range reads.
+    fn stat_method(&self) -> &'static str {
+        match self {
+            LogBlocks::Range { .. } => "eth_getLogs",
+            LogBlocks::Hash { .. } | LogBlocks::RecheckByNumber { .. } => {
+                "eth_getLogs (head block recheck)"
+            }
+        }
+    }
+}
+
+/// The `eth_getLogs` filter: `null` matches any value at a topic position,
+/// trailing match-any positions are trimmed, and no addresses means any
+/// emitter.
+fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -> Value {
     let mut topics: Vec<Option<&Vec<String>>> = topics
         .iter()
         .map(|values| (!values.is_empty()).then_some(values))
@@ -28,11 +70,20 @@ fn log_filter(
     while matches!(topics.last(), Some(None)) {
         topics.pop();
     }
-    let mut filter = json!({
-        "fromBlock": format!("0x{from_block:x}"),
-        "toBlock": format!("0x{to_block:x}"),
-        "topics": topics,
-    });
+    let mut filter = match blocks {
+        LogBlocks::Range { .. } | LogBlocks::RecheckByNumber { .. } => {
+            let (from_block, to_block) = blocks.bounds();
+            json!({
+                "fromBlock": format!("0x{from_block:x}"),
+                "toBlock": format!("0x{to_block:x}"),
+                "topics": topics,
+            })
+        }
+        LogBlocks::Hash { hash, .. } => json!({
+            "blockHash": hash,
+            "topics": topics,
+        }),
+    };
     if !addresses.is_empty() {
         filter["address"] = json!(addresses);
     }
@@ -54,14 +105,13 @@ fn is_answer_too_large(error: &RpcError) -> bool {
 /// billed; the first failure then decides.
 async fn request_all(
     client: &JsonRpcClient,
-    from_block: u64,
-    to_block: u64,
+    blocks: LogBlocks<'_>,
     selections: &[BuiltLogSelection],
 ) -> Result<Vec<RawLog>, RpcError> {
     let results = futures_util::future::join_all(
         selections
             .iter()
-            .map(|selection| request(client, from_block, to_block, selection)),
+            .map(|selection| request(client, blocks, selection)),
     )
     .await;
     let mut logs = Vec::new();
@@ -73,24 +123,19 @@ async fn request_all(
 
 async fn request(
     client: &JsonRpcClient,
-    from_block: u64,
-    to_block: u64,
+    blocks: LogBlocks<'_>,
     selection: &BuiltLogSelection,
 ) -> Result<Vec<RawLog>, RpcError> {
     client
-        .request(
+        .request_recorded_as(
+            blocks.stat_method(),
             "eth_getLogs",
-            json!([log_filter(
-                from_block,
-                to_block,
-                &selection.topics,
-                selection.addresses()
-            )]),
+            json!([log_filter(blocks, &selection.topics, selection.addresses())]),
         )
         .await
 }
 
-/// Reads `selection` over the range. When a one-block range of an address-free
+/// Reads `selection` over `blocks`. When one block of an address-free
 /// selection holding client-filtered registrations is too large for the
 /// provider, it is read again the way `by_address` rebuilds it. A wider range
 /// goes back to the caller, whose retry shrinks it first. Nothing is
@@ -98,15 +143,15 @@ async fn request(
 pub(super) async fn request_selection_logs(
     client: &JsonRpcClient,
     logger: &BoundLogger,
-    from_block: u64,
-    to_block: u64,
+    blocks: LogBlocks<'_>,
     selection: &BuiltLogSelection,
     by_address: impl FnOnce(&AddressFreeOrigin) -> anyhow::Result<SelectionByAddress>,
 ) -> Result<Vec<RawLog>, RpcError> {
-    let error = match request(client, from_block, to_block, selection).await {
+    let error = match request(client, blocks, selection).await {
         Ok(logs) => return Ok(logs),
         Err(error) => error,
     };
+    let (from_block, to_block) = blocks.bounds();
     let origin = match &selection.emitters {
         Emitters::Any(origin)
             if from_block == to_block
@@ -124,8 +169,8 @@ pub(super) async fn request_selection_logs(
     } = by_address(origin).map_err(RpcError::Other)?;
     // The topic-only part first: when it is what's too large, no address
     // request is spent on a read that fails anyway.
-    let mut logs = request_all(client, from_block, to_block, &address_free).await?;
-    logs.extend(request_all(client, from_block, to_block, &by_address).await?);
+    let mut logs = request_all(client, blocks, &address_free).await?;
+    logs.extend(request_all(client, blocks, &by_address).await?);
     logger.log(
         Level::TRACE,
         "The RPC provider couldn't answer an address-free query, so its range was read again by the contracts' registered addresses.",
@@ -149,14 +194,41 @@ mod tests {
         let topics = vec![vec!["0xaa".to_string()], vec![], vec![], vec![]];
         assert_eq!(
             (
-                log_filter(16, 17, &topics, &[]),
-                log_filter(16, 16, &topics, &["0x01".to_string()]),
+                log_filter(
+                    LogBlocks::Range {
+                        from_block: 16,
+                        to_block: 17
+                    },
+                    &topics,
+                    &[]
+                ),
+                log_filter(
+                    LogBlocks::Range {
+                        from_block: 16,
+                        to_block: 16
+                    },
+                    &topics,
+                    &["0x01".to_string()]
+                ),
+                log_filter(
+                    LogBlocks::Hash {
+                        block_number: 16,
+                        hash: "0xbb"
+                    },
+                    &topics,
+                    &["0x01".to_string()]
+                ),
             ),
             (
                 json!({"fromBlock": "0x10", "toBlock": "0x11", "topics": [["0xaa"]]}),
                 json!({
                     "fromBlock": "0x10",
                     "toBlock": "0x10",
+                    "topics": [["0xaa"]],
+                    "address": ["0x01"],
+                }),
+                json!({
+                    "blockHash": "0xbb",
                     "topics": [["0xaa"]],
                     "address": ["0x01"],
                 }),

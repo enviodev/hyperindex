@@ -19,10 +19,12 @@ type nextPageParams = {
   onBlockRegistrationIndexes: array<int>,
   clientFilteredContracts: option<array<string>>,
   retry: int,
-  // Blocks at or above this one can still be reorged, so a blocks-only page
-  // reaching them is read for the hashes of its boundary blocks even with no
-  // handler block in range. None when the range is final.
+  // Blocks at or above this one can still be reorged, so each of them in the
+  // page has its header read and its logs checked against it, even a
+  // blocks-only page with no handler block in range. None when the range is
+  // final.
   reorgableFrom?: int,
+  knownHeight: int,
 }
 
 // Rust reports what to do about a page it could not read rather than throwing

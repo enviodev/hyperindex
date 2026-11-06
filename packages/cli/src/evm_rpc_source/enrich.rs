@@ -154,7 +154,7 @@ fn worst_of(errors: impl IntoIterator<Item = EnrichError>) -> Option<EnrichError
 }
 
 /// Collect a fan-out's results, or its worst failure.
-fn collect_worst<T>(
+pub(crate) fn collect_worst<T>(
     results: impl IntoIterator<Item = Result<T, EnrichError>>,
 ) -> Result<Vec<T>, EnrichError> {
     let mut values = Vec::new();
@@ -252,6 +252,11 @@ impl PageRefs {
 pub(crate) struct EnrichRequest<'a> {
     pub from_block: u64,
     pub to_block: u64,
+    /// Blocks read fresh like the range's boundary blocks, whatever the store
+    /// holds: the head blocks whose logs were checked against these headers.
+    pub checked_blocks: &'a [u64],
+    /// Block responses already read for this page, by number.
+    pub prefetched_blocks: &'a HashMap<u64, Arc<Json>>,
     pub refs: PageRefs,
     pub known_blocks: &'a BlockStore,
     pub known_transactions: &'a TransactionStore,
@@ -345,6 +350,8 @@ pub(crate) async fn page(
     let EnrichRequest {
         from_block,
         to_block,
+        checked_blocks,
+        prefetched_blocks,
         refs,
         known_blocks,
         known_transactions,
@@ -352,7 +359,7 @@ pub(crate) async fn page(
         chain_tx_mask,
     } = request;
 
-    let block_numbers = plan_blocks(&refs, from_block, to_block, known_blocks);
+    let block_numbers = plan_blocks(&refs, from_block, to_block, checked_blocks, known_blocks);
     let tx_plan = plan_transactions(&refs, known_transactions, chain_tx_mask);
 
     // Both sides are awaited, then judged together. Taking whichever failed
@@ -362,7 +369,13 @@ pub(crate) async fn page(
     // on the slower side costs at most one more request timeout, since every
     // read is bounded by its own.
     let (blocks, transactions) = futures_util::future::join(
-        fetch_blocks(client, fetches, block_read, &block_numbers),
+        fetch_blocks(
+            client,
+            fetches,
+            block_read,
+            &block_numbers,
+            prefetched_blocks,
+        ),
         fetch_transactions(client, fetches, &tx_plan),
     )
     .await;
@@ -502,10 +515,21 @@ struct TxReadPlan {
 }
 
 /// Which blocks to read. A referenced block is skipped when the store was
-/// already asked for everything this page needs of it; a boundary block never
-/// is.
-fn plan_blocks(refs: &PageRefs, from_block: u64, to_block: u64, known: &BlockStore) -> Vec<u64> {
-    let boundary = boundary_blocks(from_block, to_block);
+/// already asked for everything this page needs of it; a boundary or checked
+/// block never is.
+fn plan_blocks(
+    refs: &PageRefs,
+    from_block: u64,
+    to_block: u64,
+    checked: &[u64],
+    known: &BlockStore,
+) -> Vec<u64> {
+    let mut boundary = boundary_blocks(from_block, to_block);
+    for &block in checked {
+        if !boundary.contains(&block) {
+            boundary.push(block);
+        }
+    }
     let mut numbers: Vec<u64> = refs
         .blocks
         .iter()
@@ -587,23 +611,43 @@ pub(crate) async fn fetch_block_hashes(
     block_numbers: &[u64],
 ) -> Result<BlockStore, EnrichError> {
     let read = BlockRead::observations_only();
-    let blocks = fetch_blocks(client, fetches, &read, block_numbers).await?;
+    let blocks = fetch_blocks(client, fetches, &read, block_numbers, &HashMap::new()).await?;
 
     let page = BlockStore::new_evm();
     fill_block_page(&page, Vec::new(), read.covering, blocks);
     Ok(page)
 }
 
+/// Read the given blocks' responses concurrently, undecoded, for a caller that
+/// needs them before the page is planned.
+pub(crate) async fn fetch_block_responses(
+    client: &Arc<JsonRpcClient>,
+    fetches: &Fetches,
+    numbers: &[u64],
+) -> Result<HashMap<u64, Arc<Json>>, EnrichError> {
+    let responses = join_all(numbers.iter().map(|&number| async move {
+        require(client, fetches, FetchKey::Block(number), number)
+            .await
+            .map(|response| (number, response))
+    }))
+    .await;
+    Ok(collect_worst(responses)?.into_iter().collect())
+}
+
 /// Fetch and decode every planned block concurrently, keeping the rows together
-/// for a single insert.
+/// for a single insert. A block already in `prefetched` costs no request.
 async fn fetch_blocks(
     client: &Arc<JsonRpcClient>,
     fetches: &Fetches,
     read: &BlockRead,
     numbers: &[u64],
+    prefetched: &HashMap<u64, Arc<Json>>,
 ) -> Result<Vec<Block>, EnrichError> {
     let blocks = join_all(numbers.iter().map(|&number| async move {
-        let response = require(client, fetches, FetchKey::Block(number), number).await?;
+        let response = match prefetched.get(&number) {
+            Some(response) => response.clone(),
+            None => require(client, fetches, FetchKey::Block(number), number).await?,
+        };
         responses::build_block(&response, number, &read.fields, &read.selected)
             .map_err(|error| EnrichError::from_response(number, error))
     }))
@@ -755,7 +799,7 @@ mod tests {
             }],
             wanted,
         );
-        let plan = plan_blocks(&refs_for(50, wanted, 0), 40, 60, &known);
+        let plan = plan_blocks(&refs_for(50, wanted, 0), 40, 60, &[], &known);
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
     }
 
@@ -770,7 +814,7 @@ mod tests {
             block_bit(EvmBlockField::GasUsed),
         );
         let miner = block_bit(EvmBlockField::Miner);
-        let plan = plan_blocks(&refs_for(50, miner, 0), 40, 60, &known);
+        let plan = plan_blocks(&refs_for(50, miner, 0), 40, 60, &[], &known);
         assert_eq!(planned_numbers(&plan), vec![40, 50, 60]);
     }
 
@@ -789,15 +833,30 @@ mod tests {
                 BLOCK_OBSERVATION_MASK,
             );
         }
-        let plan = plan_blocks(&PageRefs::default(), 40, 60, &known);
+        let plan = plan_blocks(&PageRefs::default(), 40, 60, &[], &known);
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
+    }
+
+    #[test]
+    fn a_checked_head_block_is_read_once_even_when_the_store_covers_it() {
+        let known = BlockStore::new_evm();
+        known.insert_evm_blocks_covering(
+            vec![Block {
+                number: Some(58),
+                hash: Some(hash(1)),
+                ..Default::default()
+            }],
+            BLOCK_OBSERVATION_MASK,
+        );
+        let plan = plan_blocks(&refs_for(59, 0, 0), 40, 60, &[58, 59, 60], &known);
+        assert_eq!(planned_numbers(&plan), vec![40, 58, 59, 60]);
     }
 
     #[test]
     fn a_block_no_item_wants_fields_from_is_not_read() {
         // Its hash still reaches the page as an observation off the log, which
         // is all reorg detection needs from it.
-        let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &BlockStore::new_evm());
+        let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &[], &BlockStore::new_evm());
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
     }
 
@@ -805,13 +864,13 @@ mod tests {
     fn a_boundary_block_an_item_wants_nothing_from_is_still_read() {
         // The item makes the block referenced but selects no field of it; it is
         // still the range's boundary, so its reorg observation is read.
-        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &BlockStore::new_evm());
+        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &[], &BlockStore::new_evm());
         assert_eq!(planned_numbers(&plan), vec![40]);
     }
 
     #[test]
     fn a_single_block_range_reads_that_block_once() {
-        let plan = plan_blocks(&PageRefs::default(), 40, 40, &BlockStore::new_evm());
+        let plan = plan_blocks(&PageRefs::default(), 40, 40, &[], &BlockStore::new_evm());
         assert_eq!(planned_numbers(&plan), vec![40]);
     }
 
@@ -968,7 +1027,7 @@ mod tests {
         let gas_used = block_bit(EvmBlockField::GasUsed);
         let read = BlockRead::for_chain(miner | gas_used);
         let known = BlockStore::new_evm();
-        let first = plan_blocks(&refs_for(50, miner, 0), 40, 60, &known);
+        let first = plan_blocks(&refs_for(50, miner, 0), 40, 60, &[], &known);
         known.insert_evm_blocks_covering(
             vec![Block {
                 number: Some(50),
@@ -976,7 +1035,7 @@ mod tests {
             }],
             read.covering,
         );
-        let second = plan_blocks(&refs_for(50, gas_used, 0), 40, 60, &known);
+        let second = plan_blocks(&refs_for(50, gas_used, 0), 40, 60, &[], &known);
         assert_eq!(
             (planned_numbers(&first), planned_numbers(&second)),
             (vec![40, 50, 60], vec![40, 60])
