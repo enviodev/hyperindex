@@ -126,7 +126,11 @@ let getProgressedChainsById = {
         getChainAfterBatchIfProgressed(
           ~chainBeforeBatch,
           ~counts,
-          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
+          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(
+            // A suffix of the sorted, deduped buffer is itself sorted and deduped.
+            ~mutItemsSorted=true,
+            ~mutItems=leftItems,
+          ),
           ~progressBlockNumberAfterBatch,
         )
       // Skip not affected chains

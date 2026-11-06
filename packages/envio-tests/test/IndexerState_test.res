@@ -385,5 +385,117 @@ describe("IndexerState", () => {
         })
       },
     )
+
+    it(
+      "leaves the items a batch didn't take buffered in order",
+      t => {
+        let config = TestConfig.default
+        let onEventRegistrations = [
+          (EventRegistration.evmOnEventRegistration(
+            ~id="0",
+            ~contractName="Gravatar",
+            ~isWildcard=true,
+          ) :> Internal.onEventRegistration),
+        ]
+        let query: FetchState.query = {
+          partitionId: "0",
+          itemsTarget: Some(0),
+          itemsEst: 0,
+          fromBlock: 0,
+          toBlock: None,
+          isChunk: false,
+          selection: {dependsOnAddresses: false, onEventRegistrations},
+          addresses: TestAddresses.setOf([]),
+        }
+        let makeEvent = (~chainId, ~blockNumber, ~logIndex, ~registrationIndex) => Internal.Event({
+          chainId,
+          blockNumber,
+          logIndex,
+          transactionIndex: 0,
+          onEventRegistration: {"index": registrationIndex}->(
+            Utils.magic: {"index": int} => Internal.onEventRegistration
+          ),
+          payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
+        })
+
+        let chainConfig = config.defaultChain->Option.getUnsafe
+        let chainId = chainConfig.id
+        let addressStore = TestAddresses.makeStore(~onEventRegistrations)
+        let fetchState = FetchState.make(
+          ~onNotice=ignore,
+          ~maxAddrInPartition=Env.maxAddrInPartition,
+          ~endBlock=None,
+          ~onEventRegistrations,
+          ~addressStore,
+          ~addressRows=TestAddresses.addressRows(~addresses=[], ~onEventRegistrations),
+          ~startBlock=0,
+          ~maxOnBlockBufferSize=5000,
+          ~chainId,
+          ~knownHeight=10,
+        )
+        fetchState->FetchState.startFetchingQueries(~queries=[query])
+        let fetchState = fetchState->FetchState.handleQueryResult(
+          ~query,
+          ~latestFetchedBlock=10,
+          // Out of order, with one log routed to two registrations in block 7.
+          ~newItems=[
+            makeEvent(~chainId, ~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
+            makeEvent(~chainId, ~blockNumber=5, ~logIndex=1, ~registrationIndex=0),
+            makeEvent(~chainId, ~blockNumber=6, ~logIndex=0, ~registrationIndex=0),
+            makeEvent(~chainId, ~blockNumber=5, ~logIndex=0, ~registrationIndex=0),
+            makeEvent(~chainId, ~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
+          ],
+        )
+        let mockSource = MockSource.make([], ~chainId=1)
+        let chainStates = Dict.make()
+        chainStates->ChainId.Dict.set(
+          chainId,
+          ChainState.make(
+            ~chainConfig,
+            ~fetchState,
+            ~addressStore,
+            ~sourceManager=SourceManager.make(
+              ~logger=Logger.makeInMemory(),
+              ~sources=[mockSource.source],
+              ~isRealtime=false,
+            ),
+            ~maxReorgDepth=200,
+            ~shouldRollbackOnReorg=false,
+            ~committedProgressBlockNumber=-1,
+            ~logger=Logger.makeInMemory(),
+          ),
+        )
+        let state = IndexerState.make(
+          ~logger=Logger.makeInMemory(),
+          ~config,
+          ~persistence=TestIndexerState.defaultPersistence(),
+          ~chainStates,
+          ~isRealtime=false,
+          ~onError=errHandler => errHandler->ErrorHandling.toExn->throw,
+        )
+
+        // A batch of 2 still takes all of block 5, so it ends between blocks.
+        let batch = state->IndexerState.createBatch(~batchSizeTarget=2)
+        let progressed =
+          batch.progressedChainsById
+          ->ChainId.Dict.dangerouslyGetNonOption(chainId)
+          ->Option.getUnsafe
+
+        t.expect({
+          "items": batch.items,
+          "leftInBuffer": progressed.fetchState.buffer,
+        }).toEqual({
+          "items": [
+            makeEvent(~chainId, ~blockNumber=5, ~logIndex=0, ~registrationIndex=0),
+            makeEvent(~chainId, ~blockNumber=5, ~logIndex=1, ~registrationIndex=0),
+          ],
+          "leftInBuffer": [
+            makeEvent(~chainId, ~blockNumber=6, ~logIndex=0, ~registrationIndex=0),
+            makeEvent(~chainId, ~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
+            makeEvent(~chainId, ~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
+          ],
+        })
+      },
+    )
   })
 })
