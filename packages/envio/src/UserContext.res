@@ -390,11 +390,13 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
         let run = currentRunOrThrow(~prop)
         let sync = run->syncOrThrow(~prop=`${prop}.getSync`)
         let scope = run->scopeOf
+        // The lookahead keys an entity as its writes do, a Bytes id by its hex.
+        let entityKey = entityConfig.table.entityIdToKey(entityId->EntityId.unsafeOfString)
         switch sync.writes->SyncWrites.getById(~entityConfig, ~entityId) {
         | Some(entity) => entity
         | None =>
           switch run.isPreload
-            ? PreloadLookahead.overlayGet(~item=run.item, ~entityName, ~scope, ~entityId)
+            ? PreloadLookahead.overlayGet(~item=run.item, ~entityName, ~scope, ~entityId=entityKey)
             : None {
           | Some(entity) => entity
           | None =>
@@ -406,7 +408,12 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
             ) {
             | Some(entity) =>
               if run.isPreload && entity->Option.isNone {
-                PreloadLookahead.recordAbsent(~item=run.item, ~entityName, ~scope, ~entityId)
+                PreloadLookahead.recordAbsent(
+                  ~item=run.item,
+                  ~entityName,
+                  ~scope,
+                  ~entityId=entityKey,
+                )
               }
               entity
             | None =>
@@ -464,7 +471,9 @@ let makeEntityContext = (params: params, ~entityConfig: Internal.entityConfig) =
         | None =>
           let inMemTable =
             params.indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope=run->scopeOf)
-          switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(entityId) {
+          switch inMemTable.latestEntityChangeById->Utils.Dict.dangerouslyGetNonOption(
+            inMemTable.entityIdToKey(entityId->EntityId.unsafeOfString),
+          ) {
           | Some(change) if change->Change.getCheckpointId == run.checkpointId =>
             change->InMemoryTable.Entity.mapChangeToEntity
           | _ => None

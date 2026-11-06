@@ -1437,7 +1437,6 @@ export async function registerSubgraph(config: SubgraphConfig, logger: unknown):
 
   const schema: SubgraphSchema = {
     timestampFields: config.timestampFields ?? {},
-    bytesIdEntities: config.bytesIdEntities ?? [],
     entityListFields: config.entityListFields ?? {},
     entityFields: config.entityFields ?? {},
     entityRefFields: config.entityRefFields ?? {},

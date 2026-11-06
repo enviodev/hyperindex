@@ -480,9 +480,14 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         });
     }
 
+    let id_udt = our_columns
+        .as_ref()
+        .and_then(|columns| columns.get("id"))
+        .map(|column| column.udt.clone())
+        .unwrap_or_else(|| "text".to_string());
     let ours_ids = async {
         match context.ours {
-            Ours::Postgres(pg) => pg.ids(&entity.name).await,
+            Ours::Postgres(pg) => pg.ids(&entity.name, &id_udt).await,
             Ours::Graph { client, .. } => Ok(client
                 .ids(our_collection.as_deref().unwrap_or_default(), None, None)
                 .await?
@@ -555,11 +560,6 @@ async fn diff_entity(context: &Run<'_>, entity: &Entity, out: &mut EntityReport)
         return Ok(());
     }
 
-    let id_udt = our_columns
-        .as_ref()
-        .and_then(|columns| columns.get("id"))
-        .map(|column| column.udt.clone())
-        .unwrap_or_else(|| "text".to_string());
     // A nested list multiplies what one query asks graph-node for.
     let batch = if entity
         .fields

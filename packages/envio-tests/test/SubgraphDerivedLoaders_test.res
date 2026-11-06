@@ -444,7 +444,9 @@ describe("graph-node's derived-loaders mapping", () => {
       },
     });
     const results = (await indexer.TestResult.getAll()).sort((a: any, b: any) => (a.id < b.id ? -1 : 1));
-    t.expect(results.map((r: any) => [r.id, r.barDerived, r.bBarDerived])).toEqual([
+    // A list of Bytes-id entities holds their ids as bytes.
+    const hex = (ids: Uint8Array[]) => ids.map((id) => "0x" + Buffer.from(id).toString("hex"));
+    t.expect(results.map((r: any) => [r.id, r.barDerived, hex(r.bBarDerived)])).toEqual([
       ["1_0", ["0_1_0", "1_1_0", "2_1_0"], ["0x305f315f30", "0x315f315f30", "0x325f315f30"]],
       ["1_1", ["0_1_1", "2_1_1"], ["0x305f315f31", "0x325f315f31"]],
       ["2_0", ["0_2_0"], ["0x305f325f30"]],

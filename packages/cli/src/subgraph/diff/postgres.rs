@@ -206,10 +206,10 @@ impl PgSide {
             .collect())
     }
 
-    pub async fn ids(&self, table: &str) -> Result<Vec<Value>> {
+    pub async fn ids(&self, table: &str, id_udt: &str) -> Result<Vec<Value>> {
         let rows = self
             .client
-            .query(&format!("SELECT id::text FROM {}", self.table(table)), &[])
+            .query(&ids_sql(&self.table(table), id_udt), &[])
             .await?;
         Ok(rows
             .iter()
@@ -253,15 +253,11 @@ impl PgSide {
                 }
             }
         }
-        let id_filter = if id_udt == "text" {
-            "\"id\" = ANY($1::text[])".to_string()
-        } else {
-            format!("\"id\" = ANY($1::text[]::{}[])", quote(id_udt))
-        };
         let sql = format!(
-            "SELECT row_to_json(t)::text FROM (SELECT {} FROM {} e WHERE {id_filter}) t",
+            "SELECT row_to_json(t)::text FROM (SELECT {} FROM {} e WHERE {}) t",
             select.join(", "),
-            self.table(&entity.name)
+            self.table(&entity.name),
+            id_filter_sql(id_udt)
         );
         let ids: Vec<String> = ids
             .iter()
@@ -278,6 +274,23 @@ impl PgSide {
                     .context("Postgres returned a row that isn't JSON")
             })
             .collect()
+    }
+}
+
+/// Every id of `table`, as text the normalizer reads like graph-node's.
+fn ids_sql(table: &str, id_udt: &str) -> String {
+    format!("SELECT {} FROM {table}", element("\"id\"", id_udt))
+}
+
+/// The rows whose id is among `$1`, ids as `ids_sql` renders them. A `bytea`
+/// id compares by its bytes: cast from the hex text, it would be the ASCII.
+fn id_filter_sql(id_udt: &str) -> String {
+    match id_udt {
+        "text" => "\"id\" = ANY($1::text[])".to_string(),
+        "bytea" => "\"id\" = ANY(ARRAY(SELECT decode(substr(x, 3), 'hex') FROM \
+                    unnest($1::text[]) AS u(x)))"
+            .to_string(),
+        _ => format!("\"id\" = ANY($1::text[]::{}[])", quote(id_udt)),
     }
 }
 
@@ -372,6 +385,35 @@ pub fn render_relation(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// A `Bytes` id is a `bytea` column: read back as graph-node's `0x` hex,
+    /// and matched against those hex ids by their bytes rather than as text.
+    #[test]
+    fn reads_and_matches_ids_in_graph_node_s_encoding() {
+        assert_eq!(
+            [
+                (ids_sql("t", "bytea"), id_filter_sql("bytea")),
+                (ids_sql("t", "text"), id_filter_sql("text")),
+                (ids_sql("t", "int8"), id_filter_sql("int8")),
+            ],
+            [
+                (
+                    "SELECT '0x' || encode(\"id\", 'hex') FROM t".to_string(),
+                    "\"id\" = ANY(ARRAY(SELECT decode(substr(x, 3), 'hex') FROM unnest($1::text[]) \
+                     AS u(x)))"
+                        .to_string(),
+                ),
+                (
+                    "SELECT \"id\"::text FROM t".to_string(),
+                    "\"id\" = ANY($1::text[])".to_string(),
+                ),
+                (
+                    "SELECT \"id\"::text FROM t".to_string(),
+                    "\"id\" = ANY($1::text[]::\"int8\"[])".to_string(),
+                ),
+            ]
+        );
+    }
 
     #[test]
     fn renders_columns_as_graph_node_encodes_them() {

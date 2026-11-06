@@ -1406,11 +1406,16 @@ function toRow(entityType: string, entity: Entity, id?: string): Record<string, 
     // others (`check_invalid_fields` refuses them from 0.0.8 on).
     if (fields !== undefined && !fields.has(entry.key)) continue;
     const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
-    // An id is a string column whatever the subgraph declared it as, and so is
-    // a relation, which carries one. Every other `Bytes` field is a bytes
-    // column, which is what `bytes_type: uint8array` makes of it.
-    const isId = entry.key === "id" || refFields.has(entry.key) || listFields.has(entry.key);
     const declared = schema.entityFieldTypes[entityType]?.[entry.key];
+    // An id, a relation and a stored list of entities hold ids: bytes when the
+    // id they name is `Bytes`, text otherwise. Every other `Bytes` field is a
+    // bytes column, which is what `bytes_type: uint8array` makes of it.
+    const idColumn =
+      entry.key === "id" || refFields.has(entry.key) || listFields.has(entry.key)
+        ? declaredKind(schema, declared) === "Bytes"
+          ? "bytes"
+          : "text"
+        : undefined;
     if (
       declared?.nullableElements &&
       entry.value.kind === ValueKind.ARRAY &&
@@ -1426,17 +1431,17 @@ function toRow(entityType: string, entity: Entity, id?: string): Record<string, 
     row[column] =
       timestampFields.has(entry.key) && entry.value.kind !== ValueKind.NULL
         ? new Date(Number(entry.value.toTimestamp() / 1000n))
-      : fromValue(entry.value, isId);
+      : fromValue(entry.value, idColumn);
   }
   return row;
 }
 
-function fromValue(value: Value, isId = false): unknown {
+function fromValue(value: Value, idColumn?: "bytes" | "text"): unknown {
   switch (value.kind) {
     case ValueKind.NULL:
       return null;
     case ValueKind.BYTES:
-      return isId ? value.toBytes().toHexString() : Uint8Array.from(value.toBytes());
+      return idColumn === "text" ? value.toBytes().toHexString() : Uint8Array.from(value.toBytes());
     case ValueKind.BIGINT:
       return value.toBigInt().valueOf();
     case ValueKind.INT8:
@@ -1445,9 +1450,9 @@ function fromValue(value: Value, isId = false): unknown {
     case ValueKind.BIGDECIMAL:
       return value.toBigDecimal().value;
     case ValueKind.ARRAY:
-      return value.toArray().map((item) => fromValue(item, isId));
+      return value.toArray().map((item) => fromValue(item, idColumn));
     case ValueKind.STRING:
-      return withoutNul(value.data);
+      return idColumn === "bytes" ? graphIdToStoredId("Bytes", withoutNul(value.data)) : withoutNul(value.data);
     default:
       return value.data;
   }
@@ -1508,8 +1513,7 @@ function toValue(value: unknown, kind?: string): Value {
   if (Array.isArray(value)) return Value.fromArray(value.map((item) => toValue(item, kind)));
   switch (kind) {
     case "Bytes":
-      // A bytes column reads back as the bytes themselves; an id column
-      // declared `Bytes` is stored as text, and reads back hex.
+      // A bytes column reads back as the bytes themselves.
       if (value instanceof Uint8Array) return Value.fromBytes(Bytes.fromUint8Array(value));
       return typeof value === "string" ? Value.fromBytes(Bytes.fromHexString(value)) : Value.fromNull();
     case "BigInt":
@@ -1712,6 +1716,28 @@ function storedColumnsOfEntity(scope: Scope, entityType: string): string[] {
 }
 
 /**
+ * graph-ts names an entity by a string, a `Bytes` id by its hex; graph-node
+ * stores that id as the bytes, so `0xAB` and `0xab` are one entity. `kind` is
+ * the column's declared kind, a relation's being its target's id kind.
+ */
+function graphIdToStoredId(kind: string | undefined, id: string): unknown {
+  if (kind !== "Bytes") return id;
+  const digits = id.startsWith("0x") || id.startsWith("0X") ? id.slice(2) : id;
+  if (digits.length % 2 !== 0 || !HEX_DIGITS.test(digits)) {
+    throw new Error(`Envio Subgraph: \`${id}\` names an entity whose id is Bytes, and isn't hex.`);
+  }
+  return new Uint8Array(Buffer.from(digits, "hex"));
+}
+
+function storedIdToGraphId(id: unknown): string {
+  return id instanceof Uint8Array ? toHex(id) : String(id);
+}
+
+function entityIdToStoredId(scope: Scope, entityType: string, id: string): unknown {
+  return graphIdToStoredId(scope.schema.entityFieldTypes[entityType]?.id?.kind, withoutNul(id));
+}
+
+/**
  * graph-node's EntityCache::set validates a save: an update that sets every
  * non-nullable field passes as it is (a null counts as set), otherwise it is
  * merged onto the stored entity — where a null removes the field — and the
@@ -1769,26 +1795,29 @@ function fileAccess(scope: Scope, entityType: string, id: string): boolean | nul
 
 const storeImpl = {
   get(entityType: string, id: string): Entity | null {
-    id = withoutNul(id);
     const scope = currentScope();
+    const storedId = entityIdToStoredId(scope, entityType, id);
+    id = storedIdToGraphId(storedId);
     if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, false);
-    return toEntity(entityType, entityContext(entityType).getSync(id));
+    return toEntity(entityType, entityContext(entityType).getSync(storedId));
   },
   get_in_block(entityType: string, id: string): Entity | null {
-    id = withoutNul(id);
     const scope = currentScope();
+    const storedId = entityIdToStoredId(scope, entityType, id);
+    id = storedIdToGraphId(storedId);
     if (fileAccess(scope, entityType, id) === false) return null;
     if (scope.mode === "register") return registerRead(scope, entityType, id, true);
-    return toEntity(entityType, entityContext(entityType).getInBlockSync(id));
+    return toEntity(entityType, entityContext(entityType).getInBlockSync(storedId));
   },
   set(entityType: string, id: string, data: Entity): void {
-    id = withoutNul(id);
     const scope = currentScope();
+    const storedId = entityIdToStoredId(scope, entityType, id);
+    id = storedIdToGraphId(storedId);
     const own = fileAccess(scope, entityType, id);
     if (scope.file) scope.file.written.add(`${entityType}\u0000${id}`);
     const row = toRow(entityType, data, id);
-    row.id = id;
+    row.id = storedId;
     // graph-node merges a save onto the stored entity (EntityCache::set is an
     // Update, merged by merge_remove_null_fields): a field this instance
     // doesn't set keeps its stored value, an explicit null clears it. ENS's
@@ -1815,20 +1844,21 @@ const storeImpl = {
     const replacesWhole =
       !scope.schema.skipDuplicateEntities.includes(entityType) &&
       storedColumnsOfEntity(scope, entityType).every((column) => column in row);
-    const stored = own === false || replacesWhole ? undefined : table.getSync(id);
+    const stored = own === false || replacesWhole ? undefined : table.getSync(storedId);
     assertRequiredFields(scope, entityType, id, data, stored);
     // graph-node inserts a skipDuplicates type with ON CONFLICT DO NOTHING, so
     // an id an earlier block stored keeps that block's write; saves within
     // this block merge in its entity cache first.
-    if (stored && scope.schema.skipDuplicateEntities.includes(entityType) && !table.getInBlockSync(id)) return;
+    if (stored && scope.schema.skipDuplicateEntities.includes(entityType) && !table.getInBlockSync(storedId)) return;
     table.set(stored ? { ...stored, ...row } : withUnsetAsNull(scope, entityType, row));
   },
   remove(entityType: string, id: string): void {
-    id = withoutNul(id);
     const scope = currentScope();
+    const storedId = entityIdToStoredId(scope, entityType, id);
+    id = storedIdToGraphId(storedId);
     if (fileAccess(scope, entityType, id) === false) return;
     if (scope.mode === "register") return registerWrite(scope, entityType, id, null);
-    entityContext(entityType).deleteUnsafe(id);
+    entityContext(entityType).deleteUnsafe(storedId);
   },
   /**
    * `graph codegen` names the entity the derived field is declared on and the
@@ -1856,10 +1886,15 @@ const storeImpl = {
     const back = schema.entityRefFields[target]?.includes(declared.derivedFrom)
       ? `${declared.derivedFrom}_id`
       : declared.derivedFrom;
-    const rows = entityContext(target).getWhereSync({ [back]: { _eq: id } });
+    const backKind = declaredKind(schema, schema.entityFieldTypes[target]?.[declared.derivedFrom]);
+    const rows = entityContext(target).getWhereSync({
+      [back]: { _eq: graphIdToStoredId(backKind, withoutNul(id)) },
+    });
     // A file data source sees the related entities it wrote, and no others.
     const visible = file
-      ? rows.filter((row: any) => file.entities.has(target) && file.written.has(`${target}\u0000${row.id}`))
+      ? rows.filter(
+          (row: any) => file.entities.has(target) && file.written.has(`${target}\u0000${storedIdToGraphId(row.id)}`),
+        )
       : rows;
     // graph-node answers in key order (`EntityCache::load_related` walks a
     // BTreeSet of entity keys): by id, as the id's type orders.
@@ -1868,8 +1903,9 @@ const storeImpl = {
   },
 };
 
+// A Bytes id's lowercase hex orders as its bytes do.
 function byId(a: { id: unknown }, b: { id: unknown }): number {
-  return codePointOrder(String(a.id), String(b.id));
+  return codePointOrder(storedIdToGraphId(a.id), storedIdToGraphId(b.id));
 }
 
 function byNumericId(a: { id: unknown }, b: { id: unknown }): number {

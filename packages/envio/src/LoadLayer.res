@@ -361,8 +361,9 @@ let getByIdInMemory = (
   ~entityId: string,
 ) => {
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
-  inMemTable.latestEntityChangeById->Dict.has(entityId)
-    ? Some((inMemTable->InMemoryTable.Entity.getUnsafe)(entityId))
+  let entityKey = inMemTable.entityIdToKey(entityId->EntityId.unsafeOfString)
+  inMemTable.latestEntityChangeById->Dict.has(entityKey)
+    ? Some((inMemTable->InMemoryTable.Entity.getUnsafe)(entityKey))
     : None
 }
 

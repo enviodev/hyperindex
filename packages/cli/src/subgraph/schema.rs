@@ -48,9 +48,6 @@ pub struct SchemaTranslation {
     /// Fields the shim converts between graph-ts' i64 microseconds and the
     /// stored timestamp, keyed by entity name.
     pub timestamp_fields: BTreeMap<String, Vec<String>>,
-    /// Entities whose `id` is declared `Bytes`: the shim lowercases and hexes
-    /// their ids at the store boundary.
-    pub bytes_id_entities: BTreeSet<String>,
     /// Fields holding a list of entity ids, which graph-ts sees as `[String]`.
     pub entity_list_fields: BTreeMap<String, Vec<String>>,
     /// Every field each entity declares. envio's store returns what a mapping
@@ -267,7 +264,7 @@ fn unstorable_list(base: &str, wrappers: &[Wrapper]) -> Option<&'static str> {
 /// The envio scalar an id of this subgraph type is stored as.
 fn id_scalar(base: &str) -> &'static str {
     match map_scalar(base) {
-        Some(scalar @ ("Int" | "BigInt")) => scalar,
+        Some(scalar @ ("Int" | "BigInt" | "Bytes")) => scalar,
         _ => "String",
     }
 }
@@ -289,24 +286,31 @@ struct Interfaces {
     /// Per type, the stored fields typed as one of those shared interfaces.
     /// A `@derivedFrom` naming one has to name its id column instead.
     id_only_fields: BTreeMap<String, BTreeSet<String>>,
+    /// The declared id type of every entity and interface. An implementor that
+    /// doesn't restate `id` takes its interface's.
+    id_types: BTreeMap<String, String>,
 }
 
 impl Interfaces {
     fn collect(document: &Document<'_, String>) -> Self {
         let mut implementors: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut id_types: BTreeMap<String, String> = BTreeMap::new();
+        let mut objects_without_id: Vec<(String, &[String])> = Vec::new();
         let mut types: Vec<(&str, &[graphql_parser::schema::Field<'_, String>])> = Vec::new();
+        let declared_id_type = |fields: &[graphql_parser::schema::Field<'_, String>]| {
+            fields
+                .iter()
+                .find(|field| field.name == "id")
+                .map(|field| unwrap_type(&field.field_type).0)
+        };
         for definition in &document.definitions {
             match definition {
                 Definition::TypeDefinition(TypeDefinition::Interface(interface)) => {
                     implementors.entry(interface.name.clone()).or_default();
-                    let id_type = interface
-                        .fields
-                        .iter()
-                        .find(|field| field.name == "id")
-                        .map(|field| unwrap_type(&field.field_type).0)
-                        .unwrap_or_else(|| "ID".to_string());
-                    id_types.insert(interface.name.clone(), id_type);
+                    id_types.insert(
+                        interface.name.clone(),
+                        declared_id_type(&interface.fields).unwrap_or_else(|| "ID".to_string()),
+                    );
                     types.push((&interface.name, &interface.fields));
                 }
                 Definition::TypeDefinition(TypeDefinition::Object(object)) => {
@@ -316,10 +320,24 @@ impl Interfaces {
                             .or_default()
                             .push(object.name.clone());
                     }
+                    match declared_id_type(&object.fields) {
+                        Some(id_type) => {
+                            id_types.insert(object.name.clone(), id_type);
+                        }
+                        None => objects_without_id
+                            .push((object.name.clone(), &object.implements_interfaces)),
+                    }
                     types.push((&object.name, &object.fields));
                 }
                 _ => {}
             }
+        }
+        for (object, implemented) in objects_without_id {
+            let id_type = implemented
+                .iter()
+                .find_map(|interface| id_types.get(interface).cloned())
+                .unwrap_or_else(|| "ID".to_string());
+            id_types.insert(object, id_type);
         }
 
         let mut interfaces = Interfaces::default();
@@ -329,11 +347,15 @@ impl Interfaces {
                     interfaces.sole_implementor.insert(interface, only.clone());
                 }
                 _ => {
-                    let id_type = id_types.remove(&interface).unwrap_or_else(|| "ID".into());
+                    let id_type = id_types
+                        .get(&interface)
+                        .cloned()
+                        .unwrap_or_else(|| "ID".into());
                     interfaces.shared_id_type.insert(interface, id_type);
                 }
             }
         }
+        interfaces.id_types = id_types;
         for (owner, fields) in types {
             for field in fields {
                 let (base, wrappers) = unwrap_type(&field.field_type);
@@ -364,6 +386,11 @@ impl Interfaces {
         self.id_only_fields
             .get(owner)
             .is_some_and(|fields| fields.contains(field))
+    }
+
+    /// The subgraph type of the id that names an entity or interface.
+    fn id_type_of_entity(&self, entity: &str) -> &str {
+        self.id_types.get(entity).map_or("ID", String::as_str)
     }
 }
 
@@ -506,12 +533,9 @@ fn render_fields(
         let mut indexed = false;
         let rendered_base = if let Some(scalar) = map_scalar(&base) {
             if field.name == "id" {
-                if base == "Bytes" {
-                    translation.bytes_id_entities.insert(owner.to_string());
-                }
-                // envio only allows ID/String/Int/BigInt ids.
+                // envio only allows ID/String/Int/BigInt/Bytes ids.
                 match scalar {
-                    "ID" | "String" | "Int" | "BigInt" => scalar.to_string(),
+                    "ID" | "String" | "Int" | "BigInt" | "Bytes" => scalar.to_string(),
                     _ => "String".to_string(),
                 }
             } else {
@@ -535,7 +559,10 @@ fn render_fields(
                     .entry(owner.to_string())
                     .or_default()
                     .push(field.name.clone());
-                "String".to_string()
+                match interfaces.id_type_of_entity(&base) {
+                    "Bytes" => "Bytes".to_string(),
+                    _ => "String".to_string(),
+                }
             } else {
                 translation
                     .entity_ref_fields
@@ -568,9 +595,6 @@ fn render_fields(
 const RELATION_INDEX: &str = " @index";
 
 fn inherit_conversions(translation: &mut SchemaTranslation, entity: &str, interface: &str) {
-    if translation.bytes_id_entities.contains(interface) {
-        translation.bytes_id_entities.insert(entity.to_string());
-    }
     // An implementor gets the interface's columns without restating them, so it
     // needs their declared types too — otherwise the runtime is back to
     // guessing a Bytes id from a lowercase hex string.
@@ -1089,17 +1113,12 @@ enum Status {
         assert_eq!(
             (
                 translation.text.as_str(),
-                translation
-                    .bytes_id_entities
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>(),
                 translation.timestamp_fields.get("Gravatar").cloned(),
                 translation.entity_list_fields.get("Account").cloned(),
             ),
             (
                 "type Gravatar {\n  \
-                   id: String!\n  \
+                   id: Bytes!\n  \
                    owner: Bytes!\n  \
                    displayName: String!\n  \
                    score: BigInt!\n  \
@@ -1109,11 +1128,10 @@ enum Status {
                  type Account {\n  \
                    id: ID!\n  \
                    gravatars: [Gravatar!]! @derivedFrom(field: \"owner\")\n  \
-                   favourites: [String!]!\n  \
+                   favourites: [Bytes!]!\n  \
                    status: Status!\n\
                  }\n\n\
                  enum Status {\n  Active\n  Frozen\n}",
-                vec!["Gravatar".to_string()],
                 Some(vec!["createdAt".to_string()]),
                 Some(vec!["favourites".to_string()]),
             )
@@ -1420,7 +1438,7 @@ type Transfer implements Event @entity {
                    nft: Punk @index\n\
                  }\n\n\
                  type Account {\n  \
-                   id: String!\n  \
+                   id: Bytes!\n  \
                    nftsOwned: [Punk!]! @derivedFrom(field: \"owner\")\n\
                  }\n\n\
                  type Punk implements NFT {\n  \

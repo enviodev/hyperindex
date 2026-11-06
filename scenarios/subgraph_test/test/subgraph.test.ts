@@ -100,8 +100,10 @@ describe("an unmodified subgraph project", () => {
       },
     });
 
-    expect(await indexer.Pair.getOrThrow(pair.toLowerCase())).toEqual({
-      id: pair.toLowerCase(),
+    // `Pair.id` is `Bytes`, stored as the bytes, and so is the swap's relation
+    // to it; the swap's own id is text the mapping builds from the hex.
+    expect(await indexer.Pair.getOrThrow(bytes(pair))).toEqual({
+      id: bytes(pair),
       token0: bytes(Addresses.mockAddresses[1]),
       token1: bytes(Addresses.mockAddresses[2]),
       // The second event read the first back through the generated `load()`,
@@ -110,11 +112,11 @@ describe("an unmodified subgraph project", () => {
       name: "Uniswap+Uniswap/seen1",
     });
 
-    const swaps = await indexer.Swap.getWhere({ pair_id: { _eq: pair.toLowerCase() } });
+    const swaps = await indexer.Swap.getWhere({ pair_id: { _eq: bytes(pair) } });
     expect(swaps).toEqual([
       {
         id: pair.toLowerCase() + "-2",
-        pair_id: pair.toLowerCase(),
+        pair_id: bytes(pair),
         sender: bytes(Addresses.mockAddresses[4]),
         amount: 500n,
       },

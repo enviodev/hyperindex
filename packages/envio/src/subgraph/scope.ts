@@ -6,7 +6,6 @@ export type Mode = "handler" | "register";
 
 export type SubgraphSchema = {
   timestampFields: Record<string, string[]>;
-  bytesIdEntities: string[];
   entityListFields: Record<string, string[]>;
   entityFields: Record<string, string[]>;
   entityRefFields: Record<string, string[]>;
