@@ -13,10 +13,6 @@ use crate::evm_hypersync_source::selection::{
 };
 use crate::logger::{BoundLogger, Level};
 
-/// What a read is reported as when it asks a head block again, so the source's
-/// request metrics count those apart from the range reads.
-pub(super) const HEAD_BLOCK_RECHECK_STAT: &str = "eth_getLogs (head block recheck)";
-
 /// The blocks one `eth_getLogs` asks about.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum LogBlocks<'a> {
@@ -51,10 +47,14 @@ impl LogBlocks<'_> {
         }
     }
 
+    /// What the read is reported as, so the source's request metrics count a
+    /// head block asked again apart from the range reads.
     fn stat_method(&self) -> &'static str {
         match self {
             LogBlocks::Range { .. } => "eth_getLogs",
-            LogBlocks::Hash { .. } | LogBlocks::RecheckByNumber { .. } => HEAD_BLOCK_RECHECK_STAT,
+            LogBlocks::Hash { .. } | LogBlocks::RecheckByNumber { .. } => {
+                "eth_getLogs (head block recheck)"
+            }
         }
     }
 }

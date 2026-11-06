@@ -52,6 +52,8 @@ type fault =
   // "archive" error, the way publicnode's Base and BSC endpoints do, while it
   // answers the hashes it has.
   | LaggingReplicaRefusingAsArchive({block: int, mutable answers: int})
+  // Throttles the next reads of `block` by hash with a JSON-RPC error.
+  | RateLimitedBlockHashReads({block: int, mutable answers: int})
 
 type chain = {mutable height: int, mutable logs: array<ServedEvmChain.log>, mutable fault: fault}
 let chain = {height: backfillHeight, logs: [], fault: Honest}
@@ -121,6 +123,16 @@ let getLogs = (request, filter, ~fault, ~calls) => {
     )
   switch fault {
   | NoBlockHashReads if filter->Dict.has("blockHash") => archiveRefusal()
+  | RateLimitedBlockHashReads(limit)
+    if limit.answers > 0 && filter->Dict.has("blockHash") && touches(limit.block) =>
+    limit.answers = limit.answers - 1
+    envelope(
+      request,
+      "error",
+      JSON.Object(
+        dict{"code": JSON.Number(-32005.), "message": JSON.String("rate limit exceeded")},
+      ),
+    )
   | LaggingReplicaRefusingAsArchive(lag) if lag.answers > 0 && touches(lag.block) =>
     lag.answers = lag.answers - 1
     if filter->Dict.has("blockHash") {
@@ -598,6 +610,57 @@ describe("RPC head block checks", () => {
             [],
             [
               "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
+            ],
+          ))
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "waits out a provider throttling a read by hash instead of taking it for a node behind the head",
+    async t => {
+      await runAtHead(
+        ~logs=[
+          event(~blockNumber=22),
+          // The bloom can't rule our logs out, so the block is asked again.
+          event(~blockNumber=23, ~address=token, ~topic=approvalTopic),
+          event(~blockNumber=23, ~logIndex=1, ~address=otherToken),
+          event(~blockNumber=24),
+        ],
+        ~height=24,
+        ~fault=RateLimitedBlockHashReads({block: 23, answers: 1}),
+        ~waitFor="24-0-24",
+        async (~indexer, ~backfill as _, ~head as _) => {
+          t.expect((
+            await indexer->seenIds,
+            indexer.allLogsAsJson()->Array.filterMap(
+              line =>
+                switch (
+                  line->Dict.get("msg"),
+                  line->Dict.get("err"),
+                  line->Dict.get("backOffMilliseconds"),
+                ) {
+                | (Some(String(msg)), _, _) if msg->String.includes("hasn't reached block") =>
+                  Some((msg, None))
+                | (Some(String(msg)), Some(Object(err)), backoff)
+                  if err
+                  ->Dict.get("message")
+                  ->Option.flatMap(JSON.Decode.string)
+                  ->Option.mapOr(false, message => message->String.includes("rate limit")) =>
+                  Some((msg, backoff->Option.flatMap(JSON.Decode.float)))
+                | _ => None
+                },
+            ),
+          )).toEqual((
+            ["22-0-22", "24-0-24", "3-0-3"],
+            [
+              (
+                "Failed reading the blocks, transactions or head block re-checks behind the range's logs. Will retry the block range.",
+                // The configured backoff, not the quick retries of a node
+                // behind the head.
+                Some(2000.),
+              ),
             ],
           ))
         },

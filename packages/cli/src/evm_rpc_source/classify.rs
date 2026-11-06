@@ -41,6 +41,10 @@ static RATE_LIMITED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)rate.?limit|too many requests|request rate|compute units|throughput").unwrap()
 });
 
+pub fn is_rate_limited_message(message: &str) -> bool {
+    RATE_LIMITED.is_match(message)
+}
+
 /// Whether a provider refused an `eth_getLogs` for what the answer would hold,
 /// as opposed to throttling the caller or limiting the range.
 pub fn is_result_cap_message(message: &str) -> bool {

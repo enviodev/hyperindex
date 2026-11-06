@@ -33,7 +33,8 @@ use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{
-    is_response_too_large_message, is_unsupported_request, suggested_block_interval_from_message,
+    is_rate_limited_message, is_response_too_large_message, is_unsupported_request,
+    suggested_block_interval_from_message,
 };
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use enrich::{BlockRead, EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
@@ -714,8 +715,8 @@ impl EvmRpcClient {
                 NextPageResult {
                     provider_message: Some(err.to_string()),
                     ..NextPageResult::backoff(
-                        "Failed reading the blocks and transactions behind the range's logs. \
-                         Will retry the block range."
+                        "Failed reading the blocks, transactions or head block re-checks \
+                         behind the range's logs. Will retry the block range."
                             .to_string(),
                         self.sync_config.backoff_millis as i64,
                         to_block,
@@ -1061,6 +1062,14 @@ impl EvmRpcClient {
                     && query.retry >= RETRIES_BEFORE_RECHECKING_BY_NUMBER =>
             {
                 message
+            }
+            // A throttled read says nothing about the block, and retrying it
+            // at the pace a node behind the head gets would only throttle more.
+            Err(RpcError::JsonRpc { code, message }) if is_rate_limited_message(&message) => {
+                return Err(EnrichError::Rpc(Arc::new(RpcError::JsonRpc {
+                    code,
+                    message,
+                })))
             }
             Err(RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_)) => {
                 return Err(EnrichError::BehindHead {
