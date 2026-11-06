@@ -95,7 +95,7 @@ describe("A rollback of an address registration", () => {
       ])
       await indexer.getBatchWritePromise()
       await source.expectItemsQueries([
-        // The chain starts within 200 blocks of the head it can fetch, so the
+        // The chain starts within 100 blocks of the head it can fetch, so the
         // registered contract is read address-free, from its config address's
         // start block.
         {

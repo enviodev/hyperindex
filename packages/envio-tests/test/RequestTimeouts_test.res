@@ -1,7 +1,7 @@
 open Vitest
 
 // A query is sent with the shorter near-head request timeout once every
-// partition of its chain is within 200 blocks of the head the chain can fetch,
+// partition of its chain is within 100 blocks of the head the chain can fetch,
 // and with the backfill timeout before that. A chain that stops at an end block
 // short of the head never follows the head, so it never uses the shorter one.
 let scenarioOf = (~name, ~options="") =>
@@ -38,15 +38,17 @@ describe("Request timeout of an item query", () => {
   scenarioOf(
     ~name="request-timeouts",
   )->Scenario.it(
-    "switches to the near-head timeout within 200 blocks of the head",
+    "switches to the near-head timeout within 100 blocks of the head",
     ~sources=[{chain: 1337}],
     async (~t as _, ~indexer as _, ~source) => {
       let sourceMock = source(1337)
       sourceMock.resolveGetHeightOrThrow(1_000)
 
       await sourceMock.expectItemsQueries([{fromBlock: 1, where: isBackfill, reply: upTo(800)}])
+      // 200 blocks from the head.
+      await sourceMock.expectItemsQueries([{fromBlock: 801, where: isBackfill, reply: upTo(900)}])
       await sourceMock.expectItemsQueries([
-        {fromBlock: 801, where: isNearHead, reply: LeavePending},
+        {fromBlock: 901, where: isNearHead, reply: LeavePending},
       ])
     },
   )

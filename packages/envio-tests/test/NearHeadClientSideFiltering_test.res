@@ -1,6 +1,6 @@
 open Vitest
 
-// Once every partition of a chain is within 200 blocks of the head the chain
+// Once every partition of a chain is within 100 blocks of the head the chain
 // can fetch, its dynamic contracts are fetched without their addresses: their
 // partitions fold into the single address-free partition, so a new block costs
 // one query instead of one per partition, and the query keeps the same shape
@@ -40,7 +40,7 @@ type Gravatar {
 let scenario = scenarioOf(~name="near-head-client-side-filtering", ~chains=chainYaml(~id=1337))
 
 // Fetching stops 50 blocks short of the known head, so that is the head the
-// 200 blocks are counted from.
+// 100 blocks are counted from.
 let laggedScenario = scenarioOf(
   ~name="near-head-client-side-filtering-lag",
   ~chains=chainYaml(~id=1337, ~options="\n    block_lag: 50"),
@@ -181,7 +181,7 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
   )
 
   laggedScenario->Scenario.it(
-    "counts the 200 blocks from the head the chain can fetch",
+    "counts the 100 blocks from the head the chain can fetch",
     ~sources=[{chain: 1337}],
     ~maxAddrInPartition=1,
     async (~t, ~indexer as _, ~source) => {
@@ -201,18 +201,18 @@ describe("Near-head client-side filtering of dynamic contracts", () => {
         {fromBlock: 10, where: hasAddresses([first]), reply: upTo(950)},
       ])
 
-      // Fetchable head 1151, 201 blocks past the chain: still by address.
-      sourceMock.resolveGetHeightOrThrow(1201)
+      // Fetchable head 1051, 101 blocks past the chain: still by address.
+      sourceMock.resolveGetHeightOrThrow(1101)
       await sourceMock.expectItemsQueries([
-        {fromBlock: 951, where: hasAddresses([configAddress]), reply: upTo(1151)},
-        {fromBlock: 951, where: hasAddresses([first]), reply: upTo(1151)},
+        {fromBlock: 951, where: hasAddresses([configAddress]), reply: upTo(1051)},
+        {fromBlock: 951, where: hasAddresses([first]), reply: upTo(1051)},
       ])
 
-      // Fetchable head 1351, 200 blocks past the chain: one address-free query.
-      // Measured from the known head, the chain would still be 250 blocks away.
-      sourceMock.resolveGetHeightOrThrow(1401)
+      // Fetchable head 1151, 100 blocks past the chain: one address-free query.
+      // Measured from the known head, the chain would still be 150 blocks away.
+      sourceMock.resolveGetHeightOrThrow(1201)
       await sourceMock.expectItemsQueries([
-        {fromBlock: 1152, where: hasAddresses([]), reply: upTo(1351)},
+        {fromBlock: 1052, where: hasAddresses([]), reply: upTo(1151)},
       ])
 
       t.expect(

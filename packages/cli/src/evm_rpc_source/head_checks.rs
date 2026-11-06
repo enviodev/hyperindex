@@ -17,7 +17,7 @@ use crate::evm_hypersync_source::selection::BuiltLogSelection;
 /// How far below the head blocks are checked, whatever the chain's reorg
 /// depth: a chain that never reorgs, which Arbitrum and Optimism are
 /// configured as, has providers that lag all the same.
-const HEAD_CHECK_DISTANCE: u64 = 200;
+const HEAD_CHECK_DISTANCE: u64 = 100;
 
 /// The blocks of `from_block..=to_block` to check: every block that can still
 /// be reorged, and for a page reading logs every block within
@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn checks_reorgable_blocks_and_at_least_the_last_two_hundred() {
+    fn checks_reorgable_blocks_and_at_least_the_last_hundred() {
         let range = |from: u64, to: u64| (from..=to).collect::<Vec<_>>();
         assert_eq!(
             (
@@ -214,11 +214,11 @@ mod tests {
                 blocks_to_check(500, 1000, None, None),
             ),
             (
-                range(800, 1000),
+                range(900, 1000),
                 vec![],
                 range(700, 1000),
-                range(800, 1000),
-                range(800, 1000),
+                range(900, 1000),
+                range(900, 1000),
                 vec![],
                 range(21, 24),
                 range(990, 1000),
