@@ -24,7 +24,7 @@ use config::ClientConfig;
 use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{encode_address, Block, OnEventRegistrationInput, RollbackGuard};
+use types::{encode_address, OnEventRegistrationInput, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -165,16 +165,6 @@ impl EvmHyperSyncClient {
             napi::Error::from_reason(format!("Failed to get HyperSync height: {summary}"))
         })?;
         height.try_into().context("convert height").map_err(map_err)
-    }
-
-    #[napi]
-    pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
-        convert_response(
-            self.get_raw(query, false).await?,
-            self.enable_checksum_addresses,
-        )
-        .context("convert response")
-        .map_err(map_err)
     }
 
     /// Fetch the complete inclusive range spanning `block_numbers` into one
@@ -446,22 +436,6 @@ fn log_selection_from_built(
     })
 }
 
-// Generic query DTO retained for direct native-addon callers. HyperIndex's
-// event and block-hash paths use their dedicated lean methods instead.
-#[napi(object)]
-pub struct QueryResponseData {
-    pub blocks: Vec<Block>,
-}
-
-#[napi(object)]
-pub struct QueryResponse {
-    pub archive_height: Option<i64>,
-    pub next_block: i64,
-    pub total_execution_time: i64,
-    pub data: QueryResponseData,
-    pub rollback_guard: Option<RollbackGuard>,
-}
-
 #[napi(object, object_from_js = false)]
 pub struct EventItem {
     pub log_index: i64,
@@ -490,39 +464,6 @@ pub struct ItemsResponse {
     /// no item joins to. The server returns one block per number, so this is a
     /// distinct count.
     pub response_blocks: i64,
-}
-
-fn convert_response(
-    res: hypersync_client::QueryResponse,
-    should_checksum: bool,
-) -> Result<QueryResponse> {
-    let blocks = res
-        .data
-        .blocks
-        .into_iter()
-        .flatten()
-        .map(|b| Block::from_simple(&b, should_checksum))
-        .collect::<Result<Vec<_>>>()
-        .context("mapping blocks")?;
-
-    Ok(QueryResponse {
-        archive_height: res
-            .archive_height
-            .map(|h| h.try_into())
-            .transpose()
-            .context("convert height")?,
-        next_block: res.next_block.try_into().context("convert next_block")?,
-        total_execution_time: res
-            .total_execution_time
-            .try_into()
-            .context("convert total_execution_time")?,
-        data: QueryResponseData { blocks },
-        rollback_guard: res
-            .rollback_guard
-            .map(RollbackGuard::try_from)
-            .transpose()
-            .context("convert rollback guard")?,
-    })
 }
 
 /// Convert only the two values needed by the block-hash paginator. Raw blocks
