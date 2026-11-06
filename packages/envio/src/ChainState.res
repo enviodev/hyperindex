@@ -785,7 +785,7 @@ let getHighestBlockBelowThreshold = (cs: t): int => {
 
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
-let isNearHead = (cs: t) => cs.fetchState->FetchState.isNearHead
+let isNearHead = (cs: t) => cs.fetchState->FetchState.isWithinHeadClientFilteringDistance
 
 // Reached head on a chain with no configured endBlock - used by auto-exit to
 // detect that no events were found in the start..head range.
@@ -990,7 +990,10 @@ let materializePageItems = async (
 // backfill: judged against it, every block produced since would be fetched
 // address-free.
 let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
-  if !cs.fetchState.clientFilterPolicy.allDynamicContracts && cs.fetchState->FetchState.isNearHead {
+  if (
+    !cs.fetchState.clientFilterPolicy.allDynamicContracts &&
+    cs.fetchState->FetchState.isWithinHeadClientFilteringDistance
+  ) {
     cs.fetchState =
       cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
         ~addressStore=cs.addressStore,

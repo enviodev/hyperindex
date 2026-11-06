@@ -150,12 +150,25 @@ impl JsonRpcClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, RpcError> {
+        self.request_recorded_as(method, method, params).await
+    }
+
+    /// A request whose timing is reported under `stat_method` rather than the
+    /// JSON-RPC method, so a request made for a reason of its own is counted
+    /// apart from the ones it shares a method with.
+    pub async fn request_recorded_as<T: DeserializeOwned>(
+        &self,
+        stat_method: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T, RpcError> {
         // Queueing is not part of how long a request took, so the turn is taken
         // before the clock starts.
         let permit = self.acquire().await;
         let started = Instant::now();
         let result = self.send(permit, method, params).await;
-        self.stats.record(method, started.elapsed().as_secs_f64());
+        self.stats
+            .record(stat_method, started.elapsed().as_secs_f64());
         result
     }
 

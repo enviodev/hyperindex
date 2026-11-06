@@ -104,7 +104,8 @@ let invoke = (
     ~addressSet=addressStore->AddressStore.makeSet(
       ~contractName=registration.eventConfig.contractName,
     ),
-    ~knownHeight=100,
+    // Far below the head, where a page's blocks aren't checked one by one.
+    ~knownHeight=1_100,
     ~isNearHead=false,
     ~partitionId="pin-partition",
     ~selection={
@@ -243,7 +244,7 @@ describe("RPC source public contract", () => {
       "blockHashes": page.blockHashes,
       "requestCounts": page.requestCounts,
     }).toEqual({
-      "knownHeight": 100,
+      "knownHeight": 1_100,
       "latestFetchedBlockNumber": 100,
       "events": [
         {
@@ -729,7 +730,9 @@ describe("RPC source public contract", () => {
               ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressSet=addressStore->AddressStore.emptySet,
-              ~knownHeight=100,
+              // Far below the head, where a page's blocks aren't checked one
+              // by one.
+              ~knownHeight=1_100,
               ~isNearHead=false,
               ~partitionId="skip-all",
               ~selection={
@@ -964,7 +967,9 @@ describe("RPC source public contract", () => {
                 ~fromBlock=100,
                 ~toBlock=Some(100),
                 ~addressSet=addressStore->AddressStore.emptySet,
-                ~knownHeight=100,
+                // Far below the head, where a page's blocks aren't checked one
+                // by one.
+                ~knownHeight=1_100,
                 ~isNearHead=false,
                 ~partitionId="address-free",
                 ~selection={

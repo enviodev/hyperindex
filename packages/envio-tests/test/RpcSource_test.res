@@ -972,7 +972,8 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~addressSet=addressStore->AddressStore.makeSet(
           ~contractName=addressBound.eventConfig.contractName,
         ),
-        ~knownHeight=100,
+        // Far below the head, where a page's blocks aren't checked one by one.
+        ~knownHeight=1_100,
         ~isNearHead=false,
         ~partitionId="selection-e2e",
         ~selection={
