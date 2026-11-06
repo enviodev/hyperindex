@@ -494,6 +494,9 @@ let make = (
   // Hears what the source is asked and told, for the virtual clock's timeline.
   ~note: string => unit=_ => (),
   ~virtualTime=false,
+  // The block pages a response carries are merged into the chain's store,
+  // which refuses one of another ecosystem.
+  ~ecosystem: Ecosystem.name=Evm,
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -764,9 +767,9 @@ let make = (
         })
       }
     })
-    let responseBlockStore = BlockStore.make(~ecosystem=Evm)
+    let responseBlockStore = BlockStore.make(~ecosystem)
     observedBlocks->Array.forEach(block => {
-      let page = BlockStore.fromJs([block], ~ecosystem=Evm)
+      let page = BlockStore.fromJs([block], ~ecosystem)
       responseBlockStore->BlockStore.appendPage(page)
     })
     {

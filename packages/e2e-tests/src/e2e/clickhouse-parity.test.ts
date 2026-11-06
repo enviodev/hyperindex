@@ -169,6 +169,8 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
       clickhouse: ["ChainTransfer", "Holder", "Transfer", "TransferChOnly"],
       postgres: [
         "Account",
+        "AddressAccount",
+        "AddressTransfer",
         "ChainAccount",
         "ChainAccount$1",
         "ChainTransfer",
