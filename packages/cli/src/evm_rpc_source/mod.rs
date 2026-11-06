@@ -55,7 +55,7 @@ pub struct EvmRpcClientConfig {
     pub interval_ceiling: i64,
     pub backoff_millis: i64,
     /// Every request of a page read while the chain is not near its head.
-    pub query_timeout_millis: i64,
+    pub backfill_query_timeout_millis: i64,
     /// Every other request: pages near the head, heights, block hashes.
     pub near_head_query_timeout_millis: i64,
     /// How many addresses one `eth_getLogs` may carry when an address-free read
@@ -384,7 +384,8 @@ impl EvmRpcClient {
         // cancelling an RPC request, so it bounds each one. Bounding the page
         // instead would cancel reads the provider was answering fine, over a
         // total the caller's only lever — the block range — does not decide.
-        let backfill_timeout_millis = positive_u64(cfg.query_timeout_millis, "queryTimeoutMillis")?;
+        let backfill_timeout_millis =
+            positive_u64(cfg.backfill_query_timeout_millis, "queryTimeoutMillis")?;
         let near_head_timeout_millis = positive_u64(
             cfg.near_head_query_timeout_millis,
             "nearHeadQueryTimeoutMillis",

@@ -241,7 +241,7 @@ let make = (
     pollingInterval: syncConfig.pollingInterval,
     requestTimeouts: {
       nearHeadMillis: syncConfig.nearHeadQueryTimeoutMillis,
-      backfillMillis: syncConfig.queryTimeoutMillis,
+      backfillMillis: syncConfig.backfillQueryTimeoutMillis,
     },
     getBlockHashes,
     onReorg: () => rpcClient.onReorg(),

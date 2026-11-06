@@ -517,10 +517,10 @@ describe("EvmRpcClient - getNextPage via napi", () => {
   it("Defaults to a longer timeout for backfill than near the head", t => {
     let timeouts = (options: Config.sourceSyncOptions) => {
       let {
-        queryTimeoutMillis,
+        backfillQueryTimeoutMillis,
         nearHeadQueryTimeoutMillis,
       }: Config.sourceSync = EvmChain.getSyncConfig(options)
-      (queryTimeoutMillis, nearHeadQueryTimeoutMillis)
+      (backfillQueryTimeoutMillis, nearHeadQueryTimeoutMillis)
     }
     t.expect(
       (timeouts({}), timeouts({queryTimeoutMillis: 5_000})),
@@ -554,7 +554,11 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~url=mock.url,
           ~eventRegistrations=[makeRegistration()],
           ~addressStore,
-          ~syncConfig={...syncConfig, queryTimeoutMillis: 800, nearHeadQueryTimeoutMillis: 200},
+          ~syncConfig={
+            ...syncConfig,
+            backfillQueryTimeoutMillis: 800,
+            nearHeadQueryTimeoutMillis: 200,
+          },
         )
         let page = (~isNearHead) =>
           client->callNextPage(

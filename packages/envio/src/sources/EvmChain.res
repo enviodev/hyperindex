@@ -38,7 +38,7 @@ let getSyncConfig = (
       intervalCeiling->Option.getOr(10_000),
     ),
     backoffMillis: backoffMillis->Option.getOr(2000),
-    queryTimeoutMillis: backfillMillis,
+    backfillQueryTimeoutMillis: backfillMillis,
     nearHeadQueryTimeoutMillis: nearHeadMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(backfillMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),

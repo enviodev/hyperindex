@@ -77,7 +77,7 @@ type sourceSync = {
   intervalCeiling: int,
   backoffMillis: int,
   // Every request of a page read while the chain is not near its head.
-  queryTimeoutMillis: int,
+  backfillQueryTimeoutMillis: int,
   // Everything else: pages near the head, height polls, block-hash lookups.
   nearHeadQueryTimeoutMillis: int,
   fallbackStallTimeout: int,

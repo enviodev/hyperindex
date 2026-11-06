@@ -7,7 +7,7 @@ type cfg = {
   accelerationAdditive: int,
   intervalCeiling: int,
   backoffMillis: int,
-  queryTimeoutMillis: int,
+  backfillQueryTimeoutMillis: int,
   nearHeadQueryTimeoutMillis: int,
   maxAddressesPerRequest: int,
 }
@@ -108,7 +108,7 @@ let make = (
       accelerationAdditive: syncConfig.accelerationAdditive,
       intervalCeiling: syncConfig.intervalCeiling,
       backoffMillis: syncConfig.backoffMillis,
-      queryTimeoutMillis: syncConfig.queryTimeoutMillis,
+      backfillQueryTimeoutMillis: syncConfig.backfillQueryTimeoutMillis,
       nearHeadQueryTimeoutMillis: syncConfig.nearHeadQueryTimeoutMillis,
       maxAddressesPerRequest,
     },
