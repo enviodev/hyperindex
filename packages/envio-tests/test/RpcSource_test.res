@@ -594,8 +594,9 @@ describe("RpcSource - field selection end to end", () => {
 
     t.expect((firstCounts, secondCounts, payloads->Array.map(p => p.transaction))).toEqual((
       (1, 1),
-      // The boundary block is still read fresh — it is this range's reorg
-      // observation — but the transaction is served from the store.
+      // The block is at the head, so it is checked and still read fresh — it
+      // is this range's reorg observation — but the transaction is served
+      // from the store.
       (1, 0),
       [Some({"gas": 21000n}->Obj.magic)],
     ))

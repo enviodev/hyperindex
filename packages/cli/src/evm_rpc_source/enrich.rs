@@ -499,25 +499,21 @@ struct TxReadPlan {
     entries: Vec<(TxKey, format::Hash)>,
 }
 
-/// Which blocks to read. A referenced block is skipped when the store was
-/// already asked for everything this page needs of it; a checked block never
-/// is. Below the checked blocks the range's boundaries are not read at all:
-/// the checked range reaches at least as deep as the reorg window, so nothing
-/// below it is ever compared.
+/// Which blocks to read: every checked block, and each other referenced block
+/// the store was not already asked for everything this page needs of. The
+/// range's own boundaries get no read of their own: the checked blocks reach
+/// at least as deep as the reorg window, and nothing below it is compared.
+/// `checked` is ascending.
 fn plan_blocks(refs: &PageRefs, checked: &[u64], known: &BlockStore) -> Vec<u64> {
-    let is_checked = |number: &u64| checked.binary_search(number).is_ok();
-    let mut numbers: Vec<u64> = refs
-        .blocks
-        .iter()
-        .filter(|(number, block_ref)| {
-            is_checked(number) || !known.covers(**number, block_ref.mask & !BLOCK_KEY_MASK)
-        })
-        .map(|(&number, _)| number)
-        .collect();
+    let mut numbers = checked.to_vec();
     numbers.extend(
-        checked
+        refs.blocks
             .iter()
-            .filter(|number| !refs.blocks.contains_key(number)),
+            .filter(|(number, block_ref)| {
+                checked.binary_search(number).is_err()
+                    && !known.covers(**number, block_ref.mask & !BLOCK_KEY_MASK)
+            })
+            .map(|(&number, _)| number),
     );
     numbers
 }

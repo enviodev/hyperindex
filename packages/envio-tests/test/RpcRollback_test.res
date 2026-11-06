@@ -61,7 +61,7 @@ let addressStore = () =>
 // The store the source routes against, and the one a query's address set is cut
 // from. It has to be seeded: an unseeded store matches none of the logs the mock
 // serves, and a page with no items references no blocks, so nothing but the
-// range's boundary blocks is ever fetched. `makeChainState` keeps an unseeded
+// checked head blocks is ever fetched. `makeChainState` keeps an unseeded
 // store instead and lets `FetchState.make` seed it, as production does.
 let sourceAddressStore = TestAddresses.makeStore(
   ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],

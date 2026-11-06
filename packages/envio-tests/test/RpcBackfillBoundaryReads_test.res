@@ -41,6 +41,13 @@ describe("Backfilling over RPC below the checked head blocks", () => {
 `,
 )
 
+let firstCheckedBlock = 400
+
+// Pages are read concurrently and a slow one can be retried, so the request
+// order and repeats depend on timing; which blocks and ranges are read does not.
+let distinctAscending = numbers =>
+  Set.fromArray(numbers)->Set.values->Iterator.toArray->Array.toSorted(Int.compare)
+
 let blocksReadByNumber = (mock: MockRpcServer.t) =>
   mock.requests
   ->Array.filterMap(body => {
@@ -57,17 +64,28 @@ let blocksReadByNumber = (mock: MockRpcServer.t) =>
     | _ => None
     }
   })
-  ->Array.toSorted(Int.compare)
+  ->distinctAscending
+
+let pageStartsBelowCheckedBlocks = (mock: MockRpcServer.t) =>
+  mock
+  ->RpcE2eChain.logRanges
+  ->Array.map(range =>
+    range->String.split("-")->Array.getUnsafe(0)->JSON.String->RpcE2eChain.hexParam
+  )
+  ->Array.filter(fromBlock => fromBlock < firstCheckedBlock)
+  ->distinctAscending
 
 // The run's head is its end block, 600, so blocks 400 to 600 are checked one by
 // one. Below them only the event's block is read: the pages 100-199, 200-299
 // and 300-399 read none of their own boundaries.
 Vitest.it("reads only the event's block below the checked head blocks", t => {
   t.expect({
-    "pagesBelowCheckedBlocks": mock()->RpcE2eChain.logRanges->Array.slice(~start=0, ~end=3),
+    "pageStartsBelowCheckedBlocks": mock()->pageStartsBelowCheckedBlocks,
     "blocksRead": mock()->blocksReadByNumber,
   }).toEqual({
-    "pagesBelowCheckedBlocks": ["0x64-0xc7", "0xc8-0x12b", "0x12c-0x18f"],
-    "blocksRead": [105]->Array.concat(Array.fromInitializer(~length=201, i => 400 + i)),
+    "pageStartsBelowCheckedBlocks": [100, 200, 300],
+    "blocksRead": [105]->Array.concat(
+      Array.fromInitializer(~length=201, i => firstCheckedBlock + i),
+    ),
   })
 })
