@@ -4,7 +4,7 @@ expression: text
 ---
 # MCP Server
 
-> Connect AI coding assistants to Envio documentation using the Model Context Protocol (MCP) server
+> Connect Claude Code, Cursor and other MCP clients to the Envio docs MCP server to search and fetch pages, or use the same tools through the Envio CLI from 3.1.
 
 ## Contents
 
