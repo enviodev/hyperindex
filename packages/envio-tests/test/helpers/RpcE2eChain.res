@@ -199,3 +199,27 @@ let logRanges = (mock: MockRpcServer.t) =>
     | _ => None
     }
   })
+
+// The blocks read with eth_getBlockByNumber, each once and ascending. Pages are
+// read concurrently and a slow one can be retried, so the request order and
+// repeats depend on timing; which blocks are read does not.
+let distinctBlocksRead = (mock: MockRpcServer.t) =>
+  mock.requests
+  ->Array.filterMap(body => {
+    let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
+    switch request->Dict.getUnsafe("method")->JSON.Decode.string {
+    | Some("eth_getBlockByNumber") =>
+      request
+      ->Dict.getUnsafe("params")
+      ->JSON.Decode.array
+      ->Option.getOrThrow
+      ->Array.getUnsafe(0)
+      ->hexParam
+      ->Some
+    | _ => None
+    }
+  })
+  ->Set.fromArray
+  ->Set.values
+  ->Iterator.toArray
+  ->Array.toSorted(Int.compare)

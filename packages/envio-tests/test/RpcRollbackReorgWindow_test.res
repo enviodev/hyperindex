@@ -41,29 +41,6 @@ chains:
   ~handlers=RpcE2eChain.handlers,
 )
 
-// Pages are read concurrently and a slow one can be retried, so the request
-// order and repeats depend on timing; which blocks are read does not.
-let distinctBlocksRead = (mock: MockRpcServer.t) =>
-  mock.requests
-  ->Array.filterMap(body => {
-    let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
-    switch request->Dict.getUnsafe("method")->JSON.Decode.string {
-    | Some("eth_getBlockByNumber") =>
-      request
-      ->Dict.getUnsafe("params")
-      ->JSON.Decode.array
-      ->Option.getOrThrow
-      ->Array.getUnsafe(0)
-      ->RpcE2eChain.hexParam
-      ->Some
-    | _ => None
-    }
-  })
-  ->Set.fromArray
-  ->Set.values
-  ->Iterator.toArray
-  ->Array.toSorted(Int.compare)
-
 describe("Backfilling a chain that rolls back over RPC", () => {
   Async.it("reads every block reorg detection compares", async t => {
     await scenario->Scenario.run(
@@ -89,7 +66,7 @@ describe("Backfilling a chain that rolls back over RPC", () => {
     // Reorg detection compares from 600 - 300. Block 300 itself is where the
     // last page before the reorg threshold ends, which no query marks
     // reorgable, so it is not read; 301's parent hash observes it instead.
-    t.expect(mock()->distinctBlocksRead).toEqual(
+    t.expect(mock()->RpcE2eChain.distinctBlocksRead).toEqual(
       [105]->Array.concat(
         Array.fromInitializer(~length=maxReorgDepth, i => head - maxReorgDepth + 1 + i),
       ),
