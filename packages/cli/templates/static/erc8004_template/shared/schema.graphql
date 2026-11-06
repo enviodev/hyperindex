@@ -1,0 +1,29 @@
+type Agent {
+  # id is the agentId (the ERC-721 tokenId) as a string
+  id: ID!
+  agentId: BigInt!
+  # current owner of the agent NFT, updated on every Transfer
+  owner: String!
+  # resolves to the agent registration file. Empty when the agent was minted
+  # with the no-argument register() overload, so it is nullable here.
+  agentURI: String
+  # feedback left about this agent
+  feedback: [Feedback!]! @derivedFrom(field: "agent")
+}
+
+type Feedback {
+  # id is agentId-clientAddress-feedbackIndex
+  id: ID!
+  # the agent this feedback is about
+  agent: Agent!
+  # the client that left the feedback
+  clientAddress: String!
+  # the score. int128 on-chain, so it can be negative.
+  value: BigInt!
+  valueDecimals: Int!
+  # the evidence pointer. Reachable through the log and nowhere else: NewFeedback
+  # carries it as a non-indexed field and readFeedback() omits it.
+  feedbackURI: String!
+  # keccak256 commitment over the content at feedbackURI
+  feedbackHash: String!
+}
