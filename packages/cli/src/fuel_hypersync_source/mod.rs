@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::time::Duration;
 
 use anyhow::Context;
 use napi::bindgen_prelude::BigInt;
@@ -12,6 +13,7 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInn
 use crate::block_store::{BlockStore, FuelBlockRow};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
+use crate::request_timeout::{positive_millis, within};
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -21,6 +23,7 @@ use types::{convert_response, Block, ConvertError, RawReceipt};
 #[napi]
 pub struct FuelHyperSyncClient {
     inner: hyperfuel_client::Client,
+    near_head_timeout: Option<Duration>,
     selection_builder: SelectionBuilder,
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-receipt owner gate.
@@ -43,6 +46,11 @@ impl FuelHyperSyncClient {
                 .context("build selection builder")
                 .map_err(map_err)?
         };
+        let near_head_timeout = cfg
+            .near_head_req_timeout_millis
+            .map(positive_millis)
+            .transpose()
+            .map_err(map_err)?;
         let client_config: hyperfuel_client::ClientConfig =
             cfg.try_into().context("build config").map_err(map_err)?;
         let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
@@ -50,6 +58,7 @@ impl FuelHyperSyncClient {
             .map_err(map_err)?;
         Ok(FuelHyperSyncClient {
             inner,
+            near_head_timeout,
             selection_builder,
             address_store: handle,
         })
@@ -57,11 +66,13 @@ impl FuelHyperSyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self
-            .inner
-            .get_height()
-            .await
-            .map_err(|e| request_err("Failed to get HyperFuel height", e))?;
+        let height = within(
+            self.near_head_timeout,
+            "HyperFuel height",
+            self.inner.get_height(),
+        )
+        .await
+        .map_err(|e| request_err("Failed to get HyperFuel height", e))?;
         height.try_into().context("convert height").map_err(map_err)
     }
 
@@ -82,11 +93,13 @@ impl FuelHyperSyncClient {
         let query = build_query(&params, &built)
             .context("build query")
             .map_err(map_err)?;
-        let res = self
-            .inner
-            .get_arrow(&query)
-            .await
-            .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
+        let res = within(
+            self.near_head_timeout.filter(|_| params.is_near_head),
+            "HyperFuel query",
+            self.inner.get_arrow(&query),
+        )
+        .await
+        .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
 
         // The page's raw blocks, keyed by height — merged into the per-chain
@@ -141,6 +154,9 @@ impl FuelHyperSyncClient {
 #[napi(object)]
 pub struct EventItemsQuery {
     pub from_block: i64,
+    /// Whether the chain is near its head, so the query is given up on after
+    /// the client's near-head timeout.
+    pub is_near_head: bool,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
     pub registration_indexes: Vec<i64>,

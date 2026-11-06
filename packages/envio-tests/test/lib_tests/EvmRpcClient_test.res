@@ -260,7 +260,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     client: EvmRpcClient.t,
     ~fromBlock,
     ~toBlockCeiling,
-    ~knownHeight=toBlockCeiling,
+    ~isNearHead=false,
     ~indexes,
     ~addressSet,
   ) =>
@@ -268,7 +268,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       {
         fromBlock,
         toBlockCeiling,
-        knownHeight,
+        isNearHead,
         partitionId: "0",
         onEventRegistrationIndexes: indexes,
         onBlockRegistrationIndexes: [],
@@ -514,15 +514,16 @@ describe("EvmRpcClient - getNextPage via napi", () => {
 
   it("Defaults to a longer timeout for backfill than near the head", t => {
     let timeouts = (options: Config.sourceSyncOptions) => {
-      let {queryTimeoutMillis, headQueryTimeoutMillis}: Config.sourceSync = EvmChain.getSyncConfig(
-        options,
-      )
-      (queryTimeoutMillis, headQueryTimeoutMillis)
+      let {
+        queryTimeoutMillis,
+        nearHeadQueryTimeoutMillis,
+      }: Config.sourceSync = EvmChain.getSyncConfig(options)
+      (queryTimeoutMillis, nearHeadQueryTimeoutMillis)
     }
     t.expect(
       (timeouts({}), timeouts({queryTimeoutMillis: 5_000})),
       ~message="a configured timeout applies to both",
-    ).toEqual(((30_000, 10_000), (5_000, 5_000)))
+    ).toEqual(((30_000, 20_000), (5_000, 5_000)))
   })
 
   Async.it("Gives up sooner on a read near the head than on a backfill read", async t => {
@@ -546,18 +547,18 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~url=mock.url,
           ~eventRegistrations=[makeRegistration()],
           ~addressStore,
-          ~syncConfig={...syncConfig, queryTimeoutMillis: 800, headQueryTimeoutMillis: 200},
+          ~syncConfig={...syncConfig, queryTimeoutMillis: 800, nearHeadQueryTimeoutMillis: 200},
         )
-        let page = (~knownHeight) =>
+        let page = (~isNearHead) =>
           client->callNextPage(
             ~fromBlock=firstBlock,
             ~toBlockCeiling=firstBlock,
-            ~knownHeight,
+            ~isNearHead,
             ~indexes=[3],
             ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
           )
-        let (backfill, _, _) = await page(~knownHeight=firstBlock + 1_000)
-        let (atHead, _, _) = await page(~knownHeight=firstBlock)
+        let (backfill, _, _) = await page(~isNearHead=false)
+        let (atHead, _, _) = await page(~isNearHead=true)
         (backfill.kind, (atHead.kind, atHead.providerMessage), await getHeightErrorMessage(client))
       },
     )

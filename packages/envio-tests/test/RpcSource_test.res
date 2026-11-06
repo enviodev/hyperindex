@@ -178,6 +178,7 @@ describe("RpcSource - field selection end to end", () => {
         ~contractName=registration.eventConfig.contractName,
       ),
       ~knownHeight=100,
+      ~isNearHead=false,
       ~partitionId="0",
       ~selection={
         dependsOnAddresses: true,
@@ -632,6 +633,7 @@ describe("RpcSource - empty selection", () => {
         ~toBlock=Some(1),
         ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
         ~knownHeight=1,
+        ~isNearHead=false,
         ~partitionId="0",
         ~selection={dependsOnAddresses: true, onBlockRegistrations: [], onEventRegistrations: []},
         ~itemsTarget=Some(5000),
@@ -720,6 +722,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
               ~contractName=eventConfig.eventConfig.contractName,
             ),
             ~knownHeight=1_000_000,
+            ~isNearHead=false,
             ~partitionId="0",
             ~selection={
               dependsOnAddresses: true,
@@ -847,6 +850,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
             ~contractName=eventConfig.eventConfig.contractName,
           ),
           ~knownHeight=1_000_000,
+          ~isNearHead=false,
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
@@ -969,6 +973,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
           ~contractName=addressBound.eventConfig.contractName,
         ),
         ~knownHeight=100,
+        ~isNearHead=false,
         ~partitionId="selection-e2e",
         ~selection={
           dependsOnAddresses: true,

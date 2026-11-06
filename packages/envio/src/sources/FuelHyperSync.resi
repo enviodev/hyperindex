@@ -18,6 +18,7 @@ module GetLogs: {
   let query: (
     ~client: FuelHyperSyncClient.t,
     ~fromBlock: int,
+    ~isNearHead: bool,
     ~toBlock: option<int>,
     ~registrationIndexes: array<int>,
     ~addressSet: AddressSet.t,

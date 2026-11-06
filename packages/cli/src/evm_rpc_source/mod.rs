@@ -49,7 +49,10 @@ pub struct EvmRpcClientConfig {
     pub acceleration_additive: i64,
     pub interval_ceiling: i64,
     pub backoff_millis: i64,
+    /// Every request of a page read while the chain is not near its head.
     pub query_timeout_millis: i64,
+    /// Every other request: pages near the head, heights, block hashes.
+    pub near_head_query_timeout_millis: i64,
     /// How many addresses one `eth_getLogs` may carry when an address-free read
     /// is asked again by address.
     pub max_addresses_per_request: i64,
@@ -131,6 +134,8 @@ pub struct NextPageParams {
     /// internally from the partition's AIMD-suggested interval and returned
     /// on `NextPageResponse`.
     pub to_block_ceiling: i64,
+    /// Whether the chain is near its head, which picks the request timeout.
+    pub is_near_head: bool,
     pub partition_id: String,
     /// The event registrations selecting logs, by chain-scoped id. Log
     /// selections and the routing index are derived internally from the
@@ -278,7 +283,10 @@ pub struct BlockHashResult {
 
 #[napi]
 pub struct EvmRpcClient {
+    /// Requests near the head: pages near it, heights, block hashes.
     inner: Arc<JsonRpcClient>,
+    /// The same client, waiting longer on each request of a backfill page.
+    backfill: Arc<JsonRpcClient>,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
@@ -310,6 +318,7 @@ const MAX_HANDLER_BLOCKS_PER_PAGE: usize = 100;
 /// over it, the stores whose contents decide what still has to be fetched, and
 /// what a retry decision about it would need.
 struct PageQuery<'a> {
+    client: &'a Arc<JsonRpcClient>,
     partition_id: &'a str,
     from_block: u64,
     to_block: u64,
@@ -353,12 +362,16 @@ impl EvmRpcClient {
         // cancelling an RPC request, so it bounds each one. Bounding the page
         // instead would cancel reads the provider was answering fine, over a
         // total the caller's only lever — the block range — does not decide.
-        let request_timeout_millis = positive_u64(cfg.query_timeout_millis, "queryTimeoutMillis")?;
+        let backfill_timeout_millis = positive_u64(cfg.query_timeout_millis, "queryTimeoutMillis")?;
+        let near_head_timeout_millis = positive_u64(
+            cfg.near_head_query_timeout_millis,
+            "nearHeadQueryTimeoutMillis",
+        )?;
         let max_addresses_per_request =
             positive_u64(cfg.max_addresses_per_request, "maxAddressesPerRequest")? as usize;
         let inner = JsonRpcClient::new(
             cfg.url,
-            request_timeout_millis,
+            near_head_timeout_millis,
             max_concurrent_requests,
             cfg.headers,
         )
@@ -414,6 +427,7 @@ impl EvmRpcClient {
                     tx_mask: acc.tx_mask | fields.tx_mask,
                 });
         Ok(EvmRpcClient {
+            backfill: Arc::new(inner.with_request_timeout(backfill_timeout_millis)),
             inner: Arc::new(inner),
             decoder,
             selection_builder,
@@ -598,6 +612,11 @@ impl EvmRpcClient {
         );
 
         let query = PageQuery {
+            client: if params.is_near_head {
+                &self.inner
+            } else {
+                &self.backfill
+            },
             partition_id: &params.partition_id,
             from_block,
             to_block,
@@ -773,7 +792,7 @@ impl EvmRpcClient {
         }
 
         let page = enrich::page(
-            &self.inner,
+            query.client,
             &self.fetches,
             EnrichRequest {
                 from_block: query.from_block,
@@ -871,7 +890,7 @@ impl EvmRpcClient {
         let results =
             futures_util::future::join_all(query.selections.iter().map(|selection| async {
                 let logs = logs::request_selection_logs(
-                    &self.inner,
+                    query.client,
                     &self.logger,
                     query.from_block,
                     query.to_block,

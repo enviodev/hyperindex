@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Once;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
@@ -10,6 +11,7 @@ use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
 use crate::request_stats::{rate_limited_err, RequestStat};
+use crate::request_timeout::{positive_millis, within};
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -51,6 +53,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 #[napi]
 pub struct EvmHyperSyncClient {
     inner: hypersync_client::Client,
+    near_head_timeout: Option<Duration>,
     enable_checksum_addresses: bool,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
@@ -58,20 +61,36 @@ pub struct EvmHyperSyncClient {
 }
 
 impl EvmHyperSyncClient {
-    /// Execute one raw HyperSync page. Public methods decide how much of the
-    /// response to convert for their specific caller.
-    async fn get_raw(&self, query: Query) -> napi::Result<hypersync_client::QueryResponse> {
-        let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
+    /// One query, given up on after `timeout` when there is one. Without, the
+    /// client's own request timeout applies.
+    async fn run_query(
+        &self,
+        query: &hypersync_client::net_types::Query,
+        timeout: Option<Duration>,
+    ) -> napi::Result<hypersync_client::QueryResponse> {
+        let res = within(
+            timeout,
+            "HyperSync query",
+            self.inner.get_with_rate_limit(query),
+        )
+        .await
+        .context("run inner query")
+        .map_err(map_err)?;
         match res {
             RateLimitResponse::Success { response, .. } => Ok(response),
             RateLimitResponse::RateLimited(info) => Err(make_rate_limit_err(&info)),
         }
+    }
+
+    /// Execute one raw HyperSync page. Public methods decide how much of the
+    /// response to convert for their specific caller.
+    async fn get_raw(
+        &self,
+        query: Query,
+        timeout: Option<Duration>,
+    ) -> napi::Result<hypersync_client::QueryResponse> {
+        let query = query.try_into().context("parse query").map_err(map_err)?;
+        self.run_query(&query, timeout).await
     }
 }
 
@@ -102,12 +121,18 @@ impl EvmHyperSyncClient {
             .context("build selection builder")
             .map_err(map_err)?;
 
+        let near_head_timeout = cfg
+            .near_head_req_timeout_millis
+            .map(positive_millis)
+            .transpose()
+            .map_err(map_err)?;
         let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
             .context("build client")
             .map_err(map_err)?;
 
         Ok(EvmHyperSyncClient {
             inner,
+            near_head_timeout,
             enable_checksum_addresses,
             decoder,
             selection_builder,
@@ -117,7 +142,13 @@ impl EvmHyperSyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.inner.get_height().await.map_err(|e| {
+        let height = within(
+            self.near_head_timeout,
+            "HyperSync height",
+            self.inner.get_height(),
+        )
+        .await
+        .map_err(|e| {
             // The client embeds a `{:?}` debug dump (a full backtrace when
             // RUST_BACKTRACE is set) in its error message; keep only the first
             // line so it stays readable when the indexer surfaces it on retries.
@@ -130,9 +161,12 @@ impl EvmHyperSyncClient {
 
     #[napi]
     pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
-        convert_response(self.get_raw(query).await?, self.enable_checksum_addresses)
-            .context("convert response")
-            .map_err(map_err)
+        convert_response(
+            self.get_raw(query, None).await?,
+            self.enable_checksum_addresses,
+        )
+        .context("convert response")
+        .map_err(map_err)
     }
 
     /// Fetch the complete inclusive range spanning `block_numbers` into one
@@ -160,7 +194,7 @@ impl EvmHyperSyncClient {
                     },
                     ..Default::default()
                 };
-                let response = self.get_raw(query).await?;
+                let response = self.get_raw(query, self.near_head_timeout).await?;
                 let (next, store) = block_hash_page(response).map_err(map_err)?;
                 // `include_all_blocks` leaves no gaps, so the last block the
                 // page covered is the one before where it stopped.
@@ -181,6 +215,7 @@ impl EvmHyperSyncClient {
         params: ItemsQuery,
         address_set: &AddressSet,
     ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
+        let is_near_head = params.is_near_head;
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
@@ -297,17 +332,9 @@ impl EvmHyperSyncClient {
         };
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
-
-        let response = match res {
-            RateLimitResponse::Success { response, .. } => response,
-            RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
-        };
+        let response = self
+            .run_query(&query, self.near_head_timeout.filter(|_| is_near_head))
+            .await?;
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
@@ -378,6 +405,9 @@ impl EvmHyperSyncClient {
 #[napi(object)]
 pub struct ItemsQuery {
     pub from_block: i64,
+    /// Whether the chain is near its head, so the query is given up on after
+    /// the client's near-head timeout.
+    pub is_near_head: bool,
     /// Inclusive; `None` queries to the end of available data.
     pub to_block: Option<i64>,
     /// Soft cap on the page's items: the logs it selects, or for a query

@@ -76,11 +76,10 @@ type sourceSync = {
   accelerationAdditive: int,
   intervalCeiling: int,
   backoffMillis: int,
-  // The requests of a page that starts further back than the head.
+  // Every request of a page read while the chain is not near its head.
   queryTimeoutMillis: int,
-  // Everything else: a page starting close to the known height, a height
-  // poll, a block-hash lookup.
-  headQueryTimeoutMillis: int,
+  // Everything else: pages near the head, height polls, block-hash lookups.
+  nearHeadQueryTimeoutMillis: int,
   fallbackStallTimeout: int,
   pollingInterval: int,
 }

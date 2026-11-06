@@ -351,6 +351,7 @@ let fetchChain = async (
             let response = await sourceManager->SourceManager.executeQuery(
               ~query,
               ~knownHeight=chainState->ChainState.knownHeight,
+              ~isNearHead=chainState->ChainState.isNearHead,
               ~isRealtime,
               ~reorgableFrom=chainState->ChainState.reorgableFrom(~isRealtime),
             )

@@ -345,7 +345,6 @@ type timing = {
   reducedPollingInterval?: int,
   recoveryTimeout?: float,
   getHeightRetryInterval?: (~retry: int) => int,
-  heightPollTimeout?: int,
   clock?: Clock.t,
 }
 
@@ -383,7 +382,7 @@ let make = (~sources: array<Source.t>, ~logger: Logger.t, ~isRealtime, ~timing: 
           ~logger,
           ~recordRequestStats=stats => requestStats->recordStatsInto(stats),
           ~getHeightRetryInterval,
-          ~pollTimeoutMillis=timing.heightPollTimeout->Option.getOr(60_000),
+          ~pollTimeoutMillis=source.requestTimeouts.nearHeadMillis,
           ~clock,
         ),
         disabled: false,
@@ -1008,6 +1007,7 @@ let executeQuery = async (
   sourceManager: t,
   ~query: FetchState.query,
   ~knownHeight,
+  ~isNearHead,
   ~isRealtime,
   ~reorgableFrom,
 ) => {
@@ -1073,6 +1073,7 @@ let executeQuery = async (
         ~reorgableFrom,
         ~partitionId=query.partitionId,
         ~knownHeight,
+        ~isNearHead,
         ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
         ~itemsTarget=query.itemsTarget,
         ~retry,

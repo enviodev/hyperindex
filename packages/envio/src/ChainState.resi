@@ -135,6 +135,7 @@ let hasCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isReady: t => bool
 let isFetchingAtHead: t => bool
+let isNearHead: t => bool
 let isAtHeadWithoutEndBlock: t => bool
 
 // State transitions. The chain state is mutated only through these.

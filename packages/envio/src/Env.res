@@ -46,8 +46,12 @@ let tuiEnvVar = envSafe->EnvSafe.get("ENVIO_TUI", S.option(S.bool))
 let prodEnvioAppUrl = "https://envio.dev"
 let envioAppUrl = envSafe->EnvSafe.get("ENVIO_APP", S.string, ~fallback=prodEnvioAppUrl)
 let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
+// Unset, a source waits longer on backfill requests than near the head; set,
+// it waits this long on every request. See `Source.requestTimeouts`.
 let hyperSyncClientTimeoutMillis =
-  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.int, ~fallback=120_000)
+  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.option(S.int))
+let hyperFuelClientTimeoutMillis =
+  envSafe->EnvSafe.get("ENVIO_HYPERFUEL_CLIENT_TIMEOUT_MILLIS", S.option(S.int))
 
 let hypersyncClientSerializationFormat =
   envSafe->EnvSafe.get(

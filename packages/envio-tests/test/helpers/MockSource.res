@@ -219,6 +219,7 @@ type pendingItemsQuery = {
 // pending queries doesn't have to spell them out.
 @get external addresses: pendingItemsQuery => array<Address.t> = "addresses"
 @get external reorgableFrom: pendingItemsQuery => option<int> = "reorgableFrom"
+@get external isNearHead: pendingItemsQuery => bool = "isNearHead"
 
 // A block the chain has, for the block handlers of the query's selection that
 // run on it. Its number, timestamp and hash are those of `itemMock`'s block.
@@ -488,6 +489,8 @@ let make = (
   // `autoHeight`. For calls startup makes before a test body can answer them,
   // where a source has to fail first.
   ~startupHeights: array<startupHeight>=[],
+  // How long a height poll may go unanswered before the manager gives up on it.
+  ~nearHeadRequestTimeoutMillis=20_000,
   // What failures call this mock, for a chain with several: the way the test
   // reaches it.
   ~label=?,
@@ -1080,6 +1083,7 @@ let make = (
         poweredByHyperSync: false,
         chainId,
         pollingInterval,
+        requestTimeouts: {nearHeadMillis: nearHeadRequestTimeoutMillis, backfillMillis: 60_000},
         getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
           getBlockHashesCalls->Array.push(blockNumbers)->ignore
           let id = ledger->Ledger.takeBlockHashLookup(blockNumbers)
@@ -1117,6 +1121,7 @@ let make = (
           ~addressSet,
           ~reorgableFrom,
           ~knownHeight,
+          ~isNearHead,
           ~partitionId,
           ~selection,
           ~itemsTarget as _,
@@ -1184,6 +1189,10 @@ let make = (
             ->Utils.Object.definePropertyWithValue(
               "reorgableFrom",
               {enumerable: false, value: reorgableFrom},
+            )
+            ->Utils.Object.definePropertyWithValue(
+              "isNearHead",
+              {enumerable: false, value: isNearHead},
             )
             ->Utils.Object.definePropertyWithValue(
               "__control",

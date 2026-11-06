@@ -53,7 +53,7 @@ let makeClient = (~eventRegistrations) =>
   HyperSyncClient.make(
     ~url="https://eth.hypersync.xyz",
     ~apiToken=testApiToken,
-    ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
+    ~httpReqTimeoutMillis=Source.hyperSyncBackfillTimeoutMillis,
     ~eventRegistrations,
     ~enableChecksumAddresses=false,
     ~addressStore,
@@ -66,6 +66,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
   let (res, _txStore, _blockStore) = await client.getItems(
     ~query={
       fromBlock,
+      isNearHead: false,
       toBlock: Some(toBlock),
       itemsTarget: 10_000,
       onEventRegistrationIndexes: registrationIndexes,

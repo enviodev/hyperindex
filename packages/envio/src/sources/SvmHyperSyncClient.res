@@ -4,6 +4,8 @@ type cfg = {
   /** Optional bearer token for the HyperSync server. */
   apiToken?: string,
   httpReqTimeoutMillis?: int,
+  // For a request near the head, in place of `httpReqTimeoutMillis`.
+  nearHeadReqTimeoutMillis?: int,
   retryBaseMs?: int,
   retryCeilingMs?: int,
 }
@@ -123,6 +125,8 @@ module Items = {
   // selection, and routing are derived on the Rust side.
   type query = {
     fromSlot: int,
+    // The chain is near its head, so the query is given up on sooner.
+    isNearHead: bool,
     // Inclusive; None queries to the end of available data.
     toSlot: option<int>,
     // Soft cap on the page's items: the instructions it selects, or for a query
@@ -201,6 +205,7 @@ let make = (
   ~url,
   ~apiToken=?,
   ~httpReqTimeoutMillis=?,
+  ~nearHeadReqTimeoutMillis=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~programs=[],
@@ -213,6 +218,7 @@ let make = (
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
+      ?nearHeadReqTimeoutMillis,
       ?retryBaseMs,
       ?retryCeilingMs,
     },

@@ -143,7 +143,7 @@ let makeSource = (
     endpointUrl,
     apiToken,
     onEventRegistrations,
-    clientTimeoutMillis: 10_000,
+    requestTimeouts: {nearHeadMillis: 10_000, backfillMillis: 10_000},
     addressStore,
   }) catch {
   | exn =>
@@ -168,6 +168,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ~toBlock=Some(slot + 10),
       ~addressSet=programSet,
       ~knownHeight=slot + 1000,
+      ~isNearHead=false,
       ~partitionId="0",
       ~itemsTarget=Some(5000),
       ~selection={
@@ -227,6 +228,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "query": (
         {
           fromSlot: slot - 10,
+          isNearHead: false,
           toSlot: Some(slot + 10),
           itemsTarget: 5000,
           onEventRegistrationIndexes: [0],
@@ -345,6 +347,7 @@ describe("SvmHyperSyncSource reorgable range", () => {
       ~toBlock=Some(slot + 1),
       ~addressSet=programSet,
       ~knownHeight=slot + 1,
+      ~isNearHead=false,
       ~partitionId="0",
       ~itemsTarget=None,
       ~selection={

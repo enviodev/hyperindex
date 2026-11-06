@@ -18,14 +18,12 @@ let getSyncConfig = (
     ?pollingInterval,
   }: Config.sourceSyncOptions,
 ): Config.sourceSync => {
-  // A backfill page can span thousands of blocks, so a slow answer is still
-  // worth waiting for. Near the head a read covers a block or a few, and a
-  // provider that hasn't answered in 10s is better retried. A configured
-  // timeout applies to both.
-  let (queryTimeoutMillis, headQueryTimeoutMillis) = switch queryTimeoutMillis {
-  | Some(queryTimeoutMillis) => (queryTimeoutMillis, queryTimeoutMillis)
-  | None => (30_000, 10_000)
-  }
+  // RPC's block range already shrinks after a timeout, so waiting longer than
+  // 30s on a backfill read mostly delays that.
+  let {nearHeadMillis, backfillMillis} = Source.makeRequestTimeouts(
+    ~configuredMillis=queryTimeoutMillis,
+    ~backfillMillis=30_000,
+  )
   {
     initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getOr(
       initialBlockInterval->Option.getOr(10_000),
@@ -40,9 +38,9 @@ let getSyncConfig = (
       intervalCeiling->Option.getOr(10_000),
     ),
     backoffMillis: backoffMillis->Option.getOr(2000),
-    queryTimeoutMillis,
-    headQueryTimeoutMillis,
-    fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
+    queryTimeoutMillis: backfillMillis,
+    nearHeadQueryTimeoutMillis: nearHeadMillis,
+    fallbackStallTimeout: fallbackStallTimeout->Option.getOr(backfillMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),
   }
 }
@@ -68,7 +66,10 @@ let makeSources = (
         onEventRegistrations,
         onBlockRegistrations,
         apiToken: Env.envioApiToken,
-        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        requestTimeouts: Source.makeRequestTimeouts(
+          ~configuredMillis=Env.hyperSyncClientTimeoutMillis,
+          ~backfillMillis=Source.hyperSyncBackfillTimeoutMillis,
+        ),
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,

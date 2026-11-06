@@ -105,6 +105,7 @@ let invoke = (
       ~contractName=registration.eventConfig.contractName,
     ),
     ~knownHeight=100,
+    ~isNearHead=false,
     ~partitionId="pin-partition",
     ~selection={
       dependsOnAddresses: true,
@@ -594,6 +595,7 @@ describe("RPC source public contract", () => {
                   ~contractName=registration.eventConfig.contractName,
                 ),
                 ~knownHeight=1_000_000,
+                ~isNearHead=false,
                 ~partitionId="pin-partition",
                 ~selection={
                   dependsOnAddresses: true,
@@ -728,6 +730,7 @@ describe("RPC source public contract", () => {
               ~toBlock=Some(100),
               ~addressSet=addressStore->AddressStore.emptySet,
               ~knownHeight=100,
+              ~isNearHead=false,
               ~partitionId="skip-all",
               ~selection={
                 dependsOnAddresses: false,
@@ -858,6 +861,7 @@ describe("RPC source public contract", () => {
               ->AddressStore.makeSet(~contractName="ContractA")
               ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="ContractB")),
               ~knownHeight=100,
+              ~isNearHead=false,
               ~partitionId="contract-scope",
               ~selection={
                 dependsOnAddresses: true,
@@ -961,6 +965,7 @@ describe("RPC source public contract", () => {
                 ~toBlock=Some(100),
                 ~addressSet=addressStore->AddressStore.emptySet,
                 ~knownHeight=100,
+                ~isNearHead=false,
                 ~partitionId="address-free",
                 ~selection={
                   dependsOnAddresses: false,

@@ -14,6 +14,8 @@ type cfg = {
   apiToken: string,
   /** Milliseconds to wait for a response before timing out. Default: 30000. */
   httpReqTimeoutMillis?: int,
+  /** For a request near the head, in place of `httpReqTimeoutMillis`. */
+  nearHeadReqTimeoutMillis?: int,
   /** Number of retries to attempt before returning error. Default: 12. */
   /** Milliseconds that would be used for retry backoff increasing. Default: 500. */
   retryBackoffMs?: int,
@@ -256,6 +258,8 @@ module Items = {
   // the routing index are derived on the Rust side.
   type query = {
     fromBlock: int,
+    // The chain is near its head, so the query is given up on sooner.
+    isNearHead: bool,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
     // Soft cap on the page's items: the logs it selects, or for a query
@@ -322,6 +326,7 @@ let make = (
   ~url,
   ~apiToken,
   ~httpReqTimeoutMillis,
+  ~nearHeadReqTimeoutMillis=?,
   ~eventRegistrations,
   ~onBlockRegistrations=[],
   ~enableChecksumAddresses=true,
@@ -340,6 +345,7 @@ let make = (
       enableChecksumAddresses,
       apiToken,
       httpReqTimeoutMillis,
+      ?nearHeadReqTimeoutMillis,
       ?serializationFormat,
       ?enableQueryCaching,
       ?retryBaseMs,

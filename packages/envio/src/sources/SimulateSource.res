@@ -76,6 +76,8 @@ let make = (
     chainId,
     poweredByHyperSync: false,
     pollingInterval: 0,
+    // It answers at once, so neither is ever reached.
+    requestTimeouts: Source.makeRequestTimeouts(~configuredMillis=None, ~backfillMillis=60_000),
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
       Promise.resolve({
         Source.result: Ok(BlockStore.fromJs([], ~ecosystem)),
@@ -92,6 +94,7 @@ let make = (
       ~addressSet,
       ~reorgableFrom as _,
       ~knownHeight as _,
+      ~isNearHead as _,
       ~partitionId as _,
       ~selection: FetchState.selection,
       ~itemsTarget as _,
