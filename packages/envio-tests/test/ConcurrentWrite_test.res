@@ -186,16 +186,16 @@ describe("Concurrent batch write and processing", () => {
         [],
         [
           Set({
-            checkpointId: 2n,
+            checkpointId: 1n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "created"},
           }),
           Delete({
-            checkpointId: 3n,
+            checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
           }),
           Set({
-            checkpointId: 4n,
+            checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "recreated"},
           }),

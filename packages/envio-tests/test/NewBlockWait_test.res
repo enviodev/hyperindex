@@ -411,7 +411,7 @@ describe("Waiting across a sibling's rollback", () => {
     async (~t, ~indexer, ~source) => {
       let waiting = source(1)
       let sibling = source(137)
-      // Its fetchable head sits a reorg depth below the 300 it knows.
+      // Its fetchable head sits a reorg depth plus one below the 300 it knows.
       waiting.resolveGetHeightOrThrow(300)
       sibling.resolveGetHeightOrThrow(10_000)
       await waiting.expectItemsQueries([{fromBlock: 1, toBlock: Bounded(100), reply: upTo(100)}])

@@ -245,21 +245,14 @@ describe("Progress block time", () => {
         },
       ])
 
-      // Block 100 is the only stored block below the reorged 300, and the
-      // source still agrees with it.
-      let trace = await traceThroughRollback(
-        ~indexer,
-        ~mock,
-        ~lookup={
-          blockNumbers: [100],
-          reply: [{blockNumber: 100, blockHash: "0x100", blockTimestamp: 100}],
-        },
-      )
+      // No stored block in the reorg window lies below the reorged 300, so the
+      // rollback falls back to block 100, just below the window, without a lookup.
+      let trace = await traceThroughRollback(~indexer, ~mock)
 
       t.expect(
-        trace,
+        (mock.getBlockHashesCalls, trace),
         ~message="block 100 was never orphaned, so its timestamp is still its own",
-      ).toEqual(["100|100"])
+      ).toEqual(([], ["100|100"]))
     },
   )
 
@@ -269,7 +262,7 @@ describe("Progress block time", () => {
     async (~t, ~indexer, ~source) => {
       let mock = source(1)
 
-      // Head 300 with maxReorgDepth 200: the pre-threshold query stops at block
+      // Head 300 with maxReorgDepth 199: the pre-threshold query stops at block
       // 100, the next one reaches the head.
       mock.resolveGetHeightOrThrow(300)
       await mock.expectItemsQueries([

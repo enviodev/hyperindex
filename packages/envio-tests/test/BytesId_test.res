@@ -174,11 +174,8 @@ let rollback = async (
     {partitionId: "0", reply: LeavePending},
   ])
   await source.expectBlockHashLookup({
-    blockNumbers: [100, 101],
-    reply: [
-      {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-      {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-    ],
+    blockNumbers: [101],
+    reply: [{blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101}],
   })
   await indexer.getRollbackReadyPromise()
   // The rollback diff is written with the next batch.

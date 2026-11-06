@@ -222,7 +222,7 @@ type tokenContext = {
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
-// Head 300 against maxReorgDepth 200: one query opens at block 1, and its
+// Head 300 against maxReorgDepth 199: one query opens at block 1, and its
 // response is what every case below rides in on.
 let reachFirstQuery = async (~source: MockSource.t) => {
   await Scenario.resolveInitialHeight(~source, ~head=300)
@@ -442,7 +442,7 @@ describe("Write/read tests", () => {
           entity: {id: "updated", value: "batch1"},
         }),
         Set({
-          checkpointId: 3n,
+          checkpointId: 2n,
           entityId: "updated"->EntityId.unsafeOfString,
           entity: {id: "updated", value: "batch2"},
         }),

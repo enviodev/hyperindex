@@ -175,11 +175,8 @@ describe("Rollback diff checkpoint ids", () => {
       )
       // The rollback's depth search re-fetches the scanned block hashes.
       await source1337.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x101", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        reply: [{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}],
       })
       await indexer.getRollbackReadyPromise()
 
