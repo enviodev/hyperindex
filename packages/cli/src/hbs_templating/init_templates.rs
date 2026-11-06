@@ -126,8 +126,8 @@ impl InitTemplates {
         }
     }
 
-    pub fn render_env(&self) -> String {
-        env_template::render(&self.envio_api_token)
+    pub fn write_env(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        env_template::write(path, &self.envio_api_token)
     }
 
     pub fn render_package_json(&self) -> String {

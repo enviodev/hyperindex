@@ -1,3 +1,30 @@
+use std::{
+    fs::{self, OpenOptions},
+    io::{self, Write},
+    path::Path,
+};
+
+pub fn write(path: impl AsRef<Path>, token: &Option<String>) -> io::Result<()> {
+    let path = path.as_ref();
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => file.write_all(render(token).as_bytes()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let Some(token) = token else { return Ok(()) };
+            let values = crate::utils::dotenv::from_path(path).map_err(io::Error::other)?;
+            if values.contains_key("ENVIO_API_TOKEN") {
+                return Ok(());
+            }
+            let existing = fs::read_to_string(path)?;
+            let mut file = OpenOptions::new().append(true).open(path)?;
+            if !existing.is_empty() && !existing.ends_with('\n') {
+                writeln!(file)?;
+            }
+            writeln!(file, "ENVIO_API_TOKEN=\"{token}\"")
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Renders the `.env` file scaffolded by both `envio init` and contract import.
 pub fn render(envio_api_token: &Option<String>) -> String {
     let mut out =

@@ -265,7 +265,8 @@ pub async fn run_init_args(
     );
 
     let project_root = &parsed_project_paths.project_root;
-    fs::write(project_root.join(".env"), init_template.render_env())
+    init_template
+        .write_env(project_root.join(".env"))
         .context("Failed writing .env")?;
     fs::write(
         project_root.join("package.json"),
