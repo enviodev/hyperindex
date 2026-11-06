@@ -16,9 +16,7 @@ let make = (
 ) => {
   if maxReorgDepth > 0 && shouldRollbackOnReorg {
     let checkpointIds = Utils.Array.jsArrayCreate(chainReorgCheckpoints->Array.length)
-    let checkpointBlockNumbers = Utils.Array.jsArrayCreate(
-      chainReorgCheckpoints->Array.length,
-    )
+    let checkpointBlockNumbers = Utils.Array.jsArrayCreate(chainReorgCheckpoints->Array.length)
     chainReorgCheckpoints->Array.forEachWithIndex((checkpoint, idx) => {
       checkpointIds->Array.setUnsafe(idx, checkpoint.checkpointId)
       checkpointBlockNumbers->Array.setUnsafe(idx, checkpoint.blockNumber)
@@ -36,7 +34,9 @@ let make = (
 let getSafeCheckpointId = (safeCheckpointTracking: t, ~sourceBlockNumber: int): option<
   Internal.checkpointId,
 > => {
-  let safeBlockNumber = sourceBlockNumber - safeCheckpointTracking.maxReorgDepth
+  // The first block reorg detection compares is itself reorgable, so the safe
+  // block is the one below it.
+  let safeBlockNumber = sourceBlockNumber - safeCheckpointTracking.maxReorgDepth - 1
 
   switch safeCheckpointTracking.checkpointIds {
   | [] => None

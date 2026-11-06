@@ -26,8 +26,8 @@ let logs: array<RpcE2eChain.transfer> = [
 
 let receiptJson = hash =>
   JSON.parseOrThrow(
-    `{"transactionHash":"${hash}","blockNumber":"${approvalBlock->hex}","transactionIndex":"0x0","gasUsed":"${(approvalBlock *
-      3)->hex}"}`,
+    `{"transactionHash":"${hash}","blockNumber":"${approvalBlock->hex}","transactionIndex":"0x0","gasUsed":"${(approvalBlock * 3)
+        ->hex}"}`,
   )
 
 let mock = serveDuringSuite(() =>
@@ -121,7 +121,7 @@ describe("Two registrations selecting different fields of the same chain", () =>
 
 // Block 100 carries only the Transfer, which selects no transaction field, so
 // the receipt read belongs to block 101 alone. Both blocks are read either way:
-// they are the range's own boundaries.
+// they are within 200 blocks of the head, so each is checked.
 Vitest.it("pays for a receipt only where an event selected one", t => {
   t.expect(mock()->RpcE2eChain.callSummary).toEqual([
     "eth_getBlockByNumber",

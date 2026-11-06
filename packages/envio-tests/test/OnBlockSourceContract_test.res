@@ -192,12 +192,12 @@ let getBlockCall = number =>
   )
 
 describe("A block handler selecting fields, fetched from an RPC", () => {
-  // No log is asked for, and of the blocks the handler skips only the range's
-  // last is read, as every page reads its boundary for reorg detection.
+  // No log is asked for, and far below the head none of the blocks the
+  // handler skips is read, the range's boundaries included.
   Async.it("reads the blocks the handler runs on, with its fields", async t => {
     let blocks = await MockRpcServer.withScenario(
       ~name="block handler page",
-      ~calls=[10, 12, 13]->Array.map(getBlockCall),
+      ~calls=[10, 12]->Array.map(getBlockCall),
       async mock => {
         let (source, addressSet) = makeRpcSource(~url=mock.url)
         await (await source->fetch(~addressSet))->materializedBlocks
@@ -252,13 +252,13 @@ describe("A block handler with no block to read, fetched from an RPC", () => {
     t.expect(latestFetchedBlockNumber).toEqual(5009)
   })
 
-  // Where blocks can still be reorged the page's boundary blocks, and every
-  // block that can still be reorged, are its reorg observation, so they are
-  // read even with no handler block between them.
-  Async.it("still reads the boundary and reorgable blocks of a range", async t => {
+  // Every block that can still be reorged is the page's reorg observation, so
+  // it is read even with no handler block on it. The range's first block is
+  // below them, where no reorg reaches, so it is not.
+  Async.it("still reads the reorgable blocks of a range", async t => {
     let latestFetchedBlockNumber = await MockRpcServer.withScenario(
       ~name="reorgable range without a handler block",
-      ~calls=[11, ...Array.fromInitializer(~length=11, i => 100 + i)]->Array.map(getBlockCall),
+      ~calls=Array.fromInitializer(~length=11, i => 100 + i)->Array.map(getBlockCall),
       async mock => {
         let (source, addressSet) = makeRpcSource(~url=mock.url)
 

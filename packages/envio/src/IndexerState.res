@@ -236,12 +236,13 @@ let make = (
 }
 
 // Check if progress is past the reorg threshold (safe block).
-// A chain is in reorg threshold when progressBlockNumber > sourceBlockNumber - maxReorgDepth.
-// This matches the logic in InternalTable.Checkpoints.makeGetReorgCheckpointsQuery.
+// A chain is in reorg threshold once its progress passes the safe block,
+// sourceBlockNumber - maxReorgDepth - 1. This matches the reorg checkpoints
+// query in packages/cli/src/postgres/internal.rs.
 let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~maxReorgDepth) => {
   maxReorgDepth > 0 &&
   sourceBlockNumber > 0 &&
-  progressBlockNumber > sourceBlockNumber - maxReorgDepth
+  progressBlockNumber > sourceBlockNumber - maxReorgDepth - 1
 }
 
 let makeFromDbState = (

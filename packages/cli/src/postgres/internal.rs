@@ -364,10 +364,10 @@ pub fn insert_checkpoints(pg_schema: &str, chain_id_mode: ChainIdMode) -> String
 pub fn read_reorg_checkpoints(pg_schema: &str) -> String {
     format!(
         "WITH reorg_chains AS (\n  \
-         SELECT \"id\" as id, \"source_block\" - \"max_reorg_depth\" AS safe_block\n  \
+         SELECT \"id\" as id, \"source_block\" - \"max_reorg_depth\" - 1 AS safe_block\n  \
          FROM \"{pg_schema}\".\"{CHAINS}\"\n  \
          WHERE \"max_reorg_depth\" > 0\n    \
-         AND \"progress_block\" > \"source_block\" - \"max_reorg_depth\"\n\
+         AND \"progress_block\" > \"source_block\" - \"max_reorg_depth\" - 1\n\
          )\n\
          SELECT cp.\"id\"::int8, cp.\"chain_id\"::int8, cp.\"block_number\", cp.\"block_hash\"\n\
          FROM \"{pg_schema}\".\"{CHECKPOINTS}\" cp\n\
