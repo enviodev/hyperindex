@@ -922,7 +922,7 @@ pub mod evm {
                                   will take precedence over what is defined in the json ABI")]
         pub event: String,
         #[schemars(
-            description = "Name of the event in the HyperIndex generated code. When ommitted, the \
+            description = "Name of the event in the generated types. When ommitted, the \
                            event field will be used. Should be unique per contract"
         )]
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1098,7 +1098,7 @@ pub mod fuel {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
-        #[schemars(description = "Name of the event in the HyperIndex generated code")]
+        #[schemars(description = "Name of the event in the generated types")]
         pub name: String,
         #[serde(rename = "type")]
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1404,7 +1404,7 @@ pub mod svm {
     #[serde(deny_unknown_fields)]
     pub struct Program {
         #[schemars(
-            description = "A unique project-wide name for this program (used in generated code)."
+            description = "A unique project-wide name for this program (used in the generated types)."
         )]
         pub name: String,
         #[schemars(
@@ -1441,7 +1441,7 @@ pub mod svm {
     #[serde(deny_unknown_fields)]
     pub struct Instruction {
         #[schemars(
-            description = "Name of the instruction in the HyperIndex generated code. Should be \
+            description = "Name of the instruction in the generated types. Should be \
                            unique per program."
         )]
         pub name: String,
