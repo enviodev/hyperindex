@@ -53,6 +53,7 @@ impl From<SvmClientConfig> for hypersync_client_solana::config::ClientConfig {
             // the request open while SourceManager's backoff, failover and TUI
             // throttling all sit idle. Surface the 429 instead.
             proactive_rate_limit_sleep: false,
+            enable_query_cache: default.enable_query_cache,
         }
     }
 }
