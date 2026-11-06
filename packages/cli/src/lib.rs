@@ -38,7 +38,6 @@ mod postgres;
 mod project_paths;
 mod registration_start_block;
 mod request_stats;
-mod request_timeout;
 pub mod scripts;
 mod service_health;
 mod storage;

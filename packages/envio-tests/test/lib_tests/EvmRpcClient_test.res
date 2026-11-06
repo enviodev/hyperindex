@@ -539,6 +539,11 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~times=2,
           ~reply=slowly(RpcResult(JSON.Array([]))),
         ),
+        // The backfill page reads its last block.
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~reply=RpcResult(blockResult(~number="0x64")),
+        ),
         heightCall(~reply=slowly(RpcResult(JSON.String("0x64")))),
       ],
       async mock => {

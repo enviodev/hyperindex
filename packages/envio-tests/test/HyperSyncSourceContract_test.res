@@ -593,7 +593,10 @@ describe("HyperSync source responses", () => {
         (backfill, nearHead)
       },
     )
-    t.expect(result).toEqual(("ok:fetched", "unknown"))
+    t.expect(result).toEqual((
+      "ok:fetched",
+      "backoff:Unexpected issue while fetching events from HyperSync client. Attempt a retry.",
+    ))
   })
 
   Async.it("maps a rate-limited response to the wait the manager retries on", async t => {

@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::time::Duration;
 
 use anyhow::Context;
 use napi::bindgen_prelude::BigInt;
@@ -13,7 +12,6 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInn
 use crate::block_store::{BlockStore, FuelBlockRow};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
-use crate::request_timeout::{positive_millis, within};
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
@@ -23,11 +21,23 @@ use types::{convert_response, Block, ConvertError, RawReceipt};
 #[napi]
 pub struct FuelHyperSyncClient {
     inner: hyperfuel_client::Client,
-    near_head_timeout: Option<Duration>,
+    /// The same server with the near-head request timeout: heights, and item
+    /// queries that say they are near the head. Absent, `inner` serves those
+    /// too.
+    near_head: Option<hyperfuel_client::Client>,
     selection_builder: SelectionBuilder,
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-receipt owner gate.
     address_store: std::sync::Arc<std::sync::RwLock<StoreInner>>,
+}
+
+impl FuelHyperSyncClient {
+    fn client(&self, is_near_head: bool) -> &hyperfuel_client::Client {
+        match &self.near_head {
+            Some(near_head) if is_near_head => near_head,
+            _ => &self.inner,
+        }
+    }
 }
 
 #[napi]
@@ -46,19 +56,27 @@ impl FuelHyperSyncClient {
                 .context("build selection builder")
                 .map_err(map_err)?
         };
-        let near_head_timeout = cfg
+        let build = |cfg: ClientConfig| {
+            let client_config: hyperfuel_client::ClientConfig =
+                cfg.try_into().context("build config")?;
+            hyperfuel_client::Client::new_with_agent(client_config, user_agent.clone())
+                .context("build client")
+        };
+        let near_head = cfg
             .near_head_req_timeout_millis
-            .map(positive_millis)
+            .map(|millis| {
+                build(ClientConfig {
+                    http_req_timeout_millis: Some(millis),
+                    ..cfg.clone()
+                })
+            })
             .transpose()
+            .context("build near-head client")
             .map_err(map_err)?;
-        let client_config: hyperfuel_client::ClientConfig =
-            cfg.try_into().context("build config").map_err(map_err)?;
-        let inner = hyperfuel_client::Client::new_with_agent(client_config, user_agent)
-            .context("build client")
-            .map_err(map_err)?;
+        let inner = build(cfg).map_err(map_err)?;
         Ok(FuelHyperSyncClient {
             inner,
-            near_head_timeout,
+            near_head,
             selection_builder,
             address_store: handle,
         })
@@ -66,13 +84,11 @@ impl FuelHyperSyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = within(
-            self.near_head_timeout,
-            "HyperFuel height",
-            self.inner.get_height(),
-        )
-        .await
-        .map_err(|e| request_err("Failed to get HyperFuel height", e))?;
+        let height = self
+            .client(true)
+            .get_height()
+            .await
+            .map_err(|e| request_err("Failed to get HyperFuel height", e))?;
         height.try_into().context("convert height").map_err(map_err)
     }
 
@@ -93,13 +109,11 @@ impl FuelHyperSyncClient {
         let query = build_query(&params, &built)
             .context("build query")
             .map_err(map_err)?;
-        let res = within(
-            self.near_head_timeout.filter(|_| params.is_near_head),
-            "HyperFuel query",
-            self.inner.get_arrow(&query),
-        )
-        .await
-        .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
+        let res = self
+            .client(params.is_near_head)
+            .get_arrow(&query)
+            .await
+            .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
 
         // The page's raw blocks, keyed by height — merged into the per-chain
@@ -719,5 +733,41 @@ mod tests {
             Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
+    }
+
+    #[tokio::test]
+    async fn asks_for_a_height_with_the_near_head_timeout() {
+        // Takes the connection and never answers it.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        let client = FuelHyperSyncClient::new(
+            ClientConfig {
+                url,
+                api_token: "00000000-0000-0000-0000-000000000000".into(),
+                http_req_timeout_millis: Some(10_000),
+                near_head_req_timeout_millis: Some(50),
+            },
+            "hyperindex-test".into(),
+            vec![],
+            &fuel_store(&[]),
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let error = client.get_height().await.unwrap_err().reason.clone();
+        // Well short of the backfill timeout: the server never answers, so only
+        // the near-head one can have ended it.
+        assert_eq!(
+            (error, started.elapsed() < std::time::Duration::from_secs(5)),
+            (
+                "Failed to get HyperFuel height: execute http req".to_string(),
+                true
+            )
+        );
     }
 }

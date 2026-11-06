@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use napi::bindgen_prelude::Uint8Array;
@@ -31,7 +30,6 @@ use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationI
 use crate::block_store::BlockStore;
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
-use crate::request_timeout::{positive_millis, within};
 use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
@@ -91,12 +89,21 @@ impl SvmHyperSyncClient {
     async fn run_query(
         &self,
         query: &SolanaQuery,
-        timeout: Option<Duration>,
+        is_near_head: bool,
     ) -> napi::Result<simple::SolanaResponse> {
-        within(timeout, "Solana HyperSync query", self.inner.get(query))
+        let client = self.client(is_near_head);
+        client
+            .get(query)
             .await
             .context("solana get")
-            .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))
+            .map_err(|e| map_query_error(e, client.rate_limit_info()))
+    }
+
+    fn client(&self, is_near_head: bool) -> &hypersync_client_solana::Client {
+        match &self.near_head {
+            Some(near_head) if is_near_head => near_head,
+            _ => &self.inner,
+        }
     }
 
     /// Execute one raw Solana HyperSync page. Event queries and block-hash
@@ -106,14 +113,17 @@ impl SvmHyperSyncClient {
             .try_into()
             .context("parse solana query")
             .map_err(map_err)?;
-        self.run_query(&query, self.near_head_timeout).await
+        self.run_query(&query, true).await
     }
 }
 
 #[napi]
 pub struct SvmHyperSyncClient {
     inner: Arc<hypersync_client_solana::Client>,
-    near_head_timeout: Option<Duration>,
+    /// The same server with the near-head request timeout: heights, block
+    /// hashes, and item queries that say they are near the head. Absent, `inner`
+    /// serves those too.
+    near_head: Option<hypersync_client_solana::Client>,
     selection_builder: SelectionBuilder,
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-instruction owner gate.
@@ -138,17 +148,27 @@ impl SvmHyperSyncClient {
                 .context("build selection builder")
                 .map_err(map_err)?
         };
-        let near_head_timeout = cfg
+        let near_head = cfg
             .near_head_req_timeout_millis
-            .map(positive_millis)
+            .map(|millis| {
+                hypersync_client_solana::Client::new_with_agent(
+                    SvmClientConfig {
+                        http_req_timeout_millis: Some(millis),
+                        ..cfg.clone()
+                    }
+                    .into(),
+                    user_agent.clone(),
+                )
+            })
             .transpose()
+            .context("build near-head solana client")
             .map_err(map_err)?;
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
         Ok(SvmHyperSyncClient {
             inner: Arc::new(inner),
-            near_head_timeout,
+            near_head,
             selection_builder,
             address_store: handle,
             block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
@@ -157,13 +177,7 @@ impl SvmHyperSyncClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let h = within(
-            self.near_head_timeout,
-            "Solana HyperSync height",
-            self.inner.get_height(),
-        )
-        .await
-        .map_err(map_err)?;
+        let h = self.client(true).get_height().await.map_err(map_err)?;
         i64::try_from(h)
             .with_context(|| format!("height {} does not fit in i64", h))
             .map_err(map_err)
@@ -303,12 +317,7 @@ impl SvmHyperSyncClient {
             ..Default::default()
         };
 
-        let mut resp = self
-            .run_query(
-                &query,
-                self.near_head_timeout.filter(|_| params.is_near_head),
-            )
-            .await?;
+        let mut resp = self.run_query(&query, params.is_near_head).await?;
 
         // The replica serving this request has not reached the queried range,
         // so it would report negative progress. Expected around the head of a
