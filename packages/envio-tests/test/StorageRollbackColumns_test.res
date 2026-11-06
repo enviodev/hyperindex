@@ -14,7 +14,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     contracts:
       - name: Token
         address: "0x0000000000000000000000000000000000000001"
@@ -128,7 +128,7 @@ let render = (item: item) => (
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
-// Head 300 with a reorg depth of 200: block 50 lands below the threshold and
+// Head 300 with a reorg depth of 199: block 50 lands below the threshold and
 // is the state the rollback has to return to; block 200 lands inside it.
 let indexBeforeAndAfter = async (
   ~indexer: IndexerRunner.t,

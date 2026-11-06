@@ -131,13 +131,10 @@ describe("Rollback with a ClickHouse-only entity", () => {
       ])
 
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          // The block 100 is untouched so we can rollback to it; 101 came
-          // back on a different hash, so it is part of the reorg.
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        // 101 came back on a different hash, so it is part of the reorg and
+        // the rollback falls back to block 100, the one below the window.
+        reply: [{blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101}],
       })
 
       await indexer.getRollbackReadyPromise()->raiseOnIndexerError
