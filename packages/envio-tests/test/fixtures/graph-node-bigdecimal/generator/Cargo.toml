@@ -1,0 +1,12 @@
+# Standalone: prints the vectors in ../vectors.json from the bigdecimal graph-node pins.
+[package]
+name = "graph-node-bigdecimal-vectors"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+old_bigdecimal = { version = "=0.1.2", package = "bigdecimal" }
+num-bigint = "0.2"

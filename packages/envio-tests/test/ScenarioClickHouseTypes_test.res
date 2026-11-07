@@ -44,6 +44,7 @@ type EveryType {
   arrayOfFloats: [Float!]!
   bool: Boolean!
   optBool: Boolean
+  arrayOfBools: [Boolean!]!
   bigInt: BigInt!
   optBigInt: BigInt
   arrayOfBigInts: [BigInt!]!
@@ -85,6 +86,7 @@ indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) =>
     arrayOfFloats: [0.5, 2.5],
     bool: true,
     optBool: false,
+    arrayOfBools: [true, false],
     bigInt: 123456789012345678901234567890n,
     optBigInt: undefined,
     arrayOfBigInts: [1n, 2n],
@@ -148,6 +150,7 @@ describe("ClickHouse stores every schema type", () => {
           arrayOfFloats: [0.5, 2.5],
           bool: true,
           optBool: false,
+          arrayOfBools: [true, false],
           // Wider than Decimal(38) holds, so the column is a String.
           bigInt: "123456789012345678901234567890",
           optBigInt: null,

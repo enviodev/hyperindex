@@ -14,14 +14,19 @@ type parsed = {
   // `~registerHandlers`. Readable from a test body: the module is imported while
   // vitest collects the suite, so nothing at module scope can see them yet.
   registrations: unit => HandlerRegister.registrationsByChainId,
+  // Where `fromSubgraph` wrote the project.
+  workspace: option<string>,
 }
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
+@module("node:fs") external chmodSync: (string, int) => unit = "chmodSync"
+@module("node:fs") external rmSync: (string, {..}) => unit = "rmSync"
 @module("node:path") @variadic external pathJoin: array<string> => string = "join"
 @module("node:path") external pathDirname: string => string = "dirname"
 @module("node:url") external fileURLToPath: string => string = "fileURLToPath"
 @module("node:crypto") external randomUUID: unit => string = "randomUUID"
+@module("node:os") external osTmpdir: unit => string = "tmpdir"
 @val external importMetaUrl: string = "import.meta.url"
 
 // Vitest awaits a suite's callback while building the suite tree, so tests
@@ -103,6 +108,125 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 //
 // Note: `test`/`handlers` are ReScript template strings, so a literal `${` in
 // the source must be escaped.
+
+// Parses a subgraph project the way `envio dev` does inside one, with the
+// mappings written to disk so the manifest's `file:` paths resolve. `test` is
+// evaluated exactly as in `fromUserApi`.
+//
+// The project lives outside this repository, the way a user's does: inside
+// it, Node would resolve this package's own devDependencies from the mappings
+// and hide anything the runtime wrongly expects the project to install.
+//
+// `projectDir` puts the project in a subdirectory of a workspace, as a
+// monorepo package is; `mappings` are then written relative to the workspace.
+//
+// `fromProjectFiles` parses the project from disk the way `envio start` does
+// inside it — `.env`, a manifest it renders, ABIs read from `abis/` — and
+// `manifest`/`schema` go unused.
+let fromSubgraph = (
+  ~env=?,
+  ~files=?,
+  ~mappings=Dict.make(),
+  ~test=?,
+  ~projectDir=?,
+  ~fromProjectFiles=false,
+  // What `envio dev` sets: the runtime then type-checks with `graph build`.
+  ~isDev=false,
+  ~manifest,
+  ~schema,
+): parsed => {
+  let site = callSite()
+  let workspace = pathJoin([
+    osTmpdir(),
+    `envio-subgraph-${site->String.replaceRegExp(
+        /[^a-zA-Z0-9]+/g,
+        "-",
+      )}-${randomUUID()->String.slice(~start=0, ~end=8)}`,
+  ])
+  let root = switch projectDir {
+  | Some(dir) => pathJoin([workspace, dir])
+  | None => workspace
+  }
+  mkdirSync(root, {"recursive": true})
+  mappings->Dict.forEachWithKey((source, relativePath) => {
+    let dest = pathJoin([workspace, relativePath])
+    mkdirSync(pathDirname(dest), {"recursive": true})
+    writeFileSync(dest, source)
+
+    // A package manager links bins executable.
+    if relativePath->String.includes("node_modules/.bin/") {
+      chmodSync(dest, 0o755)
+    }
+  })
+
+  let removeWorkspace = () => rmSync(workspace, {"recursive": true, "force": true})
+  let configJson = try {
+    if fromProjectFiles {
+      Core.getConfigJson(~directory=root)
+    } else {
+      Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root).config
+    }
+  } catch {
+  | exn =>
+    removeWorkspace()
+    throw(exn)
+  }
+  // The mappings are loaded from the workspace only once a test creates an
+  // indexer; a parse-only fixture is done with it already.
+  switch test {
+  | None => removeWorkspace()
+  | Some(_) => Vitest.afterAll(removeWorkspace)
+  }
+  let publicConfigJson = switch configJson->JSON.parseOrThrow {
+  | Object(fields) if isDev =>
+    let fields = fields->Dict.copy
+    fields->Dict.set("isDev", JSON.Boolean(true))
+    JSON.Object(fields)
+  | json => json
+  }
+  let config = Config.fromPublic(publicConfigJson)
+
+  let registrations = () =>
+    JsError.throwWithMessage(
+      "fromSubgraph does not expose registrations this way. Mappings are registered by createTestIndexer via registerAllHandlers.",
+    )
+
+  switch test {
+  | None => ()
+  | Some(test) =>
+    let suiteName = `subgraphTest(${site})`
+    let setup = try {
+      claimProcess(~site)
+      Config.prime(publicConfigJson)
+      HandlerRegister.startRegistration(~logger=Logger.makeInMemory(), ~config)
+      mkdirSync(tmpDir, {"recursive": true})
+      Ok(writeModule(~kind="test", ~site, ~source=test))
+    } catch {
+    | exn => Error(exn)
+    }
+
+    switch setup {
+    | Ok(testFile) =>
+      let collected = ref(false)
+      // The mappings are registered by `createTestIndexer` itself, through the
+      // same `registerAllHandlers` path production uses.
+      describeAsync(suiteName, async () => {
+        await importModule(testFile)
+        collected := true
+      })
+      Vitest.it(`${suiteName} collected`, t =>
+        t.expect(
+          collected.contents,
+          ~message="test module was not imported during collection",
+        ).toBe(true)
+      )
+    | Error(exn) => Vitest.it(`${suiteName} setup`, _ => throw(exn))
+    }
+  }
+
+  {config, registrations, workspace: Some(workspace)}
+}
+
 let fromUserApi = (
   ~schema=?,
   ~env=?,
@@ -243,7 +367,7 @@ let fromUserApi = (
     }
   }
 
-  {config, registrations}
+  {config, registrations, workspace: None}
 }
 
 // The message a config the parser should reject failed with. Returns a

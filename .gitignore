@@ -11,6 +11,9 @@ node_modules
 
 #All generated code for scenarios
 scenarios/**/generated
+# Checked in on purpose: it is real `graph codegen` output from a pinned
+# graph-cli, and the mappings run against exactly those bytes.
+!scenarios/subgraph_test/generated
 scenarios/**/*.bs.js
 scenarios/**/*.res.js
 scenarios/**/*.res.mjs

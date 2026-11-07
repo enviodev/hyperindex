@@ -23,10 +23,7 @@ mod nested_params {
         ///Gets a named parameter or constructs a name using the parameter's index
         ///if the param is nameless
         fn get_param_name(&self) -> String {
-            match &self.event_param.name {
-                name if name.is_empty() => format!("_{}", self.event_param_pos),
-                name => name.clone(),
-            }
+            crate::evm::abi::event_param_key(&self.event_param.name, self.event_param_pos)
         }
 
         ///Key to use for the generated entity column. Same as the event param

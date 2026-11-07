@@ -148,6 +148,7 @@ pub struct InitializeInput {
     pub envio_info: String,
     pub contract_names: Vec<String>,
     pub addresses: AddressesInput,
+    pub kept_effect_caches: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -600,6 +601,7 @@ impl JsStorage {
             envio_info: input.envio_info,
             contract_names: input.contract_names,
             addresses: addresses(input.addresses)?,
+            kept_effect_caches: input.kept_effect_caches.unwrap_or_default(),
         };
         self.inner.initialize(input).await.map_err(to_napi)
     }
