@@ -749,20 +749,9 @@ const REGISTER_CACHE_LIMIT = 20_000;
  */
 const registerInFlight = new Map<string, Promise<unknown>>();
 
-/**
- * What the finished register passes cost in host ops (contract calls, balances,
- * block lookups) each. `ChainFetching` reads it to decide how many register
- * passes one fetched response may hold: a pass that makes no call needs no
- * limit, a pass that makes a dozen is what keeps a response from committing.
- * Unknown (undefined) until enough passes have finished to say.
- */
-const registerCost = { hostOps: 0, passes: 0 };
-const REGISTER_COST_MIN_PASSES = 20;
 // ChainFetching reports each chain's lowest partition frontier after every
 // response it applies; the register store keeps the versions above it.
 (globalThis as any).__envioSubgraphRegisterFrontier = setRegisterFrontier;
-(globalThis as any).__envioSubgraphRegisterCostPerItem = () =>
-  registerCost.passes < REGISTER_COST_MIN_PASSES ? undefined : registerCost.hostOps / registerCost.passes;
 
 async function runRegisterHost(effect: Effect, input: unknown, chainId: number): Promise<unknown> {
   // A resync after `envio start -r` keeps the stored call answers; the handler
@@ -817,7 +806,6 @@ function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
   scope.awaiting = awaiting;
   let flight = registerInFlight.get(key);
   if (!flight) {
-    registerCost.hostOps++;
     const started = runRegisterHost(effect, input, scope.dataSource.chainId);
     flight = started;
     registerInFlight.set(key, started);
@@ -896,7 +884,6 @@ function startRegisterPass(chainId: number, position: number): { pass: RegisterP
       if (remaining.length === 0) missers.delete(key);
       else missers.set(key, remaining);
     }
-    registerCost.passes++;
     resolve();
   };
   return { pass, settle };

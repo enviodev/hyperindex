@@ -255,82 +255,12 @@ let runResponsePassesOrThrow = async (
   (registrations->sortRegistrations, passedThrough.contents)
 }
 
-// A subgraph's register pass for one event can cost a dozen contract calls, and
-// a response is applied only when every pass of it is done: a 5,000-event
-// response of PairCreated made PancakeSwap v2 wait for ~15,000 calls before it
-// committed anything. A response with more register passes than the calls can
-// answer promptly is cut after a block and the rest fetched again; HyperSync
-// answers that far faster than the RPC does. The runtime reports the calls its
-// finished passes made (`__envioSubgraphRegisterCostPerItem`); until it has
-// seen enough passes the cost is assumed to be high, and a run whose passes
-// make no calls is never cut.
-let registerCallsPerItem: unit => option<float> = %raw(`() => {
-  const cost = globalThis.__envioSubgraphRegisterCostPerItem
-  const value = cost ? cost() : undefined
-  return value === undefined ? undefined : value
-}`)
-
 // A subgraph's register store keeps an entity's past versions for the passes
 // still to read them, and none starts below the lowest partition frontier.
 let reportRegisterFrontier: (int, int) => unit = %raw(`(chainId, block) => {
   const report = globalThis.__envioSubgraphRegisterFrontier
   if (report) report(chainId, block)
 }`)
-
-let registerCallsPerChunk = 3000.
-let unknownCostChunk = 100
-let minRegisterChunk = 100
-
-let registerChunkLimit = () =>
-  if !Env.subgraphMode.contents {
-    None
-  } else {
-    switch Env.subgraphRegisterChunk {
-    | Some(limit) => limit > 0 ? Some(limit) : None
-    | None =>
-      switch registerCallsPerItem() {
-      | None => Some(unknownCostChunk)
-      | Some(cost) if cost < 0.5 => None
-      | Some(cost) =>
-        Some(Pervasives.max(minRegisterChunk, (registerCallsPerChunk /. cost)->Float.toInt))
-      }
-    }
-  }
-
-// The items and last block of `response` up to the block holding the `limit`th
-// item that has a register pass. Whole blocks only: a block's items are never
-// split between two responses.
-let cutAtRegisterLimit = (items: array<Internal.item>, ~latestFetchedBlock, ~limit) => {
-  let seen = ref(0)
-  let cutIdx = ref(-1)
-  let idx = ref(0)
-  while cutIdx.contents < 0 && idx.contents < items->Array.length {
-    if items->Array.getUnsafe(idx.contents)->hasContractRegister {
-      seen := seen.contents + 1
-      if seen.contents >= limit {
-        cutIdx := idx.contents
-      }
-    }
-    idx := idx.contents + 1
-  }
-  if cutIdx.contents < 0 {
-    (items, latestFetchedBlock)
-  } else {
-    let cutBlock = items->Array.getUnsafe(cutIdx.contents)->Internal.getItemBlockNumber
-    let last = ref(cutIdx.contents)
-    while (
-      last.contents + 1 < items->Array.length &&
-        items->Array.getUnsafe(last.contents + 1)->Internal.getItemBlockNumber <= cutBlock
-    ) {
-      last := last.contents + 1
-    }
-    if last.contents + 1 >= items->Array.length && cutBlock >= latestFetchedBlock {
-      (items, latestFetchedBlock)
-    } else {
-      (items->Array.slice(~start=0, ~end=last.contents + 1), cutBlock)
-    }
-  }
-}
 
 let rec onQueryResponse = async (
   state: IndexerState.t,
@@ -353,11 +283,6 @@ let rec onQueryResponse = async (
       stats,
       knownHeight,
     } = response
-    let (parsedQueueItems, latestFetchedBlockNumber) = switch registerChunkLimit() {
-    | Some(limit) =>
-      parsedQueueItems->cutAtRegisterLimit(~latestFetchedBlock=latestFetchedBlockNumber, ~limit)
-    | None => (parsedQueueItems, latestFetchedBlockNumber)
-    }
 
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
@@ -571,8 +496,8 @@ let rec onQueryResponse = async (
         }
       | [] => proceed(~newRegistrations=[])
       | _ =>
-        // A subgraph's register passes run in chunks, long enough for the pool
-        // to admit queries on top of a response it doesn't count yet.
+        // A subgraph's register passes take long enough for the pool to admit
+        // queries on top of a response it doesn't count yet.
         let held = Env.subgraphMode.contents
           ? Some(
               chainState->ChainState.holdExtraBudget(

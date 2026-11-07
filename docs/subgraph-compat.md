@@ -294,11 +294,7 @@ register store. Concurrent passes share one in-flight request per op.
 At most `ENVIO_SUBGRAPH_REGISTER_CONCURRENCY` passes (default 256) run at
 once, the lowest position first; the rest wait in a queue, which is also the
 back-pressure on fetching. A response is applied only once every pass in it is
-done, so one whose passes would make more contract calls than the endpoint
-answers promptly (about 3,000, from what finished passes cost, and at least 100
-events) is cut after a block and the rest fetched again; a run whose passes
-make no calls is never cut. `ENVIO_SUBGRAPH_REGISTER_CHUNK` fixes the number of
-events with a pass a response may hold; 0 turns the cut off.
+done, as envio applies one once its `contractRegister` handlers are.
 
 **Block handlers' register pass.** graph-node creates a data source from any
 handler, a block handler's included, and runs it for the rest of its creation
@@ -666,7 +662,6 @@ concurrency and batching. envio's other knobs (`hypersync_config.url`,
 | Events per batch | `ENVIO_SUBGRAPH_BATCH_SIZE` | optional; default envio's 5,000, or 500 when a mapping calls contracts: a batch commits only once every call in it is answered, and a smaller one commits sooner at no cost in calls |
 | Block handler header lag | `ENVIO_SUBGRAPH_BLOCK_LAG` | optional; on a chain where a template's block handler or a block handler's register pass reads header fields, default the chain's reorg depth (200 where envio has no figure, §2); 0 turns it off |
 | Register passes at once | `ENVIO_SUBGRAPH_REGISTER_CONCURRENCY` | optional, default 256 (§4) |
-| Register passes per response | `ENVIO_SUBGRAPH_REGISTER_CHUNK` | optional; unset, it follows what the passes cost (§4); 0 turns the cut off |
 | Stable calls at every block | `ENVIO_SUBGRAPH_EXACT_CALLS=1` | asks `name`, `symbol`, `decimals` and the like at every block instead of reusing their first non-empty answer (§4) |
 | Fetch cache | `ENVIO_SUBGRAPH_CACHE_DIR` | optional, default `$XDG_CACHE_HOME/envio/subgraph` or `~/.cache/envio/subgraph`: where the graph-cli and packages envio fetches go (§6a) |
 | Replay stress | `ENVIO_SUBGRAPH_SKIP_PRELOAD=1` | for testing: skips the preload pass, so every read misses and each mapping replays as often as it can; the store must come out the same (CI runs the subgraph suite this way) |

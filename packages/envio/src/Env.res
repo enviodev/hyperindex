@@ -15,11 +15,6 @@ let subgraphMode = ref(false)
 // event can create a data source, so none holds a register pass.
 let subgraphHasTemplates = ref(false)
 
-// Most events with a register pass one subgraph response may hold before it is
-// cut after a block and the rest fetched again. 0 turns the cut off; unset, it
-// follows what the register passes cost (ChainFetching).
-let subgraphRegisterChunk = envSafe->EnvSafe.get("ENVIO_SUBGRAPH_REGISTER_CHUNK", S.option(S.int))
-
 // How many items ahead of the one executing a subgraph handler is preloaded
 // again once an entity it read as absent is created (PreloadLookahead). 0 = off.
 let subgraphPreloadLookahead =
