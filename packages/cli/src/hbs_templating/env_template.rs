@@ -4,6 +4,7 @@ use std::{
     path::Path,
 };
 
+/// Preserves existing settings and nonempty tokens when scaffolding `.env`.
 pub fn write(path: impl AsRef<Path>, token: &Option<String>) -> io::Result<()> {
     let path = path.as_ref();
     match OpenOptions::new().write(true).create_new(true).open(path) {
