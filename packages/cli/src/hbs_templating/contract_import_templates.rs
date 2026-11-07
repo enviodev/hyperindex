@@ -1020,13 +1020,10 @@ impl AutoSchemaHandlerTemplate {
             self.render_schema_graphql(),
         )
         .context("Failed writing schema.graphql")?;
-        fs::write(project_root.join(".env"), self.render_env()).context("Failed writing .env")?;
+        env_template::write(project_root.join(".env"), &self.envio_api_token)
+            .context("Failed writing .env")?;
 
         Ok(())
-    }
-
-    fn render_env(&self) -> String {
-        env_template::render(&self.envio_api_token)
     }
 
     fn render_schema_graphql(&self) -> String {
