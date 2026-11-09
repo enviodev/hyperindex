@@ -1,0 +1,52 @@
+name: Redeploy envio.dev changelog
+
+# envio.dev/changelog is built from this repo's GitHub Releases at build time
+# (scripts/sync-releases.ts in enviodev/ui), so a new release only shows up
+# after envio.dev rebuilds. This triggers that rebuild through a Vercel deploy
+# hook on the envio.dev project.
+
+on:
+  release:
+    types: [published]
+  # Manual re-run, for example after editing a release's notes.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    # The changelog lists stable vX.Y.Z releases only, so skip drafts,
+    # prereleases and tags such as v3.0.0-rc.1.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.release.draft == false &&
+       github.event.release.prerelease == false)
+    steps:
+      - name: Check tag
+        id: tag
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$TAG is not a stable vX.Y.Z tag; skipping"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger envio.dev production deploy
+        if: github.event_name == 'workflow_dispatch' || steps.tag.outputs.deploy == 'true'
+        env:
+          HOOK_URL: ${{ secrets.ENVIO_DEV_VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [[ -z "$HOOK_URL" ]]; then
+            echo "::error::ENVIO_DEV_VERCEL_DEPLOY_HOOK secret is not set"
+            exit 1
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-delay 10 \
+            -X POST "$HOOK_URL"
+          echo
+          echo "envio.dev redeploy triggered"
