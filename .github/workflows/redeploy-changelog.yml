@@ -5,10 +5,9 @@ name: Redeploy envio.dev changelog
 
 on:
   release:
-    # Unlike "published", also fires when a prerelease is promoted to a full
-    # release, and never fires for prereleases.
-    types: [released]
-  # Manual re-run, for example after editing a release's notes.
+    # "released" (unlike "published") also fires when a prerelease is promoted
+    # to a full release. "edited" picks up release-note fixes.
+    types: [released, edited]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +16,7 @@ permissions:
 jobs:
   redeploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       # Match the tags the changelog lists, so rc and other suffixed tags skip.
       - name: Check tag
@@ -24,8 +24,12 @@ jobs:
         if: github.event_name == 'release'
         env:
           TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          if [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            echo "$TAG is a prerelease; skipping"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "$TAG is not a stable vX.Y.Z tag; skipping"
@@ -41,7 +45,7 @@ jobs:
             echo "::error::ENVIO_DEV_VERCEL_DEPLOY_HOOK secret is not set"
             exit 1
           fi
-          curl --fail --silent --show-error --retry 3 --retry-delay 10 \
-            -X POST "$HOOK_URL"
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            --retry 3 --retry-delay 10 -X POST "$HOOK_URL"
           echo
           echo "envio.dev redeploy triggered"
