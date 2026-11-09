@@ -2150,6 +2150,7 @@ dependencies = [
  "subenum",
  "tar",
  "tempdir",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-postgres",
