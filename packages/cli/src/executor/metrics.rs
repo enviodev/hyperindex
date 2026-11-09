@@ -63,8 +63,14 @@ mod test {
 
     #[test]
     fn reads_the_port_from_the_project_dotenv() {
-        let project = project_with_env("ENVIO_INDEXER_PORT=9899\n");
-        assert_eq!(resolve_port(project.path()).unwrap(), 9899);
+        for contents in [
+            "ENVIO_INDEXER_PORT=9899\n",
+            "INVALID LINE\nENVIO_INDEXER_PORT=9899\n",
+            "ENVIO_INDEXER_PORT=9899\nINVALID LINE\n",
+        ] {
+            let project = project_with_env(contents);
+            assert_eq!(resolve_port(project.path()).unwrap(), 9899);
+        }
     }
 
     #[test]
