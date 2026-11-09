@@ -6,7 +6,7 @@ use std::{
 
 /// Resolves environment variables the way the indexer runtime does: the process
 /// environment wins, and anything unset there falls back to the project's
-/// `.env`. The file is read at most once, on the first miss.
+/// `.env`. The file values are cached on the first miss.
 #[derive(Debug)]
 pub struct ProjectEnv {
     dotenv: OnceCell<EnvMap>,
@@ -27,7 +27,14 @@ impl ProjectEnv {
         }
         self.dotenv
             .get_or_init(|| {
-                match dotenv::from_path_ignoring_invalid_lines(self.project_root.join(".env")) {
+                let path = self.project_root.join(".env");
+                let values = dotenv::from_path(&path).or_else(|err| match err {
+                    dotenv::Error::LineParse(_, _) => {
+                        dotenv::from_path_ignoring_invalid_lines(&path)
+                    }
+                    err => Err(err),
+                });
+                match values {
                     Ok(env_map) => env_map,
                     Err(err) => {
                         match err {
