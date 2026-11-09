@@ -63,6 +63,29 @@ mod test {
 
     #[test]
     fn reads_the_port_from_the_project_dotenv() {
+        if std::env::var_os("ENVIO_METRICS_PORT_TEST_CHILD").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "executor::metrics::test::reads_the_port_from_the_project_dotenv",
+                    "--nocapture",
+                ])
+                .env("ENVIO_METRICS_PORT_TEST_CHILD", "1")
+                .env_remove("ENVIO_INDEXER_PORT")
+                .output()
+                .unwrap();
+            assert_eq!(
+                (
+                    output.status.success(),
+                    String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"),
+                ),
+                (true, true),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
         for contents in [
             "ENVIO_INDEXER_PORT=9899\n",
             "INVALID LINE\nENVIO_INDEXER_PORT=9899\n",

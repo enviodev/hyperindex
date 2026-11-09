@@ -30,6 +30,7 @@ impl ProjectEnv {
                 let path = self.project_root.join(".env");
                 let values = dotenv::from_path(&path).or_else(|err| match err {
                     dotenv::Error::LineParse(_, _) => {
+                        eprintln!("Warning: Ignoring invalid entries in .env");
                         dotenv::from_path_ignoring_invalid_lines(&path)
                     }
                     err => Err(err),
@@ -55,15 +56,43 @@ impl ProjectEnv {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn preserves_settings_around_invalid_lines() {
+        let Ok(contents) = std::env::var("ENVIO_PROJECT_ENV_TEST_CONTENTS") else {
+            for (contents, warning) in [
+                ("PROJECT_ENV_BEFORE=before\nPROJECT_ENV_AFTER=after\n", ""),
+                (
+                    "PROJECT_ENV_BEFORE=before\nINVALID LINE\nPROJECT_ENV_AFTER=after\n",
+                    "Warning: Ignoring invalid entries in .env\n",
+                ),
+            ] {
+                let output = Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "utils::project_env::test::preserves_settings_around_invalid_lines",
+                        "--nocapture",
+                    ])
+                    .env("ENVIO_PROJECT_ENV_TEST_CONTENTS", contents)
+                    .env_remove("PROJECT_ENV_BEFORE")
+                    .env_remove("PROJECT_ENV_AFTER")
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    (
+                        output.status.success(),
+                        String::from_utf8_lossy(&output.stderr)
+                    ),
+                    (true, warning.into()),
+                    "{}",
+                    String::from_utf8_lossy(&output.stdout),
+                );
+            }
+            return;
+        };
         let project = tempdir::TempDir::new("project_env").unwrap();
-        std::fs::write(
-            project.path().join(".env"),
-            "PROJECT_ENV_BEFORE=before\nINVALID LINE\nPROJECT_ENV_AFTER=after\n",
-        )
-        .unwrap();
+        std::fs::write(project.path().join(".env"), contents).unwrap();
         let env = ProjectEnv::new(project.path());
         assert_eq!(
             (env.var("PROJECT_ENV_BEFORE"), env.var("PROJECT_ENV_AFTER")),
