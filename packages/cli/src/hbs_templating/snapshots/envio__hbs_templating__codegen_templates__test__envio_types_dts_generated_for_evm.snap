@@ -16,7 +16,7 @@ import type { Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex } from
  * `field_selection` in config.yaml to make it available. */
 type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
 
-type EvmBlock = {
+type $EvmBlockShape = {
   /** The number field. */
   readonly number: number;
   /** The timestamp field. */
@@ -288,6 +288,7 @@ type EvmBlock = {
    */
   readonly mixHash: FieldNotSelected<"Field 'mixHash' is not selected for the '<EventName>' event. Add it under field_selection.block_fields in config.yaml.">;
 };
+type EvmBlock = $EvmBlockShape;
 type EvmTransaction = {
   /**
    * @deprecated Not selected for this event. To enable, add to config.yaml:
@@ -680,7 +681,7 @@ declare module "envio" {
       /** The parameters or arguments associated with this event. */
       readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
       /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-      readonly block: EvmBlock;
+      readonly block: $EvmBlockShape;
       /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
       readonly transaction: EvmTransaction;
       /** The index of this event's log within the block. */
@@ -698,7 +699,7 @@ declare module "envio" {
       /** The parameters or arguments associated with this event. */
       readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
       /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-      readonly block: EvmBlock;
+      readonly block: $EvmBlockShape;
       /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
       readonly transaction: EvmTransaction;
       /** The index of this event's log within the block. */
