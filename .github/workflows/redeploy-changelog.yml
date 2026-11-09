@@ -1,13 +1,13 @@
 name: Redeploy envio.dev changelog
 
-# envio.dev/changelog is built from this repo's GitHub Releases at build time
-# (scripts/sync-releases.ts in enviodev/ui), so a new release only shows up
-# after envio.dev rebuilds. This triggers that rebuild through a Vercel deploy
-# hook on the envio.dev project.
+# envio.dev/changelog reads this repo's releases only at build time
+# (scripts/sync-releases.ts in enviodev/ui), so each release needs a rebuild.
 
 on:
   release:
-    types: [published]
+    # Unlike "published", also fires when a prerelease is promoted to a full
+    # release, and never fires for prereleases.
+    types: [released]
   # Manual re-run, for example after editing a release's notes.
   workflow_dispatch:
 
@@ -17,13 +17,8 @@ permissions:
 jobs:
   redeploy:
     runs-on: ubuntu-latest
-    # The changelog lists stable vX.Y.Z releases only, so skip drafts,
-    # prereleases and tags such as v3.0.0-rc.1.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.release.draft == false &&
-       github.event.release.prerelease == false)
     steps:
+      # Match the tags the changelog lists, so rc and other suffixed tags skip.
       - name: Check tag
         id: tag
         if: github.event_name == 'release'
