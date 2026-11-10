@@ -403,7 +403,7 @@ impl EventMod {
         };
 
         // ReScript block/transaction types only include selected fields
-        // (deprecated FieldNotSelected fields only in TypeScript EvmBlock/EvmTransaction)
+        // (deprecated FieldNotSelected fields only in TypeScript EvmBlockShape/EvmTransaction)
         let (block_type, transaction_type) =
             match (&self.custom_field_selection, &self.all_ecosystem_fields) {
                 (Some(ref custom_fs), Some(ref all_fields)) => {
@@ -1984,10 +1984,15 @@ type testIndexer = {{
         };
 
         // Generate envio.d.ts content. Two outputs:
-        //   - `lookup_tables`: file-level named types (`EvmBlock`, `Entities`,
-        //     etc.) that are shared across events / referenced by entity
-        //     fields. None of these names collide with `envio`'s exports or
-        //     internal generics, so no prefix is needed.
+        //   - `lookup_tables`: file-level named types (`$EvmBlockShape`,
+        //     `EvmTransaction`, `Entities`, etc.) that are shared across
+        //     events / referenced by entity fields. The block shape is named
+        //     `$EvmBlockShape`: `envio` exports a generic `EvmBlock`, so a bare
+        //     `EvmBlock` inside the `declare module "envio"` augmentation below
+        //     would bind to that export instead of the local alias (TS2314).
+        //     The `$` also keeps the name out of reach of generated entity
+        //     aliases, since a GraphQL name cannot contain `$`. A file-level
+        //     `EvmBlock` alias is still emitted for backwards compatibility.
         //   - body strings (`evm_chains_body`, `evm_contracts_body`, …):
         //     inlined directly into `Global.config` by
         //     `wrap_envio_module_augmentation`. Names that *would* collide
@@ -2051,7 +2056,11 @@ type testIndexer = {{
                         None,
                         "  ",
                     );
-                    parts.push(format!("type EvmBlock = {};", evm_block_type));
+                    parts.push(format!("type $EvmBlockShape = {};", evm_block_type));
+                    // Keep the name this used to be emitted as. It must not be referenced from
+                    // inside `declare module "envio"` (there it binds to envio's generic
+                    // `EvmBlock`); `$EvmBlockShape` is used for that instead.
+                    parts.push("type EvmBlock = $EvmBlockShape;".to_string());
                     let evm_tx_type = Self::generate_ts_all_fields_record(
                         &global_field_selection.transaction_fields,
                         &all_fs.transaction_fields,
@@ -2064,7 +2073,7 @@ type testIndexer = {{
             }
 
             // EVM contracts table (inlined). Uses inline chainId union and
-            // file-level `EvmBlock` / `EvmTransaction`.
+            // file-level `$EvmBlockShape` / `EvmTransaction`.
             let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 let all_evm = system_config::FieldSelection::all_evm();
                 let all_fields = FieldSelection::new(FieldSelectionOptions {
@@ -2083,7 +2092,7 @@ type testIndexer = {{
                                     event,
                                     &all_fields,
                                     &evm_chain_id_inline,
-                                    "EvmBlock",
+                                    "$EvmBlockShape",
                                     "EvmTransaction",
                                 )
                             })
@@ -2471,10 +2480,14 @@ type testIndexer = {{
     /// the generic types in `packages/envio/index.d.ts` resolve through the
     /// augmented `Global` interface.
     ///
-    /// File-level types (`EvmBlock`, `EvmTransaction`, `FuelBlock`,
+    /// File-level types (`$EvmBlockShape`, `EvmTransaction`, `FuelBlock`,
     /// `FuelTransaction`, `FuelTypes`, `Entities`, `Enums`) are emitted at
-    /// the host file's top level. Their names don't collide with anything
-    /// envio exports or uses internally as a generic. The per-ecosystem
+    /// the host file's top level. The block shape is named `$EvmBlockShape`
+    /// because envio exports a generic `EvmBlock` (a bare `EvmBlock` inside this
+    /// augmentation would bind to that export) and because `$` keeps it out of
+    /// reach of generated entity aliases; a file-level `EvmBlock` alias is still
+    /// emitted for backwards compatibility. The other names don't collide with
+    /// anything envio exports or uses internally as a generic. The per-ecosystem
     /// `chains` / `contracts` / `eventFilters` shapes are inlined directly
     /// into `Global.config` rather than named at file scope — naming them
     /// (e.g. `EvmContracts`) would shadow envio's internal generic
@@ -3145,7 +3158,7 @@ mod test {
             &event,
             &aggregated,
             "ChainId",
-            "EvmBlock",
+            "$EvmBlockShape",
             "EvmTransaction",
         );
         insta::assert_snapshot!(ts);
@@ -3308,6 +3321,47 @@ mod test {
     fn envio_types_dts_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
         insta::assert_snapshot!(project_template.envio_types_dts);
+    }
+
+    /// Regression test: a schema entity named like the generated block shape must not
+    /// shadow it inside `declare module "envio"`, while `EvmBlock` remains available.
+    #[test]
+    fn evm_block_shape_does_not_collide_with_entity_named_like_it() {
+        // A GraphQL entity cannot contain `$`, so the generated block shape uses a
+        // `$`-prefixed name that an entity alias can never shadow, even for an entity
+        // literally named `EvmBlockShape`. The old `EvmBlock` name stays as an alias.
+        let yaml = r#"
+name: block-shape-collision
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer()
+"#;
+        let schema = r#"
+type EvmBlockShape {
+  id: ID!
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("config should parse");
+        let types_dts = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .envio_types_dts;
+
+        assert!(types_dts.contains("type $EvmBlockShape = {"));
+        assert!(types_dts.contains("type EvmBlock = $EvmBlockShape;"));
+        assert!(types_dts.contains("readonly block: $EvmBlockShape;"));
+        assert!(!types_dts.contains("readonly block: EvmBlockShape;"));
+        // The entity is still represented in the generated Entities type.
+        assert!(types_dts.contains("\"EvmBlockShape\""));
     }
 
     #[test]
