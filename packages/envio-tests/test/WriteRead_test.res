@@ -81,6 +81,7 @@ type EntityWithAllTypes {
   arrayOfFloats: [Float!]!
   bool: Boolean!
   optBool: Boolean
+  arrayOfBools: [Boolean!]!
   bigInt: BigInt!
   optBigInt: BigInt
   arrayOfBigInts: [BigInt!]!
@@ -133,6 +134,7 @@ type entityWithAllTypes = {
   arrayOfFloats: array<float>,
   bool: bool,
   optBool: option<bool>,
+  arrayOfBools: array<bool>,
   bigInt: bigint,
   optBigInt: option<bigint>,
   arrayOfBigInts: array<bigint>,
@@ -256,6 +258,7 @@ describe("Write/read tests", () => {
         arrayOfFloats: [3.3, 4.4],
         bool: true,
         optBool: Some(false),
+        arrayOfBools: [true, false],
         bigInt: BigInt.fromInt(1),
         optBigInt: Some(BigInt.fromInt(2)),
         arrayOfBigInts: [BigInt.fromInt(3), BigInt.fromInt(4)],

@@ -22,6 +22,9 @@ type contractRegisterRun = {
   chainLogger: Logger.t,
   ecosystem: Ecosystem.t,
   registrations: array<AddressStore.registration>,
+  // Subgraph mode: the creation round the addresses it adds belong to (see
+  // `AddressStore.registration.creationRound`).
+  creationRound?: int,
 }
 
 // An effect call is shared by the runs that asked for it, so it is told by the

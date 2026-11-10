@@ -6,6 +6,7 @@
 //! an index actually covers.
 
 pub const BTREE: &str = "btree";
+pub const GIN: &str = "gin";
 
 use crate::storage::schema::Direction;
 
