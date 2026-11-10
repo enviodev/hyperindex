@@ -9,6 +9,10 @@ pub struct SvmClientConfig {
     pub url: String,
     pub api_token: Option<String>,
     pub http_req_timeout_millis: Option<i64>,
+    /// For a request near the head: heights, block hashes, and item queries
+    /// that say they are near it. Absent, `http_req_timeout_millis` applies to
+    /// those too.
+    pub near_head_req_timeout_millis: Option<i64>,
     /// Defaults to no retries — see the `From` impl.
     pub max_num_retries: Option<i64>,
     pub retry_base_ms: Option<i64>,
@@ -49,6 +53,7 @@ impl From<SvmClientConfig> for hypersync_client_solana::config::ClientConfig {
             // the request open while SourceManager's backoff, failover and TUI
             // throttling all sit idle. Surface the 429 instead.
             proactive_rate_limit_sleep: false,
+            enable_query_cache: default.enable_query_cache,
         }
     }
 }

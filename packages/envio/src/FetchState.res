@@ -3132,7 +3132,7 @@ let isFetchingAtHead = ({endBlock, knownHeight} as fetchState: t) => {
 // Counted in blocks whatever the chain's block time: the chain still fetches
 // block by block near the head, and an address-free query must never reach back
 // into a range a partition is still backfilling.
-let headClientFilteringDistance = 200
+let headClientFilteringDistance = 100
 
 // Every partition is within `headClientFilteringDistance` of the fetch target. A
 // chain with no head to follow never is: no known height yet, or an end block it

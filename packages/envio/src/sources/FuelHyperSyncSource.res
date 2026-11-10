@@ -9,10 +9,19 @@ type options = {
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
   logger: Logger.t,
+  requestTimeouts: Source.requestTimeouts,
 }
 
 let make = (
-  {chainId, endpointUrl, apiToken, onEventRegistrations, addressStore, logger}: options,
+  {
+    chainId,
+    endpointUrl,
+    apiToken,
+    onEventRegistrations,
+    addressStore,
+    logger,
+    requestTimeouts,
+  }: options,
 ): t => {
   let name = "HyperFuel"
 
@@ -26,7 +35,12 @@ let make = (
   let apiToken = apiToken->HyperSync.requireApiToken
 
   let client = switch FuelHyperSyncClient.make(
-    {url: endpointUrl, apiToken},
+    {
+      url: endpointUrl,
+      apiToken,
+      httpReqTimeoutMillis: requestTimeouts.backfillMillis,
+      nearHeadReqTimeoutMillis: requestTimeouts.nearHeadMillis,
+    },
     ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(
       onEventRegistrations,
     ),
@@ -43,6 +57,7 @@ let make = (
     ~addressSet,
     ~reorgableFrom as _,
     ~knownHeight,
+    ~isNearHead,
     ~partitionId as _,
     ~selection: FetchState.selection,
     ~itemsTarget as _,
@@ -59,6 +74,7 @@ let make = (
     let pageUnsafe = try await FuelHyperSync.GetLogs.query(
       ~client,
       ~fromBlock,
+      ~isNearHead,
       ~toBlock,
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
       ~addressSet,
@@ -217,6 +233,7 @@ let make = (
     chainId,
     getBlockHashes,
     pollingInterval: HyperSync.pollingInterval,
+    requestTimeouts,
     poweredByHyperSync: true,
     getHeightOrThrow: async () => {
       let timerRef = Performance.now()

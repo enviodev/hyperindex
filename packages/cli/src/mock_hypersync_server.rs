@@ -262,6 +262,14 @@ async fn answer_query(
             state.height,
         )
     };
+    // A slow server, for a client giving up on it.
+    if let Some(millis) = spec
+        .as_ref()
+        .and_then(|spec| spec.get("delayMillis"))
+        .and_then(Value::as_u64)
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(millis)).await;
+    }
     // A spec carrying a status answers at the HTTP level instead of with a
     // page: rate limiting and payload-too-large are statuses the client acts on.
     if let Some(raw) = spec.as_ref().and_then(raw_reply) {

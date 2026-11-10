@@ -202,6 +202,26 @@ let downReasonLabel = reason =>
 // message, or the frame nobody could read.
 type heightSubscriptionStatus = Live | Down({reason: heightSubscriptionDownReason, detail?: string})
 
+// How long a source waits on one request. A chain near its head reads a block
+// or a few at a time, and polls for the next height: an answer that slow is a
+// stalled provider, better retried. Further back a request covers a large
+// range, and a slow answer is still worth the wait. A timeout the user
+// configured applies to both.
+type requestTimeouts = {
+  nearHeadMillis: int,
+  backfillMillis: int,
+}
+
+// HyperSync and HyperFuel servers cap how long one answer may take and return
+// what they have, so a minute without an answer is a hung connection.
+let hyperSyncBackfillTimeoutMillis = 60_000
+
+let makeRequestTimeouts = (~configuredMillis, ~backfillMillis) =>
+  switch configuredMillis {
+  | Some(millis) => {nearHeadMillis: millis, backfillMillis: millis}
+  | None => {nearHeadMillis: 20_000, backfillMillis}
+  }
+
 type t = {
   name: string,
   sourceFor: sourceFor,
@@ -211,6 +231,9 @@ type t = {
   pollingInterval: int,
   getBlockHashes: (~blockNumbers: array<int>, ~logger: Logger.t) => promise<getBlockHashesResponse>,
   getHeightOrThrow: unit => promise<getHeightResponse>,
+  // A height poll is given up on after `nearHeadMillis`: a chain only polls
+  // while it waits at its head.
+  requestTimeouts: requestTimeouts,
   getItemsOrThrow: (
     ~fromBlock: int,
     ~toBlock: option<int>,
@@ -226,6 +249,8 @@ type t = {
     // to provide it. None when every block of the range is final.
     ~reorgableFrom: option<int>,
     ~knownHeight: int,
+    // Picks the request timeout: see `requestTimeouts`.
+    ~isNearHead: bool,
     ~partitionId: string,
     ~selection: FetchState.selection,
     // Soft cap on the number of primary items (logs/instructions/receipts) the

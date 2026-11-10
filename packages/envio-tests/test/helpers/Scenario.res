@@ -46,6 +46,8 @@ type sourceMock = {
   // Answers for the first height calls, ahead of `autoHeight`, for a startup
   // height call that has to fail first.
   startupHeights?: array<MockSource.startupHeight>,
+  // How long a height poll may go unanswered before the manager gives up on it.
+  nearHeadRequestTimeoutMillis?: int,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -222,7 +224,16 @@ let run = async (
   let virtualTime = virtualTime->Option.getOr(scenario.virtualTime)
   let clock = virtualTime ? Some(VirtualClock.make()) : None
   let mocks = sources->Array.mapWithIndex((
-    {chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard, ?autoHeight, ?startupHeights},
+    {
+      chain,
+      ?methods,
+      ?sourceFor,
+      ?pollingInterval,
+      ?isWildcard,
+      ?autoHeight,
+      ?startupHeights,
+      ?nearHeadRequestTimeoutMillis,
+    },
     position,
   ) => {
     // Named the way the body reaches it, so a timeline line points at the
@@ -247,6 +258,7 @@ let run = async (
         ~isWildcard?,
         ~autoHeight?,
         ~startupHeights?,
+        ~nearHeadRequestTimeoutMillis?,
         ~label=?sharesChain ? Some(name) : None,
         ~note=?clock->Option.map(clock => event => clock->VirtualClock.note(`${name}: ${event}`)),
         ~virtualTime,

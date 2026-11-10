@@ -77,7 +77,7 @@ let makeSource = (~url) => {
       Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
     ),
     apiToken: Some(MockHyperSyncServer.apiToken),
-    clientTimeoutMillis: 10_000,
+    requestTimeouts: {nearHeadMillis: 10_000, backfillMillis: 10_000},
     lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
@@ -99,6 +99,7 @@ let fetch = (source: Source.t, ~addressSet) =>
     ~toBlock=Some(10),
     ~addressSet,
     ~knownHeight=100,
+    ~isNearHead=false,
     ~partitionId="mock-partition",
     ~selection={
       dependsOnAddresses: true,

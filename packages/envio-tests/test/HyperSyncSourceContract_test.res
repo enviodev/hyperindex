@@ -81,7 +81,11 @@ let onEventRegistrations = () => {
   )
 }
 
-let makeSource = (~url, ~lowercaseAddresses=true) => {
+let makeSource = (
+  ~url,
+  ~lowercaseAddresses=true,
+  ~requestTimeouts: Source.requestTimeouts={nearHeadMillis: 10_000, backfillMillis: 10_000},
+) => {
   let addressStore = TestAddresses.storeOf(
     ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
     ~addresses=[
@@ -97,7 +101,7 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
     endpointUrl: url,
     onEventRegistrations: onEventRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
-    clientTimeoutMillis: 10_000,
+    requestTimeouts,
     lowercaseAddresses,
     serializationFormat: Json,
     enableQueryCaching: false,
@@ -114,6 +118,7 @@ let fetch = (
   ~fromBlock=10,
   ~toBlock=Some(11),
   ~reorgableFrom=None,
+  ~isNearHead=false,
 ) =>
   source.getItemsOrThrow(
     ~fromBlock,
@@ -121,6 +126,7 @@ let fetch = (
     ~addressSet,
     ~reorgableFrom,
     ~knownHeight=100,
+    ~isNearHead,
     ~partitionId="mock-partition",
     ~selection={
       dependsOnAddresses: true,
@@ -563,6 +569,36 @@ let attempt = async body =>
   }
 
 describe("HyperSync source responses", () => {
+  Async.it("gives up on a slow query sooner near the head than in backfill", async t => {
+    let result = await MockHyperSyncServer.withServer(
+      ~height=100,
+      async server => {
+        let (source, addressSet) = makeSource(
+          ~url=server->MockHyperSyncServer.url,
+          ~requestTimeouts={nearHeadMillis: 200, backfillMillis: 2_000},
+        )
+        // Each answer takes 400ms: past the near-head timeout, inside the
+        // backfill one.
+        server->MockHyperSyncServer.pushResponse({delayMillis: 400})
+        server->MockHyperSyncServer.pushResponse({delayMillis: 400})
+        let fetched = async (~isNearHead) =>
+          await attempt(
+            async () => {
+              let _ = await source->fetch(~addressSet, ~isNearHead)
+              "fetched"
+            },
+          )
+        let backfill = await fetched(~isNearHead=false)
+        let nearHead = await fetched(~isNearHead=true)
+        (backfill, nearHead)
+      },
+    )
+    t.expect(result).toEqual((
+      "ok:fetched",
+      "backoff:Unexpected issue while fetching events from HyperSync client. Attempt a retry.",
+    ))
+  })
+
   Async.it("maps a rate-limited response to the wait the manager retries on", async t => {
     let result = await MockHyperSyncServer.withServer(
       ~height=100,

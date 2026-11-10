@@ -154,6 +154,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
       ~contractName=registration.eventConfig.contractName,
     ),
     ~knownHeight,
+    ~isNearHead=false,
     ~partitionId="0",
     ~selection={
       dependsOnAddresses: true,

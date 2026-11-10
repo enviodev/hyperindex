@@ -796,6 +796,7 @@ describe("MockSource waits for a burst to fully arrive", () => {
         ~addressSet=TestAddresses.setOf([]),
         ~reorgableFrom=None,
         ~knownHeight=100,
+        ~isNearHead=false,
         ~partitionId,
         ~selection=FetchState.makeSelection(~dependsOnAddresses=false, ~onEventRegistrations=[]),
         ~itemsTarget=None,

@@ -18,7 +18,12 @@ let getSyncConfig = (
     ?pollingInterval,
   }: Config.sourceSyncOptions,
 ): Config.sourceSync => {
-  let queryTimeoutMillis = queryTimeoutMillis->Option.getOr(20_000)
+  // RPC's block range already shrinks after a timeout, so waiting longer than
+  // 30s on a backfill read mostly delays that.
+  let {nearHeadMillis, backfillMillis} = Source.makeRequestTimeouts(
+    ~configuredMillis=queryTimeoutMillis,
+    ~backfillMillis=30_000,
+  )
   {
     initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getOr(
       initialBlockInterval->Option.getOr(10_000),
@@ -33,8 +38,9 @@ let getSyncConfig = (
       intervalCeiling->Option.getOr(10_000),
     ),
     backoffMillis: backoffMillis->Option.getOr(2000),
-    queryTimeoutMillis,
-    fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
+    backfillQueryTimeoutMillis: backfillMillis,
+    nearHeadQueryTimeoutMillis: nearHeadMillis,
+    fallbackStallTimeout: fallbackStallTimeout->Option.getOr(backfillMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),
   }
 }
@@ -60,7 +66,10 @@ let makeSources = (
         onEventRegistrations,
         onBlockRegistrations,
         apiToken: Env.envioApiToken,
-        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        requestTimeouts: Source.makeRequestTimeouts(
+          ~configuredMillis=Env.hyperSyncClientTimeoutMillis,
+          ~backfillMillis=Source.hyperSyncBackfillTimeoutMillis,
+        ),
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,

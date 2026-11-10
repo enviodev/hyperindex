@@ -3,6 +3,9 @@ type t
 type cfg = {
   url: string,
   apiToken: string,
+  httpReqTimeoutMillis?: int,
+  // For a request near the head, in place of `httpReqTimeoutMillis`.
+  nearHeadReqTimeoutMillis?: int,
 }
 
 module Registration = {
@@ -64,6 +67,8 @@ module EventItems = {
   // selection, and routing are derived on the Rust side.
   type query = {
     fromBlock: int,
+    // The chain is near its head, so the query is given up on sooner.
+    isNearHead: bool,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
     registrationIndexes: array<int>,

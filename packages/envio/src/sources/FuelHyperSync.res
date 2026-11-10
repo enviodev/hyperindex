@@ -44,6 +44,7 @@ module GetLogs = {
   let query = async (
     ~client: FuelHyperSyncClient.t,
     ~fromBlock,
+    ~isNearHead,
     ~toBlock,
     ~registrationIndexes,
     ~addressSet,
@@ -51,6 +52,7 @@ module GetLogs = {
   ): logsQueryPage => {
     let query: FuelHyperSyncClient.EventItems.query = {
       fromBlock,
+      isNearHead,
       toBlock,
       registrationIndexes,
       clientFilteredContracts,

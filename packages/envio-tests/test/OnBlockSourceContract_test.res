@@ -82,7 +82,7 @@ let makeHyperSyncSource = (~url) => {
     onEventRegistrations: [],
     onBlockRegistrations: onBlockRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
-    clientTimeoutMillis: 10_000,
+    requestTimeouts: {nearHeadMillis: 10_000, backfillMillis: 10_000},
     lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
@@ -110,6 +110,7 @@ let fetch = (
     ~addressSet,
     ~reorgableFrom,
     ~knownHeight,
+    ~isNearHead=false,
     ~partitionId="0",
     ~selection=FetchState.makeSelection(
       ~dependsOnAddresses=false,

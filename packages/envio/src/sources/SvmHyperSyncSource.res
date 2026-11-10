@@ -6,7 +6,7 @@ type options = {
   apiToken: option<string>,
   onEventRegistrations: array<Internal.svmOnEventRegistration>,
   onBlockRegistrations?: array<Internal.onBlockRegistration>,
-  clientTimeoutMillis: int,
+  requestTimeouts: Source.requestTimeouts,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
 }
@@ -126,7 +126,7 @@ let make = (
     apiToken,
     onEventRegistrations,
     ?onBlockRegistrations,
-    clientTimeoutMillis,
+    requestTimeouts,
     addressStore,
   }: options,
 ): t => {
@@ -141,7 +141,8 @@ let make = (
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
-    ~httpReqTimeoutMillis=clientTimeoutMillis,
+    ~httpReqTimeoutMillis=requestTimeouts.backfillMillis,
+    ~nearHeadReqTimeoutMillis=requestTimeouts.nearHeadMillis,
     ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~onBlockRegistrations,
     ~addressStore,
@@ -153,6 +154,7 @@ let make = (
     ~addressSet,
     ~reorgableFrom,
     ~knownHeight,
+    ~isNearHead,
     ~partitionId as _,
     ~selection: FetchState.selection,
     ~itemsTarget,
@@ -166,6 +168,7 @@ let make = (
 
     let query: SvmHyperSyncClient.Items.query = {
       fromSlot: fromBlock,
+      isNearHead,
       toSlot: selection->FetchState.sourceToBlock(~toBlock, ~knownHeight),
       ?itemsTarget,
       onEventRegistrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
@@ -268,6 +271,7 @@ let make = (
     sourceFor: Sync,
     chainId,
     pollingInterval: HyperSync.pollingInterval,
+    requestTimeouts,
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {

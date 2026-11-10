@@ -17,7 +17,6 @@ type timing = {
   reducedPollingInterval?: int,
   recoveryTimeout?: float,
   getHeightRetryInterval?: (~retry: int) => int,
-  heightPollTimeout?: int,
   // Every timer the manager and its height feeds arm, and every time they
   // read. A test passes one that only moves when the test advances it.
   clock?: Clock.t,
@@ -88,6 +87,7 @@ let executeQuery: (
   t,
   ~query: FetchState.query,
   ~knownHeight: int,
+  ~isNearHead: bool,
   ~isRealtime: bool,
   ~reorgableFrom: option<int>,
 ) => promise<Source.blockRangeFetchResponse>
