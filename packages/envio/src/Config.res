@@ -336,6 +336,7 @@ let propertySchema = S.schema(s =>
     "entity": s.matches(S.option(S.string)),
     "precision": s.matches(S.option(S.int)),
     "scale": s.matches(S.option(S.int)),
+    "byteLength": s.matches(S.option(S.int)),
     "description": s.matches(S.option(S.string)),
   }
 )
@@ -407,6 +408,11 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | "serial" => (Table.Serial, S.int->S.toUnknown)
   | "json" => (Table.Json, S.json(~validate=false)->S.toUnknown)
   | "date" => (Table.Date, Utils.Schema.dbDate->S.toUnknown)
+  | "address" =>
+    switch prop["byteLength"] {
+    | Some(length) => (Table.Address({length: length}), Utils.Schema.addressBytes->S.toUnknown)
+    | None => (Table.String, Address.schema->S.toUnknown)
+    }
   | "enum" => {
       let enumName = prop["enum"]->Option.getOrThrow
 

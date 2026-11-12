@@ -214,7 +214,7 @@ impl Table {
             .zip(columns)
             .map(|(field, column)| Source::Staged {
                 column,
-                render: Render::of(field.encoding(), field.field_type.encoding()),
+                render: Render::of(field),
             })
             .collect()
     }
@@ -1187,10 +1187,11 @@ impl Storage {
         let table = self.entity_table_or_err(entity).map_err(insert_failure)?;
         let history = table.entity_history().map_err(insert_failure)?;
         let projection = changes.project(diff);
+        let id_render = Render::of(&entity.fields[changes.id_index()]);
         let ids = |rows: &[usize]| -> Result<Param> {
             let id = Source::Staged {
                 column: changes.id_column(),
-                render: Render::Plain,
+                render: id_render,
             };
             Ok(write::unnest_params(&[id], rows)?.remove(0))
         };

@@ -105,6 +105,11 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
   });
   context.Holder.deleteUnsafe(HOLDER_DELETED_SENTINEL);
 
+  // Kept as raw bytes under `address_format: lowercase`: an Address id, an
+  // indexed Address field, and a relation keyed on the Address id.
+  context.AddressAccount.set({ id: event.params.from, token: event.srcAddress });
+  context.AddressTransfer.set({ id, sender_id: event.params.from });
+
   // Values are chosen beyond float64 precision so a regression that lets
   // Hasura serve NUMERIC[] as numbers changes the digits, not just the type.
   context.NumericArrays.set({

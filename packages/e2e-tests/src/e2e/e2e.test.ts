@@ -775,6 +775,53 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse", ()
     });
   });
 
+  // config.yaml sets `address_format: lowercase`, so an Address column is a
+  // bytea. Hasura serves it under its `bytea` scalar as `\x`-prefixed hex,
+  // joins a relation on it, and reads a filter value as bytea text input, so
+  // the `0x` spelling handlers use matches nothing.
+  it("Hasura serves an Address kept as bytes as bytea", async () => {
+    const addressAccounts = (id: string) =>
+      graphql.query<{
+        AddressAccount: Array<{
+          id: string;
+          token: string;
+          transfers: Array<{ id: string; sender: { id: string } }>;
+        }>;
+      }>(
+        `query ($id: bytea!) {
+          AddressAccount(where: {id: {_eq: $id}}) {
+            id
+            token
+            transfers(where: {id: {_eq: "1-10861674-23"}}) { id sender { id } }
+          }
+        }`,
+        { id }
+      );
+
+    expect({
+      bytea: await addressAccounts("\\x0000000000000000000000000000000000000000"),
+      hex: await addressAccounts("0x0000000000000000000000000000000000000000"),
+    }).toEqual({
+      bytea: {
+        data: {
+          AddressAccount: [
+            {
+              id: "\\x0000000000000000000000000000000000000000",
+              token: "\\x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+              transfers: [
+                {
+                  id: "1-10861674-23",
+                  sender: { id: "\\x0000000000000000000000000000000000000000" },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      hex: { data: { AddressAccount: [] } },
+    });
+  });
+
   // Overwrites events_processed, so it has to follow the tests that read it.
   it("_meta and chain_metadata serve events processed as a number", async () => {
     // Above int32 max, so a column type regression surfaces as an overflow.

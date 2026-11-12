@@ -39,6 +39,9 @@ type fieldType =
   | Json
   | Date
   | Enum({config: enumConfig<enum>})
+  // An `Address` the handler holds as `0x` and lowercase hex, kept as its
+  // `length` raw bytes. One kept as text is a `String`.
+  | Address({length: int})
 
 type field = {
   fieldName: string,
@@ -193,7 +196,7 @@ let entityIdToKeyFor = (fields: array<fieldOrDerived>) =>
     }
   ) {
   | Some(Bytea) => bytesEntityIdToKey
-  | Some(String) | None => stringEntityIdToKey
+  | Some(String) | Some(Address(_)) | None => stringEntityIdToKey
   | Some(_) => numericEntityIdToKey
   }
 
@@ -291,6 +294,74 @@ let fieldsByApiName: table => dict<fieldOrDerived> = Utils.WeakMap.memoize(table
 
 let getFieldByApiName = (table, apiFieldName) =>
   table->fieldsByApiName->Utils.Dict.dangerouslyGetNonOption(apiFieldName)
+
+// Bytes keep no case, so an address kept as them takes only the spelling they
+// read back as. Any other would be one entity in memory and another, or a
+// write failure, in storage: a lookup in it would match the stored row, whose
+// bytea hex input ignores case, and miss the entity in memory.
+let addressPatterns: dict<RegExp.t> = Dict.make()
+let isStoredAddress = (value: unknown, ~length) => {
+  let key = length->Int.toString
+  let pattern = switch addressPatterns->Utils.Dict.dangerouslyGetNonOption(key) {
+  | Some(pattern) => pattern
+  | None =>
+    let pattern = RegExp.fromString(`^0x[0-9a-f]{${(length * 2)->Int.toString}}$`)
+    addressPatterns->Dict.set(key, pattern)
+    pattern
+  }
+  typeof(value) === #string && pattern->RegExp.test(value->(Utils.magic: unknown => string))
+}
+
+let storedAddressRequirement = (~length) =>
+  `0x followed by ${(length * 2)->Int.toString} lowercase hex characters`
+
+%%private(
+  let throwInvalidAddress = (value, ~usage, ~length) =>
+    JsError.throwWithMessage(
+      `Invalid Address "${String.make(
+          value,
+        )}" ${usage}. An Address is kept here as its ${length->Int.toString} bytes, so it must be ${storedAddressRequirement(
+          ~length,
+        )}.`,
+    )
+)
+
+type addressField = {apiFieldName: string, length: int, isArray: bool}
+
+let addressFields: table => array<addressField> = Utils.WeakMap.memoize(table =>
+  table.fields->Array.filterMap(field =>
+    switch field {
+    | Field({fieldType: Address({length}), isArray} as field) =>
+      Some({apiFieldName: field->getApiFieldName, length, isArray})
+    | _ => None
+    }
+  )
+)
+
+let validateAddressesOrThrow = (table, entity: dict<unknown>, ~entityName) =>
+  table
+  ->addressFields
+  ->Array.forEach(({apiFieldName, length, isArray}) => {
+    let check = value =>
+      switch value->(Utils.magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
+      | Some(value) if !(value->isStoredAddress(~length)) =>
+        throwInvalidAddress(value, ~usage=`set on ${entityName}.${apiFieldName}`, ~length)
+      | _ => ()
+      }
+    let value = entity->Dict.getUnsafe(apiFieldName)
+    if isArray && value->Array.isArray {
+      value->(Utils.magic: unknown => array<unknown>)->Array.forEach(check)
+    } else {
+      check(value)
+    }
+  })
+
+let validateAddressIdOrThrow = (table, entityId: unknown, ~entityName, ~method) =>
+  switch table->addressFields->Array.find(({apiFieldName}) => apiFieldName === idFieldName) {
+  | Some({length}) if !(entityId->isStoredAddress(~length)) =>
+    throwInvalidAddress(entityId, ~usage=`passed to context.${entityName}.${method}`, ~length)
+  | _ => ()
+  }
 
 type queryField = {
   fieldType: fieldType,

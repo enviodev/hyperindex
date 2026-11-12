@@ -231,6 +231,9 @@ struct PropertyJson {
     precision: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     scale: Option<u32>,
+    /// Set on an `address` kept as its raw bytes; absent, it is kept as text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    byte_length: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
 }
@@ -754,30 +757,36 @@ impl SystemConfig {
                     .iter()
                     .map(|f| {
                         use field_types::Primitive;
-                        let (field_type, enum_name, entity_name, precision, scale) =
-                            match &f.field_type {
-                                Primitive::Boolean => ("boolean".into(), None, None, None, None),
-                                Primitive::String => ("string".into(), None, None, None, None),
-                                Primitive::Bytes => ("bytes".into(), None, None, None, None),
-                                Primitive::Int32 => ("int".into(), None, None, None, None),
-                                Primitive::BigInt { precision } => {
-                                    ("bigint".into(), None, None, *precision, None)
-                                }
-                                Primitive::BigDecimal(config) => {
-                                    let (p, s) = match config {
-                                        Some((p, s)) => (Some(*p), Some(*s)),
-                                        None => (None, None),
-                                    };
-                                    ("bigdecimal".into(), None, None, p, s)
-                                }
-                                Primitive::Number => ("float".into(), None, None, None, None),
-                                Primitive::Serial => ("serial".into(), None, None, None, None),
-                                Primitive::Json => ("json".into(), None, None, None, None),
-                                Primitive::Date => ("date".into(), None, None, None, None),
-                                Primitive::Enum(name) => {
-                                    ("enum".into(), Some(name.clone()), None, None, None)
-                                }
-                            };
+                        let (field_type, enum_name, entity_name, precision, scale) = match &f
+                            .field_type
+                        {
+                            Primitive::Boolean => ("boolean".into(), None, None, None, None),
+                            Primitive::String => ("string".into(), None, None, None, None),
+                            Primitive::Bytes => ("bytes".into(), None, None, None, None),
+                            Primitive::Int32 => ("int".into(), None, None, None, None),
+                            Primitive::BigInt { precision } => {
+                                ("bigint".into(), None, None, *precision, None)
+                            }
+                            Primitive::BigDecimal(config) => {
+                                let (p, s) = match config {
+                                    Some((p, s)) => (Some(*p), Some(*s)),
+                                    None => (None, None),
+                                };
+                                ("bigdecimal".into(), None, None, p, s)
+                            }
+                            Primitive::Number => ("float".into(), None, None, None, None),
+                            Primitive::Serial => ("serial".into(), None, None, None, None),
+                            Primitive::Json => ("json".into(), None, None, None, None),
+                            Primitive::Date => ("date".into(), None, None, None, None),
+                            Primitive::Enum(name) => {
+                                ("enum".into(), Some(name.clone()), None, None, None)
+                            }
+                            Primitive::Address { .. } => ("address".into(), None, None, None, None),
+                        };
+                        let byte_length = match &f.field_type {
+                            Primitive::Address { length } => Some(*length),
+                            _ => None,
+                        };
                         let db_name_for = |backend: system_config::StorageBackend| match backend
                             .column_name_format
                         {
@@ -804,6 +813,7 @@ impl SystemConfig {
                             entity: entity_name,
                             precision,
                             scale,
+                            byte_length,
                             description: f.description.clone(),
                         }
                     })
