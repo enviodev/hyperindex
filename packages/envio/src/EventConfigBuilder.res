@@ -630,8 +630,20 @@ let resolveSvmInlineFieldSelection = (
     ~registration,
     ~rejectEmpty=accountActivity->Option.isSome,
   )
+  let block = selectionList(fields, "block")
+  switch block {
+  | Some(names) if Array.isArray(names) =>
+    names->Array.forEach(name =>
+      if Svm.slotOnlyBlockFields->Array.includes(name) {
+        JsError.throwWithMessage(
+          `The "${name}" block field counts the transactions of a whole slot, so only \`indexer.onSlot\` can select it. Remove it from the fields.block option of ${registration}.`,
+        )
+      }
+    )
+  | _ => ()
+  }
   let blockFields = parseFieldsOrThrow(
-    selectionList(fields, "block"),
+    block,
     ~valid=validSvmBlockFields,
     ~kind="block",
     ~registration,
