@@ -115,12 +115,16 @@ pub(crate) fn tx_mask(fields: &[TransactionField]) -> u64 {
 /// The block field the store derives from its key, so a row always has it.
 pub(crate) const BLOCK_KEY_MASK: u64 = 1u64 << (EvmBlockField::Number as u32);
 
+pub(crate) const BLOCK_HASH_MASK: u64 = 1u64 << (EvmBlockField::Hash as u32);
+
+pub(crate) const BLOCK_TIMESTAMP_MASK: u64 = 1u64 << (EvmBlockField::Timestamp as u32);
+
 /// The reorg-detection fields every fetched block carries, whatever the user
 /// selected: the key, the timestamp the indexer reports progress with, and the
 /// two hashes a fork is detected by.
 pub(crate) const BLOCK_OBSERVATION_MASK: u64 = BLOCK_KEY_MASK
-    | (1u64 << (EvmBlockField::Timestamp as u32))
-    | (1u64 << (EvmBlockField::Hash as u32))
+    | BLOCK_TIMESTAMP_MASK
+    | BLOCK_HASH_MASK
     | (1u64 << (EvmBlockField::ParentHash as u32));
 
 /// Transaction fields left out of the chain-wide read, so that only a page
