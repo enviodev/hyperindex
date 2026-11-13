@@ -135,6 +135,23 @@ describe("SVM handler fields", () => {
     );
   });
 
+  // Linear GTM-5262
+  it("rejects a slot's transaction counts on an instruction", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        {
+          program: "Swapper",
+          instruction: "swap",
+          // @ts-expect-error - only a slot handler selects the slot's transaction counts
+          fields: { block: ["time", "failedTransactionCount"] },
+        },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`The "failedTransactionCount" block field counts the transactions of a whole slot, so only \\\`indexer.onSlot\\\` can select it. Remove it from the fields.block option of the "swap" instruction on program "Swapper".\`,
+    );
+  });
+
   it("rejects a parent name in place of its subfields", (t) => {
     t.expect(() =>
       indexer.onInstruction(
@@ -213,7 +230,9 @@ import type {
   Account,
   FieldNotSelected,
   SvmBlock,
+  SvmBlockFieldName,
   SvmChainId,
+  SvmFieldsSelection,
   SvmOnSlotContext,
   SvmOnSlotFieldsSelection,
   SvmOnSlotFilter,
@@ -222,6 +241,8 @@ import type {
   SvmOnSlotOptions,
   SvmOnSlotWhereArgs,
   SvmOnSlotWhereResult,
+  SvmSlotBlock,
+  SvmSlotBlockFieldName,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
@@ -255,18 +276,37 @@ expectType<
   TypeEqual<SvmOnSlotHandler<{}>, (args: SvmOnSlotHandlerArgs<{}>) => Promise<void>>
 >(true);
 
-// Typed the way onInstruction handlers are: the block is the same SvmBlock,
-// unselected it is branded like an instruction's logs, and the handler types
-// take the selection alone.
+// Typed the way onInstruction handlers are: the block narrows to the selection
+// like SvmBlock, unselected it is branded like an instruction's logs, and the
+// handler types take the selection alone.
 const fields = { block: ["time"] } as const satisfies SvmOnSlotFieldsSelection;
 if (0) {
   indexer.onSlot({ name: "s", fields }, async ({ block }) => {
-    expectType<TypeEqual<typeof block, SvmBlock<typeof fields> | undefined>>(true);
+    expectType<TypeEqual<typeof block, SvmSlotBlock<typeof fields> | undefined>>(true);
   });
 }
 expectType<
-  TypeEqual<SvmOnSlotHandlerArgs<typeof fields>["block"], SvmBlock<typeof fields> | undefined>
+  TypeEqual<SvmOnSlotHandlerArgs<typeof fields>["block"], SvmSlotBlock<typeof fields> | undefined>
 >(true);
+expectType<TypeEqual<SvmSlotBlock<typeof fields>["time"], SvmBlock<typeof fields>["time"]>>(true);
+
+// A slot's block also counts the slot's transactions, which an instruction's
+// block does not.
+expectType<
+  TypeEqual<SvmSlotBlockFieldName, SvmBlockFieldName | "transactionCount" | "failedTransactionCount">
+>(true);
+const countFields = {
+  block: ["transactionCount"],
+} as const satisfies SvmOnSlotFieldsSelection;
+expectType<TypeEqual<SvmSlotBlock<typeof countFields>["transactionCount"], number>>(true);
+expectType<
+  TypeEqual<
+    SvmSlotBlock<typeof countFields>["failedTransactionCount"],
+    FieldNotSelected<"Field 'failedTransactionCount' is not selected for this handler. Add it to fields.block in the registration options.">
+  >
+>(true);
+// @ts-expect-error - an instruction's block has no transaction counts to select
+const _instructionFields = { block: ["transactionCount"] } as const satisfies SvmFieldsSelection;
 expectType<
   TypeEqual<
     SvmOnSlotHandlerArgs<{}>["block"],
