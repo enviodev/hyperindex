@@ -27,8 +27,8 @@ use serde_json::{json, Value as Json};
 
 use super::client::{JsonRpcClient, RpcError};
 use super::fields::{
-    tx_fields_in, tx_mask_of, Carrier, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
-    TX_EAGER_EXCLUDED_MASK,
+    tx_fields_in, tx_mask_of, Carrier, BLOCK_HASH_MASK, BLOCK_KEY_MASK, BLOCK_OBSERVATION_MASK,
+    BLOCK_TIMESTAMP_MASK, TX_EAGER_EXCLUDED_MASK,
 };
 use super::inflight::Inflight;
 use super::responses::{self, ResponseError};
@@ -187,7 +187,40 @@ struct ReferencedBlock {
     /// page as its own observation, so two selections whose `eth_getLogs`
     /// responses straddle a fork disagree inside the page and are caught,
     /// rather than the second hash being dropped as a duplicate.
-    log_hashes: Vec<format::Hash>,
+    log_observations: Vec<LogObservation>,
+}
+
+struct LogObservation {
+    hash: format::Hash,
+    /// The log's `blockTimestamp`, which providers on geth 1.16+ serve and
+    /// others leave out.
+    timestamp: Option<format::Quantity>,
+}
+
+impl ReferencedBlock {
+    fn new() -> Self {
+        ReferencedBlock {
+            mask: 0,
+            log_observations: Vec::new(),
+        }
+    }
+
+    /// The block fields this page's own logs already carry, which no read of
+    /// the block has to supply.
+    fn fields_from_logs(&self) -> u64 {
+        if self.log_observations.is_empty() {
+            return BLOCK_KEY_MASK;
+        }
+        let mut mask = BLOCK_KEY_MASK | BLOCK_HASH_MASK;
+        if self
+            .log_observations
+            .iter()
+            .all(|observation| observation.timestamp.is_some())
+        {
+            mask |= BLOCK_TIMESTAMP_MASK;
+        }
+        mask
+    }
 }
 
 struct ReferencedTransaction {
@@ -213,19 +246,29 @@ impl PageRefs {
         block_number: u64,
         transaction_index: u32,
         block_hash: &format::Hash,
+        block_timestamp: Option<&format::Quantity>,
         transaction_hash: &format::Hash,
         fields: SelectedFields,
     ) {
         let block = self
             .blocks
             .entry(block_number)
-            .or_insert_with(|| ReferencedBlock {
-                mask: 0,
-                log_hashes: Vec::new(),
-            });
+            .or_insert_with(ReferencedBlock::new);
         block.mask |= fields.block_mask;
-        if !block.log_hashes.contains(block_hash) {
-            block.log_hashes.push(block_hash.clone());
+        match block
+            .log_observations
+            .iter_mut()
+            .find(|observation| observation.hash == *block_hash)
+        {
+            Some(observation) => {
+                if observation.timestamp.is_none() {
+                    observation.timestamp = block_timestamp.cloned();
+                }
+            }
+            None => block.log_observations.push(LogObservation {
+                hash: block_hash.clone(),
+                timestamp: block_timestamp.cloned(),
+            }),
         }
         let transaction = self
             .transactions
@@ -242,10 +285,7 @@ impl PageRefs {
     pub(crate) fn add_block(&mut self, block_number: u64, block_mask: u64) {
         self.blocks
             .entry(block_number)
-            .or_insert_with(|| ReferencedBlock {
-                mask: 0,
-                log_hashes: Vec::new(),
-            })
+            .or_insert_with(ReferencedBlock::new)
             .mask |= block_mask;
     }
 }
@@ -395,11 +435,15 @@ pub(crate) async fn page(
         .blocks
         .iter()
         .flat_map(|(&number, block_ref)| {
-            block_ref.log_hashes.iter().map(move |hash| Block {
-                number: Some(number),
-                hash: Some(hash.clone()),
-                ..Default::default()
-            })
+            block_ref
+                .log_observations
+                .iter()
+                .map(move |observation| Block {
+                    number: Some(number),
+                    hash: Some(observation.hash.clone()),
+                    timestamp: observation.timestamp.clone(),
+                    ..Default::default()
+                })
         })
         .collect();
     fill_block_page(&page_blocks, log_observations, block_read.covering, blocks);
@@ -500,10 +544,10 @@ struct TxReadPlan {
 }
 
 /// Which blocks to read: every checked block, and each other referenced block
-/// the store was not already asked for everything this page needs of. The
-/// range's own boundaries get no read of their own: the checked blocks reach
-/// at least as deep as the reorg window, and nothing below it is compared.
-/// `checked` is ascending.
+/// whose wanted fields neither its logs carry nor the store was already asked
+/// for. The range's own boundaries get no read of their own: the checked
+/// blocks reach at least as deep as the reorg window, and nothing below it is
+/// compared. `checked` is ascending.
 fn plan_blocks(refs: &PageRefs, checked: &[u64], known: &BlockStore) -> Vec<u64> {
     let mut numbers = checked.to_vec();
     numbers.extend(
@@ -511,7 +555,7 @@ fn plan_blocks(refs: &PageRefs, checked: &[u64], known: &BlockStore) -> Vec<u64>
             .iter()
             .filter(|(number, block_ref)| {
                 checked.binary_search(number).is_err()
-                    && !known.covers(**number, block_ref.mask & !BLOCK_KEY_MASK)
+                    && !known.covers(**number, block_ref.mask & !block_ref.fields_from_logs())
             })
             .map(|(&number, _)| number),
     );
@@ -734,6 +778,7 @@ mod tests {
             number,
             0,
             &hash(0xbb),
+            None,
             &hash(0xcc),
             SelectedFields {
                 block_mask,
@@ -886,6 +931,7 @@ mod tests {
             50,
             0,
             &hash(0xbb),
+            None,
             &hash(0xcc),
             SelectedFields {
                 block_mask: 0,
@@ -896,6 +942,7 @@ mod tests {
             50,
             1,
             &hash(0xbb),
+            None,
             &hash(0xdd),
             SelectedFields {
                 block_mask: 0,
@@ -918,6 +965,7 @@ mod tests {
                 50,
                 index,
                 &block_hash,
+                None,
                 &hash(0xcc),
                 SelectedFields {
                     block_mask: 0,
@@ -925,7 +973,14 @@ mod tests {
                 },
             );
         }
-        assert_eq!(refs.blocks[&50].log_hashes, vec![hash(0xaa), hash(0xbb)]);
+        assert_eq!(
+            refs.blocks[&50]
+                .log_observations
+                .iter()
+                .map(|observation| observation.hash.clone())
+                .collect::<Vec<_>>(),
+            vec![hash(0xaa), hash(0xbb)]
+        );
     }
 
     #[test]
@@ -943,6 +998,7 @@ mod tests {
                 50,
                 index,
                 &hash(0xbb),
+                None,
                 &hash(0xc0 + index as u8),
                 SelectedFields {
                     block_mask: 0,

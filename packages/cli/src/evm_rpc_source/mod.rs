@@ -73,15 +73,23 @@ struct RawLog {
     transaction_index: String,
     block_hash: String,
     log_index: String,
+    /// Served by geth 1.16+ and the clients that followed it (execution-apis
+    /// #639), absent elsewhere. Kept as raw JSON so a provider spelling it some
+    /// other way costs the block read it would have cost anyway rather than
+    /// failing the whole response.
+    #[serde(default)]
+    block_timestamp: Option<serde_json::Value>,
 }
 
-/// A routed log, alongside the two hashes the page needs from it: the block
-/// hash is a reorg observation, and the transaction hash is what the enrichment
-/// requests are keyed by. Neither crosses the napi boundary — the item the JS
+/// A routed log, alongside what the page needs from it beyond the item: the
+/// block hash is a reorg observation, the block timestamp spares a block read
+/// where the log carries one, and the transaction hash is what the enrichment
+/// requests are keyed by. None crosses the napi boundary — the item the JS
 /// side receives is the same shape the HyperSync path returns.
 struct DecodedItem {
     item: EventItem,
     block_hash: format::Hash,
+    block_timestamp: Option<format::Quantity>,
     transaction_hash: format::Hash,
 }
 
@@ -804,6 +812,7 @@ impl EvmRpcClient {
                 entry.item.block_number as u64,
                 transaction_index,
                 &entry.block_hash,
+                entry.block_timestamp.as_ref(),
                 &entry.transaction_hash,
                 fields,
             );
@@ -1128,6 +1137,11 @@ impl EvmRpcClient {
                 }
                 let block_hash = format::Hash::decode_hex(&raw.block_hash)
                     .map_err(|e| anyhow::anyhow!("log.blockHash: {e}"))?;
+                let block_timestamp = raw
+                    .block_timestamp
+                    .as_ref()
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|hex| format::Quantity::decode_hex(hex).ok());
                 let transaction_hash = format::Hash::decode_hex(&raw.transaction_hash)
                     .map_err(|e| anyhow::anyhow!("log.transactionHash: {e}"))?;
                 for routed in routed {
@@ -1138,6 +1152,7 @@ impl EvmRpcClient {
                             routed.params,
                         )?,
                         block_hash: block_hash.clone(),
+                        block_timestamp: block_timestamp.clone(),
                         transaction_hash: transaction_hash.clone(),
                     });
                 }
