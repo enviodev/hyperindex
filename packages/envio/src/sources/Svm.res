@@ -12,7 +12,20 @@ let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 // Ordered block field names. The index of each is the field code shared with the
 // Rust store (`SvmBlockField`) — keep this order in sync.
-let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
+let blockFields = [
+  "slot",
+  "time",
+  "hash",
+  "height",
+  "parentSlot",
+  "parentHash",
+  "transactionCount",
+  "failedTransactionCount",
+]
+
+// Counts over every transaction of a slot, which only a slot handler selects:
+// an instruction's query reads the transactions its instructions matched.
+let slotOnlyBlockFields = ["transactionCount", "failedTransactionCount"]
 
 // `slot` is always included (the item's key); every other block field is
 // opt-in via handler `fields.block`. All are materialised from the store.

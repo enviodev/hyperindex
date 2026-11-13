@@ -276,10 +276,14 @@ pub fn block_extra_columns(selected: &[String]) -> Result<Vec<&'static str>> {
     extra_columns(BLOCK, selected)
 }
 
-/// The columns filling the block store fields set in `mask`.
+/// The block columns filling the block store fields set in `mask`. The
+/// transaction counts are tallied from the transaction table, so they name no
+/// block column.
 pub fn block_mask_columns(mask: u64) -> Result<Vec<&'static str>> {
+    use crate::block_store::SvmBlockField;
     use strum::VariantArray;
-    let selected: Vec<String> = crate::block_store::SvmBlockField::VARIANTS
+    let mask = mask & !SvmBlockField::TRANSACTION_COUNTS_MASK;
+    let selected: Vec<String> = SvmBlockField::VARIANTS
         .iter()
         .filter(|field| mask & (1u64 << (**field as u32)) != 0)
         .map(|field| field.name().to_string())
@@ -371,15 +375,27 @@ mod tests {
         );
     }
 
+    /// The block table's names lead the store's fields. The transaction counts
+    /// follow them, which only a slot handler selects.
     #[test]
     fn block_names_match_store_ordinals() {
+        let slot_only = dts_string_union(&dts(), "SvmSlotBlockFieldName");
         assert_eq!(
-            names(BLOCK),
+            names(BLOCK)
+                .into_iter()
+                .chain(slot_only.iter().map(String::as_str))
+                .collect::<Vec<_>>(),
             SvmBlockField::VARIANTS
                 .iter()
                 .map(|field| field.name())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn a_mask_of_transaction_counts_names_no_block_column() {
+        let mask = SvmBlockField::TRANSACTION_COUNTS_MASK | 1 << SvmBlockField::Height as u32;
+        assert_eq!(block_mask_columns(mask).unwrap(), vec!["block_height"]);
     }
 
     #[test]

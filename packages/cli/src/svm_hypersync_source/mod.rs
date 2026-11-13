@@ -10,6 +10,7 @@ mod config;
 mod fields;
 mod query;
 mod selection;
+mod transaction_counts;
 pub(crate) mod types;
 
 pub(crate) mod mod_helpers {
@@ -19,6 +20,7 @@ pub(crate) mod mod_helpers {
     }
 }
 
+use hypersync_client_solana::from_arrow::blocks_from_arrow;
 use hypersync_client_solana::simple_types as simple;
 use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
@@ -27,7 +29,7 @@ use hypersync_solana_net_types::query::SolanaQuery;
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, SvmBlockField, SvmTransactionCounts};
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -92,6 +94,37 @@ impl SvmHyperSyncClient {
             .await
             .context("solana get")
             .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))
+    }
+
+    /// Run a `transaction_counts::query`, tallying its transaction rows
+    /// without decoding them.
+    async fn run_counting_query(&self, query: &SolanaQuery) -> napi::Result<CountedPage> {
+        let response = self
+            .inner
+            .get_arrow(query)
+            .await
+            .context("solana get")
+            .map_err(|e| map_query_error(e, self.inner.rate_limit_info()))?;
+        let tables = &response.data.tables;
+        let blocks = tables
+            .get("blocks")
+            .map(blocks_from_arrow)
+            .transpose()
+            .context("decode blocks")
+            .map_err(map_err)?
+            .unwrap_or_default();
+        let counts = tables
+            .get("transactions")
+            .map(transaction_counts::count_by_slot)
+            .transpose()
+            .context("count transactions")
+            .map_err(map_err)?
+            .unwrap_or_default();
+        Ok(CountedPage {
+            next_slot: response.next_slot,
+            blocks,
+            counts,
+        })
     }
 
     /// Execute one raw Solana HyperSync page. Event queries and block-hash
@@ -285,12 +318,41 @@ impl SvmHyperSyncClient {
             ..Default::default()
         };
 
-        let mut resp = self.run_query(&query).await?;
+        let counts_transactions =
+            block_selection.mask() & SvmBlockField::TRANSACTION_COUNTS_MASK != 0;
+        let (mut resp, transaction_counts) = if counts_transactions {
+            // Selections of different tables intersect: beside instruction
+            // selections, one matching every transaction would return only the
+            // transactions those instructions are in and undercount the slot.
+            // The fetch state keeps slot handlers in a partition of their own,
+            // so no query selects both.
+            if selects_instructions {
+                return Err(map_err(anyhow::anyhow!(
+                    "A query counting the transactions of its slots can't also select instructions"
+                )));
+            }
+            let counted = self
+                .run_counting_query(&transaction_counts::query(
+                    from_slot,
+                    query.to_slot,
+                    query.field_selection.block,
+                    query.max_num_blocks,
+                ))
+                .await?;
+            let resp = simple::SolanaResponse {
+                next_slot: counted.next_slot,
+                blocks: counted.blocks,
+                ..Default::default()
+            };
+            (resp, Some(counted.counts))
+        } else {
+            (self.run_query(&query).await?, None)
+        };
 
         // The replica serving this request has not reached the queried range,
         // so it would report negative progress. Expected around the head of a
         // load-balanced backend; the source manager backs off and fails over.
-        if resp.next_slot <= query.from_slot {
+        if resp.next_slot <= from_slot {
             return Err(source_behind_head_err(params.from_slot));
         }
 
@@ -354,6 +416,22 @@ impl SvmHyperSyncClient {
             Some(&referenced_transactions),
         );
         let block_store = take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
+        if let Some(transaction_counts) = transaction_counts {
+            // A block the response holds no transaction of stored none.
+            let mut counts: Vec<(u64, SvmTransactionCounts)> = block_items
+                .iter()
+                .filter(|item| !item.skipped)
+                .map(|item| {
+                    let slot = item.block_number as u64;
+                    (
+                        slot,
+                        transaction_counts.get(&slot).copied().unwrap_or_default(),
+                    )
+                })
+                .collect();
+            counts.dedup_by_key(|(slot, _)| *slot);
+            block_store.insert_svm_transaction_counts(&counts);
+        }
 
         let response = ItemsResponse {
             next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
@@ -364,6 +442,13 @@ impl SvmHyperSyncClient {
         };
         Ok((response, store, block_store))
     }
+}
+
+/// What a `transaction_counts::query` page answers with.
+struct CountedPage {
+    next_slot: u64,
+    blocks: Vec<simple::Block>,
+    counts: HashMap<u64, SvmTransactionCounts>,
 }
 
 /// Convert only the values needed by the block-hash paginator: the advancing
