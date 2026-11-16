@@ -47,7 +47,7 @@ let extractStartBlock = (
           ->Utils.prettifyExn
           ->(
             Utils.magic: exn => string
-          )}. Only \`_gte\` is supported on event filters — use \`indexer.onBlock\` for \`_lte\` or \`_every\`.`,
+          )}. Only \`_gte\` is supported on event filters. Use \`indexer.onBlock\` for \`_lte\` or \`_every\`.`,
       )
     }
   }

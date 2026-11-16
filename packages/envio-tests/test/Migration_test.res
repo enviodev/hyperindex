@@ -408,7 +408,7 @@ describe("What a refused restart tells the operator", () => {
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
 ${storageLines}
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`,
@@ -422,6 +422,178 @@ ${storageLines}
           ),
         ],
       ))
+    },
+  )
+
+  // https://github.com/enviodev/hyperindex/issues/1830
+  deployed->Scenario.it(
+    "Offers to add a new chain under its own process when that is the only change",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondEmptyUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config =
+        deployment(~chains=[chain(1), chain(137)]).config->Scenario.withMockSources(
+          ~sources=[(1, source), (137, MockSource.make(Scenario.defaultMethods, ~chainId=137))],
+        )
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(
+          `The following config changes are incompatible with the existing indexer data:
+
+    - chains.137
+
+Pick one:
+  1. envio start --chain 137   # add the chain to this database, keeping what's already indexed
+  2. Revert the changes above  # resume indexing where it left off
+  3. envio dev -r              # delete all indexed data and start over
+  4. Run a second indexer alongside this one to keep both datasets:
+${storageLines}
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+        ),
+      )
+    },
+  )
+
+  deployed->Scenario.it(
+    "Offers a process per chain when several new chains are the only change",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondEmptyUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config =
+        deployment(~chains=[chain(1), chain(10), chain(137)]).config->Scenario.withMockSources(
+          ~sources=[
+            (1, source),
+            (10, MockSource.make(Scenario.defaultMethods, ~chainId=10)),
+            (137, MockSource.make(Scenario.defaultMethods, ~chainId=137)),
+          ],
+        )
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(
+          `The following config changes are incompatible with the existing indexer data:
+
+    - chains.10
+    - chains.137
+
+Pick one:
+  1. Add the new chains to this database, keeping what's already indexed, one process per chain:
+       envio start --chain 10
+       envio start --chain 137
+  2. Revert the changes above  # resume indexing where it left off
+  3. envio dev -r              # delete all indexed data and start over
+  4. Run a second indexer alongside this one to keep both datasets:
+${storageLines}
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+        ),
+      )
+    },
+  )
+
+  // The entity change sits in a tier below the chains, so the refusal names
+  // only the chain, yet an `envio start --chain 137` would be refused for it.
+  deployed->Scenario.it(
+    "Doesn't offer to add a new chain when another change rides along with it",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondEmptyUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config =
+        deployment(
+          ~chains=[chain(1), chain(137)],
+          ~schema=schema ++ "\ntype Extra {\n  id: ID!\n}\n",
+        ).config->Scenario.withMockSources(
+          ~sources=[(1, source), (137, MockSource.make(Scenario.defaultMethods, ~chainId=137))],
+        )
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(
+          `The following config changes are incompatible with the existing indexer data:
+
+    - chains.137
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one to keep both datasets:
+${storageLines}
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+        ),
+      )
+    },
+  )
+
+  // An `envio start --chain` against diverged storage is refused before it
+  // adds anything.
+  paired->Scenario.it(
+    "Doesn't offer to add a new chain to storage whose ClickHouse diverged",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondEmptyUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
+      let config =
+        deployment(
+          ~chains=[chain(1), chain(137)],
+          ~storage=clickHouseBesidePostgres,
+        ).config->Scenario.withMockSources(
+          ~sources=[(1, source), (137, MockSource.make(Scenario.defaultMethods, ~chainId=137))],
+        )
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(`The following config changes are incompatible with the existing indexer data:
+
+    - chains.137
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one to keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`),
+      )
     },
   )
 
@@ -464,7 +636,7 @@ ${storageLines}
 Pick one:
   1. Revert the changes above                           # resume indexing where it left off
   2. envio dev -r -d indexer --config config.head.yaml  # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
 ${storageLines}
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev -d indexer --config config.head.yaml`,

@@ -76,7 +76,7 @@ describe("per-chain entities", () => {
 
     await assert.rejects(
       indexer.Counter.get("total"),
-      /Entity `Counter` with id `total` exists on multiple chains \(1, 137\) — use getWhere\(\{chainId: \{_eq: \.\.\.\}\}\) to pick one/,
+      /Entity `Counter` with id `total` exists on multiple chains \(1, 137\)\. Use getWhere\(\{chainId: \{_eq: \.\.\.\}\}\) to pick one/,
     );
   });
 
