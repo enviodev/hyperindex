@@ -14,19 +14,22 @@ import type { Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex } from
 declare module "envio" {
   interface Global {
     config: {
-      svm: { chains: {
-  "7565164": { id: 7565164 };
-      }; programs: {
-        "TokenMetadata": {
-          "CreateMetadataAccountV3": { readonly args: never; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mint_authority: string; readonly payer: string; readonly update_authority: string; readonly system_program: string; readonly rent: string } };
-          "UpdateMetadataAccountV2": { readonly args: never; readonly accounts: { readonly metadata: string; readonly update_authority: string } };
+      svm: {
+        chains: {
+          "7565164": { id: 7565164 };
         };
-      } };
+        programs: {
+          "TokenMetadata": {
+            "CreateMetadataAccountV3": { readonly args: never; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mint_authority: string; readonly payer: string; readonly update_authority: string; readonly system_program: string; readonly rent: string } };
+            "UpdateMetadataAccountV2": { readonly args: never; readonly accounts: { readonly metadata: string; readonly update_authority: string } };
+          };
+        };
+      };
       entities: {
-  "EmptyEntity": {
-    readonly "id": string;
-    readonly "emptyField": string;
-  };
+        "EmptyEntity": {
+          readonly "id": string;
+          readonly "emptyField": string;
+        };
       };
       perChainEntities: never;
       enums: {};

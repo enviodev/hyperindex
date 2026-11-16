@@ -143,6 +143,7 @@ pub mod reserved_keywords {
         "FuelContractRegisterHandler",
         "FuelContractRegisterOptions",
         "FuelEvent",
+        "FuelFieldsSelection",
         "FuelOnBlockContext",
         "FuelOnBlockFilter",
         "FuelOnBlockHandler",

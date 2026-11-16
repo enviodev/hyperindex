@@ -1145,24 +1145,24 @@ impl ProjectTemplate {
         };
 
         format!(
-            r#"    "{}": {{
-      /** The name of the event. */
-      readonly eventName: "{}";
-      /** The name of the contract that emitted this event. */
-      readonly contractName: "{}";
-      /** The unique identifier of the blockchain network where this event occurred. */
-      readonly chainId: {};
-      /** The parameters or arguments associated with this event. */
-      readonly params: {};
-      /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-      readonly block: {};
-      /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-      readonly transaction: {};
-      /** The index of this event's log within the block. */
-      readonly logIndex: number;
-      /** The address of the contract that emitted this event. */
-      readonly srcAddress: Address;
-    }};"#,
+            r#""{}": {{
+/** The name of the event. */
+readonly eventName: "{}";
+/** The name of the contract that emitted this event. */
+readonly contractName: "{}";
+/** The unique identifier of the blockchain network where this event occurred. */
+readonly chainId: {};
+/** The parameters or arguments associated with this event. */
+readonly params: {};
+/** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
+readonly block: {};
+/** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
+readonly transaction: {};
+/** The index of this event's log within the block. */
+readonly logIndex: number;
+/** The address of the contract that emitted this event. */
+readonly srcAddress: Address;
+}};"#,
             event.name,
             event.name,
             contract_name,
@@ -1973,7 +1973,7 @@ type testIndexer = {{
                         let chain_name =
                             chain_id_to_name(chain_config.network_config.id, &Ecosystem::Evm);
                         format!(
-                            "  \"{}\": {{ id: {} }};",
+                            "\"{}\": {{ id: {} }};",
                             chain_name, chain_config.network_config.id
                         )
                     })
@@ -1984,7 +1984,7 @@ type testIndexer = {{
             evm_chains_body = if evm_chains_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", evm_chains_entries.join("\n"))
+                format!("{{\n{}\n}}", evm_chains_entries.join("\n"))
             };
             // Inline chainId union for event payloads. Empty ecosystem →
             // error string so users see a useful message in tsc errors.
@@ -2022,7 +2022,7 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
+                        format!("\"{}\": {{\n{}\n}};", name, event_entries.join("\n"))
                     })
                     .collect()
             } else {
@@ -2031,7 +2031,7 @@ type testIndexer = {{
             evm_contracts_body = if evm_contracts_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", evm_contracts_entries.join("\n"))
+                format!("{{\n{}\n}}", evm_contracts_entries.join("\n"))
             };
 
             // EVM event filters table (inlined).
@@ -2050,7 +2050,7 @@ type testIndexer = {{
                                 )
                             })
                             .collect();
-                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
+                        format!("\"{}\": {{\n{}\n}};", name, event_entries.join("\n"))
                     })
                     .collect()
             } else {
@@ -2059,7 +2059,7 @@ type testIndexer = {{
             evm_event_filters_body = if evm_event_filters_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", evm_event_filters_entries.join("\n"))
+                format!("{{\n{}\n}}", evm_event_filters_entries.join("\n"))
             };
 
             // Fuel chain table (inlined).
@@ -2070,7 +2070,7 @@ type testIndexer = {{
                         let chain_name =
                             chain_id_to_name(chain_config.network_config.id, &Ecosystem::Fuel);
                         format!(
-                            "  \"{}\": {{ id: {} }};",
+                            "\"{}\": {{ id: {} }};",
                             chain_name, chain_config.network_config.id
                         )
                     })
@@ -2081,7 +2081,7 @@ type testIndexer = {{
             fuel_chains_body = if fuel_chains_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", fuel_chains_entries.join("\n"))
+                format!("{{\n{}\n}}", fuel_chains_entries.join("\n"))
             };
             let fuel_chain_id_inline: String = if fuel_chains_entries.is_empty() {
                 "\"FuelChainId is not available. Configure Fuel chains in config.yaml and run \
@@ -2108,12 +2108,12 @@ type testIndexer = {{
                                     name,
                                     event,
                                     &fuel_chain_id_inline,
-                                    "FuelBlock",
-                                    "FuelTransaction",
+                                    "FuelBlock<{}>",
+                                    "FuelTransaction<{}>",
                                 )
                             })
                             .collect();
-                        format!("  \"{}\": {{\n{}\n  }};", name, event_entries.join("\n"))
+                        format!("\"{}\": {{\n{}\n}};", name, event_entries.join("\n"))
                     })
                     .collect()
             } else {
@@ -2122,7 +2122,7 @@ type testIndexer = {{
             fuel_contracts_body = if fuel_contracts_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", fuel_contracts_entries.join("\n"))
+                format!("{{\n{}\n}}", fuel_contracts_entries.join("\n"))
             };
 
             // FuelTypes namespace at file scope (referenced by Fuel event
@@ -2138,13 +2138,13 @@ type testIndexer = {{
                                 .ok()?
                                 .type_declarations()
                                 .iter()
-                                .map(|decl| format!("    {}", decl.to_ts_type_decl(&ns)))
+                                .map(|decl| decl.to_ts_type_decl(&ns))
                                 .collect();
                             if type_entries.is_empty() {
                                 None
                             } else {
                                 Some(format!(
-                                    "  namespace {} {{\n{}\n  }}",
+                                    "namespace {} {{\n{}\n}}",
                                     name,
                                     type_entries.join("\n")
                                 ))
@@ -2172,7 +2172,7 @@ type testIndexer = {{
                         let chain_name =
                             chain_id_to_name(chain_config.network_config.id, &Ecosystem::Svm);
                         format!(
-                            "  \"{}\": {{ id: {} }};",
+                            "\"{}\": {{ id: {} }};",
                             chain_name, chain_config.network_config.id
                         )
                     })
@@ -2183,7 +2183,7 @@ type testIndexer = {{
             svm_chains_body = if svm_chains_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", svm_chains_entries.join("\n"))
+                format!("{{\n{}\n}}", svm_chains_entries.join("\n"))
             };
 
             // SVM programs table: per-program record of per-instruction
@@ -2245,7 +2245,7 @@ type testIndexer = {{
                             format!("{{ {fields} }}")
                         };
                         instruction_entries.push(format!(
-                            "          {instr}: {{ readonly args: {args}; readonly accounts: \
+                            "{instr}: {{ readonly args: {args}; readonly accounts: \
                              {accs} }};",
                             instr = ts_string_literal(&event.name),
                             args = args_ts,
@@ -2254,7 +2254,7 @@ type testIndexer = {{
                     }
                     if !instruction_entries.is_empty() {
                         program_entries.push(format!(
-                            "        {name}: {{\n{body}\n        }};",
+                            "{name}: {{\n{body}\n}};",
                             name = ts_string_literal(&contract.name),
                             body = instruction_entries.join("\n"),
                         ));
@@ -2263,7 +2263,7 @@ type testIndexer = {{
                 if program_entries.is_empty() {
                     "{}".to_string()
                 } else {
-                    format!("{{\n{}\n      }}", program_entries.join("\n"))
+                    format!("{{\n{}\n}}", program_entries.join("\n"))
                 }
             } else {
                 "{}".to_string()
@@ -2278,7 +2278,7 @@ type testIndexer = {{
                         .map(|value| format!("\"{}\"", value.original))
                         .collect();
                     format!(
-                        "  \"{}\": {};",
+                        "\"{}\": {};",
                         gql_enum.name.original,
                         enum_values.join(" | ")
                     )
@@ -2287,7 +2287,7 @@ type testIndexer = {{
             enums_body = if enum_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", enum_entries.join("\n"))
+                format!("{{\n{}\n}}", enum_entries.join("\n"))
             };
 
             let entity_entries: Vec<String> = entities
@@ -2311,7 +2311,7 @@ type testIndexer = {{
                         })
                         .collect();
                     format!(
-                        "  \"{}\": {{\n{}\n  }};",
+                        "\"{}\": {{\n{}\n}};",
                         entity.name.capitalized,
                         field_entries.join("\n")
                     )
@@ -2320,7 +2320,7 @@ type testIndexer = {{
             entities_body = if entity_entries.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{\n{}\n      }}", entity_entries.join("\n"))
+                format!("{{\n{}\n}}", entity_entries.join("\n"))
             };
         }
 
@@ -2399,27 +2399,24 @@ type testIndexer = {{
         strict_hex_type: bool,
         bodies: ConfigBodies<'_>,
     ) -> String {
-        const I2: &str = "  ";
-        const I4: &str = "    ";
-        const I6: &str = "      ";
-
         // Only the configured ecosystem populates `Global.config.<eco>`. Generic
         // helpers in envio fall back to error-message strings for unconfigured
         // ecosystems.
         let ecosystem_field = match ecosystem {
             Ecosystem::Evm => format!(
-                "evm: {{ chains: {chains}; contracts: {contracts}; eventFilters: {filters} }};",
+                "evm: {{\nchains: {chains};\ncontracts: {contracts};\neventFilters: \
+                 {filters};\n}};",
                 chains = bodies.evm_chains,
                 contracts = bodies.evm_contracts,
                 filters = bodies.evm_event_filters,
             ),
             Ecosystem::Fuel => format!(
-                "fuel: {{ chains: {chains}; contracts: {contracts} }};",
+                "fuel: {{\nchains: {chains};\ncontracts: {contracts};\n}};",
                 chains = bodies.fuel_chains,
                 contracts = bodies.fuel_contracts,
             ),
             Ecosystem::Svm => format!(
-                "svm: {{ chains: {chains}; programs: {programs} }};",
+                "svm: {{\nchains: {chains};\nprograms: {programs};\n}};",
                 chains = bodies.svm_chains,
                 programs = bodies.svm_programs,
             ),
@@ -2431,15 +2428,14 @@ type testIndexer = {{
             Some(format!("enums: {};", bodies.enums)),
             strict_hex_type.then(|| "strictHexType: true;".to_string()),
         ]
-        .iter()
+        .into_iter()
         .flatten()
-        .map(|line| format!("{I6}{line}"))
         .collect::<Vec<_>>()
         .join("\n");
 
         let entity_aliases = entity_aliases
             .iter()
-            .map(|name| format!("{I2}export type {name} = Entity<\"{name}\">;"))
+            .map(|name| format!("export type {name} = Entity<\"{name}\">;"))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -2450,15 +2446,15 @@ type testIndexer = {{
         // The import also makes this file a module; without one,
         // `declare module "envio"` would replace envio's types instead of
         // augmenting them.
-        format!(
+        indent_ts_by_brace_depth(&format!(
             "/**\n * This file is generated by HyperIndex codegen from config.yaml and \
              schema.graphql.\n * Do not edit manually.\n * If your project's types look out of \
              date, run `envio codegen`\n * (or your package manager's `codegen` script, e.g. \
              `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex }} \
              from \"envio\";\n\n{fuel_types_namespace}\
-             declare module \"envio\" {{\n{I2}interface Global {{\n{I4}config: \
-             {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
-        )
+             declare module \"envio\" {{\ninterface Global {{\nconfig: \
+             {{\n{config_block}\n}};\n}}\n\n{entity_aliases}\n}}\n",
+        ))
     }
 }
 
@@ -2612,6 +2608,48 @@ fn ts_safe_property_name(name: &str) -> String {
 /// control character would break the line it sits on.
 fn ts_string_literal(value: &str) -> String {
     serde_json::to_string(value).expect("a string always serializes")
+}
+
+/// Re-indents generated TypeScript two spaces per brace level, so pieces
+/// built separately nest correctly. A line sits at the lowest depth it
+/// reaches, which dedents `};` and leaves `{ id: 1 }` level. Braces inside
+/// double-quoted strings don't count, and comment lines aren't scanned at all:
+/// their apostrophes and backticks aren't string delimiters.
+fn indent_ts_by_brace_depth(code: &str) -> String {
+    let mut depth: usize = 0;
+    code.split('\n')
+        .map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return String::new();
+            }
+            if line.starts_with('*') {
+                return format!("{} {line}", "  ".repeat(depth));
+            }
+            if line.starts_with("/*") || line.starts_with("//") {
+                return format!("{}{line}", "  ".repeat(depth));
+            }
+            let (mut offset, mut lowest_offset) = (0isize, 0isize);
+            let (mut in_string, mut escaped) = (false, false);
+            for character in line.chars() {
+                match (in_string, escaped, character) {
+                    (true, true, _) => escaped = false,
+                    (true, false, '\\') => escaped = true,
+                    (_, false, '"') => in_string = !in_string,
+                    (false, _, '{') => offset += 1,
+                    (false, _, '}') => {
+                        offset -= 1;
+                        lowest_offset = lowest_offset.min(offset);
+                    }
+                    _ => {}
+                }
+            }
+            let line_depth = depth.saturating_add_signed(lowest_offset);
+            depth = depth.saturating_add_signed(offset);
+            format!("{}{line}", "  ".repeat(line_depth))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -3815,6 +3853,20 @@ type Swap {
         );
     }
 
+    #[test]
+    fn indent_ts_by_brace_depth_nests_every_line() {
+        let code = "declare module \"envio\" {\n      config: {\n  /** The event's \
+                    block. */\n  \"Contract{1}\": { id: 1 };\n          programs: {\n\n    \
+                    \"a\": never;\n  };\n};\n }\n";
+
+        assert_eq!(
+            super::indent_ts_by_brace_depth(code),
+            "declare module \"envio\" {\n  config: {\n    /** The event's block. */\n    \
+             \"Contract{1}\": { id: 1 };\n    programs: {\n\n      \"a\": never;\n    };\n  \
+             };\n}\n",
+        );
+    }
+
     /// Regression: only entities get per-name aliases; enum schema names
     /// often clash with TS reserved words or envio exports, so they're
     /// only available via `Enum<"Name">`.
@@ -3947,8 +3999,9 @@ type Swap {
             .to_ts_type_string()
         };
         let rendered = format!(
-            "export type FuelBlock = {};\n\n/** The transaction that triggered a Fuel event. \
-             */\nexport type FuelTransaction = {};",
+            "export type FuelBlock<Fields extends FuelFieldsSelection> = {};\n\n/** The \
+             transaction that triggered a Fuel event. */\nexport type FuelTransaction<Fields \
+             extends FuelFieldsSelection> = {};",
             render(fuel.block_fields),
             render(fuel.transaction_fields),
         );

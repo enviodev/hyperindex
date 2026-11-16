@@ -28,53 +28,56 @@ declare namespace FuelTypes {
 declare module "envio" {
   interface Global {
     config: {
-      fuel: { chains: {
-  "0": { id: 0 };
-      }; contracts: {
-  "Greeter": {
-    "NewGreeting": {
-      /** The name of the event. */
-      readonly eventName: "NewGreeting";
-      /** The name of the contract that emitted this event. */
-      readonly contractName: "Greeter";
-      /** The unique identifier of the blockchain network where this event occurred. */
-      readonly chainId: 0;
-      /** The parameters or arguments associated with this event. */
-      readonly params: FuelTypes.Greeter.type6;
-      /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-      readonly block: FuelBlock;
-      /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-      readonly transaction: FuelTransaction;
-      /** The index of this event's log within the block. */
-      readonly logIndex: number;
-      /** The address of the contract that emitted this event. */
-      readonly srcAddress: Address;
-    };
-    "ClearGreeting": {
-      /** The name of the event. */
-      readonly eventName: "ClearGreeting";
-      /** The name of the contract that emitted this event. */
-      readonly contractName: "Greeter";
-      /** The unique identifier of the blockchain network where this event occurred. */
-      readonly chainId: 0;
-      /** The parameters or arguments associated with this event. */
-      readonly params: FuelTypes.Greeter.type4;
-      /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-      readonly block: FuelBlock;
-      /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
-      readonly transaction: FuelTransaction;
-      /** The index of this event's log within the block. */
-      readonly logIndex: number;
-      /** The address of the contract that emitted this event. */
-      readonly srcAddress: Address;
-    };
-  };
-      } };
+      fuel: {
+        chains: {
+          "0": { id: 0 };
+        };
+        contracts: {
+          "Greeter": {
+            "NewGreeting": {
+              /** The name of the event. */
+              readonly eventName: "NewGreeting";
+              /** The name of the contract that emitted this event. */
+              readonly contractName: "Greeter";
+              /** The unique identifier of the blockchain network where this event occurred. */
+              readonly chainId: 0;
+              /** The parameters or arguments associated with this event. */
+              readonly params: FuelTypes.Greeter.type6;
+              /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
+              readonly block: FuelBlock<{}>;
+              /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
+              readonly transaction: FuelTransaction<{}>;
+              /** The index of this event's log within the block. */
+              readonly logIndex: number;
+              /** The address of the contract that emitted this event. */
+              readonly srcAddress: Address;
+            };
+            "ClearGreeting": {
+              /** The name of the event. */
+              readonly eventName: "ClearGreeting";
+              /** The name of the contract that emitted this event. */
+              readonly contractName: "Greeter";
+              /** The unique identifier of the blockchain network where this event occurred. */
+              readonly chainId: 0;
+              /** The parameters or arguments associated with this event. */
+              readonly params: FuelTypes.Greeter.type4;
+              /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
+              readonly block: FuelBlock<{}>;
+              /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
+              readonly transaction: FuelTransaction<{}>;
+              /** The index of this event's log within the block. */
+              readonly logIndex: number;
+              /** The address of the contract that emitted this event. */
+              readonly srcAddress: Address;
+            };
+          };
+        };
+      };
       entities: {
-  "EmptyEntity": {
-    readonly "id": string;
-    readonly "emptyField": string;
-  };
+        "EmptyEntity": {
+          readonly "id": string;
+          readonly "emptyField": string;
+        };
       };
       perChainEntities: never;
       enums: {};

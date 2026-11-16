@@ -1167,11 +1167,16 @@ export type EvmOnBlockOptions<Fields extends EvmOnBlockFieldsSelection = {}> =
 
 // ============== Fuel event fields ==============
 
+/** The block and transaction fields a Fuel registration reads. Fuel selects
+ * none yet: every field is always present. It keeps `FuelBlock` and
+ * `FuelTransaction` shaped like `EvmBlock` and `SvmBlock`. */
+export type FuelFieldsSelection = {};
+
 /** The block a Fuel event was recorded in. */
-export type FuelBlock = { id: Hex; height: number; time: number };
+export type FuelBlock<Fields extends FuelFieldsSelection> = { id: Hex; height: number; time: number };
 
 /** The transaction that triggered a Fuel event. */
-export type FuelTransaction = { id: Hex };
+export type FuelTransaction<Fields extends FuelFieldsSelection> = { id: Hex };
 
 // ============== Fuel onBlock types ==============
 
