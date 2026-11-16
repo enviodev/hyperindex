@@ -1,7 +1,8 @@
 // https://github.com/enviodev/hyperindex/issues/1808
 // Entity aliases are exported from inside `declare module "envio"`, where an
-// export wins over a file-level type of the same name. No name a schema can
-// use may change what an event's block or transaction resolves to.
+// export wins over a file-level or global type of the same name. No name a
+// schema can use may change what an event's block or transaction, or an
+// entity's `Date` or `Uint8Array` field, resolves to.
 open Vitest
 
 describe("an entity named like a generated type", () => {
@@ -9,6 +10,7 @@ describe("an entity named like a generated type", () => {
     InternalTestIndexer.fromUserApi(
       ~configYaml=`
 name: generated-type-names
+bytes_type: uint8array
 field_selection:
   transaction_fields:
     - hash
@@ -35,6 +37,14 @@ type Entities {
 type Enums {
   id: ID!
 }
+type Date {
+  id: ID!
+  at: Timestamp!
+}
+type Uint8Array {
+  id: ID!
+  data: Bytes!
+}
 `,
       ~handlers=`
 import type { Entity, Enum, EvmEvent } from "envio";
@@ -49,8 +59,18 @@ expectType<
       Entity<"EvmTransaction">,
       Entity<"Entities">,
       Enum<"Status">,
+      Entity<"Date">["at"],
+      Entity<"Uint8Array">["data"],
     ],
-    [number, string, { readonly id: string }, { readonly id: string; readonly status: "ACTIVE" }, "ACTIVE"]
+    [
+      number,
+      string,
+      { readonly id: string },
+      { readonly id: string; readonly status: "ACTIVE" },
+      "ACTIVE",
+      Date,
+      Uint8Array,
+    ]
   >
 >(true);
 `,

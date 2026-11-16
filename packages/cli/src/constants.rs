@@ -215,4 +215,10 @@ pub mod reserved_keywords {
         "TestIndexerFromConfig",
         "TestIndexerProcessConfig",
     ];
+
+    /// Global types the generated `declare module "envio"` block refers to by
+    /// bare name. An entity alias exported from that block would shadow the
+    /// global there, so an entity named like one of these gets no alias.
+    pub const GENERATED_GLOBAL_TYPE_REFERENCES: &[&str] =
+        &["Date", "Readonly", "Record", "Uint8Array"];
 }

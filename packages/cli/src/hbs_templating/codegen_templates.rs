@@ -18,7 +18,7 @@ use crate::{
     },
     constants::{
         project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
-        reserved_keywords::ENVIO_TYPE_EXPORTS,
+        reserved_keywords::{ENVIO_TYPE_EXPORTS, GENERATED_GLOBAL_TYPE_REFERENCES},
     },
     project_paths::ParsedProjectPaths,
     type_schema::{RecordField, TypeExpr, TypeIdent},
@@ -2326,13 +2326,17 @@ type testIndexer = {{
 
         // Per-entity aliases for ergonomic imports
         // (`import type { User } from "envio"`). An entity named like an
-        // envio export (`Hex`, `Address`, …) gets none and is reached through
+        // envio export (`Hex`, `Address`, …) or a global the block refers to
+        // (`Date`, `Uint8Array`, …) gets none and is reached through
         // `Entity<"Hex">` only. Enums skip aliasing altogether and go through
         // `Enum<"Name">`.
         let entity_aliases: Vec<String> = entities
             .iter()
             .map(|e| e.name.capitalized.clone())
-            .filter(|name| !ENVIO_TYPE_EXPORTS.contains(&name.as_str()))
+            .filter(|name| {
+                !ENVIO_TYPE_EXPORTS.contains(&name.as_str())
+                    && !GENERATED_GLOBAL_TYPE_REFERENCES.contains(&name.as_str())
+            })
             .collect();
 
         Ok(ProjectTemplate {
