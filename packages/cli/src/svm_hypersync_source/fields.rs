@@ -375,18 +375,28 @@ mod tests {
         );
     }
 
-    /// The block table's names lead the store's fields. The transaction counts
-    /// follow them, which only a slot handler selects.
     #[test]
     fn block_names_match_store_ordinals() {
-        let slot_only = dts_string_union(&dts(), "SvmSlotBlockFieldName");
         assert_eq!(
-            names(BLOCK)
-                .into_iter()
-                .chain(slot_only.iter().map(String::as_str))
-                .collect::<Vec<_>>(),
+            dts_string_union(&dts(), "SvmBlockFieldName"),
             SvmBlockField::VARIANTS
                 .iter()
+                .map(|field| field.name())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// The transaction counts are tallied from the transaction table, so the
+    /// block table names every block field but them.
+    #[test]
+    fn block_table_names_every_field_but_the_transaction_counts() {
+        assert_eq!(
+            names(BLOCK),
+            SvmBlockField::VARIANTS
+                .iter()
+                .filter(|&&field| {
+                    SvmBlockField::TRANSACTION_COUNTS_MASK & (1 << field as u32) == 0
+                })
                 .map(|field| field.name())
                 .collect::<Vec<_>>()
         );
@@ -417,7 +427,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             dts_string_union(&dts, "SvmTransactionFieldName")
         );
-        assert_eq!(names(BLOCK), dts_string_union(&dts, "SvmBlockFieldName"));
     }
 
     fn quoted_names_between(src: &str, start_marker: &str, end_marker: &str) -> Vec<String> {

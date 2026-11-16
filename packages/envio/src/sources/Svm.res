@@ -23,8 +23,9 @@ let blockFields = [
   "failedTransactionCount",
 ]
 
-// Counts over every transaction of a slot, which only a slot handler selects:
-// an instruction's query reads the transactions its instructions matched.
+// Counts over every transaction of a slot, which only a slot handler selects for
+// now: in an instruction's query, the instruction selection narrows the
+// transactions returned.
 let slotOnlyBlockFields = ["transactionCount", "failedTransactionCount"]
 
 // `slot` is always included (the item's key); every other block field is

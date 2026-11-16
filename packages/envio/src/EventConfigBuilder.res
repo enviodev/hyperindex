@@ -636,7 +636,7 @@ let resolveSvmInlineFieldSelection = (
     names->Array.forEach(name =>
       if Svm.slotOnlyBlockFields->Array.includes(name) {
         JsError.throwWithMessage(
-          `The "${name}" block field counts the transactions of a whole slot, so only \`indexer.onSlot\` can select it. Remove it from the fields.block option of ${registration}.`,
+          `The "${name}" block field is not supported on \`indexer.onInstruction\` yet. Select it in an \`indexer.onSlot\` handler instead, or remove it from the fields.block option of ${registration}.`,
         )
       }
     )

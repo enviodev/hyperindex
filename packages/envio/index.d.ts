@@ -1278,19 +1278,7 @@ export type SvmOnSlotWhereArgs<Config extends IndexerConfigTypes = GlobalConfig>
 
 /** The `fields` option of `indexer.onSlot`: the fields of the slot's block the
  * handler reads. */
-export type SvmOnSlotFieldsSelection = {
-  readonly block?: readonly SvmSlotBlockFieldName[];
-};
-
-/** The block of an `indexer.onSlot` handler, narrowed to the registration's
- * fields selection. `slot` is always selected. */
-export type SvmSlotBlock<Fields extends SvmOnSlotFieldsSelection> = {
-  readonly [K in keyof SvmAllSlotBlockFields]: K extends "slot"
-    ? SvmAllSlotBlockFields[K]
-    : K extends ListedFields<Fields, "block">
-      ? SvmAllSlotBlockFields[K]
-      : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.block in the registration options.`>;
-};
+export type SvmOnSlotFieldsSelection = Pick<SvmFieldsSelection, "block">;
 
 type SvmOnSlotArgsFor<Fields extends SvmOnSlotFieldsSelection, Config extends IndexerConfigTypes> = {
   /** Slot number being processed. */
@@ -1299,7 +1287,7 @@ type SvmOnSlotArgsFor<Fields extends SvmOnSlotFieldsSelection, Config extends In
       Undefined on a slot the chain skipped, which produced no block. */
   readonly block: [Exclude<ListedFields<Fields, "block">, "slot">] extends [never]
     ? FieldNotSelected<FieldGroupNotSelectedMessage<"block", "block", "time">>
-    : SvmSlotBlock<Fields> | undefined;
+    : SvmBlock<Fields> | undefined;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: SvmOnSlotContext<Config>;
 };
@@ -1322,7 +1310,7 @@ type SvmOnSlotOptionsFor<Fields extends SvmOnSlotFieldsSelection, Config extends
 };
 
 /** Arguments passed to an SVM slot handler. Takes the registration's fields
- * selection, like {@link SvmSlotBlock}. */
+ * selection, like {@link SvmBlock}. */
 export type SvmOnSlotHandlerArgs<Fields extends SvmOnSlotFieldsSelection> =
   SvmOnSlotArgsFor<Fields, GlobalConfig>;
 
@@ -1385,15 +1373,12 @@ export type SvmAllBlockFields = {
   readonly height: number;
   readonly parentSlot: number;
   readonly parentHash: string;
-};
-
-/** Every field of a slot's block an `indexer.onSlot` handler can select: the
- *  block's own, and counts of the transactions HyperSync stores for the slot,
- *  which leave out votes. A block that stored none counts zero. */
-export type SvmAllSlotBlockFields = SvmAllBlockFields & {
-  /** How many non-vote transactions the slot holds, failed ones included. */
+  /** How many non-vote transactions the slot holds, failed ones included.
+   *  HyperSync doesn't store votes. A block that stored none counts zero.
+   *  Only `indexer.onSlot` can select it for now. */
   readonly transactionCount: number;
-  /** How many of them failed. */
+  /** How many of the slot's non-vote transactions failed. Only
+   *  `indexer.onSlot` can select it for now. */
   readonly failedTransactionCount: number;
 };
 
@@ -1455,11 +1440,7 @@ export type SvmBlockFieldName =
   | "hash"
   | "height"
   | "parentSlot"
-  | "parentHash";
-/** The block fields `indexer.onSlot` selects from. The counts read every
- *  transaction of the slot, so an instruction's block does not offer them. */
-export type SvmSlotBlockFieldName =
-  | SvmBlockFieldName
+  | "parentHash"
   | "transactionCount"
   | "failedTransactionCount";
 export type SvmLogFieldName = "kind" | "message";
@@ -1499,7 +1480,22 @@ type SvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
             ? EvmFieldsMustBeLiteral<"log">
             : unknown;
 
-type SvmActivityListed<Fields> = ListedFields<Fields, "accountActivity">;
+/** `unknown` (a no-op intersection) unless `fields.block` lists a field only
+ * `indexer.onSlot` serves, otherwise the branded type that rejects the
+ * option. The counts take a query over every transaction of the slot, which
+ * an instruction query can't share: its instruction selection would narrow
+ * the transactions it returns. */
+type SvmSlotOnlyFieldsCheck<Fields> = [
+  Extract<ListedFields<Fields, "block">, "transactionCount" | "failedTransactionCount">,
+] extends [infer SlotOnly extends string]
+  ? [SlotOnly] extends [never]
+    ? unknown
+    : {
+        readonly __slotOnlyField: `Field '${SlotOnly}' is not supported on indexer.onInstruction yet. Select it in an indexer.onSlot handler instead.`;
+      }
+  : unknown;
+
+type SvmActivityListed<Fields> =ListedFields<Fields, "accountActivity">;
 type SvmActivityHas<Fields, Name extends string> = [SvmActivityListed<Fields>] extends [never]
   ? false
   : Name extends SvmActivityListed<Fields>
@@ -1721,7 +1717,7 @@ export type SvmOnInstructionOptions<
   /** Instruction name from the program's IDL, or from
    * `chains[].programs[].instructions[].name` when the layout is inline. */
   readonly instruction: I;
-  readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
+  readonly fields?: Fields & SvmFieldsLiteralCheck<Fields> & SvmSlotOnlyFieldsCheck<Fields>;
   readonly where?: SvmOnInstructionWhere<SvmAccountsOf<P, I>>;
 };
 
@@ -2155,7 +2151,7 @@ type SvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
  * A slot not given one is skipped: those handlers get no block there. */
 type SvmSimulateBlock = {
   /** Block fields, keyed by the names `fields.block` selects. */
-  block: { readonly slot: number } & Partial<SvmAllSlotBlockFields>;
+  block: { readonly slot: number } & Partial<SvmAllBlockFields>;
 };
 
 /** Configuration for a single SVM chain in the test indexer. */
