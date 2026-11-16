@@ -376,14 +376,24 @@ describe("IndexerState", () => {
         t.expect(
           {
             "committedProgressBlockNumber": resultCs->ChainState.committedProgressBlockNumber,
-            // The concurrent fetch buffered 2 events; the batch-time snapshot had 1.
-            // Seeing 2 proves the current (post-fetch) fetchState was kept.
+            // The concurrent fetch buffered 2 events in the chain's store.
             "bufferSize": resultCs->ChainState.bufferSize,
+            // The store is the chain's either way, so only the frontier shows
+            // whether the post-fetch fetch state was kept: the batch-time
+            // snapshot would ask again from block 6.
+            "nextQueryFromBlock": {
+              resultCs->ChainState.updateKnownHeight(~knownHeight=100)
+              switch resultCs->ChainState.getNextQuery(~chainTargetItems=10_000.) {
+              | Ready([query]) => Some(query.fromBlock)
+              | _ => None
+              }
+            },
           },
           ~message="must commit the batch's progress while keeping the mid-batch fetch frontier",
         ).toEqual({
           "committedProgressBlockNumber": progressed.progressBlockNumber,
           "bufferSize": 2,
+          "nextQueryFromBlock": Some(16),
         })
       },
     )
