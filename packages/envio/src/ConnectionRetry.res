@@ -8,7 +8,7 @@ let retryDelayMillis = (~attempt) =>
 // and its alerting notice.
 let deadlineSeconds = 60
 
-let lostConnectionMsg = `Lost the connection to the database. Retrying until it answers; the indexer stops if it stays unreachable for ${deadlineSeconds->Int.toString} seconds.`
+let lostConnectionMsg = "Lost the connection to the database. Retrying until it answers."
 
 let unreachableMsg = `The database has been unreachable for ${deadlineSeconds->Int.toString} seconds, so the indexer is stopping. The "Lost the connection to the database" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it, then start the indexer again: it resumes from the last batch it saved.`
 
