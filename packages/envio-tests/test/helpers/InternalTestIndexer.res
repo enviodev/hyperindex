@@ -4,6 +4,19 @@ type sources = {handlers?: string, test?: string}
 @module("./TypeChecker.ts")
 external checkSources: (string, sources) => array<string> = "checkSources"
 
+@module("./TypeChecker.ts")
+external checkDeclarations: string => array<string> = "checkDeclarations"
+
+// Type errors in a config's generated types and in envio's own declarations,
+// as reported to a project that turns `skipLibCheck` off.
+let declarationErrors = (~schema=?, ~files=?, configYaml) => {
+  let {indexerTypes} = Core.fromUserApi(~schema?, ~files?, ~withIndexerTypes=true, configYaml)
+  switch indexerTypes->Null.toOption {
+  | Some(typesDts) => checkDeclarations(typesDts)
+  | None => JsError.throwWithMessage("Config parsed without generated indexer types.")
+  }
+}
+
 // Member names an editor offers at the `/*HERE*/` marker of `handlers`.
 @module("./TypeChecker.ts")
 external completionsAtUnsafe: (string, string) => array<string> = "completionsAt"
