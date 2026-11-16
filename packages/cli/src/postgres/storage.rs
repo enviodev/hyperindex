@@ -497,8 +497,12 @@ impl Storage {
                 "DROP SCHEMA IF EXISTS \"{schema}\" CASCADE;\nCREATE SCHEMA \"{schema}\";"
             ));
         }
+        // The indexer's own role gets everything. Other roles only need to see
+        // the schema: USAGE, never CREATE, so a read-only login cannot add
+        // objects to it. Read access to the tables is granted by whoever
+        // provisions those roles (default privileges on this role), not here.
         ddl.push(format!(
-            "GRANT ALL ON SCHEMA \"{schema}\" TO \"{}\";\nGRANT ALL ON SCHEMA \"{schema}\" TO \
+            "GRANT ALL ON SCHEMA \"{schema}\" TO \"{}\";\nGRANT USAGE ON SCHEMA \"{schema}\" TO \
              public;",
             self.settings.pg_user
         ));
