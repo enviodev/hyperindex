@@ -10,7 +10,7 @@ let deadlineSeconds = 60
 
 let lostConnectionMsg = "Lost the connection to the database. Retrying until it answers."
 
-let unreachableMsg = `The database has been unreachable for ${deadlineSeconds->Int.toString} seconds, so the indexer is stopping. The "Lost the connection to the database" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it, then start the indexer again: it resumes from the last batch it saved.`
+let unreachableMsg = `The database has been unreachable for ${deadlineSeconds->Int.toString} seconds. The "Lost the connection to the database" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it. Once the issue is resolved and the indexer is restarted, it resumes from the last block it saved.`
 
 // Runs `work` until it gets through, running it again for as long as the
 // database connection goes before it did. Only for work storage raises

@@ -298,7 +298,7 @@ describe("Postgres going away mid-run", () => {
         0,
         [
           Some(
-            "The database has been unreachable for 60 seconds, so the indexer is stopping. The \"Lost the connection to the database\" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it, then start the indexer again: it resumes from the last batch it saved.",
+            "The database has been unreachable for 60 seconds. The \"Lost the connection to the database\" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it. Once the issue is resolved and the indexer is restarted, it resumes from the last block it saved.",
           ),
         ],
         [],
