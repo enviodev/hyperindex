@@ -40,6 +40,24 @@ const _bad: FuelContractName = "NotAContract";
 `)
   )
 
+  // Fuel selects no fields yet; the parameter keeps FuelBlock and
+  // FuelTransaction shaped like EvmBlock and SvmBlock so it can.
+  it("takes a fields selection on FuelBlock and FuelTransaction", _ =>
+    check(`
+import type { FuelBlock, FuelEvent, FuelFieldsSelection, FuelTransaction } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type NewGreeting = FuelEvent<"Greeter", "NewGreeting">;
+const _noSelection: FuelFieldsSelection = {};
+expectType<
+  TypeEqual<
+    [NewGreeting["block"], NewGreeting["transaction"]],
+    [FuelBlock<typeof _noSelection>, FuelTransaction<typeof _noSelection>]
+  >
+>(true);
+`)
+  )
+
   it("looks up FuelEvent and its Fuel-specific block/transaction", _ =>
     check(`
 import type { FuelChainId, FuelEvent } from "envio";
