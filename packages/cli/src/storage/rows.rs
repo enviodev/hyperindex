@@ -53,14 +53,21 @@ pub enum ReadKind {
     List = 5,
     /// The document's own text, parsed on the other side.
     Json = 6,
+    /// A decimal integer's text, becoming a `BigInt`.
+    BigInt = 7,
+    /// A position in the `JsTape`s that travel beside the columns, for a value
+    /// with no column shape of its own.
+    Tape = 8,
 }
 
 impl ReadKind {
     /// The slot it travels in. Three of them share one.
     pub fn slot(self) -> ColumnKind {
         match self {
-            ReadKind::Float | ReadKind::Bool | ReadKind::Timestamp => ColumnKind::F64,
-            ReadKind::Text | ReadKind::Json => ColumnKind::Text,
+            ReadKind::Float | ReadKind::Bool | ReadKind::Timestamp | ReadKind::Tape => {
+                ColumnKind::F64
+            }
+            ReadKind::Text | ReadKind::Json | ReadKind::BigInt => ColumnKind::Text,
             ReadKind::Bytes => ColumnKind::Bytes,
             ReadKind::List => ColumnKind::List,
         }

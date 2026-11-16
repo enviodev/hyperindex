@@ -8,7 +8,11 @@ use hypersync_client::{
 use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
+use std::sync::Arc;
+
+use crate::hex::to_hex;
 use crate::js_value::JsTape;
+use crate::storage::rows::{Cell, ReadKind};
 
 /// Evm log object
 ///
@@ -314,33 +318,123 @@ pub struct OnEventRegistrationInput {
     pub transaction_fields: Vec<crate::evm_hypersync_source::query::TransactionField>,
 }
 
-/// A decoded event's params as one object keyed by param name in declaration
-/// order, whether each came from a topic or the body. `None` when the decoded
-/// values don't line up with `params`.
-pub(crate) fn event_params_tape(
-    decoded: &DecodedEvent,
-    params: &[ParamMeta],
-    checksummed_addresses: bool,
-) -> Option<JsTape> {
-    let mut indexed = decoded.indexed.iter();
-    let mut body = decoded.body.iter();
-    let mut tape = JsTape::new();
-    tape.obj(params.len());
-    for param in params {
-        let value = if param.indexed {
-            indexed.next()
-        } else {
-            body.next()
-        }?;
-        tape.key(&param.name);
+/// How one registration's params reach JS: their names and ABI shapes, and
+/// the column each becomes in a batch.
+pub(crate) struct ParamSchema {
+    pub(crate) params: Vec<ParamMeta>,
+    pub(crate) kinds: Vec<ReadKind>,
+    pub(crate) checksummed_addresses: bool,
+}
+
+impl ParamSchema {
+    pub(crate) fn new(params: Vec<ParamMeta>, checksummed_addresses: bool) -> Self {
+        let kinds = params.iter().map(param_read_kind).collect();
+        ParamSchema {
+            params,
+            kinds,
+            checksummed_addresses,
+        }
+    }
+}
+
+/// A flat param is a column of its own; an array or a tuple travels as a tape.
+fn param_read_kind(param: &ParamMeta) -> ReadKind {
+    let abi_type = param.abi_type.as_str();
+    if abi_type.ends_with(']') || abi_type.starts_with('(') || abi_type.starts_with("tuple") {
+        ReadKind::Tape
+    } else if abi_type == "bool" {
+        ReadKind::Bool
+    } else if abi_type.starts_with("uint") || abi_type.starts_with("int") {
+        ReadKind::BigInt
+    } else {
+        ReadKind::Text
+    }
+}
+
+/// A decoded event's params in declaration order, whether each came from a
+/// topic or the body. They become JS values only when a batch lays them out.
+#[derive(Clone)]
+pub(crate) struct EvmParams {
+    pub(crate) values: Vec<DynSolValue>,
+    pub(crate) schema: Arc<ParamSchema>,
+}
+
+impl EvmParams {
+    /// `None` when the decoded values don't line up with the schema's params.
+    pub(crate) fn from_decoded(decoded: DecodedEvent, schema: &Arc<ParamSchema>) -> Option<Self> {
+        let mut indexed = decoded.indexed.into_iter();
+        let mut body = decoded.body.into_iter();
+        let values = schema
+            .params
+            .iter()
+            .map(|param| {
+                if param.indexed {
+                    indexed.next()
+                } else {
+                    body.next()
+                }
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(EvmParams {
+            values,
+            schema: schema.clone(),
+        })
+    }
+
+    /// The params as one object keyed by param name.
+    #[cfg(test)]
+    pub(crate) fn to_tape(&self) -> JsTape {
+        let mut tape = JsTape::new();
+        tape.obj(self.values.len());
+        for (value, param) in self.values.iter().zip(&self.schema.params) {
+            tape.key(&param.name);
+            self.write(&mut tape, value, param);
+        }
+        tape
+    }
+
+    fn write(&self, tape: &mut JsTape, value: &DynSolValue, param: &ParamMeta) {
         write_sol_value(
-            &mut tape,
+            tape,
             value,
             param.components.as_deref(),
-            checksummed_addresses,
+            self.schema.checksummed_addresses,
         );
     }
-    Some(tape)
+
+    /// Param `index` as its column's cell. A nested value is pushed onto
+    /// `tapes` and the cell holds its position there.
+    pub(crate) fn cell(&self, index: usize, tapes: &mut Vec<JsTape>) -> Result<Cell<'static>> {
+        let value = &self.values[index];
+        let param = &self.schema.params[index];
+        let text = |text: String| Cell::Str(text.into());
+        Ok(match (self.schema.kinds[index], value) {
+            (ReadKind::Tape, value) => {
+                let mut tape = JsTape::new();
+                self.write(&mut tape, value, param);
+                tapes.push(tape);
+                Cell::Num((tapes.len() - 1) as f64)
+            }
+            (ReadKind::Bool, DynSolValue::Bool(value)) => Cell::Bool(*value),
+            (ReadKind::BigInt, DynSolValue::Uint(value, _)) => text(value.to_string()),
+            (ReadKind::BigInt, DynSolValue::Int(value, _)) => text(value.to_string()),
+            (ReadKind::Text, DynSolValue::Address(address))
+                if self.schema.checksummed_addresses =>
+            {
+                text(address.to_checksum_buffer(None).as_str().to_owned())
+            }
+            (ReadKind::Text, DynSolValue::Address(address)) => text(to_hex(address.as_slice())),
+            (ReadKind::Text, DynSolValue::FixedBytes(word, size)) => text(to_hex(&word[..*size])),
+            (ReadKind::Text, DynSolValue::Function(function)) => text(to_hex(function.as_slice())),
+            (ReadKind::Text, DynSolValue::Bytes(bytes)) => text(to_hex(bytes)),
+            (ReadKind::Text, DynSolValue::String(value)) => text(value.clone()),
+            (kind, value) => anyhow::bail!(
+                "param `{}` of ABI type {} decoded to {value:?}, which a {kind:?} column can't hold",
+                param.name,
+                param.abi_type
+            ),
+        })
+    }
 }
 
 /// A tuple with `components` becomes an object keyed by component name; an

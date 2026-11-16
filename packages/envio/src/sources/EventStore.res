@@ -17,20 +17,44 @@ type format =
   | @as(3) Block
   | @as(4) JsItem
 
-// Rows as columns: the object each row replays to, and each row's format and
-// registration index in typed arrays, so reading a batch builds no wrapper
-// object per row.
-type storedRows = {
-  formats: Uint8Array.t,
-  registrationIndexes: Int32Array.t,
-  data: array<unknown>,
+// The columns of one arena, as `Reading` builds its views from them.
+type arenaShape = {
+  names: array<string>,
+  kinds: array<Reading.kind>,
+  elementKinds: array<Null.t<Reading.kind>>,
+  rows: int,
 }
 
-let formatAt = (rows: storedRows, index) =>
-  rows.formats->(Utils.magic: Uint8Array.t => array<format>)->Array.getUnsafe(index)
+// One registration's EVM log params, a row per log.
+type paramsShape = {registrationIndex: int, shape: arenaShape}
 
-let registrationIndexAt = (rows: storedRows, index) =>
-  rows.registrationIndexes->(Utils.magic: Int32Array.t => array<int>)->Array.getUnsafe(index)
+// Items on their way to JS: the arenas behind `handle` hold `items`, a row per
+// item in processing order, then each registration's `params`. `tapes` holds
+// what has no column shape. `read` lends the arenas and takes them back.
+type storedRows = {
+  handle: int,
+  items: arenaShape,
+  params: array<paramsShape>,
+  tapes: array<unknown>,
+}
+
+@send external lendRowsRaw: (Core.eventStoreCtor, int) => array<ArrayBuffer.t> = "lendRows"
+@send
+external releaseRowsRaw: (Core.eventStoreCtor, int, array<ArrayBuffer.t>) => unit = "releaseRows"
+
+// Reads the arenas behind `rows` with `f`, then hands their buffers back,
+// whether or not `f` throws. Nothing may keep a view into them.
+let read = (rows: storedRows, f: array<ArrayBuffer.t> => 'a): 'a => {
+  let ctor = Core.getAddon().eventStore
+  let buffers = ctor->lendRowsRaw(rows.handle)
+  let result = try f(buffers) catch {
+  | exn =>
+    ctor->releaseRowsRaw(rows.handle, buffers)
+    throw(exn)
+  }
+  ctor->releaseRowsRaw(rows.handle, buffers)
+  result
+}
 
 // A JS-built item with its registration replaced by the registration's index.
 type jsItemInput = {

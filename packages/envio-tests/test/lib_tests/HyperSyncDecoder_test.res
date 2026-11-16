@@ -305,6 +305,42 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
     },
   )
 
+  // Flat params cross as columns, one per param, and nested ones as tapes, so
+  // every column kind and a tape share one decoded log here.
+  Async.it("keeps each flat param kind and a nested one beside them", async t => {
+    let params: array<Internal.paramMeta> = [
+      {name: "delta", abiType: "int256", indexed: false},
+      {name: "big", abiType: "uint256", indexed: false},
+      {name: "flag", abiType: "bool", indexed: false},
+      {name: "payload", abiType: "bytes", indexed: false},
+      {name: "label", abiType: "string", indexed: false},
+      {name: "id", abiType: "bytes4", indexed: false},
+      {name: "holders", abiType: "address[]", indexed: false},
+    ]
+    let result = await decodeSingle(
+      ~eventName="Mixed",
+      ~params,
+      ~log=(
+        [toEventSelector("event Mixed(int256, uint256, bool, bytes, string, bytes4, address[])")],
+        encodeAbiParameters(
+          %raw(`[{"type":"int256"},{"type":"uint256"},{"type":"bool"},{"type":"bytes"},{"type":"string"},{"type":"bytes4"},{"type":"address[]"}]`),
+          %raw(`[-5n, 2n ** 255n, true, "0xdeadbeef", "héllo", "0x01020304", ["0x0000000000000000000000000000000000000abc"]]`),
+        ),
+      ),
+    )
+    t.expect(result).toEqual(
+      {
+        "delta": -5n,
+        "big": %raw(`2n ** 255n`),
+        "flag": true,
+        "payload": "0xdeadbeef",
+        "label": "héllo",
+        "id": "0x01020304",
+        "holders": ["0x0000000000000000000000000000000000000abc"],
+      }->Utils.magic,
+    )
+  })
+
   Async.it("remaps mixed-name tuple components using index keys", async t => {
     let params: array<Internal.paramMeta> = [
       {

@@ -9,7 +9,7 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
-use crate::event_store::{EventStore, Row, RowFormat};
+use crate::event_store::{EventStore, Row};
 use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
 
@@ -20,12 +20,11 @@ pub(crate) mod selection;
 pub(crate) mod topic_filter;
 pub(crate) mod types;
 
-use crate::js_value::JsTape;
 use config::ClientConfig;
 use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{encode_address, Block, OnEventRegistrationInput, RollbackGuard};
+use types::{encode_address, Block, EvmParams, OnEventRegistrationInput, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -441,34 +440,20 @@ pub struct EventItem {
     /// The registration this log routed to, as passed to the client
     /// constructor. Logs that route nowhere never cross the boundary.
     pub on_event_registration_index: i64,
-    pub params: JsTape,
+    pub params: EvmParams,
 }
 
 impl EventItem {
     /// The store row of this log; it replays to the object `EvmEventItem.t`
     /// describes.
     pub(crate) fn into_row(self) -> Row {
-        let mut data = JsTape::new();
-        data.obj(6);
-        data.key("logIndex");
-        data.num(self.log_index as f64);
-        data.key("srcAddress");
-        data.str(&self.src_address);
-        data.key("blockNumber");
-        data.num(self.block_number as f64);
-        data.key("transactionIndex");
-        data.num(self.transaction_index as f64);
-        data.key("onEventRegistrationIndex");
-        data.num(self.on_event_registration_index as f64);
-        data.key("params");
-        data.embed(&self.params);
-        Row::event(
+        Row::evm_log(
             self.block_number,
             self.log_index,
-            None,
+            self.transaction_index,
+            self.src_address,
             self.on_event_registration_index,
-            RowFormat::EvmLog,
-            data,
+            self.params,
         )
     }
 }

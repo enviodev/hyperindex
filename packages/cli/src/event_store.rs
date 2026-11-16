@@ -1,19 +1,29 @@
 //! Per-chain store of fetched items, kept sorted in processing order until a
-//! batch takes them. A row holds the item's sort key and the source's own item
-//! object as a `JsTape`, so an item becomes a JS object only when a batch or a
-//! contract register reads it. Sources return one store per response (a page),
-//! merged into the chain's store once the response is applied.
+//! batch takes them. A row holds the item's sort key and its data as Rust
+//! values, so an item becomes a JS object only when a batch or a contract
+//! register reads it. Sources return one store per response (a page), merged
+//! into the chain's store once the response is applied.
+//!
+//! Rows leave as an arena result: whole items, events and block handlers
+//! mixed, laid out column by column the way storage hands JavaScript a query
+//! result, and read there with the same `Reading` code.
 
 use std::cmp::Ordering;
-use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+use std::sync::{LazyLock, Mutex};
 
-use napi::bindgen_prelude::{Int32Array, Uint8Array};
+use anyhow::Result;
+use napi::bindgen_prelude::ArrayBuffer;
+use napi::Env;
 use napi_derive::napi;
 
+use crate::columnar::{js as columnar_js, Arena};
+use crate::evm_hypersync_source::types::EvmParams;
 use crate::js_value::JsTape;
+use crate::storage::rows::{lay_out, Cell, ColumnRead, ReadKind};
 
-/// Which JS conversion a row's data goes through, chosen by what produced it.
+/// Which JS conversion a row goes through, chosen by what produced it.
 #[napi]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RowFormat {
@@ -21,8 +31,7 @@ pub enum RowFormat {
     EvmLog = 0,
     FuelReceipt = 1,
     SvmInstruction = 2,
-    /// A block handler's item, fetched or generated: `{blockNumber,
-    /// onBlockRegistrationIndex, skipped}`.
+    /// A block handler's item, fetched or generated.
     Block = 3,
     /// An item built in JS (simulate input), stored without its registration.
     JsItem = 4,
@@ -37,6 +46,31 @@ pub(crate) enum ItemKind {
 }
 
 #[derive(Clone)]
+pub(crate) enum RowData {
+    EvmLog {
+        src_address: String,
+        transaction_index: i64,
+        params: EvmParams,
+    },
+    Block {
+        skipped: bool,
+    },
+    /// The item object of a source without a columnar layout yet (Fuel, SVM),
+    /// or one built in JS.
+    Tape(RowFormat, JsTape),
+}
+
+impl RowData {
+    fn format(&self) -> RowFormat {
+        match self {
+            RowData::EvmLog { .. } => RowFormat::EvmLog,
+            RowData::Block { .. } => RowFormat::Block,
+            RowData::Tape(format, _) => *format,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct Row {
     block_number: i64,
     kind: ItemKind,
@@ -46,8 +80,7 @@ pub(crate) struct Row {
     /// SVM's position in the transaction's CPI tree, parent before child.
     order_path: Option<Vec<i64>>,
     registration_index: i64,
-    format: RowFormat,
-    data: JsTape,
+    data: RowData,
 }
 
 impl Row {
@@ -65,28 +98,40 @@ impl Row {
             log_index,
             order_path,
             registration_index,
-            format,
-            data,
+            data: RowData::Tape(format, data),
+        }
+    }
+
+    pub(crate) fn evm_log(
+        block_number: i64,
+        log_index: i64,
+        transaction_index: i64,
+        src_address: String,
+        registration_index: i64,
+        params: EvmParams,
+    ) -> Self {
+        Row {
+            block_number,
+            kind: ItemKind::Event,
+            log_index,
+            order_path: None,
+            registration_index,
+            data: RowData::EvmLog {
+                src_address,
+                transaction_index,
+                params,
+            },
         }
     }
 
     pub(crate) fn block(block_number: i64, registration_index: i64, skipped: bool) -> Self {
-        let mut data = JsTape::new();
-        data.obj(3);
-        data.key("blockNumber");
-        data.num(block_number as f64);
-        data.key("onBlockRegistrationIndex");
-        data.num(registration_index as f64);
-        data.key("skipped");
-        data.bool(skipped);
         Row {
             block_number,
             kind: ItemKind::Block,
             log_index: 0,
             order_path: None,
             registration_index,
-            format: RowFormat::Block,
-            data,
+            data: RowData::Block { skipped },
         }
     }
 
@@ -147,35 +192,185 @@ fn merge_rows(mut rows: VecDeque<Row>, mut incoming: Vec<Row>) -> VecDeque<Row> 
     rows
 }
 
-/// Rows on their way to JS, as columns: the object each row replays to, and
-/// the conversion and registration of each in typed arrays, so a batch builds
-/// no wrapper object per row.
-#[napi(object, object_from_js = false)]
-pub struct StoredRows {
-    /// Each row's `RowFormat`.
-    pub formats: Uint8Array,
-    pub registration_indexes: Int32Array,
-    pub data: Vec<JsTape>,
+/// The columns of an arena result, which JavaScript builds its views from.
+#[napi(object)]
+pub struct ArenaShape {
+    pub names: Vec<String>,
+    /// `ReadKind` ordinals.
+    pub kinds: Vec<u8>,
+    pub element_kinds: Vec<Option<u8>>,
+    pub rows: u32,
 }
 
-impl FromIterator<Row> for StoredRows {
-    fn from_iter<I: IntoIterator<Item = Row>>(rows: I) -> Self {
-        let rows = rows.into_iter();
-        let (capacity, _) = rows.size_hint();
-        let mut formats = Vec::with_capacity(capacity);
-        let mut registration_indexes = Vec::with_capacity(capacity);
-        let mut data = Vec::with_capacity(capacity);
-        for row in rows {
-            formats.push(row.format as u8);
-            registration_indexes.push(row.registration_index as i32);
-            data.push(row.data);
-        }
-        StoredRows {
-            formats: formats.into(),
-            registration_indexes: registration_indexes.into(),
-            data,
+impl ArenaShape {
+    fn of(columns: &[ColumnRead], rows: usize) -> Self {
+        ArenaShape {
+            names: columns.iter().map(|column| column.name.clone()).collect(),
+            kinds: columns.iter().map(|column| column.kind as u8).collect(),
+            element_kinds: columns
+                .iter()
+                .map(|column| column.element.map(|kind| kind as u8))
+                .collect(),
+            rows: rows as u32,
         }
     }
+}
+
+/// The params of one registration's EVM logs, one row per log.
+#[napi(object)]
+pub struct ParamsShape {
+    pub registration_index: i64,
+    pub shape: ArenaShape,
+}
+
+/// Items on their way to JS. The arenas behind `handle` hold `items`, one row
+/// per item in processing order, then each registration's `params`; `tapes`
+/// carries what has no column shape. `EventStore.lendRows` lends the arenas'
+/// buffers in that order, and `EventStore.releaseRows` takes them back.
+#[napi(object, object_from_js = false)]
+pub struct StoredRows {
+    pub handle: u32,
+    pub items: ArenaShape,
+    pub params: Vec<ParamsShape>,
+    pub tapes: Vec<JsTape>,
+}
+
+/// The arenas of the results JavaScript has yet to read, by handle.
+struct Lent {
+    arenas: Vec<Arena>,
+    /// How many buffers each arena lent, so each takes back its own.
+    buffer_counts: Vec<usize>,
+}
+
+static RESULTS: LazyLock<Mutex<HashMap<u32, Lent>>> = LazyLock::new(Default::default);
+static NEXT_HANDLE: AtomicU32 = AtomicU32::new(1);
+
+const ITEM_COLUMNS: [(&str, ReadKind); 9] = [
+    ("format", ReadKind::Float),
+    ("blockNumber", ReadKind::Float),
+    ("logIndex", ReadKind::Float),
+    ("transactionIndex", ReadKind::Float),
+    ("registrationIndex", ReadKind::Float),
+    ("srcAddress", ReadKind::Text),
+    ("skipped", ReadKind::Bool),
+    // The log's row in its registration's params.
+    ("paramsRow", ReadKind::Float),
+    ("tape", ReadKind::Float),
+];
+
+/// Lays rows out as one item arena and one params arena per registration with
+/// EVM logs among them, and keeps the arenas until JavaScript has read them.
+fn lay_out_rows<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Result<StoredRows> {
+    let mut item_cells = Vec::new();
+    let mut tapes = Vec::new();
+    // Registration index -> (its EVM logs' params, in order).
+    let mut params: Vec<(i64, Vec<&'a EvmParams>)> = Vec::new();
+    let mut count = 0usize;
+    for row in rows {
+        count += 1;
+        let (transaction_index, src_address, skipped, params_row, tape) = match &row.data {
+            RowData::EvmLog {
+                src_address,
+                transaction_index,
+                params: log_params,
+            } => {
+                let group = match params
+                    .iter_mut()
+                    .find(|(index, _)| *index == row.registration_index)
+                {
+                    Some((_, group)) => group,
+                    None => {
+                        params.push((row.registration_index, Vec::new()));
+                        &mut params.last_mut().unwrap().1
+                    }
+                };
+                group.push(log_params);
+                (
+                    Cell::Num(*transaction_index as f64),
+                    Cell::Str(src_address.as_str().into()),
+                    Cell::Null,
+                    Cell::Num((group.len() - 1) as f64),
+                    Cell::Null,
+                )
+            }
+            RowData::Block { skipped } => (
+                Cell::Null,
+                Cell::Null,
+                Cell::Bool(*skipped),
+                Cell::Null,
+                Cell::Null,
+            ),
+            RowData::Tape(_, data) => {
+                tapes.push(data.clone());
+                (
+                    Cell::Null,
+                    Cell::Null,
+                    Cell::Null,
+                    Cell::Null,
+                    Cell::Num((tapes.len() - 1) as f64),
+                )
+            }
+        };
+        item_cells.extend([
+            Cell::Num(row.data.format() as u8 as f64),
+            Cell::Num(row.block_number as f64),
+            Cell::Num(row.log_index as f64),
+            transaction_index,
+            Cell::Num(row.registration_index as f64),
+            src_address,
+            skipped,
+            params_row,
+            tape,
+        ]);
+    }
+
+    let item_columns: Vec<ColumnRead> = ITEM_COLUMNS
+        .iter()
+        .map(|(name, kind)| ColumnRead::scalar(*name, *kind))
+        .collect();
+    let items = ArenaShape::of(&item_columns, count);
+    let mut arenas = vec![lay_out(&item_cells, item_columns)?.arena];
+
+    let mut params_shapes = Vec::with_capacity(params.len());
+    for (registration_index, group) in params {
+        let schema = &group[0].schema;
+        let columns: Vec<ColumnRead> = schema
+            .params
+            .iter()
+            .zip(&schema.kinds)
+            .map(|(param, kind)| ColumnRead::scalar(param.name.clone(), *kind))
+            .collect();
+        let mut cells = Vec::with_capacity(group.len() * columns.len());
+        for log_params in &group {
+            for index in 0..columns.len() {
+                cells.push(log_params.cell(index, &mut tapes)?);
+            }
+        }
+        params_shapes.push(ParamsShape {
+            registration_index,
+            shape: ArenaShape::of(&columns, group.len()),
+        });
+        arenas.push(lay_out(&cells, columns)?.arena);
+    }
+
+    let handle = NEXT_HANDLE.fetch_add(1, AtomicOrdering::Relaxed);
+    RESULTS.lock().unwrap().insert(
+        handle,
+        Lent {
+            arenas,
+            buffer_counts: Vec::new(),
+        },
+    );
+    Ok(StoredRows {
+        handle,
+        items,
+        params: params_shapes,
+        tapes,
+    })
+}
+
+fn to_napi(err: anyhow::Error) -> napi::Error {
+    napi::Error::from_reason(format!("{err:#}"))
 }
 
 /// An item built in JS, its registration replaced by the registration's index.
@@ -240,8 +435,7 @@ impl EventStore {
                     log_index: item.log_index,
                     order_path: item.order_path,
                     registration_index: item.registration_index,
-                    format: RowFormat::JsItem,
-                    data: item.item,
+                    data: RowData::Tape(RowFormat::JsItem, item.item),
                 })
             })
             .collect::<napi::Result<Vec<_>>>()?;
@@ -314,32 +508,33 @@ impl EventStore {
         count
     }
 
-    /// Removes and returns the first `count` rows.
+    /// Removes the first `count` rows and lays them out for JS.
     #[napi]
-    pub fn take(&self, count: u32) -> StoredRows {
+    pub fn take(&self, count: u32) -> napi::Result<StoredRows> {
         let mut rows = self.rows();
         let count = (count as usize).min(rows.len());
-        rows.drain(..count).collect()
+        let taken: Vec<Row> = rows.drain(..count).collect();
+        lay_out_rows(&taken).map_err(to_napi)
     }
 
-    /// Copies of the event rows routed to any of `registration_indexes`, in
-    /// order. The rows stay.
+    /// The event rows routed to any of `registration_indexes`, in order, laid
+    /// out for JS. The rows stay.
     #[napi]
-    pub fn events_of_registrations(&self, registration_indexes: Vec<i64>) -> StoredRows {
-        self.rows()
-            .iter()
-            .filter(|row| {
-                row.kind == ItemKind::Event
-                    && registration_indexes.contains(&row.registration_index)
-            })
-            .cloned()
-            .collect()
+    pub fn events_of_registrations(
+        &self,
+        registration_indexes: Vec<i64>,
+    ) -> napi::Result<StoredRows> {
+        let rows = self.rows();
+        lay_out_rows(rows.iter().filter(|row| {
+            row.kind == ItemKind::Event && registration_indexes.contains(&row.registration_index)
+        }))
+        .map_err(to_napi)
     }
 
-    /// Copies of every row, in order. The rows stay.
+    /// Every row, in order, laid out for JS. The rows stay.
     #[napi]
-    pub fn all_items(&self) -> StoredRows {
-        self.rows().iter().cloned().collect()
+    pub fn all_items(&self) -> napi::Result<StoredRows> {
+        lay_out_rows(self.rows().iter()).map_err(to_napi)
     }
 
     /// Drops every row above `target_block_number`.
@@ -347,6 +542,49 @@ impl EventStore {
     pub fn rollback(&self, target_block_number: i64) {
         self.rows()
             .retain(|row| row.block_number <= target_block_number);
+    }
+
+    /// Every buffer of a laid-out result's arenas, in order: the items, then
+    /// each registration's params.
+    #[napi]
+    pub fn lend_rows<'env>(env: &'env Env, handle: u32) -> napi::Result<Vec<ArrayBuffer<'env>>> {
+        let mut results = RESULTS.lock().unwrap();
+        let lent = results
+            .get_mut(&handle)
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown rows {handle}")))?;
+        let mut buffers = Vec::new();
+        for arena in lent.arenas.iter_mut() {
+            let lent_buffers = columnar_js::lend_for_reading(env, arena)?;
+            lent.buffer_counts.push(lent_buffers.len());
+            buffers.extend(lent_buffers);
+        }
+        Ok(buffers)
+    }
+
+    /// Takes a result's buffers back and frees it. A result that cannot hand
+    /// them all back still has a JavaScript view into its memory, so that
+    /// memory is abandoned rather than freed.
+    #[napi]
+    pub fn release_rows(handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+        let mut results = RESULTS.lock().unwrap();
+        let Some(mut lent) = results.remove(&handle) else {
+            return Ok(());
+        };
+        let mut buffers = buffers.into_iter();
+        let mut failure = None;
+        for (arena, count) in lent.arenas.iter_mut().zip(&lent.buffer_counts) {
+            let own: Vec<ArrayBuffer> = buffers.by_ref().take(*count).collect();
+            if let Err(error) = columnar_js::detach_all(arena, own) {
+                failure = Some(error);
+            }
+        }
+        match failure {
+            None => Ok(()),
+            Some(error) => {
+                std::mem::forget(lent);
+                Err(error)
+            }
+        }
     }
 }
 
@@ -363,7 +601,7 @@ mod tests {
             log_index,
             None,
             registration_index,
-            RowFormat::EvmLog,
+            RowFormat::JsItem,
             data,
         )
     }
@@ -381,12 +619,30 @@ mod tests {
         )
     }
 
-    fn tags(rows: StoredRows) -> Vec<JsValue> {
-        rows.data.iter().map(JsValue::of).collect()
+    /// What each laid-out row reads as: a tape row its tape, a block row its
+    /// block and registration. Frees the result.
+    fn read(rows: StoredRows) -> Vec<JsValue> {
+        let lent = RESULTS.lock().unwrap().remove(&rows.handle).unwrap();
+        let columns = lent.arenas[0].columns();
+        let column = |name: &str| ITEM_COLUMNS.iter().position(|(n, _)| *n == name).unwrap();
+        (0..rows.items.rows as usize)
+            .map(|row| {
+                if columns[column("format")].f64_at(row) == RowFormat::Block as u8 as f64 {
+                    JsValue::str(&format!(
+                        "block {} r{}",
+                        columns[column("blockNumber")].f64_at(row),
+                        columns[column("registrationIndex")].f64_at(row)
+                    ))
+                } else {
+                    let tape = columns[column("tape")].f64_at(row) as usize;
+                    JsValue::of(&rows.tapes[tape])
+                }
+            })
+            .collect()
     }
 
     fn take_all(store: &EventStore) -> Vec<JsValue> {
-        tags(store.take(u32::MAX))
+        read(store.take(u32::MAX).unwrap())
     }
 
     #[test]
@@ -405,11 +661,7 @@ mod tests {
                 JsValue::str("b2-l1"),
                 JsValue::str("b2-l5-r0"),
                 JsValue::str("b2-l5-r1"),
-                JsValue::obj([
-                    ("blockNumber", JsValue::Num(2.0)),
-                    ("onBlockRegistrationIndex", JsValue::Num(0.0)),
-                    ("skipped", JsValue::Bool(false)),
-                ]),
+                JsValue::str("block 2 r0"),
             ]
         );
     }
@@ -493,10 +745,10 @@ mod tests {
             event(4, 0, 4, "dropped by rollback"),
         ]);
         store.rollback(3);
-        let contract_registers = tags(store.events_of_registrations(vec![4]));
+        let contract_registers = read(store.events_of_registrations(vec![4]).unwrap());
         let first_event = store.first_event_block_number();
         let second = store.block_number_at(1);
-        let taken = store.take(1).data.len();
+        let taken = read(store.take(1).unwrap());
         assert_eq!(
             (
                 contract_registers,
@@ -509,7 +761,7 @@ mod tests {
                 vec![JsValue::str("cr")],
                 Some(2),
                 Some(2),
-                1,
+                vec![JsValue::str("block 1 r0")],
                 vec![JsValue::str("cr"), JsValue::str("plain")]
             )
         );

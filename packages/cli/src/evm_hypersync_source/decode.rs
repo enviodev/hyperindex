@@ -10,9 +10,8 @@ use hypersync_client::simple_types;
 use crate::address_store::{AddressStore, Emitter, SetCache, StoreInner};
 use crate::evm_hypersync_source::topic_filter::TopicFilters;
 use crate::evm_hypersync_source::types::{
-    event_params_tape, Log, OnEventRegistrationInput, ParamMeta,
+    EvmParams, Log, OnEventRegistrationInput, ParamMeta, ParamSchema,
 };
-use crate::js_value::JsTape;
 
 /// Everything needed to match a log against one registration and decode it
 /// under that registration's own ABI declaration. Registrations sharing an
@@ -30,12 +29,16 @@ struct OnEventRegistration {
     /// Earliest block this registration accepts; `None` is unrestricted.
     start_block: Option<i64>,
     topic_filters: TopicFilters,
-    params: Vec<ParamMeta>,
+    schema: Arc<ParamSchema>,
     decoder: DynSolEvent,
 }
 
 impl OnEventRegistration {
-    fn parse(ep: &OnEventRegistrationInput, store: &StoreInner) -> Result<Self> {
+    fn parse(
+        ep: &OnEventRegistrationInput,
+        store: &StoreInner,
+        checksummed_addresses: bool,
+    ) -> Result<Self> {
         let sighash = ep
             .sighash
             .as_ref()
@@ -62,7 +65,7 @@ impl OnEventRegistration {
             is_wildcard: ep.is_wildcard,
             start_block: ep.start_block,
             topic_filters: TopicFilters::parse(ep)?,
-            params: ep.params.clone(),
+            schema: Arc::new(ParamSchema::new(ep.params.clone(), checksummed_addresses)),
             decoder: build_event_decoder(sighash, &ep.params).context("build decoder")?,
         })
     }
@@ -132,7 +135,7 @@ impl Decoder {
         {
             let store = handle.read().unwrap();
             for ep in registrations {
-                let parsed = OnEventRegistration::parse(ep, &store)
+                let parsed = OnEventRegistration::parse(ep, &store, checksum_addresses)
                     .with_context(|| format!("parse registration for {}", ep.event_name))?;
                 anyhow::ensure!(
                     map.insert(ep.index, Arc::new(parsed)).is_none(),
@@ -302,9 +305,9 @@ impl SelectionDecoder {
                     .map(|t| t.as_ref().unwrap().into()),
                 data,
             );
-            let params = decoded.ok().and_then(|decoded| {
-                event_params_tape(&decoded, &reg.params, self.checksummed_addresses)
-            });
+            let params = decoded
+                .ok()
+                .and_then(|decoded| EvmParams::from_decoded(decoded, &reg.schema));
             if let Some(params) = params {
                 routed.push(RoutedEvent {
                     index: reg.index,
@@ -318,7 +321,7 @@ impl SelectionDecoder {
 
 pub(crate) struct RoutedEvent {
     pub index: i64,
-    pub params: JsTape,
+    pub params: EvmParams,
 }
 
 /// Build the positional decoder for one registration. The decoder's topic0 is
@@ -592,7 +595,7 @@ mod tests {
             .expect("renamed event must decode under its real sighash");
 
         assert_eq!(
-            (routed.index, JsValue::of(&routed.params)),
+            (routed.index, JsValue::of(&routed.params.to_tape())),
             (
                 7,
                 JsValue::obj([
@@ -650,7 +653,7 @@ mod tests {
                 &unowned(),
             )
             .iter()
-            .map(|routed| (routed.index, JsValue::of(&routed.params)))
+            .map(|routed| (routed.index, JsValue::of(&routed.params.to_tape())))
             .collect::<Vec<_>>()
         };
         assert_eq!(
@@ -1246,7 +1249,7 @@ mod tests {
         // declared.
         let values: Vec<(i64, JsValue)> = routed
             .iter()
-            .map(|r| (r.index, JsValue::of(&r.params)))
+            .map(|r| (r.index, JsValue::of(&r.params.to_tape())))
             .collect();
         assert_eq!(
             values,
