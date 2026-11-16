@@ -343,7 +343,7 @@ fn lay_out_rows<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Result<StoredRow
         let mut cells = Vec::with_capacity(group.len() * columns.len());
         for log_params in &group {
             for index in 0..columns.len() {
-                cells.push(log_params.cell(index, &mut tapes)?);
+                cells.push(log_params.cell(index, &mut tapes));
             }
         }
         params_shapes.push(ParamsShape {

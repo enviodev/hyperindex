@@ -351,11 +351,23 @@ fn param_read_kind(param: &ParamMeta) -> ReadKind {
     }
 }
 
+/// One param as the cell its column holds, formatted when the log is decoded,
+/// off the JS thread, so laying a batch out only copies bytes.
+#[derive(Clone)]
+pub(crate) enum ParamCell {
+    Bool(bool),
+    Text(Box<str>),
+    /// A decimal integer.
+    BigInt(Box<str>),
+    /// An array or a tuple.
+    Tape(JsTape),
+}
+
 /// A decoded event's params in declaration order, whether each came from a
-/// topic or the body. They become JS values only when a batch lays them out.
+/// topic or the body.
 #[derive(Clone)]
 pub(crate) struct EvmParams {
-    pub(crate) values: Vec<DynSolValue>,
+    pub(crate) cells: Vec<ParamCell>,
     pub(crate) schema: Arc<ParamSchema>,
 }
 
@@ -364,19 +376,21 @@ impl EvmParams {
     pub(crate) fn from_decoded(decoded: DecodedEvent, schema: &Arc<ParamSchema>) -> Option<Self> {
         let mut indexed = decoded.indexed.into_iter();
         let mut body = decoded.body.into_iter();
-        let values = schema
+        let cells = schema
             .params
             .iter()
-            .map(|param| {
-                if param.indexed {
+            .zip(&schema.kinds)
+            .map(|(param, kind)| {
+                let value = if param.indexed {
                     indexed.next()
                 } else {
                     body.next()
-                }
+                }?;
+                param_cell(&value, param, *kind, schema.checksummed_addresses)
             })
             .collect::<Option<Vec<_>>>()?;
         Some(EvmParams {
-            values,
+            cells,
             schema: schema.clone(),
         })
     }
@@ -384,56 +398,81 @@ impl EvmParams {
     /// The params as one object keyed by param name.
     #[cfg(test)]
     pub(crate) fn to_tape(&self) -> JsTape {
+        use alloy_primitives::I256;
         let mut tape = JsTape::new();
-        tape.obj(self.values.len());
-        for (value, param) in self.values.iter().zip(&self.schema.params) {
+        tape.obj(self.cells.len());
+        for (cell, param) in self.cells.iter().zip(&self.schema.params) {
             tape.key(&param.name);
-            self.write(&mut tape, value, param);
+            match cell {
+                ParamCell::Bool(value) => tape.bool(*value),
+                ParamCell::Text(value) => tape.str(value),
+                ParamCell::BigInt(value) => {
+                    let (sign, magnitude) = I256::from_dec_str(value)
+                        .map(|value| value.into_sign_and_abs())
+                        .unwrap_or_else(|_| {
+                            (
+                                alloy_primitives::Sign::Positive,
+                                U256::from_str_radix(value, 10).unwrap(),
+                            )
+                        });
+                    tape.bigint(sign.is_negative(), magnitude.as_limbs());
+                }
+                ParamCell::Tape(nested) => tape.embed(nested),
+            }
         }
         tape
     }
 
-    fn write(&self, tape: &mut JsTape, value: &DynSolValue, param: &ParamMeta) {
-        write_sol_value(
-            tape,
-            value,
-            param.components.as_deref(),
-            self.schema.checksummed_addresses,
-        );
-    }
-
-    /// Param `index` as its column's cell. A nested value is pushed onto
+    /// Param `index` as its column's cell. A nested value is copied onto
     /// `tapes` and the cell holds its position there.
-    pub(crate) fn cell(&self, index: usize, tapes: &mut Vec<JsTape>) -> Result<Cell<'static>> {
-        let value = &self.values[index];
-        let param = &self.schema.params[index];
-        let text = |text: String| Cell::Str(text.into());
-        Ok(match (self.schema.kinds[index], value) {
-            (ReadKind::Tape, value) => {
-                let mut tape = JsTape::new();
-                self.write(&mut tape, value, param);
-                tapes.push(tape);
+    pub(crate) fn cell(&self, index: usize, tapes: &mut Vec<JsTape>) -> Cell<'_> {
+        match &self.cells[index] {
+            ParamCell::Bool(value) => Cell::Bool(*value),
+            ParamCell::Text(value) | ParamCell::BigInt(value) => Cell::Str((&**value).into()),
+            ParamCell::Tape(tape) => {
+                tapes.push(tape.clone());
                 Cell::Num((tapes.len() - 1) as f64)
             }
-            (ReadKind::Bool, DynSolValue::Bool(value)) => Cell::Bool(*value),
-            (ReadKind::BigInt, DynSolValue::Uint(value, _)) => text(value.to_string()),
-            (ReadKind::BigInt, DynSolValue::Int(value, _)) => text(value.to_string()),
-            (ReadKind::Text, DynSolValue::Address(address))
-                if self.schema.checksummed_addresses =>
-            {
-                text(address.to_checksum_buffer(None).as_str().to_owned())
-            }
-            (ReadKind::Text, DynSolValue::Address(address)) => text(to_hex(address.as_slice())),
-            (ReadKind::Text, DynSolValue::FixedBytes(word, size)) => text(to_hex(&word[..*size])),
-            (ReadKind::Text, DynSolValue::Function(function)) => text(to_hex(function.as_slice())),
-            (ReadKind::Text, DynSolValue::Bytes(bytes)) => text(to_hex(bytes)),
-            (ReadKind::Text, DynSolValue::String(value)) => text(value.clone()),
-            (kind, value) => anyhow::bail!(
-                "param `{}` of ABI type {} decoded to {value:?}, which a {kind:?} column can't hold",
-                param.name,
-                param.abi_type
-            ),
-        })
+        }
+    }
+}
+
+/// `None` when a value doesn't have the shape its ABI type gave the column,
+/// which the decoder, built from the same types, doesn't produce.
+fn param_cell(
+    value: &DynSolValue,
+    param: &ParamMeta,
+    kind: ReadKind,
+    checksummed_addresses: bool,
+) -> Option<ParamCell> {
+    let text = |text: String| Some(ParamCell::Text(text.into()));
+    match (kind, value) {
+        (ReadKind::Tape, value) => {
+            let mut tape = JsTape::new();
+            write_sol_value(
+                &mut tape,
+                value,
+                param.components.as_deref(),
+                checksummed_addresses,
+            );
+            Some(ParamCell::Tape(tape))
+        }
+        (ReadKind::Bool, DynSolValue::Bool(value)) => Some(ParamCell::Bool(*value)),
+        (ReadKind::BigInt, DynSolValue::Uint(value, _)) => {
+            Some(ParamCell::BigInt(value.to_string().into()))
+        }
+        (ReadKind::BigInt, DynSolValue::Int(value, _)) => {
+            Some(ParamCell::BigInt(value.to_string().into()))
+        }
+        (ReadKind::Text, DynSolValue::Address(address)) if checksummed_addresses => {
+            text(address.to_checksum_buffer(None).as_str().to_owned())
+        }
+        (ReadKind::Text, DynSolValue::Address(address)) => text(to_hex(address.as_slice())),
+        (ReadKind::Text, DynSolValue::FixedBytes(word, size)) => text(to_hex(&word[..*size])),
+        (ReadKind::Text, DynSolValue::Function(function)) => text(to_hex(function.as_slice())),
+        (ReadKind::Text, DynSolValue::Bytes(bytes)) => text(to_hex(bytes)),
+        (ReadKind::Text, DynSolValue::String(value)) => text(value.clone()),
+        _ => None,
     }
 }
 
