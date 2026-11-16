@@ -137,6 +137,8 @@ type storage = {
   ) => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
+  // `ConnectionLost` when the connection went, which a load can simply run
+  // again.
   @raises("StorageError")
   loadOrThrow: (~filter: EntityFilter.t, ~table: Table.table) => promise<array<unknown>>,
   // Creates whatever indexes the filters need and aren't there yet, resolving
@@ -161,7 +163,8 @@ type storage = {
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
-  // Update chain metadata
+  // Update chain metadata. Throws `ConnectionLost` when the connection went:
+  // the upsert lands the same however often it is sent.
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
   pruneStaleCheckpoints: (
@@ -194,7 +197,11 @@ type storage = {
     ~entityConfig: Internal.entityConfig,
     ~floors: RollbackFloors.t,
   ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
-  // Write batch to storage
+  // Each chain's committed frontier. `ConnectionLost` when the connection went.
+  readFrontier: unit => promise<Frontier.t>,
+  // Write batch to storage. Throws `ConnectionLost` when the connection went
+  // before anything of the batch committed, and `CommitUncertain` when it went
+  // with the COMMIT on its way.
   writeBatch: (
     ~batch: Batch.t,
     ~rollback: option<rollback>,
@@ -229,6 +236,15 @@ type t = {
 }
 
 exception StorageError({message: string, reason: exn})
+
+// The database connection went before the operation got through. Raised only
+// where sending the operation again as it was is safe: a read, an upsert, or a
+// batch nothing of which committed.
+exception ConnectionLost(string)
+
+// The connection went while a batch's COMMIT was on its way, so the batch may
+// have committed or not. Its frontier, read back, says which.
+exception CommitUncertain(string)
 
 // A start the operator has to act on, not a failure: what it says is all they
 // need, so it's printed once, without a stack trace.
@@ -271,6 +287,9 @@ let init = {
     // resuming takes ClickHouse back to what Postgres committed, fencing off and
     // trimming whatever a run still indexing goes on writing.
     ~resume=true,
+    // Set for a per-chain schema, which can take a new chain under its own
+    // `envio start --chain` process.
+    ~addChainCommand: option<ChainId.t => string>=?,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -346,7 +365,28 @@ let init = {
           )
           let stored = await persistence.storage.readStoredConfig()
           let incompatible = paths => Refused(
-            ResumePlan.incompatibleMessage(paths, ~envioInfo, ~resetCommand, ~runCommand),
+            ResumePlan.incompatibleMessage(
+              paths,
+              ~envioInfo,
+              ~resetCommand,
+              ~runCommand,
+              ~addChainCommands=switch addChainCommand {
+              // An `envio start --chain` run meets the same storage, and is
+              // refused for it before it adds anything.
+              | Some(_) if holding === Diverged || holding === Outdated => []
+              | Some(addChainCommand) =>
+                paths
+                ->ResumePlan.newChainIdsWhenOnlyChange(
+                  ~stored,
+                  ~envioInfo,
+                  ~chainConfigs,
+                  ~contractMapping,
+                  ~lowercaseAddresses,
+                )
+                ->Array.map(addChainCommand)
+              | None => []
+              },
+            ),
           )
           switch ResumePlan.make(
             ~stored,
@@ -442,6 +482,7 @@ let initForRun = (
     ),
     ~lowercaseAddresses=config.lowercaseAddresses,
     ~isolated=config.isolated,
+    ~addChainCommand=?config->Config.addChainCommand,
   )
 
 let getInitializedStorageOrThrow = persistence => {

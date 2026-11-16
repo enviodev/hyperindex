@@ -247,6 +247,9 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
+  // Where the indexer reaches Postgres, for a test standing a proxy in front of
+  // it. The test's own reads still go straight to the server.
+  ~postgresPort=?,
   // Runs after `restart` has stopped the previous indexer and before the next
   // one starts, so mocked sources can void what the stopped one left in flight.
   ~onIndexerStopped: unit => unit=() => (),
@@ -327,7 +330,13 @@ let run = async (
     let sql = TestPgSchema.client(~logger)
     clients->Array.push(sql)->ignore
     // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-    let client = Storage.clientFromEnv(~config, ~logger, ~pgSchema, ~isHasuraEnabled=false)
+    let client = Storage.clientFromEnv(
+      ~config,
+      ~logger,
+      ~pgSchema,
+      ~isHasuraEnabled=false,
+      ~port=?postgresPort,
+    )
     let storage =
       mapStorage(
         Storage.make(~client, ~cacheDir, ~ecosystem=config.ecosystem.name),
@@ -695,8 +704,11 @@ let run = async (
             // before it counts as held: a real one on a loaded runner can
             // outlast the short one, and returning mid-flight would let the next
             // step read stale rows.
+            // A write parked on its retry timer is waiting on this clock, not
+            // on the database, so it gets the short spell.
             let quietLimit = () =>
-              state->IndexerState.writeFiber->Option.isSome || storageCallsInFlight.contents > 0
+              (state->IndexerState.writeFiber->Option.isSome &&
+                state->IndexerState.waitingOnDatabase === 0) || storageCallsInFlight.contents > 0
                 ? 500
                 : 50
             while idle.contents < 5 && still.contents < quietLimit() {

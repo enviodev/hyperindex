@@ -7,8 +7,7 @@
 let itemKey = (item: Internal.item): string =>
   switch item {
   | Internal.Event({chainId, blockNumber, logIndex}) =>
-    `${chainId
-      ->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
+    `${chainId->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
   | Internal.Block(_) => ""
   }
 
@@ -76,6 +75,6 @@ let failureMessage = (t: t): option<string> =>
       )
       ->Array.join("\n")
     Some(
-      `simulate: ${count->Int.toString} ${itemWord} you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler — usually a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:\n${lines}`,
+      `simulate: ${count->Int.toString} ${itemWord} you passed to simulate never reached a handler, so nothing ran for them. Each was filtered out before the handler, usually by a non-wildcard srcAddress that isn't indexed for the contract, or a where/block filter that excluded the event. Unrouted items, by index in each chain's simulate array:\n${lines}`,
     )
   }

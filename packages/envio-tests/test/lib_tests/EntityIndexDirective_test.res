@@ -61,7 +61,7 @@ type Token {
     t.expect(
       parseError(schemaWith(`@index(fields: ["tokenId", "tokenId"])`)),
     ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is listed twice.
-  List each column once — repeating it adds nothing to the index.`)
+  List each column once: repeating it adds nothing to the index.`)
   })
 
   it("Rejects the same index declared twice", t => {
@@ -89,6 +89,6 @@ type TestEntity @index(fields: ["tokenId"]) {
 }
 `),
     ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is already marked \`@index\` on the field.
-  Keep one of them — the \`@index\` on the field, or \`@index(fields: ["tokenId"])\` on the entity.`)
+  Keep one of them: the \`@index\` on the field, or \`@index(fields: ["tokenId"])\` on the entity.`)
   })
 })

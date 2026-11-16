@@ -816,7 +816,7 @@ let resolveSvmWhereOrThrow = (
           ->Utils.prettifyExn
           ->(
             Utils.magic: exn => string
-          )}. Only \`_gte\` is supported on instruction filters — use \`indexer.onSlot\` for \`_lte\` or \`_every\`.`,
+          )}. Only \`_gte\` is supported on instruction filters. Use \`indexer.onSlot\` for \`_lte\` or \`_every\`.`,
       )
     }
     switch filter.slot {

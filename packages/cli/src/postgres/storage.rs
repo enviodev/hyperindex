@@ -12,7 +12,7 @@ use tokio_postgres::Row;
 
 use super::client::{PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
-use super::error::sql_state;
+use super::error::{is_connection_lost, sql_state, was_never_sent};
 use super::history::{History, CHANGE_TYPE};
 use super::index_definition::{IndexColumn, IndexDefinition, BTREE};
 use super::index_row;
@@ -303,6 +303,26 @@ fn first_cause<T>(
             .find(|failure| !is_cascade(failure))
             .unwrap_or(first),
     )
+}
+
+/// The batch's outcome from its transaction's and its effect caches'.
+///
+/// The caches are upserts of the same rows, so writing them again is
+/// harmless; only a failure of their own that isn't the connection would come
+/// back the same, and then it is what stops the batch.
+fn batch_outcome(
+    written: std::result::Result<(), WriteError>,
+    cached: std::result::Result<(), Failure>,
+) -> std::result::Result<(), WriteError> {
+    match (written, cached) {
+        (Err(WriteError::Unwritten(_) | WriteError::Uncertain(_)), Err(cache_failure))
+            if !is_connection_lost(&cache_failure.error) =>
+        {
+            Err(WriteError::Failed(cache_failure))
+        }
+        (Err(error), _) => Err(error),
+        (Ok(()), cached) => Ok(cached?),
+    }
 }
 
 /// The cause among a set of statements' outcomes, if any of them failed.
@@ -657,6 +677,18 @@ impl Storage {
         })
     }
 
+    /// Each chain's frontier as committed: the checkpoint its rows are readable
+    /// up to.
+    pub async fn read_frontier(&self) -> Result<Frontier> {
+        let (rows, _) = self
+            .client
+            .query(&internal::read_frontier(self.schema()), &[])
+            .await?;
+        rows.iter()
+            .map(|row| Ok((cell(row, 0)?, cell(row, 1)?)))
+            .collect()
+    }
+
     pub async fn resume(&self) -> Result<Resumed> {
         let schema = self.schema();
         let (read_chains, read_addresses, read_checkpoints) = (
@@ -990,18 +1022,30 @@ impl Storage {
     ///
     /// Nothing commits unless every statement succeeded and the handoff says
     /// to.
+    ///
+    /// A connection lost before the COMMIT went out is `Unwritten`: the server
+    /// rolls back a transaction whose session ends. So is a COMMIT held back
+    /// because the connection was already known gone. One lost while the
+    /// COMMIT was in flight is `Uncertain`: the server may have committed before
+    /// it went. Neither is one whose caches failed for another reason, which
+    /// writing again would only repeat.
     pub async fn write_batch(
         &self,
         batch: &Batch,
         mut handoff: Handoff,
     ) -> std::result::Result<(), WriteError> {
+        let before_commit = |error: WriteError| match error {
+            WriteError::Failed(failure) if is_connection_lost(&failure.error) => {
+                WriteError::Unwritten(failure)
+            }
+            error => error,
+        };
         // Moved in, so the handoff goes as soon as the transaction is done and a
         // store waiting on its word never waits on the caches too.
         let transactional = async move {
-            let transaction =
-                self.client.begin().await.map_err(|error| {
-                    Failure::new("Failed opening the batch's transaction", error)
-                })?;
+            let transaction = self.client.begin().await.map_err(|error| {
+                before_commit(Failure::new("Failed opening the batch's transaction", error).into())
+            })?;
             let outcome = async {
                 if let Some(rollback) = &batch.rollback {
                     self.write_rollback(&transaction, rollback).await?;
@@ -1017,14 +1061,24 @@ impl Storage {
                 Ok(()) => {
                     let committed = transaction.commit().await;
                     handoff.report_commit(committed.is_ok());
-                    committed
-                        .map_err(|error| Failure::new("Failed committing the batch", error).into())
+                    committed.map_err(|error| {
+                        let never_sent = was_never_sent(&error);
+                        let lost = is_connection_lost(&error);
+                        let failure = Failure::new("Failed committing the batch", error);
+                        if never_sent {
+                            WriteError::Unwritten(failure)
+                        } else if lost {
+                            WriteError::Uncertain(failure)
+                        } else {
+                            failure.into()
+                        }
+                    })
                 }
                 Err(error) => {
                     // The statement that failed is what to report; a rollback
                     // failing after it would only say the connection is gone.
                     let _ = transaction.rollback().await;
-                    Err(error)
+                    Err(before_commit(error))
                 }
             }
         };
@@ -1041,8 +1095,7 @@ impl Storage {
             settle(join_all(writes).await)
         };
         let (written, cached) = tokio::join!(transactional, caches);
-        written?;
-        Ok(cached?)
+        batch_outcome(written, cached)
     }
 
     async fn write_rollback(
@@ -1559,6 +1612,59 @@ mod tests {
         assert_eq!(
             array_literal([Some(bytea(&[0, 255, 16]))]),
             Param::Text("{\"\\\\x00ff10\"}".to_string())
+        );
+    }
+
+    fn outcome_of(outcome: std::result::Result<(), WriteError>) -> String {
+        match outcome {
+            Ok(()) => "written".to_string(),
+            Err(WriteError::Unwritten(failure)) => format!("unwritten: {}", failure.context),
+            Err(WriteError::Uncertain(failure)) => format!("uncertain: {}", failure.context),
+            Err(WriteError::Failed(failure)) => format!("failed: {}", failure.context),
+            Err(WriteError::Gated) => "gated".to_string(),
+        }
+    }
+
+    fn connection_lost(context: &str) -> Failure {
+        Failure::new(
+            context,
+            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
+        )
+    }
+
+    /// The batch is written again only when nothing of it can fail the same
+    /// way twice. A cache insert the server refused for good is what stops it,
+    /// so that is the failure an operator has to see.
+    #[test]
+    fn a_cache_failure_that_would_repeat_is_the_one_reported() {
+        let refused = || {
+            Failure::new(
+                "Failed to insert items into table \"envio_effect_price\"",
+                anyhow!("permission denied for table envio_effect_price"),
+            )
+        };
+        let unwritten = || {
+            Err(WriteError::Unwritten(connection_lost(
+                "Failed opening the batch's transaction",
+            )))
+        };
+
+        assert_eq!(
+            (
+                outcome_of(batch_outcome(unwritten(), Err(refused()))),
+                outcome_of(batch_outcome(
+                    unwritten(),
+                    Err(connection_lost(
+                        "Failed to insert items into table \"envio_effect_price\""
+                    ))
+                )),
+                outcome_of(batch_outcome(Ok(()), Err(refused()))),
+            ),
+            (
+                "failed: Failed to insert items into table \"envio_effect_price\"".to_string(),
+                "unwritten: Failed opening the batch's transaction".to_string(),
+                "failed: Failed to insert items into table \"envio_effect_price\"".to_string(),
+            )
         );
     }
 

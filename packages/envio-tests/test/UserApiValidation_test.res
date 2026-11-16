@@ -1825,7 +1825,7 @@ type Token @index(fields: ["value"]) {
 }
 `,
       `schema.graphql:2:12: Invalid \`@index\` on \`Token\`: \`value\` is already marked \`@index\` on the field.
-  Keep one of them — the \`@index\` on the field, or \`@index(fields: ["value"])\` on the entity.`,
+  Keep one of them: the \`@index\` on the field, or \`@index(fields: ["value"])\` on the entity.`,
     ),
     (
       "rejects indexing a derived field from the entity",

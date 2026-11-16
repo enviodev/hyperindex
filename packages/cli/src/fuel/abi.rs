@@ -105,7 +105,7 @@ impl FuelAbi {
             .collect::<HashMap<usize, String>>();
 
         let get_unknown_res_type_ident = |type_field: &str| {
-            eprintln!("Warning: unhandled Fuel ABI type \"{type_field}\" — treating as unknown");
+            eprintln!("Warning: unhandled Fuel ABI type \"{type_field}\", treating it as unknown");
             TypeIdent::Unknown
         };
 
