@@ -26,7 +26,7 @@ How it works:
 
 Go ahead with read-only commands, login, adding a free Development indexer, and deploying or promoting when the user asked you to deploy.
 
-Confirm first: deleting anything, `--tier production` (paid), `indexer security` changes, and `promote`, `restart` or `settings set` on an indexer you didn't create.
+Confirm first: deleting anything, `--tier production` (paid), `indexer security` changes, and `promote`, `restart`, `settings set` or `deployment env` on an indexer you didn't create.
 
 Only the user can approve the login link, install the Envio Deployments GitHub App on a repo, or upgrade a plan. Give them the link and continue once they're done.
 
@@ -69,11 +69,11 @@ A new indexer has no deployments until the next push (an empty commit works).
    | not listed | Wait. Still missing after a few minutes: it was pushed before the indexer existed, or to another branch (`indexer settings get`) |
    | `pending`, `deploy` | Wait |
    | `active` | Deployed: go to step 3 |
-   | `inactive` | `npx -y envio-cloud deployment deploy <indexer> <commit> <org> --yes`. Still `inactive` after that: at 3 deployments, ask before `deployment delete <indexer> <old-commit> <org> --yes`; otherwise push a new commit |
+   | `inactive` | `npx -y envio-cloud deployment deploy <indexer> <commit> <org> --yes`. If it fails at the plan's deployment limit, it lists the deployments and marks production: ask before `deployment delete <indexer> <old-commit> <org> --yes` on one that isn't. Still `inactive` after a deploy that started: the indexing-hour limit (ask the user to check the dashboard), or push a new commit |
    | `deletingDeploymemt` (spelled so) | Push a new commit |
    | anything else | The name says what's wrong (`versionNotSupported`, `configFileMissing`, ...): fix it and push |
 
-3. Check `npx -y envio-cloud deployment status <indexer> <commit> <org> -o json` until every chain has `is_ready: true`, waiting a minute between checks. No progress for 10 minutes: [debug](#debug). Never use `--watch-till-synced` in an agent session: it has no time limit, and stopping it leaves it running in the background.
+3. Wait for the sync: `npx -y envio-cloud deployment status <indexer> <commit> <org> --watch-till-synced --timeout 100s`. Exit `0`: every chain is ready. Exit `124`: not synced yet, run it again. Keep `--timeout` below your tool call's limit (`--timeout 9m` for a 10-minute call): a watch your tool kills keeps running in the background. No progress over several runs: [debug](#debug).
 4. `npx -y envio-cloud deployment endpoint <indexer> <commit> <org>` prints the GraphQL URL. Query a real entity on it, with `Authorization: Bearer <key>` if the indexer has API keys (`indexer security get`).
 5. On Production: `npx -y envio-cloud deployment promote <indexer> <commit> <org> --yes`. Consumers use the static production endpoint, which only the dashboard shows: ask the user for it.
 
@@ -89,18 +89,20 @@ npx -y envio-cloud deployment logs <indexer> <commit> <org> --level error,warn -
 | `deployment deploy` says "commit ... not found" | Envio Cloud never saw it: push, then use the hash from `indexer commits` |
 | Builds locally, fails on Envio Cloud | A file it needs isn't uploaded (see [Add an indexer](#add-an-indexer)): move it inside the root dir, or widen `--root-dir` |
 | Pushes stopped deploying | The pusher has the `reader` role, or the indexer is paused (billing or plan limits): ask the user to check the dashboard |
-| Env var undefined at runtime | Key lacks the `ENVIO_` prefix, or was set after the deployment: fix it and push |
+| Env var undefined at runtime | Key lacks the `ENVIO_` prefix, or was set after the deployment: `deployment env set <indexer> <commit> <org> ENVIO_KEY=value --yes` (below) |
 | No runtime logs | They default to the last 30 minutes: `--since 24h` |
 
-`deployment restart` reruns the same build, so new code or env vars need a new commit.
+`deployment restart` reruns the same build, so new code needs a new commit.
 
 ## Settings
 
 `npx -y envio-cloud indexer settings get|set <indexer> <org>` (`--branch`, `--root-dir`, `--auto-deploy=false`) and `indexer env set|import` apply to the next deployment. `indexer security` (API keys, IP allow-list) applies at once and can lock out existing clients.
 
+To change a running deployment's env vars, use `deployment env set|delete <indexer> <commit> <org> ... --yes`. The indexer restarts from its last checkpoint, with no resync, in about a minute, and the indexer's own `indexer env` is unchanged. Pass secrets with `--from-file <path>`, not as arguments. To follow the update, run `deployment env status <indexer> <commit> <org> --wait --timeout 100s`; exit `4` means still applying, so run it again, and exit `3` means it failed and the previous variables were kept. With an `envio` older than 3.0.0, variables used in `config.yaml` (such as an RPC URL) still need a new deployment.
+
 ## Scripting
 
-With `-o json`, check the exit code first: 0 ok, 1 user error, 2 server error.
+With `-o json`, check the exit code first: 0 ok, 1 user error, 2 server error, 124 a `--timeout` ran out.
 
 ## More
 
