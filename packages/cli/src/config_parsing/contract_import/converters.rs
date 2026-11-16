@@ -1,4 +1,10 @@
-use crate::{config_parsing::chain_helpers::HypersyncChain, evm::address::Address};
+use crate::{
+    config_parsing::{
+        chain_helpers::HypersyncChain, entity_parsing::MAX_PG_IDENTIFIER_LENGTH,
+        validation::validate_names_valid_rescript,
+    },
+    evm::address::Address,
+};
 use alloy_json_abi::Event;
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
@@ -6,6 +12,35 @@ use std::fmt::{self, Display};
 /// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores.
 pub fn normalize_contract_name(name: String) -> String {
     name.replace([' ', '-', '.'], "_")
+}
+
+/// Init names an entity `{contract}_{event}` for every imported event, and an
+/// entity name is a Postgres table name. Cut the contract name just enough for
+/// the longest event to fit. When the cut isn't a valid contract name, the name
+/// stays whole and codegen reports the long entity name instead.
+pub fn fit_contract_name_to_events(
+    name: String,
+    event_names: impl IntoIterator<Item = impl AsRef<str>>,
+) -> String {
+    let longest_event_name = event_names
+        .into_iter()
+        .map(|event_name| event_name.as_ref().len())
+        .max()
+        .unwrap_or(0);
+    let room = MAX_PG_IDENTIFIER_LENGTH.saturating_sub(longest_event_name + "_".len());
+    if name.len() <= room {
+        return name;
+    }
+    // `get` is `None` mid-character; a non-ASCII name is never valid anyway.
+    let fitted = name.get(..room).unwrap_or_default().trim_end_matches('_');
+    if validate_names_valid_rescript(&[fitted.to_string()], "contract".to_string()).is_err() {
+        return name;
+    }
+    println!(
+        "Contract name '{name}' is shortened to '{fitted}' so its entity names fit Postgres's \
+         {MAX_PG_IDENTIFIER_LENGTH}-character limit."
+    );
+    fitted.to_string()
 }
 
 ///The hierarchy is based on how you would add items to
@@ -26,7 +61,10 @@ impl SelectedContract {
         events: Vec<Event>,
     ) -> Self {
         Self {
-            name: normalize_contract_name(name),
+            name: fit_contract_name_to_events(
+                normalize_contract_name(name),
+                events.iter().map(|event| &event.name),
+            ),
             chains: vec![network_selection],
             events,
         }
@@ -160,6 +198,51 @@ mod tests {
         assert_eq!(
             normalize_contract_name("Valid_Contract_Name".to_string()),
             "Valid_Contract_Name"
+        );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/794
+    #[test]
+    fn a_long_contract_name_is_cut_so_every_entity_name_fits_postgres() {
+        let aave_pool = "InitializableImmutableAdminUpgradeabilityProxy";
+        let fit =
+            |name: &str, events: &[&str]| fit_contract_name_to_events(name.to_string(), events);
+        assert_eq!(
+            [
+                fit(aave_pool, &["Supply", "ReserveUsedAsCollateralDisabled"]),
+                fit(aave_pool, &["OwnershipTransferRequestedWithMessage"]),
+                fit(aave_pool, &["Supply"]),
+                fit("Pool", &["Supply"]),
+                fit(&format!("{}_Proxy", "A".repeat(29)), &[&"E".repeat(32)]),
+            ],
+            [
+                "InitializableImmutableAdminUpgr".to_string(),
+                "InitializableImmutableAdm".to_string(),
+                aave_pool.to_string(),
+                "Pool".to_string(),
+                "A".repeat(29),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cut_that_is_no_valid_contract_name_keeps_the_name_whole() {
+        let fit =
+            |name: &str, event: String| fit_contract_name_to_events(name.to_string(), [event]);
+        let non_ascii = format!("{}éé", "A".repeat(28));
+        assert_eq!(
+            [
+                fit("constructorProxy", "E".repeat(51)),
+                fit("_Proxy", "E".repeat(61)),
+                fit(&non_ascii, "E".repeat(31)),
+                fit("Pool", "E".repeat(70)),
+            ],
+            [
+                "constructorProxy".to_string(),
+                "_Proxy".to_string(),
+                non_ascii,
+                "Pool".to_string(),
+            ]
         );
     }
 }

@@ -70,11 +70,12 @@ describe("per-chain entities", () => {
     );
   });
 
-  it("throws when an id exists on more than one chain", async () => {
+  // https://github.com/enviodev/hyperindex/issues/1830
+  it("rejects when an id exists on more than one chain", async () => {
     const { indexer } = await processBothChains();
 
-    assert.throws(
-      () => indexer.Counter.get("total"),
+    await assert.rejects(
+      indexer.Counter.get("total"),
       /Entity `Counter` with id `total` exists on multiple chains \(1, 137\)\. Use getWhere\(\{chainId: \{_eq: \.\.\.\}\}\) to pick one/,
     );
   });
@@ -104,9 +105,9 @@ describe("per-chain entities", () => {
       await indexer.GlobalCounter.getWhere({ id: { _eq: "total" } }),
       [{ id: "total", count: 13n }],
     );
-    assert.throws(
+    await assert.rejects(
       // @ts-expect-error a cross-chain entity has no chainId field
-      () => indexer.GlobalCounter.getWhere({ chainId: { _eq: 1 } }),
+      indexer.GlobalCounter.getWhere({ chainId: { _eq: 1 } }),
       /Invalid field "chainId" in context.GlobalCounter.getWhere\(\)/,
     );
   });

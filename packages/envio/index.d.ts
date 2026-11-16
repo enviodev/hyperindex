@@ -2177,7 +2177,9 @@ type TestIndexerEntityRow<
 
 /** Entity operations available on test indexer for direct entity manipulation. */
 type TestIndexerEntityOperations<Entity> = {
-  /** Get an entity by ID. Returns undefined if not found. */
+  /** Get an entity by ID. Resolves to undefined if not found. For a per-chain
+   * entity, rejects when the id exists on several chains: use `getWhere` with
+   * `chainId` to pick one. */
   readonly get: (id: EntityId<Entity>) => Promise<Entity | undefined>;
   /** Get an entity by ID or throw if not found. */
   readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
