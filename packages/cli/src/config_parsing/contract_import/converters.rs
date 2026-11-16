@@ -1,5 +1,8 @@
 use crate::{
-    config_parsing::{chain_helpers::HypersyncChain, entity_parsing::MAX_PG_IDENTIFIER_LENGTH},
+    config_parsing::{
+        chain_helpers::HypersyncChain, entity_parsing::MAX_PG_IDENTIFIER_LENGTH,
+        validation::validate_names_valid_rescript,
+    },
     evm::address::Address,
 };
 use alloy_json_abi::Event;
@@ -13,8 +16,8 @@ pub fn normalize_contract_name(name: String) -> String {
 
 /// Init names an entity `{contract}_{event}` for every imported event, and an
 /// entity name is a Postgres table name. Cut the contract name just enough for
-/// the longest event to fit. An event too long to fit on its own leaves the
-/// name whole, so codegen reports the event itself.
+/// the longest event to fit. When the cut isn't a valid contract name, the name
+/// stays whole and codegen reports the long entity name instead.
 pub fn fit_contract_name_to_events(
     name: String,
     event_names: impl IntoIterator<Item = impl AsRef<str>>,
@@ -25,10 +28,14 @@ pub fn fit_contract_name_to_events(
         .max()
         .unwrap_or(0);
     let room = MAX_PG_IDENTIFIER_LENGTH.saturating_sub(longest_event_name + "_".len());
-    if name.len() <= room || room == 0 {
+    if name.len() <= room {
         return name;
     }
-    let fitted = name[..name.floor_char_boundary(room)].trim_end_matches('_');
+    // `get` is `None` mid-character; a non-ASCII name is never valid anyway.
+    let fitted = name.get(..room).unwrap_or_default().trim_end_matches('_');
+    if validate_names_valid_rescript(&[fitted.to_string()], "contract".to_string()).is_err() {
+        return name;
+    }
     println!(
         "Contract name '{name}' is shortened to '{fitted}' so its entity names fit Postgres's \
          {MAX_PG_IDENTIFIER_LENGTH}-character limit."
@@ -198,45 +205,44 @@ mod tests {
     #[test]
     fn a_long_contract_name_is_cut_so_every_entity_name_fits_postgres() {
         let aave_pool = "InitializableImmutableAdminUpgradeabilityProxy";
-        let entity_name = |contract: &str, event: &str| format!("{contract}_{event}");
-        let longest_aave_event = "ReserveUsedAsCollateralDisabled";
-        let fitted_for_aave =
-            fit_contract_name_to_events(aave_pool.to_string(), ["Supply", longest_aave_event]);
-        let fitted_for_long_event = fit_contract_name_to_events(
-            aave_pool.to_string(),
-            ["OwnershipTransferRequestedWithMessage"],
-        );
+        let fit =
+            |name: &str, events: &[&str]| fit_contract_name_to_events(name.to_string(), events);
         assert_eq!(
-            (
-                fitted_for_aave.as_str(),
-                entity_name(&fitted_for_aave, longest_aave_event).len(),
-                fitted_for_long_event.as_str(),
-                fit_contract_name_to_events(aave_pool.to_string(), ["Supply"]),
-                fit_contract_name_to_events("Pool".to_string(), ["Supply"]),
-            ),
-            (
-                "InitializableImmutableAdminUpgr",
-                63,
-                "InitializableImmutableAdm",
+            [
+                fit(aave_pool, &["Supply", "ReserveUsedAsCollateralDisabled"]),
+                fit(aave_pool, &["OwnershipTransferRequestedWithMessage"]),
+                fit(aave_pool, &["Supply"]),
+                fit("Pool", &["Supply"]),
+                fit(&format!("{}_Proxy", "A".repeat(29)), &[&"E".repeat(32)]),
+            ],
+            [
+                "InitializableImmutableAdminUpgr".to_string(),
+                "InitializableImmutableAdm".to_string(),
                 aave_pool.to_string(),
                 "Pool".to_string(),
-            )
+                "A".repeat(29),
+            ]
         );
     }
 
     #[test]
-    fn a_cut_contract_name_drops_a_trailing_separator_and_never_splits_a_character() {
+    fn a_cut_that_is_no_valid_contract_name_keeps_the_name_whole() {
+        let fit =
+            |name: &str, event: String| fit_contract_name_to_events(name.to_string(), [event]);
+        let non_ascii = format!("{}éé", "A".repeat(28));
         assert_eq!(
-            (
-                fit_contract_name_to_events(format!("{}_Proxy", "A".repeat(29)), ["E".repeat(32)]),
-                fit_contract_name_to_events(format!("{}éé", "A".repeat(28)), ["E".repeat(31)]),
-                fit_contract_name_to_events("Pool".to_string(), ["E".repeat(70)]),
-            ),
-            (
-                "A".repeat(29),
-                format!("{}é", "A".repeat(28)),
+            [
+                fit("constructorProxy", "E".repeat(51)),
+                fit("_Proxy", "E".repeat(61)),
+                fit(&non_ascii, "E".repeat(31)),
+                fit("Pool", "E".repeat(70)),
+            ],
+            [
+                "constructorProxy".to_string(),
+                "_Proxy".to_string(),
+                non_ascii,
                 "Pool".to_string(),
-            )
+            ]
         );
     }
 }
