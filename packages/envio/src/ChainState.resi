@@ -19,7 +19,9 @@ let seedConfigAddresses: (
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
+  ~eventStore: EventStore.t,
   ~onEventRegistrations: array<Internal.onEventRegistration>=?,
+  ~itemContext: StoredItems.context=?,
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
@@ -84,7 +86,6 @@ let timestampCaughtUpToHeadOrEndblock: t => option<Date.t>
 let recordBlockRangeFetch: (
   t,
   ~totalTimeElapsed: float,
-  ~parsingTimeElapsed: float,
   ~numEvents: int,
   ~blockRangeSize: int,
 ) => unit

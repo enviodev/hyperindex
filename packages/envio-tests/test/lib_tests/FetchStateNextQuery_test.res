@@ -54,12 +54,6 @@ let mockFetchState = (
     optimizedPartitions,
     startBlock: 0,
     endBlock,
-    eventStore: EventStore.make(),
-    itemContext: {
-      chainId: 0->ChainId.fromInt,
-      onEventRegistrations: [],
-      onBlockRegistrations: [],
-    },
     normalSelection,
     latestOnBlockBlockNumber: latestFullyFetchedBlock.contents,
     maxOnBlockBufferSize: targetBufferSize,
@@ -70,7 +64,7 @@ let mockFetchState = (
     knownHeight,
     firstEventBlock: None,
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+  }->TestFetchState.pair(~eventStore=EventStore.make())
 }
 
 let nextQuery = (fetchState: FetchState.t) =>

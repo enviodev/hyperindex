@@ -28,6 +28,11 @@ type reorgHashSnapshot = {
 
 type chainBeforeBatch = {
   fetchState: FetchState.t,
+  // The chain's own store, which the batch takes its rows from.
+  eventStore: EventStore.t,
+  itemContext: StoredItems.context,
+  // Adds the time spent building the chain's items to its metric.
+  recordMaterialize: float => unit,
   scannedHashes: reorgHashSnapshot,
   // The progress block isn't known until the build computes it, so its
   // timestamp can't be snapshotted with the rest. Reads the chain's store,
@@ -127,7 +132,9 @@ let getProgressedChainsById = {
         getChainAfterBatchIfProgressed(
           ~chainBeforeBatch,
           ~counts,
-          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal,
+          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(
+            ~eventStore=chainBeforeBatch.eventStore,
+          ),
           ~progressBlockNumberAfterBatch,
         )
       // Skip not affected chains
@@ -218,14 +225,17 @@ let make = (
   ~batchSizeTarget,
   ~history,
 ) => {
-  let preparedFetchStates =
+  let preparedChains =
     chainsBeforeBatch
     ->Dict.valuesToArray
-    ->Array.map(chainBeforeBatch => chainBeforeBatch.fetchState)
-    ->FetchState.sortForBatch(~batchSizeTarget)
+    ->FetchState.sortForBatch(
+      ~fetchStateOf=chain => chain.fetchState,
+      ~eventStoreOf=chain => chain.eventStore,
+      ~batchSizeTarget,
+    )
 
   let chainIdx = ref(0)
-  let preparedNumber = preparedFetchStates->Array.length
+  let preparedNumber = preparedChains->Array.length
   let totalBatchSize = ref(0)
 
   let cursor = sequence->CheckpointSequence.cursor(~frontier)
@@ -244,25 +254,26 @@ let make = (
   // the way to group as many items from a single chain as possible
   // This way the loaders optimisations will hit more often
   while totalBatchSize.contents < batchSizeTarget && chainIdx.contents < preparedNumber {
-    let fetchState = preparedFetchStates->Array.getUnsafe(chainIdx.contents)
+    let chainBeforeBatch = preparedChains->Array.getUnsafe(chainIdx.contents)
+    let {fetchState, eventStore} = chainBeforeBatch
     let chainBatchSize =
       fetchState->FetchState.getReadyItemsCount(
+        ~eventStore,
         ~targetSize=batchSizeTarget - totalBatchSize.contents,
         ~fromItem=0,
       )
-    let chainBeforeBatch =
-      chainsBeforeBatch
-      ->ChainId.Dict.dangerouslyGetNonOption(fetchState.chainId)
-      ->Option.getUnsafe
 
     // Read past the batch's last item, so before the batch takes its items.
     let progressBlockNumberAfterBatch =
-      fetchState->FetchState.getProgressBlockNumberAt(~index=chainBatchSize)
+      fetchState->FetchState.getProgressBlockNumberAt(~eventStore, ~index=chainBatchSize)
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     let chainEventsProcessed = ref(0)
     if chainBatchSize > 0 {
-      let chainItems = fetchState->FetchState.takeItems(~count=chainBatchSize)
+      let startedAt = Performance.now()
+      let chainItems =
+        eventStore->StoredItems.take(chainBatchSize, ~context=chainBeforeBatch.itemContext)
+      chainBeforeBatch.recordMaterialize(Performance.now() -. startedAt)
       for idx in 0 to chainBatchSize - 1 {
         let item = chainItems->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber

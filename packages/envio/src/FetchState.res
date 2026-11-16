@@ -891,12 +891,6 @@ type t = {
   // Needed to query before entering reorg threshold
   blockLag: int,
   blockThrottle: int,
-  // Fetched items ordered from earliest to latest, kept in Rust until a batch
-  // takes them. Shared by every copy of this record: mutated in place by the
-  // transitions that hand back the chain's next fetch state.
-  eventStore: EventStore.t,
-  // Turns a stored row back into the item a handler receives.
-  itemContext: StoredItems.context,
   // Caps how far ahead onBlock items are pre-generated (set to 2x the batch
   // size). Event fetch depth is bounded separately, by CrossChainState's
   // cross-chain admission against the indexer-wide buffer pool.
@@ -925,8 +919,8 @@ let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => 
 
 // Number of buffered items at or below the ready frontier (processable now,
 // i.e. not stuck behind a gap from a lagging partition or out-of-order chunk).
-let bufferReadyCount = (fetchState: t) =>
-  fetchState.eventStore->EventStore.countAtOrBelow(fetchState->bufferBlockNumber)
+let bufferReadyCount = (fetchState: t, ~eventStore: EventStore.t) =>
+  eventStore->EventStore.countAtOrBelow(fetchState->bufferBlockNumber)
 
 // Lexicographic order on two call paths, parent before child: `[1]` precedes
 // `[1, 0]`, which is the order the runtime executed them in.
@@ -1019,6 +1013,7 @@ Runs partition optimization when partitions change.
 */
 let updateInternal = (
   fetchState: t,
+  ~eventStore: EventStore.t,
   ~optimizedPartitions=fetchState.optimizedPartitions,
   ~blockLag=fetchState.blockLag,
   ~knownHeight=fetchState.knownHeight,
@@ -1034,7 +1029,7 @@ let updateInternal = (
     // chain hasn't reached, and a response is applied before the height it
     // reported, so its events can run past the height still known here.
     let maxBlockNumber = Pervasives.min(
-      switch fetchState.eventStore
+      switch eventStore
       ->EventStore.blockNumberAt(fetchState.maxOnBlockBufferSize - 1)
       ->Null.toOption {
       | Some(blockNumber) => blockNumber
@@ -1047,7 +1042,7 @@ let updateInternal = (
       knownHeight,
     )
     appendOnBlockItems(
-      ~eventStore=fetchState.eventStore,
+      ~eventStore,
       ~onBlockRegistrations,
       ~indexerStartBlock=fetchState.startBlock,
       ~fromBlock=fetchState.latestOnBlockBlockNumber,
@@ -1068,8 +1063,6 @@ let updateInternal = (
     blockLag,
     blockThrottle: fetchState.blockThrottle,
     knownHeight,
-    eventStore: fetchState.eventStore,
-    itemContext: fetchState.itemContext,
     firstEventBlock: fetchState.firstEventBlock,
     clientFilterPolicy: fetchState.clientFilterPolicy,
   }
@@ -1611,6 +1604,7 @@ OptimizedPartitions.t => {
 let registerDynamicContracts = (
   fetchState: t,
   ~addressStore: AddressStore.t,
+  ~eventStore: EventStore.t,
   ~onNotice: notice => unit,
   // How far an in-flight open-ended query may end up claiming. These
   // registrations usually come out of a response that is applied right after
@@ -1782,7 +1776,7 @@ let registerDynamicContracts = (
         ~knownHeight=Pervasives.max(claimCeiling, fetchState.knownHeight),
       )
 
-      fetchState->updateInternal(~optimizedPartitions)
+      fetchState->updateInternal(~eventStore, ~optimizedPartitions)
     }
   }
 }
@@ -1790,7 +1784,11 @@ let registerDynamicContracts = (
 // Every dynamic contract, the ones registered from now on included, is fetched
 // address-free and filtered on our side. Its partitions fold into the single
 // address-free partition through the same collapse the address threshold uses.
-let switchDynamicContractsToClientSideFiltering = (fetchState: t, ~addressStore: AddressStore.t) =>
+let switchDynamicContractsToClientSideFiltering = (
+  fetchState: t,
+  ~addressStore: AddressStore.t,
+  ~eventStore: EventStore.t,
+) =>
   if fetchState.clientFilterPolicy.allDynamicContracts {
     fetchState
   } else {
@@ -1813,6 +1811,7 @@ let switchDynamicContractsToClientSideFiltering = (fetchState: t, ~addressStore:
       fetchState
     } else {
       fetchState->updateInternal(
+        ~eventStore,
         ~optimizedPartitions=createPartitions(
           ~registeringSetsByContract=Dict.make(),
           ~addressStore,
@@ -1837,6 +1836,7 @@ newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let handleQueryResult = (
   fetchState: t,
+  ~eventStore: EventStore.t,
   ~query: query,
   ~latestFetchedBlock: int,
   ~page: EventStore.t,
@@ -1844,8 +1844,9 @@ let handleQueryResult = (
   let itemsCount = page->EventStore.length
   // Drops duplicates an overlapping query may re-deliver (e.g. an over-fetched
   // log matched by two partitions), keeping the copy already stored.
-  fetchState.eventStore->EventStore.merge(page)
+  eventStore->EventStore.merge(page)
   fetchState->updateInternal(
+    ~eventStore,
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
       ~knownHeight=fetchState.knownHeight,
@@ -2523,7 +2524,7 @@ let getNextQuery = (
   }
 }
 
-let hasReadyItem = ({eventStore} as fetchState: t) => {
+let hasReadyItem = (fetchState: t, ~eventStore: EventStore.t) => {
   switch eventStore->EventStore.blockNumberAt(0)->Null.toOption {
   | Some(blockNumber) => blockNumber <= fetchState->bufferBlockNumber
   | None => false
@@ -2532,8 +2533,8 @@ let hasReadyItem = ({eventStore} as fetchState: t) => {
 
 // Items at or below the ready frontier, up to `targetSize`, then the rest of
 // the last block, so a batch never splits a block.
-let getReadyItemsCount = (fetchState: t, ~targetSize: int, ~fromItem) =>
-  fetchState.eventStore->EventStore.readyCount(
+let getReadyItemsCount = (fetchState: t, ~eventStore: EventStore.t, ~targetSize: int, ~fromItem) =>
+  eventStore->EventStore.readyCount(
     ~frontier=fetchState->bufferBlockNumber,
     ~targetSize,
     ~fromIndex=fromItem,
@@ -2547,6 +2548,7 @@ let make = (
   ~endBlock,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~addressStore: AddressStore.t,
+  ~eventStore: EventStore.t,
   ~addressRows: AddressRows.seedRows,
   ~maxAddrInPartition,
   ~chainId: ChainId.t,
@@ -2575,14 +2577,6 @@ let make = (
       notDependingOnAddresses->Array.push(reg)
     }
   })
-
-  // Rows name registrations by index into the chain's full lists, fetched block
-  // handlers included.
-  let itemContext: StoredItems.context = {
-    chainId,
-    onEventRegistrations,
-    onBlockRegistrations,
-  }
 
   let (fetchedOnBlockRegistrations, onBlockRegistrations) =
     onBlockRegistrations->Belt.Array.partition(BlockItem.isFetched)
@@ -2719,7 +2713,6 @@ let make = (
   // For onBlock-only indexers (e.g. SVM onSlot) there are no partitions to drive
   // fetching, so without seeding the buffer here getNextQuery would return
   // NothingToQuery and the indexer would get stuck.
-  let eventStore = EventStore.make()
   let latestOnBlockBlockNumber = switch onBlockRegistrations {
   // As updateInternal keeps it: with nothing to generate per block the pointer
   // is the head cap on the buffer frontier, and left at the progress block it
@@ -2755,20 +2748,12 @@ let make = (
     onBlockRegistrations,
     maxOnBlockBufferSize,
     knownHeight,
-    eventStore,
-    itemContext,
     firstEventBlock,
     clientFilterPolicy,
   }
 
   fetchState
 }
-
-let bufferSize = ({eventStore}: t) => eventStore->EventStore.length
-
-// Removes the first `count` items from the store and returns them, rebuilt.
-let takeItems = ({eventStore, itemContext}: t, ~count) =>
-  eventStore->StoredItems.take(count, ~context=itemContext)
 
 let partitionsCount = ({optimizedPartitions}: t) => optimizedPartitions->OptimizedPartitions.count
 
@@ -2815,6 +2800,7 @@ Always recreates optimized partitions to avoid duplicate addresses:
 let rollback = (
   fetchState: t,
   ~rolledBackAddressStore: AddressStore.t,
+  ~eventStore: EventStore.t,
   ~targetBlockNumber,
 ): rollbackResult => {
   let rolledBackAddresses = rolledBackAddressStore->AddressStore.rollback(targetBlockNumber)
@@ -2907,7 +2893,7 @@ let rollback = (
     ~knownHeight=fetchState.knownHeight,
   )
 
-  fetchState.eventStore->EventStore.rollback(targetBlockNumber)
+  eventStore->EventStore.rollback(targetBlockNumber)
   let rolledBack = {
     ...fetchState,
     // TODO: Test this. Currently it's not tested.
@@ -2915,7 +2901,7 @@ let rollback = (
       fetchState.latestOnBlockBlockNumber,
       targetBlockNumber,
     ),
-  }->updateInternal(~optimizedPartitions)
+  }->updateInternal(~eventStore, ~optimizedPartitions)
   {fetchState: rolledBack, rolledBackAddresses}
 }
 
@@ -2949,12 +2935,12 @@ let resetPendingQueries = (fetchState: t) => {
 * Returns a boolean indicating whether the fetch state is actively indexing
 * used for comparing event queues in the chain manager
 */
-let isActivelyIndexing = ({endBlock} as fetchState: t) => {
+let isActivelyIndexing = ({endBlock} as fetchState: t, ~eventStore: EventStore.t) => {
   switch endBlock {
   | Some(endBlock) =>
     let isPastEndblock = fetchState->bufferBlockNumber >= endBlock
     if isPastEndblock {
-      fetchState->bufferSize > 0
+      eventStore->EventStore.length > 0
     } else {
       true
     }
@@ -3006,6 +2992,7 @@ let isWithinHeadClientFilteringDistance = (
 // blockLag) and must not defer entry, or a many-partition chain never enters.
 let isReadyToEnterReorgThreshold = (
   ~tolerance,
+  ~eventStore: EventStore.t,
   {endBlock, blockLag, knownHeight} as fetchState: t,
 ) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
@@ -3015,14 +3002,14 @@ let isReadyToEnterReorgThreshold = (
   | Some(endBlock) if endBlock <= laggedHead => bufferBlockNumber >= endBlock
   | _ => bufferBlockNumber >= laggedHead - tolerance
   } &&
-  fetchState->bufferReadyCount == 0
+  fetchState->bufferReadyCount(~eventStore) == 0
 }
 
 // Lower progress percentage = further behind = higher priority. Progress is
 // relative to the head this chain can actually fetch, so a chain at its lagged
 // head does not look behind relative to unavailable blocks. Shared by the batch
 // ordering and the cross-chain fetch priority.
-let getProgressPercentage = (fetchState: t) => {
+let getProgressPercentage = (fetchState: t, ~eventStore: EventStore.t) => {
   switch fetchState.firstEventBlock {
   | None => 0.
   | Some(firstEventBlock) =>
@@ -3030,7 +3017,7 @@ let getProgressPercentage = (fetchState: t) => {
     if totalRange <= 0 {
       0.
     } else {
-      let progress = switch fetchState.eventStore->EventStore.blockNumberAt(0)->Null.toOption {
+      let progress = switch eventStore->EventStore.blockNumberAt(0)->Null.toOption {
       | Some(blockNumber) => blockNumber - firstEventBlock
       | None => fetchState->bufferBlockNumber - firstEventBlock
       }
@@ -3039,18 +3026,29 @@ let getProgressPercentage = (fetchState: t) => {
   }
 }
 
+// Orders a batch's chains: those with a full batch ready first, then the
+// furthest behind.
 let sortForBatch = {
-  let hasFullBatch = ({eventStore} as fetchState: t, ~batchSizeTarget) => {
+  let hasFullBatch = (fetchState: t, ~eventStore: EventStore.t, ~batchSizeTarget) => {
     switch eventStore->EventStore.blockNumberAt(batchSizeTarget - 1)->Null.toOption {
     | Some(blockNumber) => blockNumber <= fetchState->bufferBlockNumber
     | None => false
     }
   }
 
-  (fetchStates: array<t>, ~batchSizeTarget: int) => {
-    let copied = fetchStates->Array.copy
-    copied->Array.sort((a: t, b: t) => {
-      switch (a->hasFullBatch(~batchSizeTarget), b->hasFullBatch(~batchSizeTarget)) {
+  (
+    chains: array<'chain>,
+    ~fetchStateOf: 'chain => t,
+    ~eventStoreOf: 'chain => EventStore.t,
+    ~batchSizeTarget: int,
+  ) => {
+    let hasFullBatch = chain =>
+      chain->fetchStateOf->hasFullBatch(~eventStore=chain->eventStoreOf, ~batchSizeTarget)
+    let getProgressPercentage = chain =>
+      chain->fetchStateOf->getProgressPercentage(~eventStore=chain->eventStoreOf)
+    let copied = chains->Array.copy
+    copied->Array.sort((a, b) => {
+      switch (a->hasFullBatch, b->hasFullBatch) {
       | (true, true)
       | (false, false) => {
           let aProgress = a->getProgressPercentage
@@ -3071,7 +3069,7 @@ let sortForBatch = {
   }
 }
 
-let getProgressBlockNumberAt = ({eventStore} as fetchState: t, ~index) => {
+let getProgressBlockNumberAt = (fetchState: t, ~eventStore: EventStore.t, ~index) => {
   let bufferBlockNumber = fetchState->bufferBlockNumber
   switch eventStore->EventStore.blockNumberAt(index)->Null.toOption {
   | Some(blockNumber) if bufferBlockNumber >= blockNumber => blockNumber - 1
@@ -3079,9 +3077,9 @@ let getProgressBlockNumberAt = ({eventStore} as fetchState: t, ~index) => {
   }
 }
 
-let updateKnownHeight = (fetchState: t, ~knownHeight) => {
+let updateKnownHeight = (fetchState: t, ~eventStore: EventStore.t, ~knownHeight) => {
   if knownHeight > fetchState.knownHeight {
-    fetchState->updateInternal(~knownHeight)
+    fetchState->updateInternal(~eventStore, ~knownHeight)
   } else {
     fetchState
   }

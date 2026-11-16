@@ -100,7 +100,6 @@ let rec onQueryResponse = async (
 
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
-      ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
       ~numEvents,
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )

@@ -31,7 +31,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     ]
     let addresses = []
     let addressStore = TestAddresses.makeStore(~onEventRegistrations)
-    let fetcherStateInit: FetchState.t = FetchState.make(
+    let fetcherStateInit: FetchState.t = TestFetchState.make(
       ~onNotice=ignore,
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
@@ -92,7 +92,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
 
         fetchState :=
-          fetchState.contents->FetchState.handleQueryResult(
+          fetchState.contents->TestFetchState.handleQueryResult(
             ~query,
             ~latestFetchedBlock=currentBlockNumber.contents,
             ~page=TestEventStore.pageOf([batchItem]),
@@ -112,6 +112,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let mockChainState = ChainState.make(
       ~chainConfig,
       ~fetchState=fetchState.contents,
+      ~eventStore=fetchState.contents->TestFetchState.eventStoreOf,
       ~addressStore,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),
@@ -237,7 +238,7 @@ describe("IndexerState", () => {
           let addresses = []
           let addressStore = TestAddresses.makeStore(~onEventRegistrations)
           let fetchState = ref(
-            FetchState.make(
+            TestFetchState.make(
               ~onNotice=ignore,
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
@@ -267,7 +268,7 @@ describe("IndexerState", () => {
               }
               fetchState.contents->FetchState.startFetchingQueries(~queries=[query])
               fetchState :=
-                fetchState.contents->FetchState.handleQueryResult(
+                fetchState.contents->TestFetchState.handleQueryResult(
                   ~query,
                   ~latestFetchedBlock=blockNumber,
                   ~page=TestEventStore.pageOf([
@@ -300,6 +301,7 @@ describe("IndexerState", () => {
               let chainState = ChainState.make(
                 ~chainConfig,
                 ~fetchState,
+                ~eventStore=fetchState->TestFetchState.eventStoreOf,
                 ~addressStore,
                 ~sourceManager=SourceManager.make(
                   ~logger=Logger.makeInMemory(),

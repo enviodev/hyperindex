@@ -249,15 +249,25 @@ let query = (q: FetchState.query): FetchState.query => {
   addresses: q.addresses->comparable,
 }
 
-let fetchState = (fs: FetchState.t): FetchState.t => {
-  ...fs,
-  optimizedPartitions: partitions(fs.optimizedPartitions),
-  // The store is a handle, so it compares by the items it holds, which are
-  // rebuilt by now: what rebuilt them isn't part of the comparison.
-  eventStore: fs
-  ->TestEventStore.bufferedItems
-  ->(Utils.magic: array<Internal.item> => EventStore.t),
-  itemContext: TestEventStore.noRegistrations(~chainId=fs.chainId),
+// A fetch state with the items its store holds: the store is a handle, so it
+// compares by its items. An expected record built by hand passes its store.
+type bufferedFetchState = {
+  fetchState: FetchState.t,
+  bufferedItems: array<Internal.item>,
+}
+
+let fetchState = (fs: FetchState.t, ~eventStore=?): bufferedFetchState => {
+  let fs = switch eventStore {
+  | Some(eventStore) => fs->TestFetchState.pair(~eventStore)
+  | None => fs
+  }
+  {
+    fetchState: {
+      ...fs,
+      optimizedPartitions: partitions(fs.optimizedPartitions),
+    },
+    bufferedItems: fs->TestFetchState.bufferedItems,
+  }
 }
 
 let queries = (qs: array<FetchState.query>) => qs->Array.map(query)

@@ -29,9 +29,9 @@ let getItem = (item: oldQueueItem) =>
   }
 
 let getEarliestEvent = (fetchState: FetchState.t) => {
-  let readyItemsCount = fetchState->FetchState.getReadyItemsCount(~targetSize=1, ~fromItem=0)
+  let readyItemsCount = fetchState->TestFetchState.getReadyItemsCount(~targetSize=1, ~fromItem=0)
   if readyItemsCount > 0 {
-    Item(fetchState->TestEventStore.bufferedItems->Array.getUnsafe(0))
+    Item(fetchState->TestFetchState.bufferedItems->Array.getUnsafe(0))
   } else {
     NoItem({
       latestFetchedBlock: fetchState->FetchState.bufferBlockNumber,
@@ -61,7 +61,7 @@ let getBlockData = (~blockNumber): int => blockNumber
 
 let rollbackTo = (fetchState: FetchState.t, ~addressStore, ~targetBlockNumber) =>
   (
-    fetchState->FetchState.rollback(~rolledBackAddressStore=addressStore, ~targetBlockNumber)
+    fetchState->TestFetchState.rollback(~rolledBackAddressStore=addressStore, ~targetBlockNumber)
   ).fetchState
 
 let makeDynContractRegistration = (
@@ -147,7 +147,7 @@ let makeInitial = (
   // Config contracts this chain has no events for.
   let configContractNames = ["UnknownContract", "AnotherUnknownContract"]
   let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~configContractNames)
-  let fetchState = FetchState.make(
+  let fetchState = TestFetchState.make(
     ~onNotice=ignore,
     ~onEventRegistrations,
     ~addressStore,
@@ -193,7 +193,7 @@ let makeFs = (
   ~configContractNames=?,
 ) => {
   let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~configContractNames?)
-  let fetchState = FetchState.make(
+  let fetchState = TestFetchState.make(
     ~onNotice=ignore,
     ~onEventRegistrations,
     ~addressStore,
@@ -254,7 +254,7 @@ let makeIndexingContractsWithDynamics = (
 }
 
 // Nothing here reads what a fetch state reports.
-let registerDynamicContracts = FetchState.registerDynamicContracts(~onNotice=ignore, ...)
+let registerDynamicContracts = TestFetchState.registerDynamicContracts(~onNotice=ignore, ...)
 
 describe("FetchState.make", () => {
   it("Creates FetchState with a single static address", t => {
@@ -287,8 +287,6 @@ describe("FetchState.make", () => {
         endBlock: None,
         latestOnBlockBlockNumber: -1,
         maxOnBlockBufferSize: 5000,
-        eventStore: EventStore.make(),
-        itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
         normalSelection: fetchState.normalSelection,
         chainId: 0->ChainId.fromInt,
         blockLag: 0,
@@ -297,7 +295,7 @@ describe("FetchState.make", () => {
         knownHeight,
         firstEventBlock: None,
         clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-      }->TestAddresses.fetchState,
+      }->TestAddresses.fetchState(~eventStore=EventStore.make()),
     )
   })
 
@@ -404,8 +402,6 @@ describe("FetchState.make", () => {
         ),
         maxOnBlockBufferSize: targetBufferSize,
         latestOnBlockBlockNumber: -1,
-        eventStore: EventStore.make(),
-        itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
         startBlock: 0,
         endBlock: None,
         normalSelection: fetchState.normalSelection,
@@ -416,7 +412,7 @@ describe("FetchState.make", () => {
         knownHeight,
         firstEventBlock: None,
         clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-      }->TestAddresses.fetchState,
+      }->TestAddresses.fetchState(~eventStore=EventStore.make()),
     )
   })
 
@@ -479,8 +475,6 @@ describe("FetchState.make", () => {
           ),
           maxOnBlockBufferSize: targetBufferSize,
           latestOnBlockBlockNumber: -1,
-          eventStore: EventStore.make(),
-          itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
           startBlock: 0,
           endBlock: None,
           normalSelection: fetchState.normalSelection,
@@ -491,7 +485,7 @@ describe("FetchState.make", () => {
           knownHeight,
           firstEventBlock: None,
           clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-        }->TestAddresses.fetchState,
+        }->TestAddresses.fetchState(~eventStore=EventStore.make()),
       )
 
       t.expect(
@@ -593,8 +587,6 @@ describe("FetchState.make", () => {
           ),
           maxOnBlockBufferSize: targetBufferSize,
           latestOnBlockBlockNumber: -1,
-          eventStore: EventStore.make(),
-          itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
           startBlock: 0,
           endBlock: None,
           normalSelection: fetchState.normalSelection,
@@ -605,7 +597,7 @@ describe("FetchState.make", () => {
           knownHeight,
           firstEventBlock: None,
           clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-        }->TestAddresses.fetchState,
+        }->TestAddresses.fetchState(~eventStore=EventStore.make()),
       )
     },
   )
@@ -1192,7 +1184,7 @@ describe("FetchState.registerDynamicContracts", () => {
     let (fetchState, addressStore) = makeInitial()
     let notices = []
     let register = (fetchState, ~blockNumber) =>
-      fetchState->FetchState.registerDynamicContracts(
+      fetchState->TestFetchState.registerDynamicContracts(
         ~addressStore,
         ~onNotice=notice => notices->Array.push(notice),
         [
@@ -1719,8 +1711,6 @@ describe("FetchState.registerDynamicContracts", () => {
           endBlock: None,
           latestOnBlockBlockNumber: -1,
           maxOnBlockBufferSize: targetBufferSize,
-          eventStore: EventStore.make(),
-          itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
           normalSelection: fetchState.normalSelection,
           chainId,
           blockLag: 0,
@@ -1729,7 +1719,7 @@ describe("FetchState.registerDynamicContracts", () => {
           knownHeight,
           firstEventBlock: None,
           clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-        }->TestAddresses.fetchState,
+        }->TestAddresses.fetchState(~eventStore=EventStore.make()),
       )
     },
   )
@@ -1782,8 +1772,6 @@ describe("FetchState.getNextQuery & integration", () => {
       ),
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
-      eventStore: TestEventStore.pageOf([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
-      itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
       startBlock: 0,
       endBlock: None,
       blockLag: 0,
@@ -1794,7 +1782,9 @@ describe("FetchState.getNextQuery & integration", () => {
       knownHeight,
       firstEventBlock: None,
       clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    }
+    }->TestFetchState.pair(
+      ~eventStore=TestEventStore.pageOf([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
+    )
   }
 
   let makeIntermidiateDcMerge = (
@@ -1844,8 +1834,6 @@ describe("FetchState.getNextQuery & integration", () => {
       ),
       latestOnBlockBlockNumber: knownHeight,
       maxOnBlockBufferSize: targetBufferSize,
-      eventStore: TestEventStore.pageOf([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
-      itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
       startBlock: 0,
       endBlock: None,
       normalSelection,
@@ -1856,7 +1844,9 @@ describe("FetchState.getNextQuery & integration", () => {
       knownHeight,
       firstEventBlock: None,
       clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    }
+    }->TestFetchState.pair(
+      ~eventStore=TestEventStore.pageOf([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
+    )
   }
 
   // The default configuration with ability to overwrite some values.
@@ -1872,9 +1862,9 @@ describe("FetchState.getNextQuery & integration", () => {
   // real frontier, same as ChainState.getNextQuery derives it in production.
   let getNextQuery = (fs, ~endBlock=None, ~knownHeight=10, ~chainTargetItems=10_000.) => {
     let updated = switch endBlock {
-    | Some(_) => {...fs, endBlock}
+    | Some(_) => fs->TestFetchState.update(fs => {...fs, endBlock})
     | None => fs
-    }->FetchState.updateKnownHeight(~knownHeight)
+    }->TestFetchState.updateKnownHeight(~knownHeight)
     updated->FetchState.getNextQuery(~chainTargetBlock=updated.knownHeight, ~chainTargetItems)
   }
 
@@ -1932,7 +1922,7 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let updatedFetchState =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=10,
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)]),
@@ -2057,7 +2047,7 @@ describe("FetchState.getNextQuery & integration", () => {
     )
 
     let updatedFetchState =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=8,
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=2), mockEvent(~blockNumber=1)]),
@@ -2166,12 +2156,12 @@ describe("FetchState.getNextQuery & integration", () => {
 
     let updatedFetchState =
       fetchStateWithDcs
-      ->FetchState.handleQueryResult(
+      ->TestFetchState.handleQueryResult(
         ~query=queries->Array.getUnsafe(0),
         ~latestFetchedBlock=10,
         ~page=TestEventStore.pageOf([]),
       )
-      ->FetchState.handleQueryResult(
+      ->TestFetchState.handleQueryResult(
         ~query=queries->Array.getUnsafe(1),
         ~latestFetchedBlock=2,
         ~page=TestEventStore.pageOf([]),
@@ -2241,13 +2231,15 @@ describe("FetchState.getNextQuery & integration", () => {
 
   it("Emulate partition merging cases", t => {
     let originalFetchState = makeIntermidiateDcMerge(~addressStore=makeIntermidiateIndex())
-    let originalFetchState = {
-      ...originalFetchState,
-      optimizedPartitions: {
-        ...originalFetchState.optimizedPartitions,
-        maxAddrInPartition: 4,
+    let originalFetchState = originalFetchState->TestFetchState.update(
+      fs => {
+        ...fs,
+        optimizedPartitions: {
+          ...originalFetchState.optimizedPartitions,
+          maxAddrInPartition: 4,
+        },
       },
-    }
+    )
     t.expect(
       originalFetchState->getNextQuery(~knownHeight=11)->TestAddresses.nextQuery,
       ~message="Until we optimize partitions - on handle query, we don't need to merge partitions",
@@ -2324,7 +2316,7 @@ describe("FetchState.getNextQuery & integration", () => {
     // When it didn't finish fetching to the target partition block
     fetchState->FetchState.startFetchingQueries(~queries=[p2Query])
     let fetchStateWithResponse1 =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query=p2Query,
         ~latestFetchedBlock=9,
         ~page=TestEventStore.pageOf([
@@ -2337,7 +2329,7 @@ describe("FetchState.getNextQuery & integration", () => {
       (
         fetchStateWithResponse1->FetchState.bufferBlockNumber,
         fetchStateWithResponse1.optimizedPartitions.idsInAscOrder,
-        fetchStateWithResponse1->TestEventStore.bufferedItems->Array.length,
+        fetchStateWithResponse1->TestFetchState.bufferedItems->Array.length,
       ),
       ~message="The buffer block should be the latest fetched block",
     ).toEqual((9, ["2", "0"], 4))
@@ -2350,7 +2342,7 @@ describe("FetchState.getNextQuery & integration", () => {
     fetchStateWithResponse1->FetchState.startFetchingQueries(~queries)
 
     let fetchStateWithResponse2 =
-      fetchStateWithResponse1->FetchState.handleQueryResult(
+      fetchStateWithResponse1->TestFetchState.handleQueryResult(
         ~query=queries->Array.getUnsafe(0),
         ~latestFetchedBlock=10,
         ~page=TestEventStore.pageOf([]),
@@ -2360,44 +2352,48 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateWithResponse2->TestAddresses.fetchState,
       ~message="Partition 2 should come to mergeBlock and be removed",
     ).toEqual(
-      {
-        ...fetchStateWithResponse1,
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [
-                {
-                  fromBlock: 11,
-                  toBlock: None,
-                  isChunk: false,
-                  itemsTarget: Some(2500),
-                  itemsEst: 2500,
-                  fetchedBlock: None,
-                },
-              ],
-              sourceRangeCapacity: 0,
-              eventDensity: Some(2. /. 11.),
-              prevSourceRangeCapacity: 0,
-              latestSourceRangeCapacityUpdateBlock: 0,
-              latestFetchedBlock: 10,
-              selection: fetchState.normalSelection,
-              addresses: TestAddresses.setOf([
-                mockAddress0,
-                mockAddress1,
-                mockAddress2,
-                mockAddress3,
-              ]),
-              mergeBlock: None,
-            },
-          ],
-          ~nextPartitionIndex=fetchStateWithResponse1.optimizedPartitions.nextPartitionIndex,
-          ~maxAddrInPartition=fetchStateWithResponse1.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchStateWithResponse1.optimizedPartitions.dynamicContracts,
-          ~clientFilteredContracts=fetchStateWithResponse1.optimizedPartitions.clientFilteredContracts,
-        ),
-      }->TestAddresses.fetchState,
+      fetchStateWithResponse1
+      ->TestFetchState.update(
+        fs => {
+          ...fs,
+          optimizedPartitions: FetchState.OptimizedPartitions.make(
+            ~partitions=[
+              {
+                id: "0",
+                dynamicContract: Some("Gravatar"),
+                mutPendingQueries: [
+                  {
+                    fromBlock: 11,
+                    toBlock: None,
+                    isChunk: false,
+                    itemsTarget: Some(2500),
+                    itemsEst: 2500,
+                    fetchedBlock: None,
+                  },
+                ],
+                sourceRangeCapacity: 0,
+                eventDensity: Some(2. /. 11.),
+                prevSourceRangeCapacity: 0,
+                latestSourceRangeCapacityUpdateBlock: 0,
+                latestFetchedBlock: 10,
+                selection: fetchState.normalSelection,
+                addresses: TestAddresses.setOf([
+                  mockAddress0,
+                  mockAddress1,
+                  mockAddress2,
+                  mockAddress3,
+                ]),
+                mergeBlock: None,
+              },
+            ],
+            ~nextPartitionIndex=fetchStateWithResponse1.optimizedPartitions.nextPartitionIndex,
+            ~maxAddrInPartition=fetchStateWithResponse1.optimizedPartitions.maxAddrInPartition,
+            ~dynamicContracts=fetchStateWithResponse1.optimizedPartitions.dynamicContracts,
+            ~clientFilteredContracts=fetchStateWithResponse1.optimizedPartitions.clientFilteredContracts,
+          ),
+        },
+      )
+      ->TestAddresses.fetchState,
     )
   })
 
@@ -2616,44 +2612,48 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback1->TestAddresses.fetchState,
       ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
     ).toEqual(
-      {
-        ...fetchState,
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: 2,
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              sourceRangeCapacity: 0,
-              // Kept partition preserves its observed empty-response density.
-              eventDensity: Some(0.),
-              prevSourceRangeCapacity: 0,
-              latestSourceRangeCapacityUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress3]),
-              mergeBlock: None,
-            },
-            {
-              id: "1",
-              latestFetchedBlock: 2,
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              sourceRangeCapacity: 0,
-              eventDensity: None,
-              prevSourceRangeCapacity: 0,
-              latestSourceRangeCapacityUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              addresses: TestAddresses.setOf([mockAddress0, mockAddress1, mockAddress2]),
-              mergeBlock: None,
-            },
-          ],
-          ~nextPartitionIndex=2,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-          ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
-        ),
-      }->TestAddresses.fetchState,
+      fetchState
+      ->TestFetchState.update(
+        fs => {
+          ...fs,
+          optimizedPartitions: FetchState.OptimizedPartitions.make(
+            ~partitions=[
+              {
+                id: "0",
+                latestFetchedBlock: 2,
+                dynamicContract: Some("Gravatar"),
+                mutPendingQueries: [],
+                sourceRangeCapacity: 0,
+                // Kept partition preserves its observed empty-response density.
+                eventDensity: Some(0.),
+                prevSourceRangeCapacity: 0,
+                latestSourceRangeCapacityUpdateBlock: 0,
+                selection: fetchState.normalSelection,
+                addresses: TestAddresses.setOf(~contractName="Gravatar", [mockAddress3]),
+                mergeBlock: None,
+              },
+              {
+                id: "1",
+                latestFetchedBlock: 2,
+                dynamicContract: Some("Gravatar"),
+                mutPendingQueries: [],
+                sourceRangeCapacity: 0,
+                eventDensity: None,
+                prevSourceRangeCapacity: 0,
+                latestSourceRangeCapacityUpdateBlock: 0,
+                selection: fetchState.normalSelection,
+                addresses: TestAddresses.setOf([mockAddress0, mockAddress1, mockAddress2]),
+                mergeBlock: None,
+              },
+            ],
+            ~nextPartitionIndex=2,
+            ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+            ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+            ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
+          ),
+        },
+      )
+      ->TestAddresses.fetchState,
     )
 
     // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
@@ -2663,35 +2663,37 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback2->TestAddresses.fetchState,
       ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
     ).toEqual(
-      {
-        ...fetchState,
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: 1,
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              sourceRangeCapacity: 0,
-              eventDensity: None,
-              prevSourceRangeCapacity: 0,
-              latestSourceRangeCapacityUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
-              addresses: TestAddresses.setOf([mockAddress0, mockAddress1]),
-              mergeBlock: None,
-            },
-            // Removed partition "2"
-          ],
-          ~nextPartitionIndex=1,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-          ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
-        ),
-        // Removed an item here
-
-        eventStore: TestEventStore.pageOf([mockEvent(~blockNumber=1)]),
-      }->TestAddresses.fetchState,
+      fetchState
+      ->TestFetchState.update(
+        fs => {
+          ...fs,
+          optimizedPartitions: FetchState.OptimizedPartitions.make(
+            ~partitions=[
+              {
+                id: "0",
+                latestFetchedBlock: 1,
+                dynamicContract: Some("Gravatar"),
+                mutPendingQueries: [],
+                sourceRangeCapacity: 0,
+                eventDensity: None,
+                prevSourceRangeCapacity: 0,
+                latestSourceRangeCapacityUpdateBlock: 0,
+                selection: fetchState.normalSelection,
+                // Removed dc2 and dc3, even though the latestFetchedBlock is not exceeding the lastScannedBlock
+                addresses: TestAddresses.setOf([mockAddress0, mockAddress1]),
+                mergeBlock: None,
+              },
+              // Removed partition "2"
+            ],
+            ~nextPartitionIndex=1,
+            ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+            ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+            ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
+          ),
+          // Removed an item here
+        },
+      )
+      ->TestAddresses.fetchState(~eventStore=TestEventStore.pageOf([mockEvent(~blockNumber=1)])),
     )
 
     // Rollback to block -1: all DCs removed, only static addr0 survives
@@ -2700,31 +2702,34 @@ describe("FetchState.getNextQuery & integration", () => {
       fetchStateAfterRollback3->TestAddresses.fetchState,
       ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
     ).toEqual(
-      {
-        ...fetchState,
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: -1,
-              dynamicContract: Some("Gravatar"),
-              mutPendingQueries: [],
-              sourceRangeCapacity: 0,
-              eventDensity: None,
-              prevSourceRangeCapacity: 0,
-              latestSourceRangeCapacityUpdateBlock: 0,
-              selection: fetchState.normalSelection,
-              addresses: TestAddresses.setOf([mockAddress0]),
-              mergeBlock: None,
-            },
-          ],
-          ~nextPartitionIndex=1,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-          ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
-        ),
-        eventStore: EventStore.make(),
-      }->TestAddresses.fetchState,
+      fetchState
+      ->TestFetchState.update(
+        fs => {
+          ...fs,
+          optimizedPartitions: FetchState.OptimizedPartitions.make(
+            ~partitions=[
+              {
+                id: "0",
+                latestFetchedBlock: -1,
+                dynamicContract: Some("Gravatar"),
+                mutPendingQueries: [],
+                sourceRangeCapacity: 0,
+                eventDensity: None,
+                prevSourceRangeCapacity: 0,
+                latestSourceRangeCapacityUpdateBlock: 0,
+                selection: fetchState.normalSelection,
+                addresses: TestAddresses.setOf([mockAddress0]),
+                mergeBlock: None,
+              },
+            ],
+            ~nextPartitionIndex=1,
+            ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+            ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+            ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
+          ),
+        },
+      )
+      ->TestAddresses.fetchState(~eventStore=EventStore.make()),
     )
   })
 
@@ -2790,43 +2795,46 @@ describe("FetchState.getNextQuery & integration", () => {
     ).toEqual(2)
 
     // resetPendingQueries must be called before rollback (removes in-flight queries)
-    let fetchStateReset = fetchState->FetchState.resetPendingQueries
+    let fetchStateReset = fetchState->TestFetchState.resetPendingQueries
     let fetchStateAfterRollback = fetchStateReset->rollbackTo(~addressStore, ~targetBlockNumber=1)
 
     t.expect(
       fetchStateAfterRollback->TestAddresses.fetchState,
       ~message=`Should keep Wildcard partition even if it's empty`,
     ).toEqual(
-      {
-        ...fetchState,
-        optimizedPartitions: FetchState.OptimizedPartitions.make(
-          ~partitions=[
-            {
-              id: "0",
-              latestFetchedBlock: -1,
-              dynamicContract: None,
-              mutPendingQueries: [],
-              sourceRangeCapacity: 0,
-              eventDensity: None,
-              prevSourceRangeCapacity: 0,
-              latestSourceRangeCapacityUpdateBlock: 0,
-              selection: {
-                dependsOnAddresses: false,
-                onEventRegistrations: wildcardEventConfigs,
-                onBlockRegistrations: [],
+      fetchState
+      ->TestFetchState.update(
+        fs => {
+          ...fs,
+          optimizedPartitions: FetchState.OptimizedPartitions.make(
+            ~partitions=[
+              {
+                id: "0",
+                latestFetchedBlock: -1,
+                dynamicContract: None,
+                mutPendingQueries: [],
+                sourceRangeCapacity: 0,
+                eventDensity: None,
+                prevSourceRangeCapacity: 0,
+                latestSourceRangeCapacityUpdateBlock: 0,
+                selection: {
+                  dependsOnAddresses: false,
+                  onEventRegistrations: wildcardEventConfigs,
+                  onBlockRegistrations: [],
+                },
+                addresses: TestAddresses.setOf([]),
+                mergeBlock: None,
               },
-              addresses: TestAddresses.setOf([]),
-              mergeBlock: None,
-            },
-          ],
-          // IDs reset on rollback
-          ~nextPartitionIndex=1,
-          ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
-          ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
-          ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
-        ),
-        eventStore: EventStore.make(),
-      }->TestAddresses.fetchState,
+            ],
+            // IDs reset on rollback
+            ~nextPartitionIndex=1,
+            ~maxAddrInPartition=fetchState.optimizedPartitions.maxAddrInPartition,
+            ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
+            ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
+          ),
+        },
+      )
+      ->TestAddresses.fetchState(~eventStore=EventStore.make()),
     )
   })
 })
@@ -2837,14 +2845,14 @@ describe("FetchState unit tests for specific cases", () => {
     let normalSelection = base.normalSelection
     let fetchState =
       base
-      ->TestEventStore.withItems([
+      ->TestFetchState.withItems([
         mockEvent(~blockNumber=4, ~logIndex=2),
         mockEvent(~blockNumber=4),
         mockEvent(~blockNumber=3),
         mockEvent(~blockNumber=2),
         mockEvent(~blockNumber=1),
       ])
-      ->FetchState.updateInternal(
+      ->TestFetchState.updateInternal(
         ~optimizedPartitions=FetchState.OptimizedPartitions.make(
           ~partitions=[
             {
@@ -2894,7 +2902,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=10,
         ~page=TestEventStore.pageOf([
@@ -2904,7 +2912,7 @@ describe("FetchState unit tests for specific cases", () => {
       )
 
     t.expect(
-      updatedFetchState->TestEventStore.bufferedItems,
+      updatedFetchState->TestFetchState.bufferedItems,
       ~message="Should merge events in correct order",
     ).toEqual([
       mockEvent(~blockNumber=1),
@@ -2941,14 +2949,14 @@ describe("FetchState unit tests for specific cases", () => {
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=getBlockData(~blockNumber=10),
         ~page=TestEventStore.pageOf(unsorted),
       )
 
     t.expect(
-      updatedFetchState->TestEventStore.bufferedItems,
+      updatedFetchState->TestFetchState.bufferedItems,
       ~message="Queue must be sorted DESC by (blockNumber, logIndex) regardless of input order",
     ).toEqual([
       mockEvent(~blockNumber=5, ~logIndex=0),
@@ -3012,12 +3020,12 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query0, query1])
     let fetchState =
       fetchState
-      ->FetchState.handleQueryResult(
+      ->TestFetchState.handleQueryResult(
         ~query=query0,
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=1), mockEvent(~blockNumber=0)]),
       )
-      ->FetchState.handleQueryResult(
+      ->TestFetchState.handleQueryResult(
         ~query=query1,
         ~latestFetchedBlock=getBlockData(~blockNumber=2),
         ~page=TestEventStore.pageOf([]),
@@ -3073,7 +3081,7 @@ describe("FetchState unit tests for specific cases", () => {
 
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let fetchStateWithEvents =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~page=TestEventStore.pageOf([
           mockEvent(~blockNumber=6, ~logIndex=2),
@@ -3142,7 +3150,7 @@ describe("FetchState unit tests for specific cases", () => {
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updatedFetchState =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=0, ~logIndex=1)]),
         ~latestFetchedBlock=getBlockData(~blockNumber=1),
@@ -3161,12 +3169,12 @@ describe("FetchState unit tests for specific cases", () => {
     let normalSelection = base.normalSelection
     let fetchState =
       base
-      ->TestEventStore.withItems([
+      ->TestFetchState.withItems([
         mockEvent(~blockNumber=6, ~logIndex=1),
         mockEvent(~blockNumber=5),
         mockEvent(~blockNumber=2, ~logIndex=1),
       ])
-      ->FetchState.updateInternal(
+      ->TestFetchState.updateInternal(
         ~optimizedPartitions=FetchState.OptimizedPartitions.make(
           ~partitions=[
             {
@@ -3230,25 +3238,33 @@ describe("FetchState unit tests for specific cases", () => {
 
   it("isActively indexing", t => {
     t.expect(
-      makeInitialFs()->FetchState.isActivelyIndexing,
+      makeInitialFs()->TestFetchState.isActivelyIndexing,
       ~message=`Should be actively indexing with initial state`,
     ).toEqual(true)
     t.expect(
-      {...makeInitialFs(), endBlock: Some(10)}->FetchState.isActivelyIndexing,
+      makeInitialFs()
+      ->TestFetchState.update(fs => {...fs, endBlock: Some(10)})
+      ->TestFetchState.isActivelyIndexing,
       ~message=`Should be actively indexing with initial state, even if there's an endBlock`,
     ).toEqual(true)
     t.expect(
-      {...makeInitialFs(), endBlock: Some(0)}->FetchState.isActivelyIndexing,
+      makeInitialFs()
+      ->TestFetchState.update(fs => {...fs, endBlock: Some(0)})
+      ->TestFetchState.isActivelyIndexing,
       ~message=`Should be active if endBlock is equal to the startBlock`,
     ).toEqual(true)
     t.expect(
-      {...makeInitialFs(~startBlock=10), endBlock: Some(9)}->FetchState.isActivelyIndexing,
+      makeInitialFs(~startBlock=10)
+      ->TestFetchState.update(fs => {...fs, endBlock: Some(9)})
+      ->TestFetchState.isActivelyIndexing,
       ~message=`Shouldn't be active if endBlock is less than the startBlock`,
     ).toEqual(false)
-    let fetchState = {
-      ...makeInitialFs(),
-      endBlock: Some(0),
-    }
+    let fetchState = makeInitialFs()->TestFetchState.update(
+      fs => {
+        ...fs,
+        endBlock: Some(0),
+      },
+    )
     let query: FetchState.query = {
       partitionId: "0",
       itemsTarget: Some(5000),
@@ -3262,12 +3278,12 @@ describe("FetchState unit tests for specific cases", () => {
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     t.expect(
       fetchState
-      ->FetchState.handleQueryResult(
+      ->TestFetchState.handleQueryResult(
         ~query,
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=0)]),
         ~latestFetchedBlock=-1,
       )
-      ->FetchState.isActivelyIndexing,
+      ->TestFetchState.isActivelyIndexing,
       ~message=`Although, with items in the queue it should be considered active`,
     ).toEqual(true)
   })
@@ -3285,7 +3301,7 @@ describe("FetchState unit tests for specific cases", () => {
         addresses: TestAddresses.setOf([]),
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query])
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~page=TestEventStore.pageOf([]),
         ~latestFetchedBlock=latestFetchedBlockNumber,
@@ -3294,9 +3310,9 @@ describe("FetchState unit tests for specific cases", () => {
 
     let atHead = makeInitialFs(~knownHeight=10)->fetchToHead(~latestFetchedBlockNumber=10)
     let endBlockReached =
-      {...makeInitialFs(~knownHeight=100), endBlock: Some(5)}->fetchToHead(
-        ~latestFetchedBlockNumber=5,
-      )
+      makeInitialFs(~knownHeight=100)
+      ->TestFetchState.update(fs => {...fs, endBlock: Some(5)})
+      ->fetchToHead(~latestFetchedBlockNumber=5)
 
     t.expect(
       {
@@ -3342,7 +3358,7 @@ describe("FetchState unit tests for specific cases", () => {
       }
       fetchState->FetchState.startFetchingQueries(~queries=[query])
       let fetchState =
-        fetchState->FetchState.handleQueryResult(
+        fetchState->TestFetchState.handleQueryResult(
           ~query,
           ~page=TestEventStore.pageOf([
             mockEvent(~blockNumber=6, ~logIndex=2),
@@ -3415,7 +3431,7 @@ describe("FetchState unit tests for specific cases", () => {
 
       //Response with updated fetch state
       let fetchStateWithBothDcsAndQueryAResponse =
-        fetchStateWithDcB->FetchState.handleQueryResult(
+        fetchStateWithDcB->TestFetchState.handleQueryResult(
           ~query=queryA,
           ~latestFetchedBlock=getBlockData(~blockNumber=400),
           ~page=TestEventStore.pageOf([]),
@@ -3480,12 +3496,12 @@ describe("FetchState.sortForBatch", () => {
     let query = mkQuery(fs0)
     fs0->FetchState.startFetchingQueries(~queries=[query])
     let fs =
-      fs0->FetchState.handleQueryResult(
+      fs0->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=latestBlock,
         ~page=TestEventStore.pageOf(queueBlocks->Array.map(b => mockEvent(~blockNumber=b))),
       )
-    {...fs, firstEventBlock: Some(0)}
+    fs->TestFetchState.update(fs => {...fs, firstEventBlock: Some(0)})
   }
 
   it("Sorts by progress percentage. Chains further behind have higher priority", t => {
@@ -3496,11 +3512,11 @@ describe("FetchState.sortForBatch", () => {
     // High progress: first item at block 8, knownHeight=10 → 80% progress
     let fsHigh = makeFsWith(~latestBlock=10, ~queueBlocks=[8])
 
-    let prepared = FetchState.sortForBatch([fsHigh, fsLow, fsMid], ~batchSizeTarget=3)
+    let prepared = TestFetchState.sortForBatch([fsHigh, fsLow, fsMid], ~batchSizeTarget=3)
 
     t.expect(
       prepared->Array.map(
-        fs => fs->TestEventStore.bufferedItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+        fs => fs->TestFetchState.bufferedItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
       ),
     ).toEqual([1, 5, 8])
   })
@@ -3511,11 +3527,11 @@ describe("FetchState.sortForBatch", () => {
     // Half-full batch (1 item) but earlier earliest item (block 1)
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.sortForBatch([fsHalfEarlier, fsFullLater], ~batchSizeTarget=2)
+    let prepared = TestFetchState.sortForBatch([fsHalfEarlier, fsFullLater], ~batchSizeTarget=2)
 
     t.expect(
       prepared->Array.map(
-        fs => fs->TestEventStore.bufferedItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+        fs => fs->TestFetchState.bufferedItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
       ),
     ).toEqual([7, 1])
   })
@@ -3526,12 +3542,12 @@ describe("FetchState.sortForBatch", () => {
     // Half-full (1 item) but earlier earliest item
     let fsHalfEarlier = makeFsWith(~latestBlock=10, ~queueBlocks=[1])
 
-    let prepared = FetchState.sortForBatch([fsHalfEarlier, fsExactFull], ~batchSizeTarget=2)
+    let prepared = TestFetchState.sortForBatch([fsHalfEarlier, fsExactFull], ~batchSizeTarget=2)
 
     // Full batch should take priority regardless of earlier timestamp of half batch
     t.expect(
       prepared->Array.map(
-        fs => fs->TestEventStore.bufferedItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
+        fs => fs->TestFetchState.bufferedItems->Array.getUnsafe(0)->Internal.getItemBlockNumber,
       ),
     ).toEqual([2, 1])
   })
@@ -3541,7 +3557,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
   it("Returns false when we just started the indexer and it has knownHeight=0", t => {
     let (fetchState, _addressStore) = makeInitial()
     t.expect(
-      {...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold(~tolerance=0),
+      fetchState
+      ->TestFetchState.update(fs => {...fs, knownHeight: 0})
+      ->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0),
     ).toBe(false)
   })
 
@@ -3550,7 +3568,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
     t => {
       let (fetchState, _addressStore) = makeInitial(~startBlock=6000)
       t.expect(
-        {...fetchState, knownHeight: 0}->FetchState.isReadyToEnterReorgThreshold(~tolerance=0),
+        fetchState
+        ->TestFetchState.update(fs => {...fs, knownHeight: 0})
+        ->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0),
       ).toBe(false)
     },
   )
@@ -3574,7 +3594,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=0,
       ~knownHeight=10,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
+    t.expect(fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns false when endBlock not reached and below head - blockLag", t => {
@@ -3596,7 +3616,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
+    t.expect(fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it("Returns true when endBlock not reached but latest >= head - blockLag", t => {
@@ -3618,7 +3638,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=59,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
+    t.expect(fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns true when no endBlock and latest >= head - blockLag (boundary)", t => {
@@ -3640,7 +3660,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
+    t.expect(fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 
   it("Returns false when no endBlock and latest < head - blockLag", t => {
@@ -3662,7 +3682,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=10,
       ~knownHeight=60,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
+    t.expect(fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(false)
   })
 
   it("With a tolerance, is ready within it below head - blockLag, false just beyond it", t => {
@@ -3685,7 +3705,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
         ~blockLag=10,
         ~knownHeight,
       )
-      fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=100)
+      fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=100)
     }
     // frontier 99, ready cutoff = knownHeight - blockLag - tolerance: 209 -> 99, 210 -> 100
     t.expect((isReady(~knownHeight=209), isReady(~knownHeight=210))).toEqual((true, false))
@@ -3713,7 +3733,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=0,
       ~knownHeight=150,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=100)).toBe(false)
+    t.expect(fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=100)).toBe(false)
   })
 
   it("Blocks on processable items, but not on items stuck above the frontier", t => {
@@ -3737,9 +3757,9 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
         ~knownHeight=10,
       )
       fs
-      ->TestEventStore.withItems([mockEvent(~blockNumber=itemBlockNumber)])
-      ->FetchState.updateInternal
-      ->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)
+      ->TestFetchState.withItems([mockEvent(~blockNumber=itemBlockNumber)])
+      ->TestFetchState.updateInternal
+      ->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0)
     }
     // A processable item (<= frontier 5) still needs draining; an item stuck
     // above the frontier (as behind a lagging partition's gap) is reorg-safe and
@@ -3765,7 +3785,7 @@ describe("FetchState.isReadyToEnterReorgThreshold", () => {
       ~blockLag=200,
       ~knownHeight=10,
     )
-    t.expect(fs->FetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
+    t.expect(fs->TestFetchState.isReadyToEnterReorgThreshold(~tolerance=0)).toBe(true)
   })
 })
 
@@ -3855,7 +3875,7 @@ describe("FetchState progress tracking", () => {
       fromBlock: 0,
     }
     fs0->FetchState.startFetchingQueries(~queries=[query])
-    fs0->FetchState.handleQueryResult(
+    fs0->TestFetchState.handleQueryResult(
       ~query,
       ~latestFetchedBlock=latestBlock,
       ~page=TestEventStore.pageOf(
@@ -3868,7 +3888,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateEmpty = makeFetchStateWith(~latestBlock=100, ~queueBlocks=[])
 
     t.expect(
-      fetchStateEmpty->FetchState.getProgressBlockNumberAt(~index=0),
+      fetchStateEmpty->TestFetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return latestFullyFetchedBlock when queue is empty",
     ).toBe(100)
   })
@@ -3877,7 +3897,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 0)])
 
     t.expect(
-      fetchStateSingleItem->FetchState.getProgressBlockNumberAt(~index=0),
+      fetchStateSingleItem->TestFetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return single queue item blockNumber - 1",
     ).toBe(54)
   })
@@ -3886,7 +3906,7 @@ describe("FetchState progress tracking", () => {
     let fetchStateSingleItem = makeFetchStateWith(~latestBlock=55, ~queueBlocks=[(55, 5)])
 
     t.expect(
-      fetchStateSingleItem->FetchState.getProgressBlockNumberAt(~index=0),
+      fetchStateSingleItem->TestFetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return single queue item blockNumber - 1",
     ).toBe(54)
   })
@@ -3898,7 +3918,7 @@ describe("FetchState progress tracking", () => {
     )
 
     t.expect(
-      fetchStateWithQueue->FetchState.getProgressBlockNumberAt(~index=0),
+      fetchStateWithQueue->TestFetchState.getProgressBlockNumberAt(~index=0),
       ~message="Should return latest fetched block number",
     ).toBe(90)
   })
@@ -3934,18 +3954,20 @@ describe("FetchState proposes queries against the natural ceiling", () => {
 
       fetchStateWithTwoPartitions->FetchState.startFetchingQueries(~queries=[query0])
       let fetchStateWithLargeQueue =
-        fetchStateWithTwoPartitions->FetchState.handleQueryResult(
+        fetchStateWithTwoPartitions->TestFetchState.handleQueryResult(
           ~query=query0,
           ~latestFetchedBlock=30,
           ~page=TestEventStore.pageOf(largeQueueEvents),
         )
 
       // Test case 1: With endBlock set, should propose all the way to endBlock
-      let fetchStateWithEndBlock = {
-        ...fetchStateWithLargeQueue,
-        endBlock: Some(25),
-        knownHeight: 30,
-      }
+      let fetchStateWithEndBlock = fetchStateWithLargeQueue->TestFetchState.update(
+        fs => {
+          ...fs,
+          endBlock: Some(25),
+          knownHeight: 30,
+        },
+      )
 
       switch fetchStateWithEndBlock->FetchState.getNextQuery(
         ~chainTargetBlock=30,
@@ -3960,7 +3982,10 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       }
 
       // Test case 2: endBlock=None -> Should use the open-ended head target
-      let fetchStateNoEndBlock = {...fetchStateWithLargeQueue, endBlock: None, knownHeight: 30}
+      let fetchStateNoEndBlock =
+        fetchStateWithLargeQueue->TestFetchState.update(
+          fs => {...fs, endBlock: None, knownHeight: 30},
+        )
       switch fetchStateNoEndBlock->FetchState.getNextQuery(
         ~chainTargetBlock=30,
         ~chainTargetItems=10_000.,
@@ -3987,12 +4012,12 @@ describe("FetchState proposes queries against the natural ceiling", () => {
       fetchState->FetchState.startFetchingQueries(~queries=[query3])
       let fetchStateSmallQueue =
         fetchState
-        ->FetchState.handleQueryResult(
+        ->TestFetchState.handleQueryResult(
           ~query=query3,
           ~latestFetchedBlock=10,
           ~page=TestEventStore.pageOf([mockEvent(~blockNumber=5)]),
         )
-        ->FetchState.updateKnownHeight(~knownHeight=30)
+        ->TestFetchState.updateKnownHeight(~knownHeight=30)
 
       switch fetchStateSmallQueue->FetchState.getNextQuery(
         ~chainTargetBlock=30,
@@ -4047,7 +4072,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       ~onBlockRegistrations=[makeOnBlockRegistration(~interval=1, ~startBlock=Some(0))],
     )
     let lastBufferedBlock = fs =>
-      fs->TestEventStore.bufferedItems->Array.last->Option.map(Internal.getItemBlockNumber)
+      fs->TestFetchState.bufferedItems->Array.last->Option.map(Internal.getItemBlockNumber)
 
     // Read before the update: fetch states share their store, so the one
     // replaced sees the update's items too.
@@ -4056,7 +4081,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       fetchState->FetchState.bufferBlockNumber,
       fetchState->lastBufferedBlock,
     )
-    let updated = fetchState->FetchState.updateKnownHeight(~knownHeight=150)
+    let updated = fetchState->TestFetchState.updateKnownHeight(~knownHeight=150)
     t.expect({
       "made": made,
       "updated": (
@@ -4094,7 +4119,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
         ~message="Partitions should be empty when there are no event configs",
       ).toEqual([])
       t.expect(
-        fetchState->TestEventStore.bufferedItems,
+        fetchState->TestFetchState.bufferedItems,
         ~message="Buffer should be empty initially",
       ).toEqual([])
       t.expect(fetchState.knownHeight, ~message="knownHeight should be 0 initially").toBe(0)
@@ -4112,7 +4137,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       ).toEqual(WaitingForNewBlock)
 
       // Update known height to 20
-      let updatedFetchState = fetchState->FetchState.updateKnownHeight(~knownHeight=20)
+      let updatedFetchState = fetchState->TestFetchState.updateKnownHeight(~knownHeight=20)
 
       // Verify buffer is now filled with block items
       t.expect(updatedFetchState.knownHeight, ~message="knownHeight should be updated to 20").toBe(
@@ -4131,7 +4156,7 @@ describe("FetchState with onBlockRegistration only (no events)", () => {
       // With interval=1, startBlock=0, we expect blocks 0,1,2,3,4,5,6,7,8,9,10
       let blockNumbers =
         updatedFetchState
-        ->TestEventStore.bufferedItems
+        ->TestFetchState.bufferedItems
         ->Array.map(item => item->Internal.getItemBlockNumber)
 
       t.expect(blockNumbers, ~message="Buffer should contain block items for blocks 0-10").toEqual([
@@ -4164,7 +4189,7 @@ describe("Stale query response should not overwrite source range capacity", () =
   // chainTargetBlock is derived from the post-update knownHeight (see the
   // other getNextQuery helper above for why).
   let getNextQuery = (fs, ~knownHeight=100000, ~chainTargetItems=10_000.) => {
-    let updated = fs->FetchState.updateKnownHeight(~knownHeight)
+    let updated = fs->TestFetchState.updateKnownHeight(~knownHeight)
     updated->FetchState.getNextQuery(~chainTargetBlock=updated.knownHeight, ~chainTargetItems)
   }
 
@@ -4182,8 +4207,8 @@ describe("Stale query response should not overwrite source range capacity", () =
     // shouldUpdateSourceRangeCapacity: None toBlock => 500 < 100000 - 10 = true
     let fs1 =
       fetchState
-      ->FetchState.updateKnownHeight(~knownHeight=100000)
-      ->FetchState.handleQueryResult(
+      ->TestFetchState.updateKnownHeight(~knownHeight=100000)
+      ->TestFetchState.handleQueryResult(
         ~query=q1,
         ~latestFetchedBlock=500,
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=100)]),
@@ -4217,7 +4242,7 @@ describe("Stale query response should not overwrite source range capacity", () =
     // Response arrives at block 1000 (range = 500)
     // shouldUpdateSourceRangeCapacity: None toBlock => 1000 < 99990 = true
     let fs2 =
-      fs1->FetchState.handleQueryResult(
+      fs1->TestFetchState.handleQueryResult(
         ~query=q2,
         ~latestFetchedBlock=1000,
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=600)]),
@@ -4259,7 +4284,7 @@ describe("Stale query response should not overwrite source range capacity", () =
     //   then 2500 < 2800 = true (partial response)
     // blockRange = 2500 - 1901 + 1 = 600
     let fs3 =
-      fs2->FetchState.handleQueryResult(
+      fs2->TestFetchState.handleQueryResult(
         ~query=chunkB,
         ~latestFetchedBlock=2500,
         ~page=TestEventStore.pageOf([]),
@@ -4277,7 +4302,7 @@ describe("Stale query response should not overwrite source range capacity", () =
     //   (latestSourceRangeCapacityUpdateBlock) = FALSE
     // So sourceRangeCapacity should NOT change
     let fs4 =
-      fs3->FetchState.handleQueryResult(
+      fs3->TestFetchState.handleQueryResult(
         ~query=chunkA,
         ~latestFetchedBlock=1500,
         ~page=TestEventStore.pageOf([]),
@@ -4346,8 +4371,6 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       ),
       startBlock: 0,
       endBlock: None,
-      eventStore: EventStore.make(),
-      itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
       normalSelection,
       latestOnBlockBlockNumber: 0,
       maxOnBlockBufferSize: 10000,
@@ -4358,7 +4381,7 @@ describe("FetchState.getNextQuery water-fill round is order-independent", () => 
       knownHeight: 10000,
       firstEventBlock: Some(0),
       clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    }
+    }->TestFetchState.pair(~eventStore=EventStore.make())
   }
 
   let getItemsTargetByPartition = nextQuery =>
@@ -4425,8 +4448,6 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     ),
     startBlock: 0,
     endBlock: None,
-    eventStore: EventStore.make(),
-    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
     normalSelection,
     latestOnBlockBlockNumber: 0,
     maxOnBlockBufferSize: 10000,
@@ -4437,7 +4458,7 @@ describe("FetchState.getNextQuery greedy budget pass fills partitions toward the
     knownHeight: 100000,
     firstEventBlock: Some(0),
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+  }->TestFetchState.pair(~eventStore=EventStore.make())
 
   it("fills each partition toward the shared target, then stops at its range end", t => {
     let byPartition = Dict.make()
@@ -4504,29 +4525,28 @@ describe("FetchState.getNextQuery with uneven in-flight reservations", () => {
     latestSourceRangeCapacityUpdateBlock: 0,
   }
 
-  let makeFetchState = (partitions): FetchState.t => {
-    optimizedPartitions: FetchState.OptimizedPartitions.make(
-      ~partitions,
-      ~maxAddrInPartition=2,
-      ~nextPartitionIndex=2,
-      ~dynamicContracts=Utils.Set.make(),
-      ~clientFilteredContracts=Utils.Set.make(),
-    ),
-    startBlock: 0,
-    endBlock: None,
-    eventStore: EventStore.make(),
-    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
-    normalSelection,
-    latestOnBlockBlockNumber: 0,
-    maxOnBlockBufferSize: 10000,
-    chainId,
-    blockLag: 0,
-    blockThrottle: 0,
-    onBlockRegistrations: [],
-    knownHeight: 10000,
-    firstEventBlock: Some(0),
-    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+  let makeFetchState = (partitions): FetchState.t =>
+    {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions,
+        ~maxAddrInPartition=2,
+        ~nextPartitionIndex=2,
+        ~dynamicContracts=Utils.Set.make(),
+        ~clientFilteredContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: None,
+      normalSelection,
+      latestOnBlockBlockNumber: 0,
+      maxOnBlockBufferSize: 10000,
+      chainId,
+      blockLag: 0,
+      blockThrottle: 0,
+      onBlockRegistrations: [],
+      knownHeight: 10000,
+      firstEventBlock: Some(0),
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    }->TestFetchState.pair(~eventStore=EventStore.make())
 
   it("hands a known-density partition only the fresh budget, not the mean footprint", t => {
     let fetchState = makeFetchState([
@@ -4733,29 +4753,28 @@ describe("FetchState.getNextQuery target containment", () => {
     latestSourceRangeCapacityUpdateBlock: 0,
   }
 
-  let makeFetchState = (partition): FetchState.t => {
-    optimizedPartitions: FetchState.OptimizedPartitions.make(
-      ~partitions=[partition],
-      ~maxAddrInPartition=2,
-      ~nextPartitionIndex=1,
-      ~dynamicContracts=Utils.Set.make(),
-      ~clientFilteredContracts=Utils.Set.make(),
-    ),
-    startBlock: 0,
-    endBlock: None,
-    eventStore: EventStore.make(),
-    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
-    normalSelection,
-    latestOnBlockBlockNumber: partition.latestFetchedBlock,
-    maxOnBlockBufferSize: 10000,
-    chainId,
-    blockLag: 0,
-    blockThrottle: 0,
-    onBlockRegistrations: [],
-    knownHeight: 10000,
-    firstEventBlock: Some(0),
-    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+  let makeFetchState = (partition): FetchState.t =>
+    {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[partition],
+        ~maxAddrInPartition=2,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+        ~clientFilteredContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: None,
+      normalSelection,
+      latestOnBlockBlockNumber: partition.latestFetchedBlock,
+      maxOnBlockBufferSize: 10000,
+      chainId,
+      blockLag: 0,
+      blockThrottle: 0,
+      onBlockRegistrations: [],
+      knownHeight: 10000,
+      firstEventBlock: Some(0),
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    }->TestFetchState.pair(~eventStore=EventStore.make())
 
   it("gates chunk starts at the target block even when a far mergeBlock allows more", t => {
     // mergeBlock=1000 gives the partition a 1000-block hard range; the budget
@@ -4858,43 +4877,42 @@ describe("FetchState.getNextQuery chunk headroom and budget-driven emit", () => 
     ~onEventRegistrations=[],
   )
 
-  let makeFetchState = (~eventDensity=Some(10.)): FetchState.t => {
-    optimizedPartitions: FetchState.OptimizedPartitions.make(
-      ~partitions=[
-        {
-          id: "0",
-          latestFetchedBlock: 0,
-          selection: normalSelection,
-          addresses: TestAddresses.setOf([mockAddress0]),
-          mergeBlock: None,
-          dynamicContract: None,
-          mutPendingQueries: [],
-          sourceRangeCapacity: 10,
-          prevSourceRangeCapacity: 10,
-          eventDensity, // density = 100 / 10 = 10 items/block by default
-          latestSourceRangeCapacityUpdateBlock: 0,
-        },
-      ],
-      ~maxAddrInPartition=2,
-      ~nextPartitionIndex=1,
-      ~dynamicContracts=Utils.Set.make(),
-      ~clientFilteredContracts=Utils.Set.make(),
-    ),
-    startBlock: 0,
-    endBlock: None,
-    eventStore: EventStore.make(),
-    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
-    normalSelection,
-    latestOnBlockBlockNumber: 0,
-    maxOnBlockBufferSize: 10000,
-    chainId,
-    blockLag: 0,
-    blockThrottle: 0,
-    onBlockRegistrations: [],
-    knownHeight: 100000,
-    firstEventBlock: Some(0),
-    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+  let makeFetchState = (~eventDensity=Some(10.)): FetchState.t =>
+    {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: 0,
+            selection: normalSelection,
+            addresses: TestAddresses.setOf([mockAddress0]),
+            mergeBlock: None,
+            dynamicContract: None,
+            mutPendingQueries: [],
+            sourceRangeCapacity: 10,
+            prevSourceRangeCapacity: 10,
+            eventDensity, // density = 100 / 10 = 10 items/block by default
+            latestSourceRangeCapacityUpdateBlock: 0,
+          },
+        ],
+        ~maxAddrInPartition=2,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+        ~clientFilteredContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: None,
+      normalSelection,
+      latestOnBlockBlockNumber: 0,
+      maxOnBlockBufferSize: 10000,
+      chainId,
+      blockLag: 0,
+      blockThrottle: 0,
+      onBlockRegistrations: [],
+      knownHeight: 100000,
+      firstEventBlock: Some(0),
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    }->TestFetchState.pair(~eventStore=EventStore.make())
 
   let getChunks = (fetchState: FetchState.t, ~chainTargetItems) =>
     switch fetchState->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems) {
@@ -4960,43 +4978,42 @@ describe("Response density and source range capacity update independently", () =
   )
   let addresses = TestAddresses.setOf([mockAddress0])
 
-  let makeFetchState = (~eventDensity=Some(1.), ~sourceRangeCapacity=300): FetchState.t => {
-    optimizedPartitions: FetchState.OptimizedPartitions.make(
-      ~partitions=[
-        {
-          id: "0",
-          latestFetchedBlock: 0,
-          selection: normalSelection,
-          addresses,
-          mergeBlock: None,
-          dynamicContract: None,
-          mutPendingQueries: [],
-          sourceRangeCapacity,
-          prevSourceRangeCapacity: sourceRangeCapacity,
-          eventDensity,
-          latestSourceRangeCapacityUpdateBlock: 0,
-        },
-      ],
-      ~maxAddrInPartition=2,
-      ~nextPartitionIndex=1,
-      ~dynamicContracts=Utils.Set.make(),
-      ~clientFilteredContracts=Utils.Set.make(),
-    ),
-    startBlock: 0,
-    endBlock: None,
-    eventStore: EventStore.make(),
-    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
-    normalSelection,
-    latestOnBlockBlockNumber: 0,
-    maxOnBlockBufferSize: 10000,
-    chainId,
-    blockLag: 0,
-    blockThrottle: 0,
-    onBlockRegistrations: [],
-    knownHeight: 100000,
-    firstEventBlock: Some(0),
-    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+  let makeFetchState = (~eventDensity=Some(1.), ~sourceRangeCapacity=300): FetchState.t =>
+    {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=[
+          {
+            id: "0",
+            latestFetchedBlock: 0,
+            selection: normalSelection,
+            addresses,
+            mergeBlock: None,
+            dynamicContract: None,
+            mutPendingQueries: [],
+            sourceRangeCapacity,
+            prevSourceRangeCapacity: sourceRangeCapacity,
+            eventDensity,
+            latestSourceRangeCapacityUpdateBlock: 0,
+          },
+        ],
+        ~maxAddrInPartition=2,
+        ~nextPartitionIndex=1,
+        ~dynamicContracts=Utils.Set.make(),
+        ~clientFilteredContracts=Utils.Set.make(),
+      ),
+      startBlock: 0,
+      endBlock: None,
+      normalSelection,
+      latestOnBlockBlockNumber: 0,
+      maxOnBlockBufferSize: 10000,
+      chainId,
+      blockLag: 0,
+      blockThrottle: 0,
+      onBlockRegistrations: [],
+      knownHeight: 100000,
+      firstEventBlock: Some(0),
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    }->TestFetchState.pair(~eventStore=EventStore.make())
 
   let makeQuery = (~isChunk): FetchState.query => {
     partitionId: "0",
@@ -5015,7 +5032,7 @@ describe("Response density and source range capacity update independently", () =
     let fetchState = makeFetchState(~eventDensity)
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updated =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=90,
         ~page=TestEventStore.pageOf(
@@ -5051,7 +5068,7 @@ describe("Response density and source range capacity update independently", () =
     let fetchState = makeFetchState(~eventDensity=None, ~sourceRangeCapacity=0)
     fetchState->FetchState.startFetchingQueries(~queries=[chunkQuery])
     let updated =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query=chunkQuery,
         ~latestFetchedBlock=90,
         ~page=TestEventStore.pageOf(
@@ -5175,31 +5192,30 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     latestSourceRangeCapacityUpdateBlock: 0,
   }
 
-  let makeFetchState = (~partitionsCount, ~inFlightCount): FetchState.t => {
-    optimizedPartitions: FetchState.OptimizedPartitions.make(
-      ~partitions=Array.fromInitializer(~length=partitionsCount, idx =>
-        makePartition(~idx, ~inFlight=idx < inFlightCount)
+  let makeFetchState = (~partitionsCount, ~inFlightCount): FetchState.t =>
+    {
+      optimizedPartitions: FetchState.OptimizedPartitions.make(
+        ~partitions=Array.fromInitializer(~length=partitionsCount, idx =>
+          makePartition(~idx, ~inFlight=idx < inFlightCount)
+        ),
+        ~maxAddrInPartition=1,
+        ~nextPartitionIndex=partitionsCount,
+        ~dynamicContracts=Utils.Set.make(),
+        ~clientFilteredContracts=Utils.Set.make(),
       ),
-      ~maxAddrInPartition=1,
-      ~nextPartitionIndex=partitionsCount,
-      ~dynamicContracts=Utils.Set.make(),
-      ~clientFilteredContracts=Utils.Set.make(),
-    ),
-    startBlock: 0,
-    endBlock: None,
-    eventStore: EventStore.make(),
-    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
-    normalSelection,
-    latestOnBlockBlockNumber: 0,
-    maxOnBlockBufferSize: 10000,
-    chainId,
-    blockLag: 0,
-    blockThrottle: 0,
-    onBlockRegistrations: [],
-    knownHeight: 100000,
-    firstEventBlock: Some(0),
-    clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-  }
+      startBlock: 0,
+      endBlock: None,
+      normalSelection,
+      latestOnBlockBlockNumber: 0,
+      maxOnBlockBufferSize: 10000,
+      chainId,
+      blockLag: 0,
+      blockThrottle: 0,
+      onBlockRegistrations: [],
+      knownHeight: 100000,
+      firstEventBlock: Some(0),
+      clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
+    }->TestFetchState.pair(~eventStore=EventStore.make())
 
   let countQueries = (fetchState: FetchState.t) =>
     switch fetchState->FetchState.getNextQuery(
@@ -5259,16 +5275,18 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
         fetchedBlock: idx === 0 ? None : Some((idx + 1) * 10),
       },
     )
-    let fetchState = {
-      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
-      optimizedPartitions: FetchState.OptimizedPartitions.make(
-        ~partitions=[{...makePartition(~idx=0, ~inFlight=false), mutPendingQueries}],
-        ~maxAddrInPartition=1,
-        ~nextPartitionIndex=1,
-        ~dynamicContracts=Utils.Set.make(),
-        ~clientFilteredContracts=Utils.Set.make(),
-      ),
-    }
+    let fetchState = makeFetchState(~partitionsCount=1, ~inFlightCount=0)->TestFetchState.update(
+      fs => {
+        ...fs,
+        optimizedPartitions: FetchState.OptimizedPartitions.make(
+          ~partitions=[{...makePartition(~idx=0, ~inFlight=false), mutPendingQueries}],
+          ~maxAddrInPartition=1,
+          ~nextPartitionIndex=1,
+          ~dynamicContracts=Utils.Set.make(),
+          ~clientFilteredContracts=Utils.Set.make(),
+        ),
+      },
+    )
     t.expect(
       fetchState
       ->FetchState.getNextQuery(~chainTargetBlock=100000, ~chainTargetItems=1000.)
@@ -5293,22 +5311,24 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     // Exercises the handleQueryResult fast path (no dynamic contracts): the
     // responding partition jumps from block 0 to 100, past the partition
     // sitting at 50, so idsInAscOrder must be reordered without a full remake.
-    let fetchState = {
-      ...makeFetchState(~partitionsCount=1, ~inFlightCount=0),
-      optimizedPartitions: FetchState.OptimizedPartitions.make(
-        ~partitions=[
-          makePartition(~idx=0, ~inFlight=false),
-          {
-            ...makePartition(~idx=1, ~inFlight=false),
-            latestFetchedBlock: 50,
-          },
-        ],
-        ~maxAddrInPartition=1,
-        ~nextPartitionIndex=2,
-        ~dynamicContracts=Utils.Set.make(),
-        ~clientFilteredContracts=Utils.Set.make(),
-      ),
-    }
+    let fetchState = makeFetchState(~partitionsCount=1, ~inFlightCount=0)->TestFetchState.update(
+      fs => {
+        ...fs,
+        optimizedPartitions: FetchState.OptimizedPartitions.make(
+          ~partitions=[
+            makePartition(~idx=0, ~inFlight=false),
+            {
+              ...makePartition(~idx=1, ~inFlight=false),
+              latestFetchedBlock: 50,
+            },
+          ],
+          ~maxAddrInPartition=1,
+          ~nextPartitionIndex=2,
+          ~dynamicContracts=Utils.Set.make(),
+          ~clientFilteredContracts=Utils.Set.make(),
+        ),
+      },
+    )
     let query: FetchState.query = {
       partitionId: "0",
       fromBlock: 1,
@@ -5321,7 +5341,7 @@ describe("FetchState.getNextQuery caps per-chain concurrency", () => {
     }
     fetchState->FetchState.startFetchingQueries(~queries=[query])
     let updated =
-      fetchState->FetchState.handleQueryResult(
+      fetchState->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=100,
         ~page=TestEventStore.pageOf([]),
@@ -5498,7 +5518,7 @@ describe("FetchState client-side address filtering", () => {
           )->dcToRegistration,
         ],
       )
-      ->FetchState.updateKnownHeight(~knownHeight=100)
+      ->TestFetchState.updateKnownHeight(~knownHeight=100)
 
     let clientFiltered = switch updated->FetchState.getNextQuery(
       ~chainTargetBlock=100,
@@ -5544,7 +5564,7 @@ describe("FetchState client-side address filtering", () => {
     t.expect(
       () =>
         collapsed
-        ->FetchState.handleQueryResult(
+        ->TestFetchState.handleQueryResult(
           ~query=orphanQuery,
           ~latestFetchedBlock=getBlockData(~blockNumber=5),
           ~page=TestEventStore.pageOf([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
@@ -5622,7 +5642,7 @@ describe("FetchState client-side address filtering", () => {
 
     // The response lands against the partition that dispatched it.
     let afterSettled =
-      afterSwitch->FetchState.handleQueryResult(
+      afterSwitch->TestFetchState.handleQueryResult(
         ~query=inFlight,
         ~latestFetchedBlock=getBlockData(~blockNumber=500),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=200)]),
@@ -5632,13 +5652,13 @@ describe("FetchState client-side address filtering", () => {
     // generation has not covered that range under the wider selection yet, so
     // the item it delivered is buffered and not yet processable.
     let frontierAfterSettled = afterSettled->FetchState.bufferBlockNumber
-    let readyAfterSettled = afterSettled->FetchState.bufferReadyCount
+    let readyAfterSettled = afterSettled->TestFetchState.bufferReadyCount
 
     // Only now does the new generation fetch, re-delivering the same event.
     let newQuery = afterSettled->takeQuery
     afterSettled->FetchState.startFetchingQueries(~queries=[newQuery])
     let afterNewGeneration =
-      afterSettled->FetchState.handleQueryResult(
+      afterSettled->TestFetchState.handleQueryResult(
         ~query=newQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=500),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=200)]),
@@ -5650,8 +5670,8 @@ describe("FetchState client-side address filtering", () => {
         (frontierAfterSettled, readyAfterSettled),
         (
           afterNewGeneration->FetchState.bufferBlockNumber,
-          afterNewGeneration->TestEventStore.bufferedItems->Array.map(Internal.getItemBlockNumber),
-          afterNewGeneration->FetchState.bufferReadyCount,
+          afterNewGeneration->TestFetchState.bufferedItems->Array.map(Internal.getItemBlockNumber),
+          afterNewGeneration->TestFetchState.bufferReadyCount,
         ),
       ),
       ~message="the retired generation holds the frontier until its response lands; no item is ever admitted below an already-processable frontier",
@@ -5729,13 +5749,13 @@ describe("FetchState client-side address filtering", () => {
       fs.optimizedPartitions.idsInAscOrder->Array.includes(standing)
 
     let afterFirst =
-      afterSwitch->FetchState.handleQueryResult(
+      afterSwitch->TestFetchState.handleQueryResult(
         ~query=q1,
         ~latestFetchedBlock=getBlockData(~blockNumber=100),
         ~page=TestEventStore.pageOf([]),
       )
     let afterSecond =
-      afterFirst->FetchState.handleQueryResult(
+      afterFirst->TestFetchState.handleQueryResult(
         ~query=q2,
         ~latestFetchedBlock=getBlockData(~blockNumber=200),
         ~page=TestEventStore.pageOf([]),
@@ -5790,7 +5810,7 @@ describe("FetchState client-side address filtering", () => {
     }
     collapsed->FetchState.startFetchingQueries(~queries=[standingQuery])
     let advanced =
-      collapsed->FetchState.handleQueryResult(
+      collapsed->TestFetchState.handleQueryResult(
         ~query=standingQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=50),
         ~page=TestEventStore.pageOf([]),
@@ -5849,7 +5869,7 @@ describe("FetchState client-side address filtering", () => {
         ],
       )
     let afterBackfill =
-      recollapsed->FetchState.handleQueryResult(
+      recollapsed->TestFetchState.handleQueryResult(
         ~query=backfillQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=30),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=12)]),
@@ -5859,7 +5879,7 @@ describe("FetchState client-side address filtering", () => {
       (
         recollapsed.optimizedPartitions.idsInAscOrder->Array.includes(backfillId),
         afterBackfill.optimizedPartitions.idsInAscOrder->Array.includes(backfillId),
-        afterBackfill->FetchState.bufferSize,
+        afterBackfill->TestFetchState.bufferSize,
       ),
       ~message="a backfill mid-query survives the recollapse and goes once its response lands",
     ).toEqual((true, false, 1))
@@ -6100,7 +6120,7 @@ describe("FetchState client-side address filtering", () => {
           )->dcToRegistration,
         ],
       )
-      ->FetchState.updateKnownHeight(~knownHeight=100)
+      ->TestFetchState.updateKnownHeight(~knownHeight=100)
     let query = switch collapsed->FetchState.getNextQuery(
       ~chainTargetBlock=100,
       ~chainTargetItems=10_000.,
@@ -6110,7 +6130,7 @@ describe("FetchState client-side address filtering", () => {
     }
     collapsed->FetchState.startFetchingQueries(~queries=[query])
     let advanced =
-      collapsed->FetchState.handleQueryResult(
+      collapsed->TestFetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=getBlockData(~blockNumber=50),
         ~page=TestEventStore.pageOf([]),
@@ -6172,7 +6192,7 @@ describe("FetchState client-side address filtering", () => {
     // The query came back at 120 — past the height known when it went out. It
     // carried nothing for the new address, so the catch-up must reach 120.
     let settled =
-      afterReg->FetchState.handleQueryResult(
+      afterReg->TestFetchState.handleQueryResult(
         ~query=inFlight,
         ~latestFetchedBlock=getBlockData(~blockNumber=120),
         ~page=TestEventStore.pageOf([]),
@@ -6214,7 +6234,7 @@ describe("FetchState client-side address filtering", () => {
     // Dispatched after the catch-up's query (fromBlock 51 against 20) yet
     // completing before it.
     let afterStanding =
-      afterReg->FetchState.handleQueryResult(
+      afterReg->TestFetchState.handleQueryResult(
         ~query=standingQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=120),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=60)]),
@@ -6222,7 +6242,7 @@ describe("FetchState client-side address filtering", () => {
     // The catch-up had no bound when it went out, so it comes back past the
     // merge block it has since been given — and is removed on arrival.
     let afterCatchUp =
-      afterStanding->FetchState.handleQueryResult(
+      afterStanding->TestFetchState.handleQueryResult(
         ~query=catchUpQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=150),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=60)]),
@@ -6232,7 +6252,7 @@ describe("FetchState client-side address filtering", () => {
         (standingQuery.toBlock, catchUpQuery.toBlock),
         afterStanding->frontierShape,
         afterCatchUp->frontierShape,
-        afterCatchUp->FetchState.bufferSize,
+        afterCatchUp->TestFetchState.bufferSize,
       ),
       ~message="both queries open-ended; the settled response bounds the catch-up, which then over-fetches past it and disappears, its overlap deduped",
     ).toEqual((
@@ -6247,7 +6267,7 @@ describe("FetchState client-side address filtering", () => {
     let (afterReg, standingQuery, catchUpQuery) = makeTwoOpenEndedQueriesInFlight()
     // The catch-up runs ahead of the standing partition, then dispatches again.
     let afterCatchUp =
-      afterReg->FetchState.handleQueryResult(
+      afterReg->TestFetchState.handleQueryResult(
         ~query=catchUpQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=80),
         ~page=TestEventStore.pageOf([]),
@@ -6267,13 +6287,13 @@ describe("FetchState client-side address filtering", () => {
     // the catch-up was to stop at is one it has already passed — but its second
     // query is still out, and dropping it would strand that response.
     let afterStanding =
-      afterCatchUp->FetchState.handleQueryResult(
+      afterCatchUp->TestFetchState.handleQueryResult(
         ~query=standingQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=70),
         ~page=TestEventStore.pageOf([]),
       )
     let afterSecond =
-      afterStanding->FetchState.handleQueryResult(
+      afterStanding->TestFetchState.handleQueryResult(
         ~query=secondCatchUpQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=90),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=85)]),
@@ -6282,7 +6302,7 @@ describe("FetchState client-side address filtering", () => {
       (
         afterStanding->frontierShape,
         afterSecond->frontierShape,
-        afterSecond->FetchState.bufferSize,
+        afterSecond->TestFetchState.bufferSize,
       ),
       ~message="the overshooting catch-up is retired rather than dropped, so its last response still has a partition to land on",
     ).toEqual(([(70, None, []), (80, Some(80), ["Gravatar"])], [(70, None, [])], 1))
@@ -6291,13 +6311,13 @@ describe("FetchState client-side address filtering", () => {
   it("keeps the catch-up unbounded when its own response lands first", t => {
     let (afterReg, standingQuery, catchUpQuery) = makeTwoOpenEndedQueriesInFlight()
     let afterCatchUp =
-      afterReg->FetchState.handleQueryResult(
+      afterReg->TestFetchState.handleQueryResult(
         ~query=catchUpQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=80),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=60)]),
       )
     let afterStanding =
-      afterCatchUp->FetchState.handleQueryResult(
+      afterCatchUp->TestFetchState.handleQueryResult(
         ~query=standingQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=120),
         ~page=TestEventStore.pageOf([mockEvent(~blockNumber=60)]),
@@ -6306,7 +6326,7 @@ describe("FetchState client-side address filtering", () => {
       (
         afterCatchUp->frontierShape,
         afterStanding->frontierShape,
-        afterStanding->FetchState.bufferSize,
+        afterStanding->TestFetchState.bufferSize,
       ),
       ~message="catch-up runs past the standing frontier unbounded, then is bounded by what the standing response actually covered",
     ).toEqual((
@@ -6446,7 +6466,7 @@ describe("FetchState client-side address filtering", () => {
     let catchUpQuery =
       queries->Array.find(q => q.partitionId !== afterReg->standingId)->Option.getOrThrow
     let caughtUp =
-      afterReg->FetchState.handleQueryResult(
+      afterReg->TestFetchState.handleQueryResult(
         ~query=catchUpQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=50),
         ~page=TestEventStore.pageOf([]),
@@ -6485,7 +6505,7 @@ describe("FetchState client-side address filtering", () => {
       queries->Array.find(q => q.partitionId !== afterReg->standingId)->Option.getOrThrow
     afterReg->FetchState.startFetchingQueries(~queries=[catchUpQuery])
     let advancedCatchUp =
-      afterReg->FetchState.handleQueryResult(
+      afterReg->TestFetchState.handleQueryResult(
         ~query=catchUpQuery,
         ~latestFetchedBlock=getBlockData(~blockNumber=45),
         ~page=TestEventStore.pageOf([]),

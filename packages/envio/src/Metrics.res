@@ -30,7 +30,7 @@ type chainMetrics = {
   waitingForNewBlockSeconds: float,
   queryingSeconds: float,
   blockRangeFetchSeconds: float,
-  blockRangeParseSeconds: float,
+  materializeSeconds: float,
   blockRangeFetchCount: float,
   blockRangeFetchedEvents: float,
   blockRangeFetchedBlocks: float,
@@ -533,11 +533,11 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~value=m => m.blockRangeFetchSeconds,
   )
   b->series(
-    ~name="envio_fetching_block_range_parse_seconds",
-    ~help="Cumulative time spent parsing block range fetch responses.",
+    ~name="envio_processing_materialize_seconds",
+    ~help="Cumulative time spent building a batch's handler events from fetched rows, block and transaction fields included.",
     ~kind="counter",
     ~entries=chains,
-    ~value=m => m.blockRangeParseSeconds,
+    ~value=m => m.materializeSeconds,
   )
   b->series(
     ~name="envio_fetching_block_range_total",

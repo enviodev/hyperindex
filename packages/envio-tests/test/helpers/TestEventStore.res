@@ -21,22 +21,13 @@ let itemsOf = (store: EventStore.t, ~context: StoredItems.context): array<Intern
   )
 }
 
-let bufferedItems = (fetchState: FetchState.t): array<Internal.item> =>
-  fetchState.eventStore->itemsOf(~context=fetchState.itemContext)
-
 let pageOf = (items: array<Internal.item>) => EventStore.fromJsItems(items)
-
-// Puts `items` in the fetch state's store, as an applied response would.
-let withItems = (fetchState: FetchState.t, items: array<Internal.item>) => {
-  fetchState.eventStore->EventStore.merge(pageOf(items))
-  fetchState
-}
 
 // The EVM logs a source page holds, as the source routed them.
 let evmLogsOf = (page: EventStore.t): array<EvmEventItem.t> =>
   (page->EventStore.allItemsRaw).data->(Utils.magic: array<unknown> => array<EvmEventItem.t>)
 
-// For a fetch state built by hand, whose rows are all built in JS.
+// For a chain built by hand, whose rows are all built in JS.
 let noRegistrations = (~chainId): StoredItems.context => {
   chainId,
   onEventRegistrations: [],

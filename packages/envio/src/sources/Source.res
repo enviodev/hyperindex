@@ -3,7 +3,6 @@ A set of stats for logging about the block range fetch
 */
 type blockRangeFetchStats = {
   @as("total time elapsed (s)") totalTimeElapsed: float,
-  @as("parsing time (s)") parsingTimeElapsed?: float,
   @as("page fetch time (s)") pageFetchTime?: float,
 }
 

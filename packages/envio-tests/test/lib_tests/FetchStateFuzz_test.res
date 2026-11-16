@@ -147,7 +147,7 @@ let respond = (run: run, ~rng, ~index) => {
     let registrationBlock =
       q.fromBlock + (rng() *. (latest - q.fromBlock + 1)->Int.toFloat)->Float.toInt
     run.fetchState =
-      run.fetchState->FetchState.registerDynamicContracts(
+      run.fetchState->TestFetchState.registerDynamicContracts(
         ~onNotice=ignore,
         ~addressStore=run.addressStore,
         ~claimCeiling=Pervasives.max(run.knownHeight, latest),
@@ -162,7 +162,7 @@ let respond = (run: run, ~rng, ~index) => {
     run->log(`reg ${contractName}@${registrationBlock->Int.toString}`)
   }
   run.fetchState =
-    run.fetchState->FetchState.handleQueryResult(
+    run.fetchState->TestFetchState.handleQueryResult(
       ~query=q,
       ~latestFetchedBlock=latest,
       ~page=TestEventStore.pageOf([]),
@@ -221,7 +221,7 @@ let runSeed = (~seed, ~ops) => {
   ]
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let run = {
-    fetchState: FetchState.make(
+    fetchState: TestFetchState.make(
       ~onNotice=ignore,
       ~onEventRegistrations,
       ~addressStore,
@@ -242,14 +242,15 @@ let runSeed = (~seed, ~ops) => {
     density: Math.pow(10., ~exp=-1. -. rng() *. 5.),
     opLog: [],
   }
-  run.fetchState = run.fetchState->FetchState.updateKnownHeight(~knownHeight=run.knownHeight)
+  run.fetchState = run.fetchState->TestFetchState.updateKnownHeight(~knownHeight=run.knownHeight)
 
   for _ in 1 to ops {
     let roll = rng()
     if roll < 0.3 {
       // New blocks found.
       run.knownHeight = run.knownHeight + 1 + (rng() *. 10.)->Float.toInt
-      run.fetchState = run.fetchState->FetchState.updateKnownHeight(~knownHeight=run.knownHeight)
+      run.fetchState =
+        run.fetchState->TestFetchState.updateKnownHeight(~knownHeight=run.knownHeight)
       run->log(`h${run.knownHeight->Int.toString}`)
     } else if roll < 0.6 {
       let _ = run->tick
@@ -264,11 +265,11 @@ let runSeed = (~seed, ~ops) => {
       // budget and pending queries reset, and the fetch state rolls back.
       run.inFlight->Utils.Array.clearInPlace
       run.pendingBudget = 0.
-      run.fetchState = run.fetchState->FetchState.resetPendingQueries
+      run.fetchState = run.fetchState->TestFetchState.resetPendingQueries
       let upper = Pervasives.max(run->minFrontier, 1)
       let target = (rng() *. upper->Int.toFloat)->Float.toInt
       run.fetchState = (
-        run.fetchState->FetchState.rollback(
+        run.fetchState->TestFetchState.rollback(
           ~rolledBackAddressStore=run.addressStore,
           ~targetBlockNumber=target,
         )

@@ -323,7 +323,7 @@ describe("AddressStore", () => {
       ~ecosystem=Evm,
       ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
     )
-    let fetchState = FetchState.make(
+    let fetchState = TestFetchState.make(
       ~onNotice=ignore,
       ~onEventRegistrations,
       ~addressStore=store,

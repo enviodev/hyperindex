@@ -26,7 +26,7 @@ let makeChainState = (
 ) => {
   let addresses = []
   let addressStore = TestAddresses.makeStore(~onEventRegistrations)
-  let base = FetchState.make(
+  let base = TestFetchState.make(
     ~onNotice=ignore,
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
@@ -60,16 +60,15 @@ let makeChainState = (
     latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    eventStore: TestEventStore.pageOf(
-      bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) =>
-        mockEvent(~blockNumber, ~logIndex)
-      ),
-    ),
   }
+  let eventStore = TestEventStore.pageOf(
+    bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
+  )
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
+    ~eventStore,
     ~onEventRegistrations,
     ~addressStore,
     ~sourceManager=SourceManager.make(
@@ -133,12 +132,6 @@ let makeFetchingChainState = (
     ),
     startBlock: 0,
     endBlock,
-    eventStore: TestEventStore.pageOf(
-      bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) =>
-        mockEvent(~blockNumber, ~logIndex)
-      ),
-    ),
-    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
@@ -150,10 +143,14 @@ let makeFetchingChainState = (
     firstEventBlock,
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
   }
+  let eventStore = TestEventStore.pageOf(
+    bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) => mockEvent(~blockNumber, ~logIndex)),
+  )
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
+    ~eventStore,
     ~addressStore,
     ~sourceManager=SourceManager.make(
       ~logger=Logger.makeInMemory(),
@@ -550,8 +547,6 @@ describe("CrossChainState fetch control", () => {
       ),
       startBlock: 0,
       endBlock: Some(20),
-      eventStore: EventStore.make(),
-      itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
       normalSelection,
       latestOnBlockBlockNumber: 0,
       maxOnBlockBufferSize: 10000,
@@ -562,11 +557,12 @@ describe("CrossChainState fetch control", () => {
       knownHeight: 1000,
       firstEventBlock: Some(0),
       clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    }
+    }->TestFetchState.pair(~eventStore=EventStore.make())
     let mockSource1 = MockSource.make([], ~chainId=1)
     let a = ChainState.make(
       ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
       ~fetchState=fetchState1,
+      ~eventStore=fetchState1->TestFetchState.eventStoreOf,
       ~addressStore=addressStore1,
       ~sourceManager=SourceManager.make(
         ~logger=Logger.makeInMemory(),
@@ -1010,7 +1006,7 @@ describe("ChainState cold start", () => {
 
   Async.it("a chain with no discovered first event never becomes a dead anchor", async t => {
     // Chain 1 has found no events yet (firstEventBlock=None) but has already
-    // scanned to 90% of its range. FetchState.getProgressPercentage reports it
+    // scanned to 90% of its range. TestFetchState.getProgressPercentage reports it
     // at 0% (its priority rank), yet its fetch frontier is far ahead. The
     // alignment anchor must be chain 2 (furthest behind by frontier progress),
     // so chain 3 (just ahead of chain 2) is held near chain 2's line instead of
