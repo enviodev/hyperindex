@@ -1142,7 +1142,9 @@ mod tests {
             )
             .await
             .map_err(|error| match error {
-                WriteError::Failed(failure) | WriteError::Unwritten(failure) => {
+                WriteError::Failed(failure)
+                | WriteError::Unwritten(failure)
+                | WriteError::Uncertain(failure) => {
                     format!("{}: {:#}", failure.context, failure.error)
                 }
                 WriteError::Gated => "gated".to_string(),

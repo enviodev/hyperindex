@@ -305,7 +305,6 @@ fn first_cause<T>(
     )
 }
 
-/// The cause among a set of statements' outcomes, if any of them failed.
 /// The batch's outcome from its transaction's and its effect caches'.
 ///
 /// The caches are upserts of the same rows, so writing them again is
@@ -316,7 +315,7 @@ fn batch_outcome(
     cached: std::result::Result<(), Failure>,
 ) -> std::result::Result<(), WriteError> {
     match (written, cached) {
-        (Err(WriteError::Unwritten(_)), Err(cache_failure))
+        (Err(WriteError::Unwritten(_) | WriteError::Uncertain(_)), Err(cache_failure))
             if !is_connection_lost(&cache_failure.error) =>
         {
             Err(WriteError::Failed(cache_failure))
@@ -326,6 +325,7 @@ fn batch_outcome(
     }
 }
 
+/// The cause among a set of statements' outcomes, if any of them failed.
 fn settle<T>(outcomes: Vec<std::result::Result<T, Failure>>) -> std::result::Result<(), Failure> {
     match first_cause(
         outcomes.into_iter().filter_map(|outcome| outcome.err()),
@@ -677,6 +677,18 @@ impl Storage {
         })
     }
 
+    /// Each chain's frontier as committed: the checkpoint its rows are readable
+    /// up to.
+    pub async fn read_frontier(&self) -> Result<Frontier> {
+        let (rows, _) = self
+            .client
+            .query(&internal::read_frontier(self.schema()), &[])
+            .await?;
+        rows.iter()
+            .map(|row| Ok((cell(row, 0)?, cell(row, 1)?)))
+            .collect()
+    }
+
     pub async fn resume(&self) -> Result<Resumed> {
         let schema = self.schema();
         let (read_chains, read_addresses, read_checkpoints) = (
@@ -1014,9 +1026,9 @@ impl Storage {
     /// A connection lost before the COMMIT went out is `Unwritten`: the server
     /// rolls back a transaction whose session ends. So is a COMMIT held back
     /// because the connection was already known gone. One lost while the
-    /// COMMIT was in flight is not, since the server may have committed before
-    /// it went. Nor is one whose caches failed for another reason, which writing
-    /// again would only repeat.
+    /// COMMIT was in flight is `Uncertain`: the server may have committed before
+    /// it went. Neither is one whose caches failed for another reason, which
+    /// writing again would only repeat.
     pub async fn write_batch(
         &self,
         batch: &Batch,
@@ -1051,9 +1063,12 @@ impl Storage {
                     handoff.report_commit(committed.is_ok());
                     committed.map_err(|error| {
                         let never_sent = was_never_sent(&error);
+                        let lost = is_connection_lost(&error);
                         let failure = Failure::new("Failed committing the batch", error);
                         if never_sent {
                             WriteError::Unwritten(failure)
+                        } else if lost {
+                            WriteError::Uncertain(failure)
                         } else {
                             failure.into()
                         }
@@ -1604,6 +1619,7 @@ mod tests {
         match outcome {
             Ok(()) => "written".to_string(),
             Err(WriteError::Unwritten(failure)) => format!("unwritten: {}", failure.context),
+            Err(WriteError::Uncertain(failure)) => format!("uncertain: {}", failure.context),
             Err(WriteError::Failed(failure)) => format!("failed: {}", failure.context),
             Err(WriteError::Gated) => "gated".to_string(),
         }

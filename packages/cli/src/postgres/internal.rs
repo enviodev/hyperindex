@@ -295,6 +295,10 @@ pub fn read_stored_chains(pg_schema: &str) -> String {
     )
 }
 
+pub fn read_frontier(pg_schema: &str) -> String {
+    format!("SELECT \"id\"::int8, \"checkpoint_id\"::int8 FROM \"{pg_schema}\".\"{CHAINS}\";")
+}
+
 pub fn read_resumed_chains(pg_schema: &str) -> String {
     format!(
         "SELECT \"id\"::int8, \"start_block\", \"end_block\", \"max_reorg_depth\", \

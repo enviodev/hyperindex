@@ -620,6 +620,8 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
+  readFrontier: async () =>
+    JsError.throwWithMessage("The test indexer's writes never leave a COMMIT in doubt"),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>

@@ -403,7 +403,17 @@ external restoreEffectCache: (t, string, bool) => promise<array<storedEffectCach
 // the `cause`.
 // `unwritten` says what failed when the connection went before anything of the
 // batch committed, and the timings are then empty.
-type writeOutcome = {timings: array<writeTiming>, unwritten: Nullable.t<string>}
+type writeOutcome = {
+  timings: array<writeTiming>,
+  unwritten: Nullable.t<string>,
+  // What failed when the connection went while the COMMIT was on its way, so
+  // that whether the batch landed is for `readFrontier` to say.
+  uncertain: Nullable.t<string>,
+}
+
+type frontierRead = {chainIds: array<ChainId.t>, checkpointIds: array<bigint>}
+
+@send external readFrontier: t => promise<frontierRead> = "readFrontier"
 
 @send external writeBatch: (t, batch) => promise<writeOutcome> = "writeBatch"
 

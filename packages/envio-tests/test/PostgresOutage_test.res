@@ -423,4 +423,39 @@ describe("Postgres going away mid-run", () => {
       ))
     },
   )
+
+  // The COMMIT the connection was carrying when it went may or may not have
+  // reached the server, so the batch is looked for before it is written
+  // again: written twice, it would store its history and checkpoints twice.
+  [(true, "committed"), (false, "rolled back")]->Array.forEach(((deliver, outcome)) => {
+    let commitErrors = []
+    scenario->Scenario.it(
+      `finds out whether a batch whose COMMIT was cut off ${outcome}`,
+      ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+      ~postgresPort=proxyPort,
+      ~onError=error => commitErrors->Array.push(error.msg)->ignore,
+      async (~t, ~indexer, ~source) => {
+        let outage = outageWithDatabaseUp()
+        let source = source(1337)
+        await Scenario.resolveInitialHeight(~source, ~head=100)
+        let (handled, releaseHandler) = makeHeldHandler()
+        await source->replyWithOneTally(~handled, ~load=false)
+        await indexer.advanceTime(1_000)
+
+        outage.cutNextCommit(~deliver)
+        releaseHandler()
+        await indexer.advanceTime(0)
+        await indexer.advanceTime(5_000)
+
+        let tallies: array<tally> = await indexer.query("Tally")
+        t.expect((
+          tallies,
+          (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+          (await indexer.queryCheckpoints())->Array.map(({blockNumber}) => blockNumber),
+          indexer->retriedOperations,
+          commitErrors,
+        )).toEqual(([{id: "1", count: 1.}], [50], [1, 50], ["batch write"], []))
+      },
+    )
+  })
 })

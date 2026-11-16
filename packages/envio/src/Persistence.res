@@ -197,9 +197,11 @@ type storage = {
     ~entityConfig: Internal.entityConfig,
     ~floors: RollbackFloors.t,
   ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
-  // Write batch to storage. Throws `ConnectionLost` only when the connection
-  // went before anything of the batch committed; at the COMMIT, when it may
-  // have landed, it stays a `StorageError`.
+  // Each chain's committed frontier. `ConnectionLost` when the connection went.
+  readFrontier: unit => promise<Frontier.t>,
+  // Write batch to storage. Throws `ConnectionLost` when the connection went
+  // before anything of the batch committed, and `CommitUncertain` when it went
+  // with the COMMIT on its way.
   writeBatch: (
     ~batch: Batch.t,
     ~rollback: option<rollback>,
@@ -239,6 +241,10 @@ exception StorageError({message: string, reason: exn})
 // where sending the operation again as it was is safe: a read, an upsert, or a
 // batch nothing of which committed.
 exception ConnectionLost(string)
+
+// The connection went while a batch's COMMIT was on its way, so the batch may
+// have committed or not. Its frontier, read back, says which.
+exception CommitUncertain(string)
 
 // A start the operator has to act on, not a failure: what it says is all they
 // need, so it's printed once, without a stack trace.

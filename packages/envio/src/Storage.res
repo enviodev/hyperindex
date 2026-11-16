@@ -494,6 +494,15 @@ let make = (
       isHyperSync: meta.isHyperSync,
     })
 
+  let readFrontier = async () =>
+    switch await client->StorageClient.readFrontier {
+    | {chainIds, checkpointIds} =>
+      chainIds
+      ->Array.mapWithIndex((chainId, index) => (chainId, checkpointIds->Array.getUnsafe(index)))
+      ->Frontier.fromEntries
+    | exception exn => exn->throwConnectionLostOr(~otherwise=throw)
+    }
+
   let setChainMeta = async chainsData =>
     switch await client->StorageClient.setChainMeta(chainsData->chainMeta) {
     | () => %raw(`undefined`)
@@ -759,15 +768,16 @@ let make = (
     let postgresStagingSeconds =
       stagingStarted->Performance.secondsSince -. clickHouseOnlyStagingSeconds.contents
 
-    let {timings, unwritten} = try await client->StorageClient.writeBatch(input) catch {
+    let {timings, unwritten, uncertain} = try await client->StorageClient.writeBatch(input) catch {
     | exn =>
       // Batches the addon never took, because it refused the call itself.
       client->StorageClient.discardStaged(handles)
       throw(exn->storageErrorOf)
     }
-    switch unwritten->Nullable.toOption {
-    | Some(message) => throw(Persistence.ConnectionLost(message))
-    | None => ()
+    switch (unwritten->Nullable.toOption, uncertain->Nullable.toOption) {
+    | (Some(message), _) => throw(Persistence.ConnectionLost(message))
+    | (_, Some(message)) => throw(Persistence.CommitUncertain(message))
+    | (None, None) => ()
     }
     timings->Array.forEach(({store, seconds}) =>
       onWrite(
@@ -802,6 +812,7 @@ let make = (
     dumpEffectCache,
     reset,
     setChainMeta,
+    readFrontier,
     pruneStaleCheckpoints,
     pruneStaleEntityHistory,
     getRollbackTargetCheckpoint,

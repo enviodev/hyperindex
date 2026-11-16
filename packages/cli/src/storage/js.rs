@@ -286,6 +286,16 @@ pub struct WriteOutcome {
     /// batch committed: what failed, for the caller to log before writing the
     /// same batch again.
     pub unwritten: Option<String>,
+    /// Set, with no timings, when the connection went while the COMMIT was on
+    /// its way: what failed. Whether the batch landed is for `readFrontier` to
+    /// say once the database answers.
+    pub uncertain: Option<String>,
+}
+
+#[napi(object)]
+pub struct FrontierRead {
+    pub chain_ids: Vec<i64>,
+    pub checkpoint_ids: Vec<BigInt>,
 }
 
 #[napi(js_name = "Storage")]
@@ -670,6 +680,15 @@ impl JsStorage {
     }
 
     #[napi]
+    pub async fn read_frontier(&self) -> napi::Result<FrontierRead> {
+        let frontier = self.inner.read_frontier().await.map_err(to_napi)?;
+        Ok(FrontierRead {
+            chain_ids: frontier.keys().copied().collect(),
+            checkpoint_ids: frontier.values().map(|&id| BigInt::from(id)).collect(),
+        })
+    }
+
+    #[napi]
     pub async fn set_chain_meta(&self, chains: Vec<ChainMeta>) -> napi::Result<()> {
         self.inner.set_chain_meta(&chains).await.map_err(to_napi)
     }
@@ -830,11 +849,14 @@ impl JsStorage {
 
     /// Writes a batch to every store, answering how long each one took. A
     /// failed write rejects with what it was doing as the message, and the
-    /// store's own error as the `cause`; one that committed nothing because
-    /// the connection went resolves as `unwritten` instead.
+    /// store's own error as the `cause`; one the connection cut off resolves
+    /// as `unwritten` or `uncertain` instead.
     #[napi]
     pub async fn write_batch(&self, batch: BatchInput) -> napi::Result<WriteOutcome> {
         let batch = self.to_batch(batch)?;
+        let describe = |failure: &super::Failure| {
+            format!("{}: {}", failure.context, message_of(&failure.error))
+        };
         match self.inner.write_batch(batch).await {
             Ok(timings) => Ok(WriteOutcome {
                 timings: timings
@@ -842,14 +864,17 @@ impl JsStorage {
                     .map(|(store, seconds)| WriteTiming { store, seconds })
                     .collect(),
                 unwritten: None,
+                uncertain: None,
             }),
             Err(WriteError::Unwritten(failure)) => Ok(WriteOutcome {
                 timings: Vec::new(),
-                unwritten: Some(format!(
-                    "{}: {}",
-                    failure.context,
-                    message_of(&failure.error)
-                )),
+                unwritten: Some(describe(&failure)),
+                uncertain: None,
+            }),
+            Err(WriteError::Uncertain(failure)) => Ok(WriteOutcome {
+                timings: Vec::new(),
+                unwritten: None,
+                uncertain: Some(describe(&failure)),
             }),
             Err(WriteError::Failed(failure)) => {
                 let mut failed = napi::Error::from_reason(failure.context);
