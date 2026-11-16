@@ -5,6 +5,7 @@
 //! merged into the chain's store once the response is applied.
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use napi_derive::napi;
@@ -107,16 +108,26 @@ impl Row {
 
 /// Merges `incoming` into the sorted, deduplicated `rows`. On a tie the row
 /// already stored is kept.
-fn merge_rows(rows: Vec<Row>, mut incoming: Vec<Row>) -> Vec<Row> {
+fn merge_rows(mut rows: VecDeque<Row>, mut incoming: Vec<Row>) -> VecDeque<Row> {
     // Stable, so of two equal incoming rows the first is the one kept.
     incoming.sort_by(Row::compare);
-    let mut merged: Vec<Row> = Vec::with_capacity(rows.len() + incoming.len());
+    incoming.dedup_by(|later, earlier| earlier.compare(later) == Ordering::Equal);
+    // A response at the fetch frontier lands after everything stored, so it
+    // appends without moving the stored rows.
+    if incoming.first().is_none_or(|first| {
+        rows.back()
+            .is_none_or(|last| last.compare(first) == Ordering::Less)
+    }) {
+        rows.extend(incoming);
+        return rows;
+    }
+    let mut merged: VecDeque<Row> = VecDeque::with_capacity(rows.len() + incoming.len());
     let mut push = |row: Row| {
         if merged
-            .last()
+            .back()
             .is_none_or(|last| last.compare(&row) != Ordering::Equal)
         {
-            merged.push(row);
+            merged.push_back(row);
         }
     };
     let mut stored = rows.into_iter().peekable();
@@ -170,17 +181,17 @@ pub struct JsItemInput {
 
 #[napi]
 pub struct EventStore {
-    rows: Mutex<Vec<Row>>,
+    rows: Mutex<VecDeque<Row>>,
 }
 
 impl EventStore {
     pub(crate) fn from_rows(rows: Vec<Row>) -> Self {
         EventStore {
-            rows: Mutex::new(merge_rows(Vec::new(), rows)),
+            rows: Mutex::new(merge_rows(VecDeque::new(), rows)),
         }
     }
 
-    fn rows(&self) -> std::sync::MutexGuard<'_, Vec<Row>> {
+    fn rows(&self) -> std::sync::MutexGuard<'_, VecDeque<Row>> {
         self.rows.lock().unwrap()
     }
 
@@ -230,7 +241,7 @@ impl EventStore {
     #[napi]
     pub fn merge(&self, page: &EventStore) {
         let incoming = std::mem::take(&mut *page.rows());
-        self.insert(incoming);
+        self.insert(incoming.into());
     }
 
     /// Block handler items generated locally, one per `(blockNumber,
@@ -428,6 +439,21 @@ mod tests {
                     JsValue::str("b3")
                 ]
             )
+        );
+    }
+
+    #[test]
+    fn merging_a_page_past_the_stored_rows_still_drops_duplicates() {
+        let store = EventStore::from_rows(vec![event(1, 0, 0, "b1")]);
+        // Starts on the stored row itself, then repeats a row of its own.
+        store.merge(&EventStore::from_rows(vec![
+            event(1, 0, 0, "b1 refetched"),
+            event(2, 0, 0, "b2"),
+        ]));
+        store.insert(vec![event(3, 0, 0, "b3"), event(3, 0, 0, "b3 again")]);
+        assert_eq!(
+            take_all(&store),
+            vec![JsValue::str("b1"), JsValue::str("b2"), JsValue::str("b3")]
         );
     }
 
