@@ -255,8 +255,8 @@ describe("TypeScript handler type check", () => {
       "      ~~",
       "",
       ...(typescript === "typescript-7"
-        ? [`  .envio/types.d.ts:645:14 - ${expectedType}`, '    645     readonly "id": string;', "                     ~~~~"]
-        : ["  .envio/types.d.ts:645:14", '    645     readonly "id": string;', "                     ~~~~", `    ${expectedType}`]),
+        ? [`  .envio/types.d.ts:43:14 - ${expectedType}`, '    43     readonly "id": string;', "                    ~~~~"]
+        : ["  .envio/types.d.ts:43:14", '    43     readonly "id": string;', "                    ~~~~", `    ${expectedType}`]),
     ].join("\n");
 
   // https://github.com/enviodev/hyperindex/issues/1684
