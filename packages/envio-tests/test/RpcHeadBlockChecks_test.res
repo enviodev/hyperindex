@@ -65,6 +65,9 @@ type fault =
   // the way a provider does for a block holding too many logs to answer at
   // once.
   | UnfilteredReadTooLarge({mutable answers: int})
+  // Refuses every read by hash as an unsupported request, and answers an
+  // unfiltered read by number with a result-count error.
+  | RefusedHashReadsWithOversizedByNumber
 
 type chain = {mutable height: int, mutable logs: array<ServedEvmChain.log>, mutable fault: fault}
 let chain = {height: backfillHeight, logs: [], fault: Honest}
@@ -142,6 +145,19 @@ let getLogs = (request, filter, ~fault, ~calls) => {
     )
   switch fault {
   | NoBlockHashReads if filter->Dict.has("blockHash") => archiveRefusal()
+  | RefusedHashReadsWithOversizedByNumber if filter->Dict.has("blockHash") => archiveRefusal()
+  | RefusedHashReadsWithOversizedByNumber
+    if !(filter->Dict.has("topics")) && !(filter->Dict.has("address")) =>
+    envelope(
+      request,
+      "error",
+      JSON.Object(
+        dict{
+          "code": JSON.Number(-32005.),
+          "message": JSON.String("query returned more than 10000 results"),
+        },
+      ),
+    )
   | UnfilteredReadTooLarge(limit)
     if limit.answers > 0
       && filter->Dict.has("blockHash")
@@ -961,6 +977,23 @@ describe("RPC head block checks", () => {
             head->Array.filter(call => call == "getLogs block 22 filtered")->Array.length,
             head->Array.filter(call => call == "getLogs block 22 unfiltered")->Array.length,
           )).toEqual((["21-0-21", "3-0-3"], 6, 1))
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "falls back to per-selection reads when the unfiltered by-number read is too large",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~startupFault=RefusedHashReadsWithOversizedByNumber,
+        ~logs=[event(~blockNumber=21)],
+        ~height=24,
+        ~fault=RefusedHashReadsWithOversizedByNumber,
+        ~waitFor="21-0-21",
+        async (~indexer, ~backfill as _, ~head as _) => {
+          t.expect(await indexer->seenIds).toEqual(["21-0-21", "3-0-3"])
         },
       )
     },

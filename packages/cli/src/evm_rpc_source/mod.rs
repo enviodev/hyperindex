@@ -1231,14 +1231,23 @@ impl EvmRpcClient {
                 self.warn_block_hash_refusal(&provider_message)
             }
         }
-        logs::request_block_logs(
+        let by_number = logs::request_block_logs(
             &self.inner,
             logs::LogBlocks::RecheckByNumber {
                 block_number: block,
             },
         )
-        .await
-        .map_err(|error| EnrichError::Rpc(Arc::new(error)))
+        .await;
+        match by_number {
+            Ok(found) => Ok(found),
+            // A provider that refuses the by-number read for its size is read
+            // per selection instead, as for the by-hash read above.
+            Err(error) if logs::is_answer_too_large(&error) => {
+                self.recheck_selections_filtered(query, block, hash, selections)
+                    .await
+            }
+            Err(error) => Err(EnrichError::Rpc(Arc::new(error))),
+        }
     }
 
     /// Reads each of `selections` over `block` by hash with its own filter,
