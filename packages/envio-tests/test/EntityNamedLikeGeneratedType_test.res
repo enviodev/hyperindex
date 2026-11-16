@@ -35,9 +35,6 @@ type Entities {
 type Enums {
   id: ID!
 }
-type EvmBlockShape {
-  id: ID!
-}
 `,
       ~handlers=`
 import type { Entity, Enum, EvmEvent } from "envio";

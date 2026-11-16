@@ -18,6 +18,7 @@ contracts:
   - name: Token
     events:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Matrix(uint256[][] indexed rows, uint256[][] columns)
         field_selection:
           block_fields:
             - parentHash

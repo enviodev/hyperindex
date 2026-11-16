@@ -832,8 +832,6 @@ pub(crate) struct FieldSelection {
     block_fields: Vec<SelectedFieldTemplate>,
     transaction_type: String,
     block_type: String,
-    ts_transaction_type: String,
-    ts_block_type: String,
 }
 
 struct FieldSelectionOptions {
@@ -909,16 +907,11 @@ impl FieldSelection {
             all_transaction_fields.push(record_field);
         }
 
-        let block_expr = TypeExpr::Record(all_block_fields);
-        let transaction_expr = TypeExpr::Record(all_transaction_fields);
-
         Self {
             transaction_fields: transaction_field_templates,
             block_fields: block_field_templates,
-            ts_transaction_type: transaction_expr.to_ts_type_string(),
-            ts_block_type: block_expr.to_ts_type_string(),
-            transaction_type: transaction_expr.to_string(),
-            block_type: block_expr.to_string(),
+            transaction_type: TypeExpr::Record(all_transaction_fields).to_string(),
+            block_type: TypeExpr::Record(all_block_fields).to_string(),
         }
     }
 
@@ -1161,9 +1154,9 @@ impl ProjectTemplate {
       readonly chainId: {};
       /** The parameters or arguments associated with this event. */
       readonly params: {};
-      /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
+      /** The block in which this event was recorded. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
       readonly block: {};
-      /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
+      /** The transaction that triggered this event. Select its fields with the handler's `fields` option or `field_selection` in config.yaml. */
       readonly transaction: {};
       /** The index of this event's log within the block. */
       readonly logIndex: number;
@@ -1956,16 +1949,12 @@ type testIndexer = {{
             }
         };
 
-        // Generate envio.d.ts content. Two outputs:
-        //   - `envio_dts_code`: file-level declarations, only the `FuelTypes`
-        //     namespace (see `wrap_envio_module_augmentation` for why nothing
-        //     else lives there).
-        //   - body strings (`evm_chains_body`, `evm_contracts_body`, …):
-        //     inlined directly into `Global.config` by
-        //     `wrap_envio_module_augmentation`. Names that *would* collide
-        //     with envio's internal generics (`EvmContracts<Config>` etc.)
-        //     are avoided by inlining instead of naming.
-        let envio_dts_code;
+        // Body strings (`evm_chains_body`, `evm_contracts_body`, …) are
+        // inlined directly into `Global.config` by
+        // `wrap_envio_module_augmentation`. Names that *would* collide with
+        // envio's internal generics (`EvmContracts<Config>` etc.) are avoided
+        // by inlining instead of naming.
+        let fuel_types_namespace: Option<String>;
         let evm_chains_body: String;
         let evm_contracts_body: String;
         let evm_event_filters_body: String;
@@ -1976,8 +1965,6 @@ type testIndexer = {{
         let entities_body: String;
         let enums_body: String;
         {
-            let mut parts = Vec::new();
-
             // EVM chain table (inlined into Global.config.evm.chains).
             let evm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
                 chain_configs
@@ -2170,12 +2157,12 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            if !fuel_types_entries.is_empty() {
-                parts.push(format!(
+            fuel_types_namespace = (!fuel_types_entries.is_empty()).then(|| {
+                format!(
                     "declare namespace FuelTypes {{\n{}\n}}",
                     fuel_types_entries.join("\n")
-                ));
-            }
+                )
+            });
 
             // SVM chain table (inlined).
             let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
@@ -2335,8 +2322,6 @@ type testIndexer = {{
             } else {
                 format!("{{\n{}\n      }}", entity_entries.join("\n"))
             };
-
-            envio_dts_code = parts.join("\n");
         }
 
         // Per-entity aliases for ergonomic imports
@@ -2355,7 +2340,7 @@ type testIndexer = {{
             is_rescript: cfg.is_rescript,
             indexer_code,
             envio_types_dts: Self::wrap_envio_module_augmentation(
-                &envio_dts_code,
+                fuel_types_namespace.as_deref(),
                 &entity_aliases,
                 cfg.get_ecosystem(),
                 cfg.human_config.strict_hex_type(),
@@ -2404,7 +2389,7 @@ type testIndexer = {{
     /// collide with TS reserved words or envio exports — users go through
     /// `Enum<"Name">` instead.
     fn wrap_envio_module_augmentation(
-        file_level_types: &str,
+        fuel_types_namespace: Option<&str>,
         entity_aliases: &[String],
         ecosystem: Ecosystem,
         strict_hex_type: bool,
@@ -2454,11 +2439,9 @@ type testIndexer = {{
             .collect::<Vec<_>>()
             .join("\n");
 
-        let file_level_types = if file_level_types.is_empty() {
-            String::new()
-        } else {
-            format!("{file_level_types}\n\n")
-        };
+        let fuel_types_namespace = fuel_types_namespace
+            .map(|namespace| format!("{namespace}\n\n"))
+            .unwrap_or_default();
 
         // The import also makes this file a module; without one,
         // `declare module "envio"` would replace envio's types instead of
@@ -2468,7 +2451,7 @@ type testIndexer = {{
              schema.graphql.\n * Do not edit manually.\n * If your project's types look out of \
              date, run `envio codegen`\n * (or your package manager's `codegen` script, e.g. \
              `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex }} \
-             from \"envio\";\n\n{file_level_types}\
+             from \"envio\";\n\n{fuel_types_namespace}\
              declare module \"envio\" {{\n{I2}interface Global {{\n{I4}config: \
              {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
         )
@@ -3836,7 +3819,7 @@ type Swap {
         let entity_aliases = vec!["User".to_string()];
 
         let out = super::ProjectTemplate::wrap_envio_module_augmentation(
-            "",
+            None,
             &entity_aliases,
             super::Ecosystem::Evm,
             false,
@@ -3950,14 +3933,20 @@ type Swap {
     #[test]
     fn fuel_fields_dts_matches_hand_written_index_dts() {
         let fuel = system_config::FieldSelection::fuel();
-        let selection = super::FieldSelection::new_without_defaults(FieldSelectionOptions {
-            block_fields: fuel.block_fields,
-            transaction_fields: fuel.transaction_fields,
-        });
+        let render = |fields: Vec<SelectedField>| {
+            TypeExpr::Record(
+                fields
+                    .into_iter()
+                    .map(|field| RecordField::new(field.name, field.data_type))
+                    .collect(),
+            )
+            .to_ts_type_string()
+        };
         let rendered = format!(
             "export type FuelBlock = {};\n\n/** The transaction that triggered a Fuel event. \
              */\nexport type FuelTransaction = {};",
-            selection.ts_block_type, selection.ts_transaction_type,
+            render(fuel.block_fields),
+            render(fuel.transaction_fields),
         );
 
         assert!(

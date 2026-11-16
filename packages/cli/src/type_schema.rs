@@ -470,12 +470,7 @@ impl TypeIdent {
             // Generic params are in scope from the type declaration, no namespace needed
             Self::GenericParam(name) => name.clone(),
             Self::Array(inner) => {
-                let inner_ts = inner.to_ts_type_string_with_namespace(ns);
-                if inner.is_option() {
-                    format!("readonly ({})[]", inner_ts)
-                } else {
-                    format!("readonly {}[]", inner_ts)
-                }
+                inner.to_ts_readonly_array_of(inner.to_ts_type_string_with_namespace(ns))
             }
             Self::Option(inner) => {
                 format!("{} | undefined", inner.to_ts_type_string_with_namespace(ns))
@@ -534,13 +529,7 @@ impl TypeIdent {
             Self::Bool => "boolean".to_string(),
             Self::Timestamp => "Date".to_string(),
             Self::Array(inner_type) => {
-                let inner_ts = inner_type.to_ts_type_string();
-                // Wrap in parens if the inner type is a union (Option generates union)
-                if inner_type.is_option() {
-                    format!("readonly ({})[]", inner_ts)
-                } else {
-                    format!("readonly {}[]", inner_ts)
-                }
+                inner_type.to_ts_readonly_array_of(inner_type.to_ts_type_string())
             }
             Self::Option(inner_type) => {
                 format!("{} | undefined", inner_type.to_ts_type_string())
@@ -769,6 +758,17 @@ impl TypeIdent {
 
     pub fn is_option(&self) -> bool {
         matches!(self, Self::Option(_))
+    }
+
+    /// `readonly` binds to the array type right after it, so an element that
+    /// is itself a union or an array needs parentheses:
+    /// `readonly readonly bigint[][]` is a syntax error (TS1354).
+    fn to_ts_readonly_array_of(&self, element_ts: String) -> String {
+        if matches!(self, Self::Option(_) | Self::Array(_)) {
+            format!("readonly ({element_ts})[]")
+        } else {
+            format!("readonly {element_ts}[]")
+        }
     }
 
     pub fn option(inner_type: Self) -> Self {

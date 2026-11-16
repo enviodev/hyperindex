@@ -117,15 +117,21 @@ export function checkDeclarations(typesDts: string): string[] {
   if (envioIndexDts === undefined) throw new Error("checkDeclarations could not resolve envio");
 
   const program = ts.createProgram([typesPath], declarationCompilerOptions, host);
-  return ts
-    .getPreEmitDiagnostics(program)
-    .filter(
-      (d) =>
-        d.file === undefined ||
-        d.file.fileName === typesPath ||
-        d.file.fileName === envioIndexDts,
-    )
-    .map((d) => ts.formatDiagnostic(d, formatHost).trim());
+  // Per file rather than `getPreEmitDiagnostics`, which would also check every
+  // lib and `@types/node` declaration only to discard the result.
+  const checkedFiles = [typesPath, envioIndexDts].map((fileName) => {
+    const sourceFile = program.getSourceFile(fileName);
+    if (sourceFile === undefined) throw new Error(`checkDeclarations did not load ${fileName}`);
+    return sourceFile;
+  });
+  return [
+    ...program.getOptionsDiagnostics(),
+    ...program.getGlobalDiagnostics(),
+    ...checkedFiles.flatMap((sourceFile) => [
+      ...program.getSyntacticDiagnostics(sourceFile),
+      ...program.getSemanticDiagnostics(sourceFile),
+    ]),
+  ].map((d) => ts.formatDiagnostic(d, formatHost).trim());
 }
 
 /**
