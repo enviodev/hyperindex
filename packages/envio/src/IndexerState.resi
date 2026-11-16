@@ -165,6 +165,8 @@ let beginRollbackDiff: (
 ) => Frontier.t
 let recordWriteFailure: (t, exn) => unit
 let abandonWrites: t => unit
+let waitingOnDatabase: t => int
+let waitForDatabase: (t, promise<unit>) => promise<unit>
 let beginWriteFiber: (t, promise<unit>) => unit
 let endWriteFiber: t => unit
 let beginFinalizeFiber: (t, promise<unit>) => unit

@@ -51,7 +51,9 @@ let untilReachable = async (state: IndexerState.t, ~operation, work) => {
             "stopsInSeconds": (leftMillis + 999) / 1000,
           },
         )
-        await clock->Clock.delay(~label="Storage retry", delayMillis)
+        await state->IndexerState.waitForDatabase(
+          clock->Clock.delay(~label="Storage retry", delayMillis),
+        )
         state->IndexerState.isStopped ? None : await attemptFrom(attempt + 1)
       }
     }

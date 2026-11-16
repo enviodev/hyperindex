@@ -704,8 +704,11 @@ let run = async (
             // before it counts as held: a real one on a loaded runner can
             // outlast the short one, and returning mid-flight would let the next
             // step read stale rows.
+            // A write parked on its retry timer is waiting on this clock, not
+            // on the database, so it gets the short spell.
             let quietLimit = () =>
-              state->IndexerState.writeFiber->Option.isSome || storageCallsInFlight.contents > 0
+              (state->IndexerState.writeFiber->Option.isSome &&
+                state->IndexerState.waitingOnDatabase === 0) || storageCallsInFlight.contents > 0
                 ? 500
                 : 50
             while idle.contents < 5 && still.contents < quietLimit() {

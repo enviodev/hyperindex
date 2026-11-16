@@ -269,6 +269,91 @@ describe("Postgres going away mid-run", () => {
     },
   )
 
+  let lateErrors = []
+  scenario->Scenario.it(
+    "carries on when the database answers just before the minute is up",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => lateErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = takeOutage()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      outage.goDown()
+      releaseHandler()
+      await indexer.advanceTime(0)
+      await indexer.advanceTime(58_000)
+      outage.comeBack()
+      // The last attempt is made at the minute, so it finds the database.
+      await indexer.advanceTime(2_000)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        tallies,
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+        lateErrors,
+      )).toEqual(([{id: "1", count: 1.}], [50], []))
+    },
+  )
+
+  let repeatedErrors = []
+  scenario->Scenario.it(
+    "gives every outage its own minute",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => repeatedErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = takeOutage()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      // Two 40-second outages, 80 seconds of waiting in all.
+      outage.goDown()
+      releaseHandler()
+      await indexer.advanceTime(0)
+      await indexer.advanceTime(40_000)
+      outage.comeBack()
+      await indexer.advanceTime(5_000)
+
+      outage.goDown()
+      await source.expectItemsQueries([
+        {
+          fromBlock: 51,
+          toBlock: Unbounded,
+          reply: Respond({
+            items: [
+              {
+                blockNumber: 60,
+                logIndex: 0,
+                handler: async args => (args->contextOf).tally.set({id: "2", count: 1.}),
+              },
+            ],
+            latestFetchedBlockNumber: 70,
+            knownHeight: 100,
+          }),
+        },
+      ])
+      await indexer.advanceTime(0)
+      await indexer.advanceTime(40_000)
+      outage.comeBack()
+      await indexer.advanceTime(5_000)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((
+        tallies->Array.toSorted((a, b) => String.compare(a.id, b.id)),
+        (await indexer.queryChains())->Array.map(chain => chain.progressBlock),
+        repeatedErrors,
+      )).toEqual(([{id: "1", count: 1.}, {id: "2", count: 1.}], [70], []))
+    },
+  )
+
   let deadlineErrors = []
   scenario->Scenario.it(
     "stops with an error once the database stays away for a minute",
