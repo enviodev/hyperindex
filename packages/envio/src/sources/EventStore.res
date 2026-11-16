@@ -17,11 +17,20 @@ type format =
   | @as(3) Block
   | @as(4) JsItem
 
-type storedItem = {
-  format: format,
-  registrationIndex: int,
-  data: unknown,
+// Rows as columns: the object each row replays to, and each row's format and
+// registration index in typed arrays, so reading a batch builds no wrapper
+// object per row.
+type storedRows = {
+  formats: Uint8Array.t,
+  registrationIndexes: Int32Array.t,
+  data: array<unknown>,
 }
+
+let formatAt = (rows: storedRows, index) =>
+  rows.formats->(Utils.magic: Uint8Array.t => array<format>)->Array.getUnsafe(index)
+
+let registrationIndexAt = (rows: storedRows, index) =>
+  rows.registrationIndexes->(Utils.magic: Int32Array.t => array<int>)->Array.getUnsafe(index)
 
 // A JS-built item with its registration replaced by the registration's index.
 type jsItemInput = {
@@ -91,14 +100,14 @@ external insertBlockItems: (
 external readyCount: (t, ~frontier: int, ~targetSize: int, ~fromIndex: int) => int = "readyCount"
 
 // Removes and returns the first rows.
-@send external takeRaw: (t, int) => array<storedItem> = "take"
+@send external takeRaw: (t, int) => storedRows = "take"
 
 // Copies of the event rows routed to the given registrations, in order.
 @send
-external eventsOfRegistrationsRaw: (t, array<int>) => array<storedItem> = "eventsOfRegistrations"
+external eventsOfRegistrationsRaw: (t, array<int>) => storedRows = "eventsOfRegistrations"
 
 // Copies of every row, in order.
-@send external allItemsRaw: t => array<storedItem> = "allItems"
+@send external allItemsRaw: t => storedRows = "allItems"
 
 // Drops every row above the block.
 @send external rollback: (t, int) => unit = "rollback"

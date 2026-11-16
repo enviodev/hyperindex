@@ -1,23 +1,25 @@
 // Every item a store holds, which it keeps. A row built in JS gets back a
 // registration carrying only its index, which is all the fetch state tests'
 // mock items have; any other row is rebuilt with `context`'s registrations.
-let itemsOf = (store: EventStore.t, ~context: StoredItems.context): array<Internal.item> =>
-  store
-  ->EventStore.allItemsRaw
-  ->Array.map(stored =>
-    switch stored.format {
+let itemsOf = (store: EventStore.t, ~context: StoredItems.context): array<Internal.item> => {
+  let rows = store->EventStore.allItemsRaw
+  rows.data->Array.mapWithIndex((data, index) =>
+    switch rows->EventStore.formatAt(index) {
     | JsItem =>
-      let data = stored.data->(Utils.magic: unknown => dict<unknown>)
+      let item = data->(Utils.magic: unknown => dict<unknown>)
       let registration =
-        {"index": stored.registrationIndex}->(Utils.magic: {"index": int} => unknown)
-      switch data->Dict.getUnsafe("kind")->(Utils.magic: unknown => int) {
-      | 0 => data->Dict.set("onEventRegistration", registration)
-      | _ => data->Dict.set("onBlockRegistration", registration)
+        {"index": rows->EventStore.registrationIndexAt(index)}->(
+          Utils.magic: {"index": int} => unknown
+        )
+      switch item->Dict.getUnsafe("kind")->(Utils.magic: unknown => int) {
+      | 0 => item->Dict.set("onEventRegistration", registration)
+      | _ => item->Dict.set("onBlockRegistration", registration)
       }
-      data->(Utils.magic: dict<unknown> => Internal.item)
-    | _ => stored->StoredItems.toItem(~context)
+      item->(Utils.magic: dict<unknown> => Internal.item)
+    | _ => rows->StoredItems.toItem(index, ~context)
     }
   )
+}
 
 let bufferedItems = (fetchState: FetchState.t): array<Internal.item> =>
   fetchState.eventStore->itemsOf(~context=fetchState.itemContext)
@@ -32,9 +34,7 @@ let withItems = (fetchState: FetchState.t, items: array<Internal.item>) => {
 
 // The EVM logs a source page holds, as the source routed them.
 let evmLogsOf = (page: EventStore.t): array<EvmEventItem.t> =>
-  page
-  ->EventStore.allItemsRaw
-  ->Array.map(stored => stored.data->(Utils.magic: unknown => EvmEventItem.t))
+  (page->EventStore.allItemsRaw).data->(Utils.magic: array<unknown> => array<EvmEventItem.t>)
 
 // For a fetch state built by hand, whose rows are all built in JS.
 let noRegistrations = (~chainId): StoredItems.context => {

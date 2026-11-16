@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
+use napi::bindgen_prelude::{Int32Array, Uint8Array};
 use napi_derive::napi;
 
 use crate::js_value::JsTape;
@@ -146,20 +147,33 @@ fn merge_rows(mut rows: VecDeque<Row>, mut incoming: Vec<Row>) -> VecDeque<Row> 
     rows
 }
 
-/// A row on its way to JS: the conversion to run and the object to run it on.
+/// Rows on their way to JS, as columns: the object each row replays to, and
+/// the conversion and registration of each in typed arrays, so a batch builds
+/// no wrapper object per row.
 #[napi(object, object_from_js = false)]
-pub struct StoredItem {
-    pub format: RowFormat,
-    pub registration_index: i64,
-    pub data: JsTape,
+pub struct StoredRows {
+    /// Each row's `RowFormat`.
+    pub formats: Uint8Array,
+    pub registration_indexes: Int32Array,
+    pub data: Vec<JsTape>,
 }
 
-impl From<Row> for StoredItem {
-    fn from(row: Row) -> Self {
-        StoredItem {
-            format: row.format,
-            registration_index: row.registration_index,
-            data: row.data,
+impl FromIterator<Row> for StoredRows {
+    fn from_iter<I: IntoIterator<Item = Row>>(rows: I) -> Self {
+        let rows = rows.into_iter();
+        let (capacity, _) = rows.size_hint();
+        let mut formats = Vec::with_capacity(capacity);
+        let mut registration_indexes = Vec::with_capacity(capacity);
+        let mut data = Vec::with_capacity(capacity);
+        for row in rows {
+            formats.push(row.format as u8);
+            registration_indexes.push(row.registration_index as i32);
+            data.push(row.data);
+        }
+        StoredRows {
+            formats: formats.into(),
+            registration_indexes: registration_indexes.into(),
+            data,
         }
     }
 }
@@ -302,16 +316,16 @@ impl EventStore {
 
     /// Removes and returns the first `count` rows.
     #[napi]
-    pub fn take(&self, count: u32) -> Vec<StoredItem> {
+    pub fn take(&self, count: u32) -> StoredRows {
         let mut rows = self.rows();
         let count = (count as usize).min(rows.len());
-        rows.drain(..count).map(StoredItem::from).collect()
+        rows.drain(..count).collect()
     }
 
     /// Copies of the event rows routed to any of `registration_indexes`, in
     /// order. The rows stay.
     #[napi]
-    pub fn events_of_registrations(&self, registration_indexes: Vec<i64>) -> Vec<StoredItem> {
+    pub fn events_of_registrations(&self, registration_indexes: Vec<i64>) -> StoredRows {
         self.rows()
             .iter()
             .filter(|row| {
@@ -319,14 +333,13 @@ impl EventStore {
                     && registration_indexes.contains(&row.registration_index)
             })
             .cloned()
-            .map(StoredItem::from)
             .collect()
     }
 
     /// Copies of every row, in order. The rows stay.
     #[napi]
-    pub fn all_items(&self) -> Vec<StoredItem> {
-        self.rows().iter().cloned().map(StoredItem::from).collect()
+    pub fn all_items(&self) -> StoredRows {
+        self.rows().iter().cloned().collect()
     }
 
     /// Drops every row above `target_block_number`.
@@ -368,11 +381,8 @@ mod tests {
         )
     }
 
-    fn tags(items: Vec<StoredItem>) -> Vec<JsValue> {
-        items
-            .into_iter()
-            .map(|item| JsValue::of(&item.data))
-            .collect()
+    fn tags(rows: StoredRows) -> Vec<JsValue> {
+        rows.data.iter().map(JsValue::of).collect()
     }
 
     fn take_all(store: &EventStore) -> Vec<JsValue> {
@@ -486,7 +496,7 @@ mod tests {
         let contract_registers = tags(store.events_of_registrations(vec![4]));
         let first_event = store.first_event_block_number();
         let second = store.block_number_at(1);
-        let taken = store.take(1).len();
+        let taken = store.take(1).data.len();
         assert_eq!(
             (
                 contract_registers,
