@@ -61,14 +61,15 @@ impl LogBlocks<'_> {
 
 /// The `eth_getLogs` filter: `null` matches any value at a topic position,
 /// trailing match-any positions are trimmed, and no addresses means any
-/// emitter.
+/// emitter. An all-match-any filter carries neither key, which is the
+/// unfiltered read of a whole block.
 fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -> Value {
-    let mut topics: Vec<Option<&Vec<String>>> = topics
+    let mut trimmed: Vec<Option<&Vec<String>>> = topics
         .iter()
         .map(|values| (!values.is_empty()).then_some(values))
         .collect();
-    while matches!(topics.last(), Some(None)) {
-        topics.pop();
+    while matches!(trimmed.last(), Some(None)) {
+        trimmed.pop();
     }
     let mut filter = match blocks {
         LogBlocks::Range { .. } | LogBlocks::RecheckByNumber { .. } => {
@@ -76,14 +77,15 @@ fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -
             json!({
                 "fromBlock": format!("0x{from_block:x}"),
                 "toBlock": format!("0x{to_block:x}"),
-                "topics": topics,
             })
         }
         LogBlocks::Hash { hash, .. } => json!({
             "blockHash": hash,
-            "topics": topics,
         }),
     };
+    if !trimmed.is_empty() {
+        filter["topics"] = json!(trimmed);
+    }
     if !addresses.is_empty() {
         filter["address"] = json!(addresses);
     }
@@ -93,7 +95,7 @@ fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -
 /// Whether an address-free request failed for the size of what it asked for,
 /// which the same logs asked for by address can avoid. Throttling and an
 /// unreachable provider aren't: more requests would only make them worse.
-fn is_answer_too_large(error: &RpcError) -> bool {
+pub(super) fn is_answer_too_large(error: &RpcError) -> bool {
     match error {
         RpcError::JsonRpc { message, .. } => is_result_cap_message(message),
         RpcError::Timeout(_) | RpcError::MalformedResponse(_) => true,
@@ -131,6 +133,22 @@ async fn request(
             blocks.stat_method(),
             "eth_getLogs",
             json!([log_filter(blocks, &selection.topics, selection.addresses())]),
+        )
+        .await
+}
+
+/// Reads every log of `blocks` unfiltered, for a head block whose logs must be
+/// checked against several selections at once. The caller picks each
+/// selection's logs out of what comes back.
+pub(super) async fn request_block_logs(
+    client: &JsonRpcClient,
+    blocks: LogBlocks<'_>,
+) -> Result<Vec<RawLog>, RpcError> {
+    client
+        .request_recorded_as(
+            blocks.stat_method(),
+            "eth_getLogs",
+            json!([log_filter(blocks, &[], &[])]),
         )
         .await
 }
@@ -232,6 +250,27 @@ mod tests {
                     "topics": [["0xaa"]],
                     "address": ["0x01"],
                 }),
+            )
+        );
+    }
+
+    #[test]
+    fn an_unfiltered_block_read_carries_neither_addresses_nor_topics() {
+        assert_eq!(
+            (
+                log_filter(
+                    LogBlocks::Hash {
+                        block_number: 16,
+                        hash: "0xbb"
+                    },
+                    &[],
+                    &[]
+                ),
+                log_filter(LogBlocks::RecheckByNumber { block_number: 16 }, &[], &[]),
+            ),
+            (
+                json!({"blockHash": "0xbb"}),
+                json!({"fromBlock": "0x10", "toBlock": "0x10"}),
             )
         );
     }

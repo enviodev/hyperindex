@@ -5,8 +5,18 @@
 //! of the selection's logs for is asked again by its hash whenever its
 //! `logsBloom` can't rule them out. The logs' hashes themselves are checked
 //! against the headers by the page's block store.
+//!
+//! Rechecking costs one filtered read per selection per block, so a block more
+//! than one selection wants is read once unfiltered and matched locally. That
+//! is strictly no worse than the per-selection reads it replaces for
+//! completeness: it is one request, so every selection's logs come from the
+//! same replica and cannot straddle a fork between them, and the local match
+//! only drops logs no selection asked for. It still cannot catch what the
+//! per-selection reads could not — a replica that answers a block hash with the
+//! right hash but no logs — and that case is what the in-source completeness
+//! check is for.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 
 use alloy_primitives::{hex, Bloom, BloomInput};
@@ -152,6 +162,67 @@ pub(crate) fn blocks_to_recheck(
         rechecks.push((block, reason));
     }
     rechecks
+}
+
+/// The fewest selections that must want one block rechecked before a single
+/// unfiltered read replaces their per-selection filtered reads. A block wanted
+/// by one selection keeps that selection's own read: it is narrower and costs
+/// the same.
+const MIN_SELECTIONS_TO_COLLAPSE: usize = 2;
+
+/// What a page's rechecks cost: the blocks each selection asks for on its own,
+/// and the blocks read once unfiltered and matched across several selections.
+pub(crate) struct RecheckPlan {
+    /// `(selection index, block, reason)`, one filtered read per entry.
+    pub filtered: Vec<(usize, u64, RecheckReason)>,
+    /// `(block, selection indexes, reason)`, one unfiltered read per entry.
+    pub unfiltered: Vec<(u64, Vec<usize>, RecheckReason)>,
+}
+
+/// Groups per-selection rechecks by block: a block two or more selections want
+/// is read once unfiltered, a block one selection wants keeps its own filtered
+/// read, and a block no selection wants is not read at all.
+pub(crate) fn plan_rechecks(per_selection: Vec<Vec<(u64, RecheckReason)>>) -> RecheckPlan {
+    let mut by_block: BTreeMap<u64, Vec<(usize, RecheckReason)>> = BTreeMap::new();
+    for (selection, rechecks) in per_selection.into_iter().enumerate() {
+        for (block, reason) in rechecks {
+            by_block.entry(block).or_default().push((selection, reason));
+        }
+    }
+    let mut filtered = Vec::new();
+    let mut unfiltered = Vec::new();
+    for (block, selections) in by_block {
+        if selections.len() >= MIN_SELECTIONS_TO_COLLAPSE {
+            // One read answers for all of them, so it is logged as matching
+            // whenever any selection's bloom does.
+            let reason = if selections
+                .iter()
+                .any(|&(_, reason)| reason == RecheckReason::BloomMatches)
+            {
+                RecheckReason::BloomMatches
+            } else {
+                RecheckReason::BloomSaysNothing
+            };
+            unfiltered.push((
+                block,
+                selections
+                    .into_iter()
+                    .map(|(selection, _)| selection)
+                    .collect(),
+                reason,
+            ));
+        } else {
+            filtered.extend(
+                selections
+                    .into_iter()
+                    .map(|(selection, reason)| (selection, block, reason)),
+            );
+        }
+    }
+    RecheckPlan {
+        filtered,
+        unfiltered,
+    }
 }
 
 #[cfg(test)]
@@ -324,6 +395,25 @@ mod tests {
                 (Some("0xaa".to_string()), Some(false)),
                 (Some("0xaa".to_string()), None),
                 (None, None),
+            ),
+        );
+    }
+
+    #[test]
+    fn a_block_two_selections_want_is_read_once_unfiltered() {
+        use RecheckReason::*;
+        let plan = plan_rechecks(vec![
+            vec![(21, BloomSaysNothing), (22, BloomMatches)],
+            vec![(22, BloomSaysNothing)],
+            vec![(22, BloomMatches), (23, BloomSaysNothing)],
+        ]);
+        assert_eq!(
+            (plan.filtered, plan.unfiltered),
+            (
+                // Block 21 and 23 are wanted by one selection each; block 22 is
+                // wanted by three, so it is read once unfiltered.
+                vec![(0, 21, BloomSaysNothing), (2, 23, BloomSaysNothing)],
+                vec![(22, vec![0, 1, 2], BloomMatches)],
             ),
         );
     }
