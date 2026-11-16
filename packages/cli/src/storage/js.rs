@@ -342,6 +342,7 @@ impl JsStorage {
             application_name: Some(pg.application_name),
             extra_ca_file: std::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
             connect_timeout: std::time::Duration::from_secs(30),
+            keepalive: client::Keepalive::default(),
         })
         .map_err(to_napi)?;
         let postgres = Arc::new(

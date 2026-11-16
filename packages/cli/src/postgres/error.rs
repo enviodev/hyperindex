@@ -215,6 +215,7 @@ mod tests {
                 application_name: None,
                 extra_ca_file: None,
                 connect_timeout: std::time::Duration::from_secs(5),
+                keepalive: super::super::client::Keepalive::default(),
             })
             .unwrap();
 
@@ -239,6 +240,7 @@ mod tests {
                 application_name: None,
                 extra_ca_file: None,
                 connect_timeout: std::time::Duration::from_secs(5),
+                keepalive: super::super::client::Keepalive::default(),
             })
             .unwrap();
 

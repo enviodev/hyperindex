@@ -72,6 +72,36 @@ pub struct PgConnectionOptions {
     pub extra_ca_file: Option<std::path::PathBuf>,
     /// How long opening a connection may take, handshake included.
     pub connect_timeout: std::time::Duration,
+    pub keepalive: Keepalive,
+}
+
+/// How a connection whose server has gone without a word is found out.
+///
+/// With no reply for `idle`, the kernel probes every `interval`, and after
+/// `retries` probes go unanswered the connection fails. That covers an idle
+/// pooled connection and one waiting on a statement's answer. A slow statement
+/// is not mistaken for a dead server: the server's kernel answers probes while
+/// it runs.
+///
+/// No `tcp_user_timeout` beside it, although it would also catch a statement
+/// sent after the server went, which waits out TCP's resends instead. Linux
+/// applies it to a peer's full receive window too, and a batch's pipelined
+/// statements fill the server's while a slow one ahead of them runs: a healthy
+/// write on a large table would fail.
+pub struct Keepalive {
+    pub idle: std::time::Duration,
+    pub interval: std::time::Duration,
+    pub retries: u32,
+}
+
+impl Default for Keepalive {
+    fn default() -> Self {
+        Self {
+            idle: std::time::Duration::from_secs(30),
+            interval: std::time::Duration::from_secs(10),
+            retries: 3,
+        }
+    }
 }
 
 /// One column of a result, as the statement describes it.
@@ -293,10 +323,9 @@ fn build_config(options: &PgConnectionOptions) -> Config {
         .password(&options.password)
         .dbname(&options.database)
         .ssl_mode(options.ssl.ssl_mode())
-        // A NAT or load balancer drops an idle connection after a few minutes
-        // without telling either end; the driver's default of two hours would
-        // first notice on the next statement, once TCP gives up retransmitting.
-        .keepalives_idle(std::time::Duration::from_secs(60));
+        .keepalives_idle(options.keepalive.idle)
+        .keepalives_interval(options.keepalive.interval)
+        .keepalives_retries(options.keepalive.retries);
     if let Some(application_name) = &options.application_name {
         config.application_name(application_name);
     }
@@ -491,10 +520,11 @@ mod tests {
     }
 
     /// An idle pooled connection behind a NAT or load balancer is dropped
-    /// silently after a few minutes; without a probe sooner than that, the next
-    /// statement on it waits out TCP's retransmissions before failing.
+    /// silently after a few minutes, and a failover can drop one waiting on an
+    /// answer the same way. Probing after 30 s and giving up after three probes
+    /// 10 s apart finds either out within a minute.
     #[test]
-    fn an_idle_connection_is_probed_every_minute() {
+    fn a_silent_connection_is_given_up_within_a_minute() {
         let config = build_config(&PgConnectionOptions {
             host: "localhost".to_string(),
             port: 5432,
@@ -506,10 +536,21 @@ mod tests {
             application_name: None,
             extra_ca_file: None,
             connect_timeout: std::time::Duration::from_secs(30),
+            keepalive: Keepalive::default(),
         });
         assert_eq!(
-            (config.get_keepalives(), config.get_keepalives_idle()),
-            (true, std::time::Duration::from_secs(60))
+            (
+                config.get_keepalives(),
+                config.get_keepalives_idle(),
+                config.get_keepalives_interval(),
+                config.get_keepalives_retries(),
+            ),
+            (
+                true,
+                std::time::Duration::from_secs(30),
+                Some(std::time::Duration::from_secs(10)),
+                Some(3)
+            )
         );
     }
 
@@ -540,6 +581,7 @@ mod tests {
             application_name: None,
             extra_ca_file: None,
             connect_timeout: std::time::Duration::from_millis(300),
+            keepalive: Keepalive::default(),
         })
         .unwrap();
         let outcome = tokio::time::timeout(

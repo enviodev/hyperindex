@@ -40,6 +40,7 @@ fn client_with(max_connections: usize) -> PgClient {
         application_name: Some("envio-live-test".to_string()),
         extra_ca_file: None,
         connect_timeout: std::time::Duration::from_secs(30),
+        keepalive: super::client::Keepalive::default(),
     })
     .expect("the pool is built from a static configuration")
 }
