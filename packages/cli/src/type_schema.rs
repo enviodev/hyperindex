@@ -577,9 +577,7 @@ impl TypeIdent {
                 format!("{{ {} }}", inner)
             }
             Self::SchemaEnum(enum_name) => {
-                // References the file-level `Enums` lookup table emitted by
-                // codegen_templates.rs::wrap_envio_module_augmentation.
-                format!("Enums[\"{}\"]", enum_name.original)
+                format!("Enum<\"{}\">", enum_name.original)
             }
             Self::GenericParam(name) => name.clone(),
             Self::TypeApplication {
@@ -1073,7 +1071,7 @@ mod tests {
         };
         assert_eq!(
             TypeIdent::SchemaEnum(enum_name).to_ts_type_string(),
-            "Enums[\"MyEnum\"]"
+            "Enum<\"MyEnum\">"
         );
     }
 

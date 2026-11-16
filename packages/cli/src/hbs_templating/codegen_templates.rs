@@ -403,7 +403,7 @@ impl EventMod {
         };
 
         // ReScript block/transaction types only include selected fields
-        // (deprecated FieldNotSelected fields only in TypeScript EvmBlockShape/EvmTransaction)
+        // (unselected fields appear only in TypeScript, as FieldNotSelected)
         let (block_type, transaction_type) =
             match (&self.custom_field_selection, &self.all_ecosystem_fields) {
                 (Some(ref custom_fs), Some(ref all_fields)) => {
@@ -1059,42 +1059,6 @@ impl ProjectTemplate {
         format!("{{\n{}\n}}", fields.join("\n"))
     }
 
-    /// Generate a TypeScript record type with all fields for envio.d.ts.
-    /// Selected fields get their actual TS type, unselected get `FieldNotSelected<...>` with @deprecated.
-    fn generate_ts_all_fields_record(
-        selected: &[SelectedFieldTemplate],
-        all_fields: &[SelectedFieldTemplate],
-        field_kind: &str,
-        event_name: Option<&str>,
-        indent: &str,
-    ) -> String {
-        let selected_names: std::collections::HashSet<&str> =
-            selected.iter().map(|f| f.name.camel.as_str()).collect();
-
-        let event = event_name.unwrap_or("<EventName>");
-        let fields: Vec<String> = all_fields
-            .iter()
-            .map(|f| {
-                let ts_name = &f.name.camel;
-                if selected_names.contains(ts_name.as_str()) {
-                    ts_selected_field(ts_name, &Self::to_envio_dts_type(&f.ts_type), indent)
-                } else {
-                    let yaml_body = format!(
-                        "{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} \
-                         *       {kind}:\n{i} *         - {field}",
-                        i = indent,
-                        event = event,
-                        kind = field_kind,
-                        field = ts_name,
-                    );
-                    ts_unselected_field(ts_name, field_kind, "event", event, &yaml_body, indent)
-                }
-            })
-            .collect();
-
-        wrap_ts_record(&fields, indent)
-    }
-
     /// Convert a TypeScript type string for use in envio.d.ts.
     /// AccessList/AuthorizationList are internal HyperSync types — use `unknown[]` in .d.ts.
     fn to_envio_dts_type(ts_type: &str) -> String {
@@ -1107,16 +1071,58 @@ impl ProjectTemplate {
         }
     }
 
+    /// An EVM event's `block` / `transaction` types: envio's `EvmConfigBlock` /
+    /// `EvmConfigTransaction` over the event's own `field_selection`, or the
+    /// global one when it has none.
+    fn evm_event_block_and_transaction_ts_types(
+        event: &system_config::Event,
+        global_field_selection: &FieldSelection,
+    ) -> (String, String) {
+        let event_field_selection = event.field_selection.as_ref().map(|event_fs| {
+            FieldSelection::new(FieldSelectionOptions {
+                block_fields: event_fs.block_fields.clone(),
+                transaction_fields: event_fs.transaction_fields.clone(),
+            })
+        });
+        let selection = event_field_selection
+            .as_ref()
+            .unwrap_or(global_field_selection);
+        (
+            format!(
+                "EvmConfigBlock<\"{}\", {}>",
+                event.name,
+                Self::field_names_to_ts_union(&selection.block_fields)
+            ),
+            format!(
+                "EvmConfigTransaction<\"{}\", {}>",
+                event.name,
+                Self::field_names_to_ts_union(&selection.transaction_fields)
+            ),
+        )
+    }
+
+    fn field_names_to_ts_union(fields: &[SelectedFieldTemplate]) -> String {
+        use itertools::Itertools;
+        let names: Vec<String> = fields
+            .iter()
+            .map(|field| format!("\"{}\"", field.name.camel))
+            .unique()
+            .collect();
+        if names.is_empty() {
+            "never".to_string()
+        } else {
+            names.join(" | ")
+        }
+    }
+
     /// Generate a full TypeScript event type for use in EvmContracts/FuelContracts.
     /// Produces a type with contractName, eventName, params, block, transaction, etc.
-    /// Unselected block/transaction fields are typed as `FieldNotSelected<...>` with @deprecated guidance.
     fn generate_contract_event_ts_type(
         contract_name: &str,
         event: &system_config::Event,
-        aggregated: &FieldSelection,
         chain_id_type_name: &str,
-        global_block_type_name: &str,
-        global_transaction_type_name: &str,
+        block_ts_type: &str,
+        transaction_ts_type: &str,
     ) -> String {
         // Build params TS type
         let params_ts = match &event.kind {
@@ -1151,39 +1157,6 @@ impl ProjectTemplate {
             _ => "undefined".to_string(),
         };
 
-        // For events without custom field_selection, use global type alias
-        // For events with custom field_selection, generate inline type with all fields
-        let (block_ts, tx_ts) = if let Some(event_fs) = &event.field_selection {
-            let block_ts = Self::generate_ts_all_fields_record(
-                &FieldSelection::new(FieldSelectionOptions {
-                    block_fields: event_fs.block_fields.clone(),
-                    transaction_fields: vec![],
-                })
-                .block_fields,
-                &aggregated.block_fields,
-                "block_fields",
-                Some(&event.name),
-                "        ",
-            );
-            let tx_ts = Self::generate_ts_all_fields_record(
-                &FieldSelection::new(FieldSelectionOptions {
-                    block_fields: vec![],
-                    transaction_fields: event_fs.transaction_fields.clone(),
-                })
-                .transaction_fields,
-                &aggregated.transaction_fields,
-                "transaction_fields",
-                Some(&event.name),
-                "        ",
-            );
-            (block_ts, tx_ts)
-        } else {
-            (
-                global_block_type_name.to_string(),
-                global_transaction_type_name.to_string(),
-            )
-        };
-
         format!(
             r#"    "{}": {{
       /** The name of the event. */
@@ -1203,7 +1176,13 @@ impl ProjectTemplate {
       /** The address of the contract that emitted this event. */
       readonly srcAddress: Address;
     }};"#,
-            event.name, event.name, contract_name, chain_id_type_name, params_ts, block_ts, tx_ts,
+            event.name,
+            event.name,
+            contract_name,
+            chain_id_type_name,
+            params_ts,
+            block_ts_type,
+            transaction_ts_type,
         )
     }
 
@@ -1984,15 +1963,9 @@ type testIndexer = {{
         };
 
         // Generate envio.d.ts content. Two outputs:
-        //   - `lookup_tables`: file-level named types (`$EvmBlockShape`,
-        //     `EvmTransaction`, `Entities`, etc.) that are shared across
-        //     events / referenced by entity fields. The block shape is named
-        //     `$EvmBlockShape`: `envio` exports a generic `EvmBlock`, so a bare
-        //     `EvmBlock` inside the `declare module "envio"` augmentation below
-        //     would bind to that export instead of the local alias (TS2314).
-        //     The `$` also keeps the name out of reach of generated entity
-        //     aliases, since a GraphQL name cannot contain `$`. A file-level
-        //     `EvmBlock` alias is still emitted for backwards compatibility.
+        //   - `envio_dts_code`: file-level declarations, only the `FuelTypes`
+        //     namespace (see `wrap_envio_module_augmentation` for why nothing
+        //     else lives there).
         //   - body strings (`evm_chains_body`, `evm_contracts_body`, …):
         //     inlined directly into `Global.config` by
         //     `wrap_envio_module_augmentation`. Names that *would* collide
@@ -2046,40 +2019,7 @@ type testIndexer = {{
                     .join(" | ")
             };
 
-            // File-level shared block / transaction types (EVM).
-            if cfg.get_ecosystem() == Ecosystem::Evm {
-                if let Some(ref all_fs) = all_ecosystem_fields {
-                    let evm_block_type = Self::generate_ts_all_fields_record(
-                        &global_field_selection.block_fields,
-                        &all_fs.block_fields,
-                        "block_fields",
-                        None,
-                        "  ",
-                    );
-                    parts.push(format!("type $EvmBlockShape = {};", evm_block_type));
-                    // Keep the name this used to be emitted as. It must not be referenced from
-                    // inside `declare module "envio"` (there it binds to envio's generic
-                    // `EvmBlock`); `$EvmBlockShape` is used for that instead.
-                    parts.push("type EvmBlock = $EvmBlockShape;".to_string());
-                    let evm_tx_type = Self::generate_ts_all_fields_record(
-                        &global_field_selection.transaction_fields,
-                        &all_fs.transaction_fields,
-                        "transaction_fields",
-                        None,
-                        "  ",
-                    );
-                    parts.push(format!("type EvmTransaction = {};", evm_tx_type));
-                }
-            }
-
-            // EVM contracts table (inlined). Uses inline chainId union and
-            // file-level `$EvmBlockShape` / `EvmTransaction`.
             let evm_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Evm {
-                let all_evm = system_config::FieldSelection::all_evm();
-                let all_fields = FieldSelection::new(FieldSelectionOptions {
-                    block_fields: all_evm.block_fields,
-                    transaction_fields: all_evm.transaction_fields,
-                });
                 cfg.contracts
                     .iter()
                     .map(|(name, contract)| {
@@ -2087,13 +2027,17 @@ type testIndexer = {{
                             .events
                             .iter()
                             .map(|event| {
+                                let (block_ts_type, transaction_ts_type) =
+                                    Self::evm_event_block_and_transaction_ts_types(
+                                        event,
+                                        &global_field_selection,
+                                    );
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &all_fields,
                                     &evm_chain_id_inline,
-                                    "$EvmBlockShape",
-                                    "EvmTransaction",
+                                    &block_ts_type,
+                                    &transaction_ts_type,
                                 )
                             })
                             .collect();
@@ -2170,27 +2114,8 @@ type testIndexer = {{
                     .join(" | ")
             };
 
-            // File-level Fuel block / transaction types.
-            if cfg.get_ecosystem() == Ecosystem::Fuel {
-                let fuel_fs_for_types = system_config::FieldSelection::fuel();
-                let fuel_all = FieldSelection::new_without_defaults(FieldSelectionOptions {
-                    block_fields: fuel_fs_for_types.block_fields.clone(),
-                    transaction_fields: fuel_fs_for_types.transaction_fields.clone(),
-                });
-                parts.push(format!("type FuelBlock = {};", fuel_all.ts_block_type));
-                parts.push(format!(
-                    "type FuelTransaction = {};",
-                    fuel_all.ts_transaction_type
-                ));
-            }
-
             // Fuel contracts table (inlined).
             let fuel_contracts_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Fuel {
-                let fuel_fs = system_config::FieldSelection::fuel();
-                let aggregated = FieldSelection::new_without_defaults(FieldSelectionOptions {
-                    block_fields: fuel_fs.block_fields,
-                    transaction_fields: fuel_fs.transaction_fields,
-                });
                 cfg.contracts
                     .iter()
                     .map(|(name, contract)| {
@@ -2201,7 +2126,6 @@ type testIndexer = {{
                                 Self::generate_contract_event_ts_type(
                                     name,
                                     event,
-                                    &aggregated,
                                     &fuel_chain_id_inline,
                                     "FuelBlock",
                                     "FuelTransaction",
@@ -2252,14 +2176,12 @@ type testIndexer = {{
             } else {
                 vec![]
             };
-            parts.push(if fuel_types_entries.is_empty() {
-                "declare namespace FuelTypes {}".to_string()
-            } else {
-                format!(
+            if !fuel_types_entries.is_empty() {
+                parts.push(format!(
                     "declare namespace FuelTypes {{\n{}\n}}",
                     fuel_types_entries.join("\n")
-                )
-            });
+                ));
+            }
 
             // SVM chain table (inlined).
             let svm_chains_entries: Vec<String> = if cfg.get_ecosystem() == Ecosystem::Svm {
@@ -2366,10 +2288,6 @@ type testIndexer = {{
                 "{}".to_string()
             };
 
-            // File-level Enums and Entities tables. They reference each
-            // other (entity field types use `Enums["Foo"]`), so they must
-            // be named — but no prefix needed since neither name collides
-            // with anything still exported by envio.
             let enum_entries: Vec<String> = gql_enums
                 .iter()
                 .map(|gql_enum| {
@@ -2385,12 +2303,11 @@ type testIndexer = {{
                     )
                 })
                 .collect();
-            parts.push(if enum_entries.is_empty() {
-                "type Enums = {};".to_string()
+            enums_body = if enum_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!("type Enums = {{\n{}\n}};", enum_entries.join("\n"))
-            });
-            enums_body = "Enums".to_string();
+                format!("{{\n{}\n      }}", enum_entries.join("\n"))
+            };
 
             let entity_entries: Vec<String> = entities
                 .iter()
@@ -2419,17 +2336,16 @@ type testIndexer = {{
                     )
                 })
                 .collect();
-            parts.push(if entity_entries.is_empty() {
-                "type Entities = {};".to_string()
+            entities_body = if entity_entries.is_empty() {
+                "{}".to_string()
             } else {
-                format!("type Entities = {{\n{}\n}};", entity_entries.join("\n"))
-            });
-            entities_body = "Entities".to_string();
+                format!("{{\n{}\n      }}", entity_entries.join("\n"))
+            };
 
             envio_dts_code = parts.join("\n");
         }
 
-        // Per-entity aliases shadow the lookup table for ergonomic imports
+        // Per-entity aliases for ergonomic imports
         // (`import type { User } from "envio"`). An entity named like an
         // envio export (`Hex`, `Address`, …) gets none and is reached through
         // `Entity<"Hex">` only. Enums skip aliasing altogether and go through
@@ -2480,19 +2396,14 @@ type testIndexer = {{
     /// the generic types in `packages/envio/index.d.ts` resolve through the
     /// augmented `Global` interface.
     ///
-    /// File-level types (`$EvmBlockShape`, `EvmTransaction`, `FuelBlock`,
-    /// `FuelTransaction`, `FuelTypes`, `Entities`, `Enums`) are emitted at
-    /// the host file's top level. The block shape is named `$EvmBlockShape`
-    /// because envio exports a generic `EvmBlock` (a bare `EvmBlock` inside this
-    /// augmentation would bind to that export) and because `$` keeps it out of
-    /// reach of generated entity aliases; a file-level `EvmBlock` alias is still
-    /// emitted for backwards compatibility. The other names don't collide with
-    /// anything envio exports or uses internally as a generic. The per-ecosystem
-    /// `chains` / `contracts` / `eventFilters` shapes are inlined directly
-    /// into `Global.config` rather than named at file scope — naming them
-    /// (e.g. `EvmContracts`) would shadow envio's internal generic
-    /// `EvmContracts<Config>` and collapse `indexer.onEvent`'s callback to
-    /// `any`.
+    /// Inside this block a bare type name resolves against envio's exports,
+    /// entity aliases included, before the host file's own declarations. So
+    /// everything is inlined into `Global.config` or referenced through an
+    /// envio export (`EvmConfigBlock`, `FuelBlock`, `Entity`, `Enum`), and a
+    /// file-level type is never referenced from here. The one exception is
+    /// the `FuelTypes` namespace, which recursive and generic ABI types need
+    /// a name for; entity aliases are types, not namespaces, so they can't
+    /// shadow it.
     ///
     /// Per-entity aliases are emitted so handlers can `import type { Foo }
     /// from "envio"`. Enums skip aliasing — schema enum names commonly
@@ -2545,34 +2456,27 @@ type testIndexer = {{
 
         let entity_aliases = entity_aliases
             .iter()
-            .map(|name| format!("{I2}export type {name} = Entities[\"{name}\"];"))
+            .map(|name| format!("{I2}export type {name} = Entity<\"{name}\">;"))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let field_not_selected = match ecosystem {
-            // SVM selection is handler `fields` in index.d.ts, not codegen.
-            Ecosystem::Svm => String::new(),
-            Ecosystem::Evm | Ecosystem::Fuel => {
-                "/** Marks a block/transaction field that this event's `field_selection` doesn't \
-                 include.\n * Reading such a field is a type error; the message tells you which \
-                 field to add to\n * `field_selection` in config.yaml to make it available. \
-                 */\ntype FieldNotSelected<Message extends string> = { readonly \
-                 __fieldNotSelected: Message };\n\n"
-                    .to_string()
-            }
+        let file_level_types = if file_level_types.is_empty() {
+            String::new()
+        } else {
+            format!("{file_level_types}\n\n")
         };
 
+        // The import also makes this file a module; without one,
+        // `declare module "envio"` would replace envio's types instead of
+        // augmenting them.
         format!(
             "/**\n * This file is generated by HyperIndex codegen from config.yaml and \
              schema.graphql.\n * Do not edit manually.\n * If your project's types look out of \
              date, run `envio codegen`\n * (or your package manager's `codegen` script, e.g. \
              `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex }} \
-             from \"envio\";\n\n{field_not_selected}{file_level_types}\n\n\
+             from \"envio\";\n\n{file_level_types}\
              declare module \"envio\" {{\n{I2}interface Global {{\n{I4}config: \
              {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
-            field_not_selected = field_not_selected,
-            file_level_types = file_level_types,
-            entity_aliases = entity_aliases,
         )
     }
 }
@@ -2703,43 +2607,6 @@ fn ts_svm_field(
         "{doc}readonly {}: {}",
         ts_safe_property_name(&field.name),
         field_type_to_ts_type(&field.ty, defined_types, seen)
-    )
-}
-
-/// One selected field line of a generated `.d.ts` record: a doc comment plus the
-/// `readonly` property with its real type.
-fn ts_selected_field(name: &str, ts_type: &str, indent: &str) -> String {
-    format!("{indent}/** The {name} field. */\n{indent}readonly {name}: {ts_type};")
-}
-
-/// One unselected field line: an `@deprecated` config hint plus a
-/// `FieldNotSelected<...>` sentinel so reading the field is a compile error.
-/// `noun`/`owner` name the config container ("event" + event name, or
-/// "instruction" + instruction name); `yaml_body` is the already-indented YAML
-/// snippet shown between the fenced ```yaml block.
-fn ts_unselected_field(
-    name: &str,
-    knob: &str,
-    noun: &str,
-    owner: &str,
-    yaml_body: &str,
-    indent: &str,
-) -> String {
-    format!(
-        "{indent}/**\n{indent} * @deprecated Not selected for this {noun}. To enable, add to \
-         config.yaml:\n{indent} * ```yaml\n{yaml_body}\n{indent} * ```\n{indent} \
-         */\n{indent}readonly {name}: FieldNotSelected<\"Field '{name}' is not selected for the \
-         '{owner}' {noun}. Add it under field_selection.{knob} in config.yaml.\">;"
-    )
-}
-
-/// Wrap rendered field lines into a TS object type literal, closing the brace
-/// two spaces shallower than the field indent.
-fn wrap_ts_record(field_lines: &[String], indent: &str) -> String {
-    format!(
-        "{{\n{}\n{}}}",
-        field_lines.join("\n"),
-        &indent[..indent.len().saturating_sub(2)]
     )
 }
 
@@ -3144,22 +3011,13 @@ mod test {
         // Snapshots the TypeScript event type emitted into envio.d.ts. Unlike
         // ReScript, TypeScript inlines record types directly so each named
         // struct shows up as `{ readonly funder: Address; ... }`.
-        // The test module imports `system_config::FieldSelection`, so the
-        // codegen-internal `FieldSelection` (used by `generate_contract_event_ts_type`)
-        // must be referenced via `super::`.
         let event = sablier_named_struct_event();
-        let all_evm = system_config::FieldSelection::all_evm();
-        let aggregated = super::FieldSelection::new(super::FieldSelectionOptions {
-            block_fields: all_evm.block_fields,
-            transaction_fields: all_evm.transaction_fields,
-        });
         let ts = ProjectTemplate::generate_contract_event_ts_type(
             "SablierLockup",
             &event,
-            &aggregated,
             "ChainId",
-            "$EvmBlockShape",
-            "EvmTransaction",
+            "Block",
+            "Transaction",
         );
         insta::assert_snapshot!(ts);
     }
@@ -3321,47 +3179,6 @@ mod test {
     fn envio_types_dts_generated_for_fuel() {
         let project_template = get_project_template_helper("fuel-config.yaml");
         insta::assert_snapshot!(project_template.envio_types_dts);
-    }
-
-    /// Regression test: a schema entity named like the generated block shape must not
-    /// shadow it inside `declare module "envio"`, while `EvmBlock` remains available.
-    #[test]
-    fn evm_block_shape_does_not_collide_with_entity_named_like_it() {
-        // A GraphQL entity cannot contain `$`, so the generated block shape uses a
-        // `$`-prefixed name that an entity alias can never shadow, even for an entity
-        // literally named `EvmBlockShape`. The old `EvmBlock` name stays as an alias.
-        let yaml = r#"
-name: block-shape-collision
-chains:
-  - id: 1
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-    contracts:
-      - name: Token
-        address: "0x0000000000000000000000000000000000000001"
-        events:
-          - event: Transfer()
-"#;
-        let schema = r#"
-type EvmBlockShape {
-  id: ID!
-}
-"#;
-        let config =
-            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
-                .expect("config should parse");
-        let types_dts = super::ProjectTemplate::from_config(&config)
-            .expect("project template")
-            .envio_types_dts;
-
-        assert!(types_dts.contains("type $EvmBlockShape = {"));
-        assert!(types_dts.contains("type EvmBlock = $EvmBlockShape;"));
-        assert!(types_dts.contains("readonly block: $EvmBlockShape;"));
-        assert!(!types_dts.contains("readonly block: EvmBlockShape;"));
-        // The entity is still represented in the generated Entities type.
-        assert!(types_dts.contains("\"EvmBlockShape\""));
     }
 
     #[test]
@@ -4022,13 +3839,10 @@ type Swap {
     /// only available via `Enum<"Name">`.
     #[test]
     fn entities_get_aliases_enums_do_not() {
-        let file_level_types = "type Enums = {\n  \"accountType\": \"ADMIN\" | \
-                                \"USER\";\n};\ntype Entities = {\n  \"User\": { readonly id: \
-                                string };\n};";
         let entity_aliases = vec!["User".to_string()];
 
         let out = super::ProjectTemplate::wrap_envio_module_augmentation(
-            file_level_types,
+            "",
             &entity_aliases,
             super::Ecosystem::Evm,
             false,
@@ -4040,15 +3854,15 @@ type Swap {
                 fuel_contracts: "{}",
                 svm_chains: "{}",
                 svm_programs: "{}",
-                entities: "Entities",
+                entities: "{ \"User\": { readonly id: string } }",
                 per_chain_entities: "never".to_string(),
-                enums: "Enums",
+                enums: "{ \"accountType\": \"ADMIN\" | \"USER\" }",
             },
         );
 
         assert_eq!(
             (
-                out.contains("export type User = Entities[\"User\"];"),
+                out.contains("export type User = Entity<\"User\">;"),
                 out.contains("export type AccountType"),
             ),
             (true, false),
@@ -4122,17 +3936,40 @@ type Swap {
         )
     }
 
+    fn read_index_dts() -> String {
+        let index_dts_path = format!("{}/../envio/index.d.ts", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&index_dts_path)
+            .unwrap_or_else(|e| panic!("Failed to read {index_dts_path}: {e}"))
+    }
+
     #[test]
     fn evm_all_fields_dts_matches_hand_written_index_dts() {
         let rendered = evm_all_fields_dts();
 
-        let index_dts_path = format!("{}/../envio/index.d.ts", env!("CARGO_MANIFEST_DIR"));
-        let index_dts = std::fs::read_to_string(&index_dts_path)
-            .unwrap_or_else(|e| panic!("Failed to read {index_dts_path}: {e}"));
         assert!(
-            index_dts.contains(&rendered),
+            read_index_dts().contains(&rendered),
             "packages/envio/index.d.ts is out of sync with the EVM field enums. Replace its \
              EvmAllBlockFields/EvmAllTransactionFields declarations with:\n\n{rendered}",
+        );
+    }
+
+    #[test]
+    fn fuel_fields_dts_matches_hand_written_index_dts() {
+        let fuel = system_config::FieldSelection::fuel();
+        let selection = super::FieldSelection::new_without_defaults(FieldSelectionOptions {
+            block_fields: fuel.block_fields,
+            transaction_fields: fuel.transaction_fields,
+        });
+        let rendered = format!(
+            "export type FuelBlock = {};\n\n/** The transaction that triggered a Fuel event. \
+             */\nexport type FuelTransaction = {};",
+            selection.ts_block_type, selection.ts_transaction_type,
+        );
+
+        assert!(
+            read_index_dts().contains(&rendered),
+            "packages/envio/index.d.ts is out of sync with the Fuel field selection. Replace its \
+             FuelBlock/FuelTransaction declarations with:\n\n{rendered}",
         );
     }
 }

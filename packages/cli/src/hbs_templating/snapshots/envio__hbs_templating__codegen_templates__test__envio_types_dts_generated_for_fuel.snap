@@ -11,13 +11,6 @@ expression: project_template.envio_types_dts
 
 import type { Address, BigDecimal, Hex, JSON, SingleOrMultiple, StrictHex } from "envio";
 
-/** Marks a block/transaction field that this event's `field_selection` doesn't include.
- * Reading such a field is a type error; the message tells you which field to add to
- * `field_selection` in config.yaml to make it available. */
-type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
-
-type FuelBlock = { id: Hex; height: number; time: number };
-type FuelTransaction = { id: Hex };
 declare namespace FuelTypes {
   namespace Greeter {
     type type0 = StrictHex;
@@ -31,13 +24,6 @@ declare namespace FuelTypes {
     type type9 = string;
   }
 }
-type Enums = {};
-type Entities = {
-  "EmptyEntity": {
-    readonly "id": string;
-    readonly "emptyField": string;
-  };
-};
 
 declare module "envio" {
   interface Global {
@@ -84,11 +70,16 @@ declare module "envio" {
     };
   };
       } };
-      entities: Entities;
+      entities: {
+  "EmptyEntity": {
+    readonly "id": string;
+    readonly "emptyField": string;
+  };
+      };
       perChainEntities: never;
-      enums: Enums;
+      enums: {};
     };
   }
 
-  export type EmptyEntity = Entities["EmptyEntity"];
+  export type EmptyEntity = Entity<"EmptyEntity">;
 }

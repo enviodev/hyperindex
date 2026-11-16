@@ -876,6 +876,21 @@ type SelectedFields<All, Selected extends string, Knob extends string> = {
         string}' is not selected for this handler. Add it to fields.${Knob} in the registration options.`>;
 };
 
+type ConfigSelectedFields<All, Selected extends string, EventName extends string, Knob extends string> = {
+  readonly [K in keyof All]: K extends Selected
+    ? All[K]
+    : FieldNotSelected<`Field '${K &
+        string}' is not selected for the '${EventName}' event. Add it under field_selection.${Knob} in config.yaml.`>;
+};
+
+/** An event's block narrowed to the `field_selection` in config.yaml. */
+export type EvmConfigBlock<EventName extends string, Selected extends EvmBlockFieldName> =
+  ConfigSelectedFields<EvmAllBlockFields, Selected, EventName, "block_fields">;
+
+/** An event's transaction narrowed to the `field_selection` in config.yaml. */
+export type EvmConfigTransaction<EventName extends string, Selected extends EvmTransactionFieldName> =
+  ConfigSelectedFields<EvmAllTransactionFields, Selected, EventName, "transaction_fields">;
+
 /** Field names listed under `Knob`, or `never` when the key is absent or lists
  * nothing. Reads the value through `ListedArray` for the same reason that
  * type exists: an optional property doesn't satisfy a `Record<Knob, _>`
@@ -1135,6 +1150,14 @@ export type EvmOnBlockHandler<Fields extends EvmOnBlockFieldsSelection> =
 /** Options for an EVM `indexer.onBlock` registration. */
 export type EvmOnBlockOptions<Fields extends EvmOnBlockFieldsSelection = {}> =
   EvmOnBlockOptionsFor<Fields, GlobalConfig>;
+
+// ============== Fuel event fields ==============
+
+/** The block a Fuel event was recorded in. */
+export type FuelBlock = { id: Hex; height: number; time: number };
+
+/** The transaction that triggered a Fuel event. */
+export type FuelTransaction = { id: Hex };
 
 // ============== Fuel onBlock types ==============
 
