@@ -45,7 +45,7 @@ Send the user the link. Login is done when the process exits and `token` shows t
 
 1. `npx -y envio-cloud repos --org <org>` must list the repo. If not, ask the user to install the Envio Deployments GitHub App on it from https://envio.dev/app.
 2. Make sure the commit can build:
-   - `package.json` pins an exact `envio` version: no range, `latest` or `workspace:*`; at least `2.21.5`, not `2.29.x`.
+   - `package.json` pins an exact `envio` version, `3.16.0` or newer: no range, `latest` or `workspace:*`.
    - Only the root dir is uploaded, without `generated`, `node_modules`, dot folders other than `.envio`, and dotfiles other than `.npmrc`. Everything the indexer reads must be inside the root dir and outside those.
    - The lockfile is ignored, so pin exact dependency versions if the cloud build differs from local.
 3. Add it, checking the `--dry-run` summary first, then run again with `--yes` instead. The branch defaults to `envio`, so always pass yours:
@@ -97,7 +97,7 @@ npx -y envio-cloud deployment logs <indexer> <commit> <org> --level error,warn -
 
 `npx -y envio-cloud indexer settings get|set <indexer> <org>` (`--branch`, `--root-dir`, `--auto-deploy=false`) and `indexer env set|import` apply to the next deployment. `indexer security` (API keys, IP allow-list) applies at once and can lock out existing clients.
 
-To change a running deployment's env vars, use `deployment env set|delete <indexer> <commit> <org> ... --yes`. The indexer restarts from its last checkpoint, with no resync, in about a minute, and the indexer's own `indexer env` is unchanged. Pass secrets with `--from-file <path>`, not as arguments. To follow the update, run `deployment env status <indexer> <commit> <org> --wait --timeout 100s`; exit `4` means still applying, so run it again, and exit `3` means it failed and the previous variables were kept. With an `envio` older than 3.0.0, variables used in `config.yaml` (such as an RPC URL) still need a new deployment.
+To change a running deployment's env vars, use `deployment env set|delete <indexer> <commit> <org> ... --yes`. The indexer restarts from its last checkpoint, with no resync, in about a minute, and the indexer's own `indexer env` is unchanged. Pass secrets with `--from-file <path>`, not as arguments. To follow the update, run `deployment env status <indexer> <commit> <org> --wait --timeout 100s`; exit `4` means still applying, so run it again, and exit `3` means it failed and the previous variables were kept.
 
 ## Scripting
 
