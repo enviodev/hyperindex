@@ -111,26 +111,23 @@ impl Row {
 fn merge_rows(mut rows: VecDeque<Row>, mut incoming: Vec<Row>) -> VecDeque<Row> {
     // Stable, so of two equal incoming rows the first is the one kept.
     incoming.sort_by(Row::compare);
-    incoming.dedup_by(|later, earlier| earlier.compare(later) == Ordering::Equal);
-    // A response at the fetch frontier lands after everything stored, so it
-    // appends without moving the stored rows.
-    if incoming.first().is_none_or(|first| {
-        rows.back()
-            .is_none_or(|last| last.compare(first) == Ordering::Less)
-    }) {
-        rows.extend(incoming);
+    let Some(first) = incoming.first() else {
         return rows;
-    }
-    let mut merged: VecDeque<Row> = VecDeque::with_capacity(rows.len() + incoming.len());
+    };
+    // Stored rows up to the page's first row stay where they are, so a page at
+    // the fetch frontier only appends, and a gap-filling page only moves the
+    // rows after its own start.
+    let start = rows.partition_point(|row| row.compare(first) != Ordering::Greater);
+    let tail = rows.split_off(start);
     let mut push = |row: Row| {
-        if merged
+        if rows
             .back()
             .is_none_or(|last| last.compare(&row) != Ordering::Equal)
         {
-            merged.push_back(row);
+            rows.push_back(row);
         }
     };
-    let mut stored = rows.into_iter().peekable();
+    let mut stored = tail.into_iter().peekable();
     let mut incoming = incoming.into_iter().peekable();
     loop {
         match (stored.peek(), incoming.peek()) {
@@ -146,7 +143,7 @@ fn merge_rows(mut rows: VecDeque<Row>, mut incoming: Vec<Row>) -> VecDeque<Row> 
             (None, None) => break,
         }
     }
-    merged
+    rows
 }
 
 /// A row on its way to JS: the conversion to run and the object to run it on.
