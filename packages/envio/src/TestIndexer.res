@@ -821,7 +821,7 @@ let createTestIndexer = (): t<'processConfig> => {
   result->Dict.set(
     "process",
     (
-      processConfig => {
+      async processConfig => {
         // Check if already processing
         if state.processInProgress {
           JsError.throwWithMessage(
@@ -980,25 +980,18 @@ let createTestIndexer = (): t<'processConfig> => {
           }
         }
 
-        // Set flag before starting the run
         state.processInProgress = true
-
-        // Run chains sequentially, one at a time
-        let rec runChains = idx => {
-          if idx >= chainEntries->Array.length {
-            state.processInProgress = false
-            Promise.resolve({changes: state.processChanges})
-          } else {
-            runChainInProcess(chainEntries->Array.getUnsafe(idx))->Promise.then(_ =>
-              runChains(idx + 1)
-            )
+        try {
+          for idx in 0 to chainEntries->Array.length - 1 {
+            await runChainInProcess(chainEntries->Array.getUnsafe(idx))
           }
-        }
-
-        runChains(0)->Promise.catch(err => {
           state.processInProgress = false
-          Promise.reject(err->Utils.prettifyExn)
-        })
+          {changes: state.processChanges}
+        } catch {
+        | exn =>
+          state.processInProgress = false
+          throw(exn->Utils.prettifyExn)
+        }
       }
     )->(Utils.magic: ('a => promise<processResult>) => unknown),
   )
