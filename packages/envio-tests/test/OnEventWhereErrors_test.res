@@ -40,7 +40,7 @@ const errorOf = (where: unknown, event: "Transfer" | "Burn" = "Transfer") => {
 };
 
 const onlyGte = (reason: string, path = "root") =>
-  \`Invalid where configuration for ERC20. \\\`block\\\` filter is invalid: RescriptSchemaError: Failed parsing at \${path}. Reason: \${reason} Only \\\`_gte\\\` is supported on event filters — use \\\`indexer.onBlock\\\` for \\\`_lte\\\` or \\\`_every\\\`.\`;
+  \`Invalid where configuration for ERC20. \\\`block\\\` filter is invalid: RescriptSchemaError: Failed parsing at \${path}. Reason: \${reason} Only \\\`_gte\\\` is supported on event filters. Use \\\`indexer.onBlock\\\` for \\\`_lte\\\` or \\\`_every\\\`.\`;
 
 describe("onEvent where errors", () => {
   it("names each block-range key an event filter doesn't take", (t) => {

@@ -65,7 +65,7 @@ type Token @storage(clickhouse: {orderBy: ["timestamp", "timestamp"]}) {
 }
 `),
     ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`timestamp\` is listed twice.
-  List each column once — repeating it adds nothing to the sorting key.`)
+  List each column once: repeating it adds nothing to the sorting key.`)
   })
 
   it("Rejects a nullable column, which ClickHouse won't sort by", t => {

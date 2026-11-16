@@ -271,6 +271,9 @@ let init = {
     // resuming takes ClickHouse back to what Postgres committed, fencing off and
     // trimming whatever a run still indexing goes on writing.
     ~resume=true,
+    // Set for a per-chain schema, which can take a new chain under its own
+    // `envio start --chain` process.
+    ~addChainCommand: option<ChainId.t => string>=?,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -346,7 +349,19 @@ let init = {
           )
           let stored = await persistence.storage.readStoredConfig()
           let incompatible = paths => Refused(
-            ResumePlan.incompatibleMessage(paths, ~envioInfo, ~resetCommand, ~runCommand),
+            ResumePlan.incompatibleMessage(
+              paths,
+              ~envioInfo,
+              ~resetCommand,
+              ~runCommand,
+              ~addChainCommands=switch addChainCommand {
+              | Some(addChainCommand) =>
+                paths
+                ->ResumePlan.newChainIdsWhenOnlyChange(~stored, ~chainConfigs)
+                ->Array.map(addChainCommand)
+              | None => []
+              },
+            ),
           )
           switch ResumePlan.make(
             ~stored,
@@ -442,6 +457,7 @@ let initForRun = (
     ),
     ~lowercaseAddresses=config.lowercaseAddresses,
     ~isolated=config.isolated,
+    ~addChainCommand=?config->Config.addChainCommand,
   )
 
 let getInitializedStorageOrThrow = persistence => {

@@ -454,7 +454,7 @@ let getEntityFromState = (
         )
         ->Array.join(", ")
       JsError.throwWithMessage(
-        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}) — use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
+        `Entity \`${entityConfig.name}\` with id \`${entityId}\` exists on multiple chains (${chains}). Use getWhere({${field.fieldName}: {_eq: ...}}) to pick one.`,
       )
     }
   }

@@ -156,11 +156,29 @@ let make = (
     }
   }
 
+// The configured chains the storage holds nothing of, when they are the whole of
+// what changed. A path for a contract or a setting means adding them alone
+// wouldn't resume.
+let newChainIdsWhenOnlyChange = (
+  changedPaths: array<string>,
+  ~stored: stored,
+  ~chainConfigs: array<Config.chain>,
+) => {
+  let newChainIds =
+    chainConfigs
+    ->Array.filter(chain => !(stored.chains->Array.some(storedChain => storedChain.id == chain.id)))
+    ->Array.map(chain => chain.id)
+  let isNewChainPath = path =>
+    newChainIds->Array.some(chainId => path == `chains.${chainId->ChainId.toString}`)
+  changedPaths->Array.every(isNewChainPath) ? newChainIds : []
+}
+
 let incompatibleMessage = (
   changedPaths,
   ~envioInfo: JSON.t,
   ~resetCommand: string,
   ~runCommand: option<string>,
+  ~addChainCommands: array<string>=[],
 ) => {
   let hasClickhouse = switch envioInfo {
   | Object(d) =>
@@ -170,5 +188,11 @@ let incompatibleMessage = (
     }
   | _ => false
   }
-  Config.incompatibleMessage(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+  Config.incompatibleMessage(
+    changedPaths,
+    ~resetCommand,
+    ~runCommand,
+    ~hasClickhouse,
+    ~addChainCommands,
+  )
 }
