@@ -46,7 +46,7 @@ describe("materialize metric", () => {
         ])
         await indexer.getBatchWritePromise()
         t.expect(
-          (await indexer.metric("envio_processing_materialize_seconds"))->Array.map(
+          (await indexer.metric("envio_fetching_block_range_parse_seconds"))->Array.map(
             ({labels, value}: IndexerRunner.metric) => (labels, value->Float.parseFloat > 0.),
           ),
         ).toEqual([(Dict.fromArray([("chainId", "1")]), true)])
