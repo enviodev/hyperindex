@@ -81,7 +81,7 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
 // left unwritten and the loop ends as on a failed one, so nothing queued behind
 // it lands and nothing claims progress past it.
 let writeUntilCommitted = async (state: IndexerState.t, ~operation, write) =>
-  switch await state->ConnectionRetry.untilReachable(~operation, write) {
+  switch await state->ConnectionRetry.retryUntilReachable(~operation, write) {
   | Some() => true
   | None =>
     state->IndexerState.abandonWrites

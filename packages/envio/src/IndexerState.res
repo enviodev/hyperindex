@@ -1014,8 +1014,12 @@ let abandonWrites = (state: t) => state.hasFailedWrite = true
 let waitingOnDatabase = (state: t) => state.waitingOnDatabase
 let waitForDatabase = async (state: t, wait) => {
   state.waitingOnDatabase = state.waitingOnDatabase + 1
-  await wait
-  state.waitingOnDatabase = state.waitingOnDatabase - 1
+  switch await wait {
+  | () => state.waitingOnDatabase = state.waitingOnDatabase - 1
+  | exception exn =>
+    state.waitingOnDatabase = state.waitingOnDatabase - 1
+    throw(exn)
+  }
 }
 
 let beginWriteFiber = (state: t, fiber) => state.writeFiber = Some(fiber)

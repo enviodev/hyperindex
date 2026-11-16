@@ -18,7 +18,11 @@ Async.afterAll(async () =>
 )
 
 // Up at the start of every test, whatever the one before it left behind.
-let takeOutage = () => {
+//
+// The proxy refusing a connection is real socket I/O. An `advanceTime(0)` right
+// after `goDown` waits on it the way it waits on any write in flight, so the
+// attempt has failed, and armed its retry, before the test moves on.
+let outageWithDatabaseUp = () => {
   let outage = outageRef.contents->Option.getOrThrow
   outage.comeBack()
   outage
@@ -85,9 +89,6 @@ let replyWithOneTally = async (source: MockSource.t, ~handled, ~load=true) =>
     },
   ])
 
-// The proxy refusing a connection is real socket I/O. `advanceTime(0)` right
-// after `goDown` waits on it the way it waits on any write in flight, so the
-// attempt has failed, and armed its retry, before the database comes back.
 let makeHeldHandler = () => {
   let release = ref(ignore)
   let handled = Promise.make((resolve, _) => release := resolve)
@@ -115,7 +116,7 @@ describe("Postgres going away mid-run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~postgresPort=proxyPort,
     async (~t, ~indexer, ~source) => {
-      let outage = takeOutage()
+      let outage = outageWithDatabaseUp()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -142,7 +143,7 @@ describe("Postgres going away mid-run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~postgresPort=proxyPort,
     async (~t, ~indexer, ~source) => {
-      let outage = takeOutage()
+      let outage = outageWithDatabaseUp()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -169,7 +170,7 @@ describe("Postgres going away mid-run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~postgresPort=proxyPort,
     async (~t, ~indexer, ~source) => {
-      let outage = takeOutage()
+      let outage = outageWithDatabaseUp()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -203,7 +204,7 @@ describe("Postgres going away mid-run", () => {
     ~postgresPort=proxyPort,
     ~onError=error => errors->Array.push(error.msg)->ignore,
     async (~t, ~indexer, ~source) => {
-      let outage = takeOutage()
+      let outage = outageWithDatabaseUp()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -276,7 +277,7 @@ describe("Postgres going away mid-run", () => {
     ~postgresPort=proxyPort,
     ~onError=error => lateErrors->Array.push(error.msg)->ignore,
     async (~t, ~indexer, ~source) => {
-      let outage = takeOutage()
+      let outage = outageWithDatabaseUp()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -307,7 +308,7 @@ describe("Postgres going away mid-run", () => {
     ~postgresPort=proxyPort,
     ~onError=error => repeatedErrors->Array.push(error.msg)->ignore,
     async (~t, ~indexer, ~source) => {
-      let outage = takeOutage()
+      let outage = outageWithDatabaseUp()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -354,6 +355,38 @@ describe("Postgres going away mid-run", () => {
     },
   )
 
+  // The handler waiting on the load fails with it, and that failure must not
+  // read as the handler's own on top of the one that says what happened.
+  let loadDeadlineErrors = []
+  scenario->Scenario.it(
+    "stops a waiting load with the same single error at the minute",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => loadDeadlineErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = outageWithDatabaseUp()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled)
+      await indexer.advanceTime(1_000)
+
+      outage.goDown()
+      releaseHandler()
+      await indexer.advanceTime(0)
+      await indexer.advanceTime(60_000)
+      outage.comeBack()
+      await indexer.advanceTime(10_000)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((loadDeadlineErrors, indexer->retriedOperations, tallies)).toEqual((
+        [Some(ConnectionRetry.unreachableMsg)],
+        ["Tally.get"],
+        [],
+      ))
+    },
+  )
+
   let deadlineErrors = []
   scenario->Scenario.it(
     "stops with an error once the database stays away for a minute",
@@ -361,7 +394,7 @@ describe("Postgres going away mid-run", () => {
     ~postgresPort=proxyPort,
     ~onError=error => deadlineErrors->Array.push(error.msg)->ignore,
     async (~t, ~indexer, ~source) => {
-      let outage = takeOutage()
+      let outage = outageWithDatabaseUp()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()

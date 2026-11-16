@@ -9,7 +9,7 @@ let scopeKeySuffix = (scope: Internal.chainScope) =>
 // A load reads the same rows however often it runs, so it waits out a database
 // outage. An indexer stopped meanwhile has already reported why.
 let loadUntilReachable = async (indexerState, ~operation, load) =>
-  switch await indexerState->ConnectionRetry.untilReachable(~operation, load) {
+  switch await indexerState->ConnectionRetry.retryUntilReachable(~operation, load) {
   | Some(rows) => rows
   | None => JsError.throwWithMessage(`${operation} was cut off: the indexer stopped`)
   }

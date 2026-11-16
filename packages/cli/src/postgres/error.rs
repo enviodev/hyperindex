@@ -114,13 +114,14 @@ pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
 
 /// Whether the failure is the connection going rather than anything the
 /// statement or its data did: the server ending the session or shutting down,
-/// the socket dropping, or a new connection refused or cut off while the server
-/// is away. Nothing the failed statement sent is known to have run.
+/// the socket dropping, the server's name or network briefly gone, or a new
+/// connection refused or cut off while the server is away. Nothing the failed
+/// statement sent is known to have run.
 ///
-/// Narrow on purpose, since what it accepts is sent again for as long as it
-/// fails. `08P01` is left out: the server raises it for a malformed message,
-/// which a resend repeats. So is a socket error that isn't the peer going, such
-/// as a certificate the trust store refuses.
+/// Narrow on purpose, since what it accepts is sent again for up to a minute
+/// before the indexer gives up. `08P01` is left out: the server raises it for a
+/// malformed message, which a resend repeats. So is a socket error that isn't
+/// the peer going, such as a certificate the trust store refuses.
 pub fn is_connection_lost(error: &anyhow::Error) -> bool {
     if let Some(database) = database_error(error) {
         return matches!(
@@ -134,7 +135,7 @@ pub fn is_connection_lost(error: &anyhow::Error) -> bool {
             .is_some_and(tokio_postgres::Error::is_closed)
             || cause
                 .downcast_ref::<std::io::Error>()
-                .is_some_and(|io| is_peer_gone(io.kind()))
+                .is_some_and(|io| is_peer_gone(io.kind()) || is_name_unresolved(io))
             || matches!(
                 cause.downcast_ref::<deadpool_postgres::PoolError>(),
                 Some(deadpool_postgres::PoolError::Timeout(
@@ -155,7 +156,16 @@ fn is_peer_gone(kind: std::io::ErrorKind) -> bool {
             | UnexpectedEof
             | NotConnected
             | TimedOut
+            | HostUnreachable
+            | NetworkUnreachable
     )
+}
+
+/// The standard library reports a failed name lookup with no kind of its own,
+/// only this wording.
+fn is_name_unresolved(io: &std::io::Error) -> bool {
+    io.to_string()
+        .starts_with("failed to lookup address information")
 }
 
 /// What a lost connection crosses the boundary as, whatever the server or the
@@ -197,6 +207,30 @@ mod tests {
             super::super::client::PgClient::connect(super::super::client::PgConnectionOptions {
                 host: "127.0.0.1".to_string(),
                 port,
+                user: "postgres".to_string(),
+                password: String::new(),
+                database: "postgres".to_string(),
+                ssl: super::super::client::SslSetting::Disable,
+                max_connections: 1,
+                application_name: None,
+                extra_ca_file: None,
+                connect_timeout: std::time::Duration::from_secs(5),
+            })
+            .unwrap();
+
+        let error = client.begin().await.err().unwrap();
+
+        assert!(is_connection_lost(&error), "{error:#}");
+    }
+
+    /// A database restarted under Docker Compose or Kubernetes has no address
+    /// for a moment, so its name stops resolving until it is back.
+    #[tokio::test]
+    async fn a_host_that_does_not_resolve_is_lost() {
+        let client =
+            super::super::client::PgClient::connect(super::super::client::PgConnectionOptions {
+                host: "envio-test-database.invalid".to_string(),
+                port: 5432,
                 user: "postgres".to_string(),
                 password: String::new(),
                 database: "postgres".to_string(),
