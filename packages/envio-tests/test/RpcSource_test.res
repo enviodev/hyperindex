@@ -41,6 +41,8 @@ let makeSource = (
     addressStore,
     blockStore,
     transactionStore,
+    maxAddressesPerRequest: Env.maxAddrInPartition,
+    logger: Logger.makeInMemory(),
   })
 }
 
@@ -592,8 +594,9 @@ describe("RpcSource - field selection end to end", () => {
 
     t.expect((firstCounts, secondCounts, payloads->Array.map(p => p.transaction))).toEqual((
       (1, 1),
-      // The boundary block is still read fresh — it is this range's reorg
-      // observation — but the transaction is served from the store.
+      // The block is at the head, so it is checked and still read fresh — it
+      // is this range's reorg observation — but the transaction is served
+      // from the store.
       (1, 0),
       [Some({"gas": 21000n}->Obj.magic)],
     ))
@@ -966,7 +969,8 @@ describe("RpcSource - builds partition log selections end to end", () => {
         ~addressSet=addressStore->AddressStore.makeSet(
           ~contractName=addressBound.eventConfig.contractName,
         ),
-        ~knownHeight=100,
+        // Far below the head, where a page's blocks aren't checked one by one.
+        ~knownHeight=1_100,
         ~partitionId="selection-e2e",
         ~selection={
           dependsOnAddresses: true,
@@ -1024,6 +1028,8 @@ describe("RpcSource - height subscription", () => {
       blockStore,
       transactionStore,
       ?ws,
+      maxAddressesPerRequest: Env.maxAddrInPartition,
+      logger: Logger.makeInMemory(),
     })
   }
 

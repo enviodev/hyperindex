@@ -9,7 +9,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     block_throttle: 5${chainOptions}
     contracts:
       - name: Gravatar

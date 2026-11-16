@@ -471,24 +471,26 @@ let run = async (
     // copy is held to the same rows: each store is written apart, and this is
     // where a copy that drifted shows up. ClickHouse publishes a batch just
     // after Postgres commits it, so a read right behind a commit can find the
-    // copy a batch short for a moment.
-    let rec clickHouseAgrees = async (entityConfig, ~expected, ~attempts) => {
-      let copy = sortedRows(
-        entityConfig,
-        parseRows(entityConfig, await clickHouseRows(entityConfig)),
-      )
+    // copy a batch short for a moment. Both stores are read again on every
+    // attempt: while the indexer runs, the next batch can commit between the
+    // two reads and leave the copy ahead of a Postgres read that went stale.
+    let rec postgresRowsClickHouseAgreesWith = async (entityConfig, ~attempts) => {
+      let rows = parseRows(entityConfig, await postgresRows(entityConfig))
+      let copy = parseRows(entityConfig, await clickHouseRows(entityConfig))
       let agrees = try {
         Vitest.expect(
-          copy,
+          sortedRows(entityConfig, copy),
           ~message=`ClickHouse's copy of ${entityConfig.name} holds what Postgres does`,
-        ).toEqual(expected)
+        ).toEqual(sortedRows(entityConfig, rows))
         true
       } catch {
       | _ if attempts > 1 => false
       }
-      if !agrees {
+      if agrees {
+        rows
+      } else {
         await Utils.delay(50)
-        await clickHouseAgrees(entityConfig, ~expected, ~attempts=attempts - 1)
+        await postgresRowsClickHouseAgreesWith(entityConfig, ~attempts=attempts - 1)
       }
     }
 
@@ -496,10 +498,7 @@ let run = async (
       switch entityConfig.storage {
       | {postgres: false} => parseRows(entityConfig, await clickHouseRows(entityConfig))
       | {clickhouse: false} => parseRows(entityConfig, await postgresRows(entityConfig))
-      | _ =>
-        let rows = parseRows(entityConfig, await postgresRows(entityConfig))
-        await clickHouseAgrees(entityConfig, ~expected=sortedRows(entityConfig, rows), ~attempts=40)
-        rows
+      | _ => await postgresRowsClickHouseAgreesWith(entityConfig, ~attempts=40)
       }
 
     // Which chain a stored row belongs to, for a table that has chains at all.

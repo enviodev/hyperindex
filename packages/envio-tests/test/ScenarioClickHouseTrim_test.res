@@ -31,18 +31,15 @@ type Counter {
   count: BigInt!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.Counter.set({ id: "total", count: 42n });
+});
+`,
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
-
-type counter = {id: string, count: bigint}
-type counterOps = {set: counter => unit}
-type counterContext = {@as("Counter") counter: counterOps}
-
-let setCounter = (~count) =>
-  async (args: Internal.handlerArgs) => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-    context.counter.set({id: "total", count})
-  }
 
 // A checkpoint id no run reaches, so anything stamped with it can only be the
 // rows this test planted.
@@ -60,7 +57,7 @@ describe("ClickHouse resuming past its own rows", () => {
           fromBlock: 0,
           toBlock: Unbounded,
           reply: Respond({
-            items: [{blockNumber: 5, logIndex: 0, handler: setCounter(~count=42n)}],
+            items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
             latestFetchedBlockNumber: 10,
           }),
         },

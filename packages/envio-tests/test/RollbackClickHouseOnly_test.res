@@ -20,7 +20,7 @@ storage:
 contracts:
   - name: Gravatar
     events:
-      - event: "TestEvent()"
+      - event: "TestEvent(string value)"
 chains:
   - id: 1337
     rpc:
@@ -42,20 +42,26 @@ type EntityWithTimestamp @storage(clickhouse: {}) {
   timestamp: Timestamp!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  context.SimpleEntity.set({ id: "1", value: event.params.value });
+  context.EntityWithTimestamp.set({ id: "ch-only", timestamp: new Date(event.block.number) });
+});
+`,
   ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type simpleEntity = {id: string, value: string}
 type entityWithTimestamp = {id: string, timestamp: Date.t}
-type simpleEntityOps = {set: simpleEntity => unit}
-type timestampOps = {set: entityWithTimestamp => unit}
-type handlerContext = {
-  @as("SimpleEntity") simpleEntity: simpleEntityOps,
-  @as("EntityWithTimestamp") entityWithTimestamp: timestampOps,
-}
 
-let asContext = (context: Internal.handlerContext) =>
-  context->(Utils.magic: Internal.handlerContext => handlerContext)
+let setValue = (~block, value): MockSource.itemMock => {
+  event: "Gravatar.TestEvent",
+  blockNumber: block,
+  logIndex: 0,
+  params: dict{"value": value->(Utils.magic: string => unknown)},
+}
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
@@ -98,26 +104,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
           fromBlock: 101,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 101,
-                logIndex: 0,
-                handler: async args => {
-                  let context = args.context->asContext
-                  context.simpleEntity.set({id: "1", value: "value-1"})
-                  context.entityWithTimestamp.set({id: "ch-only", timestamp: Date.fromTime(101.)})
-                },
-              },
-              {
-                blockNumber: 102,
-                logIndex: 0,
-                handler: async args => {
-                  let context = args.context->asContext
-                  context.simpleEntity.set({id: "1", value: "value-2"})
-                  context.entityWithTimestamp.set({id: "ch-only", timestamp: Date.fromTime(102.)})
-                },
-              },
-            ],
+            items: [setValue(~block=101, "value-1"), setValue(~block=102, "value-2")],
             latestFetchedBlockNumber: 102,
           }),
         },
@@ -144,13 +131,10 @@ describe("Rollback with a ClickHouse-only entity", () => {
       ])
 
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          // The block 100 is untouched so we can rollback to it; 101 came
-          // back on a different hash, so it is part of the reorg.
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        // 101 came back on a different hash, so it is part of the reorg and
+        // the rollback falls back to block 100, the one below the window.
+        reply: [{blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101}],
       })
 
       await indexer.getRollbackReadyPromise()->raiseOnIndexerError

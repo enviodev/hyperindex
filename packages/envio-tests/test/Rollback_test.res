@@ -131,7 +131,7 @@ describe("E2E rollback tests", () => {
     ~t,
     ~sourceMock: MockSource.t,
     ~indexer: IndexerRunner.t,
-    ~firstHistoryCheckpointId=2n,
+    ~firstHistoryCheckpointId=1n,
     // How far the id after the rollback sits above the first history one. The
     // diff takes an id per chain it moves, so a run with a sibling to move
     // burns one more before the re-index.
@@ -336,11 +336,10 @@ describe("E2E rollback tests", () => {
     ])
 
     await sourceMock.expectBlockHashLookup({
-      blockNumbers: [100, 101],
+      blockNumbers: [101],
       reply: [
-        // The block 100 is untouched so we can rollback to it; 101 came back on a
-        // different hash, so it belongs to the reorg.
-        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        // 101 came back on a different hash, so it belongs to the reorg, and the
+        // rollback lands on the last block below the reorg window.
         {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
       ],
     })
@@ -475,7 +474,7 @@ describe("E2E rollback tests", () => {
       await restarted.advanceTime(0)
 
       // After restart, we should still be in reorg threshold because
-      // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
+      // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (199) = 101
       t.expect(await restarted.metric("envio_reorg_threshold")).toEqual([
         {value: "1", labels: Dict.make()},
       ])
@@ -638,13 +637,13 @@ describe("E2E rollback tests", () => {
         [{id: "1", value: "after-recreate"}],
         [
           Set({
-            checkpointId: 2n,
+            checkpointId: 1n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "before-delete"},
           }),
-          Delete({checkpointId: 3n, entityId: "1"->EntityId.unsafeOfString}),
+          Delete({checkpointId: 2n, entityId: "1"->EntityId.unsafeOfString}),
           Set({
-            checkpointId: 4n,
+            checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {id: "1", value: "after-recreate"},
           }),
@@ -668,9 +667,8 @@ describe("E2E rollback tests", () => {
 
       // The rollback queries the scanned blocks below the reorg.
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101, 102],
+        blockNumbers: [101, 102],
         reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
           {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
           {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
         ],
@@ -708,7 +706,7 @@ describe("E2E rollback tests", () => {
     "Parks a reorg detected while a batch is still processing",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
-    async (~t as _, ~indexer, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
@@ -716,6 +714,7 @@ describe("E2E rollback tests", () => {
       // while the batch is still in flight.
       let releaseHandler = ref(() => ())
       let handlerGate = Promise.make((resolve, _) => releaseHandler := (() => resolve()))
+      let handlerStarted = ref(false)
 
       await sourceMock.expectItemsQueries([
         {
@@ -726,6 +725,7 @@ describe("E2E rollback tests", () => {
                 blockNumber: 101,
                 logIndex: 0,
                 handler: async args => {
+                  handlerStarted := true
                   let context = args.context->asContext
                   context.simpleEntity.set({id: "1", value: "from-reorged-block"})
                   await handlerGate
@@ -738,9 +738,15 @@ describe("E2E rollback tests", () => {
         },
       ])
 
+      await Scenario.waitUntil(
+        () => handlerStarted.contents,
+        ~message="the block-101 batch to reach its handler",
+      )
+
       // The processing loop launches the next fetch while the batch is in
       // flight, blocked in the handler above. A reorg lands mid-batch: block 101
       // came back with a different hash.
+      let reorgsBefore = sourceMock.reorgCallCount()
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 102,
@@ -752,11 +758,27 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      // The rollback starts finding its depth even though the batch hasn't finished.
-      await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100],
-        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
-      })
+      // The rollback starts finding its depth even though the batch hasn't
+      // finished. Nothing scanned is left below block 101, so the search asks
+      // for no hash and lands on the threshold's lower edge.
+      await Scenario.waitUntil(
+        () => sourceMock.reorgCallCount() > reorgsBefore,
+        ~message="the rollback's depth search to start",
+      )
+      let isParked = () =>
+        indexer.allLogsAsJson()->Array.some(
+          line =>
+            line->Dict.get("msg") ==
+              Some(String("Waiting for batch to finish processing before executing rollback")),
+        )
+      await Scenario.waitUntil(isParked, ~message="the rollback to park behind the batch")
+      t.expect(
+        (
+          handlerStarted.contents,
+          sourceMock.pendingItemsQueries->Array.some(query => query.fromBlock == 101),
+        ),
+        ~message="the batch is still in its handler and the rollback hasn't re-requested block 101",
+      ).toEqual((true, false))
 
       // Releasing the handler lets the batch finish; its progress is applied and the
       // parked rollback then executes and re-requests from the rolled-back block.
@@ -860,11 +882,8 @@ describe("E2E rollback tests", () => {
         },
       ])
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        reply: [{blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101}],
       })
       await indexer.getRollbackReadyPromise()
 
@@ -920,11 +939,8 @@ describe("E2E rollback tests", () => {
         {reply: LeavePending},
       ])
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 102],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 102, blockHash: "0x102b", blockTimestamp: 102},
-        ],
+        blockNumbers: [102],
+        reply: [{blockNumber: 102, blockHash: "0x102b", blockTimestamp: 102}],
       })
       await indexer.getRollbackReadyPromise()
 
@@ -1025,11 +1041,8 @@ describe("E2E rollback tests", () => {
         },
       ])
       await sourceMock100.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        reply: [{blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101}],
       })
       await indexer.getRollbackReadyPromise()
 
@@ -1071,7 +1084,7 @@ describe("E2E rollback tests", () => {
         ~message="Should have added a checkpoint even though there are no items in the batch",
       ).toEqual([
         {
-          id: 2n,
+          id: 1n,
           eventsProcessed: 0,
           chainId: 1337->ChainId.fromInt,
           blockNumber: 102,
@@ -1094,6 +1107,7 @@ describe("E2E rollback tests", () => {
       ])
       await indexer.getBatchWritePromise()
 
+      let reorgsBefore = sourceMock.reorgCallCount()
       await sourceMock.expectItemsQueries([
         {
           fromBlock: 103,
@@ -1108,14 +1122,12 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100],
-        reply: [
-          // The block 100 is untouched so we can rollback to it
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-        ],
-      })
-
+      // Nothing scanned is left below block 102, so the depth search asks for
+      // no hash and rolls back to the threshold's lower edge, block 100.
+      await Scenario.waitUntil(
+        () => sourceMock.reorgCallCount() > reorgsBefore,
+        ~message="the rollback's depth search to start",
+      )
       await indexer.getRollbackReadyPromise()
       // The fetch state is rolled back and items re-requested.
       await sourceMock.expectItemsQueries([
@@ -1139,7 +1151,7 @@ describe("E2E rollback tests", () => {
         ~message="Should update the checkpoint without retriggering a reorg",
       ).toEqual([
         {
-          id: 4n,
+          id: 3n,
           eventsProcessed: 0,
           chainId: 1337->ChainId.fromInt,
           blockNumber: 102,
@@ -1168,7 +1180,7 @@ describe("E2E rollback tests", () => {
         ~t,
         ~sourceMock=sourceMock2,
         ~indexer,
-        ~firstHistoryCheckpointId=3n,
+        ~firstHistoryCheckpointId=1n,
         ~afterRollback=4n,
         ~chainId=100->ChainId.fromInt,
       )
@@ -1340,10 +1352,9 @@ describe("E2E rollback tests", () => {
       ])
 
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101, 102],
+        blockNumbers: [101, 102],
         reply: [
           // The block 102 is untouched so we can rollback to it
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
           {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
           {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
         ],
@@ -1374,10 +1385,10 @@ describe("E2E rollback tests", () => {
       // dynamic-contract partition re-request from 103.
       await sourceMock.expectItemsQueries([
         {
-          // Normal partition (recreated fresh, no chunking)
+          // Normal partition, re-requested in the chunks its history sizes.
           partitionId: "0",
           fromBlock: 103,
-          toBlock: Unbounded,
+          toBlock: Bounded(104),
           retryCount: 0,
           reply: Respond({
             items: [
@@ -1391,13 +1402,18 @@ describe("E2E rollback tests", () => {
           }),
         },
         {
-          // DC partition (recreated fresh, no chunking since chunk history lost)
+          // The address-free partition the dynamic contracts are fetched in
+          // near the head.
           partitionId: "1",
           fromBlock: 103,
           toBlock: Unbounded,
           retryCount: 0,
           reply: Respond({items: [], latestFetchedBlockNumber: 104}),
         },
+        // The base partition's later chunks, and the address-free partition's
+        // chunks voided by the rollback.
+        {partitionId: "0", reply: LeavePending},
+        {partitionId: "1", reply: LeavePending},
       ])
 
       await indexer.getBatchWritePromise()
@@ -1413,10 +1429,11 @@ describe("E2E rollback tests", () => {
           contractName: "SimpleNft",
         },
       ])
-      // After the db rollback, both partitions continue from block 105 (no chunk history yet)
+      // After the db rollback, the address-free partition continues from block 105.
       await sourceMock.expectItemsQueries([
-        {partitionId: "0", fromBlock: 105, toBlock: Unbounded, reply: LeavePending},
-        {partitionId: "1", fromBlock: 105, toBlock: Unbounded, reply: LeavePending},
+        {partitionId: "1", fromBlock: 105, reply: LeavePending},
+        {partitionId: "0", reply: LeavePending},
+        {partitionId: "1", reply: LeavePending},
       ])
     },
   )
@@ -1550,35 +1567,35 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         [
           {
-            id: 3n,
+            id: 1n,
             eventsProcessed: 1,
             chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
           },
           {
-            id: 4n,
+            id: 2n,
             eventsProcessed: 2,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
           },
           {
-            id: 5n,
+            id: 3n,
             eventsProcessed: 1,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 6n,
+            id: 4n,
             eventsProcessed: 1,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 7n,
+            id: 5n,
             eventsProcessed: 1,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 107,
@@ -1587,7 +1604,7 @@ describe("E2E rollback tests", () => {
           // Block 108 is skipped, since we don't have
           // ether events processed or block hash for it
           {
-            id: 8n,
+            id: 6n,
             eventsProcessed: 0,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 109,
@@ -1602,7 +1619,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: 3n,
+            checkpointId: 1n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1610,7 +1627,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 4n,
+            checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1618,7 +1635,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 5n,
+            checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1626,7 +1643,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 6n,
+            checkpointId: 4n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1634,7 +1651,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 7n,
+            checkpointId: 5n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1702,10 +1719,9 @@ describe("E2E rollback tests", () => {
       ])
 
       await sourceMock1337.expectBlockHashLookup({
-        blockNumbers: [100, 103],
+        blockNumbers: [103],
         reply: [
           // The block 103 is untouched so we can rollback to it
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
           {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
         ],
       })
@@ -1864,31 +1880,31 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         [
           {
-            id: 3n,
+            id: 1n,
             eventsProcessed: 1,
             chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
           },
           {
-            id: 4n,
+            id: 2n,
             eventsProcessed: 2,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
           },
-          // Reorg checkpoint id was checkpoint id 5
+          // Reorg checkpoint id was checkpoint id 3
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 11n,
+            id: 9n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 12n,
+            id: 10n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -1906,7 +1922,7 @@ describe("E2E rollback tests", () => {
         async _ =>
           t.expect(await simpleEntityHistory(indexer)).toEqual([
             Set({
-              checkpointId: 3n,
+              checkpointId: 1n,
               entityId: "1"->EntityId.unsafeOfString,
               entity: {
                 id: "1",
@@ -1914,7 +1930,7 @@ describe("E2E rollback tests", () => {
               },
             }),
             Set({
-              checkpointId: 4n,
+              checkpointId: 2n,
               entityId: "1"->EntityId.unsafeOfString,
               entity: {
                 id: "1",
@@ -1922,7 +1938,7 @@ describe("E2E rollback tests", () => {
               },
             }),
             Set({
-              checkpointId: 11n,
+              checkpointId: 9n,
               entityId: "1"->EntityId.unsafeOfString,
               entity: {
                 id: "1",
@@ -2075,35 +2091,35 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         [
           {
-            id: 3n,
+            id: 1n,
             eventsProcessed: 1,
             chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
+          },
+          {
+            id: 2n,
+            eventsProcessed: 2,
+            chainId: 1337->ChainId.fromInt,
+            blockNumber: 103,
+            blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
+          },
+          {
+            id: 3n,
+            eventsProcessed: 1,
+            chainId: 1337->ChainId.fromInt,
+            blockNumber: 106,
+            blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
             id: 4n,
             eventsProcessed: 2,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 103,
-            blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
-          },
-          {
-            id: 5n,
-            eventsProcessed: 1,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 106,
-            blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
-          },
-          {
-            id: 6n,
-            eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 7n,
+            id: 5n,
             eventsProcessed: 1,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 107,
@@ -2112,7 +2128,7 @@ describe("E2E rollback tests", () => {
           // Block 108 is skipped, since we don't have
           // ether events processed or block hash for it
           {
-            id: 8n,
+            id: 6n,
             eventsProcessed: 0,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 109,
@@ -2127,7 +2143,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: 3n,
+            checkpointId: 1n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2135,7 +2151,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 4n,
+            checkpointId: 2n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2143,7 +2159,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 5n,
+            checkpointId: 3n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2151,7 +2167,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 6n,
+            checkpointId: 4n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2159,7 +2175,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 7n,
+            checkpointId: 5n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2187,7 +2203,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: 6n,
+            checkpointId: 4n,
             entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               id: "foo",
@@ -2212,10 +2228,9 @@ describe("E2E rollback tests", () => {
       ])
 
       await sourceMock1337.expectBlockHashLookup({
-        blockNumbers: [100, 103],
+        blockNumbers: [103],
         reply: [
           // The block 103 is untouched so we can rollback to it
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
           {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
         ],
       })
@@ -2282,31 +2297,31 @@ describe("E2E rollback tests", () => {
       ).toEqual((
         [
           {
-            id: 3n,
+            id: 1n,
             eventsProcessed: 1,
             chainId: 100->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
           },
           {
-            id: 4n,
+            id: 2n,
             eventsProcessed: 2,
             chainId: 1337->ChainId.fromInt,
             blockNumber: 103,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0103")),
           },
-          // Reorg checkpoint id was checkpoint id 5
+          // Reorg checkpoint id was checkpoint id 3
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 11n,
+            id: 9n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 12n,
+            id: 10n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -2324,7 +2339,7 @@ describe("E2E rollback tests", () => {
         async _ =>
           t.expect(await simpleEntityHistory(indexer)).toEqual([
             Set({
-              checkpointId: 3n,
+              checkpointId: 1n,
               entityId: "1"->EntityId.unsafeOfString,
               entity: {
                 id: "1",
@@ -2332,7 +2347,7 @@ describe("E2E rollback tests", () => {
               },
             }),
             Set({
-              checkpointId: 4n,
+              checkpointId: 2n,
               entityId: "1"->EntityId.unsafeOfString,
               entity: {
                 id: "1",
@@ -2340,7 +2355,7 @@ describe("E2E rollback tests", () => {
               },
             }),
             Set({
-              checkpointId: 11n,
+              checkpointId: 9n,
               entityId: "1"->EntityId.unsafeOfString,
               entity: {
                 id: "1",
@@ -2369,7 +2384,7 @@ describe("E2E rollback tests", () => {
             ~message="Should also add history for the non-reorg chain's entity",
           ).toEqual([
             Set({
-              checkpointId: 11n,
+              checkpointId: 9n,
               entityId: "foo"->EntityId.unsafeOfString,
               entity: {
                 id: "foo",
@@ -2445,32 +2460,38 @@ describe("E2E rollback tests", () => {
         },
       ])
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        reply: [{blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101}],
       })
       await indexer.getRollbackReadyPromise()
 
       // Second reorg before any batch is written: the store has already
       // tombstoned the registration, so it reports nothing this time round.
+      // The address-free partition stays, though no address is left for it.
+      let reorgsBefore = sourceMock.reorgCallCount()
       await sourceMock.expectItemsQueries([
         {
+          partitionId: "0",
           coversBlock: 102,
           reply: Respond({
             items: [],
             prevRangeLastBlock: {blockNumber: 101, blockHash: "0x101a"},
           }),
         },
+        {partitionId: "1", reply: LeavePending},
       ])
-      await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100],
-        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
-      })
+      // Nothing scanned is left below block 101, so the depth search asks for no
+      // hash and rolls back to the threshold's lower edge.
+      await Scenario.waitUntil(
+        () => sourceMock.reorgCallCount() > reorgsBefore,
+        ~message="the second rollback's depth search to start",
+      )
       await indexer.getRollbackReadyPromise()
 
-      await sourceMock.expectItemsQueries([{coversBlock: 101, reply: Respond({items: []})}])
+      await sourceMock.expectItemsQueries([
+        {partitionId: "0", coversBlock: 101, reply: Respond({items: []})},
+        {partitionId: "1", coversBlock: 101, reply: Respond({items: []})},
+      ])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -2514,7 +2535,6 @@ describe("E2E rollback tests", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      // Check initial metrics - should have 3 events processed
       t.expect(
         await indexer.metric("envio_progress_events"),
         ~message="Should have 1 event processed initially",
@@ -2536,24 +2556,28 @@ describe("E2E rollback tests", () => {
         {partitionId: "0", reply: LeavePending},
       ])
 
-      // Rollback to block 100 - blocks 101-103 are reorged
+      // Block 101 comes back on the same hash, so the rollback lands on it and
+      // only block 102, with the one event, is reorged.
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-        ],
+        blockNumbers: [101],
+        reply: [{blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101}],
       })
 
       await indexer.getRollbackReadyPromise()
 
-      // Check metrics after first rollback - should have rolled back all 3 events
       t.expect(
-        await indexer.metric("envio_progress_events"),
-        ~message="Should have 0 events after first rollback",
-      ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
+        (
+          await indexer.metric("envio_progress_block"),
+          await indexer.metric("envio_progress_events"),
+        ),
+        ~message="The first rollback lands on block 101 and takes back the block-102 event",
+      ).toEqual((
+        [{value: "101", labels: dict{"chainId": "1337"}}],
+        [{value: "0", labels: dict{"chainId": "1337"}}],
+      ))
 
       // Detects second reorg
+      let reorgsBefore = sourceMock.reorgCallCount()
       await sourceMock.expectItemsQueries([
         {
           coversBlock: 102,
@@ -2567,18 +2591,25 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      // Rollback to block 100 - blocks 101-103 are reorged
-      await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100],
-        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
-      })
+      // Block 101 itself is reorged now. Nothing scanned is left below it, so
+      // the depth search asks for no hash and falls back to block 100, the one
+      // below the reorg window.
+      await Scenario.waitUntil(
+        () => sourceMock.reorgCallCount() > reorgsBefore,
+        ~message="the second rollback's depth search to start",
+      )
       await indexer.getRollbackReadyPromise()
 
-      // Check metrics after processing - should have 2 events
       t.expect(
-        await indexer.metric("envio_progress_events"),
-        ~message="Shouldn't go to negative with the counter",
-      ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
+        (
+          await indexer.metric("envio_progress_block"),
+          await indexer.metric("envio_progress_events"),
+        ),
+        ~message="The second rollback lands on block 100 without taking the counter below zero",
+      ).toEqual((
+        [{value: "100", labels: dict{"chainId": "1337"}}],
+        [{value: "0", labels: dict{"chainId": "1337"}}],
+      ))
 
       // Process batch after rollback
       sourceMock.drainPendingItemsQueries()
@@ -2714,15 +2745,12 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      // getBlockHashes called with [100, 102]: both are stored in the
-      // threshold below 103. Block 100 still matches and 102 came back on
-      // the new fork → rollback target = 100.
+      // getBlockHashes called with [102]: the only block stored in the
+      // threshold below 103. It came back on the new fork, so the rollback
+      // falls back to getHighestBlockBelowThreshold = 300 - 199 - 1 = 100.
       await sourceMock1337.expectBlockHashLookup({
-        blockNumbers: [100, 102],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
-        ],
+        blockNumbers: [102],
+        reply: [{blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102}],
       })
 
       // Clean up pending calls from before rollback
@@ -2752,7 +2780,7 @@ describe("E2E rollback tests", () => {
       // Chain 1337 re-fetches from block 101, prevRangeLastBlock auto = {100, "0x100"}
       // We override to trigger reorg: block 100 hash changed
       // No getBlockHashes call needed: getThresholdBlockNumbersBelowBlock(~blockNumber=100) = []
-      // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
+      // so getHighestBlockBelowThreshold = 300 - 199 - 1 = 100 is used directly.
       await sourceMock1337.expectItemsQueries([
         {
           fromBlock: 101,
@@ -2949,11 +2977,8 @@ describe("E2E rollback tests", () => {
       ])
 
       await sourceMock1337.expectBlockHashLookup({
-        blockNumbers: [100, 102],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
-        ],
+        blockNumbers: [102],
+        reply: [{blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102}],
       })
 
       await indexer.getRollbackReadyPromise()
@@ -3113,9 +3138,8 @@ describe("E2E rollback tests", () => {
 
       // Rollback to block 112
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101, 103, 104, 106, 112],
+        blockNumbers: [101, 103, 104, 106, 112],
         reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
           {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
           {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
           {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
@@ -3223,12 +3247,11 @@ describe("E2E rollback tests", () => {
         {partitionId: "0", reply: LeavePending},
       ])
 
-      // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 112, 115]
+      // Stored checkpoints below reorgBlockNumber(118): [103, 106, 112, 115]
       // All searched blocks are valid, so the reorg is shallow (only block 118).
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [100, 101, 103, 104, 106, 112, 115],
+        blockNumbers: [101, 103, 104, 106, 112, 115],
         reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
           {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 100},
           {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 100},
           {blockNumber: 104, blockHash: "0x0104", blockTimestamp: 100},
@@ -3321,6 +3344,7 @@ describe("E2E rollback tests", () => {
       // Reorg is detected while the batch write is still in-flight,
       // so chain 1337 never gets a checkpoint at block 101.
       // getRollbackProgressDiff won't return an entry for chain 1337 (None branch).
+      let reorgsBefore = sourceMock1.reorgCallCount()
       await sourceMock1.expectItemsQueries([
         {
           fromBlock: 102,
@@ -3335,10 +3359,12 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      await sourceMock1.expectBlockHashLookup({
-        blockNumbers: [100],
-        reply: [{blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100}],
-      })
+      // Nothing scanned is left below block 101, so the depth search asks for no
+      // hash and rolls back to the threshold's lower edge, block 100.
+      await Scenario.waitUntil(
+        () => sourceMock1.reorgCallCount() > reorgsBefore,
+        ~message="the rollback's depth search to start",
+      )
 
       await indexer.getRollbackReadyPromise()
 
@@ -3572,11 +3598,8 @@ describe("E2E rollback tests", () => {
       ])
 
       await sourceMock1337.expectBlockHashLookup({
-        blockNumbers: [100, 103],
-        reply: [
-          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-          {blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103},
-        ],
+        blockNumbers: [103],
+        reply: [{blockNumber: 103, blockHash: "0x0103", blockTimestamp: 103}],
       })
 
       // Let the rollback proceed to the flush of the stalled write, then
@@ -3718,7 +3741,7 @@ describe("E2E rollback tests", () => {
       await indexer.usePostgresSql(async _ =>
         t.expect(await simpleEntityHistory(indexer)).toEqual([
           Set({
-            checkpointId: 4n,
+            checkpointId: 2n,
             entityId: "reorg"->EntityId.unsafeOfString,
             entity: {
               id: "reorg",
@@ -3726,7 +3749,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 3n,
+            checkpointId: 1n,
             entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               id: "victim",
@@ -3734,7 +3757,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 9n,
+            checkpointId: 7n,
             entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               id: "victim",

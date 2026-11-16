@@ -33,18 +33,17 @@ type Counter {
   count: BigInt!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.value });
+});
+`,
   ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
-type counter = {id: string, count: bigint}
-type counterOps = {set: counter => unit}
-type counterContext = {@as("Counter") counter: counterOps}
-
-let setCounter = (~count) =>
-  async (args: Internal.handlerArgs) => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-    context.counter.set({id: "total", count})
-  }
+external toUnknown: bigint => unknown = "%identity"
 
 let feed = async (
   indexer: IndexerRunner.t,
@@ -56,7 +55,14 @@ let feed = async (
   let reply: MockSource.expectedItemsQuery = {
     coversBlock: blockNumber,
     reply: Respond({
-      items: [{blockNumber, logIndex: 0, handler: setCounter(~count)}],
+      items: [
+        {
+          event: "Token.Transfer",
+          blockNumber,
+          logIndex: 0,
+          params: dict{"value": count->toUnknown},
+        },
+      ],
       latestFetchedBlockNumber: blockNumber,
     }),
   }

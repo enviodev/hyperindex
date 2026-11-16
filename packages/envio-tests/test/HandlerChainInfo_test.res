@@ -11,7 +11,7 @@ name: handler-chain-info
 contracts:
   - name: Token
     events:
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
+      - event: Transfer(string label)
 chains:
   - id: 1
     rpc:
@@ -37,24 +37,26 @@ type Seen {
   isRealtime: Boolean!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Seen.set({
+    id: event.params.label,
+    chainId: context.chain.id,
+    isRealtime: context.chain.isRealtime,
+  });
+});
+`,
 )
 
 type seen = {id: string, chainId: int, isRealtime: bool}
-type seenOps = {set: seen => unit}
-type chainInfo = {id: int, isRealtime: bool}
-type seenContext = {@as("Seen") seen: seenOps, chain: chainInfo}
 
 let recordChain = (~block, ~label): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => seenContext)
-    context.seen.set({
-      id: label,
-      chainId: context.chain.id,
-      isRealtime: context.chain.isRealtime,
-    })
-  },
+  params: dict{"label": label->(Utils.magic: string => unknown)},
 }
 
 let sortById = (rows: array<seen>) => rows->Array.toSorted((a, b) => String.compare(a.id, b.id))
