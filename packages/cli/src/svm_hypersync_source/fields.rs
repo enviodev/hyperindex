@@ -489,16 +489,46 @@ mod tests {
             )
         );
         assert_eq!(
-            names(BLOCK),
-            quoted_names_between(&res, "let validSvmBlockFields", "let validSvmLogFields")
-        );
-        assert_eq!(
             names(LOG),
             quoted_names_between(
                 &res,
                 "let validSvmLogFields",
                 "let resolveSvmInlineFieldSelection"
             )
+        );
+    }
+
+    /// `EventConfigBuilder` validates block fields against `Svm.blockFields`,
+    /// whose positions are the block store's field codes, and rejects
+    /// `Svm.slotOnlyBlockFields` on instructions.
+    #[test]
+    fn svm_res_block_fields_match_store_ordinals() {
+        let svm_res = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../envio/src/sources/Svm.res"
+        ))
+        .expect("read Svm.res");
+        let store_names = |counts: Option<bool>| {
+            SvmBlockField::VARIANTS
+                .iter()
+                .filter(|&&field| {
+                    let is_count =
+                        SvmBlockField::TRANSACTION_COUNTS_MASK & (1 << field as u32) != 0;
+                    counts.is_none_or(|counts| counts == is_count)
+                })
+                .map(|field| field.name().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            (
+                quoted_names_between(&svm_res, "let blockFields", "let slotOnlyBlockFields"),
+                quoted_names_between(
+                    &svm_res,
+                    "let slotOnlyBlockFields",
+                    "let eventBlockFieldMask"
+                ),
+            ),
+            (store_names(None), store_names(Some(true)))
         );
     }
 
