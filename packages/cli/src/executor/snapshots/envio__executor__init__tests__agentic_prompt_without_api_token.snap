@@ -19,4 +19,4 @@ pnpx envio init contract-import explorer \
   --all-events \
   -d ${directory}
 
-Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.
+Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet: keep iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until the user's goal is met.

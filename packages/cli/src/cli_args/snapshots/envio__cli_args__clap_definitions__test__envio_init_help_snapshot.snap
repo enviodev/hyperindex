@@ -2,7 +2,7 @@
 source: packages/cli/src/cli_args/clap_definitions.rs
 expression: rendered
 ---
-Quick start — run with no arguments:
+Quick start, run with no arguments:
 
   pnpx envio init
 

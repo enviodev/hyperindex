@@ -403,7 +403,7 @@ fn is_agentic_init_mode(env: &AgenticEnv) -> bool {
 /// prints it once the agent actually runs `envio init`.
 pub fn init_help_preamble() -> String {
     let mut out = String::new();
-    out.push_str("Quick start — run with no arguments:\n\n  pnpx envio init\n\n");
+    out.push_str("Quick start, run with no arguments:\n\n  pnpx envio init\n\n");
     out.push_str(
         "Guided step-by-step for humans and AI agents. Reach for the subcommands below only when \
          you already know exactly what you want.\n",
@@ -453,7 +453,7 @@ fn agentic_init_prompt(has_api_token: bool) -> String {
     out.push_str("  -d ${directory}\n");
     out.push('\n');
     out.push_str(
-        "Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet — keep \
+        "Then `cd ${directory}` and run `pnpm test`. Don't hand the project off yet: keep \
          iterating on the indexer with a TDD loop (extend tests, run them, fix handlers) until \
          the user's goal is met.\n",
     );
