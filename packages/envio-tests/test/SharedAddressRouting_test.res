@@ -187,7 +187,13 @@ describe("An address indexed by two contracts", () => {
         let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
         let page = await source->fetch(~addressSet)
-        page.parsedQueueItems
+        page.items->TestEventStore.itemsOf(
+          ~context={
+            chainId: 1->ChainId.fromInt,
+            onEventRegistrations: onEventRegistrations(),
+            onBlockRegistrations: [],
+          },
+        )
       },
     )
 

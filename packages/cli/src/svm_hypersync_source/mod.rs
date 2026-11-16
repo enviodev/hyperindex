@@ -28,6 +28,7 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInn
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
+use crate::event_store::{EventStore, Row, RowFormat};
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -208,7 +209,7 @@ impl SvmHyperSyncClient {
         &self,
         params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore, EventStore)> {
         let built = self
             .selection_builder
             .build(&params.on_event_registration_indexes)
@@ -230,11 +231,10 @@ impl SvmHyperSyncClient {
             return Ok((
                 ItemsResponse {
                     next_slot: next_slot as i64,
-                    event_items: Vec::new(),
-                    block_items: Vec::new(),
                 },
                 TransactionStore::new_svm(),
                 BlockStore::new_svm(),
+                EventStore::empty(),
             ));
         }
         let from_slot = block_query.from_block;
@@ -359,10 +359,15 @@ impl SvmHyperSyncClient {
             next_slot: i64::try_from(block_query.fetched_until(resp.next_slot))
                 .context("next_slot overflow")
                 .map_err(map_err)?,
-            event_items: items,
-            block_items,
         };
-        Ok((response, store, block_store))
+        let page = EventStore::from_rows(
+            items
+                .into_iter()
+                .map(EventItem::into_row)
+                .chain(block_items.into_iter().map(BlockItem::into_row))
+                .collect(),
+        );
+        Ok((response, store, block_store, page))
     }
 }
 
@@ -411,7 +416,6 @@ pub struct ItemsQuery {
     pub reorgable_from: Option<i64>,
 }
 
-#[napi(object)]
 #[derive(Clone)]
 pub struct LogItem {
     pub kind: Option<String>,
@@ -421,7 +425,6 @@ pub struct LogItem {
 /// One routed instruction. Carries everything JS needs to build the handler
 /// payload; the parent transaction and block are materialised from the
 /// per-chain stores at batch prep.
-#[napi(object, object_from_js = false)]
 pub struct EventItem {
     /// The registration this instruction routed to, as passed to the client
     /// constructor. Instructions that route nowhere never cross the boundary.
@@ -444,11 +447,74 @@ pub struct EventItem {
     pub logs: Option<Vec<LogItem>>,
 }
 
+impl EventItem {
+    /// The store row of this instruction; it replays to the object
+    /// `SvmHyperSyncClient.Items.item` describes.
+    fn into_row(self) -> Row {
+        let mut data = JsTape::new();
+        data.obj(10);
+        data.key("onEventRegistrationIndex");
+        data.num(self.on_event_registration_index as f64);
+        data.key("slot");
+        data.num(self.slot as f64);
+        data.key("transactionIndex");
+        data.num(self.transaction_index as f64);
+        data.key("path");
+        data.arr(self.path.len());
+        for step in &self.path {
+            data.num(*step as f64);
+        }
+        data.key("programId");
+        data.str(&self.program_id);
+        data.key("accounts");
+        data.arr(self.accounts.len());
+        for account in &self.accounts {
+            data.str(account);
+        }
+        data.key("data");
+        data.bytes(&self.data);
+        data.key("isInner");
+        data.bool(self.is_inner);
+        data.key("args");
+        match &self.args {
+            Some(args) => data.embed(args),
+            None => data.undefined(),
+        }
+        data.key("logs");
+        match &self.logs {
+            Some(logs) => {
+                data.arr(logs.len());
+                for log in logs {
+                    data.obj(2);
+                    data.key("kind");
+                    match &log.kind {
+                        Some(kind) => data.str(kind),
+                        None => data.undefined(),
+                    }
+                    data.key("message");
+                    match &log.message {
+                        Some(message) => data.str(message),
+                        None => data.undefined(),
+                    }
+                }
+            }
+            None => data.undefined(),
+        }
+        Row::event(
+            self.slot,
+            self.transaction_index,
+            Some(self.path),
+            self.on_event_registration_index,
+            RowFormat::SvmInstruction,
+            data,
+        )
+    }
+}
+
+/// What a page covered. Its items are in the `EventStore` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
     pub next_slot: i64,
-    pub event_items: Vec<EventItem>,
-    pub block_items: Vec<BlockItem>,
 }
 
 fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {

@@ -105,11 +105,14 @@ describe("FetchState onBlock functionality", () => {
       fetchState->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=300,
-        ~newItems=Array.fromInitializer(~length=200, i => mockEvent(~blockNumber=101 + i)),
+        ~page=TestEventStore.pageOf(
+          Array.fromInitializer(~length=200, i => mockEvent(~blockNumber=101 + i)),
+        ),
       )
 
     let lastBlockItem =
-      updatedFetchState.buffer
+      updatedFetchState
+      ->TestEventStore.bufferedItems
       ->Array.filter(
         item =>
           switch item {
@@ -147,11 +150,11 @@ describe("FetchState onBlock functionality", () => {
       fetchState->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=10,
-        ~newItems=[mockEvent(~blockNumber=5)],
+        ~page=TestEventStore.pageOf([mockEvent(~blockNumber=5)]),
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState->TestEventStore.bufferedItems
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items for blocks 0, 2, 4, 6, 8, 10 (interval=2, startBlock=0) plus event at block 5
@@ -194,11 +197,11 @@ describe("FetchState onBlock functionality", () => {
       fetchState->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=10,
-        ~newItems=[mockEvent(~blockNumber=5)],
+        ~page=TestEventStore.pageOf([mockEvent(~blockNumber=5)]),
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState->TestEventStore.bufferedItems
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items starting from block 5 (startBlock=5, interval=1) plus event at block 5
@@ -242,11 +245,11 @@ describe("FetchState onBlock functionality", () => {
       fetchState->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=10,
-        ~newItems=[mockEvent(~blockNumber=5)],
+        ~page=TestEventStore.pageOf([mockEvent(~blockNumber=5)]),
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState->TestEventStore.bufferedItems
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items that don't exceed endBlock=8 plus event at block 5
@@ -296,11 +299,11 @@ describe("FetchState onBlock functionality", () => {
       fetchState->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=12,
-        ~newItems=[mockEvent(~blockNumber=5)],
+        ~page=TestEventStore.pageOf([mockEvent(~blockNumber=5)]),
       )
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState->TestEventStore.bufferedItems
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items for both configs plus event at block 5
@@ -351,11 +354,11 @@ describe("FetchState onBlock functionality", () => {
       fetchState->FetchState.handleQueryResult(
         ~query,
         ~latestFetchedBlock=10,
-        ~newItems=[mockEvent(~blockNumber=5)],
+        ~page=TestEventStore.pageOf([mockEvent(~blockNumber=5)]),
       )
 
     // Verify that no block items were added when onBlock configs are not provided
-    let queue = updatedFetchState.buffer
+    let queue = updatedFetchState->TestEventStore.bufferedItems
     let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have only the event item

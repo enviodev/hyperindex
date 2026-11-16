@@ -1,5 +1,5 @@
 type logsQueryPage = {
-  items: array<FuelHyperSyncClient.EventItems.item>,
+  items: EventStore.t,
   rejectedLogData: array<FuelHyperSyncClient.EventItems.rejectedLogData>,
   // Blocks referenced by `items`, one per height.
   nextBlock: int,
@@ -56,7 +56,7 @@ module GetLogs = {
       clientFilteredContracts,
     }
 
-    let (res, blockStore) = switch await client->FuelHyperSyncClient.getEventItems(
+    let (res, blockStore, items) = switch await client->FuelHyperSyncClient.getEventItems(
       query,
       addressSet,
     ) {
@@ -72,7 +72,7 @@ module GetLogs = {
       throw(Error(WrongInstance))
     }
     {
-      items: res.items,
+      items,
       rejectedLogData: res.rejectedLogData,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here

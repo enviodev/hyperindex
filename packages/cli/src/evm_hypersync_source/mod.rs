@@ -9,6 +9,7 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
+use crate::event_store::{EventStore, Row, RowFormat};
 use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
 
@@ -180,7 +181,7 @@ impl EvmHyperSyncClient {
         &self,
         params: ItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore)> {
+    ) -> napi::Result<(ItemsResponse, TransactionStore, BlockStore, EventStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
         );
@@ -221,12 +222,11 @@ impl EvmHyperSyncClient {
                     // No request was made, so the source learned no height.
                     archive_height: None,
                     next_block,
-                    event_items: Vec::new(),
-                    block_items: Vec::new(),
                     response_blocks: 0,
                 },
                 TransactionStore::new_evm(),
                 BlockStore::new_evm(),
+                EventStore::empty(),
             ));
         }
 
@@ -363,11 +363,14 @@ impl EvmHyperSyncClient {
                 .context("convert archive_height")
                 .map_err(map_err)?,
             next_block: block_query.fetched_until(next_block as u64) as i64,
-            event_items,
-            block_items,
             response_blocks,
         };
-        Ok((items, transaction_store, block_store))
+        Ok((
+            items,
+            transaction_store,
+            block_store,
+            evm_items_page(event_items, block_items),
+        ))
     }
 }
 
@@ -426,7 +429,6 @@ pub struct QueryResponse {
     pub rollback_guard: Option<RollbackGuard>,
 }
 
-#[napi(object, object_from_js = false)]
 pub struct EventItem {
     pub log_index: i64,
     pub src_address: String,
@@ -442,14 +444,55 @@ pub struct EventItem {
     pub params: JsTape,
 }
 
-/// One page of items routed from the query's tables. The rows they join to are
-/// in the stores returned beside it.
+impl EventItem {
+    /// The store row of this log; it replays to the object `EvmEventItem.t`
+    /// describes.
+    pub(crate) fn into_row(self) -> Row {
+        let mut data = JsTape::new();
+        data.obj(6);
+        data.key("logIndex");
+        data.num(self.log_index as f64);
+        data.key("srcAddress");
+        data.str(&self.src_address);
+        data.key("blockNumber");
+        data.num(self.block_number as f64);
+        data.key("transactionIndex");
+        data.num(self.transaction_index as f64);
+        data.key("onEventRegistrationIndex");
+        data.num(self.on_event_registration_index as f64);
+        data.key("params");
+        data.embed(&self.params);
+        Row::event(
+            self.block_number,
+            self.log_index,
+            None,
+            self.on_event_registration_index,
+            RowFormat::EvmLog,
+            data,
+        )
+    }
+}
+
+/// The page's items, ready to merge into the chain's store.
+pub(crate) fn evm_items_page(
+    event_items: Vec<EventItem>,
+    block_items: Vec<BlockItem>,
+) -> EventStore {
+    EventStore::from_rows(
+        event_items
+            .into_iter()
+            .map(EventItem::into_row)
+            .chain(block_items.into_iter().map(BlockItem::into_row))
+            .collect(),
+    )
+}
+
+/// What a page of items covered. The items themselves are in the `EventStore`
+/// returned beside it, and the rows they join to in the other stores.
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    pub event_items: Vec<EventItem>,
-    pub block_items: Vec<BlockItem>,
     /// Blocks the server returned for this query, before routing drops the ones
     /// no item joins to. The server returns one block per number, so this is a
     /// distinct count.

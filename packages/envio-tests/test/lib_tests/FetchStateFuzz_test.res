@@ -162,7 +162,11 @@ let respond = (run: run, ~rng, ~index) => {
     run->log(`reg ${contractName}@${registrationBlock->Int.toString}`)
   }
   run.fetchState =
-    run.fetchState->FetchState.handleQueryResult(~query=q, ~latestFetchedBlock=latest, ~newItems=[])
+    run.fetchState->FetchState.handleQueryResult(
+      ~query=q,
+      ~latestFetchedBlock=latest,
+      ~page=TestEventStore.pageOf([]),
+    )
   run.pendingBudget = Pervasives.max(0., run.pendingBudget -. q.itemsEst->Int.toFloat)
   run->log(`r p${q.partitionId}@${q.fromBlock->Int.toString}->${latest->Int.toString}`)
 }

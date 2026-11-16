@@ -63,7 +63,7 @@ let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
 let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => {
-  let (res, _txStore, _blockStore) = await client.getItems(
+  let (res, _txStore, _blockStore, items) = await client.getItems(
     ~query={
       fromBlock,
       toBlock: Some(toBlock),
@@ -74,29 +74,29 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
     },
     ~addressSet=usdcSet,
   )
-  res
+  (res, items->TestEventStore.evmLogsOf)
 }
 
 describe("HyperSync client getItems (live)", () => {
   Async.itWithOptions("returns decoded event items for a real block range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
-    let res = await runQuery(~client)
+    let (res, eventItems) = await runQuery(~client)
 
     let summary = {
-      "hasItems": res.eventItems->Array.length > 0,
-      "everyItemRouted": res.eventItems->Array.every(item => item.onEventRegistrationIndex == 42),
-      "everySrcAddressIsUsdc": res.eventItems->Array.every(
+      "hasItems": eventItems->Array.length > 0,
+      "everyItemRouted": eventItems->Array.every(item => item.onEventRegistrationIndex == 42),
+      "everySrcAddressIsUsdc": eventItems->Array.every(
         item =>
           item.srcAddress->Address.toString->String.toLowerCase ==
             usdcAddress->Address.toString->String.toLowerCase,
       ),
-      "everyBlockInRange": res.eventItems->Array.every(
+      "everyBlockInRange": eventItems->Array.every(
         item => {
           let n = item.blockNumber
           n >= fromBlock && n <= toBlock
         },
       ),
-      "everyParamsDecoded": res.eventItems->Array.every(
+      "everyParamsDecoded": eventItems->Array.every(
         item => {
           let obj = item.params->(Utils.magic: Internal.eventParams => {..})
           obj["from"]->typeof == #string &&
@@ -155,9 +155,9 @@ describe("HyperSync client getItems (live)", () => {
         transactionFields: [],
       }
       let client = makeClient(~eventRegistrations=[unrelatedEventRegistration])
-      let res = await runQuery(~client, ~registrationIndexes=[0])
+      let (_, eventItems) = await runQuery(~client, ~registrationIndexes=[0])
 
-      t.expect(res.eventItems->Array.length).toEqual(0)
+      t.expect(eventItems->Array.length).toEqual(0)
     },
   )
 })

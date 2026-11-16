@@ -74,6 +74,15 @@ let onBlockRegistrations = () => {
 
 let named = name => onBlockRegistrations()->Array.filter(reg => reg.name === name)
 
+let responseItems = (response: Source.blockRangeFetchResponse) =>
+  response.items->TestEventStore.itemsOf(
+    ~context={
+      chainId: 1->ChainId.fromInt,
+      onEventRegistrations: [],
+      onBlockRegistrations: onBlockRegistrations(),
+    },
+  )
+
 let makeHyperSyncSource = (~url) => {
   let addressStore = TestAddresses.storeOf(~contracts=[], ~addresses=[])
   let source = EvmHyperSyncSource.make({
@@ -131,13 +140,14 @@ type blockView = {number: int, timestamp?: int, miner?: Address.t}
 
 // What a block handler runs with, once the page's blocks are materialised.
 let materializedBlocks = async (page: Source.blockRangeFetchResponse) => {
+  let items = page->responseItems
   await ChainState.materializePageItems(
-    ~items=page.parsedQueueItems,
+    ~items,
     ~transactionStore=TransactionStore.make(~ecosystem=Evm),
     ~blockStore=page.blockStore,
     ~shouldChecksum=false,
   )
-  page.parsedQueueItems->Array.map(item =>
+  items->Array.map(item =>
     switch item {
     | Internal.Block({onBlockRegistration, blockNumber, ?block}) => (
         onBlockRegistration.name,
@@ -369,7 +379,7 @@ describe("A block handler selecting fields, fetched from HyperSync", () => {
     t.expect((
       queries,
       page.latestFetchedBlockNumber,
-      page.parsedQueueItems->Array.map(Internal.getItemBlockNumber),
+      page->responseItems->Array.map(Internal.getItemBlockNumber),
     )).toEqual((
       [
         JSON.parseOrThrow(`{

@@ -39,12 +39,13 @@ let contract = (~address, ~contractName, ~registrationBlock=-1): Internal.indexi
 let item = (
   ~registration: Internal.onEventRegistration,
   ~blockNumber,
+  ~logIndex=0,
   ~srcAddress,
   ~params=?,
 ) => Internal.Event({
   chainId,
   blockNumber,
-  logIndex: 0,
+  logIndex,
   transactionIndex: 0,
   onEventRegistration: registration,
   payload: {"srcAddress": srcAddress, "params": params->Option.getOr(Dict.make())}->(
@@ -79,7 +80,9 @@ let getItems = async (
     ~retry=0,
     ~logger=Logger.makeInMemory(),
   )
-  response.parsedQueueItems->Array.map(item => {
+  response.items
+  ->TestEventStore.itemsOf(~context=TestEventStore.noRegistrations(~chainId))
+  ->Array.map(item => {
     let eventItem = item->Internal.castUnsafeEventItem
     (
       eventItem.onEventRegistration.index,
@@ -231,6 +234,9 @@ describe("SimulateSource routing", () => {
       item(
         ~registration=regWildcard,
         ~blockNumber=10,
+        // A second log: one log routed to one registration twice is a
+        // duplicate the page keeps once.
+        ~logIndex=1,
         ~srcAddress=addr(9),
         ~params=dict{"to": addr(1)},
       ),

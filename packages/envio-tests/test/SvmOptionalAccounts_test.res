@@ -91,7 +91,7 @@ let namedAccountsOf = accounts => {
   let reg = registrations()->Array.getUnsafe(0)
   let eventConfig =
     reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-  let instruction = SvmHyperSyncSource.toSvmInstruction(
+  let instruction = SvmEventItem.toSvmInstruction(
     {
       onEventRegistrationIndex: 0,
       slot: 10,

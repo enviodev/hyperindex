@@ -57,6 +57,8 @@ let makeFromDbState: (
 let logger: t => Logger.t
 let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
+// The chain's registrations by the index stored rows carry.
+let itemContext: t => StoredItems.context
 let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
@@ -141,7 +143,7 @@ let isAtHeadWithoutEndBlock: t => bool
 let handleQueryResult: (
   t,
   ~query: FetchState.query,
-  ~newItems: array<Internal.item>,
+  ~page: EventStore.t,
   ~newRegistrations: array<AddressStore.registration>,
   ~latestFetchedBlock: int,
   ~knownHeight: int,

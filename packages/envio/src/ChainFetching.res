@@ -8,11 +8,13 @@ type partitionQueryResponse = {
   query: FetchState.query,
 }
 
-let hasContractRegister = (item: Internal.item) =>
-  switch item {
-  | Event({onEventRegistration: {contractRegister: Some(_)}}) => true
-  | Event(_) | Block(_) => false
-  }
+let contractRegisterIndexes = (context: StoredItems.context) =>
+  context.onEventRegistrations->Array.filterMap(registration =>
+    switch registration {
+    | {contractRegister: Some(_), index} => Some(index)
+    | _ => None
+    }
+  )
 
 let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
   let contractRegister = switch (item->Internal.castUnsafeEventItem).onEventRegistration {
@@ -87,25 +89,31 @@ let rec onQueryResponse = async (
   } else {
     let chainState = state->IndexerState.getChainState(~chainId)
     let {
-      parsedQueueItems,
+      items: page,
       transactionStore,
       blockStore,
       latestFetchedBlockNumber,
       stats,
       knownHeight,
     } = response
+    let numEvents = page->EventStore.length
 
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
-      ~numEvents=parsedQueueItems->Array.length,
+      ~numEvents,
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
-    let numContractRegisterEvents =
-      parsedQueueItems->Array.reduce(0, (count, item) =>
-        item->hasContractRegister ? count + 1 : count
-      )
+    let itemContext = chainState->ChainState.itemContext
+    // Materialised from the page now, since the handlers run before the page
+    // merges into the chain's store.
+    let itemsWithContractRegister = switch itemContext->contractRegisterIndexes {
+    | [] => []
+    | registrationIndexes =>
+      page->StoredItems.eventsOfRegistrations(registrationIndexes, ~context=itemContext)
+    }
+    let numContractRegisterEvents = itemsWithContractRegister->Array.length
     if numContractRegisterEvents === 0 {
       chainState
       ->ChainState.logger
@@ -115,7 +123,7 @@ let rec onQueryResponse = async (
           "partitionId": query.partitionId,
           "fromBlock": query.fromBlock,
           "toBlock": latestFetchedBlockNumber,
-          "numEvents": parsedQueueItems->Array.length,
+          "numEvents": numEvents,
         },
       )
     } else {
@@ -127,7 +135,7 @@ let rec onQueryResponse = async (
           "partitionId": query.partitionId,
           "fromBlock": query.fromBlock,
           "toBlock": latestFetchedBlockNumber,
-          "numEvents": parsedQueueItems->Array.length,
+          "numEvents": numEvents,
           "numContractRegisterEvents": numContractRegisterEvents,
         },
       )
@@ -204,15 +212,7 @@ let rec onQueryResponse = async (
       // effectiveStartBlock, a wildcard param referencing an address registered
       // after the log's block, or a registration whose own start block is later
       // than its contract's) are already dropped by the source's native gates,
-      // so everything here is indexable.
-      let newItems = parsedQueueItems
-      let itemsWithContractRegister = []
-      for idx in 0 to newItems->Array.length - 1 {
-        let item = newItems->Array.getUnsafe(idx)
-        if item->hasContractRegister {
-          itemsWithContractRegister->Array.push(item)
-        }
-      }
+      // so everything in the page is indexable.
 
       // Re-check staleness: contract registration is async, so the chain state
       // may have rolled back by the time we apply the fetched items.
@@ -221,7 +221,7 @@ let rec onQueryResponse = async (
           applyQueryResponse(
             state,
             ~chainId,
-            ~newItems,
+            ~page,
             ~newRegistrations,
             ~knownHeight,
             ~latestFetchedBlock=latestFetchedBlockNumber,
@@ -254,32 +254,28 @@ let rec onQueryResponse = async (
 and applyQueryResponse = (
   state: IndexerState.t,
   ~chainId,
-  ~newItems,
+  ~page,
   ~newRegistrations,
   ~knownHeight,
   ~latestFetchedBlock,
   ~query,
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
+  // Read before the page merges into the chain's store, which empties it.
+  let firstEventBlockNumber = page->EventStore.firstEventBlockNumber->Null.toOption
 
   chainState->ChainState.handleQueryResult(
     ~query,
     ~latestFetchedBlock,
-    ~newItems,
+    ~page,
     ~newRegistrations,
     ~knownHeight,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.
   if state->IndexerState.exitAfterFirstEventBlock {
-    switch newItems->Array.find(item =>
-      switch item {
-      | Internal.Event(_) => true
-      | Block(_) => false
-      }
-    ) {
-    | Some(item) =>
-      chainState->ChainState.setEndBlockToFirstEvent(~blockNumber=item->Internal.getItemBlockNumber)
+    switch firstEventBlockNumber {
+    | Some(blockNumber) => chainState->ChainState.setEndBlockToFirstEvent(~blockNumber)
     | None => ()
     }
   }

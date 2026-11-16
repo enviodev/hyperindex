@@ -122,11 +122,12 @@ let getProgressedChainsById = {
         fetchState.chainId->ChainId.toString,
       ) {
       | Some(counts) =>
-        let leftItems = fetchState.buffer->Array.slice(~start=counts.size)
+        // The batch already took its items from the store; this tops the
+        // block handler items back up.
         getChainAfterBatchIfProgressed(
           ~chainBeforeBatch,
           ~counts,
-          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(~mutItems=leftItems),
+          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal,
           ~progressBlockNumberAfterBatch,
         )
       // Skip not affected chains
@@ -254,17 +255,21 @@ let make = (
       ->ChainId.Dict.dangerouslyGetNonOption(fetchState.chainId)
       ->Option.getUnsafe
 
+    // Read past the batch's last item, so before the batch takes its items.
+    let progressBlockNumberAfterBatch =
+      fetchState->FetchState.getProgressBlockNumberAt(~index=chainBatchSize)
+
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     let chainEventsProcessed = ref(0)
     if chainBatchSize > 0 {
+      let chainItems = fetchState->FetchState.takeItems(~count=chainBatchSize)
       for idx in 0 to chainBatchSize - 1 {
-        let item = fetchState.buffer->Array.getUnsafe(idx)
+        let item = chainItems->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
-        // The buffer is sorted, so a log's items are consecutive: the first of
+        // The store is sorted, so a log's items are consecutive: the first of
         // them is the only one that counts as an event.
         let isNewEvent =
-          idx === 0 ||
-            !(fetchState.buffer->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
+          idx === 0 || !(chainItems->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
         if isNewEvent {
           chainEventsProcessed := chainEventsProcessed.contents + 1
         }
@@ -327,9 +332,6 @@ let make = (
       )
     }
 
-    let progressBlockNumberAfterBatch =
-      fetchState->FetchState.getProgressBlockNumberAt(~index=chainBatchSize)
-
     addReorgCheckpoints(
       ~chainId=fetchState.chainId,
       ~scannedHashes=chainBeforeBatch.scannedHashes,
@@ -389,8 +391,7 @@ let findFirstEventBlockNumber = (batch: t, ~chainId) => {
   while idx.contents < checkpointsLength && result.contents === None {
     let checkpointChainId = batch.checkpointChainIds->Array.getUnsafe(idx.contents)
     if (
-      checkpointChainId === chainId &&
-        batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
+      checkpointChainId === chainId && batch.checkpointItemsCount->Array.getUnsafe(idx.contents) > 0
     ) {
       result := Some(batch.checkpointBlockNumbers->Array.getUnsafe(idx.contents))
     } else {

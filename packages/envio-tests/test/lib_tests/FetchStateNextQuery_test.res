@@ -54,7 +54,12 @@ let mockFetchState = (
     optimizedPartitions,
     startBlock: 0,
     endBlock,
-    buffer: [],
+    eventStore: EventStore.make(),
+    itemContext: {
+      chainId: 0->ChainId.fromInt,
+      onEventRegistrations: [],
+      onBlockRegistrations: [],
+    },
     normalSelection,
     latestOnBlockBlockNumber: latestFullyFetchedBlock.contents,
     maxOnBlockBufferSize: targetBufferSize,

@@ -464,6 +464,7 @@ let makeFromDbState = (
 let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
 let transactionStore = (cs: t) => cs.transactionStore
+let itemContext = (cs: t) => cs.fetchState.itemContext
 let shouldChecksum = (cs: t) => cs.shouldChecksum
 let entities = (cs: t) => cs.entities
 
@@ -1014,7 +1015,7 @@ let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
-  ~newItems,
+  ~page,
   ~newRegistrations,
   ~latestFetchedBlock: int,
   ~knownHeight,
@@ -1037,7 +1038,7 @@ let handleQueryResult = (
   let previousKnownHeight = cs.fetchState.knownHeight
   cs.fetchState =
     fs
-    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
+    ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~page)
     ->FetchState.updateKnownHeight(~knownHeight)
 
   // The query is no longer in flight, so release its reservation.

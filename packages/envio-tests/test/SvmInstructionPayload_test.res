@@ -125,7 +125,7 @@ describe("SVM instruction payload assembly", () => {
       args: %raw(`{}`),
       logs: Nullable.undefined,
     }
-    let instruction = SvmHyperSyncSource.toSvmInstruction(
+    let instruction = SvmEventItem.toSvmInstruction(
       item,
       ~programName="Swapper",
       ~instructionName="swap",
@@ -157,7 +157,7 @@ describe("SVM instruction payload assembly", () => {
       args: %raw(`{}`),
       logs: Nullable.undefined,
     }
-    let instruction = SvmHyperSyncSource.toSvmInstruction(
+    let instruction = SvmEventItem.toSvmInstruction(
       item,
       ~programName="Swapper",
       ~instructionName="swap",
@@ -214,14 +214,14 @@ describe("SVM instruction payload assembly", () => {
         args: %raw(`{}`),
         logs: Nullable.undefined,
       }
-      let decoded = SvmHyperSyncSource.toSvmInstruction(
+      let decoded = SvmEventItem.toSvmInstruction(
         {...base, args: %raw(`{amountIn: 18446744073709551615n}`)},
         ~programName="Swapper",
         ~instructionName="swap",
         ~eventConfig,
         ~fieldSelection=reg.fieldSelection,
       )
-      let undecoded = SvmHyperSyncSource.toSvmInstruction(
+      let undecoded = SvmEventItem.toSvmInstruction(
         base,
         ~programName="Swapper",
         ~instructionName="swap",
@@ -240,7 +240,7 @@ describe("SVM instruction payload assembly", () => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-    let instruction = SvmHyperSyncSource.toSvmInstruction(
+    let instruction = SvmEventItem.toSvmInstruction(
       {
         onEventRegistrationIndex: 0,
         slot: 10,
@@ -265,7 +265,7 @@ describe("SVM instruction payload assembly", () => {
     let reg = registrations()->Array.getUnsafe(1)
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-    let instruction = SvmHyperSyncSource.toSvmInstruction(
+    let instruction = SvmEventItem.toSvmInstruction(
       {
         onEventRegistrationIndex: 0,
         slot: 10,

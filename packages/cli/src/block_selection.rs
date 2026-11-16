@@ -27,6 +27,16 @@ pub struct BlockItem {
     pub skipped: bool,
 }
 
+impl BlockItem {
+    pub(crate) fn into_row(self) -> crate::event_store::Row {
+        crate::event_store::Row::block(
+            self.block_number,
+            self.on_block_registration_index,
+            self.skipped,
+        )
+    }
+}
+
 #[derive(Clone)]
 struct Registration {
     index: i64,

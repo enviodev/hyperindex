@@ -143,25 +143,15 @@ let make = (
     //In the query
     let heighestBlockQueried = pageUnsafe.nextBlock - 1
 
-    let parsingTimeRef = Performance.now()
-
-    let parsedQueueItems =
-      pageUnsafe.eventItems
-      ->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
-      ->Array.concat(pageUnsafe.blockItems->BlockItem.toInternalItems(~onBlockRegistrations))
-
-    let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     let stats = {
       totalTimeElapsed,
-      parsingTimeElapsed,
       pageFetchTime,
     }
 
     {
-      parsedQueueItems,
+      items: pageUnsafe.items,
       transactionStore: Some(pageUnsafe.transactionStore),
       // The page store also carries the rollbackGuard's blocks (head block and
       // parent of the range's first block), inserted on the Rust side.

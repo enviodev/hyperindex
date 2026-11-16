@@ -2,13 +2,13 @@ open Vitest
 
 let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
-let mockEvent = (~blockNumber): Internal.item => Internal.Event({
+let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   chainId: 1->ChainId.fromInt,
   blockNumber,
   // Carries an `index` so the buffer's dedup key resolves; the rest of the
   // registration is unused by these tests.
   onEventRegistration: {"index": 0}->(Utils.magic: {"index": int} => Internal.onEventRegistration),
-  logIndex: 0,
+  logIndex,
   transactionIndex: 0,
   payload: "Mock event in CrossChainState test"->(Utils.magic: string => Internal.eventPayload),
 })
@@ -60,7 +60,11 @@ let makeChainState = (
     latestOnBlockBlockNumber: frontier,
     firstEventBlock: Some(firstEventBlock),
     clientFilterPolicy: {addressThreshold: None, allDynamicContracts: false},
-    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
+    eventStore: TestEventStore.pageOf(
+      bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) =>
+        mockEvent(~blockNumber, ~logIndex)
+      ),
+    ),
   }
   let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
@@ -129,7 +133,12 @@ let makeFetchingChainState = (
     ),
     startBlock: 0,
     endBlock,
-    buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
+    eventStore: TestEventStore.pageOf(
+      bufferBlocks->Array.mapWithIndex((blockNumber, logIndex) =>
+        mockEvent(~blockNumber, ~logIndex)
+      ),
+    ),
+    itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
     normalSelection,
     latestOnBlockBlockNumber: latestFetchedBlock,
     maxOnBlockBufferSize: 10000,
@@ -477,7 +486,7 @@ describe("CrossChainState fetch control", () => {
       let releasedQuery = releasedQueries->Utils.Array.firstUnsafe
       first->ChainState.handleQueryResult(
         ~query=releasedQuery,
-        ~newItems=[],
+        ~page=TestEventStore.pageOf([]),
         ~newRegistrations=[],
         ~latestFetchedBlock=1000,
         ~knownHeight=1000,
@@ -541,7 +550,8 @@ describe("CrossChainState fetch control", () => {
       ),
       startBlock: 0,
       endBlock: Some(20),
-      buffer: [],
+      eventStore: EventStore.make(),
+      itemContext: TestEventStore.noRegistrations(~chainId=0->ChainId.fromInt),
       normalSelection,
       latestOnBlockBlockNumber: 0,
       maxOnBlockBufferSize: 10000,

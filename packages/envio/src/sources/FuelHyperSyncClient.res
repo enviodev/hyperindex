@@ -98,7 +98,6 @@ module EventItems = {
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    items: array<item>,
     rejectedLogData: array<rejectedLogData>,
   }
 }
@@ -122,14 +121,14 @@ let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
   )
 }
 
-// Returns the routed items/blocks plus the page's block store (Fuel blocks
-// keyed by height); the store's ids drive reorg detection on merge.
+// Returns what the page covered, its block store (Fuel blocks keyed by
+// height, whose ids drive reorg detection on merge) and its routed items.
 @send
 external getEventItems: (
   t,
   EventItems.query,
   AddressSet.t,
-) => promise<(EventItems.response, BlockStore.t)> = "getEventItems"
+) => promise<(EventItems.response, BlockStore.t, EventStore.t)> = "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

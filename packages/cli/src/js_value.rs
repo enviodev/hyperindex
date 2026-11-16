@@ -1,4 +1,4 @@
-use napi::bindgen_prelude::ToNapiValue;
+use napi::bindgen_prelude::{FromNapiValue, ToNapiValue};
 use napi::{check_status, sys};
 
 /// A JS value recorded as a flat byte tape. Decoders write it on the worker
@@ -108,6 +108,12 @@ impl JsTape {
     pub fn obj(&mut self, len: usize) {
         self.tag(OBJ);
         self.u64(len as u64);
+    }
+
+    /// `value` as the next value; a tape holds exactly one value, so its bytes
+    /// splice in as one.
+    pub fn embed(&mut self, value: &JsTape) {
+        self.0.extend_from_slice(&value.0);
     }
 
     /// The key of the object entry whose value is written next.
@@ -226,6 +232,185 @@ impl ToNapiValue for JsTape {
             [] => Ok(value),
             _ => Err(corrupt()),
         }
+    }
+}
+
+/// Records a JS value made of plain data: primitives, bigints, strings,
+/// Uint8Arrays (Buffers included), arrays and objects' own enumerable string
+/// keys. Anything else (functions, symbols, class instances' prototypes) has
+/// no tape form and is refused, so a value can't silently lose a part.
+impl FromNapiValue for JsTape {
+    unsafe fn from_napi_value(env: sys::napi_env, value: sys::napi_value) -> napi::Result<Self> {
+        let mut tape = JsTape::new();
+        Record { env }.value(&mut tape, value, 0)?;
+        Ok(tape)
+    }
+}
+
+/// Deep enough for any payload; a cycle runs into it instead of overflowing
+/// the stack.
+const MAX_RECORD_DEPTH: usize = 64;
+
+struct Record {
+    env: sys::napi_env,
+}
+
+fn unrecordable(what: &str) -> napi::Error {
+    napi::Error::from_reason(format!("a {what} can't be stored as a JS value tape"))
+}
+
+// SAFETY (all `unsafe` below): `env` is the live env `from_napi_value` was
+// called with, `value` a handle valid for that call, and every out pointer
+// points at a local that outlives the napi call writing it.
+impl Record {
+    fn value(&self, tape: &mut JsTape, value: sys::napi_value, depth: usize) -> napi::Result<()> {
+        if depth > MAX_RECORD_DEPTH {
+            return Err(unrecordable("value nested this deep (or cyclic)"));
+        }
+        let mut kind = 0;
+        check_status!(unsafe { sys::napi_typeof(self.env, value, &mut kind) })?;
+        match kind {
+            sys::ValueType::napi_undefined => tape.undefined(),
+            sys::ValueType::napi_null => tape.null(),
+            sys::ValueType::napi_boolean => {
+                let mut out = false;
+                check_status!(unsafe { sys::napi_get_value_bool(self.env, value, &mut out) })?;
+                tape.bool(out);
+            }
+            sys::ValueType::napi_number => {
+                let mut out = 0.0;
+                check_status!(unsafe { sys::napi_get_value_double(self.env, value, &mut out) })?;
+                tape.num(out);
+            }
+            sys::ValueType::napi_string => tape.str(&self.string(value)?),
+            sys::ValueType::napi_bigint => self.bigint(tape, value)?,
+            sys::ValueType::napi_object => self.object(tape, value, depth)?,
+            sys::ValueType::napi_symbol => return Err(unrecordable("symbol")),
+            sys::ValueType::napi_function => return Err(unrecordable("function")),
+            _ => return Err(unrecordable("external value")),
+        }
+        Ok(())
+    }
+
+    fn string(&self, value: sys::napi_value) -> napi::Result<String> {
+        let mut len = 0;
+        check_status!(unsafe {
+            sys::napi_get_value_string_utf8(self.env, value, std::ptr::null_mut(), 0, &mut len)
+        })?;
+        let mut bytes = vec![0u8; len + 1];
+        check_status!(unsafe {
+            sys::napi_get_value_string_utf8(
+                self.env,
+                value,
+                bytes.as_mut_ptr().cast(),
+                bytes.len(),
+                &mut len,
+            )
+        })?;
+        bytes.truncate(len);
+        String::from_utf8(bytes).map_err(|_| unrecordable("string that isn't UTF-8"))
+    }
+
+    fn bigint(&self, tape: &mut JsTape, value: sys::napi_value) -> napi::Result<()> {
+        // Only a call with neither a sign nor a words pointer reports the
+        // word count alone.
+        let mut count = 0;
+        check_status!(unsafe {
+            sys::napi_get_value_bigint_words(
+                self.env,
+                value,
+                std::ptr::null_mut(),
+                &mut count,
+                std::ptr::null_mut(),
+            )
+        })?;
+        let mut sign = 0;
+        if count > MAX_BIGINT_WORDS {
+            return Err(unrecordable("bigint wider than 256 bits"));
+        }
+        let mut words = [0u64; MAX_BIGINT_WORDS];
+        check_status!(unsafe {
+            sys::napi_get_value_bigint_words(
+                self.env,
+                value,
+                &mut sign,
+                &mut count,
+                words.as_mut_ptr(),
+            )
+        })?;
+        tape.bigint(sign != 0, &words[..count]);
+        Ok(())
+    }
+
+    fn object(&self, tape: &mut JsTape, value: sys::napi_value, depth: usize) -> napi::Result<()> {
+        let mut is_typed_array = false;
+        check_status!(unsafe { sys::napi_is_typedarray(self.env, value, &mut is_typed_array) })?;
+        if is_typed_array {
+            let mut kind = 0;
+            let mut len = 0;
+            let mut data = std::ptr::null_mut();
+            check_status!(unsafe {
+                sys::napi_get_typedarray_info(
+                    self.env,
+                    value,
+                    &mut kind,
+                    &mut len,
+                    &mut data,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            })?;
+            if kind != sys::TypedarrayType::uint8_array {
+                return Err(unrecordable("typed array other than Uint8Array"));
+            }
+            let bytes: &[u8] = if len == 0 {
+                &[]
+            } else {
+                unsafe { std::slice::from_raw_parts(data.cast(), len) }
+            };
+            tape.bytes(bytes);
+            return Ok(());
+        }
+
+        let mut is_array = false;
+        check_status!(unsafe { sys::napi_is_array(self.env, value, &mut is_array) })?;
+        if is_array {
+            let mut len = 0;
+            check_status!(unsafe { sys::napi_get_array_length(self.env, value, &mut len) })?;
+            tape.arr(len as usize);
+            for index in 0..len {
+                let mut element = std::ptr::null_mut();
+                check_status!(unsafe {
+                    sys::napi_get_element(self.env, value, index, &mut element)
+                })?;
+                self.value(tape, element, depth + 1)?;
+            }
+            return Ok(());
+        }
+
+        let mut keys = std::ptr::null_mut();
+        check_status!(unsafe {
+            sys::napi_get_all_property_names(
+                self.env,
+                value,
+                sys::KeyCollectionMode::own_only,
+                sys::KeyFilter::enumerable | sys::KeyFilter::skip_symbols,
+                sys::KeyConversion::numbers_to_strings,
+                &mut keys,
+            )
+        })?;
+        let mut len = 0;
+        check_status!(unsafe { sys::napi_get_array_length(self.env, keys, &mut len) })?;
+        tape.obj(len as usize);
+        for index in 0..len {
+            let mut key = std::ptr::null_mut();
+            check_status!(unsafe { sys::napi_get_element(self.env, keys, index, &mut key) })?;
+            let mut property = std::ptr::null_mut();
+            check_status!(unsafe { sys::napi_get_property(self.env, value, key, &mut property) })?;
+            tape.key(&self.string(key)?);
+            self.value(tape, property, depth + 1)?;
+        }
+        Ok(())
     }
 }
 

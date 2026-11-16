@@ -522,7 +522,7 @@ let parse = (
         let onEventRegistrationIndex = onEventRegistrations->Array.length
         let onEventRegistration = {...reg, index: onEventRegistrationIndex}
         onEventRegistrations->Array.push(onEventRegistration)->ignore
-        let payload = SvmHyperSyncSource.toSvmInstruction(
+        let payload = SvmEventItem.toSvmInstruction(
           {
             onEventRegistrationIndex,
             slot,

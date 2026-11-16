@@ -42,12 +42,11 @@ let toRegistrationInputs = (onBlockRegistrations: array<Internal.onBlockRegistra
     })
   )
 
-let toInternalItems = (
-  items: array<t>,
+let toInternalItem = (
+  {blockNumber, onBlockRegistrationIndex, skipped}: t,
   ~onBlockRegistrations: array<Internal.onBlockRegistration>,
-): array<Internal.item> =>
-  items->Array.map(({blockNumber, onBlockRegistrationIndex, skipped}) => Internal.Block({
-    onBlockRegistration: onBlockRegistrations->Array.getUnsafe(onBlockRegistrationIndex),
-    blockNumber,
-    skipped: ?(skipped ? Some(true) : None),
-  }))
+): Internal.item => Internal.Block({
+  onBlockRegistration: onBlockRegistrations->Array.getUnsafe(onBlockRegistrationIndex),
+  blockNumber,
+  skipped: ?(skipped ? Some(true) : None),
+})

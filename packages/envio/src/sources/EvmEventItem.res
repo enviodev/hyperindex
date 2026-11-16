@@ -42,15 +42,3 @@ let toInternalItem = (
     }->Evm.fromPayload,
   })
 }
-
-let toInternalItems = (
-  items: array<t>,
-  ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
-  ~chainId,
-): array<Internal.item> =>
-  items->Array.map(item =>
-    item->toInternalItem(
-      ~onEventRegistration=onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex),
-      ~chainId,
-    )
-  )

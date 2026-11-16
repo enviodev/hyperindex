@@ -95,7 +95,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           fetchState.contents->FetchState.handleQueryResult(
             ~query,
             ~latestFetchedBlock=currentBlockNumber.contents,
-            ~newItems=[batchItem],
+            ~page=TestEventStore.pageOf([batchItem]),
           )
 
         numberOfMockEventsCreated := numberOfMockEventsCreated.contents + 1
@@ -270,7 +270,7 @@ describe("IndexerState", () => {
                 fetchState.contents->FetchState.handleQueryResult(
                   ~query,
                   ~latestFetchedBlock=blockNumber,
-                  ~newItems=[
+                  ~page=TestEventStore.pageOf([
                     Internal.Event({
                       chainId,
                       blockNumber,
@@ -282,7 +282,7 @@ describe("IndexerState", () => {
                       ),
                       payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
                     }),
-                  ],
+                  ]),
                 )
             },
           )
@@ -348,7 +348,7 @@ describe("IndexerState", () => {
           ~query=concurrentQuery,
           ~newRegistrations=[],
           ~latestFetchedBlock=15,
-          ~newItems=[
+          ~page=TestEventStore.pageOf([
             Internal.Event({
               chainId,
               blockNumber: 15,
@@ -360,7 +360,7 @@ describe("IndexerState", () => {
               ),
               payload: "Mock event"->(Utils.magic: string => Internal.eventPayload),
             }),
-          ],
+          ]),
           ~knownHeight=cs->ChainState.knownHeight,
         )
 

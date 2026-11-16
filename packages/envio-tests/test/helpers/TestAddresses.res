@@ -65,20 +65,19 @@ let storeOf = (
   ~ecosystem: Ecosystem.name=Evm,
 ) => {
   let store = AddressStore.make(~ecosystem, ~contracts)
-  let _ =
-    store->AddressStore.seedRows(
-      rowsOf(
-        ~addresses,
-        // A row's contract id is its contract's position in the store's own list.
-        ~contractId=name =>
-          switch contracts->Array.findIndex(c => c.name === name) {
-          | -1 =>
-            JsError.throwWithMessage(`Contract "${name}" isn't among the test store's contracts`)
-          | idx => idx
-          },
-        ~ecosystem,
-      ),
-    )
+  let _ = store->AddressStore.seedRows(
+    rowsOf(
+      ~addresses,
+      // A row's contract id is its contract's position in the store's own list.
+      ~contractId=name =>
+        switch contracts->Array.findIndex(c => c.name === name) {
+        | -1 =>
+          JsError.throwWithMessage(`Contract "${name}" isn't among the test store's contracts`)
+        | idx => idx
+        },
+      ~ecosystem,
+    ),
+  )
   store
 }
 
@@ -253,6 +252,12 @@ let query = (q: FetchState.query): FetchState.query => {
 let fetchState = (fs: FetchState.t): FetchState.t => {
   ...fs,
   optimizedPartitions: partitions(fs.optimizedPartitions),
+  // The store is a handle, so it compares by the items it holds, which are
+  // rebuilt by now: what rebuilt them isn't part of the comparison.
+  eventStore: fs
+  ->TestEventStore.bufferedItems
+  ->(Utils.magic: array<Internal.item> => EventStore.t),
+  itemContext: TestEventStore.noRegistrations(~chainId=fs.chainId),
 }
 
 let queries = (qs: array<FetchState.query>) => qs->Array.map(query)
