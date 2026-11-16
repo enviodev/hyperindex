@@ -135,10 +135,7 @@ let make = (
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
-      let eventConfig =
-        onEventRegistration.eventConfig->(
-          Utils.magic: Internal.eventConfig => Internal.fuelEventConfig
-        )
+      let {contractName, name: eventName} = onEventRegistration.eventConfig
 
       Internal.Event({
         onEventRegistration,
@@ -149,8 +146,8 @@ let make = (
         // unused (Fuel identifies transactions by hash, kept on the payload).
         transactionIndex: 0,
         payload: {
-          contractName: eventConfig.contractName,
-          eventName: eventConfig.name,
+          contractName,
+          eventName,
           chainId,
           params: item.params,
           transaction: {

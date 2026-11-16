@@ -267,6 +267,13 @@ fn push_unique(missing: &mut Vec<String>, name: &str) {
     }
 }
 
+fn required<T>(value: Option<T>, name: &str, missing: &mut Vec<String>) -> Option<T> {
+    if value.is_none() {
+        push_unique(missing, name);
+    }
+    value
+}
+
 /// Fans each receipt out to every registration of the selection it matches
 /// and flattens the kind-specific columns onto the items. A receipt without a
 /// `root_contract_id` (no contract context for `srcAddress`) is dropped, as is
@@ -317,15 +324,12 @@ fn route_receipts(
             if !present_block_heights.contains(&receipt.block_height) {
                 push_unique(&mut missing, "block");
             }
-            let mut require = |is_present: bool, name: &str| {
-                if !is_present {
-                    push_unique(&mut missing, name);
-                }
-            };
+            // Each kind's fields are all checked before giving up on the
+            // item, so one error names every column the source left out.
             let params = match &reg.kind {
                 RegistrationKind::LogData { decoder, .. } => {
-                    let Some(data) = &receipt.data else {
-                        require(false, "receipt.data");
+                    let Some(data) = required(receipt.data.as_ref(), "receipt.data", &mut missing)
+                    else {
                         continue;
                     };
                     // Dropped for this registration only; others on the same
@@ -355,12 +359,13 @@ fn route_receipts(
                     params
                 }
                 RegistrationKind::Mint | RegistrationKind::Burn => {
-                    require(receipt.sub_id.is_some(), "receipt.subId");
-                    require(receipt.val.is_some(), "receipt.val");
-                    match (&receipt.sub_id, receipt.val) {
-                        (Some(sub_id), Some(val)) => supply_params(sub_id, val),
-                        _ => continue,
-                    }
+                    let (Some(sub_id), Some(val)) = (
+                        required(receipt.sub_id.as_deref(), "receipt.subId", &mut missing),
+                        required(receipt.val, "receipt.val", &mut missing),
+                    ) else {
+                        continue;
+                    };
+                    supply_params(sub_id, val)
                 }
                 RegistrationKind::Transfer | RegistrationKind::Call => {
                     // TransferOut receipts carry the wallet recipient in
@@ -371,15 +376,14 @@ fn route_receipts(
                         } else {
                             (&receipt.to, "receipt.to")
                         };
-                    require(receipt.amount.is_some(), "receipt.amount");
-                    require(receipt.asset_id.is_some(), "receipt.assetId");
-                    require(recipient.is_some(), recipient_name);
-                    match (recipient, &receipt.asset_id, receipt.amount) {
-                        (Some(to), Some(asset_id), Some(amount)) => {
-                            transfer_params(to, asset_id, amount)
-                        }
-                        _ => continue,
-                    }
+                    let (Some(amount), Some(asset_id), Some(to)) = (
+                        required(receipt.amount, "receipt.amount", &mut missing),
+                        required(receipt.asset_id.as_deref(), "receipt.assetId", &mut missing),
+                        required(recipient.as_deref(), recipient_name, &mut missing),
+                    ) else {
+                        continue;
+                    };
+                    transfer_params(to, asset_id, amount)
                 }
             };
             items.push(EventItem {
@@ -695,6 +699,31 @@ mod tests {
             Err(ConvertError::MissingFields(fields)) => {
                 assert_eq!(fields, vec!["receipt.val".to_string()])
             }
+            Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
+            Ok(_) => panic!("expected MissingFields, got Ok"),
+        }
+    }
+
+    #[test]
+    fn missing_transfer_columns_are_all_named_in_one_error() {
+        let (store, set, built) = build(
+            &[reg_input(0, "C", FuelEventKind::Transfer, true, None)],
+            &[0],
+            &[("C", &[])],
+        );
+        let mut receipt = raw_receipt(7);
+        receipt.amount = None;
+        receipt.asset_id = None;
+        receipt.to = None;
+        match route(&store, &set, &built, vec![receipt]) {
+            Err(ConvertError::MissingFields(fields)) => assert_eq!(
+                fields,
+                vec![
+                    "receipt.amount".to_string(),
+                    "receipt.assetId".to_string(),
+                    "receipt.to".to_string(),
+                ]
+            ),
             Err(ConvertError::Other(e)) => panic!("unexpected ConvertError::Other: {e:?}"),
             Ok(_) => panic!("expected MissingFields, got Ok"),
         }
