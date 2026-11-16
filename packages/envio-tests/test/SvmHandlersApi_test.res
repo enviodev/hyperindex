@@ -270,7 +270,7 @@ expectType<
 expectType<
   TypeEqual<
     SvmOnSlotHandlerArgs<{}>["block"],
-    FieldNotSelected<'Field \\'block\\' is not selected. Add one of its fields to the handler options, e.g. { ..., fields: { block: ["time"] } }'>
+    FieldNotSelected<"Field 'block' is not selected. Add one of its fields to the handler options, e.g. { ..., fields: { block: ['time'] } }">
   >
 >(true);
 expectType<
@@ -499,7 +499,7 @@ type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
   : false;
 
 type NotSelectedActivity<Name extends string> = FieldNotSelected<
-  \`Field '\${Name}' is not selected. Add it to the handler options: { ..., fields: { accountActivity: ["\${Name}"] } }\`
+  \`Field '\${Name}' is not selected. Add it to the handler options: { ..., fields: { accountActivity: ['\${Name}'] } }\`
 >;
 
 if (0) {
@@ -686,7 +686,7 @@ const fields = {
 } as const satisfies SvmFieldsSelection;
 
 type NotSelectedActivity<Name extends string> = FieldNotSelected<
-  \`Field '\${Name}' is not selected. Add it to the handler options: { ..., fields: { accountActivity: ["\${Name}"] } }\`
+  \`Field '\${Name}' is not selected. Add it to the handler options: { ..., fields: { accountActivity: ['\${Name}'] } }\`
 >;
 
 if (0) {
@@ -754,7 +754,7 @@ expectType<
       readonly accountName: "source";
       readonly instructionAccountIndex: number;
       readonly activity:
-        | FieldNotSelected<'Field \\'activity\\' is not selected. Add one of its fields to the handler options, e.g. { ..., fields: { accountActivity: ["isSigner"] } }'>
+        | FieldNotSelected<"Field 'activity' is not selected. Add one of its fields to the handler options, e.g. { ..., fields: { accountActivity: ['isSigner'] } }">
         | undefined;
     }
   >

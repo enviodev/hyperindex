@@ -293,7 +293,7 @@ expectType<IsNotSelected<TransferEvent["transaction"]["from"]>>(true);
 expectType<
   TypeEqual<
     TransferEvent["block"]["parentHash"],
-    FieldNotSelected<'Field \\'parentHash\\' is not selected. Add it to the handler options: { ..., fields: { block: ["parentHash"] } }'>
+    FieldNotSelected<"Field 'parentHash' is not selected. Add it to the handler options: { ..., fields: { block: ['parentHash'] } }">
   >
 >(true);
 `)
@@ -927,6 +927,21 @@ const opts: EvmOnEventOptions<Transfer, {}, typeof fields> = {
 indexer.onEvent(opts, async () => {});
 `,
     )
+  )
+
+  // The message is what an editor and tsc print, so it is asserted as printed:
+  // a helper alias around `FieldNotSelected` would print its own name instead.
+  it("prints the fields option that selects an unselected field", t =>
+    t.expect(
+      checkResult(`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event }) => {
+  const parentHash: string = event.block.parentHash;
+});
+`),
+    ).toBe(`Type errors:
+__mock_indexer_handlers.ts(5,9): error TS2322: Type 'FieldNotSelected<"Field 'parentHash' is not selected. Add it to the handler options: { ..., fields: { block: ['parentHash'] } }">' is not assignable to type 'string'.`)
   )
 
   // Rejected at the declaration rather than at the `onEvent` call: the alias
