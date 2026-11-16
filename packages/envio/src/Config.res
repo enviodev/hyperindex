@@ -688,6 +688,13 @@ let withProjectFlags = (command, ~config: t) =>
   | flags => `${command} ${flags}`
   }
 
+// Only a per-chain schema can take a chain into an existing database, under an
+// `envio start --chain` naming it alone.
+let addChainCommand = (config: t) =>
+  config->isPerChain
+    ? Some(chainId => `envio start --chain ${chainId->ChainId.toString}`->withProjectFlags(~config))
+    : None
+
 let ecosystemFields = ["evm", "fuel", "svm"]
 
 // What `envio_info` records: the public config without the command's fields
@@ -1393,40 +1400,83 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 %%private(let resume = "resume indexing where it left off")
 %%private(let startOver = "delete all indexed data and start over")
 
+// A way forward is either one command with its effect beside it, or a title
+// over several lines to run.
+type way =
+  | Command(string, string)
+  | Steps(string, array<string>)
+
 %%private(
-  let pickOne = (ways: array<(string, string)>) => {
-    let col = ways->Array.reduce(0, (col, (way, _)) => Math.Int.max(col, way->String.length)) + 2
+  let pickOneOf = (ways: array<way>) => {
+    let col =
+      ways->Array.reduce(0, (col, way) =>
+        switch way {
+        | Command(command, _) => Math.Int.max(col, command->String.length)
+        | Steps(_) => col
+        }
+      ) + 2
     ways
-    ->Array.mapWithIndex(((way, effect), index) =>
-      `  ${(index + 1)->Int.toString}. ${way}${" "->String.repeat(
-          col - way->String.length,
-        )}# ${effect}`
-    )
+    ->Array.mapWithIndex((way, index) => {
+      let number = `  ${(index + 1)->Int.toString}. `
+      switch way {
+      | Command(command, effect) =>
+        `${number}${command}${" "->String.repeat(col - command->String.length)}# ${effect}`
+      | Steps(title, lines) =>
+        `${number}${title}:${lines->Array.map(line => `\n       ${line}`)->Array.join("")}`
+      }
+    })
     ->Array.join("\n")
   }
 )
 
-// `~runCommand` controls option 3 (parallel indexer recipe): when `None`,
-// option 3 is omitted — the migrate flow uses this because running a second
-// indexer doesn't apply. `~hasClickhouse` adds the env line that points a second
-// indexer at a ClickHouse database of its own.
+%%private(
+  let pickOne = (ways: array<(string, string)>) =>
+    ways->Array.map(((command, effect)) => Command(command, effect))->pickOneOf
+)
+
+// `~runCommand` adds the parallel indexer recipe; the migrate flow leaves it
+// out because running a second indexer doesn't apply. `~hasClickhouse` adds the
+// env line that points a second indexer at a ClickHouse database of its own.
+// `~addChainCommands` is one `envio start --chain` per new chain, given only
+// when adding those chains is the whole of the change.
 let incompatibleMessage = (
   changedPaths: array<string>,
   ~resetCommand: string,
   ~runCommand: option<string>,
   ~hasClickhouse: bool,
+  ~addChainCommands: array<string>=[],
 ) => {
   let bullets = changedPaths->Array.map(p => `    - ${p}`)->Array.joinUnsafe("\n")
-  let option3 = switch runCommand {
-  | None => ""
-  | Some(cmd) =>
-    let clickhouseLine = hasClickhouse ? "       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\\n" : ""
-    `\n  3. Run a second indexer alongside this one — keep both datasets:\n       ENVIO_PG_SCHEMA=<new_schema> \\\n${clickhouseLine}       ENVIO_INDEXER_PORT=<new_port> \\\n       ${cmd}`
+  let addChains = switch addChainCommands {
+  | [] => []
+  | [command] => [
+      Command(command, "add the chain to this database, keeping what's already indexed"),
+    ]
+  | commands => [
+      Steps(
+        "Add the new chains to this database, keeping what's already indexed, one process per chain",
+        commands,
+      ),
+    ]
   }
-  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n${pickOne([
-      ("Revert the changes above", resume),
-      (resetCommand, startOver),
-    ])}${option3}`
+  let secondIndexer = switch runCommand {
+  | None => []
+  | Some(command) => [
+      Steps(
+        "Run a second indexer alongside this one to keep both datasets",
+        Array.flat([
+          ["ENVIO_PG_SCHEMA=<new_schema> \\"],
+          hasClickhouse ? ["ENVIO_CLICKHOUSE_DATABASE=<new_db> \\"] : [],
+          ["ENVIO_INDEXER_PORT=<new_port> \\", command],
+        ]),
+      ),
+    ]
+  }
+  `The following config changes are incompatible with the existing indexer data:\n\n${bullets}\n\nPick one:\n${Array.flat([
+      addChains,
+      [Command("Revert the changes above", resume), Command(resetCommand, startOver)],
+      secondIndexer,
+    ])->pickOneOf}`
 }
 
 let strandedMessage = (~resetCommand) =>

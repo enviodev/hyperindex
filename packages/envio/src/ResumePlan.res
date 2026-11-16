@@ -156,11 +156,48 @@ let make = (
     }
   }
 
+// The configured chains the storage holds nothing of, when adding them is the
+// whole of what changed. `changedPaths` names only the first tier that differs,
+// so a change in a later tier, an entity say, is caught by planning each new
+// chain's own `envio start --chain` run, which checks everything but the chains
+// it leaves out.
+let newChainIdsWhenOnlyChange = (
+  changedPaths: array<string>,
+  ~stored: stored,
+  ~envioInfo: JSON.t,
+  ~chainConfigs: array<Config.chain>,
+  ~contractMapping: ContractMapping.t,
+  ~lowercaseAddresses: bool,
+) => {
+  let newChains =
+    chainConfigs->Array.filter(chain =>
+      !(stored.chains->Array.some(storedChain => storedChain.id == chain.id))
+    )
+  let isNewChainPath = path =>
+    newChains->Array.some(chain => path == `chains.${chain.id->ChainId.toString}`)
+  let addsAlone = chain =>
+    switch make(
+      ~stored,
+      ~envioInfo,
+      ~chainConfigs=[chain],
+      ~contractMapping,
+      ~lowercaseAddresses,
+      ~isolated=true,
+    ) {
+    | AddChain(_) => true
+    | Resume | Incompatible(_) => false
+    }
+  changedPaths->Array.every(isNewChainPath) && newChains->Array.every(addsAlone)
+    ? newChains->Array.map(chain => chain.id)
+    : []
+}
+
 let incompatibleMessage = (
   changedPaths,
   ~envioInfo: JSON.t,
   ~resetCommand: string,
   ~runCommand: option<string>,
+  ~addChainCommands: array<string>=[],
 ) => {
   let hasClickhouse = switch envioInfo {
   | Object(d) =>
@@ -170,5 +207,11 @@ let incompatibleMessage = (
     }
   | _ => false
   }
-  Config.incompatibleMessage(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+  Config.incompatibleMessage(
+    changedPaths,
+    ~resetCommand,
+    ~runCommand,
+    ~hasClickhouse,
+    ~addChainCommands,
+  )
 }

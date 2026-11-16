@@ -322,7 +322,7 @@ Although it should load effect caches metadata.`,
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
@@ -343,7 +343,7 @@ Pick one:
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
@@ -363,7 +363,7 @@ Pick one:
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
@@ -383,7 +383,7 @@ Pick one:
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
@@ -403,7 +403,7 @@ Pick one:
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
@@ -437,7 +437,7 @@ Pick one:
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
@@ -459,7 +459,7 @@ Pick one:
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
        envio dev`)
@@ -500,7 +500,7 @@ Pick one:
 Pick one:
   1. Revert the changes above  # resume indexing where it left off
   2. envio dev -r              # delete all indexed data and start over
-  3. Run a second indexer alongside this one — keep both datasets:
+  3. Run a second indexer alongside this one to keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
        ENVIO_INDEXER_PORT=<new_port> \\

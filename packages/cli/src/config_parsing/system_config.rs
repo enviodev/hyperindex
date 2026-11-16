@@ -850,7 +850,7 @@ pub fn validate_chain_id_field_names(
                 return Err(anyhow!(
                     "`{entity}.{field}` is not allowed, since envio sets `chainId` on every \
                      per-chain entity for you. Either rename the field, or add `@crossChain` to \
-                     `{entity}` — its rows are then shared across chains and the field is yours \
+                     `{entity}`, so its rows are shared across chains and the field is yours \
                      to set.",
                     entity = entity.name,
                     field = gql_field.name
