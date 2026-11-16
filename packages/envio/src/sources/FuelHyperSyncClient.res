@@ -73,23 +73,15 @@ module EventItems = {
     clientFilteredContracts: option<array<string>>,
   }
 
-  // One routed receipt with its kind-specific columns flattened: LogData
-  // carries `params` decoded against the ABI (a receipt its logged type
-  // rejects is dropped in Rust), Mint/Burn carry `val`/`subId`,
-  // Transfer/TransferOut/Call carry `amount`/`assetId`/`to` (TransferOut's
-  // wallet recipient normalised into `to`).
+  // One routed receipt with the params its handler receives, built in Rust
+  // for every receipt kind.
   type item = {
     onEventRegistrationIndex: int,
     receiptIndex: int,
     txId: string,
     blockHeight: int,
     srcAddress: Address.t,
-    params?: Internal.eventParams,
-    subId?: string,
-    val?: bigint,
-    amount?: bigint,
-    assetId?: string,
-    to?: string,
+    params: Internal.eventParams,
   }
 
   // The page's first LogData receipt a contract-bound registration's ABI
