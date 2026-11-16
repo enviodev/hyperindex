@@ -242,7 +242,12 @@ impl ToNapiValue for JsTape {
 impl FromNapiValue for JsTape {
     unsafe fn from_napi_value(env: sys::napi_env, value: sys::napi_value) -> napi::Result<Self> {
         let mut tape = JsTape::new();
-        Record { env }.value(&mut tape, value, 0)?;
+        let object_prototype = Record::object_prototype(env)?;
+        Record {
+            env,
+            object_prototype,
+        }
+        .value(&mut tape, value, 0)?;
         Ok(tape)
     }
 }
@@ -253,6 +258,8 @@ const MAX_RECORD_DEPTH: usize = 64;
 
 struct Record {
     env: sys::napi_env,
+    /// `Object.prototype`, which a plain object's prototype is.
+    object_prototype: sys::napi_value,
 }
 
 fn unrecordable(what: &str) -> napi::Error {
@@ -290,6 +297,37 @@ impl Record {
             _ => return Err(unrecordable("external value")),
         }
         Ok(())
+    }
+
+    fn object_prototype(env: sys::napi_env) -> napi::Result<sys::napi_value> {
+        let mut global = std::ptr::null_mut();
+        check_status!(unsafe { sys::napi_get_global(env, &mut global) })?;
+        let mut object = std::ptr::null_mut();
+        check_status!(unsafe {
+            sys::napi_get_named_property(env, global, c"Object".as_ptr(), &mut object)
+        })?;
+        let mut prototype = std::ptr::null_mut();
+        check_status!(unsafe {
+            sys::napi_get_named_property(env, object, c"prototype".as_ptr(), &mut prototype)
+        })?;
+        Ok(prototype)
+    }
+
+    /// An object with `Object.prototype` or no prototype at all: nothing but
+    /// its own keys to record.
+    fn is_plain(&self, value: sys::napi_value) -> napi::Result<bool> {
+        let mut prototype = std::ptr::null_mut();
+        check_status!(unsafe { sys::napi_get_prototype(self.env, value, &mut prototype) })?;
+        let mut kind = 0;
+        check_status!(unsafe { sys::napi_typeof(self.env, prototype, &mut kind) })?;
+        if kind == sys::ValueType::napi_null {
+            return Ok(true);
+        }
+        let mut equal = false;
+        check_status!(unsafe {
+            sys::napi_strict_equals(self.env, prototype, self.object_prototype, &mut equal)
+        })?;
+        Ok(equal)
     }
 
     fn string(&self, value: sys::napi_value) -> napi::Result<String> {
@@ -388,6 +426,11 @@ impl Record {
             return Ok(());
         }
 
+        if !self.is_plain(value)? {
+            return Err(unrecordable(
+                "class instance (an object whose prototype isn't Object.prototype, such as a Date or Map)",
+            ));
+        }
         let mut keys = std::ptr::null_mut();
         check_status!(unsafe {
             sys::napi_get_all_property_names(

@@ -35,6 +35,15 @@ describe("EventStore.fromJsItems", () => {
     ).toEqual([item])
   })
 
+  it("refuses an object that isn't plain data instead of storing its keys alone", t => {
+    let withDate = dict{"at": Date.fromTime(0.)->(Utils.magic: Date.t => unknown)}
+
+    t->toThrowErrorEqual(
+      () => TestEventStore.pageOf([eventWithPayload(withDate)]),
+      "a class instance (an object whose prototype isn't Object.prototype, such as a Date or Map) can't be stored as a JS value tape on JsItemInput.item",
+    )
+  })
+
   it("refuses a bigint wider than 256 bits instead of storing it truncated", t => {
     let tooWide = dict{
       "value": 115792089237316195423570985008687907853269984665640564039457584007913129639936n->(
