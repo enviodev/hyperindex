@@ -355,9 +355,18 @@ let init = {
               ~resetCommand,
               ~runCommand,
               ~addChainCommands=switch addChainCommand {
+              // An `envio start --chain` run meets the same storage, and is
+              // refused for it before it adds anything.
+              | Some(_) if holding === Diverged || holding === Outdated => []
               | Some(addChainCommand) =>
                 paths
-                ->ResumePlan.newChainIdsWhenOnlyChange(~stored, ~chainConfigs)
+                ->ResumePlan.newChainIdsWhenOnlyChange(
+                  ~stored,
+                  ~envioInfo,
+                  ~chainConfigs,
+                  ~contractMapping,
+                  ~lowercaseAddresses,
+                )
                 ->Array.map(addChainCommand)
               | None => []
               },

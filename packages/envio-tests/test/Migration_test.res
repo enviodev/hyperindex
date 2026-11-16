@@ -511,6 +511,92 @@ ${storageLines}
     },
   )
 
+  // The entity change sits in a tier below the chains, so the refusal names
+  // only the chain, yet an `envio start --chain 137` would be refused for it.
+  deployed->Scenario.it(
+    "Doesn't offer to add a new chain when another change rides along with it",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondEmptyUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      let config =
+        deployment(
+          ~chains=[chain(1), chain(137)],
+          ~schema=schema ++ "\ntype Extra {\n  id: ID!\n}\n",
+        ).config->Scenario.withMockSources(
+          ~sources=[(1, source), (137, MockSource.make(Scenario.defaultMethods, ~chainId=137))],
+        )
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(
+          `The following config changes are incompatible with the existing indexer data:
+
+    - chains.137
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one to keep both datasets:
+${storageLines}
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`,
+        ),
+      )
+    },
+  )
+
+  // An `envio start --chain` against diverged storage is refused before it
+  // adds anything.
+  paired->Scenario.it(
+    "Doesn't offer to add a new chain to storage whose ClickHouse diverged",
+    ~sources=[{chain: 1}],
+    ~supervised=false,
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      source.resolveGetHeightOrThrow(100)
+      await source.respondEmptyUpTo(100)
+      await indexer.waitUntilReady()
+      await indexer.waitUntilIdle()
+      await TestClickHouse.drop(~database=TestClickHouse.currentDatabase())
+      let config =
+        deployment(
+          ~chains=[chain(1), chain(137)],
+          ~storage=clickHouseBesidePostgres,
+        ).config->Scenario.withMockSources(
+          ~sources=[(1, source), (137, MockSource.make(Scenario.defaultMethods, ~chainId=137))],
+        )
+
+      let refusal = switch await indexer.restart(~config, ()) {
+      | _ => None
+      | exception JsExn(e) => e->JsExn.message
+      }
+
+      t.expect(refusal).toEqual(
+        Some(`The following config changes are incompatible with the existing indexer data:
+
+    - chains.137
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio dev -r              # delete all indexed data and start over
+  3. Run a second indexer alongside this one to keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio dev`),
+      )
+    },
+  )
+
   // `projectFlags` is what the CLI hands over for `envio dev -d indexer
   // --config config.head.yaml`.
   deployed->Scenario.it(
