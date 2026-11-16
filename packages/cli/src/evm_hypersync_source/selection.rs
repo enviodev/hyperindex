@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use alloy_primitives::hex;
 use anyhow::{Context, Result};
 
 use crate::address_store::AddressSet;
@@ -41,6 +42,43 @@ impl BuiltLogSelection {
             Emitters::Listed(addresses) => addresses,
             Emitters::Any(_) => &[],
         }
+    }
+
+    /// Whether a raw log's `address` and `topics` satisfy this selection, the
+    /// same way the provider's `eth_getLogs` filter would have. Used to pick a
+    /// selection's own logs out of one unfiltered block read, so it only has to
+    /// reproduce the server-side filter; registration and address-ownership
+    /// gating stay in routing.
+    pub(crate) fn matches_log_address_and_topics(&self, address: &str, topics: &[String]) -> bool {
+        self.matches_log_address(address) && self.matches_log_topics(topics)
+    }
+
+    fn matches_log_address(&self, address: &str) -> bool {
+        match &self.emitters {
+            Emitters::Any(_) => true,
+            // A provider may case the address differently from the string the
+            // query was built with, so the two are compared as bytes.
+            Emitters::Listed(addresses) => hex::decode(address).is_ok_and(|log_address| {
+                addresses.iter().any(|candidate| {
+                    hex::decode(candidate).is_ok_and(|candidate| candidate == log_address)
+                })
+            }),
+        }
+    }
+
+    fn matches_log_topics(&self, topics: &[String]) -> bool {
+        self.topics.iter().enumerate().all(|(position, values)| {
+            if values.is_empty() {
+                return true;
+            }
+            topics.get(position).is_some_and(|topic| {
+                hex::decode(topic).is_ok_and(|topic| {
+                    values
+                        .iter()
+                        .any(|value| hex::decode(value).is_ok_and(|value| value == topic))
+                })
+            })
+        })
     }
 }
 
@@ -847,5 +885,60 @@ mod tests {
             .err()
             .unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
+    }
+
+    #[test]
+    fn a_listed_selection_matches_a_log_by_address_and_constrained_topics() {
+        const OTHER: &str = "0x9999999999999999999999999999999999999999";
+        let selection = BuiltLogSelection {
+            emitters: listed(&[ADDR]),
+            topics: vec![
+                vec![SIGHASH_A.to_string()],
+                vec![ADDR_TOPIC.to_string()],
+                vec![],
+                vec![],
+            ],
+        };
+        let matches = |address: &str, topics: &[&str]| {
+            let topics: Vec<String> = topics.iter().map(|topic| topic.to_string()).collect();
+            selection.matches_log_address_and_topics(address, &topics)
+        };
+        // The provider's own casing of the hex digits, the `0x` prefix aside.
+        let upper = format!("0x{}", ADDR[2..].to_uppercase());
+        assert_eq!(
+            (
+                // The address and both constrained positions.
+                matches(ADDR, &[SIGHASH_A, ADDR_TOPIC]),
+                // Uppercase digits are the same address.
+                matches(&upper, &[SIGHASH_A, ADDR_TOPIC]),
+                // Another emitter.
+                matches(OTHER, &[SIGHASH_A, ADDR_TOPIC]),
+                // A constrained position the log does not carry.
+                matches(ADDR, &[SIGHASH_A]),
+                // The wrong value at a constrained position.
+                matches(ADDR, &[SIGHASH_B, ADDR_TOPIC]),
+                // Positions past the constraint are unconstrained.
+                matches(ADDR, &[SIGHASH_A, ADDR_TOPIC, ADDR_TOPIC]),
+                // An address that is not hex cannot match a listed one.
+                matches("token", &[SIGHASH_A, ADDR_TOPIC]),
+            ),
+            (true, true, false, false, false, true, false),
+        );
+    }
+
+    #[test]
+    fn an_address_free_selection_matches_any_emitter() {
+        let selection = BuiltLogSelection {
+            emitters: any(&[], &[]),
+            topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+        };
+        let matches = |topics: &[&str]| {
+            let topics: Vec<String> = topics.iter().map(|topic| topic.to_string()).collect();
+            selection.matches_log_address_and_topics("0xdeadbeef", &topics)
+        };
+        assert_eq!(
+            (matches(&[SIGHASH_A]), matches(&[SIGHASH_B])),
+            (true, false)
+        );
     }
 }

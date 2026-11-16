@@ -13,6 +13,13 @@ let token = "0x1000000000000000000000000000000000000001"
 let otherToken = "0x2000000000000000000000000000000000000002"
 let holder = "0x3000000000000000000000000000000000000003"
 
+// Six distinct contracts, for the many-selection scenarios: each is its own
+// address-bound log selection.
+let tokenC = "0x4000000000000000000000000000000000000004"
+let tokenD = "0x5000000000000000000000000000000000000005"
+let tokenE = "0x6000000000000000000000000000000000000006"
+let tokenF = "0x7000000000000000000000000000000000000007"
+
 let transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 let approvalTopic = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
 
@@ -54,6 +61,10 @@ type fault =
   | LaggingReplicaRefusingAsArchive({block: int, mutable answers: int})
   // Throttles the next reads of `block` by hash with a JSON-RPC error.
   | RateLimitedBlockHashReads({block: int, mutable answers: int})
+  // Refuses the next unfiltered reads by blockHash with a result-count error,
+  // the way a provider does for a block holding too many logs to answer at
+  // once.
+  | UnfilteredReadTooLarge({mutable answers: int})
 
 type chain = {mutable height: int, mutable logs: array<ServedEvmChain.log>, mutable fault: fault}
 let chain = {height: backfillHeight, logs: [], fault: Honest}
@@ -102,7 +113,15 @@ let getLogs = (request, filter, ~fault, ~calls) => {
   calls
   ->Array.push(
     switch filter->Dict.get("blockHash") {
-    | Some(_) => `getLogs block ${fromBlock->Int.toString}`
+    | Some(_) =>
+      // An unfiltered read carries neither an address nor topics; anything
+      // else is one selection's own read.
+      let mode =
+        switch (filter->Dict.get("address"), filter->Dict.get("topics")) {
+        | (None, None) => " unfiltered"
+        | _ => " filtered"
+        }
+      `getLogs block ${fromBlock->Int.toString}${mode}`
     | None => `getLogs ${fromBlock->Int.toString}-${toBlock->Int.toString}`
     },
   )
@@ -123,6 +142,22 @@ let getLogs = (request, filter, ~fault, ~calls) => {
     )
   switch fault {
   | NoBlockHashReads if filter->Dict.has("blockHash") => archiveRefusal()
+  | UnfilteredReadTooLarge(limit)
+    if limit.answers > 0
+      && filter->Dict.has("blockHash")
+      && !(filter->Dict.has("topics"))
+      && !(filter->Dict.has("address")) =>
+    limit.answers = limit.answers - 1
+    envelope(
+      request,
+      "error",
+      JSON.Object(
+        dict{
+          "code": JSON.Number(-32005.),
+          "message": JSON.String("query returned more than 10000 results"),
+        },
+      ),
+    )
   | RateLimitedBlockHashReads(limit)
     if limit.answers > 0 && filter->Dict.has("blockHash") && touches(limit.block) =>
     limit.answers = limit.answers - 1
@@ -295,6 +330,89 @@ let failoverScenario = makeScenario(
         polling_interval: 10`,
 )
 
+// Six contracts, one event each, so a head block's recheck has six selections
+// that want it and today's one filtered read per selection becomes one
+// unfiltered read.
+let manySelectionScenario = Scenario.make(
+  ~configYaml=`
+name: rpc-head-block-checks-many-selections
+contracts:
+  - name: TokenA
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+  - name: TokenB
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+  - name: TokenC
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+  - name: TokenD
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+  - name: TokenE
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+  - name: TokenF
+    events:
+      - event: Transfer(address indexed from, address indexed to, uint256 value)
+chains:
+  - id: 1337
+    rpc:
+      url: ${ServedEvmChain.url(rpcPort)}
+      for: sync
+      polling_interval: 10
+    start_block: 1
+    max_reorg_depth: 5
+    contracts:
+      - name: TokenA
+        address: "${token}"
+      - name: TokenB
+        address: "${otherToken}"
+      - name: TokenC
+        address: "${tokenC}"
+      - name: TokenD
+        address: "${tokenD}"
+      - name: TokenE
+        address: "${tokenE}"
+      - name: TokenF
+        address: "${tokenF}"
+`,
+  ~schema=`
+type Seen {
+  id: ID!
+}
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "TokenA", event: "Transfer" }, async ({ event, context }) => {
+  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+});
+
+indexer.onEvent({ contract: "TokenB", event: "Transfer" }, async ({ event, context }) => {
+  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+});
+
+indexer.onEvent({ contract: "TokenC", event: "Transfer" }, async ({ event, context }) => {
+  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+});
+
+indexer.onEvent({ contract: "TokenD", event: "Transfer" }, async ({ event, context }) => {
+  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+});
+
+indexer.onEvent({ contract: "TokenE", event: "Transfer" }, async ({ event, context }) => {
+  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+});
+
+indexer.onEvent({ contract: "TokenF", event: "Transfer" }, async ({ event, context }) => {
+  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+});
+`,
+  // A real RPC source against a local server: its requests resolve on real I/O.
+  ~virtualTime=false,
+)
+
 type seen = {id: string}
 
 let seenIds = async (indexer: IndexerRunner.t) => {
@@ -407,10 +525,10 @@ describe("RPC head block checks", () => {
             ["21-0-21", "3-0-3"],
             [
               "getLogs 21-24",
-              "getLogs block 23",
+              "getLogs block 23 filtered",
               // An empty block has an all-zero bloom, which some chains serve
               // whatever the block holds, so it says nothing.
-              "getLogs block 24",
+              "getLogs block 24 filtered",
               "header 21",
               "header 22",
               "header 23",
@@ -451,11 +569,11 @@ describe("RPC head block checks", () => {
               "getLogs 21-23",
               // Block 21 holds no logs at all, and its zero bloom rules nothing
               // out, so each attempt asks for it again.
-              "getLogs block 21",
-              "getLogs block 21",
+              "getLogs block 21 filtered",
+              "getLogs block 21 filtered",
               // The replica doesn't know 22, which is the source being behind.
-              "getLogs block 22",
-              "getLogs block 23",
+              "getLogs block 22 filtered",
+              "getLogs block 23 filtered",
             ],
             [
               "RPC (127.0.0.1:18741) hasn't reached block 22 on all of its servers yet. This is normal near the latest block and resolves by itself - retrying shortly.",
@@ -593,8 +711,8 @@ describe("RPC head block checks", () => {
             [
               "getLogs 21-21",
               "getLogs 23-23",
-              "getLogs block 21",
-              "getLogs block 23",
+              "getLogs block 21 filtered",
+              "getLogs block 23 filtered",
             ]->Array.filter(call => !(head->Array.includes(call))),
             indexer.allLogsAsJson()->Array.filterMap(
               line =>
@@ -698,7 +816,7 @@ describe("RPC head block checks", () => {
         async (~indexer, ~backfill as _, ~head) => {
           t.expect((
             await indexer->seenIds,
-            head->Array.some(call => call == "getLogs block 22"),
+            head->Array.some(call => call == "getLogs block 22 filtered"),
             fallbackCalls->Array.some(call => call == "getLogs 21-22"),
             indexer.allLogsAsJson()->Array.some(
               line =>
@@ -713,5 +831,138 @@ describe("RPC head block checks", () => {
       )
     },
     ~timeout=60_000,
+  )
+
+  Async.it(
+    "reads one unfiltered block per empty head block when six selections want it",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~logs=[event(~blockNumber=24)],
+        ~height=24,
+        ~fault=Honest,
+        ~waitFor="24-0-24",
+        async (~indexer as _, ~backfill as _, ~head) => {
+          t.expect(
+            head->Array.filter(call => call->String.includes("block")),
+          ).toEqual([
+            "getLogs block 21 unfiltered",
+            "getLogs block 22 unfiltered",
+            "getLogs block 23 unfiltered",
+          ])
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "picks each selection's logs out of one unfiltered read of a block the range left out",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~logs=[
+          event(~blockNumber=22),
+          event(~blockNumber=22, ~logIndex=1, ~address=otherToken),
+          // Not one of the six contracts: the unfiltered read carries it and
+          // the local match must drop it.
+          event(~blockNumber=22, ~logIndex=2, ~address=holder),
+        ],
+        ~height=24,
+        ~fault=RangeHole({block: 22, answers: 6}),
+        ~waitFor="22-0-22",
+        async (~indexer, ~backfill as _, ~head as _) => {
+          t.expect(await indexer->seenIds).toEqual(["22-0-22", "22-1-22", "3-0-3"])
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "does not recheck a head block whose bloom rules every selection out",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~logs=[event(~blockNumber=22, ~address=holder), event(~blockNumber=24)],
+        ~height=24,
+        ~fault=Honest,
+        ~waitFor="24-0-24",
+        async (~indexer as _, ~backfill as _, ~head) => {
+          t.expect(
+            head->Array.filter(call => call->String.includes("block 22")),
+          ).toEqual([])
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "asks a refused hash read once by number per block when six selections want it",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~startupFault=NoBlockHashReads,
+        ~logs=[event(~blockNumber=21)],
+        ~height=24,
+        ~fault=NoBlockHashReads,
+        ~waitFor="21-0-21",
+        async (~indexer, ~backfill as _, ~head) => {
+          t.expect((
+            await indexer->seenIds,
+            head->Array.filter(call =>
+              ["getLogs 22-22", "getLogs 23-23", "getLogs 24-24"]->Array.includes(call)
+            ),
+            indexer.allLogsAsJson()->Array.filter(
+              line =>
+                switch (line->Dict.get("level"), line->Dict.get("msg")) {
+                | (Some(String("warn")), Some(String(msg)))
+                  if msg->String.includes("by block hash") =>
+                  true
+                | _ => false
+                },
+            )->Array.length,
+          )).toEqual((
+            ["21-0-21", "3-0-3"],
+            ["getLogs 22-22", "getLogs 23-23", "getLogs 24-24"],
+            1,
+          ))
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "rechecks a lagging replica's empty head block once for every selection",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~logs=[event(~blockNumber=23)],
+        ~height=23,
+        ~fault=LaggingReplica({block: 22, answers: 12}),
+        ~waitFor="23-0-23",
+        async (~indexer, ~backfill as _, ~head as _) => {
+          t.expect(await indexer->seenIds).toEqual(["23-0-23", "3-0-3"])
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "falls back to per-selection reads when an unfiltered block read is too large",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~logs=[event(~blockNumber=21)],
+        ~height=24,
+        ~fault=UnfilteredReadTooLarge({answers: 100}),
+        ~waitFor="21-0-21",
+        async (~indexer, ~backfill as _, ~head) => {
+          t.expect((
+            await indexer->seenIds,
+            head->Array.filter(call => call == "getLogs block 22 filtered")->Array.length,
+            head->Array.filter(call => call == "getLogs block 22 unfiltered")->Array.length,
+          )).toEqual((["21-0-21", "3-0-3"], 6, 1))
+        },
+      )
+    },
   )
 })

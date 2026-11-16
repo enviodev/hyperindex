@@ -62,7 +62,7 @@ pub struct EvmRpcClientConfig {
 
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
 /// 0x-prefixed hex quantities that decoding later converts.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct RawLog {
     address: String,
@@ -227,6 +227,63 @@ enum PageError {
 impl From<EnrichError> for PageError {
     fn from(error: EnrichError) -> Self {
         PageError::Enrich(error)
+    }
+}
+
+/// One head block's recheck: the block, the reason it is asked for again, and
+/// the selections it is asked for. One selection means its own filtered read;
+/// several mean one unfiltered read matched locally.
+struct RecheckTask {
+    selections: Vec<usize>,
+    block: u64,
+    reason: head_checks::RecheckReason,
+    filtered: bool,
+}
+
+/// What one recheck found, kept apart from the task so the caller can apply
+/// each selection's logs once every recheck has settled.
+struct RecheckResult {
+    selections: Vec<usize>,
+    found: Vec<RawLog>,
+}
+
+/// What a refused read by hash means: the block is asked again by number, or
+/// the page is failed. The one place the policy lives, so the per-selection and
+/// unfiltered rechecks cannot drift apart.
+enum HashReadRefusal {
+    /// Ask the same block again by number, carrying the provider's own words.
+    ByNumber(String),
+    Failed(EnrichError),
+}
+
+fn hash_read_refusal(
+    error: RpcError,
+    block: u64,
+    answered_block_hash_read: bool,
+    retry: i64,
+) -> HashReadRefusal {
+    match error {
+        RpcError::JsonRpc { code, message }
+            if is_unsupported_request(code, &message)
+                && !answered_block_hash_read
+                && retry >= RETRIES_BEFORE_RECHECKING_BY_NUMBER =>
+        {
+            HashReadRefusal::ByNumber(message)
+        }
+        // A throttled read says nothing about the block, and retrying it at the
+        // pace a node behind the head gets would only throttle more.
+        RpcError::JsonRpc { code, message } if is_rate_limited_message(&message) => {
+            HashReadRefusal::Failed(EnrichError::Rpc(Arc::new(RpcError::JsonRpc {
+                code,
+                message,
+            })))
+        }
+        RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_) => {
+            HashReadRefusal::Failed(EnrichError::BehindHead {
+                block_number: block,
+            })
+        }
+        other => HashReadRefusal::Failed(EnrichError::Rpc(Arc::new(other))),
     }
 }
 
@@ -957,9 +1014,12 @@ impl EvmRpcClient {
 
     /// Asks again, by hash, for every checked block a selection's answer held
     /// none of its logs for while the block's header can't rule them out, and
-    /// adds what comes back to that selection's logs. A node that doesn't have
-    /// the block yet must refuse a hash it doesn't know, so a refusal is the
-    /// node being behind it, which the source manager retries and fails over.
+    /// adds what comes back to that selection's logs. A block more than one
+    /// selection wants is read once unfiltered and each selection's logs picked
+    /// out of it locally, which is one request instead of one per selection. A
+    /// node that doesn't have the block yet must refuse a hash it doesn't know,
+    /// so a refusal is the node being behind it, which the source manager
+    /// retries and fails over.
     async fn recheck_head_blocks(
         &self,
         query: &PageQuery<'_>,
@@ -974,12 +1034,11 @@ impl EvmRpcClient {
             .iter()
             .map(|(&block, header)| (block, head_checks::CheckedHeader::read(header)))
             .collect();
-        let rechecks: Vec<(usize, u64, head_checks::RecheckReason)> = query
+        let per_selection: Vec<Vec<(u64, head_checks::RecheckReason)>> = query
             .selections
             .iter()
             .zip(logs.iter())
-            .enumerate()
-            .flat_map(|(index, (selection, selection_logs))| {
+            .map(|(selection, selection_logs)| {
                 let answered: HashSet<u64> = selection_logs
                     .iter()
                     .filter_map(|log| parse_hex_u64(&log.block_number).ok())
@@ -990,40 +1049,84 @@ impl EvmRpcClient {
                     &checked_headers,
                     selection,
                 )
-                .into_iter()
-                .map(move |(block, reason)| (index, block, reason))
             })
             .collect();
+        let plan = head_checks::plan_rechecks(per_selection);
 
-        let results =
-            futures_util::future::join_all(rechecks.iter().map(|&(index, block, reason)| {
-                let hash = checked_headers
-                    .get(&block)
-                    .and_then(|header| header.hash.as_deref());
-                async move {
-                    let hash = hash.ok_or_else(|| {
-                        EnrichError::Transient(format!(
-                            "The RPC returned the header of block {block} without its hash."
-                        ))
-                    })?;
-                    let found = self
-                        .recheck_block(query, &query.selections[index], block, hash)
-                        .await?;
-                    self.logger.log(
-                        Level::TRACE,
-                        "Asked the RPC again for a head block its range answer held none of the selection's logs for.",
-                        &serde_json::json!({
-                            "blockNumber": block,
-                            "reason": reason.as_str(),
-                            "logs": found.len(),
-                        }),
+        let results = futures_util::future::join_all(
+            plan.filtered
+                .iter()
+                .map(|&(selection, block, reason)| RecheckTask {
+                    selections: vec![selection],
+                    block,
+                    reason,
+                    filtered: true,
+                })
+                .chain(plan.unfiltered.iter().map(|(block, selections, reason)| RecheckTask {
+                    selections: selections.clone(),
+                    block: *block,
+                    reason: *reason,
+                    filtered: false,
+                }))
+                .map(|task| {
+                    let hash = checked_headers
+                        .get(&task.block)
+                        .and_then(|header| header.hash.clone());
+                    async move {
+                        let hash = hash.ok_or_else(|| {
+                            EnrichError::Transient(format!(
+                                "The RPC returned the header of block {} without its hash.",
+                                task.block
+                            ))
+                        })?;
+                        let found = if task.filtered {
+                            self.recheck_block(
+                                query,
+                                &query.selections[task.selections[0]],
+                                task.block,
+                                &hash,
+                            )
+                            .await?
+                        } else {
+                            self.recheck_block_unfiltered(query, task.block, &hash, &task.selections)
+                                .await?
+                        };
+                        self.logger.log(
+                            Level::TRACE,
+                            "Asked the RPC again for a head block its range answer held none of the selection's logs for.",
+                            &serde_json::json!({
+                                "blockNumber": task.block,
+                                "reason": task.reason.as_str(),
+                                "logs": found.len(),
+                                "selections": task.selections.len(),
+                                "mode": if task.filtered { "filtered" } else { "unfiltered" },
+                            }),
+                        );
+                        Ok(RecheckResult {
+                            selections: task.selections,
+                            found,
+                        })
+                    }
+                }),
+        )
+        .await;
+        for result in enrich::collect_worst(results)? {
+            if let [selection] = result.selections[..] {
+                logs[selection].extend(result.found);
+            } else {
+                for &selection in &result.selections {
+                    let matcher = &query.selections[selection];
+                    logs[selection].extend(
+                        result
+                            .found
+                            .iter()
+                            .filter(|log| {
+                                matcher.matches_log_address_and_topics(&log.address, &log.topics)
+                            })
+                            .cloned(),
                     );
-                    Ok((index, found))
                 }
-            }))
-            .await;
-        for (index, found) in enrich::collect_worst(results)? {
-            logs[index].extend(found);
+            }
         }
         Ok(())
     }
@@ -1045,43 +1148,33 @@ impl EvmRpcClient {
         block: u64,
         hash: &str,
     ) -> Result<Vec<RawLog>, EnrichError> {
-        let by_hash = logs::LogBlocks::Hash {
-            block_number: block,
-            hash,
-        };
-        let refusal = match self.request_logs(query, by_hash, selection).await {
+        let read = self
+            .request_logs(
+                query,
+                logs::LogBlocks::Hash {
+                    block_number: block,
+                    hash,
+                },
+                selection,
+            )
+            .await;
+        let refusal = match read {
             Ok(found) => {
                 self.answered_block_hash_read.store(true, Ordering::Relaxed);
                 return Ok(found);
             }
-            Err(RpcError::JsonRpc { code, message })
-                if is_unsupported_request(code, &message)
-                    && !self.answered_block_hash_read.load(Ordering::Relaxed)
-                    && query.retry >= RETRIES_BEFORE_RECHECKING_BY_NUMBER =>
-            {
-                message
-            }
-            // A throttled read says nothing about the block, and retrying it
-            // at the pace a node behind the head gets would only throttle more.
-            Err(RpcError::JsonRpc { code, message }) if is_rate_limited_message(&message) => {
-                return Err(EnrichError::Rpc(Arc::new(RpcError::JsonRpc {
-                    code,
-                    message,
-                })))
-            }
-            Err(RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_)) => {
-                return Err(EnrichError::BehindHead {
-                    block_number: block,
-                })
-            }
-            Err(error) => return Err(EnrichError::Rpc(Arc::new(error))),
+            Err(error) => hash_read_refusal(
+                error,
+                block,
+                self.answered_block_hash_read.load(Ordering::Relaxed),
+                query.retry,
+            ),
         };
-        if !self.warned_block_hash_refusal.swap(true, Ordering::Relaxed) {
-            self.logger.log(
-                Level::WARN,
-                "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
-                &serde_json::json!({ "providerMessage": refusal }),
-            );
+        match refusal {
+            HashReadRefusal::Failed(error) => return Err(error),
+            HashReadRefusal::ByNumber(provider_message) => {
+                self.warn_block_hash_refusal(&provider_message)
+            }
         }
         self.request_logs(
             query,
@@ -1092,6 +1185,92 @@ impl EvmRpcClient {
         )
         .await
         .map_err(|error| EnrichError::Rpc(Arc::new(error)))
+    }
+
+    /// Asks for one checked block again by its hash, unfiltered, and returns
+    /// every log the block holds. The caller picks each selection's own logs
+    /// out of the answer. A block too large to answer unfiltered falls back to
+    /// the selections' own filtered reads.
+    async fn recheck_block_unfiltered(
+        &self,
+        query: &PageQuery<'_>,
+        block: u64,
+        hash: &str,
+        selections: &[usize],
+    ) -> Result<Vec<RawLog>, EnrichError> {
+        let read = logs::request_block_logs(
+            &self.inner,
+            logs::LogBlocks::Hash {
+                block_number: block,
+                hash,
+            },
+        )
+        .await;
+        let refusal = match read {
+            Ok(found) => {
+                self.answered_block_hash_read.store(true, Ordering::Relaxed);
+                return Ok(found);
+            }
+            Err(error) => {
+                if logs::is_answer_too_large(&error) {
+                    return self
+                        .recheck_selections_filtered(query, block, hash, selections)
+                        .await;
+                }
+                hash_read_refusal(
+                    error,
+                    block,
+                    self.answered_block_hash_read.load(Ordering::Relaxed),
+                    query.retry,
+                )
+            }
+        };
+        match refusal {
+            HashReadRefusal::Failed(error) => return Err(error),
+            HashReadRefusal::ByNumber(provider_message) => {
+                self.warn_block_hash_refusal(&provider_message)
+            }
+        }
+        logs::request_block_logs(
+            &self.inner,
+            logs::LogBlocks::RecheckByNumber {
+                block_number: block,
+            },
+        )
+        .await
+        .map_err(|error| EnrichError::Rpc(Arc::new(error)))
+    }
+
+    /// Reads each of `selections` over `block` by hash with its own filter,
+    /// joining what comes back. The fallback for an unfiltered read a provider
+    /// refuses for its size.
+    async fn recheck_selections_filtered(
+        &self,
+        query: &PageQuery<'_>,
+        block: u64,
+        hash: &str,
+        selections: &[usize],
+    ) -> Result<Vec<RawLog>, EnrichError> {
+        let results = futures_util::future::join_all(selections.iter().map(|&selection| {
+            self.recheck_block(query, &query.selections[selection], block, hash)
+        }))
+        .await;
+        Ok(enrich::collect_worst(results)?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    /// Says once per source that a provider refuses reads by hash and blocks
+    /// near the head are read by number instead.
+    fn warn_block_hash_refusal(&self, provider_message: &str) {
+        if !self.warned_block_hash_refusal.swap(true, Ordering::Relaxed) {
+            self.logger.log(
+                Level::WARN,
+                "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
+                &serde_json::json!({ "providerMessage": provider_message }),
+            );
+        }
     }
 
     async fn route_logs(
