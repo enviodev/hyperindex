@@ -135,30 +135,7 @@ let make = (
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
       let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
-      let eventConfig =
-        onEventRegistration.eventConfig->(
-          Utils.magic: Internal.eventConfig => Internal.fuelEventConfig
-        )
-
-      let params = switch eventConfig.kind {
-      // Rust only routes a LogData receipt once its data decoded.
-      | LogData(_) => item.params->Option.getUnsafe
-      | Mint | Burn =>
-        (
-          {
-            subId: item.subId->Option.getOr(""),
-            amount: item.val->Option.getOr(0n),
-          }: Internal.fuelSupplyParams
-        )->Obj.magic
-      | Transfer | Call =>
-        (
-          {
-            to: item.to->Option.getOr("")->Address.unsafeFromString,
-            assetId: item.assetId->Option.getOr(""),
-            amount: item.amount->Option.getOr(0n),
-          }: Internal.fuelTransferParams
-        )->Obj.magic
-      }
+      let {contractName, name: eventName} = onEventRegistration.eventConfig
 
       Internal.Event({
         onEventRegistration,
@@ -169,10 +146,10 @@ let make = (
         // unused (Fuel identifies transactions by hash, kept on the payload).
         transactionIndex: 0,
         payload: {
-          contractName: eventConfig.contractName,
-          eventName: eventConfig.name,
+          contractName,
+          eventName,
           chainId,
-          params,
+          params: item.params,
           transaction: {
             "id": item.txId,
           }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
