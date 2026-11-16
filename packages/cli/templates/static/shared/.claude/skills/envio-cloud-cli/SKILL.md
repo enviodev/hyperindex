@@ -18,7 +18,6 @@ How it works:
 
 - An **indexer** follows one branch of a GitHub repo. Envio Cloud only sees commits **pushed to that branch after the indexer was added**.
 - With auto-deploy on (the default), a push deploys. With it off, the commit waits as `inactive` until `deployment deploy`.
-- A deployment is named by its commit's first 7 characters: `git rev-parse HEAD | cut -c1-7`.
 - Each deployment has its own GraphQL URL. On Production plans, `deployment promote` points the static production endpoint at it; promoting an older one rolls back.
 - Indexers on Envio Cloud don't need a HyperSync `ENVIO_API_TOKEN`.
 
