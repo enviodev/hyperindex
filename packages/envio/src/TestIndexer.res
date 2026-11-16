@@ -463,17 +463,17 @@ let getEntityFromState = (
 let makeEntityGet = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   string => promise<option<Internal.entity>>
 ) => {
-  entityId => {
-    Promise.resolve(getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get"))
+  async entityId => {
+    getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="get")
   }
 }
 
 let makeEntityGetOrThrow = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   (string, ~message: string=?) => promise<Internal.entity>
 ) => {
-  (entityId, ~message=?) => {
+  async (entityId, ~message=?) => {
     switch getEntityFromState(~state, ~entityConfig, ~entityId, ~methodName="getOrThrow") {
-    | Some(entity) => Promise.resolve(entity)
+    | Some(entity) => entity
     | None =>
       let msg = switch message {
       | Some(m) => m
@@ -523,14 +523,14 @@ let makeEntitySet = (~state: testIndexerState, ~entityConfig: Internal.entityCon
 let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   unit => promise<array<Internal.entity>>
 ) => {
-  () => {
+  async () => {
     if state.processInProgress {
       JsError.throwWithMessage(
         `Cannot call ${entityConfig.name}.getAll() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
       )
     }
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    Promise.resolve(entityDict->Dict.valuesToArray->Array.map(copyEntity))
+    entityDict->Dict.valuesToArray->Array.map(copyEntity)
   }
 }
 
@@ -541,7 +541,7 @@ let makeEntityGetAll = (~state: testIndexerState, ~entityConfig: Internal.entity
 let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.entityConfig): (
   dict<dict<unknown>> => promise<array<Internal.entity>>
 ) => {
-  filter => {
+  async filter => {
     if state.processInProgress {
       JsError.throwWithMessage(
         `Cannot call ${entityConfig.name}.getWhere() while indexer.process() is running. ` ++ "Wait for process() to complete before accessing entities directly.",
@@ -552,7 +552,7 @@ let makeEntityGetWhere = (~state: testIndexerState, ~entityConfig: Internal.enti
       ->EntityFilter.parseOrThrow(~entityName=entityConfig.name, ~table=entityConfig.table)
       ->EntityFilter.makeMatcher(~table=entityConfig.table)
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
-    Promise.resolve(entityDict->Dict.valuesToArray->Array.filter(matcher)->Array.map(copyEntity))
+    entityDict->Dict.valuesToArray->Array.filter(matcher)->Array.map(copyEntity)
   }
 }
 

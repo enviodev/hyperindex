@@ -95,11 +95,11 @@ describe("TestIndexer entity operations", () => {
     t.expect(await indexer.User.getAll()).toEqual([{ ...user, id: "0", address: "existing" }]);
   });
 
-  it("get throws while process() is running", (t) => {
+  it("get rejects while process() is running", async (t) => {
     const indexer = createTestIndexer();
     indexer.process({ chains: { 1: { startBlock: 1, endBlock: 100 } } });
 
-    t.expect(() => indexer.User.get("test-user-1")).toThrowError(
+    await t.expect(indexer.User.get("test-user-1")).rejects.toThrowError(
       "Cannot call User.get() while indexer.process() is running. Wait for process() to complete before accessing entities directly."
     );
   });
