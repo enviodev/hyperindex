@@ -1062,15 +1062,13 @@ impl Storage {
                     let committed = transaction.commit().await;
                     handoff.report_commit(committed.is_ok());
                     committed.map_err(|error| {
-                        let never_sent = was_never_sent(&error);
-                        let lost = is_connection_lost(&error);
                         let failure = Failure::new("Failed committing the batch", error);
-                        if never_sent {
+                        if was_never_sent(&failure.error) {
                             WriteError::Unwritten(failure)
-                        } else if lost {
+                        } else if is_connection_lost(&failure.error) {
                             WriteError::Uncertain(failure)
                         } else {
-                            failure.into()
+                            WriteError::Failed(failure)
                         }
                     })
                 }

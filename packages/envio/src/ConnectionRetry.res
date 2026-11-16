@@ -8,6 +8,8 @@ let retryDelayMillis = (~attempt) =>
 // and its alerting notice.
 let deadlineSeconds = 60
 
+let retryTimerLabel = "Storage retry"
+
 let lostConnectionMsg = "Lost the connection to the database. Retrying until it answers."
 
 let unreachableMsg = `The database has been unreachable for ${deadlineSeconds->Int.toString} seconds. The "Lost the connection to the database" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it. Once the issue is resolved and the indexer is restarted, it resumes from the last block it saved.`
@@ -21,15 +23,13 @@ let unreachableMsg = `The database has been unreachable for ${deadlineSeconds->I
 let retryUntilReachable = async (state: IndexerState.t, ~operation, work) => {
   let clock = state->IndexerState.clock
   let deadlineMillis = deadlineSeconds * 1000
-  let firstFailedAt = ref(None)
-  let rec attemptFrom = async attempt =>
+  let rec attemptFrom = async (attempt, ~firstFailedAt) =>
     switch await work() {
     | value => Some(value)
     | exception Persistence.ConnectionLost(_) if state->IndexerState.isStopped => None
     | exception Persistence.ConnectionLost(message) =>
-      let failedAt = firstFailedAt.contents->Option.getOr(clock.now())
-      firstFailedAt := Some(failedAt)
-      let leftMillis = deadlineMillis - (clock.now() -. failedAt)->Float.toInt
+      let firstFailedAt = firstFailedAt->Option.getOr(clock.now())
+      let leftMillis = deadlineMillis - (clock.now() -. firstFailedAt)->Float.toInt
       if leftMillis <= 0 {
         state->IndexerState.errorExit(
           Utils.Error.make(message)->ErrorHandling.make(
@@ -52,11 +52,11 @@ let retryUntilReachable = async (state: IndexerState.t, ~operation, work) => {
             "stopsInSeconds": (leftMillis + 999) / 1000,
           },
         )
-        await state->IndexerState.waitForDatabase(
-          clock->Clock.delay(~label="Storage retry", delayMillis),
-        )
-        state->IndexerState.isStopped ? None : await attemptFrom(attempt + 1)
+        await clock->Clock.delay(~label=retryTimerLabel, delayMillis)
+        state->IndexerState.isStopped
+          ? None
+          : await attemptFrom(attempt + 1, ~firstFailedAt=Some(firstFailedAt))
       }
     }
-  await attemptFrom(0)
+  await attemptFrom(0, ~firstFailedAt=None)
 }

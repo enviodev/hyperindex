@@ -20,9 +20,11 @@ module Native = {
   @send external describe: t => string = "describe"
 }
 
+type armed = {label: string, callback: unit => unit}
+
 type t = {
   native: Native.t,
-  callbacks: Map.t<int, unit => unit>,
+  callbacks: Map.t<int, armed>,
   // Zero-delay timers, keyed by the negative ids handed out for them.
   turns: Map.t<int, timeoutId>,
   mutable nextTurn: int,
@@ -68,7 +70,7 @@ let toClock = (clock: t): Clock.t => {
       id->(Utils.magic: int => Clock.timer)
     } else {
       let id = clock.native->Native.arm(label, millis->Int.toFloat)
-      clock.callbacks->Map.set(id, callback)
+      clock.callbacks->Map.set(id, {label, callback})
       id->(Utils.magic: int => Clock.timer)
     }
   },
@@ -108,7 +110,7 @@ let advance = async (clock: t, millis, ~settle: unit => promise<unit>) => {
     switch clock.native->Native.fireNext(until)->Nullable.toOption {
     | Some({id}) =>
       switch clock.callbacks->Map.get(id) {
-      | Some(callback) =>
+      | Some({callback}) =>
         clock.callbacks->Map.delete(id)->ignore
         callback()
       | None => ()
@@ -119,5 +121,8 @@ let advance = async (clock: t, millis, ~settle: unit => promise<unit>) => {
   }
   clock.native->Native.endAdvance(until)
 }
+
+let hasPendingTimer = (clock: t, ~label) =>
+  clock.callbacks->Map.values->Iterator.toArray->Array.some(armed => armed.label === label)
 
 let describe = (clock: t) => clock.native->Native.describe

@@ -190,7 +190,25 @@ pub fn to_napi(error: anyhow::Error) -> napi::Error {
 
 #[cfg(test)]
 mod tests {
+    use super::super::client::{Keepalive, PgClient, PgConnectionOptions, SslSetting};
     use super::*;
+
+    fn client_for(host: &str, port: u16) -> PgClient {
+        PgClient::connect(PgConnectionOptions {
+            host: host.to_string(),
+            port,
+            user: "postgres".to_string(),
+            password: String::new(),
+            database: "postgres".to_string(),
+            ssl: SslSetting::Disable,
+            max_connections: 1,
+            application_name: None,
+            extra_ca_file: None,
+            connect_timeout: std::time::Duration::from_secs(5),
+            keepalive: Keepalive::default(),
+        })
+        .unwrap()
+    }
 
     /// A port that accepts and closes straight away is what a pooler or a
     /// proxy in front of a restarting database answers with.
@@ -203,21 +221,7 @@ mod tests {
                 drop(socket);
             }
         });
-        let client =
-            super::super::client::PgClient::connect(super::super::client::PgConnectionOptions {
-                host: "127.0.0.1".to_string(),
-                port,
-                user: "postgres".to_string(),
-                password: String::new(),
-                database: "postgres".to_string(),
-                ssl: super::super::client::SslSetting::Disable,
-                max_connections: 1,
-                application_name: None,
-                extra_ca_file: None,
-                connect_timeout: std::time::Duration::from_secs(5),
-                keepalive: super::super::client::Keepalive::default(),
-            })
-            .unwrap();
+        let client = client_for("127.0.0.1", port);
 
         let error = client.begin().await.err().unwrap();
 
@@ -228,21 +232,7 @@ mod tests {
     /// for a moment, so its name stops resolving until it is back.
     #[tokio::test]
     async fn a_host_that_does_not_resolve_is_lost() {
-        let client =
-            super::super::client::PgClient::connect(super::super::client::PgConnectionOptions {
-                host: "envio-test-database.invalid".to_string(),
-                port: 5432,
-                user: "postgres".to_string(),
-                password: String::new(),
-                database: "postgres".to_string(),
-                ssl: super::super::client::SslSetting::Disable,
-                max_connections: 1,
-                application_name: None,
-                extra_ca_file: None,
-                connect_timeout: std::time::Duration::from_secs(5),
-                keepalive: super::super::client::Keepalive::default(),
-            })
-            .unwrap();
+        let client = client_for("envio-test-database.invalid", 5432);
 
         let error = client.begin().await.err().unwrap();
 

@@ -708,7 +708,8 @@ let run = async (
             // on the database, so it gets the short spell.
             let quietLimit = () =>
               (state->IndexerState.writeFiber->Option.isSome &&
-                state->IndexerState.waitingOnDatabase === 0) || storageCallsInFlight.contents > 0
+                !(clock->VirtualClock.hasPendingTimer(~label=ConnectionRetry.retryTimerLabel))) ||
+                storageCallsInFlight.contents > 0
                 ? 500
                 : 50
             while idle.contents < 5 && still.contents < quietLimit() {

@@ -373,8 +373,9 @@ impl Storage {
     /// it, and only a restart, raising the frontier to what Postgres
     /// committed, makes its rows readable. So with ClickHouse a failed write
     /// is never retried by the process that made it, and comes back `Failed`
-    /// even when Postgres alone would call it `Unwritten` or `Uncertain`: ClickHouse may hold
-    /// the batch's rows already, and only a resume trims them away.
+    /// even when Postgres alone would call it `Unwritten` or `Uncertain`:
+    /// ClickHouse may hold the batch's rows already, and only a resume trims
+    /// them away.
     ///
     /// Never `Gated`: a store told not to commit is reported as the other
     /// store's failure.
