@@ -1071,9 +1071,9 @@ impl ProjectTemplate {
         }
     }
 
-    /// An EVM event's `block` / `transaction` types: envio's `EvmConfigBlock` /
-    /// `EvmConfigTransaction` over the event's own `field_selection`, or the
-    /// global one when it has none.
+    /// An EVM event's `block` / `transaction` types: envio's `EvmBlock` /
+    /// `EvmTransaction` over the event's own `field_selection`, or the global
+    /// one when it has none.
     fn evm_event_block_and_transaction_ts_types(
         event: &system_config::Event,
         global_field_selection: &FieldSelection,
@@ -1089,30 +1089,24 @@ impl ProjectTemplate {
             .unwrap_or(global_field_selection);
         (
             format!(
-                "EvmConfigBlock<\"{}\", {}>",
-                event.name,
-                Self::field_names_to_ts_union(&selection.block_fields)
+                "EvmBlock<{{ block: {} }}>",
+                Self::field_names_to_ts_tuple(&selection.block_fields)
             ),
             format!(
-                "EvmConfigTransaction<\"{}\", {}>",
-                event.name,
-                Self::field_names_to_ts_union(&selection.transaction_fields)
+                "EvmTransaction<{{ transaction: {} }}>",
+                Self::field_names_to_ts_tuple(&selection.transaction_fields)
             ),
         )
     }
 
-    fn field_names_to_ts_union(fields: &[SelectedFieldTemplate]) -> String {
+    fn field_names_to_ts_tuple(fields: &[SelectedFieldTemplate]) -> String {
         use itertools::Itertools;
-        let names: Vec<String> = fields
+        let names = fields
             .iter()
             .map(|field| format!("\"{}\"", field.name.camel))
             .unique()
-            .collect();
-        if names.is_empty() {
-            "never".to_string()
-        } else {
-            names.join(" | ")
-        }
+            .join(", ");
+        format!("[{names}]")
     }
 
     /// Generate a full TypeScript event type for use in EvmContracts/FuelContracts.
@@ -2399,7 +2393,7 @@ type testIndexer = {{
     /// Inside this block a bare type name resolves against envio's exports,
     /// entity aliases included, before the host file's own declarations. So
     /// everything is inlined into `Global.config` or referenced through an
-    /// envio export (`EvmConfigBlock`, `FuelBlock`, `Entity`, `Enum`), and a
+    /// envio export (`EvmBlock`, `FuelBlock`, `Entity`, `Enum`), and a
     /// file-level type is never referenced from here. The one exception is
     /// the `FuelTypes` namespace, which recursive and generic ABI types need
     /// a name for; entity aliases are types, not namespaces, so they can't

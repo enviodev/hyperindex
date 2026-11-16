@@ -795,6 +795,16 @@ type _ProjectFuelEvent = FuelEvent extends EventLike ? FuelEvent : never;
  * a field is a type error; the message names the field and where to add it. */
 export type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
 
+type FieldNotSelectedInFieldsOption<Field extends string, Knob extends string> = FieldNotSelected<`Field '${Field}' is not selected. Add it to the handler options: { ..., fields: { ${Knob}: ["${Field}"] } }`>;
+
+/** For a field that isn't itself selectable, like `lamports`: selecting any of
+ * `ExampleField`'s siblings makes it readable. */
+type FieldGroupNotSelectedInFieldsOption<
+  Group extends string,
+  Knob extends string,
+  ExampleField extends string,
+> = FieldNotSelected<`Field '${Group}' is not selected. Add one of its fields to the handler options, e.g. { ..., fields: { ${Knob}: ["${ExampleField}"] } }`>;
+
 /** Every EVM block field, with the type it has once selected. Declared by hand
  * so the `fields` option types work in a project that never ran codegen; kept
  * in sync with the config-parsing enums by a test in `codegen_templates.rs`. */
@@ -882,24 +892,8 @@ type EvmAlwaysSelectedBlockField = "number";
 type SelectedFields<All, Selected extends string, Knob extends string> = {
   readonly [K in keyof All]: K extends Selected
     ? All[K]
-    : FieldNotSelected<`Field '${K &
-        string}' is not selected for this handler. Add it to fields.${Knob} in the registration options.`>;
+    : FieldNotSelectedInFieldsOption<K & string, Knob>;
 };
-
-type ConfigSelectedFields<All, Selected extends string, EventName extends string, Knob extends string> = {
-  readonly [K in keyof All]: K extends Selected
-    ? All[K]
-    : FieldNotSelected<`Field '${K &
-        string}' is not selected for the '${EventName}' event. Add it under field_selection.${Knob} in config.yaml.`>;
-};
-
-/** An event's block narrowed to the `field_selection` in config.yaml. */
-export type EvmConfigBlock<EventName extends string, Selected extends EvmBlockFieldName> =
-  ConfigSelectedFields<EvmAllBlockFields, Selected, EventName, "block_fields">;
-
-/** An event's transaction narrowed to the `field_selection` in config.yaml. */
-export type EvmConfigTransaction<EventName extends string, Selected extends EvmTransactionFieldName> =
-  ConfigSelectedFields<EvmAllTransactionFields, Selected, EventName, "transaction_fields">;
 
 /** Field names listed under `Knob`, or `never` when the key is absent or lists
  * nothing. Reads the value through `ListedArray` for the same reason that
@@ -948,12 +942,20 @@ type FieldsLiteralCheck<Fields> = [Fields] extends [undefined]
       ? EvmFieldsMustBeLiteral<"transaction">
       : unknown;
 
-/** A block narrowed to a registration's fields selection, for `indexer.onEvent`
- * and `indexer.onBlock` alike. `number` is always selected. */
+/** A block narrowed to a fields selection: a registration's `fields` option, or
+ * an event's `field_selection` in config.yaml. `number` is always selected. */
 export type EvmBlock<Fields extends EvmFieldsSelection> = SelectedFields<
   EvmAllBlockFields,
   EvmAlwaysSelectedBlockField | ListedFields<Fields, "block">,
   "block"
+>;
+
+/** A transaction narrowed to a fields selection: a registration's `fields`
+ * option, or an event's `field_selection` in config.yaml. */
+export type EvmTransaction<Fields extends EvmFieldsSelection> = SelectedFields<
+  EvmAllTransactionFields,
+  ListedFields<Fields, "transaction">,
+  "transaction"
 >;
 
 /** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
@@ -962,11 +964,7 @@ export type EvmBlock<Fields extends EvmFieldsSelection> = SelectedFields<
 export type EvmEventWithFields<Event extends EventLike, Fields> = [Fields] extends [EvmFieldsSelection]
   ? Omit<Event, "block" | "transaction"> & Pick<Event, keyof EventLike> & {
       readonly block: EvmBlock<Fields>;
-      readonly transaction: SelectedFields<
-        EvmAllTransactionFields,
-        ListedFields<Fields, "transaction">,
-        "transaction"
-      >;
+      readonly transaction: EvmTransaction<Fields>;
     }
   : Event;
 
@@ -1278,7 +1276,7 @@ type SvmOnSlotArgsFor<Fields extends SvmOnSlotFieldsSelection, Config extends In
   /** The slot's block: the fields listed in the registration's `fields.block`.
       Undefined on a slot the chain skipped, which produced no block. */
   readonly block: [Exclude<ListedFields<Fields, "block">, "slot">] extends [never]
-    ? FieldNotSelected<`Field 'block' is not selected for this handler. Add fields.block in the registration options.`>
+    ? FieldGroupNotSelectedInFieldsOption<"block", "block", "time">
     : SvmBlock<Fields> | undefined;
   /** Handler context: entity operations, logger, effect caller, chain state. */
   readonly context: SvmOnSlotContext<Config>;
@@ -1475,28 +1473,28 @@ type SvmActivityField<Fields, Name extends string, T> = SvmActivityHas<
   Name
 > extends true
   ? T
-  : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
+  : FieldNotSelectedInFieldsOption<Name, "accountActivity">;
 
 /** The pre/post lamport balances of a {@link SvmAccountActivity}, narrowed to
  * the registration's fields selection. */
 export type SvmAccountLamports<Fields extends SvmFieldsSelection> = [
   SvmActivityListed<Fields> & `lamports.${string}`,
 ] extends [never]
-  ? FieldNotSelected<`Field 'lamports' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
+  ? FieldGroupNotSelectedInFieldsOption<"lamports", "accountActivity", "lamports.pre">
   : {
       readonly [K in keyof SvmAllAccountLamportsFields]: SvmActivityHas<Fields, `lamports.${K & string}`> extends true
         ? SvmAllAccountLamportsFields[K]
-        : FieldNotSelected<`Field 'lamports.${K & string}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
+        : FieldNotSelectedInFieldsOption<`lamports.${K & string}`, "accountActivity">;
     } | undefined;
 
 /** The token activity of a {@link SvmAccountActivity}, narrowed to the
  * registration's fields selection. */
 export type SvmAccountTokenActivity<Fields extends SvmFieldsSelection> = [SvmActivityListed<Fields> & `token.${string}`] extends [never]
-  ? FieldNotSelected<`Field 'token' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
+  ? FieldGroupNotSelectedInFieldsOption<"token", "accountActivity", "token.mint">
   : {
       readonly [K in keyof SvmAllAccountTokenActivityFields]: SvmActivityHas<Fields, `token.${K & string}`> extends true
         ? SvmAllAccountTokenActivityFields[K]
-        : FieldNotSelected<`Field 'token.${K & string}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
+        : FieldNotSelectedInFieldsOption<`token.${K & string}`, "accountActivity">;
     } | undefined;
 
 /** An account activity of a {@link SvmTransaction}, narrowed to the
@@ -1513,7 +1511,7 @@ export type SvmAccountActivity<Fields extends SvmFieldsSelection> = {
 type SvmInstrListed<Fields> = ListedFields<Fields, "instruction">;
 type SvmInstrField<Fields, Name extends SvmInstructionFieldName, T> = Name extends SvmInstrListed<Fields>
   ? T
-  : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.instruction in the registration options.`>;
+  : FieldNotSelectedInFieldsOption<Name, "instruction">;
 
 /** A named account of a {@link SvmInstruction}. Its `activity` narrows to the
  * registration's fields selection. */
@@ -1526,7 +1524,7 @@ export type SvmInstructionAccount<
   readonly instructionAccountIndex: number;
   readonly activity:
     | ([SvmActivityListed<Fields>] extends [never]
-        ? FieldNotSelected<`Field 'activity' is not selected for this handler. Add fields.accountActivity in the registration options.`>
+        ? FieldGroupNotSelectedInFieldsOption<"activity", "accountActivity", "isSigner">
         : SvmAccountActivity<Fields>)
     | undefined;
 };
@@ -1543,10 +1541,10 @@ type SvmNamedAccounts<
 export type SvmTransaction<Fields extends SvmFieldsSelection> = {
   readonly [K in keyof SvmAllTransactionFields]: K extends ListedFields<Fields, "transaction">
     ? SvmAllTransactionFields[K]
-    : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.transaction in the registration options.`>;
+    : FieldNotSelectedInFieldsOption<K & string, "transaction">;
 } & {
   readonly accountActivities: [SvmActivityListed<Fields>] extends [never]
-    ? FieldNotSelected<`Field 'accountActivities' is not selected for this handler. Add fields.accountActivity in the registration options.`>
+    ? FieldGroupNotSelectedInFieldsOption<"accountActivities", "accountActivity", "isSigner">
     : readonly SvmAccountActivity<Fields>[];
 };
 
@@ -1557,7 +1555,7 @@ export type SvmBlock<Fields extends SvmFieldsSelection> = {
     ? SvmAllBlockFields[K]
     : K extends ListedFields<Fields, "block">
       ? SvmAllBlockFields[K]
-      : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.block in the registration options.`>;
+      : FieldNotSelectedInFieldsOption<K & string, "block">;
 };
 
 /** A log of a {@link SvmInstruction}, narrowed to the registration's fields
@@ -1565,10 +1563,10 @@ export type SvmBlock<Fields extends SvmFieldsSelection> = {
 export type SvmLog<Fields extends SvmFieldsSelection> = {
   readonly kind: "kind" extends ListedFields<Fields, "log">
     ? SvmLogKind
-    : FieldNotSelected<`Field 'kind' is not selected for this handler. Add it to fields.log in the registration options.`>;
+    : FieldNotSelectedInFieldsOption<"kind", "log">;
   readonly message: "message" extends ListedFields<Fields, "log">
     ? string
-    : FieldNotSelected<`Field 'message' is not selected for this handler. Add it to fields.log in the registration options.`>;
+    : FieldNotSelectedInFieldsOption<"message", "log">;
 };
 
 type SvmAnyProgramInstruction = {
@@ -1598,7 +1596,7 @@ type SvmSelectedInstruction<Fields extends SvmFieldsSelection, ProgInstr> = {
   >;
   readonly accountArguments: SvmInstrField<Fields, "accountArguments", readonly string[]>;
   readonly logs: [ListedFields<Fields, "log">] extends [never]
-    ? FieldNotSelected<`Field 'logs' is not selected for this handler. Add fields.log in the registration options.`>
+    ? FieldGroupNotSelectedInFieldsOption<"logs", "log", "message">
     : readonly SvmLog<Fields>[];
   readonly transaction: SvmTransaction<Fields>;
   readonly block: SvmBlock<Fields>;

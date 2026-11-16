@@ -28,9 +28,9 @@ declare module "envio" {
       /** The parameters or arguments associated with this event. */
       readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
       /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-      readonly block: EvmConfigBlock<"NewGravatar", "number" | "timestamp" | "hash">;
+      readonly block: EvmBlock<{ block: ["number", "timestamp", "hash"] }>;
       /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
-      readonly transaction: EvmConfigTransaction<"NewGravatar", never>;
+      readonly transaction: EvmTransaction<{ transaction: [] }>;
       /** The index of this event's log within the block. */
       readonly logIndex: number;
       /** The address of the contract that emitted this event. */
@@ -46,9 +46,9 @@ declare module "envio" {
       /** The parameters or arguments associated with this event. */
       readonly params: { readonly id: bigint; readonly owner: Address; readonly displayName: string; readonly imageUrl: string };
       /** The block in which this event was recorded. Configurable via `field_selection` in config.yaml. */
-      readonly block: EvmConfigBlock<"UpdatedGravatar", "number" | "timestamp" | "hash">;
+      readonly block: EvmBlock<{ block: ["number", "timestamp", "hash"] }>;
       /** The transaction that triggered this event. Configurable via `field_selection` in config.yaml. */
-      readonly transaction: EvmConfigTransaction<"UpdatedGravatar", never>;
+      readonly transaction: EvmTransaction<{ transaction: [] }>;
       /** The index of this event's log within the block. */
       readonly logIndex: number;
       /** The address of the contract that emitted this event. */

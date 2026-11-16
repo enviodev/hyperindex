@@ -261,7 +261,7 @@ const _bad2: UnionOpts = { contract: "Factory", event: "Transfer" };
 
   it("narrows event block/transaction fields by field_selection", _ =>
     check(`
-import type { EvmEvent } from "envio";
+import type { EvmEvent, FieldNotSelected } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 // Unselected fields carry the branded FieldNotSelected sentinel so reading
@@ -290,7 +290,12 @@ type TransferEvent = EvmEvent<"Token", "Transfer">;
 expectType<TypeEqual<TransferEvent["transaction"]["transactionIndex"], number>>(true);
 expectType<TypeEqual<TransferEvent["transaction"]["hash"], string>>(true);
 expectType<IsNotSelected<TransferEvent["transaction"]["from"]>>(true);
-expectType<IsNotSelected<TransferEvent["block"]["parentHash"]>>(true);
+expectType<
+  TypeEqual<
+    TransferEvent["block"]["parentHash"],
+    FieldNotSelected<'Field \\'parentHash\\' is not selected. Add it to the handler options: { ..., fields: { block: ["parentHash"] } }'>
+  >
+>(true);
 `)
   )
 
