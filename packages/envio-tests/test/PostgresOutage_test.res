@@ -3,19 +3,26 @@ open Vitest
 // A database restart, a failover or a pooler in front of either drops the
 // indexer's connections mid-run. What is safe to send again — a load, the
 // chain metadata upsert, a batch that never reached COMMIT — is sent again once
-// the database answers, rather than ending the run.
+// the database answers, for up to a minute, rather than ending the run.
 let proxyPort = 18563
 
-let outage = ref(None)
+let outageRef = ref(None)
 Async.beforeAll(async () => {
-  outage := Some(await PostgresOutage.start(~port=proxyPort, ~upstreamPort=Env.Db.port))
+  outageRef := Some(await PostgresOutage.start(~port=proxyPort, ~upstreamPort=Env.Db.port))
 })
 Async.afterAll(async () =>
-  switch outage.contents {
+  switch outageRef.contents {
   | Some(outage) => await outage.close()
   | None => ()
   }
 )
+
+// Up at the start of every test, whatever the one before it left behind.
+let takeOutage = () => {
+  let outage = outageRef.contents->Option.getOrThrow
+  outage.comeBack()
+  outage
+}
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -108,7 +115,7 @@ describe("Postgres going away mid-run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~postgresPort=proxyPort,
     async (~t, ~indexer, ~source) => {
-      let outage = outage.contents->Option.getOrThrow
+      let outage = takeOutage()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -135,7 +142,7 @@ describe("Postgres going away mid-run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~postgresPort=proxyPort,
     async (~t, ~indexer, ~source) => {
-      let outage = outage.contents->Option.getOrThrow
+      let outage = takeOutage()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -162,7 +169,7 @@ describe("Postgres going away mid-run", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
     ~postgresPort=proxyPort,
     async (~t, ~indexer, ~source) => {
-      let outage = outage.contents->Option.getOrThrow
+      let outage = takeOutage()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -196,7 +203,7 @@ describe("Postgres going away mid-run", () => {
     ~postgresPort=proxyPort,
     ~onError=error => errors->Array.push(error.msg)->ignore,
     async (~t, ~indexer, ~source) => {
-      let outage = outage.contents->Option.getOrThrow
+      let outage = takeOutage()
       let source = source(1337)
       await Scenario.resolveInitialHeight(~source, ~head=100)
       let (handled, releaseHandler) = makeHeldHandler()
@@ -258,6 +265,43 @@ describe("Postgres going away mid-run", () => {
             "Unexpected error in the event handler. Please handle the error to keep the indexer running smoothly.",
           ),
         ],
+      ))
+    },
+  )
+
+  let deadlineErrors = []
+  scenario->Scenario.it(
+    "stops with an error once the database stays away for a minute",
+    ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow]}],
+    ~postgresPort=proxyPort,
+    ~onError=error => deadlineErrors->Array.push(error.msg)->ignore,
+    async (~t, ~indexer, ~source) => {
+      let outage = takeOutage()
+      let source = source(1337)
+      await Scenario.resolveInitialHeight(~source, ~head=100)
+      let (handled, releaseHandler) = makeHeldHandler()
+      await source->replyWithOneTally(~handled, ~load=false)
+      await indexer.advanceTime(1_000)
+
+      outage.goDown()
+      releaseHandler()
+      await indexer.advanceTime(0)
+      await indexer.advanceTime(59_000)
+      let errorsBeforeTheMinute = deadlineErrors->Array.length
+      await indexer.advanceTime(1_000)
+      outage.comeBack()
+      // Nothing is sent again after giving up, however long the run goes on.
+      await indexer.advanceTime(10_000)
+
+      let tallies: array<tally> = await indexer.query("Tally")
+      t.expect((errorsBeforeTheMinute, deadlineErrors, tallies)).toEqual((
+        0,
+        [
+          Some(
+            "The database has been unreachable for 60 seconds, so the indexer is stopping. The \"Lost the connection to the database\" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it, then start the indexer again: it resumes from the last batch it saved.",
+          ),
+        ],
+        [],
       ))
     },
   )

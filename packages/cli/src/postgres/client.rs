@@ -10,7 +10,7 @@ use tokio_postgres::config::SslMode;
 use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{Config, NoTls, Row, Statement};
 
-use super::error::Aborted;
+use super::error::{Aborted, NeverSent};
 use super::param::Param;
 use super::tls::MakeRustlsConnect;
 
@@ -213,6 +213,11 @@ impl Transaction {
         } else {
             "ROLLBACK"
         };
+        // Checked before sending, where it is certain: a COMMIT that fails once
+        // sent may have committed all the same.
+        if commit && !failed && self.connection.client().is_closed() {
+            return Err(NeverSent("The connection closed before the COMMIT was sent").into());
+        }
         self.connection.client().batch_execute(statement).await?;
         *stage = Stage::Ended;
         if commit && failed {

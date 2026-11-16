@@ -3,32 +3,57 @@
 let retryDelayMillis = (~attempt) =>
   Math.Int.min(500 * Math.Int.pow(2, ~exp=Math.Int.min(attempt, 4)), 5_000)
 
-let lostConnectionMsg = "Lost the database connection. Trying again once it answers"
+// Long enough for a restart, a failover or a pooler blip. Past it the outage is
+// for an operator to look at, and a process that exits is what a supervisor
+// and its alerting notice.
+let deadlineSeconds = 60
+
+let lostConnectionMsg = `Lost the connection to the database. Retrying until it answers; the indexer stops if it stays unreachable for ${deadlineSeconds->Int.toString} seconds.`
+
+let unreachableMsg = `The database has been unreachable for ${deadlineSeconds->Int.toString} seconds, so the indexer is stopping. The "Lost the connection to the database" warnings above show the error behind it. Check that Postgres is running and that ENVIO_PG_HOST and ENVIO_PG_PORT point at it, then start the indexer again: it resumes from the last batch it saved.`
 
 // Runs `work` until it gets through, running it again for as long as the
 // database connection goes before it did. Only for work storage raises
-// `ConnectionLost` from, which is work that is safe to send again. There is no
-// deadline: the indexer waits out an outage of any length, saying so on every
-// attempt. None when the indexer stopped meanwhile.
-let rec untilReachable = async (state: IndexerState.t, ~operation, ~attempt=0, work) =>
-  switch await work() {
-  | value => Some(value)
-  | exception Persistence.ConnectionLost(message) =>
-    let clock = state->IndexerState.clock
-    let delayMillis = clock->Clock.jitter(retryDelayMillis(~attempt))
-    state
-    ->IndexerState.logger
-    ->Logger.warn(
-      lostConnectionMsg,
-      ~params={
-        "operation": operation,
-        "err": message,
-        "attempt": attempt + 1,
-        "retryInMillis": delayMillis,
-      },
-    )
-    await clock->Clock.delay(~label="Storage retry", delayMillis)
-    state->IndexerState.isStopped
-      ? None
-      : await untilReachable(state, ~operation, ~attempt=attempt + 1, work)
-  }
+// `ConnectionLost` from, which is work that is safe to send again. The last
+// attempt is made at the deadline; if that fails too, the indexer stops with
+// `unreachableMsg`. None once the indexer has stopped, for that or any other
+// reason.
+let untilReachable = async (state: IndexerState.t, ~operation, work) => {
+  let clock = state->IndexerState.clock
+  let deadlineMillis = deadlineSeconds * 1000
+  let firstFailedAt = ref(None)
+  let rec attemptFrom = async attempt =>
+    switch await work() {
+    | value => Some(value)
+    | exception Persistence.ConnectionLost(message) =>
+      let failedAt = firstFailedAt.contents->Option.getOr(clock.now())
+      firstFailedAt := Some(failedAt)
+      let leftMillis = deadlineMillis - (clock.now() -. failedAt)->Float.toInt
+      if leftMillis <= 0 {
+        state->IndexerState.errorExit(
+          Utils.Error.make(message)->ErrorHandling.make(
+            ~logger=state->IndexerState.logger,
+            ~msg=unreachableMsg,
+          ),
+        )
+        None
+      } else {
+        let delayMillis = Math.Int.min(clock->Clock.jitter(retryDelayMillis(~attempt)), leftMillis)
+        state
+        ->IndexerState.logger
+        ->Logger.warn(
+          lostConnectionMsg,
+          ~params={
+            "operation": operation,
+            "err": message,
+            "attempt": attempt + 1,
+            "retryInMillis": delayMillis,
+            "stopsInSeconds": (leftMillis + 999) / 1000,
+          },
+        )
+        await clock->Clock.delay(~label="Storage retry", delayMillis)
+        state->IndexerState.isStopped ? None : await attemptFrom(attempt + 1)
+      }
+    }
+  await attemptFrom(0)
+}

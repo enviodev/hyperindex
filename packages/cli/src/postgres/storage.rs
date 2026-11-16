@@ -12,7 +12,7 @@ use tokio_postgres::Row;
 
 use super::client::{PgClient, Transaction};
 use super::ddl::{create_partition_query, create_table_query, ColumnSpec, TableSpec};
-use super::error::{is_connection_lost, sql_state};
+use super::error::{is_connection_lost, sql_state, was_never_sent};
 use super::history::{History, CHANGE_TYPE};
 use super::index_definition::{IndexColumn, IndexDefinition, BTREE};
 use super::index_row;
@@ -992,10 +992,11 @@ impl Storage {
     /// to.
     ///
     /// A connection lost before the COMMIT went out is `Unwritten`: the server
-    /// rolls back a transaction whose session ends. One lost at the COMMIT is
-    /// not, since the server may have committed before it went. Nor is one
-    /// whose caches failed for another reason, which writing again would only
-    /// repeat.
+    /// rolls back a transaction whose session ends. So is a COMMIT held back
+    /// because the connection was already known gone. One lost while the
+    /// COMMIT was in flight is not, since the server may have committed before
+    /// it went. Nor is one whose caches failed for another reason, which writing
+    /// again would only repeat.
     pub async fn write_batch(
         &self,
         batch: &Batch,
@@ -1028,8 +1029,15 @@ impl Storage {
                 Ok(()) => {
                     let committed = transaction.commit().await;
                     handoff.report_commit(committed.is_ok());
-                    committed
-                        .map_err(|error| Failure::new("Failed committing the batch", error).into())
+                    committed.map_err(|error| {
+                        let never_sent = was_never_sent(&error);
+                        let failure = Failure::new("Failed committing the batch", error);
+                        if never_sent {
+                            WriteError::Unwritten(failure)
+                        } else {
+                            failure.into()
+                        }
+                    })
                 }
                 Err(error) => {
                     // The statement that failed is what to report; a rollback

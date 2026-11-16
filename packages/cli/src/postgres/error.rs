@@ -83,6 +83,23 @@ impl std::fmt::Display for Aborted {
 
 impl std::error::Error for Aborted {}
 
+/// A statement held back because the connection was already known to be gone,
+/// so the server never saw it.
+#[derive(Debug)]
+pub struct NeverSent(pub &'static str);
+
+impl std::fmt::Display for NeverSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for NeverSent {}
+
+pub fn was_never_sent(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<NeverSent>())
+}
+
 /// The SQLSTATE, where the failure came from the server or stands in for one.
 pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
     database_error(error)
