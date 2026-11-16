@@ -1,4 +1,7 @@
-use crate::{config_parsing::chain_helpers::HypersyncChain, evm::address::Address};
+use crate::{
+    config_parsing::{chain_helpers::HypersyncChain, entity_parsing::MAX_PG_IDENTIFIER_LENGTH},
+    evm::address::Address,
+};
 use alloy_json_abi::Event;
 use anyhow::{Context, Result};
 use std::fmt::{self, Display};
@@ -6,6 +9,31 @@ use std::fmt::{self, Display};
 /// Normalizes a contract name by replacing spaces, hyphens, and dots with underscores.
 pub fn normalize_contract_name(name: String) -> String {
     name.replace([' ', '-', '.'], "_")
+}
+
+/// Init names an entity `{contract}_{event}` for every imported event, and an
+/// entity name is a Postgres table name. Cut the contract name just enough for
+/// the longest event to fit. An event too long to fit on its own leaves the
+/// name whole, so codegen reports the event itself.
+pub fn fit_contract_name_to_events(
+    name: String,
+    event_names: impl IntoIterator<Item = impl AsRef<str>>,
+) -> String {
+    let longest_event_name = event_names
+        .into_iter()
+        .map(|event_name| event_name.as_ref().len())
+        .max()
+        .unwrap_or(0);
+    let room = MAX_PG_IDENTIFIER_LENGTH.saturating_sub(longest_event_name + "_".len());
+    if name.len() <= room || room == 0 {
+        return name;
+    }
+    let fitted = name[..name.floor_char_boundary(room)].trim_end_matches('_');
+    println!(
+        "Contract name '{name}' is shortened to '{fitted}' so its entity names fit Postgres's \
+         {MAX_PG_IDENTIFIER_LENGTH}-character limit."
+    );
+    fitted.to_string()
 }
 
 ///The hierarchy is based on how you would add items to
@@ -26,7 +54,10 @@ impl SelectedContract {
         events: Vec<Event>,
     ) -> Self {
         Self {
-            name: normalize_contract_name(name),
+            name: fit_contract_name_to_events(
+                normalize_contract_name(name),
+                events.iter().map(|event| &event.name),
+            ),
             chains: vec![network_selection],
             events,
         }
@@ -160,6 +191,52 @@ mod tests {
         assert_eq!(
             normalize_contract_name("Valid_Contract_Name".to_string()),
             "Valid_Contract_Name"
+        );
+    }
+
+    // https://github.com/enviodev/hyperindex/issues/794
+    #[test]
+    fn a_long_contract_name_is_cut_so_every_entity_name_fits_postgres() {
+        let aave_pool = "InitializableImmutableAdminUpgradeabilityProxy";
+        let entity_name = |contract: &str, event: &str| format!("{contract}_{event}");
+        let longest_aave_event = "ReserveUsedAsCollateralDisabled";
+        let fitted_for_aave =
+            fit_contract_name_to_events(aave_pool.to_string(), ["Supply", longest_aave_event]);
+        let fitted_for_long_event = fit_contract_name_to_events(
+            aave_pool.to_string(),
+            ["OwnershipTransferRequestedWithMessage"],
+        );
+        assert_eq!(
+            (
+                fitted_for_aave.as_str(),
+                entity_name(&fitted_for_aave, longest_aave_event).len(),
+                fitted_for_long_event.as_str(),
+                fit_contract_name_to_events(aave_pool.to_string(), ["Supply"]),
+                fit_contract_name_to_events("Pool".to_string(), ["Supply"]),
+            ),
+            (
+                "InitializableImmutableAdminUpgr",
+                63,
+                "InitializableImmutableAdm",
+                aave_pool.to_string(),
+                "Pool".to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn a_cut_contract_name_drops_a_trailing_separator_and_never_splits_a_character() {
+        assert_eq!(
+            (
+                fit_contract_name_to_events(format!("{}_Proxy", "A".repeat(29)), ["E".repeat(32)]),
+                fit_contract_name_to_events(format!("{}éé", "A".repeat(28)), ["E".repeat(31)]),
+                fit_contract_name_to_events("Pool".to_string(), ["E".repeat(70)]),
+            ),
+            (
+                "A".repeat(29),
+                format!("{}é", "A".repeat(28)),
+                "Pool".to_string(),
+            )
         );
     }
 }
