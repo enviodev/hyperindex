@@ -28,7 +28,7 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInn
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
-use crate::event_store::{EventStore, Row, RowFormat};
+use crate::event_store::{EventStore, Row, RowData};
 use crate::js_value::JsTape;
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
@@ -448,65 +448,40 @@ pub struct EventItem {
 }
 
 impl EventItem {
-    /// The store row of this instruction; it replays to the object
+    /// The store row of this instruction, read back as the record
     /// `SvmHyperSyncClient.Items.item` describes.
     fn into_row(self) -> Row {
-        let mut data = JsTape::new();
-        data.obj(10);
-        data.key("onEventRegistrationIndex");
-        data.num(self.on_event_registration_index as f64);
-        data.key("slot");
-        data.num(self.slot as f64);
-        data.key("transactionIndex");
-        data.num(self.transaction_index as f64);
-        data.key("path");
-        data.arr(self.path.len());
-        for step in &self.path {
-            data.num(*step as f64);
-        }
-        data.key("programId");
-        data.str(&self.program_id);
-        data.key("accounts");
-        data.arr(self.accounts.len());
-        for account in &self.accounts {
-            data.str(account);
-        }
-        data.key("data");
-        data.bytes(&self.data);
-        data.key("isInner");
-        data.bool(self.is_inner);
-        data.key("args");
-        match &self.args {
-            Some(args) => data.embed(args),
-            None => data.undefined(),
-        }
-        data.key("logs");
-        match &self.logs {
-            Some(logs) => {
-                data.arr(logs.len());
-                for log in logs {
-                    data.obj(2);
-                    data.key("kind");
-                    match &log.kind {
-                        Some(kind) => data.str(kind),
-                        None => data.undefined(),
-                    }
-                    data.key("message");
-                    match &log.message {
-                        Some(message) => data.str(message),
-                        None => data.undefined(),
-                    }
+        let logs = self.logs.map(|logs| {
+            let mut tape = JsTape::new();
+            tape.arr(logs.len());
+            for log in logs {
+                tape.obj(2);
+                tape.key("kind");
+                match &log.kind {
+                    Some(kind) => tape.str(kind),
+                    None => tape.undefined(),
+                }
+                tape.key("message");
+                match &log.message {
+                    Some(message) => tape.str(message),
+                    None => tape.undefined(),
                 }
             }
-            None => data.undefined(),
-        }
+            tape
+        });
         Row::event(
             self.slot,
             self.transaction_index,
             Some(self.path),
             self.on_event_registration_index,
-            RowFormat::SvmInstruction,
-            data,
+            RowData::SvmInstruction {
+                program_id: self.program_id,
+                accounts: self.accounts,
+                data: self.data.to_vec(),
+                is_inner: self.is_inner,
+                args: self.args,
+                logs,
+            },
         )
     }
 }

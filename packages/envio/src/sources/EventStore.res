@@ -29,12 +29,16 @@ type arenaShape = {
 type paramsShape = {registrationIndex: int, shape: arenaShape}
 
 // Items on their way to JS: the arenas behind `handle` hold `items`, a row per
-// item in processing order, then each registration's `params`. `tapes` holds
-// what has no column shape. `read` lends the arenas and takes them back.
+// item in processing order, then each registration's `params`, then `fuel` and
+// `svm`. `tapes` holds what has no column shape. `read` lends the arenas and
+// takes them back.
 type storedRows = {
   handle: int,
   items: arenaShape,
   params: array<paramsShape>,
+  // The whole item record of each Fuel receipt and SVM instruction row.
+  fuel: arenaShape,
+  svm: arenaShape,
   tapes: array<unknown>,
 }
 

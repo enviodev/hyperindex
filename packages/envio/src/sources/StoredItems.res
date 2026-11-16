@@ -12,37 +12,34 @@ type context = {
 @get_index external numberAt: (array<unknown>, int) => float = ""
 @get_index external valueAt: (array<unknown>, int) => 'a = ""
 
+// One arena's rows as objects keyed by its column names. A column of tapes
+// takes its values in before the objects are built, which keeps their shape
+// stable; a row with no tape there gets `undefined`, as an absent field.
 %%private(
-  let paramsByRegistration = (rows: EventStore.storedRows, ~buffers, ~cursor) => {
-    let byRegistration = []
-    rows.params->Array.forEach(({registrationIndex, shape}) => {
-      let columns = Reading.columns(
-        ~buffers,
-        ~cursor,
-        ~kinds=shape.kinds,
-        ~elementKinds=shape.elementKinds,
-        ~rows=shape.rows,
-      )
-      // A nested param travels as a tape, which the column points at, so it
-      // goes in before the objects are built and keeps their shape stable.
-      shape.kinds->Array.forEachWithIndex((kind, index) =>
-        if kind === Reading.Tape {
-          columns->Array.setUnsafe(
-            index,
-            columns
-            ->Array.getUnsafe(index)
-            ->Array.map(
-              position => rows.tapes->Array.getUnsafe(position->(Utils.magic: unknown => int)),
-            ),
-          )
-        }
-      )
-      byRegistration->Array.setUnsafe(
-        registrationIndex,
-        columns->Reading.objects(~names=shape.names, ~rows=shape.rows),
-      )
-    })
-    byRegistration
+  let objectsOf = (shape: EventStore.arenaShape, ~tapes, ~buffers, ~cursor) => {
+    let columns = Reading.columns(
+      ~buffers,
+      ~cursor,
+      ~kinds=shape.kinds,
+      ~elementKinds=shape.elementKinds,
+      ~rows=shape.rows,
+    )
+    shape.kinds->Array.forEachWithIndex((kind, index) =>
+      if kind === Reading.Tape {
+        columns->Array.setUnsafe(
+          index,
+          columns
+          ->Array.getUnsafe(index)
+          ->Array.map(position =>
+            switch position->(Utils.magic: unknown => Null.t<int>) {
+            | Value(position) => tapes->Array.getUnsafe(position)
+            | Null => %raw(`undefined`)
+            }
+          ),
+        )
+      }
+    )
+    columns->Reading.objects(~names=shape.names, ~rows=shape.rows)
   }
 )
 
@@ -72,9 +69,18 @@ let build = (
     let registrationIndexes = column(4)
     let srcAddresses = column(5)
     let skipped = column(6)
-    let paramsRows = column(7)
+    let detailRows = column(7)
     let tapePositions = column(8)
-    let params = rows->paramsByRegistration(~buffers, ~cursor)
+    let params = []
+    rows.params->Array.forEach(({registrationIndex, shape}) =>
+      params->Array.setUnsafe(
+        registrationIndex,
+        shape->objectsOf(~tapes=rows.tapes, ~buffers, ~cursor),
+      )
+    )
+    let fuel = rows.fuel->objectsOf(~tapes=rows.tapes, ~buffers, ~cursor)
+    let svm = rows.svm->objectsOf(~tapes=rows.tapes, ~buffers, ~cursor)
+    let detailRow = row => detailRows->numberAt(row)->Float.toInt
     let tapeAt = row => rows.tapes->Array.getUnsafe(tapePositions->numberAt(row)->Float.toInt)
     Array.fromInitializer(~length=rows.items.rows, row => {
       let registrationIndex = registrationIndexes->numberAt(row)->Float.toInt
@@ -88,7 +94,7 @@ let build = (
           onEventRegistrationIndex: registrationIndex,
           params: params
           ->Array.getUnsafe(registrationIndex)
-          ->Array.getUnsafe(paramsRows->numberAt(row)->Float.toInt)
+          ->Array.getUnsafe(row->detailRow)
           ->(Utils.magic: dict<unknown> => Internal.eventParams),
         }
         item->EvmEventItem.toInternalItem(
@@ -105,13 +111,19 @@ let build = (
         }
         item->BlockItem.toInternalItem(~onBlockRegistrations=context.onBlockRegistrations)
       | FuelReceipt =>
-        let item = tapeAt(row)->(Utils.magic: unknown => FuelHyperSyncClient.EventItems.item)
+        let item =
+          fuel
+          ->Array.getUnsafe(row->detailRow)
+          ->(Utils.magic: dict<unknown> => FuelHyperSyncClient.EventItems.item)
         item->FuelEventItem.toInternalItem(
           ~onEventRegistration=context.onEventRegistrations->Array.getUnsafe(registrationIndex),
           ~chainId=context.chainId,
         )
       | SvmInstruction =>
-        let item = tapeAt(row)->(Utils.magic: unknown => SvmHyperSyncClient.Items.item)
+        let item =
+          svm
+          ->Array.getUnsafe(row->detailRow)
+          ->(Utils.magic: dict<unknown> => SvmHyperSyncClient.Items.item)
         item->SvmEventItem.toInternalItem(
           ~onEventRegistration=context.onEventRegistrations->Array.getUnsafe(registrationIndex),
           ~chainId=context.chainId,

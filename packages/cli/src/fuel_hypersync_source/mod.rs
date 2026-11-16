@@ -9,7 +9,7 @@ mod types;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_store::{BlockStore, FuelBlockRow};
-use crate::event_store::{EventStore, Row, RowFormat};
+use crate::event_store::{EventStore, Row, RowData};
 use crate::hex::decode_prefixed;
 use crate::js_value::JsTape;
 use config::ClientConfig;
@@ -191,30 +191,19 @@ fn transfer_params(to: &str, asset_id: &str, amount: u64) -> JsTape {
 }
 
 impl EventItem {
-    /// The store row of this receipt; it replays to the object
+    /// The store row of this receipt, read back as the record
     /// `FuelHyperSyncClient.EventItems.item` describes.
     fn into_row(self) -> Row {
-        let mut data = JsTape::new();
-        data.obj(6);
-        data.key("onEventRegistrationIndex");
-        data.num(self.on_event_registration_index as f64);
-        data.key("receiptIndex");
-        data.num(self.receipt_index as f64);
-        data.key("txId");
-        data.str(&self.tx_id);
-        data.key("blockHeight");
-        data.num(self.block_height as f64);
-        data.key("srcAddress");
-        data.str(&self.src_address);
-        data.key("params");
-        data.embed(&self.params);
         Row::event(
             self.block_height,
             self.receipt_index,
             None,
             self.on_event_registration_index,
-            RowFormat::FuelReceipt,
-            data,
+            RowData::FuelReceipt {
+                tx_id: self.tx_id,
+                src_address: self.src_address,
+                params: self.params,
+            },
         )
     }
 }
