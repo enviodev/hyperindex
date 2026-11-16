@@ -104,6 +104,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       currentTime := currentTime.contents + blockTime
       currentBlockNumber := currentBlockNumber.contents + 1
     }
+    // The buffer is ready only up to the known height, so it has to cover the
+    // random block range for any batch to take an event.
+    fetchState :=
+      fetchState.contents->TestFetchState.updateKnownHeight(
+        ~knownHeight=currentBlockNumber.contents,
+      )
 
     let chainConfig = config.defaultChain->Option.getUnsafe
     // For this test we don't need real sources - just testing event ordering
@@ -211,9 +217,9 @@ describe("IndexerState", () => {
           ->Array.reduce(0, (accum, cs) => accum + cs->ChainState.bufferSize)
 
         t.expect(
-          amountStillOnQueues + numberOfMockEventsReadFromQueues.contents,
-          ~message="There were a different number of events created to what was recieved from the queues.",
-        ).toBe(numberOfMockEventsCreated)
+          (numberOfMockEventsReadFromQueues.contents, amountStillOnQueues),
+          ~message="Every created event must be processed through batches, none left behind",
+        ).toEqual((numberOfMockEventsCreated, 0))
       },
     )
 
