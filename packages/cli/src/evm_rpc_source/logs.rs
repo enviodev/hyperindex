@@ -206,6 +206,41 @@ pub(super) async fn request_selection_logs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evm_hypersync_source::selection::LogMatcher;
+    use alloy_primitives::hex;
+
+    /// Whether the filter a request carries would return a log, the way the
+    /// provider applies it. The local pick must agree with it case for case.
+    fn filter_returns(filter: &Value, address: &str, topics: &[String]) -> bool {
+        let decoded = |value: &Value| value.as_str().and_then(|value| hex::decode(value).ok());
+        let address_ok = filter.get("address").is_none_or(|addresses| {
+            addresses.as_array().is_none_or(|addresses| {
+                hex::decode(address).is_ok_and(|log_address| {
+                    addresses
+                        .iter()
+                        .any(|candidate| decoded(candidate) == Some(log_address.clone()))
+                })
+            })
+        });
+        let topics_ok = filter.get("topics").is_none_or(|filter_topics| {
+            filter_topics.as_array().is_none_or(|filter_topics| {
+                filter_topics.iter().enumerate().all(
+                    |(position, filter_topic)| match filter_topic {
+                        Value::Null => true,
+                        value => topics.get(position).is_some_and(|topic| {
+                            hex::decode(topic).is_ok_and(|topic| match value {
+                                Value::Array(values) => values
+                                    .iter()
+                                    .any(|candidate| decoded(candidate) == Some(topic.clone())),
+                                single => decoded(single) == Some(topic.clone()),
+                            })
+                        }),
+                    },
+                )
+            })
+        });
+        address_ok && topics_ok
+    }
 
     #[test]
     fn filter_trims_trailing_match_any_topics_and_omits_absent_addresses() {
@@ -293,6 +328,114 @@ mod tests {
         assert_eq!(
             errors.each_ref().map(is_answer_too_large),
             [true, false, true, true, false]
+        );
+    }
+
+    #[test]
+    fn the_local_pick_agrees_with_the_filter_a_request_carries() {
+        const TOKEN: &str = "0x1000000000000000000000000000000000000001";
+        const OTHER: &str = "0x2000000000000000000000000000000000000002";
+        const TRANSFER: &str = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+        const APPROVAL: &str = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+        let listed = |addresses: &[&str]| {
+            Emitters::Listed(
+                addresses
+                    .iter()
+                    .map(|address| address.to_string())
+                    .collect(),
+            )
+        };
+        let any = || Emitters::Any(AddressFreeOrigin::default());
+        // A selection and a candidate log, answered both ways: what the local
+        // pick says, and what the filter the request carries would return.
+        let agrees = |emitters, topics: &[&[&str]], address: &str, log_topics: &[&str]| {
+            let selection = BuiltLogSelection {
+                emitters,
+                topics: topics
+                    .iter()
+                    .map(|values| values.iter().map(|value| value.to_string()).collect())
+                    .collect(),
+            };
+            let filter = log_filter(
+                LogBlocks::Hash {
+                    block_number: 16,
+                    hash: "0xbb",
+                },
+                &selection.topics,
+                selection.addresses(),
+            );
+            let log_topics: Vec<String> =
+                log_topics.iter().map(|topic| topic.to_string()).collect();
+            (
+                LogMatcher::new(&selection).matches(address, &log_topics),
+                filter_returns(&filter, address, &log_topics),
+            )
+        };
+        let upper = format!("0x{}", TOKEN[2..].to_uppercase());
+        assert_eq!(
+            [
+                // The address and the topic both match.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], TOKEN, &[TRANSFER]),
+                // The provider's own casing of the address.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], &upper, &[TRANSFER]),
+                // Another emitter.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                // One of several listed addresses.
+                agrees(listed(&[TOKEN, OTHER]), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                // An address-free selection takes any emitter, as an empty
+                // listed one does.
+                agrees(any(), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                agrees(listed(&[]), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                // A constrained position the log does not carry.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER], &[APPROVAL]],
+                    TOKEN,
+                    &[TRANSFER],
+                ),
+                // A position past the constraints is unconstrained.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER]],
+                    TOKEN,
+                    &[TRANSFER, APPROVAL],
+                ),
+                // One of several values at a position.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER, APPROVAL]],
+                    TOKEN,
+                    &[APPROVAL],
+                ),
+                // An unconstrained position between two constrained ones.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER], &[], &[APPROVAL]],
+                    TOKEN,
+                    &[TRANSFER, TRANSFER, APPROVAL],
+                ),
+                // No constraints at all.
+                agrees(any(), &[], OTHER, &[TRANSFER]),
+                // A value that is not hex can match nothing.
+                agrees(listed(&[TOKEN]), &[&["token"]], TOKEN, &[TRANSFER]),
+                // An address that is not hex can match nothing.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], "token", &[TRANSFER]),
+            ],
+            [
+                (true, true),
+                (true, true),
+                (false, false),
+                (true, true),
+                (true, true),
+                (true, true),
+                (false, false),
+                (true, true),
+                (true, true),
+                (true, true),
+                (true, true),
+                (false, false),
+                (false, false),
+            ],
         );
     }
 }

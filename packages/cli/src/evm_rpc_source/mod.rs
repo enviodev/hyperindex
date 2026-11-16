@@ -23,7 +23,7 @@ use crate::block_selection::{
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::query::BlockField;
-use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
+use crate::evm_hypersync_source::selection::{BuiltLogSelection, LogMatcher, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput,
 };
@@ -1147,14 +1147,12 @@ impl EvmRpcClient {
                 logs[selection].extend(result.found);
             } else {
                 for &selection in &result.selections {
-                    let matcher = &query.selections[selection];
+                    let matcher = LogMatcher::new(&query.selections[selection]);
                     logs[selection].extend(
                         result
                             .found
                             .iter()
-                            .filter(|log| {
-                                matcher.matches_log_address_and_topics(&log.address, &log.topics)
-                            })
+                            .filter(|log| matcher.matches(&log.address, &log.topics))
                             .cloned(),
                     );
                 }
@@ -1179,7 +1177,7 @@ impl EvmRpcClient {
         checked_headers: &HashMap<u64, head_checks::CheckedHeader>,
     ) {
         match head_checks::zero_bloom_evidence(checked, blocks_with_logs, checked_headers) {
-            Some(head_checks::ZeroBloomEvidence::Proof { .. }) => {
+            Some(head_checks::ZeroBloomEvidence::Proof) => {
                 // Never overrides a source already seen serving a zero bloom
                 // for a block that holds logs.
                 let _ = self.zero_bloom_trust.compare_exchange(

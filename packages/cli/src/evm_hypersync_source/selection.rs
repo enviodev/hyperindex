@@ -43,40 +43,66 @@ impl BuiltLogSelection {
             Emitters::Any(_) => &[],
         }
     }
+}
 
-    /// Whether a raw log's `address` and `topics` satisfy this selection, the
-    /// same way the provider's `eth_getLogs` filter would have. Used to pick a
-    /// selection's own logs out of one unfiltered block read, so it only has to
-    /// reproduce the server-side filter; registration and address-ownership
-    /// gating stay in routing.
-    pub(crate) fn matches_log_address_and_topics(&self, address: &str, topics: &[String]) -> bool {
-        self.matches_log_address(address) && self.matches_log_topics(topics)
+/// A selection's address and topic constraints with their hex decoded one time,
+/// so picking its logs out of an unfiltered block read does not decode the same
+/// strings for every log. It reproduces the provider's `eth_getLogs` filter;
+/// registration and address-ownership gating stay in routing.
+pub(crate) struct LogMatcher {
+    /// `None` for an emitters-any selection, which matches any address.
+    addresses: Option<Vec<Vec<u8>>>,
+    /// Per topic position: `None` where the position matches anything, `Some`
+    /// with its decoded values otherwise.
+    topics: Vec<Option<Vec<Vec<u8>>>>,
+}
+
+impl LogMatcher {
+    pub(crate) fn new(selection: &BuiltLogSelection) -> Self {
+        let decoded = |values: &[String]| -> Vec<Vec<u8>> {
+            values
+                .iter()
+                .filter_map(|value| hex::decode(value).ok())
+                .collect()
+        };
+        LogMatcher {
+            addresses: match &selection.emitters {
+                Emitters::Any(_) => None,
+                // An empty list carries no address key, the same as any address.
+                Emitters::Listed(addresses) if addresses.is_empty() => None,
+                Emitters::Listed(addresses) => Some(decoded(addresses)),
+            },
+            topics: selection
+                .topics
+                .iter()
+                .map(|values| (!values.is_empty()).then(|| decoded(values)))
+                .collect(),
+        }
     }
 
-    fn matches_log_address(&self, address: &str) -> bool {
-        match &self.emitters {
-            Emitters::Any(_) => true,
+    /// Whether a raw log's `address` and `topics` satisfy the selection.
+    pub(crate) fn matches(&self, address: &str, topics: &[String]) -> bool {
+        self.matches_address(address) && self.matches_topics(topics)
+    }
+
+    fn matches_address(&self, address: &str) -> bool {
+        match &self.addresses {
+            None => true,
             // A provider may case the address differently from the string the
             // query was built with, so the two are compared as bytes.
-            Emitters::Listed(addresses) => hex::decode(address).is_ok_and(|log_address| {
-                addresses.iter().any(|candidate| {
-                    hex::decode(candidate).is_ok_and(|candidate| candidate == log_address)
-                })
+            Some(addresses) => hex::decode(address).is_ok_and(|log_address| {
+                addresses.iter().any(|candidate| candidate == &log_address)
             }),
         }
     }
 
-    fn matches_log_topics(&self, topics: &[String]) -> bool {
+    fn matches_topics(&self, topics: &[String]) -> bool {
         self.topics.iter().enumerate().all(|(position, values)| {
-            if values.is_empty() {
+            let Some(values) = values else {
                 return true;
-            }
+            };
             topics.get(position).is_some_and(|topic| {
-                hex::decode(topic).is_ok_and(|topic| {
-                    values
-                        .iter()
-                        .any(|value| hex::decode(value).is_ok_and(|value| value == topic))
-                })
+                hex::decode(topic).is_ok_and(|topic| values.iter().any(|value| value == &topic))
             })
         })
     }
@@ -899,9 +925,10 @@ mod tests {
                 vec![],
             ],
         };
+        let matcher = LogMatcher::new(&selection);
         let matches = |address: &str, topics: &[&str]| {
             let topics: Vec<String> = topics.iter().map(|topic| topic.to_string()).collect();
-            selection.matches_log_address_and_topics(address, &topics)
+            matcher.matches(address, &topics)
         };
         // The provider's own casing of the hex digits, the `0x` prefix aside.
         let upper = format!("0x{}", ADDR[2..].to_uppercase());
@@ -932,9 +959,10 @@ mod tests {
             emitters: any(&[], &[]),
             topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
         };
+        let matcher = LogMatcher::new(&selection);
         let matches = |topics: &[&str]| {
             let topics: Vec<String> = topics.iter().map(|topic| topic.to_string()).collect();
-            selection.matches_log_address_and_topics("0xdeadbeef", &topics)
+            matcher.matches("0xdeadbeef", &topics)
         };
         assert_eq!(
             (matches(&[SIGHASH_A]), matches(&[SIGHASH_B])),

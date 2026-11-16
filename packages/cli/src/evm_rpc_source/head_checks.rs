@@ -189,7 +189,7 @@ pub(crate) fn blocks_to_recheck(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ZeroBloomEvidence {
     /// The block holds a log and its bloom is set: the chain fills blooms.
-    Proof { block: u64 },
+    Proof,
     /// The block holds a log and its bloom is all zero: the chain does not.
     Disproof { block: u64 },
 }
@@ -212,7 +212,7 @@ pub(crate) fn zero_bloom_evidence(
             Some(bloom) if bloom == Bloom::ZERO => {
                 return Some(ZeroBloomEvidence::Disproof { block })
             }
-            Some(_) => proof = proof.or(Some(ZeroBloomEvidence::Proof { block })),
+            Some(_) => proof = proof.or(Some(ZeroBloomEvidence::Proof)),
             None => {}
         }
     }
@@ -507,10 +507,10 @@ mod tests {
                 evidence(&[5]),
             ),
             (
-                Some(Proof { block: 3 }),
+                Some(Proof),
                 Some(Disproof { block: 4 }),
                 Some(Disproof { block: 4 }),
-                Some(Proof { block: 6 }),
+                Some(Proof),
                 None,
             ),
         );
