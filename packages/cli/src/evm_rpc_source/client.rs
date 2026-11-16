@@ -11,10 +11,21 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 use crate::request_stats::{RequestStat, Stats};
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:
-/// provider error messages carry block-range hints the caller inspects.
+/// provider error messages carry block-range hints the caller inspects. The
+/// failures that say the provider could not deliver the answer it was asked
+/// for, rather than that it is unreachable, have their own variants.
 #[derive(Debug)]
 pub enum RpcError {
-    JsonRpc { code: i64, message: String },
+    JsonRpc {
+        code: i64,
+        message: String,
+    },
+    /// No answer within the request timeout.
+    Timeout(anyhow::Error),
+    /// An answer arrived but can't be read as one: a body cut off mid-read,
+    /// something other than JSON-RPC, or a result of the wrong shape, such as
+    /// `null` where a list was due.
+    MalformedResponse(anyhow::Error),
     Other(anyhow::Error),
 }
 
@@ -22,7 +33,9 @@ impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RpcError::JsonRpc { code, message } => write!(f, "JSON-RPC error {code}: {message}"),
-            RpcError::Other(err) => write!(f, "{err:#}"),
+            RpcError::Timeout(err) | RpcError::MalformedResponse(err) | RpcError::Other(err) => {
+                write!(f, "{err:#}")
+            }
         }
     }
 }
@@ -125,12 +138,25 @@ impl JsonRpcClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, RpcError> {
+        self.request_recorded_as(method, method, params).await
+    }
+
+    /// A request whose timing is reported under `stat_method` rather than the
+    /// JSON-RPC method, so a request made for a reason of its own is counted
+    /// apart from the ones it shares a method with.
+    pub async fn request_recorded_as<T: DeserializeOwned>(
+        &self,
+        stat_method: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T, RpcError> {
         // Queueing is not part of how long a request took, so the turn is taken
         // before the clock starts.
         let permit = self.acquire().await;
         let started = Instant::now();
         let result = self.send(permit, method, params).await;
-        self.stats.record(method, started.elapsed().as_secs_f64());
+        self.stats
+            .record(stat_method, started.elapsed().as_secs_f64());
         result
     }
 
@@ -155,22 +181,28 @@ impl JsonRpcClient {
             .send()
             .await
             .map_err(|err| {
-                RpcError::Other(if err.is_timeout() {
-                    anyhow::anyhow!(
+                if err.is_timeout() {
+                    RpcError::Timeout(anyhow::anyhow!(
                         "{method} took longer than {}ms",
                         self.request_timeout_millis
-                    )
+                    ))
                 } else {
-                    anyhow::Error::new(err).context(format!("send {method} request"))
-                })
+                    RpcError::Other(
+                        anyhow::Error::new(err).context(format!("send {method} request")),
+                    )
+                }
             })?;
 
         let status = response.status();
-        let bytes = response
-            .bytes()
-            .await
-            .with_context(|| format!("read {method} response body"))
-            .map_err(RpcError::Other)?;
+        let bytes = response.bytes().await.map_err(|err| {
+            let timed_out = err.is_timeout();
+            let err = anyhow::Error::new(err).context(format!("read {method} response body"));
+            if timed_out {
+                RpcError::Timeout(err)
+            } else {
+                RpcError::MalformedResponse(err)
+            }
+        })?;
         // Decoding what came back is this process's work, not the provider's,
         // so the next queued request gets the turn before it starts.
         drop(permit);
@@ -182,9 +214,16 @@ impl JsonRpcClient {
             Ok(parsed) => parsed,
             Err(e) => {
                 let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).into_owned();
-                return Err(RpcError::Other(anyhow::anyhow!(
+                let err = anyhow::anyhow!(
                     "invalid JSON-RPC response for {method} (HTTP {status}): {e}; body: {snippet}"
-                )));
+                );
+                // An error status with a body that isn't JSON-RPC is a gateway
+                // failing, not an answer that came back damaged.
+                return Err(if status.is_success() {
+                    RpcError::MalformedResponse(err)
+                } else {
+                    RpcError::Other(err)
+                });
             }
         };
 
@@ -197,8 +236,8 @@ impl JsonRpcClient {
         match parsed.result {
             Some(result) => serde_json::from_str(result.get())
                 .with_context(|| format!("parse {method} result"))
-                .map_err(RpcError::Other),
-            None => Err(RpcError::Other(anyhow::anyhow!(
+                .map_err(RpcError::MalformedResponse),
+            None => Err(RpcError::MalformedResponse(anyhow::anyhow!(
                 "JSON-RPC response for {method} (HTTP {status}) has neither result nor error"
             ))),
         }

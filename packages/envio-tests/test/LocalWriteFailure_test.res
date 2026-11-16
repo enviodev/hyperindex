@@ -26,14 +26,15 @@ type Tally {
   count: Float!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  // No column holds NaN, and the staging buffer is what says so.
+  context.Tally.set({ id: "1", count: NaN });
+});
+`,
 )
-
-type tally = {id: string, count: float}
-type tallyOps = {set: tally => unit}
-type handlerContext = {@as("Tally") tally: tallyOps}
-
-let contextOf = (args: Internal.handlerArgs) =>
-  args.context->(Utils.magic: Internal.handlerContext => handlerContext)
 
 describe("A batch whose write fails in JavaScript", () => {
   let refusal = Scenario.captureRefusal()
@@ -51,15 +52,7 @@ describe("A batch whose write fails in JavaScript", () => {
           fromBlock: 1,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 1,
-                logIndex: 0,
-                // No column holds NaN, and the staging buffer is what says so.
-                handler: async args =>
-                  (args->contextOf).tally.set({id: "1", count: Float.Constants.nan}),
-              },
-            ],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 1, logIndex: 0}],
           }),
         },
       ])

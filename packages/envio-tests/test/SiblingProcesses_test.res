@@ -33,26 +33,25 @@ type Item {
   owner: String! @index
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ event, context }) => {
+  for (let index = 0; index < 200; index++) {
+    context.Item.set({ id: \`\${event.chainId}-\${index}\`, owner: \`owner-\${index % 5}\` });
+  }
+});
+`,
 )
 
 let rowsPerSibling = 200
 
 type item = {id: string, owner: string}
-type itemOps = {set: item => unit}
-type handlerContext = {@as("Item") item: itemOps}
 
 let writeItems = (~chainId): MockSource.itemMock => {
+  event: "Gravatar.TestEvent",
   blockNumber: chainId,
   logIndex: 0,
-  handler: async args => {
-    let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-    for index in 0 to rowsPerSibling - 1 {
-      context.item.set({
-        id: `${chainId->Int.toString}-${index->Int.toString}`,
-        owner: `owner-${mod(index, 5)->Int.toString}`,
-      })
-    }
-  },
 }
 
 let catchUp = async (sibling: IndexerRunner.t, ~source: MockSource.t, ~chainId) => {

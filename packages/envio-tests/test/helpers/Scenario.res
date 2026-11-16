@@ -451,7 +451,8 @@ let resolveInitialHeight = async (~source: MockSource.t, ~head) => {
 }
 
 // Drives a chain through the reorg-threshold transition: the first query stops
-// `maxReorgDepth` short of the head, and the response commits before the
+// one block below the `maxReorgDepth` window under the head (block 100 for the
+// default depth of 199 and a head of 300), and the response commits before the
 // post-threshold range opens up. Several scenarios need to be past this point
 // before the behaviour they test is reachable.
 let enterReorgThreshold = async (

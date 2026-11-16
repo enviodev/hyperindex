@@ -40,21 +40,6 @@ let decodeLogs = async (
     ~name="native decoder logs",
     ~calls=[
       MockRpcServer.expectCall(~method="eth_getLogs", ~reply=RpcResult(JSON.Array(logJsons))),
-      // The client reads the range's last block for its reorg observation,
-      // whatever the field selection is.
-      MockRpcServer.expectCall(
-        ~method="eth_getBlockByNumber",
-        ~reply=RpcResult(
-          JSON.Object(
-            Dict.fromArray([
-              ("number", JSON.String("0x0")),
-              ("timestamp", JSON.String("0x0")),
-              ("hash", JSON.String("0x" ++ "b0"->String.repeat(32))),
-              ("parentHash", JSON.String("0x" ++ "00"->String.repeat(32))),
-            ]),
-          ),
-        ),
-      ),
     ],
     async mock => {
       // One entry per contract, not per registration: two events on one
@@ -90,6 +75,8 @@ let decodeLogs = async (
         ~syncConfig=EvmChain.getSyncConfig({}),
         ~eventRegistrations,
         ~addressStore,
+        ~maxAddressesPerRequest=Env.maxAddrInPartition,
+        ~logger=Logger.makeInMemory(),
       )
       let (result, _, _) = await client.getNextPage(
         {
@@ -100,6 +87,8 @@ let decodeLogs = async (
           onBlockRegistrationIndexes: [],
           clientFilteredContracts: None,
           retry: 0,
+          // Far below the head, where a page's blocks aren't checked one by one.
+          knownHeight: 1_000,
         },
         addressSet,
         BlockStore.make(~ecosystem=Ecosystem.Evm),

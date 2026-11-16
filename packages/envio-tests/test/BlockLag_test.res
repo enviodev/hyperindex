@@ -9,7 +9,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     block_lag: 1
     contracts:
       - name: Gravatar
@@ -36,7 +36,7 @@ describe("E2E blockLag tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       // Enter reorg threshold the standard way:
-      // knownHeight=300, maxReorgDepth=200, so initial fetch is blocks 1-100
+      // knownHeight=300, maxReorgDepth=199, so initial fetch is blocks 1-100
       await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
       t.expect(

@@ -21,6 +21,8 @@ let makeClient = (
     ~maxConcurrentRequests?,
     ~eventRegistrations?,
     ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
+    ~maxAddressesPerRequest=Env.maxAddrInPartition,
+    ~logger=Logger.makeInMemory(),
   )
 
 let heightCall = (~reply, ~headers=?) =>
@@ -248,11 +250,6 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       `{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x${block}","transactionHash":"${hash}","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}`
     })->Array.join(",")
 
-  // The client reads the range's last block for its reorg observation, whatever
-  // the field selection is.
-  let blockReply = (~number) =>
-    MockRpcServer.expectCall(~method="eth_getBlockByNumber", ~reply=RpcResult(blockResult(~number)))
-
   let callNextPage = (client: EvmRpcClient.t, ~fromBlock, ~toBlockCeiling, ~indexes, ~addressSet) =>
     client.getNextPage(
       {
@@ -263,6 +260,8 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         onBlockRegistrationIndexes: [],
         clientFilteredContracts: None,
         retry: 0,
+        // Far below the head, where a page's blocks aren't checked one by one.
+        knownHeight: toBlockCeiling + 1_000,
       },
       addressSet,
       BlockStore.make(~ecosystem=Ecosystem.Evm),
@@ -298,7 +297,6 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             ),
           ),
         ),
-        blockReply(~number="0x64"),
       ],
       async mock => {
         let addressStore = makeAddressStore()
@@ -375,7 +373,6 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             ),
           ),
         ),
-        blockReply(~number="0x1"),
       ],
       async mock => {
         let addressStore = makeAddressStore()
@@ -563,13 +560,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         ),
         MockRpcServer.expectCall(
           ~method="eth_getBlockByNumber",
-          ~times=2,
-          ~reply=Dynamic(
-            request =>
-              requestedBlock(request) == "0x64"
-                ? Delayed({millis: 900, reply: RpcResult(blockResult(~number="0x64"))})
-                : RpcResult(blockResult(~number=requestedBlock(request))),
-          ),
+          ~reply=Delayed({millis: 900, reply: RpcResult(blockResult(~number="0x64"))}),
         ),
         MockRpcServer.expectCall(
           ~phase=1,
@@ -581,8 +572,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         MockRpcServer.expectCall(
           ~phase=1,
           ~method="eth_getBlockByNumber",
-          ~times=2,
-          ~reply=Dynamic(request => RpcResult(blockResult(~number=requestedBlock(request)))),
+          ~reply=RpcResult(blockResult(~number="0x64")),
         ),
       ],
       async mock => {

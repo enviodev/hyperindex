@@ -76,15 +76,6 @@ let rpcLog = log => JSON.Object(
   },
 )
 
-let rpcBlock = blockNumber => JSON.Object(
-  dict{
-    "number": JSON.String(blockNumber->hex),
-    "timestamp": JSON.String(blockNumber->hex),
-    "hash": JSON.String(blockNumber->blockHash),
-    "parentHash": JSON.String((blockNumber - 1)->Pervasives.max(0)->blockHash),
-  },
-)
-
 let sameHex = (a, b) => a->String.toLowerCase === b->String.toLowerCase
 
 // eth_getLogs' value matching: null matches anything, a list matches any of
@@ -110,10 +101,65 @@ let quantity = json =>
   ->Option.flatMap(s => s->dropPrefix->Int.fromString(~radix=16))
   ->Option.getOrThrow(~message="expected a hex quantity")
 
+@module("viem") external keccak256: string => string = "keccak256"
+
+// The three bits of a block's 2048-bit logsBloom that `value` sets: the low 11
+// bits of each of the first three byte pairs of its keccak256.
+let bloomBits = value => {
+  let hash = value->keccak256->dropPrefix
+  let byteAt = index =>
+    hash
+    ->String.slice(~start=2 * index, ~end=2 * index + 2)
+    ->Int.fromString(~radix=16)
+    ->Option.getOrThrow(~message="expected a keccak256 byte")
+  [0, 1, 2]->Array.map(pair =>
+    Int.bitwiseAnd(Int.bitwiseOr(Int.shiftLeft(byteAt(2 * pair), 8), byteAt(2 * pair + 1)), 2047)
+  )
+}
+
+// The logsBloom a node puts in the header of a block holding `logs`: every
+// log's address and topics, each setting its three bits.
+let logsBloom = (logs: array<log>) => {
+  let bytes = Array.make(~length=256, 0)
+  logs->Array.forEach(log =>
+    [log.address, ...log.topics]->Array.forEach(value =>
+      value
+      ->bloomBits
+      ->Array.forEach(
+        bit => {
+          let index = 255 - bit / 8
+          bytes->Array.setUnsafe(
+            index,
+            Int.bitwiseOr(bytes->Array.getUnsafe(index), Int.shiftLeft(1, bit - bit / 8 * 8)),
+          )
+        },
+      )
+    )
+  )
+  "0x" ++
+  bytes->Array.map(byte => byte->Int.toString(~radix=16)->String.padStart(2, "0"))->Array.join("")
+}
+
+// `logs` are the block's own, which its logsBloom summarises.
+let rpcBlock = (~logs=[], blockNumber) => JSON.Object(
+  dict{
+    "number": JSON.String(blockNumber->hex),
+    "timestamp": JSON.String(blockNumber->hex),
+    "hash": JSON.String(blockNumber->blockHash),
+    "parentHash": JSON.String((blockNumber - 1)->Pervasives.max(0)->blockHash),
+    "logsBloom": JSON.String(logs->Array.filter(log => log.blockNumber == blockNumber)->logsBloom),
+  },
+)
+
+// A filter naming a `blockHash` (EIP-234) asks for that one block instead of a
+// range.
 let rpcFilterMatches = (filter: dict<JSON.t>, log) => {
-  let inRange =
+  let inRange = switch filter->Dict.get("blockHash") {
+  | Some(JSON.String(hash)) => sameHex(hash, log.blockNumber->blockHash)
+  | _ =>
     log.blockNumber >= filter->Dict.getUnsafe("fromBlock")->quantity &&
       log.blockNumber <= filter->Dict.getUnsafe("toBlock")->quantity
+  }
   let addressMatches = switch filter->Dict.get("address") {
   | None => true
   | Some(value) => rpcValueMatches(value, Some(log.address))
@@ -134,7 +180,7 @@ let rpcResult = (~logs, ~height, ~method, ~params) => {
   switch method {
   | "eth_chainId" => JSON.String("0x1")
   | "eth_blockNumber" => JSON.String(height->hex)
-  | "eth_getBlockByNumber" => arg(0)->quantity->rpcBlock
+  | "eth_getBlockByNumber" => arg(0)->quantity->rpcBlock(~logs)
   | "eth_getLogs" =>
     let filter = arg(0)->JSON.Decode.object->Option.getOrThrow
     JSON.Array(logs->Array.filter(log => rpcFilterMatches(filter, log))->Array.map(rpcLog))
@@ -261,7 +307,13 @@ let takeRpcQueries = served => {
         ->Array.getUnsafe(0)
         ->JSON.Decode.object
         ->Option.getOrThrow
-      Some({fromBlock: filter->Dict.getUnsafe("fromBlock")->quantity, filters: [filter->logFilter]})
+      // A served block's hash is its number, so a one-block read by hash
+      // starts where that number says.
+      let fromBlock = switch filter->Dict.get("fromBlock") {
+      | Some(fromBlock) => fromBlock
+      | None => filter->Dict.getUnsafe("blockHash")
+      }
+      Some({fromBlock: fromBlock->quantity, filters: [filter->logFilter]})
     | _ => None
     }
   })

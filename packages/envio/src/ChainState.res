@@ -308,9 +308,13 @@ let makeInternal = (
     // FIXME: Shouldn't set with full history
     // The resumed depth, not the config one: the pre-threshold lag must match
     // the window reorg detection compares, or a reduced config depth would let
-    // fetching enter the stored rollback window without history.
+    // fetching enter the stored rollback window without history. One block
+    // more than the window, so the last pre-threshold page ends below it and
+    // the window's first block is read by a page that knows it is reorgable.
     ~blockLag=Pervasives.max(
-      !config.shouldRollbackOnReorg || isInReorgThreshold ? 0 : maxReorgDepth,
+      !config.shouldRollbackOnReorg || isInReorgThreshold || maxReorgDepth == 0
+        ? 0
+        : maxReorgDepth + 1,
       chainConfig.blockLag,
     ),
     ~blockThrottle=chainConfig.blockThrottle,
@@ -350,6 +354,7 @@ let makeInternal = (
     ~blockStore,
     ~transactionStore,
     ~logger,
+    ~maxAddressesPerRequest=config.maxAddrInPartition,
   )
 
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
@@ -777,10 +782,10 @@ let takeFinished = (cs: t) =>
     }
   }
 
-let getHighestBlockBelowThreshold = (cs: t): int => {
-  let highestBlockBelowThreshold = cs.fetchState.knownHeight - cs.maxReorgDepth
-  highestBlockBelowThreshold < 0 ? 0 : highestBlockBelowThreshold
-}
+// The block reorg detection compares from is itself in the window, so the
+// highest block below it is the one before, where catch-up stops.
+let getHighestBlockBelowThreshold = (cs: t): int =>
+  Pervasives.max(cs.fetchState.knownHeight - cs.maxReorgDepth - 1, 0)
 
 // True once the fetch frontier has reached the head/endBlock for this chain.
 let isFetchingAtHead = (cs: t) => cs.fetchState->FetchState.isFetchingAtHead
@@ -978,6 +983,34 @@ let materializePageItems = async (
   ))
 }
 
+// Near the head: each new block in as few queries as possible, of a shape that
+// stays the same while contracts keep being registered. Once every partition is
+// close enough, the chain's dynamic contracts leave the server-side address
+// filter for the rest of the run.
+//
+// Judged only when the chain learns a newer head. An RPC response repeats the
+// height its query went out with, which can be hours old by the end of a
+// backfill: judged against it, every block produced since would be fetched
+// address-free.
+let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
+  if (
+    !cs.fetchState.clientFilterPolicy.allDynamicContracts &&
+    cs.fetchState->FetchState.isWithinHeadClientFilteringDistance
+  ) {
+    cs.fetchState =
+      cs.fetchState->FetchState.switchDynamicContractsToClientSideFiltering(
+        ~addressStore=cs.addressStore,
+      )
+    if cs.onEventRegistrations->Array.some(registration => registration.contractRegister !== None) {
+      cs.logger->Logger.trace(
+        "Near the head: dynamic contracts are fetched without their addresses for the rest of the run, and filtered on our side.",
+        ~params={
+          "contractNames": cs.fetchState.optimizedPartitions.dynamicContracts->Utils.Set.toArray,
+        },
+      )
+    }
+  }
+
 let handleQueryResult = (
   cs: t,
   ~query: FetchState.query,
@@ -1001,6 +1034,7 @@ let handleQueryResult = (
     )
   }
 
+  let previousKnownHeight = cs.fetchState.knownHeight
   cs.fetchState =
     fs
     ->FetchState.handleQueryResult(~query, ~latestFetchedBlock, ~newItems)
@@ -1008,6 +1042,9 @@ let handleQueryResult = (
 
   // The query is no longer in flight, so release its reservation.
   cs.pendingBudget = Pervasives.max(0., cs.pendingBudget -. query.itemsEst->Int.toFloat)
+  if cs.fetchState.knownHeight > previousKnownHeight {
+    cs->switchDynamicContractsToClientSideFilteringNearHead
+  }
 }
 
 // Run reorg detection against a fetch response by merging its block-store page
@@ -1042,8 +1079,11 @@ let prepareReorg = (cs: t, ~eventsProcessedDiff) => {
   cs->resetPendingQueries
 }
 
-let updateKnownHeight = (cs: t, ~knownHeight) =>
+// A chain waiting at its head goes address-free before querying the new block.
+let updateKnownHeight = (cs: t, ~knownHeight) => {
   cs.fetchState = cs.fetchState->FetchState.updateKnownHeight(~knownHeight)
+  cs->switchDynamicContractsToClientSideFilteringNearHead
+}
 
 // In auto-exit mode, pin the endBlock to the earliest observed event block.
 let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>

@@ -31,12 +31,19 @@ type Price {
   amount: BigDecimal! @config(precision: 10, scale: 2)
 }
 `,
+  ~handlers=`
+import { indexer, BigDecimal } from "envio";
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  context.Price.set({ id: "up", amount: new BigDecimal("1.005") });
+  context.Price.set({ id: "down", amount: new BigDecimal("-1.005") });
+  context.Price.set({ id: "under", amount: new BigDecimal("1.00499") });
+});
+`,
   ~unsupported=Scenario.configuresOwnStorage,
 )
 
 type price = {id: string, amount: BigDecimal.t}
-type priceOps = {set: price => unit}
-type handlerContext = {@as("Price") price: priceOps}
 
 describe("ClickHouse rounds a BigDecimal the way Postgres does", () => {
   scenario->Scenario.it("stores the same value in both stores", ~sources=[{chain: 1}], async (
@@ -52,18 +59,7 @@ describe("ClickHouse rounds a BigDecimal the way Postgres does", () => {
         fromBlock: 0,
         toBlock: Unbounded,
         reply: Respond({
-          items: [
-            {
-              blockNumber: 5,
-              logIndex: 0,
-              handler: async args => {
-                let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                context.price.set({id: "up", amount: BigDecimal.fromStringUnsafe("1.005")})
-                context.price.set({id: "down", amount: BigDecimal.fromStringUnsafe("-1.005")})
-                context.price.set({id: "under", amount: BigDecimal.fromStringUnsafe("1.00499")})
-              },
-            },
-          ],
+          items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
           latestFetchedBlockNumber: 10,
         }),
       },

@@ -26,15 +26,18 @@ type Doc {
   many: [Json!]!
 }
 `,
+  ~handlers=`
+import { indexer } from "envio";
+
+const every = [{ a: 1 }, [1, true], 2, true, false, "s", 'a "quoted", {braced} value'];
+
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ context }) => {
+  every.forEach((one, index) => {
+    context.Doc.set({ id: index.toString(), one, many: every });
+  });
+});
+`,
 )
-
-type doc = {id: string, one: JSON.t, many: array<JSON.t>}
-type docOps = {set: doc => unit}
-type handlerContext = {@as("Doc") doc: docOps}
-
-let every: array<
-  JSON.t,
-> = %raw(`[{"a": 1}, [1, true], 2, true, false, "s", "a \"quoted\", {braced} value"]`)
 
 describe("Json documents of every shape", () => {
   let failure = ref(None)
@@ -54,19 +57,7 @@ describe("Json documents of every shape", () => {
           fromBlock: 0,
           toBlock: Unbounded,
           reply: Respond({
-            items: [
-              {
-                blockNumber: 5,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  every->Array.forEachWithIndex((one, index) =>
-                    context.doc.set({id: index->Int.toString, one, many: every})
-                  )
-                },
-              },
-            ],
+            items: [{event: "Token.Transfer", blockNumber: 5, logIndex: 0}],
             latestFetchedBlockNumber: 10,
           }),
         },

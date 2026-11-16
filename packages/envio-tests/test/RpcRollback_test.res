@@ -61,7 +61,7 @@ let addressStore = () =>
 // The store the source routes against, and the one a query's address set is cut
 // from. It has to be seeded: an unseeded store matches none of the logs the mock
 // serves, and a page with no items references no blocks, so nothing but the
-// range's boundary blocks is ever fetched. `makeChainState` keeps an unseeded
+// checked head blocks is ever fetched. `makeChainState` keeps an unseeded
 // store instead and lets `FetchState.make` seed it, as production does.
 let sourceAddressStore = TestAddresses.makeStore(
   ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
@@ -141,6 +141,8 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
     addressStore: sourceAddressStore,
     blockStore,
     transactionStore,
+    maxAddressesPerRequest: Env.maxAddrInPartition,
+    logger: Logger.makeInMemory(),
   })
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
@@ -294,18 +296,25 @@ describe("Rollback against a real RPC server", () => {
     let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
 
-    let page = await source->fetchRange(~fromBlock=100, ~toBlock=104, ~knownHeight=state.height)
+    // The source is told it is far below the head, where a page's blocks
+    // aren't checked one by one and the store can serve them.
+    let sourceKnownHeight = 1_000
+    let page = await source->fetchRange(
+      ~fromBlock=100,
+      ~toBlock=104,
+      ~knownHeight=sourceKnownHeight,
+    )
     let firstGuard =
       chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=110)
 
-    // 102 and 103 are now interior to the refetched range and fully covered by
-    // the store, so neither is read again — yet both moved to the other fork.
+    // 102 and 103 are fully covered by the store, and below the checked head
+    // blocks no other block is read either — yet both moved to the other fork.
     state.forkFrom = 102
     let requestsBefore = mock.requests->Array.length
     let reorgedPage = await source->fetchRange(
       ~fromBlock=101,
       ~toBlock=104,
-      ~knownHeight=state.height,
+      ~knownHeight=sourceKnownHeight,
     )
     let refetchedBlocks =
       mock.requests
@@ -335,7 +344,7 @@ describe("Rollback against a real RPC server", () => {
       ),
     )).toEqual((
       ReorgDetection.NoReorg,
-      [101, 104],
+      [],
       ReorgDetection.ReorgDetected({
         scannedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="a")},
         receivedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="b")},

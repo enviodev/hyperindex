@@ -9,7 +9,7 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 1
-    max_reorg_depth: 200
+    max_reorg_depth: 199
     contracts:
       - name: Gravatar
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
@@ -22,11 +22,17 @@ type EntityWithBigDecimal {
   bigDecimal: BigDecimal!
 }
 `,
+  ~handlers=`
+import { indexer, BigDecimal } from "envio";
+
+indexer.onEvent({ contract: "Gravatar", event: "TestEvent" }, async ({ context }) => {
+  context.EntityWithBigDecimal.set({ id: "testEntity", bigDecimal: new BigDecimal(123.456) });
+  context.EntityWithBigDecimal.set({ id: "testEntity2", bigDecimal: new BigDecimal(654.321) });
+});
+`,
 )
 
 type entityWithBigDecimal = {id: string, bigDecimal: BigDecimal.t}
-type entityOps = {set: entityWithBigDecimal => unit}
-type handlerContext = {@as("EntityWithBigDecimal") entityWithBigDecimal: entityOps}
 
 describe("Load and save an entity with a BigDecimal from DB", () => {
   scenario->Scenario.it(
@@ -41,24 +47,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
           fromBlock: 1,
           toBlock: Bounded(100),
           reply: Respond({
-            items: [
-              {
-                blockNumber: 100,
-                logIndex: 0,
-                handler: async args => {
-                  let context =
-                    args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-                  context.entityWithBigDecimal.set({
-                    id: "testEntity",
-                    bigDecimal: BigDecimal.fromFloat(123.456),
-                  })
-                  context.entityWithBigDecimal.set({
-                    id: "testEntity2",
-                    bigDecimal: BigDecimal.fromFloat(654.321),
-                  })
-                },
-              },
-            ],
+            items: [{event: "Gravatar.TestEvent", blockNumber: 100, logIndex: 0}],
           }),
         },
       ])

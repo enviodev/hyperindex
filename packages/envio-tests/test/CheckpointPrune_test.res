@@ -4,9 +4,6 @@ open Vitest
 // keeps the entity's history to prune beside it, which on the ClickHouse leg it
 // doesn't.
 
-type counterOps = {set: {"id": string, "count": bigint} => unit}
-type handlerContext = {@as("Counter") counter: counterOps}
-
 let schema = `
 type Counter {
   id: ID!
@@ -20,7 +17,7 @@ rollback_on_reorg: true
 contracts:
   - name: Token
     events:
-      - event: Transfer()
+      - event: Transfer(uint256 count)
 chains:
   - id: 100
     rpc:
@@ -33,16 +30,23 @@ chains:
         address: "0x0000000000000000000000000000000000000001"
 `
 
-let scenario = Scenario.make(~supervised=false, ~schema, ~configYaml)
+let handlers = `
+import { indexer } from "envio";
 
-let setCounter = (~block, ~count): MockSource.itemMock => {
+indexer.onEvent({ contract: "Token", event: "Transfer" }, async ({ event, context }) => {
+  context.Counter.set({ id: "total", count: event.params.count });
+});
+`
+
+let scenario = Scenario.make(~supervised=false, ~schema, ~configYaml, ~handlers)
+
+external toUnknown: bigint => unknown = "%identity"
+
+let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
+  event: "Token.Transfer",
   blockNumber: block,
   logIndex: 0,
-  handler: async args =>
-    (args.context->(Utils.magic: Internal.handlerContext => handlerContext)).counter.set({
-      "id": "total",
-      "count": count,
-    }),
+  params: dict{"count": count->toUnknown},
 }
 
 describe("Checkpoint pruning", () => {
