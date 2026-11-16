@@ -12,9 +12,6 @@ chains:
           - event: Transfer(address indexed from, address indexed to, uint256 value)
   - id: 10
     start_block: 0
-    contracts:
-      - name: Token
-        address: "0x1111111111111111111111111111111111111111"
 `,
   ~schema=`
 type Account {
