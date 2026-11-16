@@ -158,6 +158,42 @@ describe("Supervisor.planForRun", () => {
       workerChains(~schema=perChain, ~maxConnections=100, ~isolatedChains=[JSON.Number(1.)]),
     ]).toStrictEqual([Some(["1", "137"]), None, None, None])
   })
+
+  // https://github.com/enviodev/hyperindex/issues/1837
+  it("Deals chains in the order config.yaml lists them, not by chain id", t => {
+    let chainIds = [42220, 1868, 57073, 34443, 1135, 130, 252, 1750, 5330, 1923, 4663, 5042]
+    let chainsYaml =
+      chainIds
+      ->Array.map(
+        chainId =>
+          `  - id: ${chainId->Int.toString}
+    start_block: 0
+    contracts:
+      - name: Counters
+        address: "0x1111111111111111111111111111111111111111"
+`,
+      )
+      ->Array.joinUnsafe("")
+    let configYaml = `
+name: supervised-run
+disable_default_cross_chain: true
+contracts:
+  - name: Counters
+    events:
+      - event: Bumped(uint256 amount)
+chains:
+${chainsYaml}`
+    let config =
+      Core.fromUserApi(~schema=perChain, configYaml).config->JSON.parseOrThrow->Config.fromPublic
+
+    t.expect(
+      Supervisor.planForRun(~config, ~maxConnections=10)->Option.map(
+        workers => workers->Array.map(worker => worker.chainIds->Array.map(ChainId.toInt)),
+      ),
+    ).toStrictEqual(
+      Some([[42220, 1750, 5330], [1868, 252, 1923], [57073, 130, 4663], [34443, 1135, 5042]]),
+    )
+  })
 })
 
 describe("Supervisor worker plumbing", () => {

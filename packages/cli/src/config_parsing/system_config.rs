@@ -30,6 +30,7 @@ use crate::{
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
+use indexmap::IndexMap;
 use itertools::Itertools;
 
 use super::abi_compat::EventParam;
@@ -51,10 +52,23 @@ type ContractNameKey = String;
 type NetworkIdKey = u64;
 type EntityKey = String;
 type GraphqlEnumKey = String;
-type ChainMap = HashMap<NetworkIdKey, Chain>;
+// Keeps config.yaml order: the run splits chains across workers in that order.
+type ChainMap = IndexMap<NetworkIdKey, Chain>;
 type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
+
+fn insert_unique_chain(chains: &mut ChainMap, chain: Chain) -> Result<()> {
+    if chains.contains_key(&chain.id) {
+        return Err(anyhow!(
+            "{} already exists, cannot have duplicates",
+            chain.id
+        ))
+        .context("Failed inserting chain at chains map");
+    }
+    chains.insert(chain.id, chain);
+    Ok(())
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Ecosystem {
@@ -1010,7 +1024,7 @@ impl SystemConfig {
         schema: Schema,
         source: &dyn ConfigSource,
     ) -> Result<Self> {
-        let mut chains: ChainMap = HashMap::new();
+        let mut chains: ChainMap = IndexMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
@@ -1162,8 +1176,7 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
-                        .context("Failed inserting chain at chains map")?;
+                    insert_unique_chain(&mut chains, chain)?;
                 }
 
                 let field_selection = FieldSelection::try_from_config_field_selection(
@@ -1321,8 +1334,7 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
-                        .context("Failed inserting chain at chains map")?;
+                    insert_unique_chain(&mut chains, chain)?;
                 }
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;
@@ -1435,8 +1447,7 @@ impl SystemConfig {
                         contracts: chain_contracts.remove(&chain_id).unwrap_or_default(),
                     };
 
-                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
-                        .context("Failed inserting chain at chains map")?;
+                    insert_unique_chain(&mut chains, chain)?;
                 }
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;

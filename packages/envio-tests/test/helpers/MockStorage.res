@@ -127,6 +127,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~stored=emptyStored) => {
       finalizeBackfill: (~chainIds as _, ~readyAt as _) => Promise.resolve(),
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
+      readFrontier: () => JsError.throwWithMessage("Not implemented"),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
       pruneStaleEntityHistory: async (~entityConfig as _, ~safeCheckpoints as _) => (),
       getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>

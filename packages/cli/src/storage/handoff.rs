@@ -58,6 +58,13 @@ pub enum WriteError {
     Failed(Failure),
     /// Told not to commit, so nothing here was.
     Gated,
+    /// The connection went before the COMMIT was sent, so nothing of the batch
+    /// committed and the same batch can be written again.
+    Unwritten(Failure),
+    /// The connection went while the COMMIT was on its way, so the batch may
+    /// have committed or not. Its frontier, read back once the database
+    /// answers, says which.
+    Uncertain(Failure),
 }
 
 impl From<Failure> for WriteError {
