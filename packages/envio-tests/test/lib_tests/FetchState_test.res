@@ -2393,7 +2393,14 @@ describe("FetchState.getNextQuery & integration", () => {
           ),
         },
       )
-      ->TestAddresses.fetchState,
+      ->TestAddresses.fetchState(
+        ~eventStore=TestEventStore.pageOf([
+          mockEvent(~blockNumber=1),
+          mockEvent(~blockNumber=2),
+          mockEvent(~blockNumber=4, ~logIndex=2),
+          mockEvent(~blockNumber=4, ~logIndex=6),
+        ]),
+      ),
     )
   })
 
@@ -2653,7 +2660,9 @@ describe("FetchState.getNextQuery & integration", () => {
           ),
         },
       )
-      ->TestAddresses.fetchState,
+      ->TestAddresses.fetchState(
+        ~eventStore=TestEventStore.pageOf([mockEvent(~blockNumber=1), mockEvent(~blockNumber=2)]),
+      ),
     )
 
     // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
