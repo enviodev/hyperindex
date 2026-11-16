@@ -80,10 +80,10 @@ describe("TestIndexer chain info and process() guards", () => {
     });
   });
 
-  it("rejects a process() call naming no chain at all", (t) => {
+  it("rejects a process() call naming no chain at all", async (t) => {
     const indexer = createTestIndexer();
 
-    t.expect(() => indexer.process({ chains: {} })).toThrowError(
+    await t.expect(indexer.process({ chains: {} })).rejects.toThrowError(
       "createTestIndexer requires at least one chain to be defined"
     );
   });
@@ -92,17 +92,17 @@ describe("TestIndexer chain info and process() guards", () => {
     const indexer = createTestIndexer();
     const first = indexer.process({ chains: { 1: { startBlock: 1, endBlock: 100 } } });
 
-    t.expect(() => indexer.process({ chains: { 1: { startBlock: 1, endBlock: 100 } } })).toThrowError(
+    await t.expect(indexer.process({ chains: { 1: { startBlock: 1, endBlock: 100 } } })).rejects.toThrowError(
       "createTestIndexer process is already running. Only one process call is allowed at a time"
     );
 
     await first;
   });
 
-  it("rejects a startBlock below the chain's configured start block", (t) => {
+  it("rejects a startBlock below the chain's configured start block", async (t) => {
     const indexer = createTestIndexer();
 
-    t.expect(() => indexer.process({ chains: { 1: { startBlock: 0, endBlock: 100 } } })).toThrowError(
+    await t.expect(indexer.process({ chains: { 1: { startBlock: 0, endBlock: 100 } } })).rejects.toThrowError(
       "Invalid block range for chain 1: startBlock (0) is less than config.startBlock (1). Either use startBlock >= 1 or create a new test indexer with createTestIndexer()."
     );
   });
@@ -120,9 +120,9 @@ describe("TestIndexer chain info and process() guards", () => {
       },
     });
 
-    t.expect(() =>
+    await t.expect(
       indexer.process({ chains: { 137: { startBlock: 50, endBlock: 150 } } })
-    ).toThrowError(
+    ).rejects.toThrowError(
       "Invalid block range for chain 137: startBlock (50) must be greater than previously processed endBlock (100). Either use startBlock > 100 or create a new test indexer with createTestIndexer()."
     );
   });
