@@ -102,6 +102,32 @@ host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreate)
   return sourceFile;
 };
 
+const declarationCompilerOptions: ts.CompilerOptions = { ...compilerOptions, skipLibCheck: false };
+
+/**
+ * Type-check the generated `.envio/types.d.ts` of a mock config together with
+ * envio's own `index.d.ts`, as a project with `skipLibCheck: false` does. Under
+ * the default `skipLibCheck: true` an error in either file reports nothing and
+ * silently degrades the types it touches to `any`.
+ */
+export function checkDeclarations(typesDts: string): string[] {
+  virtualFiles = new Map<string, string>([[typesPath, typesDts]]);
+  const envioIndexDts = ts.resolveModuleName("envio", typesPath, declarationCompilerOptions, host)
+    .resolvedModule?.resolvedFileName;
+  if (envioIndexDts === undefined) throw new Error("checkDeclarations could not resolve envio");
+
+  const program = ts.createProgram([typesPath], declarationCompilerOptions, host);
+  return ts
+    .getPreEmitDiagnostics(program)
+    .filter(
+      (d) =>
+        d.file === undefined ||
+        d.file.fileName === typesPath ||
+        d.file.fileName === envioIndexDts,
+    )
+    .map((d) => ts.formatDiagnostic(d, formatHost).trim());
+}
+
 /**
  * Type-check user sources against the generated `.envio/types.d.ts` of a mock
  * config. `handlers` is handler source; `test` is a user-facing test module

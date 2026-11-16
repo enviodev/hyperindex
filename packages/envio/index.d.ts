@@ -553,6 +553,16 @@ type EvmEventFilters<Config extends IndexerConfigTypes = GlobalConfig> =
   Config["evm"] extends { eventFilters: infer F extends Record<string, Record<string, any>> }
     ? F : {};
 
+type EvmEventFilter<
+  Config extends IndexerConfigTypes,
+  ContractName extends string,
+  EventName extends string,
+> = ContractName extends keyof EvmEventFilters<Config>
+  ? EvmEventFilters<Config>[ContractName] extends infer ContractFilters extends Record<string, any>
+    ? ContractFilters[EventName & keyof ContractFilters]
+    : {}
+  : {};
+
 // Extract contract names for contract registration
 type EvmContractNames<Config extends IndexerConfigTypes = GlobalConfig> =
   Config["evm"] extends { contracts: Record<infer N, any> } ? N & string : never;
@@ -898,8 +908,9 @@ export type EvmConfigTransaction<EventName extends string, Selected extends EvmT
  * selection whose keys are optional. Element access rather than `infer`, which
  * falls back to its `string` constraint on an absent key — naming every field
  * as selected. */
-type ListedFields<Fields, Knob extends string> = NonNullable<
-  ListedArray<Fields, Knob>
+type ListedFields<Fields, Knob extends string> = Extract<
+  NonNullable<ListedArray<Fields, Knob>>,
+  readonly unknown[]
 >[number] &
   string;
 
@@ -948,8 +959,8 @@ export type EvmBlock<Fields extends EvmFieldsSelection> = SelectedFields<
 /** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
  * With no `fields` option the event type passes through, so the `config.yaml`
  * `field_selection` path is unaffected. */
-export type EvmEventWithFields<Event, Fields> = [Fields] extends [EvmFieldsSelection]
-  ? Omit<Event, "block" | "transaction"> & {
+export type EvmEventWithFields<Event extends EventLike, Fields> = [Fields] extends [EvmFieldsSelection]
+  ? Omit<Event, "block" | "transaction"> & Pick<Event, keyof EventLike> & {
       readonly block: EvmBlock<Fields>;
       readonly transaction: SelectedFields<
         EvmAllTransactionFields,
@@ -1758,12 +1769,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
                     readonly fields?: F & FieldsLiteralCheck<F>;
-                  } & EvmOnEventWhereOption<
-                    EvmEventFilters<Config>[C] extends Record<string, any>
-                      ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]]
-                      : {},
-                    C
-                  >,
+                  } & EvmOnEventWhereOption<EvmEventFilter<Config, C, E>, C>,
                   handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
                 /** Register a contract register handler for dynamic contract indexing. */
@@ -1779,12 +1785,7 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
                     readonly fields?: F & FieldsLiteralCheck<F>;
-                  } & EvmOnEventWhereOption<
-                    EvmEventFilters<Config>[C] extends Record<string, any>
-                      ? EvmEventFilters<Config>[C][E & keyof EvmEventFilters<Config>[C]]
-                      : {},
-                    C
-                  >,
+                  } & EvmOnEventWhereOption<EvmEventFilter<Config, C, E>, C>,
                   handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;
               }
