@@ -15,6 +15,19 @@
 //! per-selection reads could not — a replica that answers a block hash with the
 //! right hash but no logs — and that case is what the in-source completeness
 //! check is for.
+//!
+//! An all-zero `logsBloom` is what some chains serve for every block, and what
+//! every chain serves for a block holding no logs, so on its own it says
+//! nothing. A checked block makes it say something: a block the range answer
+//! holds one of the selection's logs for, and whose bloom is set, shows the
+//! chain fills blooms, after which an all-zero bloom only means the block holds
+//! no logs, and an empty head block is left alone. A block that holds a log yet
+//! answers an all-zero bloom shows the opposite, and disproof is taken over
+//! proof. Trust is earned per source and never shared, so a fallback provider
+//! is calibrated on its own answers. The risk accepted is a chain that fills
+//! blooms but serves a stale zero bloom at the head, which, together with a
+//! replica's empty answer, loses the block's events; disproof only fires when a
+//! log is seen at a zero-bloom block.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
@@ -130,11 +143,14 @@ impl RecheckReason {
 }
 
 /// The checked blocks a selection's answer held none of its logs for, and
-/// whose header can't rule them out, so they are asked for again by hash.
+/// whose header can't rule them out, so they are asked for again by hash. A
+/// zero bloom is left alone when the chain is trusted to fill blooms, which
+/// makes it the answer for a block holding no logs.
 pub(crate) fn blocks_to_recheck(
     checked: &[u64],
     answered: &HashSet<u64>,
     headers: &HashMap<u64, CheckedHeader>,
+    trust_zero_bloom: bool,
     selection: &BuiltLogSelection,
 ) -> Vec<(u64, RecheckReason)> {
     // Hashing a selection costs a keccak per address, which only a block whose
@@ -145,10 +161,14 @@ pub(crate) fn blocks_to_recheck(
         if answered.contains(&block) {
             continue;
         }
-        let bloom = headers
-            .get(&block)
-            .and_then(|header| header.bloom)
-            .filter(|bloom| *bloom != Bloom::ZERO);
+        let header_bloom = headers.get(&block).and_then(|header| header.bloom);
+        // A chain that fills blooms serves a zero one only for a block with no
+        // logs, so an empty block is not asked again. A missing bloom still
+        // says nothing and is still asked again.
+        if trust_zero_bloom && header_bloom == Some(Bloom::ZERO) {
+            continue;
+        }
+        let bloom = header_bloom.filter(|bloom| *bloom != Bloom::ZERO);
         let reason = match bloom {
             Some(bloom) => {
                 match selection_bloom.get_or_insert_with(|| SelectionBloom::new(selection)) {
@@ -162,6 +182,41 @@ pub(crate) fn blocks_to_recheck(
         rechecks.push((block, reason));
     }
     rechecks
+}
+
+/// What a checked block that holds one of the selection's logs says about a
+/// source whose empty blocks come back with an all-zero `logsBloom`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ZeroBloomEvidence {
+    /// The block holds a log and its bloom is set: the chain fills blooms.
+    Proof { block: u64 },
+    /// The block holds a log and its bloom is all zero: the chain does not.
+    Disproof { block: u64 },
+}
+
+/// The evidence `checked` gives about a source that serves all-zero blooms,
+/// taken from the blocks `blocks_with_logs` holds a log for. Disproof wins: a
+/// source seen answering a zero bloom for a block that holds logs is distrusted
+/// whatever else it answered. A block without a parsed bloom says nothing.
+pub(crate) fn zero_bloom_evidence(
+    checked: &[u64],
+    blocks_with_logs: &HashSet<u64>,
+    headers: &HashMap<u64, CheckedHeader>,
+) -> Option<ZeroBloomEvidence> {
+    let mut proof = None;
+    for &block in checked {
+        if !blocks_with_logs.contains(&block) {
+            continue;
+        }
+        match headers.get(&block).and_then(|header| header.bloom) {
+            Some(bloom) if bloom == Bloom::ZERO => {
+                return Some(ZeroBloomEvidence::Disproof { block })
+            }
+            Some(_) => proof = proof.or(Some(ZeroBloomEvidence::Proof { block })),
+            None => {}
+        }
+    }
+    proof
 }
 
 /// The fewest selections that must want one block rechecked before a single
@@ -325,7 +380,8 @@ mod tests {
         let by_address = selection(Emitters::Listed(vec![TOKEN.to_string()]), &[&[TRANSFER]]);
         let address_free = selection(Emitters::Any(AddressFreeOrigin::default()), &[&[TRANSFER]]);
         let not_hex = selection(Emitters::Listed(vec!["token".to_string()]), &[&[TRANSFER]]);
-        let recheck = |selection| blocks_to_recheck(&checked, &answered, &headers, selection);
+        let recheck =
+            |selection| blocks_to_recheck(&checked, &answered, &headers, false, selection);
         use RecheckReason::*;
         assert_eq!(
             (
@@ -414,6 +470,86 @@ mod tests {
                 // wanted by three, so it is read once unfiltered.
                 vec![(0, 21, BloomSaysNothing), (2, 23, BloomSaysNothing)],
                 vec![(22, vec![0, 1, 2], BloomMatches)],
+            ),
+        );
+    }
+
+    #[test]
+    fn a_filled_bloom_and_a_zero_one_each_speak_for_the_chain() {
+        use ZeroBloomEvidence::*;
+        let headers = HashMap::from([
+            (3, header(&[(TOKEN, &[TRANSFER])])),
+            (4, header(&[])),
+            (
+                5,
+                CheckedHeader {
+                    hash: Some("0xaa".to_string()),
+                    bloom: None,
+                },
+            ),
+            (6, header(&[(OTHER_TOKEN, &[APPROVAL])])),
+        ]);
+        let checked = [3, 4, 5, 6];
+        let evidence = |blocks: &[u64]| {
+            zero_bloom_evidence(&checked, &blocks.iter().copied().collect(), &headers)
+        };
+        assert_eq!(
+            (
+                // A log at a filled bloom is proof the chain fills blooms.
+                evidence(&[3]),
+                // A log at a zero bloom is proof the other way.
+                evidence(&[4]),
+                // Disproof wins over proof, whatever the order.
+                evidence(&[3, 4]),
+                // A block without a parsed bloom says nothing, so only the
+                // filled-bloom block of 5 and 6 speaks.
+                evidence(&[5, 6]),
+                evidence(&[5]),
+            ),
+            (
+                Some(Proof { block: 3 }),
+                Some(Disproof { block: 4 }),
+                Some(Disproof { block: 4 }),
+                Some(Proof { block: 6 }),
+                None,
+            ),
+        );
+    }
+
+    #[test]
+    fn a_trusted_chain_leaves_an_all_zero_bloom_alone() {
+        use RecheckReason::*;
+        let headers = HashMap::from([
+            (21, header(&[(TOKEN, &[TRANSFER])])),
+            (22, header(&[])),
+            (
+                23,
+                CheckedHeader {
+                    hash: Some("0xaa".to_string()),
+                    bloom: None,
+                },
+            ),
+        ]);
+        let checked = [21, 22, 23];
+        let answered = HashSet::new();
+        let selection = selection(Emitters::Listed(vec![TOKEN.to_string()]), &[&[TRANSFER]]);
+        let recheck = |trust| blocks_to_recheck(&checked, &answered, &headers, trust, &selection);
+        assert_eq!(
+            (
+                // Untrusted, an all-zero bloom says nothing, as a missing one
+                // does.
+                recheck(false),
+                // Trusted, the zero bloom is the block holding no logs, while a
+                // missing bloom still says nothing.
+                recheck(true),
+            ),
+            (
+                vec![
+                    (21, BloomMatches),
+                    (22, BloomSaysNothing),
+                    (23, BloomSaysNothing),
+                ],
+                vec![(21, BloomMatches), (23, BloomSaysNothing)],
             ),
         );
     }

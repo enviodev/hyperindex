@@ -2,7 +2,7 @@ use anyhow::Context;
 use napi_derive::napi;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -371,12 +371,25 @@ pub struct EvmRpcClient {
     /// Whether the provider has ever answered a read by block hash, which
     /// makes any later refusal one of a hash it doesn't know yet.
     answered_block_hash_read: AtomicBool,
+    /// What the source's all-zero `logsBloom` values have been shown to mean:
+    /// `ZERO_BLOOM_UNKNOWN` until a checked block says the chain fills blooms,
+    /// `ZERO_BLOOM_TRUSTED` once one does, and `ZERO_BLOOM_DISTRUSTED` (sticky)
+    /// once a block that holds logs comes back with a zero bloom. A fallback
+    /// provider is its own client, so it is calibrated on its own answers.
+    zero_bloom_trust: AtomicU8,
 }
 
 /// How many times a page is retried, a node behind the head taking about a
 /// second over them, before a refusal of reads by hash is taken to mean the
 /// provider doesn't serve them.
 const RETRIES_BEFORE_RECHECKING_BY_NUMBER: i64 = 3;
+
+/// A source's calibration for a chain whose empty blocks come back with an
+/// all-zero `logsBloom`: unknown until a checked block holding one of the
+/// selection's logs says which way.
+const ZERO_BLOOM_UNKNOWN: u8 = 0;
+const ZERO_BLOOM_TRUSTED: u8 = 1;
+const ZERO_BLOOM_DISTRUSTED: u8 = 2;
 
 /// How many blocks a page reads for its block handlers at most: each costs an
 /// `eth_getBlockByNumber`, which the log range's size says nothing about.
@@ -507,6 +520,7 @@ impl EvmRpcClient {
             block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
             warned_block_hash_refusal: AtomicBool::new(false),
             answered_block_hash_read: AtomicBool::new(false),
+            zero_bloom_trust: AtomicU8::new(ZERO_BLOOM_UNKNOWN),
         })
     }
 
@@ -1034,6 +1048,15 @@ impl EvmRpcClient {
             .iter()
             .map(|(&block, header)| (block, head_checks::CheckedHeader::read(header)))
             .collect();
+        // What the range answer holds logs for is what can prove or disprove the
+        // source's all-zero blooms, before any recheck is asked for.
+        let blocks_with_logs: HashSet<u64> = logs
+            .iter()
+            .flatten()
+            .filter_map(|log| parse_hex_u64(&log.block_number).ok())
+            .collect();
+        self.record_zero_bloom_evidence(checked_blocks, &blocks_with_logs, &checked_headers);
+        let trust_zero_bloom = self.zero_bloom_trust.load(Ordering::Relaxed) == ZERO_BLOOM_TRUSTED;
         let per_selection: Vec<Vec<(u64, head_checks::RecheckReason)>> = query
             .selections
             .iter()
@@ -1047,6 +1070,7 @@ impl EvmRpcClient {
                     checked_blocks,
                     &answered,
                     &checked_headers,
+                    trust_zero_bloom,
                     selection,
                 )
             })
@@ -1110,7 +1134,15 @@ impl EvmRpcClient {
                 }),
         )
         .await;
-        for result in enrich::collect_worst(results)? {
+        let found = enrich::collect_worst(results)?;
+        // A recheck that came back with logs at a zero-bloom block disproves the
+        // source the same way a range answer would.
+        let rechecked_blocks: HashSet<u64> = found
+            .iter()
+            .flat_map(|result| result.found.iter())
+            .filter_map(|log| parse_hex_u64(&log.block_number).ok())
+            .collect();
+        for result in found {
             if let [selection] = result.selections[..] {
                 logs[selection].extend(result.found);
             } else {
@@ -1128,7 +1160,72 @@ impl EvmRpcClient {
                 }
             }
         }
+        if !rechecked_blocks.is_empty() {
+            let mut with_rechecks = blocks_with_logs.clone();
+            with_rechecks.extend(rechecked_blocks);
+            self.disprove_zero_bloom(checked_blocks, &with_rechecks, &checked_headers);
+        }
         Ok(())
+    }
+
+    /// Records what a checked block with a log says about the source's all-zero
+    /// `logsBloom` values, before the page decides which blocks to recheck: a
+    /// filled bloom earns trust, a zero bloom for a block that holds logs
+    /// refuses it and says so once.
+    fn record_zero_bloom_evidence(
+        &self,
+        checked: &[u64],
+        blocks_with_logs: &HashSet<u64>,
+        checked_headers: &HashMap<u64, head_checks::CheckedHeader>,
+    ) {
+        match head_checks::zero_bloom_evidence(checked, blocks_with_logs, checked_headers) {
+            Some(head_checks::ZeroBloomEvidence::Proof { .. }) => {
+                // Never overrides a source already seen serving a zero bloom
+                // for a block that holds logs.
+                let _ = self.zero_bloom_trust.compare_exchange(
+                    ZERO_BLOOM_UNKNOWN,
+                    ZERO_BLOOM_TRUSTED,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                );
+            }
+            Some(head_checks::ZeroBloomEvidence::Disproof { block }) => {
+                self.distrust_zero_bloom(block)
+            }
+            None => {}
+        }
+    }
+
+    /// Refuses to trust the source's zero blooms when a recheck found a log at
+    /// a zero-bloom block, which a range answer would have disproved the same
+    /// way.
+    fn disprove_zero_bloom(
+        &self,
+        checked: &[u64],
+        blocks_with_logs: &HashSet<u64>,
+        checked_headers: &HashMap<u64, head_checks::CheckedHeader>,
+    ) {
+        if let Some(head_checks::ZeroBloomEvidence::Disproof { block }) =
+            head_checks::zero_bloom_evidence(checked, blocks_with_logs, checked_headers)
+        {
+            self.distrust_zero_bloom(block);
+        }
+    }
+
+    /// Sticks the source to serving an all-zero bloom for a block that holds
+    /// logs, and says so once.
+    fn distrust_zero_bloom(&self, block: u64) {
+        if self
+            .zero_bloom_trust
+            .swap(ZERO_BLOOM_DISTRUSTED, Ordering::Relaxed)
+            != ZERO_BLOOM_DISTRUSTED
+        {
+            self.logger.log(
+                Level::WARN,
+                "RPC serves an all-zero logsBloom for a block with logs; empty head blocks are asked again",
+                &serde_json::json!({ "blockNumber": block }),
+            );
+        }
     }
 
     /// Asks for one checked block again by its hash. A provider that refuses

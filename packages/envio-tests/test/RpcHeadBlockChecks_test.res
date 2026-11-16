@@ -37,6 +37,16 @@ let event = (
   data: value->ServedEvmChain.hex->ServedEvmChain.dropPrefix->ServedEvmChain.word,
 }
 
+// The logs of a block whose bloom sets two other selections' addresses and the
+// transfer topic while holding neither of their logs, so both want the block
+// again and it is read once unfiltered. The third log answers a third selection
+// and is what sets the transfer topic.
+let twoSelectionBlock = blockNumber => [
+  event(~blockNumber, ~address=token, ~topic=approvalTopic),
+  event(~blockNumber, ~logIndex=1, ~address=otherToken, ~topic=approvalTopic),
+  event(~blockNumber, ~logIndex=2, ~address=tokenC),
+]
+
 let backfillHeight = 20
 
 // How the provider answers eth_getLogs for a while: correctly, or the way a
@@ -68,6 +78,12 @@ type fault =
   // Refuses every read by hash as an unsupported request, and answers an
   // unfiltered read by number with a result-count error.
   | RefusedHashReadsWithOversizedByNumber
+  // Every header carries an all-zero logsBloom, the way a chain whose nodes
+  // don't fill them serves it.
+  | ZeroBlooms
+  // An all-zero logsBloom only for blocks from `block` on, for a chain that
+  // starts serving them at the head.
+  | ZeroBloomsFrom({block: int})
 
 type chain = {mutable height: int, mutable logs: array<ServedEvmChain.log>, mutable fault: fault}
 let chain = {height: backfillHeight, logs: [], fault: Honest}
@@ -97,6 +113,20 @@ let rpcLog = (log: ServedEvmChain.log, ~blockHash=?) => {
   | _ => ()
   }
   json
+}
+
+// An all-zero logsBloom, 256 zero bytes, the way a node that doesn't fill
+// blooms serves it.
+let zeroLogsBloom = "0x" ++ Array.make(~length=256, "00")->Array.join("")
+
+// The same header with its logsBloom set to zero.
+let withZeroBloom = block => {
+  switch block {
+  | JSON.Object(fields) =>
+    fields->Dict.set("logsBloom", JSON.String(zeroLogsBloom))->ignore
+  | _ => ()
+  }
+  block
 }
 
 // The filter's blocks: the range, or the one block a hash names.
@@ -267,7 +297,14 @@ let serve = (~port, ~fault, ~calls) =>
     | "eth_getBlockByNumber" =>
       let blockNumber = params->Array.getUnsafe(0)->ServedEvmChain.quantity
       calls->Array.push(`header ${blockNumber->Int.toString}`)->ignore
-      (200, envelope(request, "result", blockNumber->ServedEvmChain.rpcBlock(~logs=chain.logs)))
+      let block = blockNumber->ServedEvmChain.rpcBlock(~logs=chain.logs)
+      let block =
+        switch fault() {
+        | ZeroBlooms => block->withZeroBloom
+        | ZeroBloomsFrom({block: from}) if blockNumber >= from => block->withZeroBloom
+        | _ => block
+        }
+      (200, envelope(request, "result", block))
     | "eth_blockNumber" => (
         200,
         envelope(request, "result", JSON.String(chain.height->ServedEvmChain.hex)),
@@ -542,9 +579,9 @@ describe("RPC head block checks", () => {
             [
               "getLogs 21-24",
               "getLogs block 23 filtered",
-              // An empty block has an all-zero bloom, which some chains serve
-              // whatever the block holds, so it says nothing.
-              "getLogs block 24 filtered",
+              // Block 24 holds no event, and the backfill's filled bloom has
+              // shown the chain serves a zero bloom only for a block holding no
+              // logs, so its empty block is left alone.
               "header 21",
               "header 22",
               "header 23",
@@ -583,10 +620,8 @@ describe("RPC head block checks", () => {
               "getLogs 21-23",
               // The range again, once the source has retried.
               "getLogs 21-23",
-              // Block 21 holds no logs at all, and its zero bloom rules nothing
-              // out, so each attempt asks for it again.
-              "getLogs block 21 filtered",
-              "getLogs block 21 filtered",
+              // Block 21 holds no logs at all, and the backfill's filled bloom
+              // has shown the chain fills them, so its zero bloom is left alone.
               // The replica doesn't know 22, which is the source being behind.
               "getLogs block 22 filtered",
               "getLogs block 23 filtered",
@@ -722,14 +757,14 @@ describe("RPC head block checks", () => {
         async (~indexer, ~backfill as _, ~head) => {
           t.expect((
             await indexer->seenIds,
-            // Each block is refused by hash on every attempt, and read by
-            // number once the page has been retried long enough.
-            [
-              "getLogs 21-21",
-              "getLogs 23-23",
-              "getLogs block 21 filtered",
-              "getLogs block 23 filtered",
-            ]->Array.filter(call => !(head->Array.includes(call))),
+            // A block whose bloom may hide our logs is refused by hash on
+            // every attempt, and read by number once the page has been retried
+            // long enough. Block 21 holds no logs, and the backfill's filled
+            // bloom has shown the chain fills them, so its zero bloom is left
+            // alone.
+            ["getLogs 23-23", "getLogs block 23 filtered"]->Array.filter(call =>
+              !(head->Array.includes(call))
+            ),
             indexer.allLogsAsJson()->Array.filterMap(
               line =>
                 switch (line->Dict.get("level"), line->Dict.get("msg")) {
@@ -850,7 +885,7 @@ describe("RPC head block checks", () => {
   )
 
   Async.it(
-    "reads one unfiltered block per empty head block when six selections want it",
+    "does not recheck an empty head block once a filled bloom has shown the chain fills them",
     async t => {
       await runAtHead(
         ~scenario=manySelectionScenario,
@@ -859,13 +894,12 @@ describe("RPC head block checks", () => {
         ~fault=Honest,
         ~waitFor="24-0-24",
         async (~indexer as _, ~backfill as _, ~head) => {
+          // Blocks 21 to 23 hold no logs. The backfill's filled bloom has shown
+          // the chain fills blooms, so each zero bloom is the answer for a
+          // block holding no logs, and none of the six selections asks again.
           t.expect(
             head->Array.filter(call => call->String.includes("block")),
-          ).toEqual([
-            "getLogs block 21 unfiltered",
-            "getLogs block 22 unfiltered",
-            "getLogs block 23 unfiltered",
-          ])
+          ).toEqual([])
         },
       )
     },
@@ -912,12 +946,17 @@ describe("RPC head block checks", () => {
   )
 
   Async.it(
-    "asks a refused hash read once by number per block when six selections want it",
+    "asks a refused hash read once by number per block two selections want",
     async t => {
       await runAtHead(
         ~scenario=manySelectionScenario,
         ~startupFault=NoBlockHashReads,
-        ~logs=[event(~blockNumber=21)],
+        ~logs=[
+          event(~blockNumber=21),
+          ...twoSelectionBlock(22),
+          ...twoSelectionBlock(23),
+          ...twoSelectionBlock(24),
+        ],
         ~height=24,
         ~fault=NoBlockHashReads,
         ~waitFor="21-0-21",
@@ -937,7 +976,7 @@ describe("RPC head block checks", () => {
                 },
             )->Array.length,
           )).toEqual((
-            ["21-0-21", "3-0-3"],
+            ["21-0-21", "22-2-22", "23-2-23", "24-2-24", "3-0-3"],
             ["getLogs 22-22", "getLogs 23-23", "getLogs 24-24"],
             1,
           ))
@@ -967,6 +1006,9 @@ describe("RPC head block checks", () => {
     async t => {
       await runAtHead(
         ~scenario=manySelectionScenario,
+        // A chain that answers all-zero blooms, so the empty head blocks are
+        // still asked for and the too-large unfiltered read is reached.
+        ~startupFault=ZeroBlooms,
         ~logs=[event(~blockNumber=21)],
         ~height=24,
         ~fault=UnfilteredReadTooLarge({answers: 100}),
@@ -988,12 +1030,113 @@ describe("RPC head block checks", () => {
       await runAtHead(
         ~scenario=manySelectionScenario,
         ~startupFault=RefusedHashReadsWithOversizedByNumber,
-        ~logs=[event(~blockNumber=21)],
+        ~logs=[event(~blockNumber=21), ...twoSelectionBlock(22)],
         ~height=24,
         ~fault=RefusedHashReadsWithOversizedByNumber,
         ~waitFor="21-0-21",
+        async (~indexer, ~backfill as _, ~head) => {
+          // The block is refused by hash, the unfiltered by-number read is
+          // refused for its size, and the two selections' own filtered reads
+          // answer instead.
+          t.expect((
+            await indexer->seenIds,
+            head->Array.includes("getLogs block 22 unfiltered"),
+            head->Array.filter(call => call == "getLogs block 22 filtered")->Array.length,
+          )).toEqual((["21-0-21", "22-2-22", "3-0-3"], true, 2))
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "asks an empty head block again while the chain has shown no proof it fills blooms",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        // Every header is all zero, the backfill's filled bloom included, so
+        // the chain has shown nothing either way and its zero blooms still say
+        // nothing.
+        ~startupFault=ZeroBlooms,
+        ~logs=[event(~blockNumber=24)],
+        ~height=24,
+        ~fault=ZeroBlooms,
+        ~waitFor="24-0-24",
+        async (~indexer as _, ~backfill as _, ~head) => {
+          t.expect(
+            head
+            ->Array.filter(call =>
+              [
+                "getLogs block 21 unfiltered",
+                "getLogs block 22 unfiltered",
+                "getLogs block 23 unfiltered",
+              ]->Array.includes(call)
+            ),
+          ).toEqual([
+            "getLogs block 21 unfiltered",
+            "getLogs block 22 unfiltered",
+            "getLogs block 23 unfiltered",
+          ])
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "stops trusting zero blooms once a block with logs answers one, asking empty blocks again",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        // The backfill fills blooms and earns trust; the head still serves
+        // all-zero blooms, and the event at 22 answers one, which disproves the
+        // chain and asks its empty blocks again.
+        ~logs=[event(~blockNumber=22)],
+        ~height=24,
+        ~fault=ZeroBloomsFrom({block: 21}),
+        ~waitFor="22-0-22",
+        async (~indexer, ~backfill as _, ~head) => {
+          t.expect((
+            await indexer->seenIds,
+            head->Array.filter(call =>
+              [
+                "getLogs block 21 unfiltered",
+                "getLogs block 23 unfiltered",
+                "getLogs block 24 unfiltered",
+              ]->Array.includes(call)
+            ),
+            indexer.allLogsAsJson()->Array.filter(
+              line =>
+                switch (line->Dict.get("level"), line->Dict.get("msg")) {
+                | (Some(String("warn")), Some(String(msg)))
+                  if msg->String.includes("all-zero logsBloom") =>
+                  true
+                | _ => false
+                },
+            )->Array.length,
+          )).toEqual((
+            ["22-0-22", "3-0-3"],
+            [
+              "getLogs block 21 unfiltered",
+              "getLogs block 23 unfiltered",
+              "getLogs block 24 unfiltered",
+            ],
+            1,
+          ))
+        },
+      )
+    },
+  )
+
+  Async.it(
+    "keeps rechecking a block with logs a lagging replica answers as empty",
+    async t => {
+      await runAtHead(
+        ~scenario=manySelectionScenario,
+        ~logs=[event(~blockNumber=22)],
+        ~height=22,
+        ~fault=LaggingReplica({block: 22, answers: 2}),
+        ~waitFor="22-0-22",
         async (~indexer, ~backfill as _, ~head as _) => {
-          t.expect(await indexer->seenIds).toEqual(["21-0-21", "3-0-3"])
+          t.expect(await indexer->seenIds).toEqual(["22-0-22", "3-0-3"])
         },
       )
     },
