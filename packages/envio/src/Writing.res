@@ -77,6 +77,47 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
   acc
 }
 
+// False when the indexer stopped while the database was away. The write is then
+// left unwritten and the loop ends as on a failed one, so nothing queued behind
+// it lands and nothing claims progress past it.
+let writeUntilCommitted = async (state: IndexerState.t, ~operation, write) =>
+  switch await state->ConnectionRetry.retryUntilReachable(~operation, write) {
+  | Some() => true
+  | None =>
+    state->IndexerState.abandonWrites
+    false
+  }
+
+// The chains whose frontier the batch moves, with where it moves them.
+let movedFrontier = (state: IndexerState.t, ~writtenFrontier) => {
+  let committed = state->IndexerState.committedFrontier
+  writtenFrontier
+  ->Frontier.entries
+  ->Array.filter(((chainId, checkpointId)) =>
+    committed
+    ->Frontier.find(chainId)
+    ->Option.mapOr(true, committedId => committedId != checkpointId)
+  )
+}
+
+let landingUnknownMsg = "The connection to the database was lost while a batch was being saved, and the database does not show whether it was. Start the indexer again: it resumes from the last block it saved."
+
+// A batch commits in one transaction, so the chains it moves either all hold
+// its checkpoint or none does. Anything else means another writer, and the
+// batch is neither written again nor taken as saved.
+let hasBatchLanded = async (state: IndexerState.t, ~moved) => {
+  let stored = await (state->IndexerState.persistence).storage.readFrontier()
+  let landed =
+    moved->Array.filter(((chainId, checkpointId)) =>
+      stored->Frontier.find(chainId)->Option.mapOr(false, storedId => storedId == checkpointId)
+    )
+  switch landed->Array.length {
+  | 0 => false
+  | count if count == moved->Array.length => true
+  | _ => JsError.throwWithMessage(landingUnknownMsg)
+  }
+}
+
 let runOneWrite = async (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
   let config = state->IndexerState.config
@@ -95,7 +136,9 @@ let runOneWrite = async (state: IndexerState.t) => {
     // Metadata only: a cheap upsert, still serialized by the single write loop.
     switch chainMetaData {
     | Some(chainsData) =>
-      await persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+      let _ = await state->writeUntilCommitted(~operation="chain metadata write", () =>
+        persistence.storage.setChainMeta(chainsData)->Utils.Promise.ignoreValue
+      )
     | None => ()
     }
   | _ =>
@@ -148,32 +191,53 @@ let runOneWrite = async (state: IndexerState.t) => {
     // could overlap the next batch's history writes and lose an anchor (which
     // breaks a later rollback). Rollback writes touch every history table, so
     // they get no concurrent prune at all.
-    let _ = await Promise.all2((
-      persistence.storage.writeBatch(
-        ~batch,
-        ~rollback,
-        ~config,
-        ~updatedEntities,
-        ~registeredAddresses,
-        ~updatedEffectsCache,
-        ~chainMetaData,
-        ~onWrite=(~storage, ~timeSeconds) =>
-          state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
+    // A COMMIT cut off on its way may have landed. The next attempt looks for
+    // the batch first and writes it only if it is not there: written twice, it
+    // would store its history and checkpoints twice.
+    let moved = state->movedFrontier(~writtenFrontier)
+    let mayHaveLanded = ref(false)
+    let (isCommitted, ()) = await Promise.all2((
+      state->writeUntilCommitted(~operation="batch write", async () =>
+        if mayHaveLanded.contents && (await state->hasBatchLanded(~moved)) {
+          ()
+        } else {
+          mayHaveLanded := false
+          switch await persistence.storage.writeBatch(
+            ~batch,
+            ~rollback,
+            ~config,
+            ~updatedEntities,
+            ~registeredAddresses,
+            ~updatedEffectsCache,
+            ~chainMetaData,
+            ~onWrite=(~storage, ~timeSeconds) =>
+              state->IndexerState.recordStorageWrite(~storage, ~timeSeconds),
+          ) {
+          | () => ()
+          | exception Persistence.CommitUncertain(_) if moved->Utils.Array.isEmpty =>
+            JsError.throwWithMessage(landingUnknownMsg)
+          | exception Persistence.CommitUncertain(message) =>
+            mayHaveLanded := true
+            throw(Persistence.ConnectionLost(message))
+          }
+        }
       ),
       PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
     ))
 
-    state->IndexerState.markCommitted(~writtenFrontier)
+    if isCommitted {
+      state->IndexerState.markCommitted(~writtenFrontier)
 
-    switch rollback {
-    | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
-      await RollbackCommit.fire(~progressedChains)
-    | _ => ()
+      switch rollback {
+      | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
+        await RollbackCommit.fire(~progressedChains)
+      | _ => ()
+      }
+
+      // Entities starved of the concurrent prune (eg written in every batch) are
+      // pruned here with no other pg writer running.
+      await PruneStaleHistory.runForced(state, ~targets=pruneTargets)
     }
-
-    // Entities starved of the concurrent prune (eg written in every batch) are
-    // pruned here with no other pg writer running.
-    await PruneStaleHistory.runForced(state, ~targets=pruneTargets)
   }
 }
 

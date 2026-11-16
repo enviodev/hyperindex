@@ -83,6 +83,23 @@ impl std::fmt::Display for Aborted {
 
 impl std::error::Error for Aborted {}
 
+/// A statement held back because the connection was already known to be gone,
+/// so the server never saw it.
+#[derive(Debug)]
+pub struct NeverSent(pub &'static str);
+
+impl std::fmt::Display for NeverSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for NeverSent {}
+
+pub fn was_never_sent(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<NeverSent>())
+}
+
 /// The SQLSTATE, where the failure came from the server or stands in for one.
 pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
     database_error(error)
@@ -95,11 +112,77 @@ pub fn sql_state(error: &anyhow::Error) -> Option<&str> {
         })
 }
 
+/// Whether the failure is the connection going rather than anything the
+/// statement or its data did: the server ending the session or shutting down,
+/// the socket dropping, the server's name or network briefly gone, or a new
+/// connection refused or cut off while the server is away. Nothing the failed
+/// statement sent is known to have run.
+///
+/// Narrow on purpose, since what it accepts is sent again for up to a minute
+/// before the indexer gives up. `08P01` is left out: the server raises it for a
+/// malformed message, which a resend repeats. So is a socket error that isn't
+/// the peer going, such as a certificate the trust store refuses.
+pub fn is_connection_lost(error: &anyhow::Error) -> bool {
+    if let Some(database) = database_error(error) {
+        return matches!(
+            database.code().code(),
+            "08000" | "08001" | "08003" | "08004" | "08006" | "57P01" | "57P02" | "57P03"
+        );
+    }
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<tokio_postgres::Error>()
+            .is_some_and(tokio_postgres::Error::is_closed)
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| is_peer_gone(io.kind()) || is_name_unresolved(io))
+            || matches!(
+                cause.downcast_ref::<deadpool_postgres::PoolError>(),
+                Some(deadpool_postgres::PoolError::Timeout(
+                    deadpool_postgres::TimeoutType::Create
+                ))
+            )
+    })
+}
+
+fn is_peer_gone(kind: std::io::ErrorKind) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        kind,
+        ConnectionReset
+            | ConnectionRefused
+            | ConnectionAborted
+            | BrokenPipe
+            | UnexpectedEof
+            | NotConnected
+            | TimedOut
+            | HostUnreachable
+            | NetworkUnreachable
+    )
+}
+
+/// The standard library reports a failed name lookup with no kind of its own,
+/// only this wording.
+fn is_name_unresolved(io: &std::io::Error) -> bool {
+    io.to_string()
+        .starts_with("failed to lookup address information")
+}
+
+/// What a lost connection crosses the boundary as, whatever the server or the
+/// socket said: the one code the indexer reads, to send an idempotent statement
+/// again.
+pub const CONNECTION_LOST: &str = "08006";
+
 /// napi only puts its own status names in an error's `code`, so the SQLSTATE
 /// travels as the message of a `cause`.
 pub fn to_napi(error: anyhow::Error) -> napi::Error {
     let mut napi_error = napi::Error::from_reason(message_of(&error));
-    if let Some(code) = sql_state(&error) {
+    let code = if is_connection_lost(&error) {
+        Some(CONNECTION_LOST)
+    } else {
+        sql_state(&error)
+    };
+    if let Some(code) = code {
         napi_error.set_cause(napi::Error::from_reason(code));
     }
     napi_error
@@ -108,6 +191,93 @@ pub fn to_napi(error: anyhow::Error) -> napi::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A port that accepts and closes straight away is what a pooler or a
+    /// proxy in front of a restarting database answers with.
+    #[tokio::test]
+    async fn a_connection_cut_off_while_opening_is_lost() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+        let client =
+            super::super::client::PgClient::connect(super::super::client::PgConnectionOptions {
+                host: "127.0.0.1".to_string(),
+                port,
+                user: "postgres".to_string(),
+                password: String::new(),
+                database: "postgres".to_string(),
+                ssl: super::super::client::SslSetting::Disable,
+                max_connections: 1,
+                application_name: None,
+                extra_ca_file: None,
+                connect_timeout: std::time::Duration::from_secs(5),
+                keepalive: super::super::client::Keepalive::default(),
+            })
+            .unwrap();
+
+        let error = client.begin().await.err().unwrap();
+
+        assert!(is_connection_lost(&error), "{error:#}");
+    }
+
+    /// A database restarted under Docker Compose or Kubernetes has no address
+    /// for a moment, so its name stops resolving until it is back.
+    #[tokio::test]
+    async fn a_host_that_does_not_resolve_is_lost() {
+        let client =
+            super::super::client::PgClient::connect(super::super::client::PgConnectionOptions {
+                host: "envio-test-database.invalid".to_string(),
+                port: 5432,
+                user: "postgres".to_string(),
+                password: String::new(),
+                database: "postgres".to_string(),
+                ssl: super::super::client::SslSetting::Disable,
+                max_connections: 1,
+                application_name: None,
+                extra_ca_file: None,
+                connect_timeout: std::time::Duration::from_secs(5),
+                keepalive: super::super::client::Keepalive::default(),
+            })
+            .unwrap();
+
+        let error = client.begin().await.err().unwrap();
+
+        assert!(is_connection_lost(&error), "{error:#}");
+    }
+
+    /// A failure with nothing from the driver behind it says nothing about the
+    /// connection, and writing again would only fail the same way.
+    #[test]
+    fn a_failure_of_our_own_is_not_a_lost_connection() {
+        let error = anyhow::anyhow!("Internal error: 2 values for 3 columns");
+        assert!(!is_connection_lost(&error));
+    }
+
+    /// The TLS connector reports a certificate it refuses as a socket error,
+    /// and sending again would be refused the same way, so only the peer going
+    /// counts.
+    #[test]
+    fn only_a_socket_error_that_is_the_peer_going_is_a_lost_connection() {
+        let lost = |kind| {
+            is_connection_lost(
+                &anyhow::Error::new(std::io::Error::new(kind, "socket"))
+                    .context("Failed taking a Postgres connection from the pool"),
+            )
+        };
+        assert_eq!(
+            (
+                lost(std::io::ErrorKind::ConnectionReset),
+                lost(std::io::ErrorKind::UnexpectedEof),
+                lost(std::io::ErrorKind::InvalidData),
+                lost(std::io::ErrorKind::Other),
+            ),
+            (true, true, false, false)
+        );
+    }
 
     /// A statement the client turns away reads as the cascade of the failure
     /// behind it, not as a failure of its own.
