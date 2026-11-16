@@ -822,7 +822,9 @@ let createTestIndexer = (): t<'processConfig> => {
     "process",
     (
       async processConfig => {
-        // Check if already processing
+        // Keep every await below `state.processInProgress = true`: the body
+        // runs synchronously up to its first await, which is what makes a
+        // second concurrent call see the flag and reject.
         if state.processInProgress {
           JsError.throwWithMessage(
             "createTestIndexer process is already running. Only one process call is allowed at a time",
