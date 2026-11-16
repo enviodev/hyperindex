@@ -706,7 +706,7 @@ describe("E2E rollback tests", () => {
     "Parks a reorg detected while a batch is still processing",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
-    async (~t as _, ~indexer, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
       await Scenario.enterReorgThreshold(~indexer, ~source=sourceMock)
 
@@ -714,6 +714,7 @@ describe("E2E rollback tests", () => {
       // while the batch is still in flight.
       let releaseHandler = ref(() => ())
       let handlerGate = Promise.make((resolve, _) => releaseHandler := (() => resolve()))
+      let handlerStarted = ref(false)
 
       await sourceMock.expectItemsQueries([
         {
@@ -724,6 +725,7 @@ describe("E2E rollback tests", () => {
                 blockNumber: 101,
                 logIndex: 0,
                 handler: async args => {
+                  handlerStarted := true
                   let context = args.context->asContext
                   context.simpleEntity.set({id: "1", value: "from-reorged-block"})
                   await handlerGate
@@ -735,6 +737,11 @@ describe("E2E rollback tests", () => {
           }),
         },
       ])
+
+      await Scenario.waitUntil(
+        () => handlerStarted.contents,
+        ~message="the block-101 batch to reach its handler",
+      )
 
       // The processing loop launches the next fetch while the batch is in
       // flight, blocked in the handler above. A reorg lands mid-batch: block 101
@@ -758,6 +765,20 @@ describe("E2E rollback tests", () => {
         () => sourceMock.reorgCallCount() > reorgsBefore,
         ~message="the rollback's depth search to start",
       )
+      let isParked = () =>
+        indexer.allLogsAsJson()->Array.some(
+          line =>
+            line->Dict.get("msg") ==
+              Some(String("Waiting for batch to finish processing before executing rollback")),
+        )
+      await Scenario.waitUntil(isParked, ~message="the rollback to park behind the batch")
+      t.expect(
+        (
+          handlerStarted.contents,
+          sourceMock.pendingItemsQueries->Array.some(query => query.fromBlock == 101),
+        ),
+        ~message="the batch is still in its handler and the rollback hasn't re-requested block 101",
+      ).toEqual((true, false))
 
       // Releasing the handler lets the batch finish; its progress is applied and the
       // parked rollback then executes and re-requests from the rolled-back block.
@@ -2514,7 +2535,6 @@ describe("E2E rollback tests", () => {
       ])
       await indexer.getBatchWritePromise()
 
-      // Check initial metrics - should have 3 events processed
       t.expect(
         await indexer.metric("envio_progress_events"),
         ~message="Should have 1 event processed initially",
@@ -2536,7 +2556,8 @@ describe("E2E rollback tests", () => {
         {partitionId: "0", reply: LeavePending},
       ])
 
-      // Rollback to block 100 - blocks 101-103 are reorged
+      // Block 101 comes back on the same hash, so the rollback lands on it and
+      // only block 102, with the one event, is reorged.
       await sourceMock.expectBlockHashLookup({
         blockNumbers: [101],
         reply: [{blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101}],
@@ -2544,11 +2565,16 @@ describe("E2E rollback tests", () => {
 
       await indexer.getRollbackReadyPromise()
 
-      // Check metrics after first rollback - should have rolled back all 3 events
       t.expect(
-        await indexer.metric("envio_progress_events"),
-        ~message="Should have 0 events after first rollback",
-      ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
+        (
+          await indexer.metric("envio_progress_block"),
+          await indexer.metric("envio_progress_events"),
+        ),
+        ~message="The first rollback lands on block 101 and takes back the block-102 event",
+      ).toEqual((
+        [{value: "101", labels: dict{"chainId": "1337"}}],
+        [{value: "0", labels: dict{"chainId": "1337"}}],
+      ))
 
       // Detects second reorg
       let reorgsBefore = sourceMock.reorgCallCount()
@@ -2565,19 +2591,25 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      // Rollback to block 100 - blocks 101-103 are reorged. Nothing scanned is
-      // left below block 101, so the depth search asks for no hash.
+      // Block 101 itself is reorged now. Nothing scanned is left below it, so
+      // the depth search asks for no hash and falls back to block 100, the one
+      // below the reorg window.
       await Scenario.waitUntil(
         () => sourceMock.reorgCallCount() > reorgsBefore,
         ~message="the second rollback's depth search to start",
       )
       await indexer.getRollbackReadyPromise()
 
-      // Check metrics after processing - should have 2 events
       t.expect(
-        await indexer.metric("envio_progress_events"),
-        ~message="Shouldn't go to negative with the counter",
-      ).toEqual([{value: "0", labels: dict{"chainId": "1337"}}])
+        (
+          await indexer.metric("envio_progress_block"),
+          await indexer.metric("envio_progress_events"),
+        ),
+        ~message="The second rollback lands on block 100 without taking the counter below zero",
+      ).toEqual((
+        [{value: "100", labels: dict{"chainId": "1337"}}],
+        [{value: "0", labels: dict{"chainId": "1337"}}],
+      ))
 
       // Process batch after rollback
       sourceMock.drainPendingItemsQueries()
