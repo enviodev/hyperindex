@@ -398,6 +398,7 @@ let resolveInlineFieldSelection = (
   ~contractName: string,
   ~eventName: string,
   ~enableRawEvents: bool,
+  ~registrationMethod: string,
 ): Internal.fieldSelection => {
   let registration = `the "${eventName}" event registration on contract "${contractName}"`
   validateFieldsShapeOrThrow(
@@ -411,6 +412,13 @@ let resolveInlineFieldSelection = (
     ~valid=validBlockFields,
     ~kind="block",
     ~registration,
+  )
+  Evm.blockHandlerOnlyBlockFields->Array.forEach(name =>
+    if blockFields->Utils.Set.has(name) {
+      JsError.throwWithMessage(
+        `The "${name}" block field is not supported on \`indexer.${registrationMethod}\` yet. Select it in an \`indexer.onBlock\` handler instead, or remove it from the fields.block option of ${registration}.`,
+      )
+    }
   )
   let transactionFields = parseFieldsOrThrow(
     selectionList(fields, "transaction"),

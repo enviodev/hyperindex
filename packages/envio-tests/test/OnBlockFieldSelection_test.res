@@ -70,7 +70,7 @@ describe("onBlock field selection", () => {
         async () => {},
       ),
     ).toThrowError(
-      'Invalid "notAField" field in the fields.block option of \`indexer.onBlock("bad")\`. Valid block fields: "number", "timestamp", "hash", "parentHash", "nonce", "sha3Uncles", "logsBloom", "transactionsRoot", "stateRoot", "receiptsRoot", "miner", "difficulty", "totalDifficulty", "extraData", "size", "gasLimit", "gasUsed", "uncles", "baseFeePerGas", "blobGasUsed", "excessBlobGas", "parentBeaconBlockRoot", "withdrawalsRoot", "l1BlockNumber", "sendCount", "sendRoot", "mixHash".',
+      'Invalid "notAField" field in the fields.block option of \`indexer.onBlock("bad")\`. Valid block fields: "number", "timestamp", "hash", "parentHash", "nonce", "sha3Uncles", "logsBloom", "transactionsRoot", "stateRoot", "receiptsRoot", "miner", "difficulty", "totalDifficulty", "extraData", "size", "gasLimit", "gasUsed", "uncles", "baseFeePerGas", "blobGasUsed", "excessBlobGas", "parentBeaconBlockRoot", "withdrawalsRoot", "l1BlockNumber", "sendCount", "sendRoot", "mixHash", "transactionCount".',
     );
   });
 

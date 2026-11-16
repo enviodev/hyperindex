@@ -327,6 +327,7 @@ let addOnEventRegistration = (
           ~contractName,
           ~eventName,
           ~enableRawEvents=registration.config.enableRawEvents,
+          ~registrationMethod=contractRegister->Option.isSome ? "contractRegister" : "onEvent",
         ),
       )
     | Svm =>

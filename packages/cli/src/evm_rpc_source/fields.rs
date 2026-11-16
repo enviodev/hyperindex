@@ -233,6 +233,11 @@ pub(crate) fn set_block_field(block: &mut Block, field: EvmBlockField, raw: &Jso
         SendCount => block.send_count = Some(hex_value(name, raw)?),
         SendRoot => block.send_root = Some(hex_value(name, raw)?),
         MixHash => block.mix_hash = Some(hex_value(name, raw)?),
+        TransactionCount => {
+            return Err(anyhow!(
+                "{name} is counted from the block's transactions, not read as a field"
+            ))
+        }
     }
     Ok(())
 }
@@ -357,7 +362,8 @@ mod tests {
     #[test]
     fn every_store_field_is_reachable_from_a_requested_field() {
         // The two conversions are the only way a selection reaches a column, so
-        // a store field no requested field maps onto would be unselectable.
+        // a store field no requested field maps onto would be unselectable. The
+        // transaction count is counted off the block's transactions instead.
         let blocks: Vec<EvmBlockField> = BlockField::VARIANTS
             .iter()
             .filter_map(|f| f.store_column())
@@ -368,7 +374,10 @@ mod tests {
             .collect();
         assert_eq!(
             (
-                EvmBlockField::VARIANTS.iter().all(|f| blocks.contains(f)),
+                EvmBlockField::VARIANTS
+                    .iter()
+                    .filter(|&&f| f != EvmBlockField::TransactionCount)
+                    .all(|f| blocks.contains(f)),
                 EvmTxField::VARIANTS.iter().all(|f| txs.contains(f)),
             ),
             (true, true)

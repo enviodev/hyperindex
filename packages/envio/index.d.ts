@@ -812,7 +812,11 @@ type FieldGroupNotSelectedMessage<
 
 /** Every EVM block field, with the type it has once selected. Declared by hand
  * so the `fields` option types work in a project that never ran codegen; kept
- * in sync with the config-parsing enums by a test in `codegen_templates.rs`. */
+ * in sync with the config-parsing enums by a test in `codegen_templates.rs`.
+ *
+ * `transactionCount` is how many transactions the block holds. Only
+ * `indexer.onBlock` can select it for now, so `config.yaml`'s
+ * `field_selection` doesn't offer it. */
 export type EvmAllBlockFields = {
   readonly number: number;
   readonly timestamp: number;
@@ -841,6 +845,7 @@ export type EvmAllBlockFields = {
   readonly sendCount: Hex | undefined;
   readonly sendRoot: Hex | undefined;
   readonly mixHash: Hex | undefined;
+  readonly transactionCount: number;
 };
 
 export type EvmAllTransactionFields = {
@@ -947,6 +952,20 @@ type FieldsLiteralCheck<Fields> = [Fields] extends [undefined]
       ? EvmFieldsMustBeLiteral<"transaction">
       : unknown;
 
+/** `unknown` (a no-op intersection) unless `fields.block` lists a field only
+ * `indexer.onBlock` serves, otherwise the branded type that rejects the
+ * option. Counting a block's transactions takes a query over every
+ * transaction of the range, which a log query can't share. */
+type EvmBlockHandlerOnlyFieldsCheck<Fields, Method extends string> = [
+  Extract<ListedFields<Fields, "block">, "transactionCount">,
+] extends [infer BlockHandlerOnly extends string]
+  ? [BlockHandlerOnly] extends [never]
+    ? unknown
+    : {
+        readonly __blockHandlerOnlyField: `Field '${BlockHandlerOnly}' is not supported on indexer.${Method} yet. Select it in an indexer.onBlock handler instead.`;
+      }
+  : unknown;
+
 /** A block narrowed to a fields selection: a registration's `fields` option, or
  * an event's `field_selection` in config.yaml. `number` is always selected. */
 export type EvmBlock<Fields extends EvmFieldsSelection> = SelectedFields<
@@ -994,7 +1013,9 @@ export type EvmOnEventOptions<
          * no selection: `EvmFieldsSelection` names no fields in particular, so an
          * options value declared without the generic would carry a selection
          * `onEvent` can only reject. */
-        readonly fields?: Fields & FieldsLiteralCheck<Fields>;
+        readonly fields?: Fields &
+          FieldsLiteralCheck<Fields> &
+          EvmBlockHandlerOnlyFieldsCheck<Fields, "onEvent">;
       }
     : {
         readonly contract: Event["contractName"];
@@ -1006,7 +1027,9 @@ export type EvmOnEventOptions<
          * no selection: `EvmFieldsSelection` names no fields in particular, so an
          * options value declared without the generic would carry a selection
          * `onEvent` can only reject. */
-        readonly fields?: Fields & FieldsLiteralCheck<Fields>;
+        readonly fields?: Fields &
+          FieldsLiteralCheck<Fields> &
+          EvmBlockHandlerOnlyFieldsCheck<Fields, "onEvent">;
       }
   : never;
 
@@ -1800,7 +1823,9 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly wildcard?: boolean;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
-                    readonly fields?: F & FieldsLiteralCheck<F>;
+                    readonly fields?: F &
+                      FieldsLiteralCheck<F> &
+                      EvmBlockHandlerOnlyFieldsCheck<F, "onEvent">;
                   } & EvmOnEventWhereOption<EvmEventFilter<Config, C, E>, C>,
                   handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
@@ -1816,7 +1841,9 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                     readonly wildcard?: boolean;
                     /** Block and transaction fields this handler reads. Replaces
                      * `field_selection` from `config.yaml` for this registration. */
-                    readonly fields?: F & FieldsLiteralCheck<F>;
+                    readonly fields?: F &
+                      FieldsLiteralCheck<F> &
+                      EvmBlockHandlerOnlyFieldsCheck<F, "contractRegister">;
                   } & EvmOnEventWhereOption<EvmEventFilter<Config, C, E>, C>,
                   handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;

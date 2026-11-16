@@ -59,7 +59,12 @@ let blockFields = [
   "sendCount",
   "sendRoot",
   "mixHash",
+  "transactionCount",
 ]
+
+// Counts over every transaction of a block, which only a block handler selects
+// for now: a log query returns only the transactions its logs are in.
+let blockHandlerOnlyBlockFields = ["transactionCount"]
 
 // One event's selected block fields → store selection bitmask. Computed per
 // event at config build and cached on the event config.

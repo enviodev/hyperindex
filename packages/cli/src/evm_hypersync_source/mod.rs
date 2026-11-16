@@ -1,14 +1,15 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Once;
 
 use anyhow::{Context, Result};
+use arrow::array::{RecordBatch, UInt64Array};
 use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, EvmBlockField};
 use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
 
@@ -230,6 +231,17 @@ impl EvmHyperSyncClient {
             ));
         }
 
+        let counts_transactions =
+            block_selection.mask() & EvmBlockField::TRANSACTION_COUNT_MASK != 0;
+        // A log query returns only the transactions its logs are in, so a count
+        // beside it would undercount the block. The fetch state keeps block
+        // handlers in a partition of their own, so no query selects both.
+        if counts_transactions && selects_logs {
+            return Err(map_err(anyhow::anyhow!(
+                "A query counting the transactions of its blocks can't also select logs"
+            )));
+        }
+
         let requested_transaction_fields = built.transaction_fields;
         let mut block_fields = built.block_fields;
         // Force-add the always-required block fields, then validate the full
@@ -273,9 +285,16 @@ impl EvmHyperSyncClient {
             }),
             max_num_logs: params.items_target.filter(|_| selects_logs),
             max_num_blocks: block_query.max_blocks.map(|b| b as i64),
+            transactions: counts_transactions
+                .then(|| vec![napi::bindgen_prelude::Either::A(Default::default())]),
+            max_num_transactions: counts_transactions.then_some(MAX_NUM_COUNTED_TRANSACTIONS),
             field_selection: query::FieldSelection {
                 block: Some(validated_block_fields.clone()),
-                transaction: selects_logs.then_some(transaction_fields),
+                transaction: if counts_transactions {
+                    Some(vec![TransactionField::BlockNumber])
+                } else {
+                    selects_logs.then_some(transaction_fields)
+                },
                 // Everything get_items reads off the log: decode inputs, the
                 // flattened item fields, and the transaction-store keys.
                 log: selects_logs.then(|| {
@@ -297,16 +316,39 @@ impl EvmHyperSyncClient {
         };
 
         let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
-
-        let response = match res {
-            RateLimitResponse::Success { response, .. } => response,
-            RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
+        let (response, transaction_counts) = if counts_transactions {
+            // A counting page holds some 180,000 transaction rows: they are
+            // counted off the Arrow column rather than decoded one by one.
+            let res = self
+                .inner
+                .get_arrow_with_rate_limit(&query)
+                .await
+                .context("run inner query")
+                .map_err(map_err)?;
+            let mut response = match res {
+                RateLimitResponse::Success { response, .. } => response,
+                RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
+            };
+            let counts = count_transactions_by_block(&response.data.transactions)
+                .context("count transactions")
+                .map_err(map_err)?;
+            response.data.transactions.clear();
+            let response = hypersync_client::QueryResponse::try_from(&response)
+                .context("convert arrow response")
+                .map_err(map_err)?;
+            (response, Some(counts))
+        } else {
+            let res = self
+                .inner
+                .get_with_rate_limit(&query)
+                .await
+                .context("run inner query")
+                .map_err(map_err)?;
+            let response = match res {
+                RateLimitResponse::Success { response, .. } => response,
+                RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
+            };
+            (response, None)
         };
 
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
@@ -336,6 +378,22 @@ impl EvmHyperSyncClient {
             )
         })
         .map_err(convert_error_to_napi)?;
+        if let Some(transaction_counts) = transaction_counts {
+            // `include_all_blocks` returns every block of the range, so a block
+            // the response holds no transaction of has none.
+            let mut counts: Vec<(u64, u64)> = block_items
+                .iter()
+                .map(|item| {
+                    let number = item.block_number as u64;
+                    (
+                        number,
+                        transaction_counts.get(&number).copied().unwrap_or(0),
+                    )
+                })
+                .collect();
+            counts.dedup_by_key(|(number, _)| *number);
+            block_store.insert_evm_transaction_counts(&counts);
+        }
 
         let rollback_guard = response
             .rollback_guard
@@ -369,6 +427,31 @@ impl EvmHyperSyncClient {
         };
         Ok((items, transaction_store, block_store))
     }
+}
+
+/// Left unset, the server ends a page near 40,000 transactions, some 250
+/// Ethereum blocks. A counted transaction costs one narrow column, so the cap
+/// is raised past what the server returns anyway: it ended pages near 1,100
+/// blocks and 180,000 transactions when measured.
+const MAX_NUM_COUNTED_TRANSACTIONS: i64 = 1_000_000;
+
+/// How many transactions each block of a page holds. HyperSync ends a page on
+/// a block boundary, so a page's count of a block is the block's count.
+fn count_transactions_by_block(transactions: &[RecordBatch]) -> Result<HashMap<u64, u64>> {
+    let mut counts = HashMap::new();
+    for batch in transactions {
+        let block_numbers = batch
+            .column_by_name("block_number")
+            .context("transactions table has no block_number column")?
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .context("transactions column block_number has an unexpected arrow type")?;
+        for block_number in block_numbers.iter() {
+            let block_number = block_number.context("transaction row has no block_number")?;
+            *counts.entry(block_number).or_insert(0) += 1;
+        }
+    }
+    Ok(counts)
 }
 
 /// The whole per-query input for `get_items` beside the partition's address

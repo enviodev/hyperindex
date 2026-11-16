@@ -32,7 +32,7 @@ use super::fields::{
 };
 use super::inflight::Inflight;
 use super::responses::{self, ResponseError};
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, EvmBlockField};
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::transaction_store::TransactionStore;
 
@@ -438,8 +438,13 @@ fn fill_block_page(
     page: &BlockStore,
     mut observations: Vec<Block>,
     covering: u64,
-    fetched: Vec<Block>,
+    fetched: Vec<FetchedBlock>,
 ) {
+    let transaction_counts: Vec<(u64, u64)> = fetched
+        .iter()
+        .filter_map(|fetched| Some((fetched.block.number?, fetched.transaction_count?)))
+        .collect();
+    let fetched: Vec<Block> = fetched.into_iter().map(|fetched| fetched.block).collect();
     observations.extend(fetched.iter().filter_map(|block| {
         // Genesis has no parent to observe, and its `parentHash` is
         // zero rather than absent, so it would enter the page as a
@@ -453,6 +458,14 @@ fn fill_block_page(
     }));
     page.insert_evm_blocks(observations);
     page.insert_evm_blocks_covering(fetched, covering);
+    page.insert_evm_transaction_counts(&transaction_counts);
+}
+
+/// A decoded block and, when its read covers the count, how many transactions
+/// it holds, which no block field carries.
+struct FetchedBlock {
+    block: Block,
+    transaction_count: Option<u64>,
 }
 
 /// What a page's blocks are decoded for: the chain's registrations, widened by
@@ -614,14 +627,23 @@ async fn fetch_blocks(
     read: &BlockRead,
     numbers: &[u64],
     prefetched: &HashMap<u64, Arc<Json>>,
-) -> Result<Vec<Block>, EnrichError> {
+) -> Result<Vec<FetchedBlock>, EnrichError> {
+    let counts_transactions = read.covering & EvmBlockField::TRANSACTION_COUNT_MASK != 0;
     let blocks = join_all(numbers.iter().map(|&number| async move {
         let response = match prefetched.get(&number) {
             Some(response) => response.clone(),
             None => require(client, fetches, FetchKey::Block(number), number).await?,
         };
-        responses::build_block(&response, number, &read.fields, &read.selected)
-            .map_err(|error| EnrichError::from_response(number, error))
+        let block = responses::build_block(&response, number, &read.fields, &read.selected)
+            .map_err(|error| EnrichError::from_response(number, error))?;
+        let transaction_count = counts_transactions
+            .then(|| responses::block_transaction_count(&response))
+            .transpose()
+            .map_err(|error| EnrichError::from_response(number, error))?;
+        Ok(FetchedBlock {
+            block,
+            transaction_count,
+        })
     }))
     .await;
     collect_worst(blocks)

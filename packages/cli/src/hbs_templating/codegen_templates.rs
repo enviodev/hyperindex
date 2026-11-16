@@ -3943,13 +3943,16 @@ type Swap {
     /// `packages/envio/index.d.ts` declares by hand, from the config-parsing
     /// enums. Hand-written there so the inline `fields` option types work in a
     /// project that never ran codegen; rendered here so they can't drift.
+    /// `transactionCount` follows the block fields: only `indexer.onBlock`
+    /// selects it, so the config-parsing enum, which events select from,
+    /// leaves it out.
     fn evm_all_fields_dts() -> String {
         let all = system_config::FieldSelection::all_evm();
         let selection = super::FieldSelection::new(FieldSelectionOptions {
             block_fields: all.block_fields,
             transaction_fields: all.transaction_fields,
         });
-        let render = |name: &str, fields: &[SelectedFieldTemplate]| {
+        let render = |name: &str, fields: &[SelectedFieldTemplate], extra: &[&str]| {
             let lines: Vec<String> = fields
                 .iter()
                 .map(|f| {
@@ -3959,13 +3962,22 @@ type Swap {
                         ProjectTemplate::to_envio_dts_type(&f.ts_type)
                     )
                 })
+                .chain(extra.iter().map(|line| line.to_string()))
                 .collect();
             format!("export type {name} = {{\n{}\n}};", lines.join("\n"))
         };
         format!(
             "{}\n\n{}",
-            render("EvmAllBlockFields", &selection.block_fields),
-            render("EvmAllTransactionFields", &selection.transaction_fields),
+            render(
+                "EvmAllBlockFields",
+                &selection.block_fields,
+                &["  readonly transactionCount: number;"]
+            ),
+            render(
+                "EvmAllTransactionFields",
+                &selection.transaction_fields,
+                &[]
+            ),
         )
     }
 

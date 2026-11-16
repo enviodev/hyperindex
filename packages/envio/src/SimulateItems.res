@@ -35,6 +35,7 @@ let evmSimulateBlockSchema = S.schema(s =>
     "sendCount": s.matches(S.null(S.string)),
     "sendRoot": s.matches(S.null(S.string)),
     "mixHash": s.matches(S.null(S.string)),
+    "transactionCount": s.matches(S.null(S.int)),
   }
 )
 

@@ -118,6 +118,17 @@ pub(crate) fn build_block(
     Ok(block)
 }
 
+/// How many transactions an `eth_getBlockByNumber` response lists. The list is
+/// in every response, as hashes or as full transactions, whichever was asked.
+pub(crate) fn block_transaction_count(response: &Json) -> Result<u64> {
+    present(response, "transactions")
+        .and_then(Json::as_array)
+        .map(|transactions| transactions.len() as u64)
+        .ok_or_else(|| {
+            ResponseError::Malformed(anyhow!("block response carries no \"transactions\" list"))
+        })
+}
+
 /// Build a transaction row from whichever of the two responses were fetched.
 /// The key and hash come from the log that referenced it, so they hold even
 /// when neither response is read.

@@ -56,9 +56,14 @@ pub enum EvmBlockField {
     SendCount = 24,
     SendRoot = 25,
     MixHash = 26,
+    TransactionCount = 27,
 }
 
 impl EvmBlockField {
+    /// The field counting a block's transactions. No block column carries it:
+    /// a source counts the block's transactions instead.
+    pub(crate) const TRANSACTION_COUNT_MASK: u64 = 1 << EvmBlockField::TransactionCount as u32;
+
     /// JS property name; must match `Evm.res` `blockFields`. Used as the object
     /// key when zipping columns into JS objects.
     pub fn name(self) -> &'static str {
@@ -91,6 +96,7 @@ impl EvmBlockField {
             SendCount => "sendCount",
             SendRoot => "sendRoot",
             MixHash => "mixHash",
+            TransactionCount => "transactionCount",
         }
     }
 }
@@ -199,6 +205,8 @@ fn evm_block_col(field: EvmBlockField, blocks: &[simple_types::Block]) -> Option
         SendCount => var_from(blocks, |b| b.send_count.as_ref().map(bytes)),
         SendRoot => fixed_from(blocks, 32, |b| b.send_root.as_ref().map(bytes)),
         MixHash => fixed_from(blocks, 32, |b| b.mix_hash.as_ref().map(bytes)),
+        // Merged apart from the block, by `insert_evm_transaction_counts`.
+        TransactionCount => None,
     }
 }
 
@@ -251,6 +259,11 @@ fn decode_evm_block_field(
             i64::try_from(v).map(Some).context("l1BlockNumber overflow")
         })?),
         SendCount => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_quantity(b))))?),
+        TransactionCount => Column::I64(u64_cells(col, len, |v| {
+            i64::try_from(v)
+                .map(Some)
+                .context("transactionCount overflow")
+        })?),
     })
 }
 
@@ -1155,6 +1168,24 @@ impl BlockStore {
             .collect();
         self.inner.lock().unwrap().table.merge_batch(keys, cols);
     }
+
+    /// Merge blocks' transaction counts onto their rows, which the same page
+    /// must hold: a row of a count alone would carry no hash for reorg
+    /// detection.
+    pub(crate) fn insert_evm_transaction_counts(&self, counts: &[(u64, u64)]) {
+        if counts.is_empty() {
+            return;
+        }
+        let keys = counts.iter().map(|(number, _)| *number).collect();
+        let cols = EvmBlockField::VARIANTS
+            .iter()
+            .map(|&f| match f {
+                EvmBlockField::TransactionCount => u64_from(counts, |(_, count)| Some(*count)),
+                _ => None,
+            })
+            .collect();
+        self.inner.lock().unwrap().table.merge_batch(keys, cols);
+    }
 }
 
 /// How many transactions HyperSync stores for a slot, which leaves out votes,
@@ -1745,6 +1776,7 @@ mod tests {
                 "sendCount",
                 "sendRoot",
                 "mixHash",
+                "transactionCount",
             ]
         );
 

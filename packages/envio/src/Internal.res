@@ -252,6 +252,7 @@ type evmBlockInput = {
   sendCount?: string,
   sendRoot?: string,
   mixHash?: string,
+  transactionCount?: int,
 }
 
 type evmTransactionInput = {
