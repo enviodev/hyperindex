@@ -587,14 +587,7 @@ let validSvmAccountActivityFields = Utils.Set.fromArray([
   "token.preAmount",
   "token.postAmount",
 ])
-let validSvmBlockFields = Utils.Set.fromArray([
-  "slot",
-  "time",
-  "hash",
-  "height",
-  "parentSlot",
-  "parentHash",
-])
+let validSvmBlockFields = Utils.Set.fromArray(Svm.blockFields)
 let validSvmLogFields = Utils.Set.fromArray(["kind", "message"])
 
 let resolveSvmInlineFieldSelection = (
@@ -635,6 +628,13 @@ let resolveSvmInlineFieldSelection = (
     ~valid=validSvmBlockFields,
     ~kind="block",
     ~registration,
+  )
+  Svm.slotOnlyBlockFields->Array.forEach(name =>
+    if blockFields->Utils.Set.has(name) {
+      JsError.throwWithMessage(
+        `The "${name}" block field is not supported on \`indexer.onInstruction\` yet. Select it in an \`indexer.onSlot\` handler instead, or remove it from the fields.block option of ${registration}.`,
+      )
+    }
   )
   let logFields = parseFieldsOrThrow(
     log,
