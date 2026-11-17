@@ -30,6 +30,7 @@ use crate::{
 };
 use alloy_json_abi::{Event as AlloyEvent, JsonAbi};
 use anyhow::{anyhow, Context, Result};
+use indexmap::IndexMap;
 use itertools::Itertools;
 
 use super::abi_compat::EventParam;
@@ -51,10 +52,30 @@ type ContractNameKey = String;
 type NetworkIdKey = u64;
 type EntityKey = String;
 type GraphqlEnumKey = String;
-type ChainMap = HashMap<NetworkIdKey, Chain>;
+// Keeps config.yaml order: the run splits chains across workers in that order.
+type ChainMap = IndexMap<NetworkIdKey, Chain>;
 type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
+
+// Chains are inserted in the order config.yaml lists them, so map positions are
+// the YAML item positions.
+fn insert_unique_chain(chains: &mut ChainMap, chain: Chain) -> Result<()> {
+    let item = chains.len() + 1;
+    match chains.entry(chain.id) {
+        indexmap::map::Entry::Occupied(first) => Err(anyhow!(
+            "Chain {id} appears twice under `chains` in config.yaml (items {first} and {item}). \
+             Each chain can be listed only once: keep one of the two items and move anything \
+             only the other one configures, such as its contracts, into it.",
+            id = chain.id,
+            first = first.index() + 1,
+        )),
+        indexmap::map::Entry::Vacant(entry) => {
+            entry.insert(chain);
+            Ok(())
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Ecosystem {
@@ -967,12 +988,6 @@ impl SystemConfig {
         self.schema.enums.keys().cloned().collect()
     }
 
-    pub fn get_chains(&self) -> Vec<&Chain> {
-        let mut chains: Vec<&Chain> = self.chains.values().collect();
-        chains.sort_by_key(|n| n.id);
-        chains
-    }
-
     pub fn get_path_to_schema(&self) -> Result<PathBuf> {
         let schema_path = path_utils::get_config_path_relative_to_root(
             &self.parsed_project_paths,
@@ -1010,7 +1025,7 @@ impl SystemConfig {
         schema: Schema,
         source: &dyn ConfigSource,
     ) -> Result<Self> {
-        let mut chains: ChainMap = HashMap::new();
+        let mut chains: ChainMap = IndexMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
@@ -1162,8 +1177,7 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
-                        .context("Failed inserting chain at chains map")?;
+                    insert_unique_chain(&mut chains, chain)?;
                 }
 
                 let field_selection = FieldSelection::try_from_config_field_selection(
@@ -1321,8 +1335,7 @@ impl SystemConfig {
                         contracts,
                     };
 
-                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
-                        .context("Failed inserting chain at chains map")?;
+                    insert_unique_chain(&mut chains, chain)?;
                 }
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;
@@ -1435,8 +1448,7 @@ impl SystemConfig {
                         contracts: chain_contracts.remove(&chain_id).unwrap_or_default(),
                     };
 
-                    unique_hashmap::try_insert(&mut chains, chain.id, chain)
-                        .context("Failed inserting chain at chains map")?;
+                    insert_unique_chain(&mut chains, chain)?;
                 }
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;
@@ -2269,8 +2281,8 @@ impl Contract {
 
     pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
         system_config
-            .get_chains()
-            .iter()
+            .chains
+            .values()
             .filter_map(|network| {
                 if network.contracts.iter().any(|c| c.name == self.name) {
                     Some(network.id)
@@ -4696,7 +4708,7 @@ type Foo {
 
             // Chain data carries the program_id on the contract-side address,
             // and the HyperSync URL flows through to the source config.
-            let chains = config.get_chains();
+            let chains: Vec<_> = config.chains.values().collect();
             assert_eq!(chains.len(), 1);
             let chain = chains[0];
             assert_eq!(chain.contracts.len(), 1);

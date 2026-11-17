@@ -106,9 +106,16 @@ pub enum SvmBlockField {
     Height = 3,
     ParentSlot = 4,
     ParentHash = 5,
+    TransactionCount = 6,
+    FailedTransactionCount = 7,
 }
 
 impl SvmBlockField {
+    /// The fields counting a slot's transactions. No block column carries
+    /// them: a source tallies the slot's transaction rows instead.
+    pub(crate) const TRANSACTION_COUNTS_MASK: u64 = (1 << SvmBlockField::TransactionCount as u32)
+        | (1 << SvmBlockField::FailedTransactionCount as u32);
+
     /// JS property name; must match `Svm.res` `blockFields`.
     pub fn name(self) -> &'static str {
         use SvmBlockField::*;
@@ -119,6 +126,8 @@ impl SvmBlockField {
             Height => "height",
             ParentSlot => "parentSlot",
             ParentHash => "parentHash",
+            TransactionCount => "transactionCount",
+            FailedTransactionCount => "failedTransactionCount",
         }
     }
 }
@@ -273,6 +282,8 @@ fn svm_block_col(field: SvmBlockField, blocks: &[solana_simple::Block]) -> Optio
         Height => u64_from(blocks, |b| b.block_height),
         ParentSlot => u64_from(blocks, |b| b.parent_slot),
         ParentHash => base58_col(blocks, |b| b.parent_blockhash),
+        // Merged apart from the block, by `insert_svm_transaction_counts`.
+        TransactionCount | FailedTransactionCount => None,
     }
 }
 
@@ -310,12 +321,13 @@ fn decode_svm_block_field(
         ),
         Time => Column::I64(i64_cells(col, len)),
         Hash | ParentHash => Column::Str(str_cells(col, len)),
-        Height => Column::I64(u64_cells(col, len, |v| {
-            i64::try_from(v).map(Some).context("height overflow")
-        })?),
-        ParentSlot => Column::I64(u64_cells(col, len, |v| {
-            i64::try_from(v).map(Some).context("parentSlot overflow")
-        })?),
+        Height | ParentSlot | TransactionCount | FailedTransactionCount => {
+            Column::I64(u64_cells(col, len, |v| {
+                i64::try_from(v)
+                    .map(Some)
+                    .with_context(|| format!("{} overflow", field.name()))
+            })?)
+        }
     })
 }
 
@@ -1113,13 +1125,44 @@ impl BlockStore {
                     Time => i64_from(&blocks, |b| b.time),
                     Hash => str_from(&blocks, |b| b.hash.as_deref()),
                     // JS only observes slot/time/hash for reorg tracking.
-                    Height | ParentSlot | ParentHash => None,
+                    Height
+                    | ParentSlot
+                    | ParentHash
+                    | TransactionCount
+                    | FailedTransactionCount => None,
                 }
             })
             .collect();
         self.insert_watching_hash(keys, cols, Coverage::STORED);
         Ok(())
     }
+
+    /// Merge slots' transaction counts onto their block rows. Only for slots
+    /// the page holds a block of: a row of counts alone would read as a block
+    /// the slot never produced.
+    pub(crate) fn insert_svm_transaction_counts(&self, counts: &[(u64, SvmTransactionCounts)]) {
+        if counts.is_empty() {
+            return;
+        }
+        let keys = counts.iter().map(|(slot, _)| *slot).collect();
+        let cols = SvmBlockField::VARIANTS
+            .iter()
+            .map(|&f| match f {
+                SvmBlockField::TransactionCount => u64_from(counts, |(_, c)| Some(c.total)),
+                SvmBlockField::FailedTransactionCount => u64_from(counts, |(_, c)| Some(c.failed)),
+                _ => None,
+            })
+            .collect();
+        self.inner.lock().unwrap().table.merge_batch(keys, cols);
+    }
+}
+
+/// How many transactions HyperSync stores for a slot, which leaves out votes,
+/// and how many of those failed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SvmTransactionCounts {
+    pub total: u64,
+    pub failed: u64,
 }
 
 /// Stored block hashes as two aligned columns, ascending by block number.
@@ -1395,6 +1438,38 @@ mod tests {
                 vec![Some(777)],
                 false
             )
+        );
+    }
+
+    /// A block that stored no transaction reads zero, where one the counts
+    /// were never merged onto reads nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn svm_materialize_reads_the_transaction_counts_merged_onto_a_block() {
+        let store = BlockStore::new_svm();
+        store.insert_svm_blocks(vec![raw_svm_block(9), raw_svm_block(10), raw_svm_block(11)]);
+        store.insert_svm_transaction_counts(&[
+            (
+                9,
+                SvmTransactionCounts {
+                    total: 5,
+                    failed: 2,
+                },
+            ),
+            (10, SvmTransactionCounts::default()),
+        ]);
+
+        let mask = SvmBlockField::TRANSACTION_COUNTS_MASK as f64;
+        let cols = store
+            .materialize(vec![9, 10, 11], vec![mask; 3], false)
+            .await
+            .expect("materialize");
+        let counts = |name| match column(&cols, name) {
+            Some(Column::I64(v)) => v.clone(),
+            _ => panic!("expected {name} column"),
+        };
+        assert_eq!(
+            (counts("transactionCount"), counts("failedTransactionCount")),
+            (vec![Some(5), Some(0), None], vec![Some(2), Some(0), None])
         );
     }
 
@@ -1681,7 +1756,16 @@ mod tests {
         let svm_names: Vec<&str> = SvmBlockField::VARIANTS.iter().map(|f| f.name()).collect();
         assert_eq!(
             svm_names,
-            vec!["slot", "time", "hash", "height", "parentSlot", "parentHash"]
+            vec![
+                "slot",
+                "time",
+                "hash",
+                "height",
+                "parentSlot",
+                "parentHash",
+                "transactionCount",
+                "failedTransactionCount",
+            ]
         );
 
         let fuel_codes: Vec<i32> = FuelBlockField::VARIANTS.iter().map(|&f| f as i32).collect();

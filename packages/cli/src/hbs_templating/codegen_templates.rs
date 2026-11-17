@@ -1900,8 +1900,8 @@ type testIndexer = {{
             .context("Failed generating enum template types")?;
 
         let chain_configs: Vec<NetworkConfigTemplate> = cfg
-            .get_chains()
-            .iter()
+            .chains
+            .values()
             .map(|network| NetworkConfigTemplate::from_config_network(network, cfg))
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
@@ -3230,6 +3230,54 @@ mod test {
         insta::assert_snapshot!(project_template
             .indexer_code()
             .expect("rescript indexer code"));
+    }
+
+    #[test]
+    fn indexer_code_lists_chains_in_config_order() {
+        let yaml = r#"
+name: config-order
+chains:
+  - id: 137
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+"#;
+        let config = SystemConfig::parse_yaml(
+            yaml,
+            Some("type Counter { id: ID! }"),
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+        )
+        .expect("two-chain config should parse");
+        let indexer_code = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .indexer_code
+            .expect("rescript indexer code");
+
+        let chain_id_type = indexer_code
+            .lines()
+            .find(|line| line.starts_with("type chainId ="))
+            .map(str::to_string);
+        let indexer_chain_fields: Vec<&str> = indexer_code
+            .lines()
+            .filter_map(|line| line.trim().strip_suffix("\": indexerChain,"))
+            .filter_map(|line| line.strip_prefix("\\\""))
+            .collect();
+
+        assert_eq!(
+            (chain_id_type, indexer_chain_fields),
+            (
+                Some("type chainId = [#137 | #1]".to_string()),
+                vec!["137", "1"]
+            ),
+        );
     }
 
     #[test]
