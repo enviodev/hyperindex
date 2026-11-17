@@ -983,9 +983,7 @@ impl SystemConfig {
     }
 
     pub fn get_chains(&self) -> Vec<&Chain> {
-        let mut chains: Vec<&Chain> = self.chains.values().collect();
-        chains.sort_by_key(|n| n.id);
-        chains
+        self.chains.values().collect()
     }
 
     pub fn get_path_to_schema(&self) -> Result<PathBuf> {

@@ -492,10 +492,10 @@ impl SystemConfig {
     pub fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
         let cfg = self;
 
-        // In config.yaml order, which the run splits chains across workers by.
         // An array rather than a map keyed by name: JS iterates numeric keys
-        // ascending, whatever order they were written in.
-        let active_chains: Vec<_> = cfg.chains.values().filter(|c| !c.skip).collect();
+        // ascending, whatever order they were written in, and the run splits
+        // chains across workers in config.yaml order.
+        let active_chains: Vec<_> = cfg.get_chains().into_iter().filter(|c| !c.skip).collect();
 
         if active_chains.is_empty() {
             return Err(anyhow!(
