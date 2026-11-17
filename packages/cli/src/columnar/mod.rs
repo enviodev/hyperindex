@@ -608,14 +608,18 @@ impl Column {
         }
     }
 
-    /// Drops every row from `rows` on. What they held past the kept rows'
-    /// ends stays allocated until the column is shrunk.
+    /// Drops every row from `rows` on. The bytes they held stay allocated
+    /// until the column is shrunk.
     fn truncate(&mut self, rows: usize) {
         self.nulls.truncate(rows);
         match &mut self.storage {
             Storage::Fixed(words) => words.truncate(rows),
             Storage::Variable { ends, .. } => ends.truncate(rows),
-            Storage::List { row_ends, .. } => row_ends.truncate(rows),
+            Storage::List { elements, row_ends } => {
+                row_ends.truncate(rows);
+                // Later rows' elements are appended from here.
+                elements.truncate(row_ends.last().copied().unwrap_or(0) as usize);
+            }
         }
     }
 

@@ -427,7 +427,7 @@ envio_preload_handler_seconds_total{contract="ERC20",event="Transfer"} 6.5
 # TYPE envio_fetching_block_range_seconds counter
 envio_fetching_block_range_seconds{chainId="1"} 10.123
 
-# HELP envio_fetching_block_range_parse_seconds Cumulative time spent turning fetched rows into a batch's handler events, block and transaction fields included.
+# HELP envio_fetching_block_range_parse_seconds Cumulative time spent turning fetched rows into a batch's handler events, including the wait for their block and transaction fields, which are read off the main thread alongside other chains'.
 # TYPE envio_fetching_block_range_parse_seconds counter
 envio_fetching_block_range_parse_seconds{chainId="1"} 4.2
 

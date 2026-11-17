@@ -200,8 +200,8 @@ impl Row {
             .then(self.log_index.cmp(&other.log_index))
             .then_with(|| match (&self.order_path, &other.order_path) {
                 // Lexicographic, so a parent instruction `[1]` precedes its
-                // child `[1, 0]`. An empty path is no path, as in a chunk.
-                (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => a.cmp(b),
+                // child `[1, 0]`.
+                (Some(a), Some(b)) => a.cmp(b),
                 _ => Ordering::Equal,
             })
             .then(self.registration_index.cmp(&other.registration_index))
@@ -410,7 +410,7 @@ impl Rows {
                 let front = self.chunks.pop_front().unwrap();
                 remaining -= len;
                 match &mut taken {
-                    None if front.start == 0 => taken = Some(front),
+                    None if front.start == 0 && !front.truncated => taken = Some(front),
                     _ => taken
                         .get_or_insert_with(Chunk::empty)
                         .extend_from(&front, front.start..front.keys.len()),
@@ -528,6 +528,9 @@ struct Chunk {
     /// Which of the chain's stores a row's transaction and block come from:
     /// `READS_TRANSACTION` and `READS_BLOCK`.
     reads: Vec<u8>,
+    /// Whether `truncate` dropped rows whose tapes are still in `tapes`: such
+    /// a chunk is copied into a batch, never handed over whole.
+    truncated: bool,
     /// SVM's position in the transaction's CPI tree, parent before child:
     /// `path_ends[row]` is where the row's steps stop. Empty for other rows.
     path_ends: Vec<u32>,
@@ -623,6 +626,7 @@ impl Chunk {
             keys: Vec::new(),
             registrations: Vec::new(),
             reads: Vec::new(),
+            truncated: false,
             path_ends: Vec::new(),
             path_steps: Vec::new(),
             items: sized_arena(&item_columns(), 0, &[]),
@@ -660,8 +664,14 @@ impl Chunk {
             }
         }
         for (params, end) in self.params.iter_mut().zip(params_ends) {
-            if let (Some(params), Some(end)) = (params, end) {
-                params.arena.truncate(end);
+            match end {
+                Some(0) => *params = None,
+                Some(end) => {
+                    if let Some(params) = params {
+                        params.arena.truncate(end);
+                    }
+                }
+                None => {}
             }
         }
         if let Some(end) = fuel_end {
@@ -677,6 +687,7 @@ impl Chunk {
         self.path_steps
             .truncate(self.path_ends.last().copied().unwrap_or(0) as usize);
         self.items.truncate(at);
+        self.truncated = true;
     }
 
     /// Gives back what the columns grew ahead of the rows. Worth a copy only
@@ -952,6 +963,7 @@ impl Chunk {
             keys,
             registrations,
             reads,
+            truncated: false,
             path_ends,
             path_steps,
             items: items.arena,
@@ -1642,6 +1654,13 @@ impl EventStore {
                         item.block_number, item.log_index
                     )));
                 }
+                // A chunk stores no path as an empty one, so an empty path
+                // would sort as none.
+                if item.order_path.as_ref().is_some_and(Vec::is_empty) {
+                    return Err(napi::Error::from_reason(
+                        "an item's order path can't be empty",
+                    ));
+                }
                 Ok(Row {
                     block_number: item.block_number,
                     kind,
@@ -2063,6 +2082,61 @@ mod tests {
         );
     }
 
+    fn svm_at(slot: i64, path: &[i64], program: &str) -> Row {
+        Row::event(
+            slot,
+            5,
+            Some(path.to_vec()),
+            2,
+            RowData::SvmInstruction {
+                program_id: program.into(),
+                accounts: vec![format!("{program} account")],
+                data: vec![1],
+                is_inner: false,
+                args: Some(tagged(&format!("{program} args"))),
+                logs: None,
+            },
+        )
+    }
+
+    #[test]
+    fn a_truncated_chunk_s_lists_take_rows_appended_after_a_rollback() {
+        let store = EventStore::from_rows(vec![
+            svm_at(1, &[0], "a"),
+            svm_at(2, &[0, 1], "b"),
+            svm_at(3, &[0], "c"),
+            svm_at(5, &[0], "e"),
+        ]);
+        store.merge(&EventStore::from_rows(vec![svm_at(4, &[0], "d")]));
+        store.rollback(3);
+        store.merge(&EventStore::from_rows(vec![svm_at(6, &[2, 3], "f")]));
+        assert_eq!(
+            describe(store.take(u32::MAX).unwrap()),
+            vec![
+                "svm 1 [0.0] a Str(\"a args\")".to_string(),
+                "svm 2 [0.0, 1.0] b Str(\"b args\")".to_string(),
+                "svm 3 [0.0] c Str(\"c args\")".to_string(),
+                "svm 6 [2.0, 3.0] f Str(\"f args\")".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_truncated_chunk_hands_over_only_its_kept_rows_tapes() {
+        let store = EventStore::from_rows(vec![
+            svm_at(1, &[0], "a"),
+            svm_at(2, &[0], "b"),
+            svm_at(3, &[0], "c"),
+            svm_at(5, &[0], "e"),
+        ]);
+        store.merge(&EventStore::from_rows(vec![svm_at(4, &[0], "d")]));
+        store.rollback(3);
+        let rows = store.take(u32::MAX).unwrap();
+        let tapes = rows.tapes.len();
+        describe(rows);
+        assert_eq!(tapes, 3);
+    }
+
     #[test]
     fn merges_and_partial_takes_carry_each_format_s_details_and_tapes() {
         let svm_row = |block_number: i64, path: &[i64], program: &str| {
@@ -2456,14 +2530,6 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_svm_path_orders_the_same_within_a_page_and_across_pages() {
-        let within = EventStore::from_rows(vec![svm(7, 3, &[], "empty"), svm(7, 3, &[0], "child")]);
-        let across = EventStore::from_rows(vec![svm(7, 3, &[], "empty")]);
-        across.merge(&EventStore::from_rows(vec![svm(7, 3, &[0], "child")]));
-        assert_eq!(take_all(&within), take_all(&across));
-    }
-
-    #[test]
     fn the_result_registry_refuses_more_results_than_its_handles_address() {
         let lent = || Lent {
             arenas: Vec::new(),
@@ -2499,7 +2565,7 @@ mod tests {
     }
 
     #[test]
-    fn a_js_item_at_a_negative_block_is_refused() {
+    fn a_js_item_at_a_negative_block_or_with_an_empty_path_is_refused() {
         let item = |block_number| JsItemInput {
             kind: 0,
             block_number,
@@ -2510,12 +2576,18 @@ mod tests {
             transaction_index: None,
             block_from_store: false,
         };
+        let with_path = |path: Vec<i64>| JsItemInput {
+            order_path: Some(path),
+            ..item(1)
+        };
         assert_eq!(
             (
                 EventStore::from_js_items(vec![item(1)]).is_ok(),
-                EventStore::from_js_items(vec![item(-1)]).is_ok()
+                EventStore::from_js_items(vec![item(-1)]).is_ok(),
+                EventStore::from_js_items(vec![with_path(vec![0])]).is_ok(),
+                EventStore::from_js_items(vec![with_path(vec![])]).is_ok()
             ),
-            (true, false)
+            (true, false, true, false)
         );
     }
 

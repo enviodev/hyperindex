@@ -534,7 +534,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
   b->series(
     ~name="envio_fetching_block_range_parse_seconds",
-    ~help="Cumulative time spent turning fetched rows into a batch's handler events, block and transaction fields included.",
+    ~help="Cumulative time spent turning fetched rows into a batch's handler events, including the wait for their block and transaction fields, which are read off the main thread alongside other chains'.",
     ~kind="counter",
     ~entries=chains,
     ~value=m => m.materializeSeconds,
