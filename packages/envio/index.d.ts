@@ -1373,6 +1373,13 @@ export type SvmAllBlockFields = {
   readonly height: number;
   readonly parentSlot: number;
   readonly parentHash: string;
+  /** How many non-vote transactions the slot holds, failed ones included.
+   *  HyperSync doesn't store votes. A block that stored none counts zero.
+   *  Only `indexer.onSlot` can select it for now. */
+  readonly transactionCount: number;
+  /** How many of the slot's non-vote transactions failed. Only
+   *  `indexer.onSlot` can select it for now. */
+  readonly failedTransactionCount: number;
 };
 
 /** All SVM parent-transaction fields. Handler `fields.transaction` narrows
@@ -1433,7 +1440,9 @@ export type SvmBlockFieldName =
   | "hash"
   | "height"
   | "parentSlot"
-  | "parentHash";
+  | "parentHash"
+  | "transactionCount"
+  | "failedTransactionCount";
 export type SvmLogFieldName = "kind" | "message";
 
 export type SvmFieldsSelection = {
@@ -1471,7 +1480,22 @@ type SvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
             ? EvmFieldsMustBeLiteral<"log">
             : unknown;
 
-type SvmActivityListed<Fields> = ListedFields<Fields, "accountActivity">;
+/** `unknown` (a no-op intersection) unless `fields.block` lists a field only
+ * `indexer.onSlot` serves, otherwise the branded type that rejects the
+ * option. The counts take a query over every transaction of the slot, which
+ * an instruction query can't share: its instruction selection would narrow
+ * the transactions it returns. */
+type SvmSlotOnlyFieldsCheck<Fields> = [
+  Extract<ListedFields<Fields, "block">, "transactionCount" | "failedTransactionCount">,
+] extends [infer SlotOnly extends string]
+  ? [SlotOnly] extends [never]
+    ? unknown
+    : {
+        readonly __slotOnlyField: `Field '${SlotOnly}' is not supported on indexer.onInstruction yet. Select it in an indexer.onSlot handler instead.`;
+      }
+  : unknown;
+
+type SvmActivityListed<Fields> =ListedFields<Fields, "accountActivity">;
 type SvmActivityHas<Fields, Name extends string> = [SvmActivityListed<Fields>] extends [never]
   ? false
   : Name extends SvmActivityListed<Fields>
@@ -1693,7 +1717,7 @@ export type SvmOnInstructionOptions<
   /** Instruction name from the program's IDL, or from
    * `chains[].programs[].instructions[].name` when the layout is inline. */
   readonly instruction: I;
-  readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
+  readonly fields?: Fields & SvmFieldsLiteralCheck<Fields> & SvmSlotOnlyFieldsCheck<Fields>;
   readonly where?: SvmOnInstructionWhere<SvmAccountsOf<P, I>>;
 };
 

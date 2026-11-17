@@ -76,6 +76,8 @@ type svmBlock = {
   height?: int,
   parentSlot?: int,
   parentHash?: string,
+  transactionCount?: int,
+  failedTransactionCount?: int,
 }
 
 type svmInstruction = {
