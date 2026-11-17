@@ -198,11 +198,13 @@ impl Row {
             .cmp(&other.block_number)
             .then(self.kind.cmp(&other.kind))
             .then(self.log_index.cmp(&other.log_index))
-            .then_with(|| match (&self.order_path, &other.order_path) {
-                // Lexicographic, so a parent instruction `[1]` precedes its
-                // child `[1, 0]`.
-                (Some(a), Some(b)) => a.cmp(b),
-                _ => Ordering::Equal,
+            // Lexicographic, so a parent instruction `[1]` precedes its child
+            // `[1, 0]`. No path is an empty one, as in a chunk.
+            .then_with(|| {
+                self.order_path
+                    .as_deref()
+                    .unwrap_or_default()
+                    .cmp(other.order_path.as_deref().unwrap_or_default())
             })
             .then(self.registration_index.cmp(&other.registration_index))
     }
@@ -210,8 +212,8 @@ impl Row {
 
 /// A chunk this short takes the next appended rows into itself rather than
 /// staying beside them, so generated block items and small pages don't pile
-/// up chunks that the positional queries would walk. A longer one is left as
-/// it is: growing it would reallocate every column.
+/// up chunks that the positional queries would walk, when they are short too:
+/// a long page is kept whole, and a long chunk isn't regrown.
 const COALESCE_BELOW: usize = 1024;
 
 /// Rows in processing order, deduplicated, as sorted chunks that don't
@@ -278,7 +280,7 @@ impl Rows {
         }
         self.len += chunk.len();
         match self.chunks.back_mut() {
-            Some(last) if last.len() < COALESCE_BELOW => {
+            Some(last) if last.len() < COALESCE_BELOW && chunk.len() < COALESCE_BELOW => {
                 // A chunk batches take from while pages append to it never
                 // drains: once at least half of it is taken rows, it leaves
                 // them behind.
@@ -431,10 +433,7 @@ impl Rows {
                 self.chunks.pop_back();
             } else {
                 if kept < chunk.len() {
-                    let mut truncated = Chunk::empty();
-                    truncated.extend_from(chunk, chunk.start..chunk.start + kept);
-                    truncated.shrink_to_fit();
-                    *chunk = truncated;
+                    chunk.truncate(chunk.start + kept);
                 }
                 break;
             }
@@ -528,8 +527,8 @@ struct Chunk {
     /// Which of the chain's stores a row's transaction and block come from:
     /// `READS_TRANSACTION` and `READS_BLOCK`.
     reads: Vec<u8>,
-    /// Whether `truncate` dropped rows whose tapes are still in `tapes`: such
-    /// a chunk is copied into a batch, never handed over whole.
+    /// Whether `truncate` dropped rows whose tapes may still be in `tapes`:
+    /// such a chunk is copied into a batch, never handed over whole.
     truncated: bool,
     /// SVM's position in the transaction's CPI tree, parent before child:
     /// `path_ends[row]` is where the row's steps stop. Empty for other rows.
@@ -687,7 +686,7 @@ impl Chunk {
         self.path_steps
             .truncate(self.path_ends.last().copied().unwrap_or(0) as usize);
         self.items.truncate(at);
-        self.truncated = true;
+        self.truncated |= !self.tapes.is_empty();
     }
 
     /// Gives back what the columns grew ahead of the rows. Worth a copy only
@@ -759,14 +758,9 @@ impl Chunk {
     fn compare(&self, row: usize, other: &Chunk, other_row: usize) -> Ordering {
         self.keys[row]
             .cmp(&other.keys[other_row])
-            .then_with(|| {
-                match (self.path(row), other.path(other_row)) {
-                    // Lexicographic, so a parent instruction `[1]` precedes
-                    // its child `[1, 0]`.
-                    (a, b) if !a.is_empty() && !b.is_empty() => a.cmp(b),
-                    _ => Ordering::Equal,
-                }
-            })
+            // Lexicographic, so a parent instruction `[1]` precedes its child
+            // `[1, 0]`. No path is an empty one.
+            .then_with(|| self.path(row).cmp(other.path(other_row)))
             .then(self.registrations[row].cmp(&other.registrations[other_row]))
     }
 
@@ -1654,13 +1648,6 @@ impl EventStore {
                         item.block_number, item.log_index
                     )));
                 }
-                // A chunk stores no path as an empty one, so an empty path
-                // would sort as none.
-                if item.order_path.as_ref().is_some_and(Vec::is_empty) {
-                    return Err(napi::Error::from_reason(
-                        "an item's order path can't be empty",
-                    ));
-                }
                 Ok(Row {
                     block_number: item.block_number,
                     kind,
@@ -2530,6 +2517,27 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_long_page_after_a_short_chunk_starts_its_own() {
+        let store = EventStore::from_rows(vec![event(1, 0, 0, "1-0")]);
+        store.merge(&chunked(&[2..3]));
+        let chunks = store.rows().chunks.len();
+        assert_eq!(chunks, 2);
+    }
+
+    #[test]
+    fn an_empty_svm_path_orders_the_same_within_a_page_and_across_pages() {
+        let within = EventStore::from_rows(vec![svm(7, 3, &[], "empty"), svm(7, 3, &[0], "child")]);
+        let across = EventStore::from_rows(vec![svm(7, 3, &[], "empty")]);
+        across.merge(&EventStore::from_rows(vec![svm(7, 3, &[0], "child")]));
+        let expected = vec![JsValue::str("empty"), JsValue::str("child")];
+        assert_eq!(
+            (take_all(&within), take_all(&across)),
+            (expected.clone(), expected)
+        );
+    }
+
+    #[test]
     fn the_result_registry_refuses_more_results_than_its_handles_address() {
         let lent = || Lent {
             arenas: Vec::new(),
@@ -2565,7 +2573,7 @@ mod tests {
     }
 
     #[test]
-    fn a_js_item_at_a_negative_block_or_with_an_empty_path_is_refused() {
+    fn a_js_item_at_a_negative_block_is_refused() {
         let item = |block_number| JsItemInput {
             kind: 0,
             block_number,
@@ -2576,18 +2584,12 @@ mod tests {
             transaction_index: None,
             block_from_store: false,
         };
-        let with_path = |path: Vec<i64>| JsItemInput {
-            order_path: Some(path),
-            ..item(1)
-        };
         assert_eq!(
             (
                 EventStore::from_js_items(vec![item(1)]).is_ok(),
-                EventStore::from_js_items(vec![item(-1)]).is_ok(),
-                EventStore::from_js_items(vec![with_path(vec![0])]).is_ok(),
-                EventStore::from_js_items(vec![with_path(vec![])]).is_ok()
+                EventStore::from_js_items(vec![item(-1)]).is_ok()
             ),
-            (true, false, true, false)
+            (true, false)
         );
     }
 
