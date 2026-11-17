@@ -215,27 +215,27 @@ type Seen {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "TokenA", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenB", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenC", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenD", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenE", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenF", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 `,
   // A real RPC source against a local server: its requests resolve on real I/O.
@@ -274,11 +274,11 @@ type Seen {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "TokenA", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenB", event: "Approval" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 `,
   // A real RPC source against a local server: its requests resolve on real I/O.
@@ -324,17 +324,17 @@ import { indexer } from "envio";
 const holder = "${holder}";
 
 indexer.onEvent({ contract: "TokenA", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenB", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent(
   { contract: "TokenC", event: "Transfer", where: { params: { to: holder } } },
   async ({ event, context }) => {
-    context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+    context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
   },
 );
 `,
@@ -378,17 +378,17 @@ type Seen {
 import { indexer } from "envio";
 
 indexer.onEvent({ contract: "TokenA", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent({ contract: "TokenB", event: "Transfer" }, async ({ event, context }) => {
-  context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+  context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
 });
 
 indexer.onEvent(
   { contract: "AnyApproval", event: "Approval", wildcard: true },
   async ({ event, context }) => {
-    context.Seen.set({ id: \`\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
+    context.Seen.set({ id: \`\${event.contractName}-\${event.block.number}-\${event.logIndex}-\${event.params.value}\` });
   },
 );
 `,
@@ -446,7 +446,7 @@ let runAtHead = async (
   chain.fault = Honest
   calls->Utils.Array.clearInPlace
   await scenario->Scenario.run(~yamlSources=true, async (~indexer, ~source as _) => {
-    await indexer->waitForSeen("3-0-3")
+    await indexer->waitForSeen("TokenA-3-0-3")
     await indexer.waitUntilReady()
     let _ = takeCalls()
     chain.fault = fault
@@ -463,10 +463,10 @@ describe("RPC merged range reads", () => {
       ~logs=[event(~blockNumber=24)],
       ~height=24,
       ~fault=Honest,
-      ~waitFor="24-0-24",
+      ~waitFor="TokenA-24-0-24",
       async (~indexer, ~head) => {
         t.expect((await indexer->seenIds, head->rangeReads)).toEqual((
-          ["24-0-24", "3-0-3"],
+          ["TokenA-24-0-24", "TokenA-3-0-3"],
           // Six contracts, one topic0, no constraint past it: one group.
           ["getLogs 21-24 a=6 t=1"],
         ))
@@ -485,12 +485,12 @@ describe("RPC merged range reads", () => {
       ],
       ~height=24,
       ~fault=Honest,
-      ~waitFor="22-0-22",
+      ~waitFor="TokenA-22-0-22",
       async (~indexer, ~head) => {
         t.expect((await indexer->seenIds, head->rangeReads)).toEqual((
           // TokenA only gets its Transfer, TokenB only its Approval; TokenA's
           // Approval and TokenB's Transfer match no selection and are dropped.
-          ["22-0-22", "22-1-22", "3-0-3"],
+          ["TokenA-22-0-22", "TokenA-3-0-3", "TokenB-22-1-22"],
           ["getLogs 21-24 a=2 t=2"],
         ))
       },
@@ -503,7 +503,7 @@ describe("RPC merged range reads", () => {
       ~logs=[event(~blockNumber=24)],
       ~height=24,
       ~fault=Honest,
-      ~waitFor="24-0-24",
+      ~waitFor="TokenA-24-0-24",
       async (~indexer as _, ~head) => {
         t.expect(head->rangeReads).toEqual([
           "getLogs 21-24 a=1 t=1,*,1",
@@ -522,15 +522,15 @@ describe("RPC merged range reads", () => {
       chain.fault = Honest
       calls->Utils.Array.clearInPlace
       await sixContractScenario->Scenario.run(~yamlSources=true, async (~indexer, ~source as _) => {
-        await indexer->waitForSeen("3-0-3")
+        await indexer->waitForSeen("TokenA-3-0-3")
         await indexer.waitUntilReady()
         let _ = takeCalls()
         chain.fault = FilterSizeLimit({maxAddresses: 1})
         chain.height = 22
-        await indexer->waitForSeen("22-0-22")
+        await indexer->waitForSeen("TokenA-22-0-22")
         let step1 = takeCalls()
         chain.height = 24
-        await indexer->waitForSeen("24-0-24")
+        await indexer->waitForSeen("TokenA-24-0-24")
         let step2 = takeCalls()
         t.expect((
           await indexer->seenIds,
@@ -544,7 +544,7 @@ describe("RPC merged range reads", () => {
               },
           )->Array.length,
         )).toEqual((
-          ["22-0-22", "24-0-24", "3-0-3"],
+          ["TokenA-22-0-22", "TokenA-24-0-24", "TokenA-3-0-3"],
           [
             "getLogs 21-22 a=1 t=1",
             "getLogs 21-22 a=1 t=1",
@@ -574,7 +574,7 @@ describe("RPC merged range reads", () => {
       ~logs=[event(~blockNumber=22), event(~blockNumber=24)],
       ~height=24,
       ~fault=MergedResultCap({block: 22}),
-      ~waitFor="24-0-24",
+      ~waitFor="TokenA-24-0-24",
       async (~indexer, ~head) => {
         let reads = head->rangeReads
         t.expect((
@@ -582,7 +582,7 @@ describe("RPC merged range reads", () => {
           reads->Array.filter(call => call->String.includes("getLogs 22-22 a=1")),
           reads->Array.getUnsafe(reads->Array.length - 1),
         )).toEqual((
-          ["22-0-22", "24-0-24", "3-0-3"],
+          ["TokenA-22-0-22", "TokenA-24-0-24", "TokenA-3-0-3"],
           [
             "getLogs 22-22 a=1 t=1",
             "getLogs 22-22 a=1 t=1",
@@ -603,7 +603,7 @@ describe("RPC merged range reads", () => {
       ~logs=[event(~blockNumber=22, ~address=tokenA), event(~blockNumber=22, ~logIndex=1, ~address=holder, ~topic=approvalTopic)],
       ~height=24,
       ~fault=Honest,
-      ~waitFor="22-0-22",
+      ~waitFor="TokenA-22-0-22",
       async (~indexer as _, ~head) => {
         t.expect(head->rangeReads).toEqual(["getLogs 21-24 a=0 t=1", "getLogs 21-24 a=2 t=1"])
       },
