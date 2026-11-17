@@ -771,4 +771,105 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       `["${contractAddress}"]`,
     ])
   })
+
+  Async.it("reads each selection on its own when a one-block merged read is damaged", async t => {
+    // A union answer can come back damaged where each member's own answer does
+    // not, and a one-block range cannot be narrowed, so the members are read on
+    // their own instead of retrying the same request.
+    let otherContractAddress = "0x0000000000000000000000000000000000000002"
+    let outcome = await MockRpcServer.withScenario(
+      ~name="one-block merged read damaged",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~reply=RawHttp({status: 200, body: "not json"}),
+        ),
+        MockRpcServer.expectCall(
+          ~phase=1,
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${transferSighash}"]],"address":["${contractAddress}"]}]`,
+          ),
+          ~reply=RpcResult(JSON.parseOrThrow("[]")),
+        ),
+        MockRpcServer.expectCall(
+          ~phase=1,
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${transferSighash}"]],"address":["${otherContractAddress}"]}]`,
+          ),
+          ~reply=RpcResult(JSON.parseOrThrow("[]")),
+        ),
+      ],
+      async mock => {
+        let addressStore = TestAddresses.storeOf(
+          ~contracts=[
+            {name: "ERC20", startBlock: None, dependsOnAddresses: true},
+            {name: "Other", startBlock: None, dependsOnAddresses: true},
+          ],
+          ~addresses=[
+            {
+              address: contractAddress->Address.unsafeFromString,
+              contractName: "ERC20",
+              registrationBlock: -1,
+            },
+            {
+              address: otherContractAddress->Address.unsafeFromString,
+              contractName: "Other",
+              registrationBlock: -1,
+            },
+          ],
+        )
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[
+            makeRegistration(~index=3),
+            makeRegistration(~index=4, ~contractName="Other"),
+          ],
+          ~addressStore,
+        )
+        let (result, _, _) = await client->callNextPage(
+          ~fromBlock=100,
+          ~toBlockCeiling=100,
+          ~indexes=[3, 4],
+          ~addressSet=addressStore
+            ->AddressStore.makeSet(~contractName="ERC20")
+            ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="Other")),
+        )
+        (
+          result.kind,
+          mock.requests
+          ->Array.filterMap(body => {
+            let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
+            switch request->Dict.getUnsafe("method")->JSON.Decode.string {
+            | Some("eth_getLogs") =>
+              let filter =
+                request
+                ->Dict.getUnsafe("params")
+                ->JSON.Decode.array
+                ->Option.getOrThrow
+                ->Array.getUnsafe(0)
+                ->JSON.Decode.object
+                ->Option.getOrThrow
+              Some(filter->Dict.getUnsafe("address")->JSON.stringify)
+            | _ => None
+            }
+          })
+          ->Array.toSorted(String.compare),
+        )
+      },
+    )
+
+    // The merged read over both addresses, then one read for each selection.
+    // The list is sorted as strings, so the two-address filter comes before the
+    // one-address filter of the same contract.
+    t.expect(outcome).toEqual((
+      EvmRpcClient.Ok,
+      [
+        `["${otherContractAddress}"]`,
+        `["${contractAddress}","${otherContractAddress}"]`,
+        `["${contractAddress}"]`,
+      ],
+    ))
+  })
 })

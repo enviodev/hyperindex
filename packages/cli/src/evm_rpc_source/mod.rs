@@ -1086,10 +1086,11 @@ impl EvmRpcClient {
 
     /// Reads one range with the merged filter of a group and returns each
     /// member's own logs, in the group's order. A filter-size refusal falls
-    /// back to the members' own reads at any range, a result cap or another
-    /// refusal only at a single block, and throttling, a timeout, an
-    /// unreachable provider or a malformed answer is returned unchanged so the
-    /// page's retry shrinks the range and backs off.
+    /// back to the members' own reads at any range. A result cap, another
+    /// refusal, or a timeout or malformed answer falls back only at a single
+    /// block, where the retry cannot narrow the range. Throttling and an
+    /// unreachable provider are returned unchanged at any range, so the page's
+    /// retry shrinks the range and backs off.
     async fn read_merged_range(
         &self,
         query: &PageQuery<'_>,
@@ -1141,9 +1142,18 @@ impl EvmRpcClient {
                     RpcError::JsonRpc { message, .. } if !is_rate_limited_message(message) => {
                         message.clone()
                     }
-                    // Throttling, a timeout, an unreachable provider and a
-                    // malformed answer are returned unchanged: more requests
-                    // only make them worse.
+                    // A merged answer can exceed the timeout, or lose its body,
+                    // where each member's own answer fits. At one block the
+                    // retry cannot narrow the range, so the members are read on
+                    // their own. Over several blocks the error goes back to the
+                    // caller, whose retry narrows the range first.
+                    RpcError::Timeout(_) | RpcError::MalformedResponse(_)
+                        if query.from_block == query.to_block =>
+                    {
+                        return self.merged_fallback(query, blocks, selections).await;
+                    }
+                    // Throttling and an unreachable provider are returned
+                    // unchanged: more requests only make them worse.
                     _ => return Err(error),
                 };
                 let refusal = if is_filter_size_refusal_message(&provider_message) {
