@@ -147,10 +147,9 @@ module Items = {
     message: Nullable.t<string>,
   }
 
-  // One routed instruction; `block` and `transaction` are materialised from
-  // the per-chain stores at batch prep.
+  // One routed instruction; its `block` and `transaction` are read from the
+  // per-chain stores when a batch takes it.
   type item = {
-    onEventRegistrationIndex: int,
     slot: int,
     transactionIndex: int,
     path: array<int>,

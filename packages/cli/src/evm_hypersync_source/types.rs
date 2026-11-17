@@ -356,9 +356,8 @@ fn param_read_kind(param: &ParamMeta) -> ReadKind {
 #[derive(Clone)]
 pub(crate) enum ParamCell {
     Bool(bool),
+    /// A string, or a decimal integer where the column reads a bigint.
     Text(Box<str>),
-    /// A decimal integer.
-    BigInt(Box<str>),
     /// An array or a tuple.
     Tape(JsTape),
 }
@@ -401,12 +400,17 @@ impl EvmParams {
         use alloy_primitives::I256;
         let mut tape = JsTape::new();
         tape.obj(self.cells.len());
-        for (cell, param) in self.cells.iter().zip(&self.schema.params) {
+        for ((cell, param), kind) in self
+            .cells
+            .iter()
+            .zip(&self.schema.params)
+            .zip(&self.schema.kinds)
+        {
             tape.key(&param.name);
             match cell {
                 ParamCell::Bool(value) => tape.bool(*value),
-                ParamCell::Text(value) => tape.str(value),
-                ParamCell::BigInt(value) => {
+                ParamCell::Text(value) if *kind != ReadKind::BigInt => tape.str(value),
+                ParamCell::Text(value) => {
                     let (sign, magnitude) = I256::from_dec_str(value)
                         .map(|value| value.into_sign_and_abs())
                         .unwrap_or_else(|_| {
@@ -445,12 +449,8 @@ fn param_cell(
             Some(ParamCell::Tape(tape))
         }
         (ReadKind::Bool, DynSolValue::Bool(value)) => Some(ParamCell::Bool(*value)),
-        (ReadKind::BigInt, DynSolValue::Uint(value, _)) => {
-            Some(ParamCell::BigInt(value.to_string().into()))
-        }
-        (ReadKind::BigInt, DynSolValue::Int(value, _)) => {
-            Some(ParamCell::BigInt(value.to_string().into()))
-        }
+        (ReadKind::BigInt, DynSolValue::Uint(value, _)) => text(value.to_string()),
+        (ReadKind::BigInt, DynSolValue::Int(value, _)) => text(value.to_string()),
         (ReadKind::Text, DynSolValue::Address(address)) if checksummed_addresses => {
             text(address.to_checksum_buffer(None).as_str().to_owned())
         }

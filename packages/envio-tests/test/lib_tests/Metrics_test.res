@@ -255,7 +255,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           waitingForNewBlockSeconds: 2.5,
           queryingSeconds: 3.5,
           blockRangeFetchSeconds: 10.123456,
-          materializeSeconds: 4.2,
+          parseSeconds: 4.2,
           blockRangeFetchCount: 5.,
           blockRangeFetchedEvents: 500.,
           blockRangeFetchedBlocks: 250.,

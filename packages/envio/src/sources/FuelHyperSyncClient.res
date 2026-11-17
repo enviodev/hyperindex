@@ -76,7 +76,6 @@ module EventItems = {
   // One routed receipt with the params its handler receives, built in Rust
   // for every receipt kind.
   type item = {
-    onEventRegistrationIndex: int,
     receiptIndex: int,
     txId: string,
     blockHeight: int,

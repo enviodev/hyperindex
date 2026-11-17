@@ -1,14 +1,10 @@
-//! Columnar materialisation shared by the per-chain field stores
+//! Columnar field reads shared by the per-chain field stores
 //! (`TransactionStore`, `BlockStore`). Selected fields are decoded in bulk, off
-//! the JS thread, into a struct-of-arrays form; the main thread then zips the
-//! columns into plain JS objects, setting only the fields a row selected. The
-//! cell type is concrete per column, so decode runs off-thread and only the
-//! object zip touches the JS thread.
+//! the JS thread, into an arena `Reading` builds the JS objects from.
 
 use alloy_primitives::U256;
-use anyhow::{bail, Context, Result};
-use napi::bindgen_prelude::{BigInt, ToNapiValue};
-use napi::sys;
+use anyhow::{Context, Result};
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 
 use crate::columnar::{Arena, ColumnSpec};
@@ -18,7 +14,7 @@ use crate::evm_hypersync_source::types::{
 };
 use crate::storage::rows::{ColumnRead, ReadKind};
 
-/// Ecosystem selecting `materialize`'s decoder, shared by every per-chain field
+/// Ecosystem selecting a store's field decoder, shared by every per-chain field
 /// store (`TransactionStore`, `BlockStore`). A store is per-chain, hence
 /// single-ecosystem, and is fixed at construction.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -71,15 +67,13 @@ pub struct SvmAccountActivityOut {
     pub token: Option<SvmAccountTokenOut>,
 }
 
-/// One materialised field across all rows: struct-of-arrays, one entry per row,
-/// `None` where the row is missing or the value is absent. Every variant's
-/// element type is `Send` and `ToNapiValue`. New ecosystems/field kinds extend
-/// the type set as needed.
+/// One field across all rows: struct-of-arrays, one entry per row, `None`
+/// where the row is missing or the value is absent.
 pub enum Column {
     I64(Vec<Option<i64>>),
     F64(Vec<Option<f64>>),
     Bool(Vec<Option<bool>>),
-    Big(Vec<Option<BigInt>>),
+    Big(Vec<Option<U256>>),
     Str(Vec<Option<String>>),
     StrVec(Vec<Option<Vec<String>>>),
     AccessList(Vec<Option<Vec<AccessListItem>>>),
@@ -87,96 +81,11 @@ pub enum Column {
     AccountActivities(Vec<Option<Vec<SvmAccountActivityOut>>>),
 }
 
-impl Column {
-    /// Set this column's value on each object under `key`, skipping `None` cells
-    /// so unselected/absent fields stay absent on the JS object.
-    unsafe fn set_on(
-        self,
-        env: sys::napi_env,
-        objs: &[sys::napi_value],
-        key: sys::napi_value,
-    ) -> napi::Result<()> {
-        match self {
-            Column::I64(v) => set_col(env, objs, key, v),
-            Column::F64(v) => set_col(env, objs, key, v),
-            Column::Bool(v) => set_col(env, objs, key, v),
-            Column::Big(v) => set_col(env, objs, key, v),
-            Column::Str(v) => set_col(env, objs, key, v),
-            Column::StrVec(v) => set_col(env, objs, key, v),
-            Column::AccessList(v) => set_col(env, objs, key, v),
-            Column::AuthList(v) => set_col(env, objs, key, v),
-            Column::AccountActivities(v) => set_col(env, objs, key, v),
-        }
-    }
-}
-
-unsafe fn set_col<T: ToNapiValue>(
-    env: sys::napi_env,
-    objs: &[sys::napi_value],
-    key: sys::napi_value,
-    values: Vec<Option<T>>,
-) -> napi::Result<()> {
-    for (obj, cell) in objs.iter().zip(values) {
-        if let Some(v) = cell {
-            let js = T::to_napi_value(env, v)?;
-            if sys::napi_set_property(env, *obj, key, js) != sys::Status::napi_ok {
-                return Err(napi::Error::from_reason("napi_set_property failed"));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// A page of materialised rows in columnar form. `ToNapiValue` zips it into a JS
-/// array of objects on the main thread; each object carries only the selected
-/// fields.
+/// A page of field cells in columnar form, before `into_arena` lays the flat
+/// columns out for `Reading`.
 pub struct Columns {
     pub len: usize,
     pub columns: Vec<(&'static str, Column)>,
-}
-
-impl ToNapiValue for Columns {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let mut arr = std::ptr::null_mut();
-        if sys::napi_create_array_with_length(env, val.len, &mut arr) != sys::Status::napi_ok {
-            return Err(napi::Error::from_reason(
-                "napi_create_array_with_length failed",
-            ));
-        }
-
-        let mut objs = Vec::with_capacity(val.len);
-        for _ in 0..val.len {
-            let mut obj = std::ptr::null_mut();
-            if sys::napi_create_object(env, &mut obj) != sys::Status::napi_ok {
-                return Err(napi::Error::from_reason("napi_create_object failed"));
-            }
-            objs.push(obj);
-        }
-
-        for (name, col) in val.columns {
-            // Create the JS property-key string once per column and reuse it for
-            // every row; `napi_set_named_property` would re-create it per cell.
-            let mut key = std::ptr::null_mut();
-            if sys::napi_create_string_utf8(
-                env,
-                name.as_ptr() as *const std::os::raw::c_char,
-                name.len() as isize,
-                &mut key,
-            ) != sys::Status::napi_ok
-            {
-                return Err(napi::Error::from_reason("napi_create_string_utf8 failed"));
-            }
-            col.set_on(env, &objs, key)?;
-        }
-
-        for (i, obj) in objs.iter().enumerate() {
-            if sys::napi_set_element(env, arr, i as u32, *obj) != sys::Status::napi_ok {
-                return Err(napi::Error::from_reason("napi_set_element failed"));
-            }
-        }
-
-        Ok(arr)
-    }
 }
 
 /// A batch's blocks or transactions on their way to JavaScript: an arena with
@@ -210,21 +119,6 @@ impl Columns {
     }
 }
 
-/// A JS bigint's decimal text, which `Reading`'s `BigInt` kind parses.
-fn bigint_text(value: &BigInt) -> Result<String> {
-    if value.words.len() > 4 {
-        bail!("a {}-word bigint does not fit 256 bits", value.words.len());
-    }
-    let mut limbs = [0u64; 4];
-    limbs[..value.words.len()].copy_from_slice(&value.words);
-    let magnitude = U256::from_limbs(limbs);
-    Ok(if value.sign_bit && !magnitude.is_zero() {
-        format!("-{magnitude}")
-    } else {
-        magnitude.to_string()
-    })
-}
-
 fn write_cells<T>(
     arena: &mut Arena,
     column: usize,
@@ -253,57 +147,44 @@ impl Columns {
             account_activities: None,
         };
         for (name, column) in self.columns {
-            let (read, spec) = match &column {
-                Column::I64(_) | Column::F64(_) => (ReadKind::Float, None),
-                Column::Bool(_) => (ReadKind::Bool, None),
-                Column::Big(_) => (ReadKind::BigInt, None),
-                Column::Str(_) => (ReadKind::Text, None),
-                Column::StrVec(lists) => (
-                    ReadKind::List,
-                    Some(lists.iter().flatten().map(Vec::len).sum::<usize>()),
-                ),
-                Column::AccessList(_) => {
-                    let Column::AccessList(values) = column else {
-                        unreachable!()
-                    };
+            let column = match column {
+                Column::AccessList(values) => {
                     rows.access_list = Some(values);
                     continue;
                 }
-                Column::AuthList(_) => {
-                    let Column::AuthList(values) = column else {
-                        unreachable!()
-                    };
+                Column::AuthList(values) => {
                     rows.authorization_list = Some(values);
                     continue;
                 }
-                Column::AccountActivities(_) => {
-                    let Column::AccountActivities(values) = column else {
-                        unreachable!()
-                    };
+                Column::AccountActivities(values) => {
                     rows.account_activities = Some(values);
                     continue;
                 }
+                column => column,
             };
-            reads.push(match spec {
-                Some(_) => ColumnRead::list(name, ReadKind::Text),
-                None => ColumnRead::scalar(name, read),
+            reads.push(match &column {
+                Column::Bool(_) => ColumnRead::scalar(name, ReadKind::Bool),
+                Column::Big(_) => ColumnRead::scalar(name, ReadKind::BigInt),
+                Column::Str(_) => ColumnRead::scalar(name, ReadKind::Text),
+                Column::StrVec(_) => ColumnRead::list(name, ReadKind::Text),
+                _ => ColumnRead::scalar(name, ReadKind::Float),
             });
-            flat.push((column, spec));
+            flat.push(column);
         }
 
         let specs: Vec<ColumnSpec> = reads
             .iter()
             .zip(&flat)
-            .map(|(read, (_, elements))| match elements {
-                Some(elements) => ColumnSpec::List {
+            .map(|(read, column)| match column {
+                Column::StrVec(lists) => ColumnSpec::List {
                     element: ReadKind::Text.slot(),
-                    elements: *elements,
+                    elements: lists.iter().flatten().map(Vec::len).sum(),
                 },
-                None => ColumnSpec::Scalar(read.kind.slot()),
+                _ => ColumnSpec::Scalar(read.kind.slot()),
             })
             .collect();
         let mut arena = Arena::new_filled(self.len, &specs);
-        for (index, (column, _)) in flat.into_iter().enumerate() {
+        for (index, column) in flat.into_iter().enumerate() {
             match column {
                 Column::I64(cells) => {
                     write_cells(&mut arena, index, &cells, |arena, row, value| {
@@ -325,7 +206,7 @@ impl Columns {
                 }
                 Column::Big(cells) => {
                     write_cells(&mut arena, index, &cells, |arena, row, value| {
-                        arena.set_bytes(index, row, bigint_text(value)?.as_bytes());
+                        arena.set_bytes(index, row, value.to_string().as_bytes());
                         Ok(())
                     })?
                 }
@@ -420,16 +301,7 @@ mod tests {
             len: 2,
             columns: vec![
                 ("number", Column::I64(vec![Some(7), None])),
-                (
-                    "value",
-                    Column::Big(vec![
-                        Some(BigInt {
-                            sign_bit: true,
-                            words: vec![5],
-                        }),
-                        None,
-                    ]),
-                ),
+                ("value", Column::Big(vec![Some(U256::from(5u64)), None])),
                 ("hash", Column::Str(vec![None, Some("0xab".into())])),
                 (
                     "uncles",
@@ -487,7 +359,7 @@ mod tests {
                 ],
                 7.0,
                 true,
-                "-5",
+                "5",
                 true,
                 "0xab",
                 ("b", vec![2, 2], true),

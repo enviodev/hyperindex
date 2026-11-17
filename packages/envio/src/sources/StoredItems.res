@@ -20,7 +20,7 @@ type fields = {
 // What each registration selects of its items' transaction and block, as the
 // take reads them from the stores.
 %%private(
-  let joinedFields = (context: context, fields: fields): EventStore.joinedFields => {
+  let joinedFields = (context: context): EventStore.joinedFields => {
     transactionMasks: context.onEventRegistrations->Array.map(registration =>
       registration.fieldSelection.transactionMask
     ),
@@ -30,7 +30,6 @@ type fields = {
     blockHandlerMasks: context.onBlockRegistrations->Array.map(registration =>
       registration.blockFieldMask->Null.fromOption
     ),
-    shouldChecksum: fields.shouldChecksum,
   }
 )
 
@@ -205,7 +204,7 @@ type fieldsToRead = {
     ~context: context,
     ~jsItemRegistration: (~kind: int, ~index: int) => unknown,
   ): (array<Internal.item>, option<fieldsToRead>) =>
-    rows->EventStore.read(buffers => {
+    EventStore.readHandle(rows.handle, buffers => {
       let cursor = ref(0)
       let columns = Reading.columns(
         ~buffers,
@@ -355,7 +354,7 @@ let build = (rows, ~context, ~jsItemRegistration) => {
 // read that gives them their transactions and blocks.
 let takeWithFields = (store: EventStore.t, count: int, ~context: context, ~fields: fields) =>
   store
-  ->EventStore.takeJoinedRaw(count, joinedFields(context, fields))
+  ->EventStore.takeJoinedRaw(count, joinedFields(context))
   ->toItemsReading(~context)
   ->withFields(~fields)
 
@@ -368,6 +367,6 @@ let eventsOfRegistrations = (
   ~fields: fields,
 ) =>
   store
-  ->EventStore.eventsOfRegistrationsRaw(registrationIndexes, joinedFields(context, fields))
+  ->EventStore.eventsOfRegistrationsRaw(registrationIndexes, joinedFields(context))
   ->toItemsReading(~context)
   ->withFields(~fields)

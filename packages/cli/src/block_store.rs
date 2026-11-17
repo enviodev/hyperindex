@@ -8,6 +8,7 @@
 
 use std::sync::Mutex;
 
+use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use hypersync_client::format::{Hash, Hex, Quantity};
 use hypersync_client::simple_types;
@@ -17,7 +18,7 @@ use napi_derive::napi;
 use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
-use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
+use crate::evm_hypersync_source::types::{encode_address, map_i64};
 use crate::field_columns::{
     build_columns, bytes, field_names, Column, Columns, Ecosystem, FieldRead,
 };
@@ -243,7 +244,7 @@ fn decode_evm_block_field(
         | MixHash => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_full(b))))?),
         Nonce | Difficulty | TotalDifficulty | Size | GasLimit | GasUsed | BaseFeePerGas
         | BlobGasUsed | ExcessBlobGas => {
-            Column::Big(bytes_cells(col, len, |b| Ok(map_bigint(&Some(b))))?)
+            Column::Big(bytes_cells(col, len, |b| Ok(Some(U256::from_be_slice(b))))?)
         }
         Miner => Column::Str(bytes_cells(col, len, |b| {
             let address = <[u8; 20]>::try_from(b).expect("miner cell width");
@@ -1255,7 +1256,6 @@ mod tests {
         1u64 << (field as u32)
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn materialize_decodes_only_masked_fields() {
         let store = BlockStore::new_evm();

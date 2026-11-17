@@ -114,7 +114,6 @@ describe("SVM instruction payload assembly", () => {
       discriminator: None,
     }
     let item: SvmHyperSyncClient.Items.item = {
-      onEventRegistrationIndex: 0,
       slot: 10,
       transactionIndex: 1,
       path: [0],
@@ -143,7 +142,6 @@ describe("SVM instruction payload assembly", () => {
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
     let item: SvmHyperSyncClient.Items.item = {
-      onEventRegistrationIndex: 0,
       slot: 10,
       transactionIndex: 1,
       path: [0],
@@ -203,7 +201,6 @@ describe("SVM instruction payload assembly", () => {
       let eventConfig =
         reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
       let base: SvmHyperSyncClient.Items.item = {
-        onEventRegistrationIndex: 0,
         slot: 10,
         transactionIndex: 1,
         path: [0],
@@ -242,7 +239,6 @@ describe("SVM instruction payload assembly", () => {
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
     let instruction = SvmEventItem.toSvmInstruction(
       {
-        onEventRegistrationIndex: 0,
         slot: 10,
         transactionIndex: 1,
         path: [0],
@@ -267,7 +263,6 @@ describe("SVM instruction payload assembly", () => {
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
     let instruction = SvmEventItem.toSvmInstruction(
       {
-        onEventRegistrationIndex: 0,
         slot: 10,
         transactionIndex: 1,
         path: [0],

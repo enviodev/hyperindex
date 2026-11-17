@@ -153,7 +153,7 @@ pub struct EventItemsQuery {
 /// One routed receipt with the params its handler receives.
 pub struct EventItem {
     /// The registration this receipt routed to, as passed to the client
-    /// constructor. Receipts that route nowhere never cross the boundary.
+    /// constructor.
     pub on_event_registration_index: i64,
     pub receipt_index: i64,
     pub tx_id: String,

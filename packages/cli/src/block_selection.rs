@@ -17,7 +17,6 @@ pub struct OnBlockRegistrationInput {
     pub block_field_mask: f64,
 }
 
-#[napi(object)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockItem {
     pub block_number: i64,

@@ -93,7 +93,6 @@ let namedAccountsOf = accounts => {
     reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
   let instruction = SvmEventItem.toSvmInstruction(
     {
-      onEventRegistrationIndex: 0,
       slot: 10,
       transactionIndex: 1,
       path: [0],

@@ -56,8 +56,7 @@ type fieldRead = {handle: int, rows: fieldRows}
 // item in processing order, then each registration's `params`, then `fuel` and
 // `svm`, then for a joined take `links`: each item's row among the
 // transactions and blocks it reads, whose keys `transactionKeys` and
-// `blockKeys` give. `tapes` holds what has no column shape. `read` lends the
-// arenas and takes them back.
+// `blockKeys` give. `tapes` holds what has no column shape.
 type storedRows = {
   handle: int,
   items: arenaShape,
@@ -78,7 +77,6 @@ type joinedFields = {
   transactionMasks: array<float>,
   eventBlockMasks: array<float>,
   blockHandlerMasks: array<Null.t<float>>,
-  shouldChecksum: bool,
 }
 
 @send external lendRowsRaw: (Core.eventStoreCtor, int) => array<ArrayBuffer.t> = "lendRows"
@@ -98,8 +96,6 @@ let readHandle = (handle, f: array<ArrayBuffer.t> => 'a): 'a => {
   ctor->releaseRowsRaw(handle, buffers)
   result
 }
-
-let read = (rows: storedRows, f) => readHandle(rows.handle, f)
 
 // A JS-built item with its registration replaced by the registration's index.
 type jsItemInput = {
@@ -180,10 +176,9 @@ external insertBlockItems: (
 // How many rows are at or below the block.
 @send external countAtOrBelow: (t, int) => int = "countAtOrBelow"
 
-// How many rows from `fromIndex` on a batch takes: those at or below
-// `frontier`, up to `targetSize`, then the rest of the last block.
-@send
-external readyCount: (t, ~frontier: int, ~targetSize: int, ~fromIndex: int) => int = "readyCount"
+// How many rows a batch takes: those at or below `frontier`, up to
+// `targetSize`, then the rest of the last block.
+@send external readyCount: (t, ~frontier: int, ~targetSize: int) => int = "readyCount"
 
 // Removes and returns the first rows, with the transactions and blocks they
 // read from the chain's stores planned.

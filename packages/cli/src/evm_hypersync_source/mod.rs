@@ -8,7 +8,7 @@ use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::{BlockItem, BlockRegistrations, OnBlockRegistrationInput};
 use crate::block_store::BlockStore;
-use crate::event_store::{EventStore, Row};
+use crate::event_store::{EventStore, Row, RowData};
 use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
 
@@ -430,14 +430,11 @@ pub struct QueryResponse {
 pub struct EventItem {
     pub log_index: i64,
     pub src_address: String,
-    /// Block this log belongs to. The block itself is carried once, deduplicated,
-    /// in `EventItemsResponse.blocks` — the caller joins on this number.
     pub block_number: i64,
-    /// Key into the per-chain `TransactionStore` (paired with the block number);
-    /// the transaction itself is materialised field-by-field on demand.
+    /// Key into the per-chain `TransactionStore`, with the block number.
     pub transaction_index: i64,
     /// The registration this log routed to, as passed to the client
-    /// constructor. Logs that route nowhere never cross the boundary.
+    /// constructor.
     pub on_event_registration_index: i64,
     pub params: EvmParams,
 }
@@ -446,13 +443,16 @@ impl EventItem {
     /// The store row of this log; it replays to the object `EvmEventItem.t`
     /// describes.
     pub(crate) fn into_row(self) -> Row {
-        Row::evm_log(
+        Row::event(
             self.block_number,
             self.log_index,
-            self.transaction_index,
-            self.src_address,
+            None,
             self.on_event_registration_index,
-            self.params,
+            RowData::EvmLog {
+                src_address: self.src_address,
+                transaction_index: self.transaction_index,
+                params: self.params,
+            },
         )
     }
 }
@@ -1239,7 +1239,6 @@ mod tests {
         );
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn unrouted_logs_keep_a_hash_only_block_and_no_transaction() {
         // Block 1's log routes; block 2's doesn't. Both blocks and both

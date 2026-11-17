@@ -24,7 +24,6 @@ use crate::js_value::JsTape;
 use crate::storage::rows::{ColumnRead, ReadKind};
 
 /// Which JS conversion a row goes through, chosen by what produced it.
-#[napi]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RowFormat {
     /// An EVM log routed by HyperSync or RPC.
@@ -158,28 +157,6 @@ impl Row {
         }
     }
 
-    pub(crate) fn evm_log(
-        block_number: i64,
-        log_index: i64,
-        transaction_index: i64,
-        src_address: String,
-        registration_index: i64,
-        params: EvmParams,
-    ) -> Self {
-        Row {
-            block_number,
-            kind: ItemKind::Event,
-            log_index,
-            order_path: None,
-            registration_index,
-            data: RowData::EvmLog {
-                src_address,
-                transaction_index,
-                params,
-            },
-        }
-    }
-
     pub(crate) fn block(block_number: i64, registration_index: i64, skipped: bool) -> Self {
         Row {
             block_number,
@@ -223,6 +200,8 @@ const COALESCE_BELOW: usize = 1024;
 /// chunks it overlaps.
 #[derive(Default)]
 pub(crate) struct Rows {
+    /// None empty: `append` and `merge_chunk` skip empty chunks, and `take`
+    /// and `rollback` pop a chunk they empty.
     chunks: VecDeque<Chunk>,
     len: usize,
 }
@@ -264,11 +243,10 @@ impl Rows {
     fn count_at_or_below(&self, block_number: i64) -> usize {
         let mut count = 0;
         for chunk in &self.chunks {
-            match chunk.len() {
-                0 => {}
-                len if chunk.block_number_at(chunk.keys.len() - 1) <= block_number => count += len,
-                _ => return count + chunk.count_at_or_below(block_number),
+            if chunk.block_number_at(chunk.keys.len() - 1) > block_number {
+                return count + chunk.count_at_or_below(block_number);
             }
+            count += chunk.len();
         }
         count
     }
@@ -312,8 +290,7 @@ impl Rows {
         // before the page's first, to the last whose first row isn't after the
         // page's last.
         let Some(start) = self.chunks.iter().position(|chunk| {
-            chunk.len() > 0
-                && chunk.compare(chunk.keys.len() - 1, &incoming, first) != Ordering::Less
+            chunk.compare(chunk.keys.len() - 1, &incoming, first) != Ordering::Less
         }) else {
             return self.append(incoming);
         };
@@ -323,8 +300,7 @@ impl Rows {
                 .iter()
                 .skip(start)
                 .take_while(|chunk| {
-                    chunk.len() > 0
-                        && chunk.compare(chunk.start, &incoming, last) != Ordering::Greater
+                    chunk.compare(chunk.start, &incoming, last) != Ordering::Greater
                 })
                 .count();
         if start == end {
@@ -618,6 +594,48 @@ impl DetailRun {
     }
 }
 
+/// The arena holding a row's format-specific fields.
+#[derive(Clone, Copy)]
+enum DetailArena {
+    /// The params arena of an EVM log's registration.
+    Params(usize),
+    Fuel,
+    Svm,
+}
+
+/// One value per detail arena of a chunk.
+struct PerDetailArena<T> {
+    params: Vec<T>,
+    fuel: T,
+    svm: T,
+}
+
+impl<T: Clone + Default> PerDetailArena<T> {
+    fn new(params: usize) -> Self {
+        PerDetailArena {
+            params: vec![T::default(); params],
+            fuel: T::default(),
+            svm: T::default(),
+        }
+    }
+
+    fn get(&self, arena: DetailArena) -> &T {
+        match arena {
+            DetailArena::Params(registration) => &self.params[registration],
+            DetailArena::Fuel => &self.fuel,
+            DetailArena::Svm => &self.svm,
+        }
+    }
+
+    fn get_mut(&mut self, arena: DetailArena) -> &mut T {
+        match arena {
+            DetailArena::Params(registration) => &mut self.params[registration],
+            DetailArena::Fuel => &mut self.fuel,
+            DetailArena::Svm => &mut self.svm,
+        }
+    }
+}
+
 impl Chunk {
     fn empty() -> Self {
         Chunk {
@@ -645,24 +663,13 @@ impl Chunk {
     fn truncate(&mut self, at: usize) {
         // A format's arena rows run in item order, so the first dropped item
         // of a format says where that arena's kept rows end.
-        let mut params_ends: Vec<Option<usize>> = vec![None; self.params.len()];
-        let (mut fuel_end, mut svm_end) = (None, None);
+        let mut ends = PerDetailArena::<Option<usize>>::new(self.params.len());
         for row in at..self.keys.len() {
-            let detail_row = self.detail_row_at(row);
-            match self.format_at(row) {
-                format if format == RowFormat::EvmLog as u8 => {
-                    params_ends[self.registrations[row] as usize].get_or_insert(detail_row);
-                }
-                format if format == RowFormat::FuelReceipt as u8 => {
-                    fuel_end.get_or_insert(detail_row);
-                }
-                format if format == RowFormat::SvmInstruction as u8 => {
-                    svm_end.get_or_insert(detail_row);
-                }
-                _ => {}
+            if let Some(arena) = self.detail_arena_at(row) {
+                ends.get_mut(arena).get_or_insert(self.detail_row_at(row));
             }
         }
-        for (params, end) in self.params.iter_mut().zip(params_ends) {
+        for (params, end) in self.params.iter_mut().zip(ends.params) {
             match end {
                 Some(0) => *params = None,
                 Some(end) => {
@@ -673,10 +680,10 @@ impl Chunk {
                 None => {}
             }
         }
-        if let Some(end) = fuel_end {
+        if let Some(end) = ends.fuel {
             self.fuel.truncate(end);
         }
-        if let Some(end) = svm_end {
+        if let Some(end) = ends.svm {
             self.svm.truncate(end);
         }
         self.keys.truncate(at);
@@ -776,6 +783,17 @@ impl Chunk {
         self.detail_at(row) >> FORMAT_BITS
     }
 
+    fn detail_arena_at(&self, row: usize) -> Option<DetailArena> {
+        match self.format_at(row) {
+            format if format == RowFormat::EvmLog as u8 => {
+                Some(DetailArena::Params(self.registrations[row] as usize))
+            }
+            format if format == RowFormat::FuelReceipt as u8 => Some(DetailArena::Fuel),
+            format if format == RowFormat::SvmInstruction as u8 => Some(DetailArena::Svm),
+            _ => None,
+        }
+    }
+
     /// Lays sorted rows out.
     fn from_sorted_rows(rows: &[Row]) -> Self {
         // Every arena is sized before it is written, so one pass counts each
@@ -824,7 +842,7 @@ impl Chunk {
         let mut svm = ArenaWriter::new(sized_arena(
             &svm_columns(),
             svm_rows,
-            &[0, 0, 0, svm_steps, 0, svm_accounts],
+            &[0, 0, svm_steps, 0, svm_accounts],
         ));
         let mut keys = Vec::with_capacity(rows.len());
         let mut registrations = Vec::with_capacity(rows.len());
@@ -856,9 +874,7 @@ impl Chunk {
                     for (column, cell) in log_params.cells.iter().enumerate() {
                         match cell {
                             ParamCell::Bool(value) => group.bool(column, *value),
-                            ParamCell::Text(value) | ParamCell::BigInt(value) => {
-                                group.bytes(column, value.as_bytes())
-                            }
+                            ParamCell::Text(value) => group.bytes(column, value.as_bytes()),
                             ParamCell::Tape(tape) => group.tape(column, &mut tapes, tape),
                         }
                     }
@@ -873,12 +889,11 @@ impl Chunk {
                     src_address,
                     params,
                 } => {
-                    fuel.num(0, registration);
-                    fuel.num(1, row.log_index as f64);
-                    fuel.bytes(2, tx_id.as_bytes());
-                    fuel.num(3, row.block_number as f64);
-                    fuel.bytes(4, src_address.as_bytes());
-                    fuel.tape(5, &mut tapes, params);
+                    fuel.num(0, row.log_index as f64);
+                    fuel.bytes(1, tx_id.as_bytes());
+                    fuel.num(2, row.block_number as f64);
+                    fuel.bytes(3, src_address.as_bytes());
+                    fuel.tape(4, &mut tapes, params);
                     items.num(item_column::DETAIL, pack_detail(format, fuel.row));
                     fuel.end_row();
                     &[
@@ -896,16 +911,15 @@ impl Chunk {
                     args,
                     logs,
                 } => {
-                    svm.num(0, registration);
-                    svm.num(1, row.block_number as f64);
-                    svm.num(2, row.log_index as f64);
-                    svm.num_list(3, row.order_path.as_deref().unwrap_or_default());
-                    svm.bytes(4, program_id.as_bytes());
-                    svm.text_list(5, accounts);
-                    svm.bytes(6, data);
-                    svm.bool(7, *is_inner);
-                    svm.optional_tape(8, &mut tapes, args);
-                    svm.optional_tape(9, &mut tapes, logs);
+                    svm.num(0, row.block_number as f64);
+                    svm.num(1, row.log_index as f64);
+                    svm.num_list(2, row.order_path.as_deref().unwrap_or_default());
+                    svm.bytes(3, program_id.as_bytes());
+                    svm.text_list(4, accounts);
+                    svm.bytes(5, data);
+                    svm.bool(6, *is_inner);
+                    svm.optional_tape(7, &mut tapes, args);
+                    svm.optional_tape(8, &mut tapes, logs);
                     items.num(item_column::DETAIL, pack_detail(format, svm.row));
                     // A slot's transaction is keyed by its index, the row's
                     // within-block order.
@@ -1003,28 +1017,16 @@ impl Chunk {
 
         // A format's arena rows behind a run of items are themselves one run,
         // in the same order.
-        let mut params_runs: Vec<Option<DetailRun>> = vec![None; other.params.len()];
-        let (mut fuel_run, mut svm_run) = (None, None);
+        let mut runs = PerDetailArena::<Option<DetailRun>>::new(other.params.len());
         for row in rows.clone() {
-            let detail_row = other.detail_row_at(row);
-            match other.format_at(row) {
-                format if format == RowFormat::EvmLog as u8 => DetailRun::note(
-                    &mut params_runs[other.registrations[row] as usize],
-                    detail_row,
-                ),
-                format if format == RowFormat::FuelReceipt as u8 => {
-                    DetailRun::note(&mut fuel_run, detail_row)
-                }
-                format if format == RowFormat::SvmInstruction as u8 => {
-                    DetailRun::note(&mut svm_run, detail_row)
-                }
-                _ => {}
+            if let Some(arena) = other.detail_arena_at(row) {
+                DetailRun::note(runs.get_mut(arena), other.detail_row_at(row));
             }
         }
         if self.params.len() < other.params.len() {
             self.params.resize_with(other.params.len(), || None);
         }
-        for (registration, run) in params_runs.iter_mut().enumerate() {
+        for (registration, run) in runs.params.iter_mut().enumerate() {
             let Some(run) = run else { continue };
             let from = other.params[registration]
                 .as_ref()
@@ -1046,25 +1048,16 @@ impl Chunk {
                 );
             }
         }
-        if let Some(run) = &mut fuel_run {
-            run.to = self.fuel.rows();
-            self.fuel
-                .extend_from(&other.fuel, run.from..run.from + run.rows);
-            copy_tapes(
-                &mut self.fuel,
-                5,
-                run.to..run.to + run.rows,
-                &other.tapes,
-                &mut self.tapes,
-            );
-        }
-        if let Some(run) = &mut svm_run {
-            run.to = self.svm.rows();
-            self.svm
-                .extend_from(&other.svm, run.from..run.from + run.rows);
-            for column in [8, 9] {
+        for (run, to, from, columns) in [
+            (&mut runs.fuel, &mut self.fuel, &other.fuel, fuel_columns()),
+            (&mut runs.svm, &mut self.svm, &other.svm, svm_columns()),
+        ] {
+            let Some(run) = run else { continue };
+            run.to = to.rows();
+            to.extend_from(from, run.from..run.from + run.rows);
+            for column in tape_columns(&columns) {
                 copy_tapes(
-                    &mut self.svm,
+                    to,
                     column,
                     run.to..run.to + run.rows,
                     &other.tapes,
@@ -1076,15 +1069,10 @@ impl Chunk {
         let first = self.items.rows();
         self.items.extend_from(&other.items, rows.clone());
         for (offset, row) in rows.enumerate() {
-            let run = match other.format_at(row) {
-                format if format == RowFormat::EvmLog as u8 => {
-                    params_runs[other.registrations[row] as usize]
-                }
-                format if format == RowFormat::FuelReceipt as u8 => fuel_run,
-                format if format == RowFormat::SvmInstruction as u8 => svm_run,
-                _ => None,
-            };
-            if let Some(run) = run {
+            if let Some(run) = other
+                .detail_arena_at(row)
+                .and_then(|arena| *runs.get(arena))
+            {
                 let detail_row = run.to + other.detail_row_at(row) - run.from;
                 let detail = (detail_row << FORMAT_BITS) | other.format_at(row) as usize;
                 self.items
@@ -1334,7 +1322,6 @@ pub struct JoinedFields {
     /// By block registration index; `None` where the handler reads no block
     /// field beyond its number.
     pub block_handler_masks: Vec<Option<f64>>,
-    pub should_checksum: bool,
 }
 
 #[napi(object, object_from_js = false)]
@@ -1482,7 +1469,6 @@ fn pack_detail(format: RowFormat, detail_row: usize) -> f64 {
 /// that record.
 fn fuel_columns() -> Vec<ColumnRead> {
     vec![
-        ColumnRead::scalar("onEventRegistrationIndex", ReadKind::Float),
         ColumnRead::scalar("receiptIndex", ReadKind::Float),
         ColumnRead::scalar("txId", ReadKind::Text),
         ColumnRead::scalar("blockHeight", ReadKind::Float),
@@ -1494,7 +1480,6 @@ fn fuel_columns() -> Vec<ColumnRead> {
 /// Named as `SvmHyperSyncClient.Items.item`'s fields.
 fn svm_columns() -> Vec<ColumnRead> {
     vec![
-        ColumnRead::scalar("onEventRegistrationIndex", ReadKind::Float),
         ColumnRead::scalar("slot", ReadKind::Float),
         ColumnRead::scalar("transactionIndex", ReadKind::Float),
         ColumnRead::list("path", ReadKind::Float),
@@ -1712,15 +1697,15 @@ impl EventStore {
         self.rows().count_at_or_below(block_number) as u32
     }
 
-    /// How many rows from `from_index` on a batch takes: those at or below
-    /// `frontier`, up to `target_size`, and then the rest of the last block, so
-    /// a batch never splits a block.
+    /// How many rows a batch takes: those at or below `frontier`, up to
+    /// `target_size`, and then the rest of the last block, so a batch never
+    /// splits a block.
     #[napi]
-    pub fn ready_count(&self, frontier: i64, target_size: u32, from_index: u32) -> u32 {
+    pub fn ready_count(&self, frontier: i64, target_size: u32) -> u32 {
         let rows = self.rows();
         let mut ready_block_number = frontier;
         let mut count = 0u32;
-        for key in rows.keys().skip(from_index as usize) {
+        for key in rows.keys() {
             let block_number = (key >> 64) as i64;
             if block_number > ready_block_number {
                 break;
@@ -1957,18 +1942,21 @@ mod tests {
             vec![meta("value", "uint256"), meta("list", "uint256[]")],
             false,
         ));
-        Row::evm_log(
+        Row::event(
             block_number,
             0,
-            0,
-            "0xsrc".into(),
+            None,
             registration_index,
-            EvmParams {
-                cells: vec![
-                    ParamCell::BigInt(value.into()),
-                    ParamCell::Tape(tagged(&format!("{value} list"))),
-                ],
-                schema,
+            RowData::EvmLog {
+                src_address: "0xsrc".into(),
+                transaction_index: 0,
+                params: EvmParams {
+                    cells: vec![
+                        ParamCell::Text(value.into()),
+                        ParamCell::Tape(tagged(&format!("{value} list"))),
+                    ],
+                    schema,
+                },
             },
         )
     }
@@ -2005,11 +1993,11 @@ mod tests {
                     }
                     format if format == RowFormat::FuelReceipt as u8 => format!(
                         "fuel {block} {} {}",
-                        text(&fuel[2], detail),
-                        tape(fuel[5].f64_at(detail))
+                        text(&fuel[1], detail),
+                        tape(fuel[4].f64_at(detail))
                     ),
                     _ => {
-                        let (steps, ends) = svm[3].list().unwrap();
+                        let (steps, ends) = svm[2].list().unwrap();
                         let start = if detail == 0 {
                             0
                         } else {
@@ -2020,8 +2008,8 @@ mod tests {
                             .collect();
                         format!(
                             "svm {block} {path:?} {} {}",
-                            text(&svm[4], detail),
-                            tape(svm[8].f64_at(detail))
+                            text(&svm[3], detail),
+                            tape(svm[7].f64_at(detail))
                         )
                     }
                 }
@@ -2189,7 +2177,6 @@ mod tests {
             transaction_masks: Vec::new(),
             event_block_masks: Vec::new(),
             block_handler_masks: Vec::new(),
-            should_checksum: false,
         }
     }
 
@@ -2265,7 +2252,6 @@ mod tests {
             transaction_masks: vec![transaction_mask as f64, 0.0],
             event_block_masks: vec![(1u64 << EvmBlockField::Number as u32) as f64, 0.0],
             block_handler_masks: vec![Some((1u64 << EvmBlockField::Number as u32) as f64), None],
-            should_checksum: false,
         };
         let selected = links_of(
             rows()
@@ -2312,7 +2298,6 @@ mod tests {
             transaction_masks: vec![0.0],
             event_block_masks: vec![0.0],
             block_handler_masks: vec![Some(0.0)],
-            should_checksum: false,
         };
         assert_eq!(
             links_of(store.take_joined(u32::MAX, fields).unwrap()),
@@ -2615,12 +2600,12 @@ mod tests {
         ]);
         assert_eq!(
             (
-                store.ready_count(4, 100, 0),
-                store.ready_count(4, 2, 0),
-                store.ready_count(4, 1, 1),
+                store.ready_count(4, 100),
+                store.ready_count(4, 2),
+                store.ready_count(4, 1),
                 store.count_at_or_below(2),
             ),
-            (4, 3, 2, 3)
+            (4, 3, 1, 3)
         );
     }
 

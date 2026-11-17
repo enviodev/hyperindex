@@ -524,7 +524,6 @@ let parse = (
         onEventRegistrations->Array.push(onEventRegistration)->ignore
         let payload = SvmEventItem.toSvmInstruction(
           {
-            onEventRegistrationIndex,
             slot,
             transactionIndex,
             path,

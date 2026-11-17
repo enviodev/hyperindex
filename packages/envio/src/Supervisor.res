@@ -426,7 +426,7 @@ let resumedChains = (config: Config.t, ~resumed: array<Persistence.initialChainS
       waitingForNewBlockSeconds: 0.,
       queryingSeconds: 0.,
       blockRangeFetchSeconds: 0.,
-      materializeSeconds: 0.,
+      parseSeconds: 0.,
       blockRangeFetchCount: 0.,
       blockRangeFetchedEvents: 0.,
       blockRangeFetchedBlocks: 0.,

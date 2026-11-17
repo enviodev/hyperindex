@@ -337,7 +337,17 @@ describe("EVM event decoding via EvmRpcClient.getLogs", () => {
         "label": "héllo",
         "id": "0x01020304",
         "holders": ["0x0000000000000000000000000000000000000abc"],
-      }->Utils.magic,
+      }->(
+        Utils.magic: {
+          "delta": bigint,
+          "big": bigint,
+          "flag": bool,
+          "payload": string,
+          "label": string,
+          "id": string,
+          "holders": array<string>,
+        } => Internal.eventParams
+      ),
     )
   })
 

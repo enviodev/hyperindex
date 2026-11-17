@@ -4,14 +4,13 @@
 
 type t = {
   logger: Logger.t,
-  // The registrations used to build this chain's sources and route native items.
-  onEventRegistrations: array<Internal.onEventRegistration>,
   mutable fetchState: FetchState.t,
   // The chain's fetched items in processing order, kept in Rust until a batch
   // takes them. Every fetch-state transition that adds, generates or drops rows
   // is handed this store.
   eventStore: EventStore.t,
-  // Turns a stored row back into the item a handler receives.
+  // The chain's registrations, by the index stored rows carry, which turn a
+  // row back into the item a handler receives.
   itemContext: StoredItems.context,
   // The chain-wide address index, kept in Rust. Not `mutable`: registration and
   // rollback mutate it in place, so the handle is stable across fetchState
@@ -64,7 +63,7 @@ type t = {
   // --- Per-chain metric counters, rendered by Metrics at scrape time.
   // Floats: cumulative counters outgrow int32. ---
   mutable blockRangeFetchSeconds: float,
-  mutable materializeSeconds: float,
+  mutable parseSeconds: float,
   mutable blockRangeFetchCount: float,
   mutable blockRangeFetchedEvents: float,
   mutable blockRangeFetchedBlocks: float,
@@ -140,13 +139,7 @@ let make = (
   ~fetchState: FetchState.t,
   ~eventStore: EventStore.t,
   ~onEventRegistrations=[],
-  // Rows name registrations by index into the chain's full lists, fetched block
-  // handlers included.
-  ~itemContext: StoredItems.context={
-    chainId: chainConfig.id,
-    onEventRegistrations,
-    onBlockRegistrations: [],
-  },
+  ~onBlockRegistrations=[],
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,
@@ -170,10 +163,9 @@ let make = (
   {
     logger,
     entities: EntityTables.make(perChainEntities),
-    onEventRegistrations,
     fetchState,
     eventStore,
-    itemContext,
+    itemContext: {chainId: chainConfig.id, onEventRegistrations, onBlockRegistrations},
     addressStore,
     sourceManager,
     chainConfig,
@@ -193,7 +185,7 @@ let make = (
     shouldChecksum,
     reorgThresholdReadyTolerance,
     blockRangeFetchSeconds: 0.,
-    materializeSeconds: 0.,
+    parseSeconds: 0.,
     blockRangeFetchCount: 0.,
     blockRangeFetchedEvents: 0.,
     blockRangeFetchedBlocks: 0.,
@@ -403,7 +395,7 @@ let makeInternal = (
     ~fetchState,
     ~eventStore,
     ~onEventRegistrations,
-    ~itemContext={chainId: chainConfig.id, onEventRegistrations, onBlockRegistrations},
+    ~onBlockRegistrations,
     ~addressStore,
     ~sourceManager=SourceManager.make(~sources, ~logger, ~isRealtime, ~timing=?sourceTiming),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
@@ -521,8 +513,8 @@ let timestampCaughtUpToHeadOrEndblock = (cs: t) => cs.timestampCaughtUpToHeadOrE
 
 // --- Metric counters. ---
 
-let recordMaterialize = (cs: t, ~milliseconds) =>
-  cs.materializeSeconds = cs.materializeSeconds +. milliseconds /. 1000.
+let recordParse = (cs: t, ~milliseconds) =>
+  cs.parseSeconds = cs.parseSeconds +. milliseconds /. 1000.
 
 let recordBlockRangeFetch = (cs: t, ~totalTimeElapsed, ~numEvents, ~blockRangeSize) => {
   cs.blockRangeFetchSeconds = cs.blockRangeFetchSeconds +. totalTimeElapsed
@@ -841,7 +833,11 @@ let switchDynamicContractsToClientSideFilteringNearHead = (cs: t) =>
         ~addressStore=cs.addressStore,
         ~eventStore=cs.eventStore,
       )
-    if cs.onEventRegistrations->Array.some(registration => registration.contractRegister !== None) {
+    if (
+      cs.itemContext.onEventRegistrations->Array.some(registration =>
+        registration.contractRegister !== None
+      )
+    ) {
       cs.logger->Logger.trace(
         "Near the head: dynamic contracts are fetched without their addresses for the rest of the run, and filtered on our side.",
         ~params={
@@ -1034,7 +1030,7 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   waitingForNewBlockSeconds: cs.sourceManager->SourceManager.waitingForNewBlockSeconds,
   queryingSeconds: cs.sourceManager->SourceManager.queryingSeconds,
   blockRangeFetchSeconds: cs.blockRangeFetchSeconds,
-  materializeSeconds: cs.materializeSeconds,
+  parseSeconds: cs.parseSeconds,
   blockRangeFetchCount: cs.blockRangeFetchCount,
   blockRangeFetchedEvents: cs.blockRangeFetchedEvents,
   blockRangeFetchedBlocks: cs.blockRangeFetchedBlocks,
@@ -1064,7 +1060,7 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
     eventStore: cs.eventStore,
     itemContext: cs.itemContext,
     itemFields: cs->itemFields,
-    recordMaterialize: milliseconds => cs->recordMaterialize(~milliseconds),
+    recordParse: milliseconds => cs->recordParse(~milliseconds),
     progressBlockNumber: cs.committedProgressBlockNumber,
     totalEventsProcessed: cs.numEventsProcessed,
     sourceBlockNumber: cs.fetchState.knownHeight,

@@ -922,32 +922,11 @@ let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => 
 let bufferReadyCount = (fetchState: t, ~eventStore: EventStore.t) =>
   eventStore->EventStore.countAtOrBelow(fetchState->bufferBlockNumber)
 
-// Lexicographic order on two call paths, parent before child: `[1]` precedes
-// `[1, 0]`, which is the order the runtime executed them in.
-let comparePath = (a: array<int>, b: array<int>): int => {
-  let la = a->Array.length
-  let lb = b->Array.length
-  let shared = la < lb ? la : lb
-  let i = ref(0)
-  let result = ref(0)
-  while result.contents === 0 && i.contents < shared {
-    let x = a->Array.getUnsafe(i.contents)
-    let y = b->Array.getUnsafe(i.contents)
-    if x !== y {
-      result := (x < y ? -1 : 1)
-    }
-    i := i.contents + 1
-  }
-  if result.contents !== 0 {
-    result.contents
-  } else if la === lb {
-    0
-  } else if la < lb {
-    -1
-  } else {
-    1
-  }
-}
+%%private(
+  let pathsEqual = (a: array<int>, b: array<int>) =>
+    a->Array.length === b->Array.length &&
+      a->Array.everyWithIndex((step, index) => step === b->Array.getUnsafe(index))
+)
 
 // Whether two adjacent buffer items came from one log routed to two
 // registrations: everything the event store orders on except the registration
@@ -959,7 +938,7 @@ let isSameLog = (a: Internal.item, b: Internal.item): bool =>
   a->Internal.getItemBlockNumber === b->Internal.getItemBlockNumber &&
   a->Internal.getItemLogIndex === b->Internal.getItemLogIndex &&
   switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
-  | (Value(pa), Value(pb)) => comparePath(pa, pb) === 0
+  | (Value(pa), Value(pb)) => pathsEqual(pa, pb)
   | _ => true
   }
 
@@ -975,7 +954,6 @@ let appendOnBlockItems = (
   ~maxBlockNumber,
   ~maxOnBlockBufferSize,
 ) => {
-  let newItemsCounter = ref(0)
   let latestOnBlockBlockNumber = ref(fromBlock)
   let blockNumbers = []
   let registrationIndexes = []
@@ -986,7 +964,7 @@ let appendOnBlockItems = (
   while (
     latestOnBlockBlockNumber.contents < maxBlockNumber &&
       // Additional safeguard to prevent OOM
-      newItemsCounter.contents <= maxOnBlockBufferSize
+      blockNumbers->Array.length <= maxOnBlockBufferSize
   ) {
     let blockNumber = latestOnBlockBlockNumber.contents + 1
     latestOnBlockBlockNumber := blockNumber
@@ -996,7 +974,6 @@ let appendOnBlockItems = (
       if onBlockRegistration->BlockItem.runsOn(~blockNumber, ~chainStartBlock=indexerStartBlock) {
         blockNumbers->Array.push(blockNumber)
         registrationIndexes->Array.push(onBlockRegistration.index)
-        newItemsCounter := newItemsCounter.contents + 1
       }
     }
   }
@@ -1159,7 +1136,7 @@ let claimedFetchedBlock = (p: partition, ~knownHeight) =>
 //   contracts are client-filtered, plus any prior backfill) become one bounded
 //   backfill partition covering [their min frontier, that claimed block]:
 //   getNextQuery caps its queries at mergeBlock and handleQueryResponse deletes
-//   it on arrival. The overlap it re-delivers is deduped by mergeIntoBuffer, and
+//   it on arrival. The overlap it re-delivers is deduped by EventStore.merge, and
 //   the re-fetch doubles as history for freshly registered addresses: events
 //   dropped before the address was registered now pass the address gate.
 // - A dynamic partition for a contract the standing partition already covers is
@@ -1831,8 +1808,6 @@ let switchDynamicContractsToClientSideFiltering = (
 /*
 Updates fetchState with a response for a given query.
 Throws if the partition with given query cannot be found (unexpected)
-
-newItems are ordered earliest to latest (as they are returned from the worker)
 */
 let handleQueryResult = (
   fetchState: t,
@@ -2533,12 +2508,8 @@ let hasReadyItem = (fetchState: t, ~eventStore: EventStore.t) => {
 
 // Items at or below the ready frontier, up to `targetSize`, then the rest of
 // the last block, so a batch never splits a block.
-let getReadyItemsCount = (fetchState: t, ~eventStore: EventStore.t, ~targetSize: int, ~fromItem) =>
-  eventStore->EventStore.readyCount(
-    ~frontier=fetchState->bufferBlockNumber,
-    ~targetSize,
-    ~fromIndex=fromItem,
-  )
+let getReadyItemsCount = (fetchState: t, ~eventStore: EventStore.t, ~targetSize: int) =>
+  eventStore->EventStore.readyCount(~frontier=fetchState->bufferBlockNumber, ~targetSize)
 
 /**
 Instantiates a fetch state with partitions for initial addresses

@@ -1,18 +1,13 @@
-// A decoded EVM log that routed to a registration, as both EVM sources return
-// it. Everything else the log carried — its topics, its transaction hash, its
-// block hash — is consumed on the Rust side, so what crosses the boundary is
-// what an item is actually built from.
+// A decoded EVM log that routed to a registration, as the event store holds
+// it.
 type t = {
   logIndex: int,
   srcAddress: Address.t,
-  // Number of the block this log belongs to; the block itself is resolved from
-  // the chain's block store, deduplicated across items sharing a block.
+  // The block's fields are read from the chain's block store.
   blockNumber: int,
-  // Key (with the block number) into the transaction store; the transaction
-  // is resolved from the store on demand.
+  // Key, with the block number, into the chain's transaction store.
   transactionIndex: int,
-  // The registration this log routed to, by chain-scoped index. Logs that
-  // route to no registration never cross the boundary.
+  // The registration this log routed to, by chain-scoped index.
   onEventRegistrationIndex: int,
   params: Internal.eventParams,
 }

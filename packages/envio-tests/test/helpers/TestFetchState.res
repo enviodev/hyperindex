@@ -146,12 +146,8 @@ let rollback = (
   {...result, fetchState: result.fetchState->keepStore(~from=fetchState)}
 }
 
-let getReadyItemsCount = (fetchState, ~targetSize, ~fromItem) =>
-  fetchState->FetchState.getReadyItemsCount(
-    ~eventStore=fetchState->eventStoreOf,
-    ~targetSize,
-    ~fromItem,
-  )
+let getReadyItemsCount = (fetchState, ~targetSize) =>
+  fetchState->FetchState.getReadyItemsCount(~eventStore=fetchState->eventStoreOf, ~targetSize)
 
 let bufferReadyCount = fetchState =>
   fetchState->FetchState.bufferReadyCount(~eventStore=fetchState->eventStoreOf)

@@ -21,7 +21,7 @@ let make: (
   ~fetchState: FetchState.t,
   ~eventStore: EventStore.t,
   ~onEventRegistrations: array<Internal.onEventRegistration>=?,
-  ~itemContext: StoredItems.context=?,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>=?,
   ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
   ~committedProgressBlockNumber: int,

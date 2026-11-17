@@ -58,7 +58,6 @@ let makeReg = (~eventConfig=makeEventConfig(), ~where=None, ~index=0) => {
 }
 
 let mockItem: SvmHyperSyncClient.Items.item = {
-  onEventRegistrationIndex: 0,
   slot,
   transactionIndex: 965,
   path: [1],

@@ -33,7 +33,7 @@ type chainBeforeBatch = {
   itemContext: StoredItems.context,
   itemFields: StoredItems.fields,
   // Adds the time spent building the chain's items to its metric.
-  recordMaterialize: float => unit,
+  recordParse: float => unit,
   scannedHashes: reorgHashSnapshot,
   // The progress block isn't known until the build computes it, so its
   // timestamp can't be snapshotted with the rest. Reads the chain's store,
@@ -265,7 +265,6 @@ let make = (
       fetchState->FetchState.getReadyItemsCount(
         ~eventStore,
         ~targetSize=batchSizeTarget - totalBatchSize.contents,
-        ~fromItem=0,
       )
 
     // Read past the batch's last item, so before the batch takes its items.
@@ -282,11 +281,11 @@ let make = (
           ~context=chainBeforeBatch.itemContext,
           ~fields=chainBeforeBatch.itemFields,
         )
-      chainBeforeBatch.recordMaterialize(Performance.now() -. startedAt)
+      chainBeforeBatch.recordParse(Performance.now() -. startedAt)
       fieldReads->Array.push(async () => {
         let startedAt = Performance.now()
         await readFields()
-        chainBeforeBatch.recordMaterialize(Performance.now() -. startedAt)
+        chainBeforeBatch.recordParse(Performance.now() -. startedAt)
       })
       for idx in 0 to chainBatchSize - 1 {
         let item = chainItems->Array.getUnsafe(idx)

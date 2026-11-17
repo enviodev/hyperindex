@@ -29,7 +29,7 @@ let getItem = (item: oldQueueItem) =>
   }
 
 let getEarliestEvent = (fetchState: FetchState.t) => {
-  let readyItemsCount = fetchState->TestFetchState.getReadyItemsCount(~targetSize=1, ~fromItem=0)
+  let readyItemsCount = fetchState->TestFetchState.getReadyItemsCount(~targetSize=1)
   if readyItemsCount > 0 {
     Item(fetchState->TestFetchState.bufferedItems->Array.getUnsafe(0))
   } else {
@@ -5104,11 +5104,7 @@ describe("Response density and source range capacity update independently", () =
 })
 
 describe("EventStore.merge", () => {
-  let noRegistrations: StoredItems.context = {
-    chainId: 1->ChainId.fromInt,
-    onEventRegistrations: [],
-    onBlockRegistrations: [],
-  }
+  let noRegistrations = TestEventStore.noRegistrations(~chainId=1->ChainId.fromInt)
   let merged = (stored, incoming) => {
     let store = TestEventStore.pageOf(stored)
     store->EventStore.merge(TestEventStore.pageOf(incoming))

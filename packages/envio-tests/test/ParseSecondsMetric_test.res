@@ -2,7 +2,7 @@ open Vitest
 
 let scenario = Scenario.make(
   ~configYaml=`
-name: materialize-metric
+name: parse-seconds-metric
 contracts:
   - name: Token
     events:
@@ -19,9 +19,9 @@ chains:
 `,
 )
 
-describe("materialize metric", () => {
+describe("envio_fetching_block_range_parse_seconds", () => {
   // Sources hand back rows, and a batch builds its handler events from them.
-  // That build is the cost the chain reports, now that fetching parses nothing.
+  // That build is the cost the parse metric reports.
   Async.it("accrues the time a batch spends building its events", async t => {
     await scenario->Scenario.run(
       ~sources=[{chain: 1}],

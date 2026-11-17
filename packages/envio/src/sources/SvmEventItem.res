@@ -1,52 +1,54 @@
-let namedAccounts = (
-  ~slots: array<Internal.svmAccountSlot>,
-  ~accountArguments: array<string>,
-  ~programId: string,
-): dict<Envio.svmInstructionAccount> => {
-  let out = Dict.make()
-  slots->Array.forEachWithIndex((slot, i) =>
-    switch (slot, accountArguments->Array.get(i)) {
-    | (Unnamed, _) | (_, None) => ()
-    | (Optional(_), Some(address)) if address === programId => ()
-    | (Required(name), Some(address)) | (Optional(name), Some(address)) =>
-      out->Dict.set(
-        name,
-        {
-          Envio.address: address->SvmTypes.Pubkey.fromStringUnsafe,
-          accountName: name,
-          instructionAccountIndex: i,
-        },
-      )
-    }
-  )
-  out
-}
-
-let selectedLog = (
-  log: SvmHyperSyncClient.Items.log,
-  ~logFields: Utils.Set.t<string>,
-): Envio.svmLog => {
-  let out = Dict.make()
-  if logFields->Utils.Set.has("kind") {
-    switch log.kind->Nullable.toOption {
-    | Some(kind) => out->Dict.set("kind", kind)
-    | None => ()
-    }
+%%private(
+  let namedAccounts = (
+    ~slots: array<Internal.svmAccountSlot>,
+    ~accountArguments: array<string>,
+    ~programId: string,
+  ): dict<Envio.svmInstructionAccount> => {
+    let out = Dict.make()
+    slots->Array.forEachWithIndex((slot, i) =>
+      switch (slot, accountArguments->Array.get(i)) {
+      | (Unnamed, _) | (_, None) => ()
+      | (Optional(_), Some(address)) if address === programId => ()
+      | (Required(name), Some(address)) | (Optional(name), Some(address)) =>
+        out->Dict.set(
+          name,
+          {
+            Envio.address: address->SvmTypes.Pubkey.fromStringUnsafe,
+            accountName: name,
+            instructionAccountIndex: i,
+          },
+        )
+      }
+    )
+    out
   }
-  if logFields->Utils.Set.has("message") {
-    switch log.message->Nullable.toOption {
-    | Some(message) => out->Dict.set("message", message)
-    | None => ()
+
+  let selectedLog = (
+    log: SvmHyperSyncClient.Items.log,
+    ~logFields: Utils.Set.t<string>,
+  ): Envio.svmLog => {
+    let out = Dict.make()
+    if logFields->Utils.Set.has("kind") {
+      switch log.kind->Nullable.toOption {
+      | Some(kind) => out->Dict.set("kind", kind)
+      | None => ()
+      }
     }
+    if logFields->Utils.Set.has("message") {
+      switch log.message->Nullable.toOption {
+      | Some(message) => out->Dict.set("message", message)
+      | None => ()
+      }
+    }
+    out->(Utils.magic: dict<string> => Envio.svmLog)
   }
-  out->(Utils.magic: dict<string> => Envio.svmLog)
-}
 
-let setField = (out: dict<unknown>, name: string, value: 'a) =>
-  out->Dict.set(name, value->(Utils.magic: 'a => unknown))
+  let setField = (out: dict<unknown>, name: string, value: 'a) =>
+    out->Dict.set(name, value->(Utils.magic: 'a => unknown))
+)
 
-// `block` and `transaction` are omitted; they're materialised from the stores
-// at batch prep. Named-account `.activity` is attached then too.
+// `block` and `transaction` are omitted; they're read from the stores when a
+// batch takes the item. Named-account `.activity` is attached then too.
 // Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
   item: SvmHyperSyncClient.Items.item,

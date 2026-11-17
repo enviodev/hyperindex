@@ -1,7 +1,7 @@
 //! Per-chain transaction store: a merge-on-insert `Table` keyed by
 //! (blockNumber, transactionIndex), holding only the selected fields'
 //! columns — a large field (e.g. EVM `input`) never crosses the napi boundary
-//! until an event that selected it is materialised, and never duplicates
+//! until a batch that selected it reads it, and never duplicates
 //! across overlapping partition re-fetches since a key's cell overwrites in
 //! place. SVM account activity lives in a companion table keyed by (slot,
 //! transactionIndex, account) and gathered by (slot, transactionIndex) range.
@@ -10,6 +10,7 @@
 
 use std::sync::Mutex;
 
+use alloy_primitives::U256;
 use anyhow::Result;
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
@@ -19,7 +20,7 @@ use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{
-    encode_address, map_bigint, AccessList as AccessListItem, Authorization as AuthorizationItem,
+    encode_address, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 use crate::field_columns::{
     build_columns, bytes, field_names, Column, Columns, Ecosystem, FieldRead,
@@ -238,7 +239,7 @@ fn decode_evm_field(
         Gas | GasPrice | MaxPriorityFeePerGas | MaxFeePerGas | CumulativeGasUsed
         | EffectiveGasPrice | GasUsed | Nonce | Value | MaxFeePerBlobGas | L1Fee | L1GasPrice
         | L1GasUsed | GasUsedForL1 => {
-            Column::Big(bytes_cells(col, len, |b| Ok(map_bigint(&Some(b))))?)
+            Column::Big(bytes_cells(col, len, |b| Ok(Some(U256::from_be_slice(b))))?)
         }
         V | R | S | YParity => Column::Str(bytes_cells(col, len, |b| Ok(Some(hex_quantity(b))))?),
         Status | Type => Column::I64(u64_cells(col, len, |v| Ok(Some(v as i64)))?),
@@ -349,7 +350,7 @@ fn decode_svm_field(
         }
         Success => Column::Bool(bool_cells(col, len)),
         Fee | ComputeUnitsConsumed => {
-            Column::Big(u64_cells(col, len, |v| Ok(Some(bigint_u64(v))))?)
+            Column::Big(u64_cells(col, len, |v| Ok(Some(U256::from(v))))?)
         }
         AccountActivities => Column::AccountActivities(account_activities.to_vec()),
     })
@@ -573,7 +574,7 @@ impl TransactionStore {
     }
 
     /// Fuel store. Fuel keeps transactions inline, so this store is never merged
-    /// into or materialised through — it exists only because every chain holds one.
+    /// into or read from — it exists only because every chain holds one.
     #[napi(factory)]
     pub fn new_fuel() -> Self {
         Self::with_ecosystem(Ecosystem::Fuel)
@@ -1050,7 +1051,6 @@ mod tests {
         }
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn decode_selected_only_materialises_masked_fields() {
         let store = TransactionStore::new_evm();

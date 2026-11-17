@@ -507,12 +507,11 @@ pub struct LogItem {
     pub message: Option<String>,
 }
 
-/// One routed instruction. Carries everything JS needs to build the handler
-/// payload; the parent transaction and block are materialised from the
-/// per-chain stores at batch prep.
+/// One routed instruction. Its parent transaction and block are read from the
+/// per-chain stores when a batch takes it.
 pub struct EventItem {
     /// The registration this instruction routed to, as passed to the client
-    /// constructor. Instructions that route nowhere never cross the boundary.
+    /// constructor.
     pub on_event_registration_index: i64,
     pub slot: i64,
     pub transaction_index: i64,
@@ -1492,7 +1491,6 @@ mod tests {
         simple::Hash(key(4, slot))
     }
 
-    // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
     #[tokio::test(flavor = "multi_thread")]
     async fn store_keeps_only_the_transactions_and_balances_items_reference() {
         let tx = |slot, index| simple::Transaction {
