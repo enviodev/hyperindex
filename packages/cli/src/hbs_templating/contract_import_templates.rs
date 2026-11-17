@@ -912,7 +912,7 @@ impl AutoSchemaHandlerTemplate {
                 )
             })
             .collect::<Result<_>>()?;
-        let first_chain_id = config.get_chains().first().map(|c| c.id).unwrap_or(1);
+        let first_chain_id = config.chains.values().next().map(|c| c.id).unwrap_or(1);
         Ok(AutoSchemaHandlerTemplate {
             imported_contracts,
             envio_api_token,

@@ -540,7 +540,7 @@ mod test {
                 );
             }
 
-            for chain in config.get_chains() {
+            for chain in config.chains.values() {
                 let DataSource::Svm {
                     hypersync_endpoint_url,
                 } = &chain.sync_source
