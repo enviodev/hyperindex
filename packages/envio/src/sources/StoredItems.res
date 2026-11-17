@@ -82,8 +82,8 @@ type fields = {
     }
 )
 
-// A store's read of a batch's transactions or blocks as one object each. A
-// field a row has no value for is `undefined`, as an absent field.
+// A store's read of a batch's transactions or blocks as one object each,
+// holding the fields a row has a value for.
 %%private(
   let fieldObjects = (
     {
@@ -99,15 +99,17 @@ type fields = {
         ~elementKinds=shape.elementKinds,
         ~rows=shape.rows,
       )
-      columns->Array.forEach(column =>
+      let objects = Array.fromInitializer(~length=shape.rows, _ => Dict.make())
+      columns->Array.forEachWithIndex((column, index) => {
+        let name = shape.names->Array.getUnsafe(index)
         column->Array.forEachWithIndex(
           (value, row) =>
-            if value === %raw(`null`) {
-              column->Array.setUnsafe(row, %raw(`undefined`))
+            if value !== %raw(`null`) {
+              objects->Array.getUnsafe(row)->Dict.set(name, value)
             },
         )
-      )
-      columns->Reading.objects(~names=shape.names, ~rows=shape.rows)
+      })
+      objects
     })
     objects->setNested(~name="accessList", accessList)
     objects->setNested(~name="authorizationList", authorizationList)
@@ -212,16 +214,16 @@ type fieldsToRead = {
         ~elementKinds=rows.items.elementKinds,
         ~rows=rows.items.rows,
       )
-      // In the order `ITEM_COLUMNS` in `event_store.rs` lays them out.
-      let column = Array.getUnsafe(columns, ...)
-      let details = column(0)
-      let blockNumbers = column(1)
-      let logIndexes = column(2)
-      let transactionIndexes = column(3)
-      let registrationIndexes = column(4)
-      let srcAddresses = column(5)
-      let skipped = column(6)
-      let tapePositions = column(7)
+      // Named as `ITEM_COLUMNS` in `event_store.rs`.
+      let column = name => columns->Array.getUnsafe(rows.items.names->Array.indexOf(name))
+      let details = column("detail")
+      let blockNumbers = column("blockNumber")
+      let logIndexes = column("logIndex")
+      let transactionIndexes = column("transactionIndex")
+      let registrationIndexes = column("registrationIndex")
+      let srcAddresses = column("srcAddress")
+      let skipped = column("skipped")
+      let tapePositions = column("tape")
       let params = []
       rows.params->Array.forEach(({registrationIndex, shape}) =>
         params->Array.setUnsafe(
@@ -302,10 +304,11 @@ type fieldsToRead = {
           ~elementKinds=links.elementKinds,
           ~rows=links.rows,
         )
-        // In the order `link_columns` in `event_store.rs` lays them out.
+        // Named as `link_columns` in `event_store.rs`.
+        let column = name => columns->Array.getUnsafe(links.names->Array.indexOf(name))
         {
-          transactionRows: columns->Array.getUnsafe(0),
-          blockRows: columns->Array.getUnsafe(1),
+          transactionRows: column("transactionRow"),
+          blockRows: column("blockRow"),
           transactionKeys: rows.transactionKeys,
           blockKeys: rows.blockKeys,
         }
@@ -332,15 +335,6 @@ let build = (rows, ~context, ~jsItemRegistration) => {
     )
 )
 
-let toItems = (rows: EventStore.storedRows, ~context: context): array<Internal.item> => {
-  let (items, _) = rows->toItemsReading(~context)
-  items
-}
-
-// Removes the first `count` items from the store and returns them.
-let take = (store: EventStore.t, count: int, ~context: context): array<Internal.item> =>
-  store->EventStore.takeRaw(count)->toItems(~context)
-
 // Items with the read that gives them their transactions and blocks before
 // handlers run. Where nothing is read from the stores, they get them now.
 %%private(
@@ -364,10 +358,6 @@ let takeWithFields = (store: EventStore.t, count: int, ~context: context, ~field
   ->EventStore.takeJoinedRaw(count, joinedFields(context, fields))
   ->toItemsReading(~context)
   ->withFields(~fields)
-
-// Every item in the store, which keeps them.
-let allItems = (store: EventStore.t, ~context: context): array<Internal.item> =>
-  store->EventStore.allItemsRaw->toItems(~context)
 
 // The events routed to the given registrations, which the store keeps, with
 // the read that gives them their transactions and blocks.

@@ -278,6 +278,14 @@ impl Rows {
         self.len += chunk.len();
         match self.chunks.back_mut() {
             Some(last) if last.len() < COALESCE_BELOW || chunk.len() < COALESCE_BELOW => {
+                // A chunk batches take from while pages append to it never
+                // drains: once at least half of it is taken rows, it leaves
+                // them behind.
+                if last.start > 0 && last.start * 2 >= last.keys.len() {
+                    let mut kept = Chunk::empty();
+                    kept.extend_from(last, last.start..last.keys.len());
+                    *last = kept;
+                }
                 last.extend_from(&chunk, chunk.start..chunk.keys.len())
             }
             _ => self.chunks.push_back(chunk),
@@ -316,11 +324,30 @@ impl Rows {
                         && chunk.compare(chunk.start, &incoming, last) != Ordering::Greater
                 })
                 .count();
-        let overlapped: Vec<Chunk> = self.chunks.drain(start..end).collect();
-        let stored_len: usize = overlapped.iter().map(Chunk::len).sum();
-        let mut merged = merge_sorted(&overlapped, &incoming);
+        if start == end {
+            // In the gap before the chunk at `start`, overlapping no stored row.
+            self.len += incoming.len();
+            self.chunks.insert(start, incoming);
+            return;
+        }
+        let mut overlapped: Vec<Chunk> = self.chunks.drain(start..end).collect();
+        // The last overlapped chunk's rows past the page stay where they are,
+        // so a page landing near a big chunk's front copies only that front.
+        let mut rest = overlapped.pop().unwrap();
+        let past_page = rest.first_after(&incoming, last);
+        let ranges: Vec<(&Chunk, Range<usize>)> = overlapped
+            .iter()
+            .map(|chunk| (chunk, chunk.start..chunk.keys.len()))
+            .chain(std::iter::once((&rest, rest.start..past_page)))
+            .collect();
+        let stored_len: usize = ranges.iter().map(|(_, rows)| rows.len()).sum();
+        let mut merged = merge_sorted(&ranges, &incoming);
         merged.shrink_to_fit();
         self.len = self.len - stored_len + merged.len();
+        rest.start = past_page;
+        if rest.len() > 0 {
+            self.chunks.insert(start, rest);
+        }
         self.chunks.insert(start, merged);
     }
 
@@ -393,16 +420,16 @@ impl Rows {
     }
 }
 
-/// Merges the sorted, deduplicated rows of `stored`, chunks that follow each
-/// other, with `incoming`'s. On a tie the stored row is kept. Each side is
+/// Merges the sorted, deduplicated rows of `stored`, row ranges of chunks that
+/// follow each other, with `incoming`'s. On a tie the stored row is kept. Each side is
 /// copied a run at a time.
-fn merge_sorted(stored: &[Chunk], incoming: &Chunk) -> Chunk {
+fn merge_sorted(stored: &[(&Chunk, Range<usize>)], incoming: &Chunk) -> Chunk {
     let mut merged = Chunk::empty();
     let mut next = incoming.start;
     let incoming_end = incoming.keys.len();
-    for chunk in stored {
-        let mut row = chunk.start;
-        let end = chunk.keys.len();
+    for (chunk, rows) in stored {
+        let mut row = rows.start;
+        let end = rows.end;
         while row < end {
             if next == incoming_end {
                 merged.extend_from(chunk, row..end);
@@ -596,6 +623,20 @@ impl Chunk {
     fn count_at_or_below(&self, block_number: i64) -> usize {
         let bound = sort_key(block_number + 1, ItemKind::Event, 0);
         self.keys[self.start..].partition_point(|key| *key < bound)
+    }
+
+    /// The first row from `start` on that sorts after `other`'s `row`.
+    fn first_after(&self, other: &Chunk, row: usize) -> usize {
+        let (mut low, mut high) = (self.start, self.keys.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.compare(middle, other, row) == Ordering::Greater {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        low
     }
 
     fn path(&self, row: usize) -> &[i64] {
@@ -1078,11 +1119,9 @@ impl Chunk {
     /// Hands the arenas to JavaScript to read, with the links and keys `joined`
     /// planned for them.
     fn lay_out(mut self, joined: Option<Joined>) -> Result<StoredRows> {
-        if self.start > 0 {
-            let mut rest = Chunk::empty();
-            rest.extend_from(&self, self.start..self.keys.len());
-            self = rest;
-        }
+        // `take` hands over a chunk whole only from its first row, and every
+        // other result is a fresh chunk.
+        debug_assert_eq!(self.start, 0);
         let seal = |columns: &[ColumnRead], arena: &mut Arena| -> Result<ArenaShape> {
             let shape = ArenaShape::of(columns, arena.rows());
             arena.seal(&shape.names)?;
@@ -1492,6 +1531,12 @@ impl EventStore {
                         )))
                     }
                 };
+                if item.block_number < 0 || item.log_index < 0 {
+                    return Err(napi::Error::from_reason(format!(
+                        "an item's block number and log index can't be negative, got {} and {}",
+                        item.block_number, item.log_index
+                    )));
+                }
                 Ok(Row {
                     block_number: item.block_number,
                     kind,
@@ -1577,15 +1622,16 @@ impl EventStore {
         count
     }
 
-    /// Removes the first `count` rows and lays them out for JS.
-    #[napi]
+    /// Removes the first `count` rows and lays them out, with no join.
+    #[cfg(test)]
     pub fn take(&self, count: u32) -> napi::Result<StoredRows> {
         let taken = self.rows().take(count as usize);
         taken.lay_out(None).map_err(to_napi)
     }
 
-    /// `take`, with what each item reads from the chain's transaction and
-    /// block stores planned: its links, and the keys the stores read.
+    /// Removes the first `count` rows and lays them out for JS, with what each
+    /// item reads from the chain's transaction and block stores planned: its
+    /// links, and the keys the stores read.
     #[napi]
     pub fn take_joined(&self, count: u32, fields: JoinedFields) -> napi::Result<StoredRows> {
         let taken = self.rows().take(count as usize);
@@ -1632,36 +1678,50 @@ impl EventStore {
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown rows {handle}")))?;
         let mut buffers = Vec::new();
         for arena in lent.arenas.iter_mut() {
-            let lent_buffers = columnar_js::lend_for_reading(env, arena)?;
-            lent.buffer_counts.push(lent_buffers.len());
-            buffers.extend(lent_buffers);
+            match columnar_js::lend_for_reading(env, arena) {
+                Ok(lent_buffers) => {
+                    lent.buffer_counts.push(lent_buffers.len());
+                    buffers.extend(lent_buffers);
+                }
+                Err(error) => {
+                    // JavaScript never sees this result, so it is freed here,
+                    // with what was lent of it taken back first.
+                    let lent = results.remove(handle).unwrap();
+                    give_back(lent, buffers).ok();
+                    return Err(error);
+                }
+            }
         }
         Ok(buffers)
     }
 
-    /// Takes a result's buffers back and frees it. A result that cannot hand
-    /// them all back still has a JavaScript view into its memory, so that
-    /// memory is abandoned rather than freed.
+    /// Takes a result's buffers back and frees it.
     #[napi]
     pub fn release_rows(handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
-        let mut results = RESULTS.lock().unwrap();
-        let Some(mut lent) = results.remove(handle) else {
+        let Some(lent) = RESULTS.lock().unwrap().remove(handle) else {
             return Ok(());
         };
-        let mut buffers = buffers.into_iter();
-        let mut failure = None;
-        for (arena, count) in lent.arenas.iter_mut().zip(&lent.buffer_counts) {
-            let own: Vec<ArrayBuffer> = buffers.by_ref().take(*count).collect();
-            if let Err(error) = columnar_js::detach_all(arena, own) {
-                failure = Some(error);
-            }
+        give_back(lent, buffers)
+    }
+}
+
+/// Detaches `buffers`, each arena's in turn, and frees the arenas. One that
+/// cannot be detached still has a JavaScript view into its memory, so the
+/// memory is abandoned rather than freed.
+fn give_back(mut lent: Lent, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
+    let mut buffers = buffers.into_iter();
+    let mut failure = None;
+    for (arena, count) in lent.arenas.iter_mut().zip(&lent.buffer_counts) {
+        let own: Vec<ArrayBuffer> = buffers.by_ref().take(*count).collect();
+        if let Err(error) = columnar_js::detach_all(arena, own) {
+            failure = Some(error);
         }
-        match failure {
-            None => Ok(()),
-            Some(error) => {
-                std::mem::forget(lent);
-                Err(error)
-            }
+    }
+    match failure {
+        None => Ok(()),
+        Some(error) => {
+            std::mem::forget(lent);
+            Err(error)
         }
     }
 }
@@ -2133,6 +2193,18 @@ mod tests {
         store
     }
 
+    /// Each stored row's block, in order, runs of one block collapsed into one
+    /// entry per kind.
+    fn blocks_of_rows(store: &EventStore) -> Vec<i64> {
+        let mut blocks: Vec<(i64, bool)> = store
+            .rows()
+            .keys()
+            .map(|key| ((key >> 64) as i64, key & KIND_BIT != 0))
+            .collect();
+        blocks.dedup();
+        blocks.into_iter().map(|(block, _)| block).collect()
+    }
+
     fn blocks_of(rows: Vec<JsValue>) -> Vec<i64> {
         let mut blocks: Vec<i64> = rows
             .iter()
@@ -2171,7 +2243,9 @@ mod tests {
             ),
             (
                 3,
-                3,
+                // The page's rows, with the refetched row of block 5, and the
+                // rest of the chunk of blocks 5 and 6, left where it was.
+                4,
                 6 * COALESCE_BELOW as u32 + 2,
                 (Some(3), 2 * COALESCE_BELOW as u32 + 2),
                 vec![1, 2, 3, 4, 5, 6, 9, 10]
@@ -2188,6 +2262,69 @@ mod tests {
         assert_eq!(
             (taken, store.len(), chunks, blocks_of(take_all(&store))),
             (vec![1, 2], 3 * COALESCE_BELOW as u32 - 1, 2, vec![2, 3, 4])
+        );
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_page_merged_into_a_chunk_s_front_leaves_the_rest_of_it_in_place() {
+        let store = chunked(&[1..3]);
+        store.merge(&EventStore::from_rows(vec![Row::block(1, 0, false)]));
+        let chunks: Vec<(usize, usize)> = store
+            .rows()
+            .chunks
+            .iter()
+            .map(|chunk| (chunk.start, chunk.len()))
+            .collect();
+        assert_eq!(
+            (chunks, blocks_of_rows(&store)),
+            (
+                vec![(0, COALESCE_BELOW + 1), (COALESCE_BELOW, COALESCE_BELOW)],
+                vec![1, 1, 2]
+            )
+        );
+    }
+
+    #[test]
+    fn a_page_between_two_chunks_lands_between_them() {
+        let store = chunked(&[1..3, 5..7]);
+        store.merge(&EventStore::from_rows(vec![event(4, 0, 0, "4-0")]));
+        let chunks = store.rows().chunks.len();
+        assert_eq!(
+            (chunks, blocks_of(take_all(&store))),
+            (3, vec![1, 2, 4, 5, 6])
+        );
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn appending_to_a_mostly_taken_chunk_drops_its_taken_rows() {
+        let store = chunked(&[1..3]);
+        store.take(COALESCE_BELOW as u32 + 1).unwrap();
+        store.merge(&EventStore::from_rows(vec![event(9, 0, 0, "9-0")]));
+        let rows = store.rows();
+        let chunk = (rows.chunks[0].start, rows.chunks[0].keys.len());
+        assert_eq!(chunk, (0, COALESCE_BELOW));
+    }
+
+    #[test]
+    fn a_js_item_at_a_negative_block_is_refused() {
+        let item = |block_number| JsItemInput {
+            kind: 0,
+            block_number,
+            log_index: 0,
+            order_path: None,
+            registration_index: 0,
+            item: JsTape::new(),
+            transaction_index: None,
+            block_from_store: false,
+        };
+        assert_eq!(
+            (
+                EventStore::from_js_items(vec![item(1)]).is_ok(),
+                EventStore::from_js_items(vec![item(-1)]).is_ok()
+            ),
+            (true, false)
         );
     }
 

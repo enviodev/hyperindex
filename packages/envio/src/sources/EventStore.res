@@ -185,9 +185,6 @@ external insertBlockItems: (
 @send
 external readyCount: (t, ~frontier: int, ~targetSize: int, ~fromIndex: int) => int = "readyCount"
 
-// Removes and returns the first rows.
-@send external takeRaw: (t, int) => storedRows = "take"
-
 // Removes and returns the first rows, with the transactions and blocks they
 // read from the chain's stores planned.
 @send external takeJoinedRaw: (t, int, joinedFields) => storedRows = "takeJoined"

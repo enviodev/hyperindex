@@ -161,6 +161,24 @@ describe("A joined take", () => {
     ))
   })
 
+  // A field the store has no value for is left off the object, rather than
+  // set to `undefined`, as on the inline sources.
+  Async.it("leaves a field the store has no value for off the object", async t => {
+    let mask = Evm.eventTransactionFieldMask(Utils.Set.fromArray(["hash"]))
+    let selecting = registration(~index=0, ~transactionMask=mask)
+    let taken = await [makeItem(~registration=selecting, ~blockNumber=1, ~logIndex=0)]->takeJoined(
+      ~registrations=[selecting],
+    )
+    t.expect(
+      rawTx(taken->Array.getUnsafe(0))
+      ->Nullable.toOption
+      ->Option.map(
+        transaction =>
+          transaction->(Utils.magic: Internal.eventTransaction => dict<unknown>)->Dict.keysToArray,
+      ),
+    ).toEqual(Some([]))
+  })
+
   Async.it("shares a transaction between items selecting different fields of it", async t => {
     let first = registration(~index=0, ~transactionMask=2.)
     let second = registration(~index=1, ~transactionMask=4.)

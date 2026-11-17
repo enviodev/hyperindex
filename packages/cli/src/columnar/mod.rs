@@ -666,8 +666,6 @@ impl Arena {
         self.columns[column].elements_mut().write_null(element);
     }
 
-    /// Closes a list row at `elements` written so far, which is where the next
-    /// row's own elements begin.
     pub fn shrink_to_fit(&mut self) {
         self.columns.iter_mut().for_each(Column::shrink_to_fit);
     }
@@ -696,6 +694,8 @@ impl Arena {
         self.rows += rows.len();
     }
 
+    /// Closes a list row at `elements` written so far, which is where the next
+    /// row's own elements begin.
     pub fn end_list_row(&mut self, column: usize, row: usize, elements: usize) {
         match &mut self.columns[column].storage {
             Storage::List { row_ends, .. } => row_ends[row] = elements as u32,
