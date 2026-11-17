@@ -608,6 +608,25 @@ impl Column {
         }
     }
 
+    /// Gives back the room grown ahead of the rows: a text column's data
+    /// keeps only the bytes its rows use. Every vector keeps one slot at
+    /// least, as `sized` gives it, so there is still a buffer to lend.
+    fn shrink_to_fit(&mut self) {
+        self.nulls.shrink_to(1);
+        match &mut self.storage {
+            Storage::Fixed(words) => words.shrink_to(1),
+            Storage::Variable { data, ends } => {
+                data.truncate((ends.last().copied().unwrap_or(0) as usize).max(1));
+                data.shrink_to(1);
+                ends.shrink_to(1);
+            }
+            Storage::List { elements, row_ends } => {
+                elements.shrink_to_fit();
+                row_ends.shrink_to(1);
+            }
+        }
+    }
+
     fn elements_mut(&mut self) -> &mut Column {
         match &mut self.storage {
             Storage::List { elements, .. } => elements,
@@ -649,6 +668,10 @@ impl Arena {
 
     /// Closes a list row at `elements` written so far, which is where the next
     /// row's own elements begin.
+    pub fn shrink_to_fit(&mut self) {
+        self.columns.iter_mut().for_each(Column::shrink_to_fit);
+    }
+
     /// An arena of `other`'s shape holding no rows yet.
     pub fn empty_like(other: &Arena) -> Self {
         Self {
@@ -788,6 +811,52 @@ mod tests {
         arena.set_bytes(0, 0, long.as_bytes());
         arena.seal_for_test().unwrap();
         assert_eq!(arena.columns()[0].str_at(0).unwrap(), long.as_str());
+    }
+
+    #[test]
+    fn shrinking_an_empty_arena_still_leaves_buffers_to_lend() {
+        let mut arena = Arena::new_filled(
+            0,
+            &[
+                ColumnSpec::Scalar(ColumnKind::F64),
+                ColumnSpec::Scalar(ColumnKind::Text),
+            ],
+        );
+        arena.shrink_to_fit();
+        let capacities: Vec<usize> = arena
+            .columns
+            .iter()
+            .flat_map(|column| match &column.storage {
+                Storage::Fixed(words) => vec![words.capacity(), column.nulls.capacity()],
+                Storage::Variable { data, ends } => {
+                    vec![data.capacity(), ends.capacity(), column.nulls.capacity()]
+                }
+                Storage::List { row_ends, .. } => {
+                    vec![row_ends.capacity(), column.nulls.capacity()]
+                }
+            })
+            .map(|capacity| capacity.min(1))
+            .collect();
+        assert_eq!(capacities, vec![1; 5]);
+    }
+
+    #[test]
+    fn shrinking_keeps_only_the_bytes_the_rows_use() {
+        let mut arena = Arena::new_filled(2, &[ColumnSpec::Scalar(ColumnKind::Text)]);
+        arena.set_bytes(0, 0, b"ab");
+        arena.set_bytes(0, 1, b"cde");
+        arena.shrink_to_fit();
+        let Storage::Variable { data, ends } = &arena.columns[0].storage else {
+            panic!("not a text column");
+        };
+        assert_eq!(
+            (
+                data.capacity(),
+                ends.capacity(),
+                arena.columns[0].bytes_at(1)
+            ),
+            (5, 2, &b"cde"[..])
+        );
     }
 
     #[test]

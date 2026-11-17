@@ -192,7 +192,9 @@ impl Rows {
         rows.sort_by(Row::compare);
         rows.dedup_by(|later, kept| kept.compare(later) == Ordering::Equal);
         let mut sorted = Rows::default();
-        sorted.append(Chunk::from_sorted_rows(&rows));
+        let mut chunk = Chunk::from_sorted_rows(&rows);
+        chunk.shrink_to_fit();
+        sorted.append(chunk);
         sorted
     }
 
@@ -276,7 +278,8 @@ impl Rows {
                 .count();
         let overlapped: Vec<Chunk> = self.chunks.drain(start..end).collect();
         let stored_len: usize = overlapped.iter().map(Chunk::len).sum();
-        let merged = merge_sorted(&overlapped, &incoming);
+        let mut merged = merge_sorted(&overlapped, &incoming);
+        merged.shrink_to_fit();
         self.len = self.len - stored_len + merged.len();
         self.chunks.insert(start, merged);
     }
@@ -324,6 +327,7 @@ impl Rows {
                 if kept < chunk.len() {
                     let mut truncated = Chunk::empty();
                     truncated.extend_from(chunk, chunk.start..chunk.start + kept);
+                    truncated.shrink_to_fit();
                     *chunk = truncated;
                 }
                 break;
@@ -521,6 +525,22 @@ impl Chunk {
 
     fn len(&self) -> usize {
         self.keys.len() - self.start
+    }
+
+    /// Gives back what the columns grew ahead of the rows. Worth a copy only
+    /// for a chunk that is kept: a page, a gap-fill merge, a rollback's rest.
+    fn shrink_to_fit(&mut self) {
+        self.keys.shrink_to_fit();
+        self.registrations.shrink_to_fit();
+        self.path_ends.shrink_to_fit();
+        self.path_steps.shrink_to_fit();
+        self.items.shrink_to_fit();
+        for params in self.params.iter_mut().flatten() {
+            params.arena.shrink_to_fit();
+        }
+        self.fuel.shrink_to_fit();
+        self.svm.shrink_to_fit();
+        self.tapes.shrink_to_fit();
     }
 
     fn block_number_at(&self, row: usize) -> i64 {
