@@ -14,17 +14,14 @@ use std::ops::Range;
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::Result;
-use napi::bindgen_prelude::ArrayBuffer;
+use napi::bindgen_prelude::{ArrayBuffer, Float64Array, Uint32Array};
 use napi::Env;
 use napi_derive::napi;
 
-use crate::block_store::BlockStore;
 use crate::columnar::{js as columnar_js, Arena, ColumnSpec};
 use crate::evm_hypersync_source::types::{EvmParams, ParamCell, ParamSchema};
-use crate::field_columns::FieldRows;
 use crate::js_value::JsTape;
 use crate::storage::rows::{ColumnRead, ReadKind};
-use crate::transaction_store::TransactionStore;
 
 /// Which JS conversion a row goes through, chosen by what produced it.
 #[napi]
@@ -962,16 +959,12 @@ impl Chunk {
         );
     }
 
-    /// Which store row each item's transaction and block are, and those rows'
-    /// selected fields, read from the chain's stores. Consecutive items of one
+    /// Which transaction and block each item reads from the chain's stores,
+    /// as its row among the batch's distinct ones, and the keys and selected
+    /// fields of those rows for the stores to read. Consecutive items of one
     /// transaction or block share its row, selecting the union of their
     /// fields; the rows are sorted, so they are consecutive.
-    fn join(
-        &self,
-        transactions: &TransactionStore,
-        blocks: &BlockStore,
-        fields: &JoinedFields,
-    ) -> Result<Joined> {
+    fn join(&self, fields: &JoinedFields) -> Joined {
         let rows = self.start..self.keys.len();
         let mut links = sized_arena(&link_columns(), rows.len(), &[]);
         let (mut transaction_blocks, mut transaction_indexes, mut transaction_masks) =
@@ -1037,43 +1030,53 @@ impl Chunk {
         }
         // With no transaction field selected anywhere in the batch, each item
         // still gets a transaction: an empty object of its own.
-        let transactions = if any_transaction_field {
-            Some(
-                transactions
-                    .columns(
-                        &transaction_blocks,
-                        &transaction_indexes,
-                        &transaction_masks,
-                        fields.should_checksum,
-                    )?
-                    .into_arena()?,
-            )
+        let transaction_keys = if any_transaction_field {
+            Some(TransactionKeys {
+                block_numbers: Float64Array::new(
+                    transaction_blocks
+                        .iter()
+                        .map(|block| *block as f64)
+                        .collect(),
+                ),
+                transaction_indexes: Uint32Array::new(transaction_indexes),
+                masks: Float64Array::new(
+                    transaction_masks.iter().map(|mask| *mask as f64).collect(),
+                ),
+            })
         } else {
             for out in 0..links.rows() {
                 if !links.columns()[link_column::TRANSACTION].is_marked_null(out) {
-                    links.set_f64(link_column::TRANSACTION, out, EMPTY_TRANSACTION);
+                    links.set_f64(link_column::TRANSACTION, out, EMPTY_LINK);
                 }
             }
             None
         };
-        let blocks = if block_numbers.is_empty() {
-            None
+        // The same for blocks: with no block field selected there is nothing to
+        // read, and each item gets an empty block object of its own.
+        let block_keys = if block_masks.iter().any(|mask| *mask != 0) {
+            Some(BlockKeys {
+                block_numbers: Float64Array::new(
+                    block_numbers.iter().map(|block| *block as f64).collect(),
+                ),
+                masks: Float64Array::new(block_masks.iter().map(|mask| *mask as f64).collect()),
+            })
         } else {
-            Some(
-                blocks
-                    .columns(&block_numbers, &block_masks, fields.should_checksum)?
-                    .into_arena()?,
-            )
+            for out in 0..links.rows() {
+                if !links.columns()[link_column::BLOCK].is_marked_null(out) {
+                    links.set_f64(link_column::BLOCK, out, EMPTY_LINK);
+                }
+            }
+            None
         };
-        Ok(Joined {
+        Joined {
             links,
-            transactions,
-            blocks,
-        })
+            transaction_keys,
+            block_keys,
+        }
     }
 
-    /// Hands the arenas to JavaScript to read, with the transactions and blocks
-    /// `joined` read for them.
+    /// Hands the arenas to JavaScript to read, with the links and keys `joined`
+    /// planned for them.
     fn lay_out(mut self, joined: Option<Joined>) -> Result<StoredRows> {
         if self.start > 0 {
             let mut rest = Chunk::empty();
@@ -1101,18 +1104,12 @@ impl Chunk {
         arenas.push(self.fuel);
         let svm = seal(&svm_columns(), &mut self.svm)?;
         arenas.push(self.svm);
-        let (mut links, mut transactions, mut blocks) = (None, None, None);
+        let (mut links, mut transaction_keys, mut block_keys) = (None, None, None);
         if let Some(mut joined) = joined {
             links = Some(seal(&link_columns(), &mut joined.links)?);
             arenas.push(joined.links);
-            if let Some((arena, rows)) = joined.transactions {
-                arenas.push(arena);
-                transactions = Some(rows);
-            }
-            if let Some((arena, rows)) = joined.blocks {
-                arenas.push(arena);
-                blocks = Some(rows);
-            }
+            transaction_keys = joined.transaction_keys;
+            block_keys = joined.block_keys;
         }
 
         let handle = hold(arenas);
@@ -1123,8 +1120,8 @@ impl Chunk {
             fuel,
             svm,
             links,
-            transactions,
-            blocks,
+            transaction_keys,
+            block_keys,
             tapes: self.tapes,
         })
     }
@@ -1173,12 +1170,15 @@ pub struct StoredRows {
     pub params: Vec<ParamsShape>,
     pub fuel: ArenaShape,
     pub svm: ArenaShape,
-    /// For a joined result, each item's row in `transactions` and in `blocks`,
-    /// null when it reads neither from the store; `EMPTY_TRANSACTION` gives
-    /// it an empty transaction object of its own.
+    /// For a joined result, each item's row among the transactions and the
+    /// blocks it reads from the chain's stores, null where it reads none;
+    /// `EMPTY_LINK` gives it an empty object of its own.
     pub links: Option<ArenaShape>,
-    pub transactions: Option<FieldRows>,
-    pub blocks: Option<FieldRows>,
+    /// The keys and selected fields of those transactions, for
+    /// `TransactionStore.readFields`; absent when no item selects any.
+    pub transaction_keys: Option<TransactionKeys>,
+    /// The same of the blocks, for `BlockStore.readFields`.
+    pub block_keys: Option<BlockKeys>,
     pub tapes: Vec<JsTape>,
 }
 
@@ -1196,13 +1196,29 @@ pub struct JoinedFields {
     pub should_checksum: bool,
 }
 
-struct Joined {
-    links: Arena,
-    transactions: Option<(Arena, FieldRows)>,
-    blocks: Option<(Arena, FieldRows)>,
+#[napi(object, object_from_js = false)]
+pub struct TransactionKeys {
+    pub block_numbers: Float64Array,
+    pub transaction_indexes: Uint32Array,
+    /// Field-code masks.
+    pub masks: Float64Array,
 }
 
-const EMPTY_TRANSACTION: f64 = -1.0;
+#[napi(object, object_from_js = false)]
+pub struct BlockKeys {
+    pub block_numbers: Float64Array,
+    /// Field-code masks.
+    pub masks: Float64Array,
+}
+
+struct Joined {
+    links: Arena,
+    transaction_keys: Option<TransactionKeys>,
+    block_keys: Option<BlockKeys>,
+}
+
+/// A link to no store row: the item gets an empty object of its own.
+const EMPTY_LINK: f64 = -1.0;
 
 fn link_columns() -> Vec<ColumnRead> {
     vec![
@@ -1568,18 +1584,12 @@ impl EventStore {
         taken.lay_out(None).map_err(to_napi)
     }
 
-    /// `take`, with each item's transaction and block fields read from the
-    /// chain's stores.
+    /// `take`, with what each item reads from the chain's transaction and
+    /// block stores planned: its links, and the keys the stores read.
     #[napi]
-    pub fn take_joined(
-        &self,
-        count: u32,
-        transactions: &TransactionStore,
-        blocks: &BlockStore,
-        fields: JoinedFields,
-    ) -> napi::Result<StoredRows> {
+    pub fn take_joined(&self, count: u32, fields: JoinedFields) -> napi::Result<StoredRows> {
         let taken = self.rows().take(count as usize);
-        let joined = taken.join(transactions, blocks, &fields).map_err(to_napi)?;
+        let joined = taken.join(&fields);
         taken.lay_out(Some(joined)).map_err(to_napi)
     }
 
@@ -1589,17 +1599,13 @@ impl EventStore {
     pub fn events_of_registrations(
         &self,
         registration_indexes: Vec<i64>,
-        transactions: &TransactionStore,
-        blocks: &BlockStore,
         fields: JoinedFields,
     ) -> napi::Result<StoredRows> {
         let selected = self.rows().select(|chunk, row| {
             chunk.keys[row] & KIND_BIT == 0
                 && registration_indexes.contains(&chunk.registrations[row])
         });
-        let joined = selected
-            .join(transactions, blocks, &fields)
-            .map_err(to_napi)?;
+        let joined = selected.join(&fields);
         selected.lay_out(Some(joined)).map_err(to_napi)
     }
 
@@ -1938,11 +1944,13 @@ mod tests {
         row
     }
 
-    /// Each item's link into the joined transactions and blocks, `None` where
-    /// it reads neither, and the joined arenas' row counts. Frees the result.
+    /// Each item's link into the batch's transactions and blocks, `None` where
+    /// it reads neither, and the transaction and block keys the stores are to
+    /// read. Frees the result.
     type Links = Vec<(Option<f64>, Option<f64>)>;
 
-    fn links_of(rows: StoredRows) -> (Links, Option<u32>, Option<u32>) {
+    #[allow(clippy::type_complexity)]
+    fn links_of(rows: StoredRows) -> (Links, Option<Vec<(i64, u32)>>, Option<Vec<i64>>) {
         let mut lent = RESULTS.lock().unwrap().remove(rows.handle).unwrap();
         let links = lent.arenas.remove(3 + rows.params.len());
         let cell = |column: usize, row: usize| {
@@ -1958,8 +1966,19 @@ mod tests {
                     )
                 })
                 .collect(),
-            rows.transactions.map(|rows| rows.shape.rows),
-            rows.blocks.map(|rows| rows.shape.rows),
+            rows.transaction_keys.map(|keys| {
+                keys.block_numbers
+                    .iter()
+                    .zip(keys.transaction_indexes.iter())
+                    .map(|(block, index)| (*block as i64, *index))
+                    .collect()
+            }),
+            rows.block_keys.map(|keys| {
+                keys.block_numbers
+                    .iter()
+                    .map(|block| *block as i64)
+                    .collect()
+            }),
         )
     }
 
@@ -1967,28 +1986,6 @@ mod tests {
     fn a_joined_take_links_each_item_to_its_transaction_and_block_rows() {
         use crate::block_store::EvmBlockField;
         use crate::transaction_store::EvmTxField;
-        use hypersync_client::simple_types;
-        let transactions = TransactionStore::new_evm();
-        transactions.insert_evm_txs(
-            [(1u64, 0u64), (1, 1), (2, 0)]
-                .into_iter()
-                .map(|(block, index)| simple_types::Transaction {
-                    block_number: Some(block.into()),
-                    transaction_index: Some(index.into()),
-                    ..Default::default()
-                })
-                .collect(),
-        );
-        let blocks = BlockStore::new_evm();
-        blocks.insert_evm_blocks(
-            [1u64, 2]
-                .into_iter()
-                .map(|number| simple_types::Block {
-                    number: Some(number),
-                    ..Default::default()
-                })
-                .collect(),
-        );
         let rows = || {
             EventStore::from_rows(vec![
                 evm_at(1, 0, 0, 0),
@@ -2007,19 +2004,10 @@ mod tests {
         };
         let selected = links_of(
             rows()
-                .take_joined(
-                    u32::MAX,
-                    &transactions,
-                    &blocks,
-                    fields(1 << EvmTxField::TransactionIndex as u32),
-                )
+                .take_joined(u32::MAX, fields(1 << EvmTxField::TransactionIndex as u32))
                 .unwrap(),
         );
-        let none_selected = links_of(
-            rows()
-                .take_joined(u32::MAX, &transactions, &blocks, fields(0))
-                .unwrap(),
-        );
+        let none_selected = links_of(rows().take_joined(u32::MAX, fields(0)).unwrap());
         assert_eq!(
             (
                 selected,
@@ -2036,17 +2024,39 @@ mod tests {
                         (None, Some(1.0)),
                         (None, None),
                     ],
-                    Some(3),
-                    Some(2)
+                    Some(vec![(1, 0), (1, 1), (2, 0)]),
+                    Some(vec![1, 2])
                 ),
                 vec![
-                    Some(EMPTY_TRANSACTION),
-                    Some(EMPTY_TRANSACTION),
-                    Some(EMPTY_TRANSACTION),
-                    Some(EMPTY_TRANSACTION),
+                    Some(EMPTY_LINK),
+                    Some(EMPTY_LINK),
+                    Some(EMPTY_LINK),
+                    Some(EMPTY_LINK),
                     None,
                     None
                 ],
+                None
+            )
+        );
+    }
+
+    #[test]
+    fn a_joined_take_reads_no_block_when_none_of_its_fields_is_selected() {
+        let store = EventStore::from_rows(vec![evm_at(1, 0, 0, 0), Row::block(1, 0, false)]);
+        let fields = JoinedFields {
+            transaction_masks: vec![0.0],
+            event_block_masks: vec![0.0],
+            block_handler_masks: vec![Some(0.0)],
+            should_checksum: false,
+        };
+        assert_eq!(
+            links_of(store.take_joined(u32::MAX, fields).unwrap()),
+            (
+                vec![
+                    (Some(EMPTY_LINK), Some(EMPTY_LINK)),
+                    (None, Some(EMPTY_LINK))
+                ],
+                None,
                 None
             )
         );
@@ -2221,16 +2231,7 @@ mod tests {
             event(4, 0, 4, "dropped by rollback"),
         ]);
         store.rollback(3);
-        let contract_registers = read(
-            store
-                .events_of_registrations(
-                    vec![4],
-                    &TransactionStore::new_evm(),
-                    &BlockStore::new_evm(),
-                    no_fields(),
-                )
-                .unwrap(),
-        );
+        let contract_registers = read(store.events_of_registrations(vec![4], no_fields()).unwrap());
         let first_event = store.first_event_block_number();
         let second = store.block_number_at(1);
         let taken = read(store.take(1).unwrap());

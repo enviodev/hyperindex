@@ -147,6 +147,7 @@ describe("ChainState reorg threshold", () => {
       checkpointItemsCount: [],
       checkpointEventsProcessed: [],
       registeredAddresses: [],
+      fieldReads: [],
     }
 
     cs->ChainState.applyBatchProgress(~batch, ~blockTimestampName="timestamp")

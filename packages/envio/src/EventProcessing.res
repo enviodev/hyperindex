@@ -186,6 +186,7 @@ let processEventBatch = async (~batch: Batch.t, ~runtime: HandlerRuntime.t) => {
     let timeRef = Performance.now()
 
     if batch.items->Utils.Array.notEmpty {
+      let _ = await batch.fieldReads->Array.map(readFields => readFields())->Promise.all
       await batch->preloadBatchOrThrow(~runtime)
     }
 

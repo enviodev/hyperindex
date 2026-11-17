@@ -12,12 +12,15 @@ use anyhow::{Context, Result};
 use hypersync_client::format::{Hash, Hex, Quantity};
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
+use napi::bindgen_prelude::Float64Array;
 use napi_derive::napi;
 use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
-use crate::field_columns::{build_columns, bytes, field_names, Column, Columns, Ecosystem};
+use crate::field_columns::{
+    build_columns, bytes, field_names, Column, Columns, Ecosystem, FieldRead,
+};
 use crate::field_table::{
     bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
     i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Coverage, Table,
@@ -827,6 +830,24 @@ impl BlockStore {
             Ecosystem::Svm => decode_svm_block_columns(&scratch, block_numbers, masks),
             Ecosystem::Fuel => decode_fuel_block_columns(&scratch, block_numbers, masks),
         }
+    }
+
+    /// The selected fields of the blocks a batch's take keyed, read off the JS
+    /// thread.
+    #[napi]
+    pub async fn read_fields(
+        &self,
+        block_numbers: Float64Array,
+        masks: Float64Array,
+        should_checksum: bool,
+    ) -> napi::Result<FieldRead> {
+        let block_numbers: Vec<i64> = block_numbers.iter().map(|block| *block as i64).collect();
+        let masks: Vec<u64> = masks.iter().map(|mask| *mask as u64).collect();
+        tokio::task::block_in_place(|| {
+            self.columns(&block_numbers, &masks, should_checksum)?
+                .hold()
+        })
+        .map_err(map_err)
     }
 
     #[cfg(test)]

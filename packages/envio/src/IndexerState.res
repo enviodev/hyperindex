@@ -917,6 +917,8 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses,
+    // Read already: a run is drained from batches that were processed.
+    fieldReads: [],
   }
 }
 

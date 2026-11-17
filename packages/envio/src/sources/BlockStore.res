@@ -118,6 +118,12 @@ external appendPage: (t, t) => unit = "appendPage"
 @send
 external latestValidBlockFromStore: (t, t, array<int>) => Null.t<int> = "latestValidBlockFromStore"
 
+// The selected fields of the blocks a batch's take keyed, read off the JS
+// thread.
+@send
+external readFields: (t, Float64Array.t, Float64Array.t, bool) => promise<EventStore.fieldRead> =
+  "readFields"
+
 // Drop blocks at or below the given block (already processed), keeping the
 // hashes of blocks at or above `keepHashesFrom` for reorg detection.
 @send external prune: (t, int, ~keepHashesFrom: int) => unit = "prune"

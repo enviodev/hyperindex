@@ -64,6 +64,9 @@ type t = {
   // event, however many items it made.
   checkpointEventsProcessed: array<int>,
   registeredAddresses: array<AddressRows.staged>,
+  // Per chain taken from, the read that gives its items their transactions
+  // and blocks; processing awaits them before any handler runs.
+  fieldReads: array<unit => promise<unit>>,
 }
 
 // What a chain contributed to the batch: items taken off its buffer, and the
@@ -244,6 +247,7 @@ let make = (
   let mutProgressBlockNumberPerChain = Dict.make()
 
   let items = []
+  let fieldReads = []
   let checkpointIds = []
   let checkpointChainIds = []
   let checkpointBlockNumbers = []
@@ -272,12 +276,13 @@ let make = (
     let chainEventsProcessed = ref(0)
     if chainBatchSize > 0 {
       let startedAt = Performance.now()
-      let chainItems =
-        eventStore->StoredItems.take(
+      let (chainItems, readFields) =
+        eventStore->StoredItems.takeWithFields(
           chainBatchSize,
           ~context=chainBeforeBatch.itemContext,
           ~fields=chainBeforeBatch.itemFields,
         )
+      fieldReads->Array.push(readFields)
       chainBeforeBatch.recordMaterialize(Performance.now() -. startedAt)
       for idx in 0 to chainBatchSize - 1 {
         let item = chainItems->Array.getUnsafe(idx)
@@ -387,6 +392,7 @@ let make = (
     checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses: [],
+    fieldReads,
   }
 }
 

@@ -13,18 +13,17 @@ use std::sync::Mutex;
 use anyhow::Result;
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
-use napi::bindgen_prelude::BigInt;
+use napi::bindgen_prelude::{BigInt, Float64Array, Uint32Array};
 use napi_derive::napi;
 use strum::VariantArray;
 
-#[cfg(test)]
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{
     encode_address, map_bigint, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 use crate::field_columns::{
-    build_columns, bytes, field_names, Column, Columns, Ecosystem, SvmAccountActivityOut,
-    SvmAccountTokenOut, SvmLamportsOut,
+    build_columns, bytes, field_names, Column, Columns, Ecosystem, FieldRead,
+    SvmAccountActivityOut, SvmAccountTokenOut, SvmLamportsOut,
 };
 use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
@@ -644,6 +643,30 @@ impl TransactionStore {
                 columns: Vec::new(),
             }),
         }
+    }
+
+    /// The selected fields of the transactions a batch's take keyed, read off
+    /// the JS thread.
+    #[napi]
+    pub async fn read_fields(
+        &self,
+        block_numbers: Float64Array,
+        transaction_indexes: Uint32Array,
+        masks: Float64Array,
+        should_checksum: bool,
+    ) -> napi::Result<FieldRead> {
+        let block_numbers: Vec<i64> = block_numbers.iter().map(|block| *block as i64).collect();
+        let masks: Vec<u64> = masks.iter().map(|mask| *mask as u64).collect();
+        tokio::task::block_in_place(|| {
+            self.columns(
+                &block_numbers,
+                &transaction_indexes,
+                &masks,
+                should_checksum,
+            )?
+            .hold()
+        })
+        .map_err(map_err)
     }
 
     #[cfg(test)]

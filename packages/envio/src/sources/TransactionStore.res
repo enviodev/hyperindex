@@ -68,6 +68,17 @@ external fromJsSvm: (Core.transactionStoreCtor, array<svmTxInput>, array<svmActi
 let fromSvmJs = (transactions: array<svmTxInput>, activities: array<svmActivityInput>): t =>
   Core.getAddon().transactionStore->fromJsSvm(transactions, activities)
 
+// The selected fields of the transactions a batch's take keyed, read off the
+// JS thread.
+@send
+external readFields: (
+  t,
+  Float64Array.t,
+  Uint32Array.t,
+  Float64Array.t,
+  bool,
+) => promise<EventStore.fieldRead> = "readFields"
+
 // Drop transactions for blocks at or below the given block (already processed).
 @send external prune: (t, int) => unit = "prune"
 

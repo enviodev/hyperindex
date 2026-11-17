@@ -28,6 +28,17 @@ type arenaShape = {
 // One registration's EVM log params, a row per log.
 type paramsShape = {registrationIndex: int, shape: arenaShape}
 
+// The transactions a joined take's items read from the chain's store, one
+// each, for `TransactionStore.readFields`.
+type transactionKeys = {
+  blockNumbers: Float64Array.t,
+  transactionIndexes: Uint32Array.t,
+  masks: Float64Array.t,
+}
+
+// The same of the blocks, for `BlockStore.readFields`.
+type blockKeys = {blockNumbers: Float64Array.t, masks: Float64Array.t}
+
 // A batch's transactions or blocks read from the chain's stores: an arena with
 // a row each and a column per selected field, and the nested fields, which
 // have no column shape, beside it.
@@ -38,11 +49,15 @@ type fieldRows = {
   accountActivities?: array<Nullable.t<unknown>>,
 }
 
+// A store's read of a batch's transactions or blocks, behind `handle`.
+type fieldRead = {handle: int, rows: fieldRows}
+
 // Items on their way to JS: the arenas behind `handle` hold `items`, a row per
 // item in processing order, then each registration's `params`, then `fuel` and
-// `svm`; for a joined result, then `links`, each item's row in `transactions`
-// and in `blocks`, and those two. `tapes` holds what has no column shape.
-// `read` lends the arenas and takes them back.
+// `svm`, then for a joined take `links`: each item's row among the
+// transactions and blocks it reads, whose keys `transactionKeys` and
+// `blockKeys` give. `tapes` holds what has no column shape. `read` lends the
+// arenas and takes them back.
 type storedRows = {
   handle: int,
   items: arenaShape,
@@ -51,8 +66,8 @@ type storedRows = {
   fuel: arenaShape,
   svm: arenaShape,
   links?: arenaShape,
-  transactions?: fieldRows,
-  blocks?: fieldRows,
+  transactionKeys?: transactionKeys,
+  blockKeys?: blockKeys,
   tapes: array<unknown>,
 }
 
@@ -173,22 +188,15 @@ external readyCount: (t, ~frontier: int, ~targetSize: int, ~fromIndex: int) => i
 // Removes and returns the first rows.
 @send external takeRaw: (t, int) => storedRows = "take"
 
-// Removes and returns the first rows, with their transactions and blocks read
-// from the chain's stores.
-@send
-external takeJoinedRaw: (t, int, TransactionStore.t, BlockStore.t, joinedFields) => storedRows =
-  "takeJoined"
+// Removes and returns the first rows, with the transactions and blocks they
+// read from the chain's stores planned.
+@send external takeJoinedRaw: (t, int, joinedFields) => storedRows = "takeJoined"
 
 // Copies of the event rows routed to the given registrations, in order, with
-// their transactions and blocks read from the chain's stores.
+// the transactions and blocks they read from the chain's stores planned.
 @send
-external eventsOfRegistrationsRaw: (
-  t,
-  array<int>,
-  TransactionStore.t,
-  BlockStore.t,
-  joinedFields,
-) => storedRows = "eventsOfRegistrations"
+external eventsOfRegistrationsRaw: (t, array<int>, joinedFields) => storedRows =
+  "eventsOfRegistrations"
 
 // Copies of every row, in order.
 @send external allItemsRaw: t => storedRows = "allItems"

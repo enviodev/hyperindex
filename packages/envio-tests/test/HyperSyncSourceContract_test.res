@@ -94,13 +94,13 @@ let responseItems = (response: Source.blockRangeFetchResponse) =>
 
 // A response's items with their transactions and blocks, read from the given
 // stores the way a batch's take reads the chain's.
-let joinedItems = (
+let joinedItems = async (
   response: Source.blockRangeFetchResponse,
   ~transactionStore,
   ~blockStore,
   ~shouldChecksum,
-) =>
-  response.items->StoredItems.take(
+) => {
+  let (items, readFields) = response.items->StoredItems.takeWithFields(
     response.items->EventStore.length,
     ~context={
       chainId: 1->ChainId.fromInt,
@@ -111,6 +111,9 @@ let joinedItems = (
     },
     ~fields={transactionStore, blockStore, shouldChecksum},
   )
+  await readFields()
+  items
+}
 
 let makeSource = (~url, ~lowercaseAddresses=true) => {
   let addressStore = TestAddresses.storeOf(
@@ -323,8 +326,11 @@ describe("HyperSync source contract", () => {
         | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
         | None => ()
         }
-        let items =
-          page->joinedItems(~transactionStore, ~blockStore=page.blockStore, ~shouldChecksum=false)
+        let items = await page->joinedItems(
+          ~transactionStore,
+          ~blockStore=page.blockStore,
+          ~shouldChecksum=false,
+        )
         items
       },
     )
@@ -723,12 +729,11 @@ describe("HyperSync source responses", () => {
         | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
         | None => ()
         }
-        let items =
-          response->joinedItems(
-            ~transactionStore,
-            ~blockStore=response.blockStore,
-            ~shouldChecksum=true,
-          )
+        let items = await response->joinedItems(
+          ~transactionStore,
+          ~blockStore=response.blockStore,
+          ~shouldChecksum=true,
+        )
         let summary = items->Array.map(eventSummary)->Array.getUnsafe(0)
         {
           "param": summary["params"].to->Option.getOrThrow->Address.toString,

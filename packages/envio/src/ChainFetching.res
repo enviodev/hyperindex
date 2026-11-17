@@ -31,9 +31,15 @@ let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) =>
 
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
+  ~readFields: unit => promise<unit>,
   ~runtime: HandlerRuntime.t,
   ~chainState: ChainState.t,
 ) => {
+  // contractRegister handlers can read event.transaction and event.block. The
+  // read is from the chain's stores, which this response's pages have been
+  // merged into by now.
+  await readFields()
+
   // Every run of the response adds into the same registrations, in call order.
   let registrations: array<AddressStore.registration> = []
   let chainLogger = chainState->ChainState.logger
@@ -93,17 +99,46 @@ let rec onQueryResponse = async (
       ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
-    chainState
-    ->ChainState.logger
-    ->Logger.trace(
-      "Finished querying",
-      ~params={
-        "partitionId": query.partitionId,
-        "fromBlock": query.fromBlock,
-        "toBlock": latestFetchedBlockNumber,
-        "numEvents": numEvents,
-      },
-    )
+    let itemContext = chainState->ChainState.itemContext
+    // Taken from the page now, since the handlers run before the page merges
+    // into the chain's store. Their transactions and blocks are read from the
+    // chain's stores once this response's pages have merged into them.
+    let (itemsWithContractRegister, readFields) = switch itemContext->contractRegisterIndexes {
+    | [] => ([], () => Promise.resolve())
+    | registrationIndexes =>
+      page->StoredItems.eventsOfRegistrations(
+        registrationIndexes,
+        ~context=itemContext,
+        ~fields=chainState->ChainState.itemFields,
+      )
+    }
+    let numContractRegisterEvents = itemsWithContractRegister->Array.length
+    if numContractRegisterEvents === 0 {
+      chainState
+      ->ChainState.logger
+      ->Logger.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": numEvents,
+        },
+      )
+    } else {
+      chainState
+      ->ChainState.logger
+      ->Logger.trace(
+        "Finished querying",
+        ~params={
+          "partitionId": query.partitionId,
+          "fromBlock": query.fromBlock,
+          "toBlock": latestFetchedBlockNumber,
+          "numEvents": numEvents,
+          "numContractRegisterEvents": numContractRegisterEvents,
+        },
+      )
+    }
 
     let reorgResult = chainState->ChainState.registerReorgGuard(~blockStore, ~knownHeight)
 
@@ -172,19 +207,6 @@ let rec onQueryResponse = async (
       | None => ()
       }
 
-      // Read from the page, since the handlers run before it merges into the
-      // chain's store, with the transactions and blocks of the chain's stores.
-      let itemContext = chainState->ChainState.itemContext
-      let itemsWithContractRegister = switch itemContext->contractRegisterIndexes {
-      | [] => []
-      | registrationIndexes =>
-        page->StoredItems.eventsOfRegistrations(
-          registrationIndexes,
-          ~context=itemContext,
-          ~fields=chainState->ChainState.itemFields,
-        )
-      }
-
       // Over-fetched events (a merged partition returning an address before its
       // effectiveStartBlock, a wildcard param referencing an address registered
       // after the log's block, or a registration whose own start block is later
@@ -214,6 +236,7 @@ let rec onQueryResponse = async (
       | _ =>
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
+          ~readFields,
           ~runtime,
           ~chainState,
         ) {

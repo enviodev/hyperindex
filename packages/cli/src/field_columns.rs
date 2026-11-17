@@ -191,6 +191,25 @@ pub struct FieldRows {
     pub account_activities: Option<Vec<Option<Vec<SvmAccountActivityOut>>>>,
 }
 
+/// A store's read of a batch's transactions or blocks: the arena behind
+/// `handle`, which `EventStore.lendRows` lends, and its shape.
+#[napi(object, object_from_js = false)]
+pub struct FieldRead {
+    pub handle: u32,
+    pub rows: FieldRows,
+}
+
+impl Columns {
+    /// Lays the columns out and holds the arena for JavaScript to read.
+    pub fn hold(self) -> Result<FieldRead> {
+        let (arena, rows) = self.into_arena()?;
+        Ok(FieldRead {
+            handle: crate::event_store::hold(vec![arena]),
+            rows,
+        })
+    }
+}
+
 /// A JS bigint's decimal text, which `Reading`'s `BigInt` kind parses.
 fn bigint_text(value: &BigInt) -> Result<String> {
     if value.words.len() > 4 {

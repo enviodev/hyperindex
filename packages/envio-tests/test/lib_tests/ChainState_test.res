@@ -238,6 +238,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     checkpointItemsCount: [],
     checkpointEventsProcessed: [],
     registeredAddresses: [],
+    fieldReads: [],
   }
 
   it("seeds density from the first batch's own events/block (no prior density to blend)", t => {

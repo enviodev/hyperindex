@@ -24,6 +24,7 @@ let emptyBatch = (~checkpointId): Batch.t => {
   checkpointItemsCount: [0],
   checkpointEventsProcessed: [0],
   registeredAddresses: [],
+  fieldReads: [],
 }
 
 // Records chain-metadata writes, split by path: idle upsert vs. folded batch write.

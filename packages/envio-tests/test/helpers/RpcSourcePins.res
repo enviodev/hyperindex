@@ -107,12 +107,14 @@ let applyPage = async (
   | Some(page) => transactionStore->TransactionStore.merge(page)
   | None => ()
   }
-  await Promise.resolve()
-  response.items->StoredItems.take(
-    response.items->EventStore.length,
-    ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
-    ~fields={transactionStore, blockStore, shouldChecksum},
-  )
+  let (items, readFields) =
+    response.items->StoredItems.takeWithFields(
+      response.items->EventStore.length,
+      ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
+      ~fields={transactionStore, blockStore, shouldChecksum},
+    )
+  await readFields()
+  items
 }
 
 // The page's own stores back `block` and `transaction`, so the pin resolves
