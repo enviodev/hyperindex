@@ -1520,7 +1520,7 @@ mod tests {
             | (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)))
             as f64;
         let cols = store
-            .materialize(vec![42, 43], vec![7, 7], vec![mask, mask], false)
+            .materialize_columns(vec![42, 43], vec![7, 7], vec![mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1569,7 +1569,7 @@ mod tests {
         let mask =
             (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)) as f64;
         let cols = store
-            .materialize(vec![43], vec![7], vec![mask], false)
+            .materialize_columns(vec![43], vec![7], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "accountActivities") {
@@ -1617,7 +1617,7 @@ mod tests {
         let block_store = take_blocks(&mut resp, None).expect("take blocks");
 
         let txs = store
-            .materialize(
+            .materialize_columns(
                 vec![43],
                 vec![7],
                 vec![(1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32)) as f64],
@@ -1626,7 +1626,7 @@ mod tests {
             .await
             .expect("materialize transactions");
         let blocks = block_store
-            .materialize(
+            .materialize_columns(
                 vec![43],
                 vec![(1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64],
                 false,
@@ -1665,7 +1665,7 @@ mod tests {
 
         let mask = (1u64 << (crate::block_store::SvmBlockField::Hash as u32)) as f64;
         let cols = block_store
-            .materialize(vec![42, 43], vec![mask, mask], false)
+            .materialize_columns(vec![42, 43], vec![mask, mask], false)
             .await
             .expect("materialize");
 

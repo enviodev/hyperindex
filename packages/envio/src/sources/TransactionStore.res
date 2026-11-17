@@ -75,13 +75,18 @@ let fromSvmJs = (transactions: array<svmTxInput>, activities: array<svmActivityI
 // themselves are raw bytes, so a page merged from a differently configured store
 // can't fix it in.
 @send
-external materialize: (
+external materializeRows: (
   t,
   ~blockNumbers: array<int>,
   ~transactionIndices: array<int>,
   ~masks: array<float>,
   ~shouldChecksum: bool,
-) => promise<array<Internal.eventTransaction>> = "materialize"
+) => promise<MaterializedRows.t> = "materialize"
+
+let materialize = async (store, ~blockNumbers, ~transactionIndices, ~masks, ~shouldChecksum) =>
+  (await store->materializeRows(~blockNumbers, ~transactionIndices, ~masks, ~shouldChecksum))
+  ->MaterializedRows.toObjects
+  ->(Utils.magic: array<dict<unknown>> => array<Internal.eventTransaction>)
 
 // Drop transactions for blocks at or below the given block (already processed).
 @send external prune: (t, int) => unit = "prune"

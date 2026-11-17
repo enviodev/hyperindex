@@ -1277,7 +1277,7 @@ mod tests {
         .expect("expected success");
 
         let stored_transaction_hashes = transaction_store
-            .materialize(
+            .materialize_columns(
                 vec![1, 2],
                 vec![0, 0],
                 vec![(1u64 << (crate::transaction_store::EvmTxField::Hash as u32)) as f64; 2],
@@ -1286,7 +1286,7 @@ mod tests {
             .await
             .expect("materialize transactions");
         let stored_block_hashes = block_store
-            .materialize(
+            .materialize_columns(
                 vec![1, 2],
                 vec![(1u64 << (crate::block_store::EvmBlockField::Hash as u32)) as f64; 2],
                 false,

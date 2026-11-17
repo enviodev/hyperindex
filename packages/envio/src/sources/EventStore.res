@@ -46,19 +46,21 @@ type storedRows = {
 @send
 external releaseRowsRaw: (Core.eventStoreCtor, int, array<ArrayBuffer.t>) => unit = "releaseRows"
 
-// Reads the arenas behind `rows` with `f`, then hands their buffers back,
-// whether or not `f` throws. Nothing may keep a view into them.
-let read = (rows: storedRows, f: array<ArrayBuffer.t> => 'a): 'a => {
+// Reads the arenas Rust holds under `handle` with `f`, then hands their
+// buffers back, whether or not `f` throws. Nothing may keep a view into them.
+let readHandle = (handle, f: array<ArrayBuffer.t> => 'a): 'a => {
   let ctor = Core.getAddon().eventStore
-  let buffers = ctor->lendRowsRaw(rows.handle)
+  let buffers = ctor->lendRowsRaw(handle)
   let result = try f(buffers) catch {
   | exn =>
-    ctor->releaseRowsRaw(rows.handle, buffers)
+    ctor->releaseRowsRaw(handle, buffers)
     throw(exn)
   }
-  ctor->releaseRowsRaw(rows.handle, buffers)
+  ctor->releaseRowsRaw(handle, buffers)
   result
 }
+
+let read = (rows: storedRows, f) => readHandle(rows.handle, f)
 
 // A JS-built item with its registration replaced by the registration's index.
 type jsItemInput = {

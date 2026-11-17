@@ -124,12 +124,17 @@ external latestValidBlockFromStore: (t, t, array<int>) => Null.t<int> = "latestV
 // decoded out of the store: the rows themselves are raw bytes, so a page merged
 // from a differently configured store can't fix it in.
 @send
-external materialize: (
+external materializeRows: (
   t,
   ~blockNumbers: array<int>,
   ~masks: array<float>,
   ~shouldChecksum: bool,
-) => promise<array<Internal.eventBlock>> = "materialize"
+) => promise<MaterializedRows.t> = "materialize"
+
+let materialize = async (store, ~blockNumbers, ~masks, ~shouldChecksum) =>
+  (await store->materializeRows(~blockNumbers, ~masks, ~shouldChecksum))
+  ->MaterializedRows.toObjects
+  ->(Utils.magic: array<dict<unknown>> => array<Internal.eventBlock>)
 
 // Drop blocks at or below the given block (already processed), keeping the
 // hashes of blocks at or above `keepHashesFrom` for reorg detection.

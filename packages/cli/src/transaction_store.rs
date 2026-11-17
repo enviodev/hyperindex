@@ -22,8 +22,8 @@ use crate::evm_hypersync_source::types::{
     encode_address, map_bigint, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 use crate::field_columns::{
-    build_columns, bytes, field_names, Column, Columns, Ecosystem, SvmAccountActivityOut,
-    SvmAccountTokenOut, SvmLamportsOut,
+    build_columns, bytes, field_names, Column, Columns, Ecosystem, MaterializedRows,
+    SvmAccountActivityOut, SvmAccountTokenOut, SvmLamportsOut,
 };
 use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
@@ -604,6 +604,21 @@ impl TransactionStore {
         Ok(())
     }
 
+    /// `materialize_columns`, laid out for JavaScript to read.
+    #[napi]
+    pub async fn materialize(
+        &self,
+        block_numbers: Vec<i64>,
+        transaction_indices: Vec<u32>,
+        masks: Vec<f64>,
+        should_checksum: bool,
+    ) -> napi::Result<MaterializedRows> {
+        let columns = self
+            .materialize_columns(block_numbers, transaction_indices, masks, should_checksum)
+            .await?;
+        tokio::task::block_in_place(|| columns.lay_out()).map_err(map_err)
+    }
+
     /// Bulk-materialise transactions in columnar form, one row per
     /// `(block_numbers[i], transaction_indices[i])` key, decoding only the fields
     /// whose bit is set in that row's own `masks[i]`. Per-row masks let each event
@@ -615,8 +630,7 @@ impl TransactionStore {
     /// `block_in_place`. Missing keys yield an empty object. Result is aligned
     /// with input. `should_checksum` is the caller's: rows are stored as raw
     /// bytes, so the only place an address spelling is decided is here.
-    #[napi(ts_return_type = "Promise<object[]>")]
-    pub async fn materialize(
+    pub(crate) async fn materialize_columns(
         &self,
         block_numbers: Vec<i64>,
         transaction_indices: Vec<u32>,
@@ -1047,7 +1061,7 @@ mod tests {
         // Select only `input` via the bitmask.
         let mask = bit(EvmTxField::Input) as f64;
         let cols = store
-            .materialize(vec![1], vec![0], vec![mask], false)
+            .materialize_columns(vec![1], vec![0], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1078,7 +1092,7 @@ mod tests {
         store.insert_evm_txs(vec![tx0, tx1]);
 
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![1, 1],
                 vec![0, 1],
                 vec![
@@ -1115,7 +1129,7 @@ mod tests {
 
         let mask = bit(EvmTxField::TransactionIndex) as f64;
         let cols = store
-            .materialize(vec![9, 1], vec![7, 3], vec![mask, mask], false)
+            .materialize_columns(vec![9, 1], vec![7, 3], vec![mask, mask], false)
             .await
             .expect("materialize");
         match column(&cols, "transactionIndex") {
@@ -1139,7 +1153,7 @@ mod tests {
         // Select only accountKeys.
         let mask = (1u64 << (SvmTxField::AccountKeys as u32)) as f64;
         let cols = store
-            .materialize(vec![5], vec![0], vec![mask], false)
+            .materialize_columns(vec![5], vec![0], vec![mask], false)
             .await
             .expect("materialize");
 
@@ -1176,7 +1190,7 @@ mod tests {
 
         let mask = (1u64 << (SvmTxField::AccountKeys as u32)) as f64;
         let cols = store
-            .materialize(vec![5, 5], vec![0, 1], vec![mask, mask], false)
+            .materialize_columns(vec![5, 5], vec![0, 1], vec![mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1220,7 +1234,7 @@ mod tests {
 
         let mask = svm_mask(SvmTxField::AccountActivities);
         let cols = store
-            .materialize(vec![5, 5, 5], vec![0, 1, 2], vec![mask, mask, mask], false)
+            .materialize_columns(vec![5, 5, 5], vec![0, 1, 2], vec![mask, mask, mask], false)
             .await
             .expect("materialize");
 
@@ -1295,7 +1309,7 @@ mod tests {
         ]);
 
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![5],
                 vec![0],
                 vec![svm_mask(SvmTxField::AccountActivities)],
@@ -1351,7 +1365,7 @@ mod tests {
     async fn account_activities_of_a_missing_transaction_is_empty() {
         let store = TransactionStore::new_svm();
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![5],
                 vec![0],
                 vec![svm_mask(SvmTxField::AccountActivities)],
@@ -1378,7 +1392,7 @@ mod tests {
         let mask = bit(EvmTxField::Nonce) as f64;
         store.prune(10);
         let after_prune = store
-            .materialize(
+            .materialize_columns(
                 vec![10, 20, 30],
                 vec![0, 0, 0],
                 vec![mask, mask, mask],
@@ -1388,7 +1402,7 @@ mod tests {
             .expect("materialize");
         store.rollback(20);
         let after_rollback = store
-            .materialize(
+            .materialize_columns(
                 vec![10, 20, 30],
                 vec![0, 0, 0],
                 vec![mask, mask, mask],
@@ -1420,7 +1434,7 @@ mod tests {
 
     async fn materialized_from(store: &TransactionStore, should_checksum: bool) -> Option<String> {
         let cols = store
-            .materialize(
+            .materialize_columns(
                 vec![1],
                 vec![0],
                 vec![bit(EvmTxField::From) as f64],
@@ -1482,7 +1496,7 @@ mod tests {
 
         let mask = bit(EvmTxField::Input) as f64;
         let cols = persistent
-            .materialize(vec![1], vec![0], vec![mask], false)
+            .materialize_columns(vec![1], vec![0], vec![mask], false)
             .await
             .expect("materialize");
         match column(&cols, "input") {

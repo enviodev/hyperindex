@@ -927,10 +927,7 @@ impl Chunk {
         let svm = seal(&svm_columns(), &mut self.svm)?;
         arenas.push(self.svm);
 
-        let handle = RESULTS.lock().unwrap().insert(Lent {
-            arenas,
-            buffer_counts: Vec::new(),
-        });
+        let handle = hold(arenas);
         Ok(StoredRows {
             handle,
             items,
@@ -953,7 +950,7 @@ pub struct ArenaShape {
 }
 
 impl ArenaShape {
-    fn of(columns: &[ColumnRead], rows: usize) -> Self {
+    pub(crate) fn of(columns: &[ColumnRead], rows: usize) -> Self {
         ArenaShape {
             names: columns.iter().map(|column| column.name.clone()).collect(),
             kinds: columns.iter().map(|column| column.kind as u8).collect(),
@@ -1039,6 +1036,21 @@ impl Results {
 }
 
 static RESULTS: LazyLock<Mutex<Results>> = LazyLock::new(Default::default);
+
+/// Keeps sealed arenas until JavaScript has read them through `lendRows` and
+/// `releaseRows`, by the handle this returns.
+pub(crate) fn hold(arenas: Vec<Arena>) -> u32 {
+    RESULTS.lock().unwrap().insert(Lent {
+        arenas,
+        buffer_counts: Vec::new(),
+    })
+}
+
+/// The arenas `hold` kept under `handle`, freed from the registry.
+#[cfg(test)]
+pub(crate) fn release_held(handle: u32) -> Vec<Arena> {
+    RESULTS.lock().unwrap().remove(handle).unwrap().arenas
+}
 
 const ITEM_COLUMNS: [(&str, ReadKind); 8] = [
     // The row's `RowFormat` in the low `FORMAT_BITS`, and above them its place
