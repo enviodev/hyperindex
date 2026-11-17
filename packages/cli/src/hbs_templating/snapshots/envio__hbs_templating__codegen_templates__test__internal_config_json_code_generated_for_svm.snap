@@ -9,8 +9,9 @@ expression: json
     "postgres": true
   },
   "svm": {
-    "chains": {
-      "7565164": {
+    "chains": [
+      {
+        "name": "7565164",
         "id": 7565164,
         "startBlock": 200000000,
         "hypersync": "https://solana.hypersync.xyz",
@@ -22,7 +23,7 @@ expression: json
           }
         }
       }
-    },
+    ],
     "programs": {
       "TokenMetadata": {
         "abi": null,

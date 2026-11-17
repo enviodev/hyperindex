@@ -10,18 +10,20 @@ expression: json
     "postgres": true
   },
   "evm": {
-    "chains": {
-      "ethereumMainnet": {
+    "chains": [
+      {
+        "name": "ethereumMainnet",
         "id": 1,
         "startBlock": 0,
         "hypersync": "https://myskar.com"
       },
-      "polygon": {
+      {
+        "name": "polygon",
         "id": 137,
         "startBlock": 0,
         "hypersync": "https://137.hypersync.xyz"
       }
-    },
+    ],
     "addressFormat": "checksum"
   },
   "enums": {},

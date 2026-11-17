@@ -10,8 +10,33 @@ expression: json
     "postgres": true
   },
   "evm": {
-    "chains": {
-      "2": {
+    "chains": [
+      {
+        "name": "ethereumMainnet",
+        "id": 1,
+        "startBlock": 0,
+        "rpcs": [
+          {
+            "url": "https://eth.com",
+            "for": "sync",
+            "initialBlockInterval": 10000,
+            "backoffMultiplicative": 0.8,
+            "accelerationAdditive": 2000,
+            "intervalCeiling": 10000,
+            "backoffMillis": 5000,
+            "queryTimeoutMillis": 20000
+          }
+        ],
+        "contracts": {
+          "Contract1": {
+            "addresses": [
+              "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+            ]
+          }
+        }
+      },
+      {
+        "name": "2",
         "id": 2,
         "startBlock": 0,
         "rpcs": [
@@ -43,31 +68,8 @@ expression: json
             ]
           }
         }
-      },
-      "ethereumMainnet": {
-        "id": 1,
-        "startBlock": 0,
-        "rpcs": [
-          {
-            "url": "https://eth.com",
-            "for": "sync",
-            "initialBlockInterval": 10000,
-            "backoffMultiplicative": 0.8,
-            "accelerationAdditive": 2000,
-            "intervalCeiling": 10000,
-            "backoffMillis": 5000,
-            "queryTimeoutMillis": 20000
-          }
-        ],
-        "contracts": {
-          "Contract1": {
-            "addresses": [
-              "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
-            ]
-          }
-        }
       }
-    },
+    ],
     "contracts": {
       "Contract1": {
         "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
