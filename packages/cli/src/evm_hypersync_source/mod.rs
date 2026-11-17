@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Once;
 
 use anyhow::{Context, Result};
@@ -539,6 +538,13 @@ fn push_unique(missing: &mut Vec<String>, name: String) {
     }
 }
 
+/// Keys sorted and deduplicated, looked up by binary search.
+fn sorted_set<T: Ord>(mut keys: Vec<T>) -> Vec<T> {
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
 /// Builds the page's event items and its deduplicated block headers, fills the
 /// page's transaction and block stores, and checks that every requested
 /// block/transaction field came back. Only the blocks and transactions a routed
@@ -565,8 +571,7 @@ fn process_response(
     // Route before touching the joined tables: routing is what decides which
     // blocks and transactions anything will ever read.
     let mut items = Vec::with_capacity(logs.iter().map(Vec::len).sum());
-    let mut referenced_blocks: HashSet<u64> = HashSet::new();
-    let mut referenced_transactions: HashSet<(u64, u32)> = HashSet::new();
+    let mut referenced_transactions: Vec<(u64, u32)> = Vec::new();
     {
         // One read lock for the whole page: registration from the JS thread waits
         // only as long as routing takes.
@@ -591,9 +596,7 @@ fn process_response(
             if routed.is_empty() {
                 continue;
             }
-            let (block_key, _) = flat.transaction_key;
-            referenced_blocks.insert(block_key);
-            referenced_transactions.insert(flat.transaction_key);
+            referenced_transactions.push(flat.transaction_key);
             for routed in routed {
                 items.push(EventItem {
                     log_index: flat.log_index,
@@ -612,7 +615,8 @@ fn process_response(
     // the page's transactions go in as one chunk. A transaction no item
     // references is dropped whole — nothing ever reads its fields, so they
     // aren't validated either.
-    let mut transaction_keys: HashSet<(u64, u32)> = HashSet::new();
+    let referenced_transactions = sorted_set(referenced_transactions);
+    let mut transaction_keys: Vec<(u64, u32)> = Vec::new();
     if !requested_transaction_fields.is_empty() {
         let mut kept: Vec<simple_types::Transaction> = Vec::new();
         for tx in transactions.into_iter().flatten() {
@@ -626,7 +630,7 @@ fn process_response(
                 continue;
             };
             let key = transaction_key(block_number, transaction_index);
-            if !referenced_transactions.contains(&key) {
+            if referenced_transactions.binary_search(&key).is_err() {
                 continue;
             }
             for &field in requested_transaction_fields {
@@ -634,7 +638,7 @@ fn process_response(
                     push_unique(&mut missing, format!("transaction.{}", name));
                 }
             }
-            transaction_keys.insert(key);
+            transaction_keys.push(key);
             kept.push(tx);
         }
         transaction_store.insert_evm_txs(kept);
@@ -643,13 +647,21 @@ fn process_response(
     // The server returns one block per number. Every returned block is
     // validated, items or not, and its number tracked for coverage.
     let returned_blocks: Vec<simple_types::Block> = blocks.into_iter().flatten().collect();
-    let present_block_numbers: HashSet<u64> =
-        returned_blocks.iter().filter_map(|b| b.number).collect();
+    let present_block_numbers =
+        sorted_set(returned_blocks.iter().filter_map(|b| b.number).collect());
+    let transaction_keys = sorted_set(transaction_keys);
 
     // A block a block handler runs on is referenced like one a log routed
     // from. The page asked for every block of the range it covered, so the
     // coverage check below rejects one missing rather than skipping it.
-    referenced_blocks.extend(handler_blocks.iter().map(|item| item.block_number as u64));
+    let referenced_blocks = sorted_set(
+        referenced_transactions
+            .iter()
+            .map(|(block_number, _)| *block_number)
+            .chain(handler_blocks.iter().map(|item| item.block_number as u64))
+            .collect(),
+    );
+    let is_referenced = |number: u64| referenced_blocks.binary_search(&number).is_ok();
 
     // Validate the requested block fields once per distinct block. The
     // always-required number/timestamp/hash back every header, so they are
@@ -657,9 +669,7 @@ fn process_response(
     // ever read through the store, so it is checked only where an item can
     // reach it — same rule as transactions.
     for block in &returned_blocks {
-        let referenced = block
-            .number
-            .is_some_and(|number| referenced_blocks.contains(&number));
+        let referenced = block.number.is_some_and(is_referenced);
         for &field in validated_block_fields {
             if !referenced && !REQUIRED_BLOCK_FIELDS.contains(&field) {
                 continue;
@@ -675,14 +685,14 @@ fn process_response(
     // requested).
     if !validated_block_fields.is_empty() {
         for block_number in &referenced_blocks {
-            if !present_block_numbers.contains(block_number) {
+            if present_block_numbers.binary_search(block_number).is_err() {
                 push_unique(&mut missing, "block".into());
             }
         }
     }
     if !requested_transaction_fields.is_empty() {
         for key in &referenced_transactions {
-            if !transaction_keys.contains(key) {
+            if transaction_keys.binary_search(key).is_err() {
                 push_unique(&mut missing, "transaction".into());
             }
         }
@@ -701,9 +711,7 @@ fn process_response(
     let store_blocks: Vec<simple_types::Block> = returned_blocks
         .into_iter()
         .map(|b| {
-            if b.number
-                .is_some_and(|number| referenced_blocks.contains(&number))
-            {
+            if b.number.is_some_and(is_referenced) {
                 b
             } else {
                 simple_types::Block {

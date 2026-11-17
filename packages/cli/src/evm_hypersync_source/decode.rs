@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use alloy_dyn_abi::{DynSolEvent, DynSolType};
@@ -112,12 +111,12 @@ impl OnEventRegistration {
     }
 }
 
-/// All registrations passed at client construction, keyed by their
-/// chain-scoped index. Holds no routing state itself — a query resolves its
+/// All registrations passed at client construction, at their chain-scoped
+/// index. Holds no routing state itself — a query resolves its
 /// own selection into a `SelectionDecoder` via `selection`.
 #[derive(Clone)]
 pub(crate) struct Decoder {
-    registrations: Arc<HashMap<i64, Arc<OnEventRegistration>>>,
+    registrations: Arc<Vec<Option<Arc<OnEventRegistration>>>>,
     checksummed_addresses: bool,
     /// The chain's address index, shared with the fetch state. Every address
     /// gate reads it; nothing here writes to it.
@@ -131,14 +130,23 @@ impl Decoder {
         address_store: &AddressStore,
     ) -> Result<Self> {
         let handle = address_store.handle();
-        let mut map = HashMap::new();
+        let mut by_index: Vec<Option<Arc<OnEventRegistration>>> = Vec::new();
         {
             let store = handle.read().unwrap();
             for ep in registrations {
                 let parsed = OnEventRegistration::parse(ep, &store, checksum_addresses)
                     .with_context(|| format!("parse registration for {}", ep.event_name))?;
+                let index = usize::try_from(ep.index).with_context(|| {
+                    format!(
+                        "Negative registration index {} for event {}",
+                        ep.index, ep.event_name
+                    )
+                })?;
+                if by_index.len() <= index {
+                    by_index.resize(index + 1, None);
+                }
                 anyhow::ensure!(
-                    map.insert(ep.index, Arc::new(parsed)).is_none(),
+                    by_index[index].replace(Arc::new(parsed)).is_none(),
                     "Duplicate registration index {} for event {}",
                     ep.index,
                     ep.event_name,
@@ -146,7 +154,7 @@ impl Decoder {
             }
         }
         Ok(Self {
-            registrations: Arc::new(map),
+            registrations: Arc::new(by_index),
             checksummed_addresses: checksum_addresses,
             store: handle,
         })
@@ -169,9 +177,12 @@ impl Decoder {
         let mut registrations = registration_indexes
             .iter()
             .map(|id| {
-                let registration = self.registrations.get(id).cloned().with_context(|| {
-                    format!("Unknown registration index {id} in query selection")
-                })?;
+                let registration = usize::try_from(*id)
+                    .ok()
+                    .and_then(|index| self.registrations.get(index).cloned().flatten())
+                    .with_context(|| {
+                        format!("Unknown registration index {id} in query selection")
+                    })?;
                 // A client-filtered contract is queried address-free and holds
                 // no addresses in the partition's set, so the store alone
                 // decides which emitters it accepts.
