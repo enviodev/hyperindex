@@ -262,7 +262,10 @@ and applyQueryResponse = (
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
   // Read before the page merges into the chain's store, which empties it.
-  let firstEventBlockNumber = page->EventStore.firstEventBlockNumber->Null.toOption
+  let firstEventBlockNumber =
+    state->IndexerState.exitAfterFirstEventBlock
+      ? page->EventStore.firstEventBlockNumber->Null.toOption
+      : None
 
   chainState->ChainState.handleQueryResult(
     ~query,

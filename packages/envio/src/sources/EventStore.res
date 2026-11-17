@@ -1,7 +1,7 @@
 // Binding to the Rust `EventStore` napi class: a chain's fetched items, kept
-// in Rust in processing order until a batch takes them. A row holds the
-// source's own item object, which becomes JS only when read. Each fetch
-// response arrives as a page, merged into the chain's store once applied.
+// in Rust in processing order, as columns, until a batch takes them. Each
+// fetch response arrives as a page, merged into the chain's store once
+// applied.
 type t
 
 @send external empty: Core.eventStoreCtor => t = "empty"

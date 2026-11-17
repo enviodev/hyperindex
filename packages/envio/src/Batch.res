@@ -282,8 +282,12 @@ let make = (
           ~context=chainBeforeBatch.itemContext,
           ~fields=chainBeforeBatch.itemFields,
         )
-      fieldReads->Array.push(readFields)
       chainBeforeBatch.recordMaterialize(Performance.now() -. startedAt)
+      fieldReads->Array.push(async () => {
+        let startedAt = Performance.now()
+        await readFields()
+        chainBeforeBatch.recordMaterialize(Performance.now() -. startedAt)
+      })
       for idx in 0 to chainBatchSize - 1 {
         let item = chainItems->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber

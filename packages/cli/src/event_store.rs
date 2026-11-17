@@ -200,8 +200,8 @@ impl Row {
             .then(self.log_index.cmp(&other.log_index))
             .then_with(|| match (&self.order_path, &other.order_path) {
                 // Lexicographic, so a parent instruction `[1]` precedes its
-                // child `[1, 0]`.
-                (Some(a), Some(b)) => a.cmp(b),
+                // child `[1, 0]`. An empty path is no path, as in a chunk.
+                (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => a.cmp(b),
                 _ => Ordering::Equal,
             })
             .then(self.registration_index.cmp(&other.registration_index))
@@ -210,7 +210,8 @@ impl Row {
 
 /// A chunk this short takes the next appended rows into itself rather than
 /// staying beside them, so generated block items and small pages don't pile
-/// up chunks that the positional queries would walk.
+/// up chunks that the positional queries would walk. A longer one is left as
+/// it is: growing it would reallocate every column.
 const COALESCE_BELOW: usize = 1024;
 
 /// Rows in processing order, deduplicated, as sorted chunks that don't
@@ -277,7 +278,7 @@ impl Rows {
         }
         self.len += chunk.len();
         match self.chunks.back_mut() {
-            Some(last) if last.len() < COALESCE_BELOW || chunk.len() < COALESCE_BELOW => {
+            Some(last) if last.len() < COALESCE_BELOW => {
                 // A chunk batches take from while pages append to it never
                 // drains: once at least half of it is taken rows, it leaves
                 // them behind.
@@ -331,24 +332,62 @@ impl Rows {
             return;
         }
         let mut overlapped: Vec<Chunk> = self.chunks.drain(start..end).collect();
-        // The last overlapped chunk's rows past the page stay where they are,
-        // so a page landing near a big chunk's front copies only that front.
-        let mut rest = overlapped.pop().unwrap();
-        let past_page = rest.first_after(&incoming, last);
+        // The first overlapped chunk's rows before the page and the last one's
+        // rows past it stay where they are, so a merge copies only the rows the
+        // page lands among. Where both sides are one chunk, the smaller side is
+        // copied with them.
+        let first_chunk = &overlapped[0];
+        let last_chunk = &overlapped[overlapped.len() - 1];
+        let before_page = first_chunk.first_not_before(&incoming, first);
+        let past_page = last_chunk.first_after(&incoming, last);
+        let (keep_front, keep_back) = if overlapped.len() == 1 {
+            let front = before_page - first_chunk.start;
+            let back = last_chunk.keys.len() - past_page;
+            (front > back, front <= back)
+        } else {
+            (true, true)
+        };
+        let count = overlapped.len();
         let ranges: Vec<(&Chunk, Range<usize>)> = overlapped
             .iter()
-            .map(|chunk| (chunk, chunk.start..chunk.keys.len()))
-            .chain(std::iter::once((&rest, rest.start..past_page)))
+            .enumerate()
+            .map(|(index, chunk)| {
+                let from = if index == 0 && keep_front {
+                    before_page
+                } else {
+                    chunk.start
+                };
+                let to = if index == count - 1 && keep_back {
+                    past_page
+                } else {
+                    chunk.keys.len()
+                };
+                (chunk, from..to)
+            })
             .collect();
         let stored_len: usize = ranges.iter().map(|(_, rows)| rows.len()).sum();
         let mut merged = merge_sorted(&ranges, &incoming);
         merged.shrink_to_fit();
         self.len = self.len - stored_len + merged.len();
-        rest.start = past_page;
-        if rest.len() > 0 {
-            self.chunks.insert(start, rest);
+
+        let mut kept = Vec::new();
+        let mut back = overlapped.pop().unwrap();
+        let mut front = overlapped.into_iter().next();
+        if keep_back {
+            back.start = past_page;
         }
-        self.chunks.insert(start, merged);
+        if keep_front {
+            let front = front.get_or_insert_with(|| std::mem::replace(&mut back, Chunk::empty()));
+            front.truncate(before_page);
+        }
+        kept.extend(front.filter(|chunk| chunk.len() > 0));
+        kept.push(merged);
+        if back.len() > 0 {
+            kept.push(back);
+        }
+        for (offset, chunk) in kept.into_iter().enumerate() {
+            self.chunks.insert(start + offset, chunk);
+        }
     }
 
     /// Removes the first `count` rows. A chunk taken whole from its first row
@@ -598,6 +637,48 @@ impl Chunk {
         self.keys.len() - self.start
     }
 
+    /// Drops every row from `at` on, and what only they held of the format
+    /// arenas. Their tapes stay until the chunk goes.
+    fn truncate(&mut self, at: usize) {
+        // A format's arena rows run in item order, so the first dropped item
+        // of a format says where that arena's kept rows end.
+        let mut params_ends: Vec<Option<usize>> = vec![None; self.params.len()];
+        let (mut fuel_end, mut svm_end) = (None, None);
+        for row in at..self.keys.len() {
+            let detail_row = self.detail_row_at(row);
+            match self.format_at(row) {
+                format if format == RowFormat::EvmLog as u8 => {
+                    params_ends[self.registrations[row] as usize].get_or_insert(detail_row);
+                }
+                format if format == RowFormat::FuelReceipt as u8 => {
+                    fuel_end.get_or_insert(detail_row);
+                }
+                format if format == RowFormat::SvmInstruction as u8 => {
+                    svm_end.get_or_insert(detail_row);
+                }
+                _ => {}
+            }
+        }
+        for (params, end) in self.params.iter_mut().zip(params_ends) {
+            if let (Some(params), Some(end)) = (params, end) {
+                params.arena.truncate(end);
+            }
+        }
+        if let Some(end) = fuel_end {
+            self.fuel.truncate(end);
+        }
+        if let Some(end) = svm_end {
+            self.svm.truncate(end);
+        }
+        self.keys.truncate(at);
+        self.registrations.truncate(at);
+        self.reads.truncate(at);
+        self.path_ends.truncate(at);
+        self.path_steps
+            .truncate(self.path_ends.last().copied().unwrap_or(0) as usize);
+        self.items.truncate(at);
+    }
+
     /// Gives back what the columns grew ahead of the rows. Worth a copy only
     /// for a chunk that is kept: a page, a gap-fill merge, a rollback's rest.
     fn shrink_to_fit(&mut self) {
@@ -623,6 +704,20 @@ impl Chunk {
     fn count_at_or_below(&self, block_number: i64) -> usize {
         let bound = sort_key(block_number + 1, ItemKind::Event, 0);
         self.keys[self.start..].partition_point(|key| *key < bound)
+    }
+
+    /// The first row from `start` on that doesn't sort before `other`'s `row`.
+    fn first_not_before(&self, other: &Chunk, row: usize) -> usize {
+        let (mut low, mut high) = (self.start, self.keys.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.compare(middle, other, row) == Ordering::Less {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
     }
 
     /// The first row from `start` on that sorts after `other`'s `row`.
@@ -1151,7 +1246,7 @@ impl Chunk {
             block_keys = joined.block_keys;
         }
 
-        let handle = hold(arenas);
+        let handle = hold(arenas)?;
         Ok(StoredRows {
             handle,
             items,
@@ -1199,9 +1294,10 @@ pub struct ParamsShape {
 
 /// Items on their way to JS. The arenas behind `handle` hold `items`, one row
 /// per item in processing order; then each registration's EVM `params`; then
-/// `fuel` and `svm`, the whole item record of each such row. `tapes` carries
-/// what has no column shape. `EventStore.lendRows` lends the arenas' buffers
-/// in that order, and `EventStore.releaseRows` takes them back.
+/// `fuel` and `svm`, the whole item record of each such row; then, for a
+/// joined take, `links`. `tapes` carries what has no column shape.
+/// `EventStore.lendRows` lends the arenas' buffers in that order, and
+/// `EventStore.releaseRows` takes them back.
 #[napi(object, object_from_js = false)]
 pub struct StoredRows {
     pub handle: u32,
@@ -1291,16 +1387,25 @@ struct Results {
 const SLOT_BITS: u32 = 16;
 
 impl Results {
-    fn insert(&mut self, lent: Lent) -> u32 {
-        let slot = self.free.pop().unwrap_or_else(|| {
-            self.slots.push((0, None));
-            (self.slots.len() - 1) as u32
-        });
+    fn insert(&mut self, lent: Lent) -> Result<u32> {
+        let slot = match self.free.pop() {
+            Some(slot) => slot,
+            None => {
+                if self.slots.len() >= 1 << SLOT_BITS {
+                    anyhow::bail!(
+                        "{} results are waiting to be read, more than handles can address",
+                        self.slots.len()
+                    );
+                }
+                self.slots.push((0, None));
+                (self.slots.len() - 1) as u32
+            }
+        };
         let (generation, entry) = &mut self.slots[slot as usize];
         // Never zero, so no handle is 0.
         *generation = (*generation % ((1 << (32 - SLOT_BITS)) - 1)) + 1;
         *entry = Some(lent);
-        (*generation << SLOT_BITS) | slot
+        Ok((*generation << SLOT_BITS) | slot)
     }
 
     fn entry(&mut self, handle: u32) -> Option<&mut Option<Lent>> {
@@ -1326,7 +1431,7 @@ static RESULTS: LazyLock<Mutex<Results>> = LazyLock::new(Default::default);
 
 /// Keeps sealed arenas until JavaScript has read them through `lendRows` and
 /// `releaseRows`, by the handle this returns.
-pub(crate) fn hold(arenas: Vec<Arena>) -> u32 {
+pub(crate) fn hold(arenas: Vec<Arena>) -> Result<u32> {
     RESULTS.lock().unwrap().insert(Lent {
         arenas,
         buffer_counts: Vec::new(),
@@ -1668,8 +1773,7 @@ impl EventStore {
         self.rows().rollback(target_block_number);
     }
 
-    /// Every buffer of a laid-out result's arenas, in order: the items, then
-    /// each registration's params.
+    /// Every buffer of a held result's arenas, in the order they were held.
     #[napi]
     pub fn lend_rows<'env>(env: &'env Env, handle: u32) -> napi::Result<Vec<ArrayBuffer<'env>>> {
         let mut results = RESULTS.lock().unwrap();
@@ -1920,6 +2024,46 @@ mod tests {
     }
 
     #[test]
+    fn a_page_inside_a_chunk_keeps_the_formats_of_the_rows_before_it() {
+        let fuel = |block_number: i64, tag: &str| {
+            Row::event(
+                block_number,
+                1,
+                None,
+                3,
+                RowData::FuelReceipt {
+                    tx_id: tag.into(),
+                    src_address: "0xfuel".into(),
+                    params: tagged(tag),
+                },
+            )
+        };
+        let store = EventStore::from_rows(vec![
+            evm(1, 0, "1"),
+            fuel(1, "fuel 1"),
+            evm(2, 0, "2"),
+            fuel(2, "fuel 2"),
+            evm(4, 0, "4"),
+        ]);
+        store.merge(&EventStore::from_rows(vec![evm(3, 1, "3")]));
+        let chunks = store.rows().chunks.len();
+        assert_eq!(
+            (chunks, describe(store.take(u32::MAX).unwrap())),
+            (
+                2,
+                vec![
+                    "evm 1 r0 1 Str(\"1 list\")".to_string(),
+                    "fuel 1 fuel 1 Str(\"fuel 1\")".to_string(),
+                    "evm 2 r0 2 Str(\"2 list\")".to_string(),
+                    "fuel 2 fuel 2 Str(\"fuel 2\")".to_string(),
+                    "evm 3 r1 3 Str(\"3 list\")".to_string(),
+                    "evm 4 r0 4 Str(\"4 list\")".to_string(),
+                ]
+            )
+        );
+    }
+
+    #[test]
     fn merges_and_partial_takes_carry_each_format_s_details_and_tapes() {
         let svm_row = |block_number: i64, path: &[i64], program: &str| {
             Row::event(
@@ -2129,9 +2273,9 @@ mod tests {
             buffer_counts: Vec::new(),
         };
         let mut results = Results::default();
-        let first = results.insert(lent());
+        let first = results.insert(lent()).unwrap();
         results.remove(first);
-        let second = results.insert(lent());
+        let second = results.insert(lent()).unwrap();
         assert_eq!(
             (
                 first & ((1 << SLOT_BITS) - 1) == second & ((1 << SLOT_BITS) - 1),
@@ -2283,6 +2427,53 @@ mod tests {
                 vec![1, 1, 2]
             )
         );
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_page_inside_a_chunk_copies_only_its_smaller_side() {
+        let store = chunked(&[1..3]);
+        store.merge(&EventStore::from_rows(vec![event(2, 5, 1, "2-5 again")]));
+        let chunks: Vec<(usize, usize)> = store
+            .rows()
+            .chunks
+            .iter()
+            .map(|chunk| (chunk.start, chunk.len()))
+            .collect();
+        assert_eq!(
+            chunks,
+            vec![(0, COALESCE_BELOW + 6), (0, COALESCE_BELOW - 6 + 1)]
+        );
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_small_page_after_a_big_chunk_starts_its_own() {
+        let store = chunked(&[1..3]);
+        store.merge(&EventStore::from_rows(vec![event(9, 0, 0, "9-0")]));
+        let chunks = store.rows().chunks.len();
+        assert_eq!(chunks, 2);
+    }
+
+    #[test]
+    fn an_empty_svm_path_orders_the_same_within_a_page_and_across_pages() {
+        let within = EventStore::from_rows(vec![svm(7, 3, &[], "empty"), svm(7, 3, &[0], "child")]);
+        let across = EventStore::from_rows(vec![svm(7, 3, &[], "empty")]);
+        across.merge(&EventStore::from_rows(vec![svm(7, 3, &[0], "child")]));
+        assert_eq!(take_all(&within), take_all(&across));
+    }
+
+    #[test]
+    fn the_result_registry_refuses_more_results_than_its_handles_address() {
+        let lent = || Lent {
+            arenas: Vec::new(),
+            buffer_counts: Vec::new(),
+        };
+        let mut results = Results::default();
+        for _ in 0..(1 << SLOT_BITS) {
+            results.insert(lent()).unwrap();
+        }
+        assert!(results.insert(lent()).is_err());
     }
 
     #[test]

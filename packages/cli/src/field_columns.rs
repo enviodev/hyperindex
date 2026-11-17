@@ -204,7 +204,7 @@ impl Columns {
     pub fn hold(self) -> Result<FieldRead> {
         let (arena, rows) = self.into_arena()?;
         Ok(FieldRead {
-            handle: crate::event_store::hold(vec![arena]),
+            handle: crate::event_store::hold(vec![arena])?,
             rows,
         })
     }

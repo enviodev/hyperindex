@@ -608,6 +608,17 @@ impl Column {
         }
     }
 
+    /// Drops every row from `rows` on. What they held past the kept rows'
+    /// ends stays allocated until the column is shrunk.
+    fn truncate(&mut self, rows: usize) {
+        self.nulls.truncate(rows);
+        match &mut self.storage {
+            Storage::Fixed(words) => words.truncate(rows),
+            Storage::Variable { ends, .. } => ends.truncate(rows),
+            Storage::List { row_ends, .. } => row_ends.truncate(rows),
+        }
+    }
+
     /// Gives back the room grown ahead of the rows: a text column's data
     /// keeps only the bytes its rows use. Every vector keeps one slot at
     /// least, as `sized` gives it, so there is still a buffer to lend.
@@ -664,6 +675,14 @@ impl Arena {
 
     pub fn mark_element_null(&mut self, column: usize, element: usize) {
         self.columns[column].elements_mut().write_null(element);
+    }
+
+    /// Drops every row from `rows` on.
+    pub fn truncate(&mut self, rows: usize) {
+        for column in &mut self.columns {
+            column.truncate(rows);
+        }
+        self.rows = rows;
     }
 
     pub fn shrink_to_fit(&mut self) {
