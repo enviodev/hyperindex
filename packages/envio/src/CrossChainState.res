@@ -24,11 +24,13 @@ type t = {
   mutable holdRealtime: bool,
 }
 
-// The whole-indexer fetch buffer pool, independent of chain count.
+// The whole-indexer fetch buffer pool, independent of chain count. A buffered
+// item in Rust's event store takes under half the memory it did as a JS
+// object, so this holds twice the JS buffer's 100,000 for about 10% more RAM.
 let calculateTargetBufferSize = () =>
   switch Env.targetBufferSize {
   | Some(size) => size
-  | None => 100_000
+  | None => 200_000
   }
 
 let make = (
