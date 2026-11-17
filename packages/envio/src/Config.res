@@ -213,6 +213,7 @@ let startBlockSchema = S.union([
 
 let publicConfigChainSchema = S.schema(s =>
   {
+    "name": s.matches(S.string),
     "id": s.matches(ChainId.schema),
     "startBlock": s.matches(startBlockSchema),
     "endBlock": s.matches(S.option(S.int)),
@@ -285,7 +286,7 @@ let contractConfigSchema = S.schema(s =>
 
 let publicConfigEcosystemSchema = S.schema(s =>
   {
-    "chains": s.matches(S.dict(publicConfigChainSchema)),
+    "chains": s.matches(S.array(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     // SVM-only alias: programs are the SVM analog of EVM/Fuel contracts.
     // Parsed via the same `contractConfigSchema` and read in `fromPublic`'s
@@ -298,7 +299,7 @@ type addressFormat = | @as("lowercase") Lowercase | @as("checksum") Checksum
 
 let publicConfigEvmSchema = S.schema(s =>
   {
-    "chains": s.matches(S.dict(publicConfigChainSchema)),
+    "chains": s.matches(S.array(publicConfigChainSchema)),
     "contracts": s.matches(S.option(S.dict(contractConfigSchema))),
     "addressFormat": s.matches(S.option(S.enum([Lowercase, Checksum]))),
     "globalBlockFields": s.matches(S.option(S.array(Internal.evmBlockFieldSchema))),
@@ -937,168 +938,165 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 
   // Build chains from JSON config (no more codegenChains)
-  let chains =
-    publicChainsConfig
-    ->Dict.keysToArray
-    ->Array.map(chainName => {
-      let publicChainConfig = publicChainsConfig->Dict.getUnsafe(chainName)
-      let chainId = publicChainConfig["id"]
+  let chains = publicChainsConfig->Array.map(publicChainConfig => {
+    let chainName = publicChainConfig["name"]
+    let chainId = publicChainConfig["id"]
 
-      let chainContracts = publicChainConfig["contracts"]->Option.getOr(Dict.make())
-      let contracts =
-        contractDataByName
-        ->Dict.toArray
-        // Svm programs are defined once for the project and placed per chain by
-        // `program_id`. A program the config left off this chain has nothing to
-        // index here, and no dynamic registration can add it later.
-        ->Array.filter(((capitalizedName, _)) =>
-          switch ecosystemName {
-          | Ecosystem.Svm => chainContracts->Dict.get(capitalizedName)->Option.isSome
-          | _ => true
-          }
+    let chainContracts = publicChainConfig["contracts"]->Option.getOr(Dict.make())
+    let contracts =
+      contractDataByName
+      ->Dict.toArray
+      // Svm programs are defined once for the project and placed per chain by
+      // `program_id`. A program the config left off this chain has nothing to
+      // index here, and no dynamic registration can add it later.
+      ->Array.filter(((capitalizedName, _)) =>
+        switch ecosystemName {
+        | Ecosystem.Svm => chainContracts->Dict.get(capitalizedName)->Option.isSome
+        | _ => true
+        }
+      )
+      ->Array.map(((capitalizedName, contractData)) => {
+        let chainContract = chainContracts->Dict.get(capitalizedName)
+        let rawAddresses =
+          chainContract
+          ->Option.flatMap(cc => cc["addresses"])
+          ->Option.getOr([])
+        let addresses = rawAddresses->Array.map(Address.unsafeFromString)
+        let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
+
+        // Build event definitions from JSON (field selections resolved
+        // inline). Handlers and per-chain `where` filters are layered on
+        // later as `onEventRegistration`s in `ChainState.makeInternal`.
+        let events = buildContractEvents(
+          ~contractName=capitalizedName,
+          ~events=contractData["events"],
+          ~abi=contractData["abi"],
+          ~chainId,
+          ~addresses=rawAddresses,
+          ~svmDefinedTypes=contractData["svmAbi"]
+          ->Option.map(a => a["definedTypes"])
+          ->Option.getOr(JSON.Null),
         )
-        ->Array.map(((capitalizedName, contractData)) => {
-          let chainContract = chainContracts->Dict.get(capitalizedName)
-          let rawAddresses =
-            chainContract
-            ->Option.flatMap(cc => cc["addresses"])
-            ->Option.getOr([])
-          let addresses = rawAddresses->Array.map(Address.unsafeFromString)
-          let startBlock = chainContract->Option.flatMap(cc => cc["startBlock"])
 
-          // Build event definitions from JSON (field selections resolved
-          // inline). Handlers and per-chain `where` filters are layered on
-          // later as `onEventRegistration`s in `ChainState.makeInternal`.
-          let events = buildContractEvents(
-            ~contractName=capitalizedName,
-            ~events=contractData["events"],
-            ~abi=contractData["abi"],
-            ~chainId,
-            ~addresses=rawAddresses,
-            ~svmDefinedTypes=contractData["svmAbi"]
-            ->Option.map(a => a["definedTypes"])
-            ->Option.getOr(JSON.Null),
-          )
-
-          {
-            name: capitalizedName,
-            abi: contractData["abi"],
-            addresses,
-            events,
-            startBlock,
-          }
-        })
-
-      // One address listed twice for the same contract would violate the
-      // (chainId, address, contract) primary key of envio_addresses with an
-      // opaque Postgres error — fail fast instead. Two contracts may share an
-      // address: each indexes it with its own events. parseAddress already
-      // canonicalizes casing (checksum or lowercase), so an exact match
-      // catches case variants too.
-      let seen = Utils.Set.make()
-      contracts->Array.forEach(contract => {
-        contract.addresses->Array.forEach(
-          address => {
-            let addressString = address->Address.toString
-            let key = contract.name ++ "-" ++ addressString
-            if seen->Utils.Set.has(key) {
-              JsError.throwWithMessage(
-                `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->ChainId.toString}. Please remove the duplicate from your config.`,
-              )
-            }
-            seen->Utils.Set.add(key)->ignore
-          },
-        )
+        {
+          name: capitalizedName,
+          abi: contractData["abi"],
+          addresses,
+          events,
+          startBlock,
+        }
       })
 
-      let sourceConfig = switch ecosystemName {
-      | Ecosystem.Evm =>
-        let rpcs =
-          publicChainConfig["rpcs"]
-          ->Option.getOr([])
-          ->Array.map((rpcConfig): evmRpcConfig => {
-            let initialBlockInterval = rpcConfig["initialBlockInterval"]
-            let backoffMultiplicative = rpcConfig["backoffMultiplicative"]
-            let accelerationAdditive = rpcConfig["accelerationAdditive"]
-            let intervalCeiling = rpcConfig["intervalCeiling"]
-            let backoffMillis = rpcConfig["backoffMillis"]
-            let queryTimeoutMillis = rpcConfig["queryTimeoutMillis"]
-            let fallbackStallTimeout = rpcConfig["fallbackStallTimeout"]
-            let pollingInterval = rpcConfig["pollingInterval"]
-            let hasSyncConfig =
-              initialBlockInterval->Option.isSome ||
-              backoffMultiplicative->Option.isSome ||
-              accelerationAdditive->Option.isSome ||
-              intervalCeiling->Option.isSome ||
-              backoffMillis->Option.isSome ||
-              queryTimeoutMillis->Option.isSome ||
-              fallbackStallTimeout->Option.isSome ||
-              pollingInterval->Option.isSome
-            let syncConfig: option<sourceSyncOptions> = if hasSyncConfig {
-              Some({
-                ?initialBlockInterval,
-                ?backoffMultiplicative,
-                ?accelerationAdditive,
-                ?intervalCeiling,
-                ?backoffMillis,
-                ?queryTimeoutMillis,
-                ?fallbackStallTimeout,
-                ?pollingInterval,
-              })
-            } else {
-              None
-            }
-            {
-              url: rpcConfig["url"],
-              sourceFor: parseRpcSourceFor(rpcConfig["for"]),
-              syncConfig,
-              ws: rpcConfig["ws"],
-              headers: rpcConfig["headers"],
-            }
-          })
-        EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
-      | Ecosystem.Fuel =>
-        switch publicChainConfig["hypersync"] {
-        | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})
-        | None =>
-          JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
-        }
-      | Ecosystem.Svm =>
-        switch publicChainConfig["hypersync"] {
-        | Some(hypersync) => SvmSourceConfig({hypersync: hypersync})
-        | None =>
-          JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
-        }
-      }
-
-      {
-        name: chainName,
-        id: chainId,
-        ecosystem: ecosystemName,
-        startBlock: publicChainConfig["startBlock"],
-        endBlock: ?publicChainConfig["endBlock"],
-        maxReorgDepth: switch ecosystemName {
-        // One less than the 200 blocks behind the head a source checks for a
-        // lagging node, so the backfill, which stops one block below the window,
-        // ends exactly where those checks begin.
-        | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(199)
-        // Tower BFT roots a block once 32 votes lock it in (MAX_LOCKOUT_HISTORY
-        // is 31, plus the slot itself), which is what `finalized` waits for — so
-        // 32 is the protocol's own bound on how far a fork can be replaced. That
-        // bound counts *blocks* while the threshold here is measured in slot
-        // numbers, and skipped slots make the slot distance the larger of the
-        // two, so the default keeps a wide margin over it. Slots are ~0.4s, so
-        // even this spans well under two minutes of chain. One less than 200
-        // for the same reason as EVM: the backfill stops one slot below it.
-        | Ecosystem.Svm => publicChainConfig["maxReorgDepth"]->Option.getOr(199)
-        | Ecosystem.Fuel => 0
+    // One address listed twice for the same contract would violate the
+    // (chainId, address, contract) primary key of envio_addresses with an
+    // opaque Postgres error — fail fast instead. Two contracts may share an
+    // address: each indexes it with its own events. parseAddress already
+    // canonicalizes casing (checksum or lowercase), so an exact match
+    // catches case variants too.
+    let seen = Utils.Set.make()
+    contracts->Array.forEach(contract => {
+      contract.addresses->Array.forEach(
+        address => {
+          let addressString = address->Address.toString
+          let key = contract.name ++ "-" ++ addressString
+          if seen->Utils.Set.has(key) {
+            JsError.throwWithMessage(
+              `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->ChainId.toString}. Please remove the duplicate from your config.`,
+            )
+          }
+          seen->Utils.Set.add(key)->ignore
         },
-        blockLag: publicChainConfig["blockLag"]->Option.getOr(0),
-        blockThrottle: publicChainConfig["blockThrottle"]->Option.getOr(0),
-        contracts,
-        sourceConfig,
-      }
+      )
     })
+
+    let sourceConfig = switch ecosystemName {
+    | Ecosystem.Evm =>
+      let rpcs =
+        publicChainConfig["rpcs"]
+        ->Option.getOr([])
+        ->Array.map((rpcConfig): evmRpcConfig => {
+          let initialBlockInterval = rpcConfig["initialBlockInterval"]
+          let backoffMultiplicative = rpcConfig["backoffMultiplicative"]
+          let accelerationAdditive = rpcConfig["accelerationAdditive"]
+          let intervalCeiling = rpcConfig["intervalCeiling"]
+          let backoffMillis = rpcConfig["backoffMillis"]
+          let queryTimeoutMillis = rpcConfig["queryTimeoutMillis"]
+          let fallbackStallTimeout = rpcConfig["fallbackStallTimeout"]
+          let pollingInterval = rpcConfig["pollingInterval"]
+          let hasSyncConfig =
+            initialBlockInterval->Option.isSome ||
+            backoffMultiplicative->Option.isSome ||
+            accelerationAdditive->Option.isSome ||
+            intervalCeiling->Option.isSome ||
+            backoffMillis->Option.isSome ||
+            queryTimeoutMillis->Option.isSome ||
+            fallbackStallTimeout->Option.isSome ||
+            pollingInterval->Option.isSome
+          let syncConfig: option<sourceSyncOptions> = if hasSyncConfig {
+            Some({
+              ?initialBlockInterval,
+              ?backoffMultiplicative,
+              ?accelerationAdditive,
+              ?intervalCeiling,
+              ?backoffMillis,
+              ?queryTimeoutMillis,
+              ?fallbackStallTimeout,
+              ?pollingInterval,
+            })
+          } else {
+            None
+          }
+          {
+            url: rpcConfig["url"],
+            sourceFor: parseRpcSourceFor(rpcConfig["for"]),
+            syncConfig,
+            ws: rpcConfig["ws"],
+            headers: rpcConfig["headers"],
+          }
+        })
+      EvmSourceConfig({hypersync: publicChainConfig["hypersync"], rpcs})
+    | Ecosystem.Fuel =>
+      switch publicChainConfig["hypersync"] {
+      | Some(hypersync) => FuelSourceConfig({hypersync: hypersync})
+      | None =>
+        JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
+      }
+    | Ecosystem.Svm =>
+      switch publicChainConfig["hypersync"] {
+      | Some(hypersync) => SvmSourceConfig({hypersync: hypersync})
+      | None =>
+        JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
+      }
+    }
+
+    {
+      name: chainName,
+      id: chainId,
+      ecosystem: ecosystemName,
+      startBlock: publicChainConfig["startBlock"],
+      endBlock: ?publicChainConfig["endBlock"],
+      maxReorgDepth: switch ecosystemName {
+      // One less than the 200 blocks behind the head a source checks for a
+      // lagging node, so the backfill, which stops one block below the window,
+      // ends exactly where those checks begin.
+      | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(199)
+      // Tower BFT roots a block once 32 votes lock it in (MAX_LOCKOUT_HISTORY
+      // is 31, plus the slot itself), which is what `finalized` waits for — so
+      // 32 is the protocol's own bound on how far a fork can be replaced. That
+      // bound counts *blocks* while the threshold here is measured in slot
+      // numbers, and skipped slots make the slot distance the larger of the
+      // two, so the default keeps a wide margin over it. Slots are ~0.4s, so
+      // even this spans well under two minutes of chain. One less than 200
+      // for the same reason as EVM: the backfill stops one slot below it.
+      | Ecosystem.Svm => publicChainConfig["maxReorgDepth"]->Option.getOr(199)
+      | Ecosystem.Fuel => 0
+      },
+      blockLag: publicChainConfig["blockLag"]->Option.getOr(0),
+      blockThrottle: publicChainConfig["blockThrottle"]->Option.getOr(0),
+      contracts,
+      sourceConfig,
+    }
+  })
 
   let chainMap =
     chains

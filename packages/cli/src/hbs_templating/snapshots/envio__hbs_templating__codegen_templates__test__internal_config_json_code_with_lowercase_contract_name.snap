@@ -10,8 +10,9 @@ expression: json
     "postgres": true
   },
   "evm": {
-    "chains": {
-      "ethereumMainnet": {
+    "chains": [
+      {
+        "name": "ethereumMainnet",
         "id": 1,
         "startBlock": 0,
         "rpcs": [
@@ -34,7 +35,7 @@ expression: json
           }
         }
       }
-    },
+    ],
     "contracts": {
       "contract1": {
         "abi": [{"type":"event","name":"NewGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false},{"type":"event","name":"UpdatedGravatar","inputs":[{"name":"id","type":"uint256","indexed":false},{"name":"owner","type":"address","indexed":false},{"name":"displayName","type":"string","indexed":false},{"name":"imageUrl","type":"string","indexed":false}],"anonymous":false}],
