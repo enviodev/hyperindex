@@ -51,6 +51,25 @@ pub fn is_result_cap_message(message: &str) -> bool {
     RESULT_CAP.is_match(message) && !RATE_LIMITED.is_match(message)
 }
 
+// Refusals of a filter for its own size rather than for what the answer would
+// hold: go-ethereum's `LogQueryLimit` on the addresses or on one topic
+// position, and the close forms other providers use. Narrowing the filter to
+// one selection is the answer to it, unlike a result cap.
+static FILTER_SIZE_REFUSAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)exceed max addresses or topics per search position|too many addresses|too many topics",
+    )
+    .unwrap()
+});
+
+/// Whether a provider refused a filter for its size rather than for what the
+/// answer would hold: go-ethereum's `"exceed max addresses or topics per search
+/// position"` and the close forms. Narrowing the filter to one selection's
+/// addresses and topics is the answer to it.
+pub fn is_filter_size_refusal_message(message: &str) -> bool {
+    FILTER_SIZE_REFUSAL.is_match(message) && !RATE_LIMITED.is_match(message)
+}
+
 // Refusals of the request itself rather than of the block it names, as
 // providers word them: publicnode's Polygon endpoint answers every
 // `eth_getLogs` by `blockHash` with "Archive requests require a personal token".
@@ -261,6 +280,25 @@ mod tests {
         assert_eq!(
             messages.map(is_result_cap_message),
             [true, true, true, true, false, false, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn filter_size_refusals_are_told_from_caps_throttling_and_range_limits() {
+        let messages = [
+            "exceed max addresses or topics per search position",
+            "too many addresses",
+            // Caps on the answer, throttling and range limits are not refusals
+            // of the filter.
+            "limit exceeded",
+            "query returned more than 10000 results",
+            "rate limit exceeded",
+            "block range too large",
+            "header not found",
+        ];
+        assert_eq!(
+            messages.map(is_filter_size_refusal_message),
+            [true, true, false, false, false, false, false]
         );
     }
 

@@ -1,6 +1,6 @@
 open Vitest
 
-let syncConfig = EvmChain.getSyncConfig({})
+let defaultSyncConfig = EvmChain.getSyncConfig({})
 
 let makeClient = (
   ~url,
@@ -9,13 +9,16 @@ let makeClient = (
   ~addressStore=?,
   ~maxConcurrentRequests=?,
   ~queryTimeoutMillis=?,
+  ~syncConfig=?,
 ) =>
   EvmRpcClient.make(
     ~url,
     ~checksumAddresses=false,
-    ~syncConfig=switch queryTimeoutMillis {
-    | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
-    | None => syncConfig
+    ~syncConfig=switch (syncConfig, queryTimeoutMillis) {
+    | (Some(config), _) => config
+    | (None, Some(queryTimeoutMillis)) =>
+      EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
+    | (None, None) => defaultSyncConfig
     },
     ~headers?,
     ~maxConcurrentRequests?,
@@ -206,12 +209,13 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~startBlock=None,
     ~params=transferParams,
     ~blockFields=[],
+    ~contractName="ERC20",
   ): HyperSyncClient.Registration.input => {
     index,
     sighash: Some(transferSighash),
     topicCount,
     eventName: "Transfer",
-    contractName: "ERC20",
+    contractName,
     isWildcard,
     dependsOnAddresses,
     startBlock,
@@ -603,7 +607,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     t.expect(outcome).toEqual((
       (
         EvmRpcClient.Backoff,
-        Some(syncConfig.backoffMillis),
+        Some(defaultSyncConfig.backoffMillis),
         Some(`eth_getBlockByNumber took longer than ${queryTimeoutMillis->Int.toString}ms`),
       ),
       (EvmRpcClient.Ok, lastBlock),
@@ -682,4 +686,89 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       t.expect(peak).toEqual((EvmRpcClient.Ok, blockCount, maxConcurrentRequests))
     },
   )
+
+  Async.it("sends one read for each selection when merged log reads are off", async t => {
+    // Env.res reads ENVIO_RPC_MERGED_LOG_READS once, at module load, so no user
+    // API test can set it for one scenario; the switch is exercised here.
+    let otherContractAddress = "0x0000000000000000000000000000000000000002"
+    let addressFilters = await MockRpcServer.withScenario(
+      ~name="merged log reads off",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${transferSighash}"]],"address":["${contractAddress}"]}]`,
+          ),
+          ~reply=RpcResult(JSON.parseOrThrow("[]")),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${transferSighash}"]],"address":["${otherContractAddress}"]}]`,
+          ),
+          ~reply=RpcResult(JSON.parseOrThrow("[]")),
+        ),
+      ],
+      async mock => {
+        let addressStore = TestAddresses.storeOf(
+          ~contracts=[
+            {name: "ERC20", startBlock: None, dependsOnAddresses: true},
+            {name: "Other", startBlock: None, dependsOnAddresses: true},
+          ],
+          ~addresses=[
+            {
+              address: contractAddress->Address.unsafeFromString,
+              contractName: "ERC20",
+              registrationBlock: -1,
+            },
+            {
+              address: otherContractAddress->Address.unsafeFromString,
+              contractName: "Other",
+              registrationBlock: -1,
+            },
+          ],
+        )
+        let client = makeClient(
+          ~url=mock.url,
+          ~syncConfig={...defaultSyncConfig, mergedLogReads: false},
+          ~eventRegistrations=[
+            makeRegistration(~index=3),
+            makeRegistration(~index=4, ~contractName="Other"),
+          ],
+          ~addressStore,
+        )
+        let (_, _, _) = await client->callNextPage(
+          ~fromBlock=100,
+          ~toBlockCeiling=100,
+          ~indexes=[3, 4],
+          ~addressSet=addressStore
+            ->AddressStore.makeSet(~contractName="ERC20")
+            ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="Other")),
+        )
+        mock.requests
+        ->Array.filterMap(body => {
+          let request = body->JSON.parseOrThrow->JSON.Decode.object->Option.getOrThrow
+          switch request->Dict.getUnsafe("method")->JSON.Decode.string {
+          | Some("eth_getLogs") =>
+            let filter =
+              request
+              ->Dict.getUnsafe("params")
+              ->JSON.Decode.array
+              ->Option.getOrThrow
+              ->Array.getUnsafe(0)
+              ->JSON.Decode.object
+              ->Option.getOrThrow
+            Some(filter->Dict.getUnsafe("address")->JSON.stringify)
+          | _ => None
+          }
+        })
+        ->Array.toSorted(String.compare)
+      },
+    )
+
+    t.expect(addressFilters).toEqual([
+      `["${otherContractAddress}"]`,
+      `["${contractAddress}"]`,
+    ])
+  })
 })

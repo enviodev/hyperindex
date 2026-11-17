@@ -36,6 +36,7 @@ let getSyncConfig = (
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
     pollingInterval: pollingInterval->Option.getOr(1000),
+    mergedLogReads: Env.Configurable.SyncConfig.mergedLogReads,
   }
 }
 

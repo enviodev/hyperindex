@@ -82,29 +82,47 @@ impl LogMatcher {
 
     /// Whether a raw log's `address` and `topics` satisfy the selection.
     pub(crate) fn matches(&self, address: &str, topics: &[String]) -> bool {
-        self.matches_address(address) && self.matches_topics(topics)
+        self.matches_log(&DecodedLog::new(address, topics))
     }
 
-    fn matches_address(&self, address: &str) -> bool {
-        match &self.addresses {
-            None => true,
+    /// The same, for a log decoded once and tested against several selections.
+    pub(crate) fn matches_log(&self, log: &DecodedLog) -> bool {
+        let address_ok = match (&self.addresses, log.address.as_deref()) {
+            (None, _) => true,
             // A provider may case the address differently from the string the
             // query was built with, so the two are compared as bytes.
-            Some(addresses) => hex::decode(address).is_ok_and(|log_address| {
-                addresses.iter().any(|candidate| candidate == &log_address)
-            }),
-        }
-    }
-
-    fn matches_topics(&self, topics: &[String]) -> bool {
-        self.topics.iter().enumerate().all(|(position, values)| {
+            (Some(_), None) => false,
+            (Some(addresses), Some(log_address)) => {
+                addresses.iter().any(|candidate| candidate == log_address)
+            }
+        };
+        let topics_ok = self.topics.iter().enumerate().all(|(position, values)| {
             let Some(values) = values else {
                 return true;
             };
-            topics.get(position).is_some_and(|topic| {
-                hex::decode(topic).is_ok_and(|topic| values.iter().any(|value| value == &topic))
-            })
-        })
+            match log.topics.get(position) {
+                Some(Some(topic)) => values.iter().any(|value| value == topic),
+                _ => false,
+            }
+        });
+        address_ok && topics_ok
+    }
+}
+
+/// A raw log's address and topics, decoded once, for a page that tests one log
+/// against several selections. A value that will not decode is `None`, the way
+/// `LogMatcher::matches` reads it.
+pub(crate) struct DecodedLog {
+    address: Option<Vec<u8>>,
+    topics: Vec<Option<Vec<u8>>>,
+}
+
+impl DecodedLog {
+    pub(crate) fn new(address: &str, topics: &[String]) -> Self {
+        DecodedLog {
+            address: hex::decode(address).ok(),
+            topics: topics.iter().map(|topic| hex::decode(topic).ok()).collect(),
+        }
     }
 }
 

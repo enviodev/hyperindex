@@ -79,6 +79,9 @@ type sourceSync = {
   queryTimeoutMillis: int,
   fallbackStallTimeout: int,
   pollingInterval: int,
+  // Whether a page reads the listed selections that share a filter with one
+  // merged eth_getLogs. `ENVIO_RPC_MERGED_LOG_READS`, on by default.
+  mergedLogReads: bool,
 }
 
 // How a backend spells column names, mirroring `column_name_format` in

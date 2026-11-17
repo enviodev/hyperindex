@@ -137,6 +137,17 @@ async fn request(
         .await
 }
 
+/// Reads `blocks` with a filter already merged from several selections. The
+/// answer covers each of their own filters as a superset; the caller picks each
+/// selection's own logs out of it locally.
+pub(super) async fn request_range_logs(
+    client: &JsonRpcClient,
+    blocks: LogBlocks<'_>,
+    filter: &BuiltLogSelection,
+) -> Result<Vec<RawLog>, RpcError> {
+    request(client, blocks, filter).await
+}
+
 /// Reads every log of `blocks` unfiltered, for a head block whose logs must be
 /// checked against several selections at once. The caller picks each
 /// selection's logs out of what comes back.
@@ -328,6 +339,83 @@ mod tests {
         assert_eq!(
             errors.each_ref().map(is_answer_too_large),
             [true, false, true, true, false]
+        );
+    }
+
+    #[test]
+    fn a_merged_filter_returns_each_log_a_member_filter_returns() {
+        use crate::evm_rpc_source::range_reads;
+        const TOKEN: &str = "0x1000000000000000000000000000000000000001";
+        const OTHER: &str = "0x2000000000000000000000000000000000000002";
+        const STRANGER: &str = "0x9000000000000000000000000000000000000009";
+        const TRANSFER: &str =
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+        const APPROVAL: &str =
+            "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+        let selection = |addresses: &[&str]| BuiltLogSelection {
+            emitters: Emitters::Listed(addresses.iter().map(|a| a.to_string()).collect()),
+            topics: vec![vec![TRANSFER.to_string()]],
+        };
+        let members = [selection(&[TOKEN]), selection(&[TOKEN, OTHER])];
+        let refs: Vec<&BuiltLogSelection> = members.iter().collect();
+        let merged = range_reads::merge_selections_for_range(&refs);
+        let merged_filter = log_filter(
+            LogBlocks::Hash {
+                block_number: 16,
+                hash: "0xbb",
+            },
+            &merged.topics,
+            merged.addresses(),
+        );
+        let upper = format!("0x{}", TOKEN[2..].to_uppercase());
+        let logs: [(&str, &[&str]); 5] = [
+            (TOKEN, &[TRANSFER]),
+            (OTHER, &[TRANSFER]),
+            (STRANGER, &[TRANSFER]),
+            (TOKEN, &[APPROVAL]),
+            (&upper, &[TRANSFER]),
+        ];
+        // For each member and each log: what the local pick says, what that
+        // member's own filter returns, and what the merged filter returns. The
+        // merged answer must never lose a log its member's own read would
+        // return.
+        let mut cases: Vec<(bool, bool, bool)> = Vec::new();
+        for member in &members {
+            let own_filter = log_filter(
+                LogBlocks::Hash {
+                    block_number: 16,
+                    hash: "0xbb",
+                },
+                &member.topics,
+                member.addresses(),
+            );
+            let matcher = LogMatcher::new(member);
+            for (address, log_topics) in logs {
+                let log_topics: Vec<String> =
+                    log_topics.iter().map(|topic| topic.to_string()).collect();
+                cases.push((
+                    matcher.matches(address, &log_topics),
+                    filter_returns(&own_filter, address, &log_topics),
+                    filter_returns(&merged_filter, address, &log_topics),
+                ));
+            }
+        }
+        assert_eq!(
+            cases,
+            [
+                // The first member's own filter, log by log.
+                (true, true, true),
+                (false, false, true),
+                (false, false, false),
+                (false, false, false),
+                (true, true, true),
+                // The wider member's own filter, log by log.
+                (true, true, true),
+                (true, true, true),
+                (false, false, false),
+                (false, false, false),
+                (true, true, true),
+            ]
         );
     }
 

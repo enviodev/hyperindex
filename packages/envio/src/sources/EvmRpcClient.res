@@ -9,6 +9,7 @@ type cfg = {
   backoffMillis: int,
   queryTimeoutMillis: int,
   maxAddressesPerRequest: int,
+  mergedLogReads: bool,
 }
 
 type nextPageParams = {
@@ -108,6 +109,7 @@ let make = (
       backoffMillis: syncConfig.backoffMillis,
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
       maxAddressesPerRequest,
+      mergedLogReads: syncConfig.mergedLogReads,
     },
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
