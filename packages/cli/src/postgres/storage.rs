@@ -498,8 +498,7 @@ impl Storage {
             ));
         }
         ddl.push(format!(
-            "GRANT ALL ON SCHEMA \"{schema}\" TO \"{}\";\nGRANT ALL ON SCHEMA \"{schema}\" TO \
-             public;",
+            "GRANT ALL ON SCHEMA \"{schema}\" TO \"{}\";",
             self.settings.pg_user
         ));
         for (name, variants) in &self.schema.enums {

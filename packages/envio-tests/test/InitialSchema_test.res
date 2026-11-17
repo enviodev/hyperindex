@@ -64,6 +64,7 @@ type Asset {
 type relation = {name: string, kind: string, columns: string}
 type key = {table: string, columns: string}
 type enumType = {name: string, labels: string}
+type schemaAccess = {usage: bool, create: bool}
 
 describe("A fresh start", () => {
   scenario->Scenario.it(
@@ -115,11 +116,9 @@ GROUP BY ty.typname
 ORDER BY ty.typname COLLATE "C";`,
             ~params,
           )
-          let access: array<{
-            "public": bool,
-          }> = await sql->Sql.queryForTests(
-            `SELECT has_schema_privilege('public', $1, 'USAGE')
-  AND has_schema_privilege('public', $1, 'CREATE') AS "public";`,
+          let publicAccess: array<schemaAccess> = await sql->Sql.queryForTests(
+            `SELECT has_schema_privilege('public', $1, 'USAGE') AS "usage",
+  has_schema_privilege('public', $1, 'CREATE') AS "create";`,
             ~params,
           )
           let meta: array<JSON.t> = await sql->Sql.queryForTests(
@@ -137,7 +136,7 @@ ORDER BY ty.typname COLLATE "C";`,
             ),
             keys->Array.map(k => `${k.table}(${k.columns})`),
             enums->Array.map(e => `${e.name}(${e.labels})`),
-            access->Array.map(row => row["public"]),
+            publicAccess,
             meta,
             chainMetadata,
           )).toEqual((
@@ -168,7 +167,10 @@ ORDER BY ty.typname COLLATE "C";`,
               "raw_events(serial)",
             ],
             ["envio_history_change(SET, DELETE)", "kind(FIRST, SECOND)"],
-            [true],
+            // Other roles are let in by whoever provisions them, with default
+            // privileges on the indexer's role: the schema is recreated on every
+            // resync, so a grant on the schema itself would not outlive it.
+            [{usage: false, create: false}],
             %raw(`[
           {"row": {"chainId": 1, "ecosystem": "evm", "startBlock": 100, "endBlock": 200, "progressBlock": -1, "progressBlockTime": null, "bufferBlock": -1, "firstEventBlock": null, "eventsProcessed": 0, "sourceBlock": 0, "readyAt": null, "isReady": false}},
           {"row": {"chainId": 137, "ecosystem": "evm", "startBlock": 0, "endBlock": null, "progressBlock": -1, "progressBlockTime": null, "bufferBlock": -1, "firstEventBlock": null, "eventsProcessed": 0, "sourceBlock": 0, "readyAt": null, "isReady": false}}
