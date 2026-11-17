@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::hex::to_hex;
 use crate::js_value::JsTape;
-use crate::storage::rows::{Cell, ReadKind};
+use crate::storage::rows::ReadKind;
 
 /// Evm log object
 ///
@@ -421,19 +421,6 @@ impl EvmParams {
             }
         }
         tape
-    }
-
-    /// Param `index` as its column's cell. A nested value is copied onto
-    /// `tapes` and the cell holds its position there.
-    pub(crate) fn cell(&self, index: usize, tapes: &mut Vec<JsTape>) -> Cell<'_> {
-        match &self.cells[index] {
-            ParamCell::Bool(value) => Cell::Bool(*value),
-            ParamCell::Text(value) | ParamCell::BigInt(value) => Cell::Str((&**value).into()),
-            ParamCell::Tape(tape) => {
-                tapes.push(tape.clone());
-                Cell::Num((tapes.len() - 1) as f64)
-            }
-        }
     }
 }
 

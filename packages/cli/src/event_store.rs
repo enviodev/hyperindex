@@ -18,10 +18,10 @@ use napi::bindgen_prelude::ArrayBuffer;
 use napi::Env;
 use napi_derive::napi;
 
-use crate::columnar::{js as columnar_js, Arena};
-use crate::evm_hypersync_source::types::EvmParams;
+use crate::columnar::{js as columnar_js, Arena, ColumnSpec};
+use crate::evm_hypersync_source::types::{EvmParams, ParamCell, ParamSchema};
 use crate::js_value::JsTape;
-use crate::storage::rows::{lay_out, Cell, ColumnRead, ReadKind};
+use crate::storage::rows::{ColumnRead, ReadKind};
 
 /// Which JS conversion a row goes through, chosen by what produced it.
 #[napi]
@@ -413,6 +413,19 @@ const ITEM_COLUMNS: [(&str, ReadKind); 9] = [
     ("tape", ReadKind::Float),
 ];
 
+/// Positions in `ITEM_COLUMNS`.
+mod item_column {
+    pub(super) const FORMAT: usize = 0;
+    pub(super) const BLOCK_NUMBER: usize = 1;
+    pub(super) const LOG_INDEX: usize = 2;
+    pub(super) const TRANSACTION_INDEX: usize = 3;
+    pub(super) const REGISTRATION_INDEX: usize = 4;
+    pub(super) const SRC_ADDRESS: usize = 5;
+    pub(super) const SKIPPED: usize = 6;
+    pub(super) const DETAIL_ROW: usize = 7;
+    pub(super) const TAPE: usize = 8;
+}
+
 /// Named as `FuelHyperSyncClient.EventItems.item`'s fields, so a row reads as
 /// that record.
 fn fuel_columns() -> Vec<ColumnRead> {
@@ -442,72 +455,208 @@ fn svm_columns() -> Vec<ColumnRead> {
     ]
 }
 
-/// A tape's cell: its position among the result's tapes.
-fn tape_cell(tapes: &mut Vec<JsTape>, tape: &JsTape) -> Cell<'static> {
-    tapes.push(tape.clone());
-    Cell::Num((tapes.len() - 1) as f64)
+/// One arena written straight from the stored rows: each column once per row,
+/// rows in order, which is how a variable-width or list column finds where its
+/// row starts.
+struct ArenaWriter {
+    columns: Vec<ColumnRead>,
+    arena: Arena,
+    row: usize,
+    /// List elements written so far, per column.
+    elements: Vec<usize>,
+}
+
+impl ArenaWriter {
+    /// `elements` gives a list column's element count across all rows, which
+    /// its element column is sized to once.
+    fn new(columns: Vec<ColumnRead>, rows: usize, elements: &[usize]) -> Self {
+        let specs: Vec<ColumnSpec> = columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| match column.element {
+                Some(element) => ColumnSpec::List {
+                    element: element.slot(),
+                    elements: elements[index],
+                },
+                None => ColumnSpec::Scalar(column.kind.slot()),
+            })
+            .collect();
+        ArenaWriter {
+            arena: Arena::new_filled(rows, &specs),
+            elements: vec![0; columns.len()],
+            columns,
+            row: 0,
+        }
+    }
+
+    fn num(&mut self, column: usize, value: f64) {
+        self.arena.set_f64(column, self.row, value);
+    }
+
+    fn bool(&mut self, column: usize, value: bool) {
+        self.num(column, if value { 1.0 } else { 0.0 });
+    }
+
+    fn bytes(&mut self, column: usize, value: &[u8]) {
+        self.arena.set_bytes(column, self.row, value);
+    }
+
+    fn null(&mut self, column: usize) {
+        self.arena.mark_null(column, self.row);
+    }
+
+    /// A tape's position among the result's tapes.
+    fn tape(&mut self, column: usize, tapes: &mut Vec<JsTape>, tape: &JsTape) {
+        tapes.push(tape.clone());
+        self.num(column, (tapes.len() - 1) as f64);
+    }
+
+    fn optional_tape(&mut self, column: usize, tapes: &mut Vec<JsTape>, tape: &Option<JsTape>) {
+        match tape {
+            Some(tape) => self.tape(column, tapes, tape),
+            None => self.null(column),
+        }
+    }
+
+    fn num_list(&mut self, column: usize, values: &[i64]) {
+        for value in values {
+            self.arena
+                .set_element_f64(column, self.elements[column], *value as f64);
+            self.elements[column] += 1;
+        }
+        self.arena
+            .end_list_row(column, self.row, self.elements[column]);
+    }
+
+    fn text_list(&mut self, column: usize, values: &[String]) {
+        for value in values {
+            self.arena
+                .set_element_bytes(column, self.elements[column], value.as_bytes());
+            self.elements[column] += 1;
+        }
+        self.arena
+            .end_list_row(column, self.row, self.elements[column]);
+    }
+
+    fn end_row(&mut self) {
+        self.row += 1;
+    }
+
+    fn finish(mut self) -> Result<(ArenaShape, Arena)> {
+        let shape = ArenaShape::of(&self.columns, self.row);
+        self.arena.seal(&shape.names)?;
+        Ok((shape, self.arena))
+    }
 }
 
 /// Lays rows out as the arenas `StoredRows` describes, and keeps them until
 /// JavaScript has read them.
 fn lay_out_rows<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Result<StoredRows> {
-    let mut item_cells = Vec::new();
-    let mut fuel_cells = Vec::new();
-    let mut svm_cells = Vec::new();
-    let (mut fuel_rows, mut svm_rows) = (0usize, 0usize);
+    let rows: Vec<&Row> = rows.into_iter().collect();
+
+    // Every arena is sized before it is written, so one pass counts each
+    // format's rows and the SVM lists' elements first.
+    let (mut fuel_rows, mut svm_rows, mut svm_steps, mut svm_accounts) = (0, 0, 0, 0);
+    // By registration index: the schema of its EVM logs' params, and how many.
+    let mut params_of: Vec<Option<(&ParamSchema, usize)>> = Vec::new();
+    for row in &rows {
+        match &row.data {
+            RowData::EvmLog { params, .. } => {
+                let index = row.registration_index as usize;
+                if params_of.len() <= index {
+                    params_of.resize(index + 1, None);
+                }
+                params_of[index].get_or_insert((&params.schema, 0)).1 += 1;
+            }
+            RowData::FuelReceipt { .. } => fuel_rows += 1,
+            RowData::SvmInstruction { accounts, .. } => {
+                svm_rows += 1;
+                svm_steps += row.order_path.as_ref().map_or(0, Vec::len);
+                svm_accounts += accounts.len();
+            }
+            RowData::Block { .. } | RowData::JsItem(_) => {}
+        }
+    }
+
     let mut tapes = Vec::new();
-    // Each registration's EVM logs' params, in order.
-    let mut params: Vec<(i64, Vec<&'a EvmParams>)> = Vec::new();
-    let mut count = 0usize;
-    for row in rows {
-        count += 1;
-        let registration = Cell::Num(row.registration_index as f64);
-        let (transaction_index, src_address, skipped, detail_row, tape) = match &row.data {
+    let mut items = ArenaWriter::new(
+        ITEM_COLUMNS
+            .iter()
+            .map(|(name, kind)| ColumnRead::scalar(*name, *kind))
+            .collect(),
+        rows.len(),
+        &[],
+    );
+    let mut params: Vec<Option<ArenaWriter>> = params_of
+        .iter()
+        .map(|group| {
+            group.map(|(schema, logs)| {
+                let columns = schema
+                    .params
+                    .iter()
+                    .zip(&schema.kinds)
+                    .map(|(param, kind)| ColumnRead::scalar(param.name.clone(), *kind))
+                    .collect();
+                ArenaWriter::new(columns, logs, &[])
+            })
+        })
+        .collect();
+    let mut fuel = ArenaWriter::new(fuel_columns(), fuel_rows, &[]);
+    let mut svm = ArenaWriter::new(
+        svm_columns(),
+        svm_rows,
+        &[0, 0, 0, svm_steps, 0, svm_accounts, 0, 0, 0, 0],
+    );
+
+    for row in &rows {
+        let registration = row.registration_index as f64;
+        items.num(item_column::FORMAT, row.data.format() as u8 as f64);
+        items.num(item_column::BLOCK_NUMBER, row.block_number as f64);
+        items.num(item_column::LOG_INDEX, row.log_index as f64);
+        items.num(item_column::REGISTRATION_INDEX, registration);
+        let unset: &[usize] = match &row.data {
             RowData::EvmLog {
                 src_address,
                 transaction_index,
                 params: log_params,
             } => {
-                let group = match params
-                    .iter_mut()
-                    .find(|(index, _)| *index == row.registration_index)
-                {
-                    Some((_, group)) => group,
-                    None => {
-                        params.push((row.registration_index, Vec::new()));
-                        &mut params.last_mut().unwrap().1
+                let group = params[row.registration_index as usize]
+                    .as_mut()
+                    .expect("counted in the first pass");
+                for (column, cell) in log_params.cells.iter().enumerate() {
+                    match cell {
+                        ParamCell::Bool(value) => group.bool(column, *value),
+                        ParamCell::Text(value) | ParamCell::BigInt(value) => {
+                            group.bytes(column, value.as_bytes())
+                        }
+                        ParamCell::Tape(tape) => group.tape(column, &mut tapes, tape),
                     }
-                };
-                group.push(log_params);
-                (
-                    Cell::Num(*transaction_index as f64),
-                    Cell::Str(src_address.as_str().into()),
-                    Cell::Null,
-                    Cell::Num((group.len() - 1) as f64),
-                    Cell::Null,
-                )
+                }
+                items.num(item_column::TRANSACTION_INDEX, *transaction_index as f64);
+                items.bytes(item_column::SRC_ADDRESS, src_address.as_bytes());
+                items.num(item_column::DETAIL_ROW, group.row as f64);
+                group.end_row();
+                &[item_column::SKIPPED, item_column::TAPE]
             }
             RowData::FuelReceipt {
                 tx_id,
                 src_address,
                 params,
             } => {
-                fuel_cells.extend([
-                    registration.clone(),
-                    Cell::Num(row.log_index as f64),
-                    Cell::Str(tx_id.as_str().into()),
-                    Cell::Num(row.block_number as f64),
-                    Cell::Str(src_address.as_str().into()),
-                    tape_cell(&mut tapes, params),
-                ]);
-                fuel_rows += 1;
-                (
-                    Cell::Null,
-                    Cell::Null,
-                    Cell::Null,
-                    Cell::Num((fuel_rows - 1) as f64),
-                    Cell::Null,
-                )
+                fuel.num(0, registration);
+                fuel.num(1, row.log_index as f64);
+                fuel.bytes(2, tx_id.as_bytes());
+                fuel.num(3, row.block_number as f64);
+                fuel.bytes(4, src_address.as_bytes());
+                fuel.tape(5, &mut tapes, params);
+                items.num(item_column::DETAIL_ROW, fuel.row as f64);
+                fuel.end_row();
+                &[
+                    item_column::TRANSACTION_INDEX,
+                    item_column::SRC_ADDRESS,
+                    item_column::SKIPPED,
+                    item_column::TAPE,
+                ]
             }
             RowData::SvmInstruction {
                 program_id,
@@ -517,98 +666,67 @@ fn lay_out_rows<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Result<StoredRow
                 args,
                 logs,
             } => {
-                let path = row.order_path.as_deref().unwrap_or_default();
-                let optional_tape = |tapes: &mut Vec<JsTape>, tape: &Option<JsTape>| match tape {
-                    Some(tape) => tape_cell(tapes, tape),
-                    None => Cell::Null,
-                };
-                svm_cells.extend([
-                    registration.clone(),
-                    Cell::Num(row.block_number as f64),
-                    Cell::Num(row.log_index as f64),
-                    Cell::Arr(path.iter().map(|step| Cell::Num(*step as f64)).collect()),
-                    Cell::Str(program_id.as_str().into()),
-                    Cell::Arr(
-                        accounts
-                            .iter()
-                            .map(|account| Cell::Str(account.as_str().into()))
-                            .collect(),
-                    ),
-                    Cell::Bytes(data.as_slice().into()),
-                    Cell::Bool(*is_inner),
-                    optional_tape(&mut tapes, args),
-                    optional_tape(&mut tapes, logs),
-                ]);
-                svm_rows += 1;
-                (
-                    Cell::Null,
-                    Cell::Null,
-                    Cell::Null,
-                    Cell::Num((svm_rows - 1) as f64),
-                    Cell::Null,
-                )
+                svm.num(0, registration);
+                svm.num(1, row.block_number as f64);
+                svm.num(2, row.log_index as f64);
+                svm.num_list(3, row.order_path.as_deref().unwrap_or_default());
+                svm.bytes(4, program_id.as_bytes());
+                svm.text_list(5, accounts);
+                svm.bytes(6, data);
+                svm.bool(7, *is_inner);
+                svm.optional_tape(8, &mut tapes, args);
+                svm.optional_tape(9, &mut tapes, logs);
+                items.num(item_column::DETAIL_ROW, svm.row as f64);
+                svm.end_row();
+                &[
+                    item_column::TRANSACTION_INDEX,
+                    item_column::SRC_ADDRESS,
+                    item_column::SKIPPED,
+                    item_column::TAPE,
+                ]
             }
-            RowData::Block { skipped } => (
-                Cell::Null,
-                Cell::Null,
-                Cell::Bool(*skipped),
-                Cell::Null,
-                Cell::Null,
-            ),
-            RowData::JsItem(item) => (
-                Cell::Null,
-                Cell::Null,
-                Cell::Null,
-                Cell::Null,
-                tape_cell(&mut tapes, item),
-            ),
+            RowData::Block { skipped } => {
+                items.bool(item_column::SKIPPED, *skipped);
+                &[
+                    item_column::TRANSACTION_INDEX,
+                    item_column::SRC_ADDRESS,
+                    item_column::DETAIL_ROW,
+                    item_column::TAPE,
+                ]
+            }
+            RowData::JsItem(item) => {
+                items.tape(item_column::TAPE, &mut tapes, item);
+                &[
+                    item_column::TRANSACTION_INDEX,
+                    item_column::SRC_ADDRESS,
+                    item_column::SKIPPED,
+                    item_column::DETAIL_ROW,
+                ]
+            }
         };
-        item_cells.extend([
-            Cell::Num(row.data.format() as u8 as f64),
-            Cell::Num(row.block_number as f64),
-            Cell::Num(row.log_index as f64),
-            transaction_index,
-            registration,
-            src_address,
-            skipped,
-            detail_row,
-            tape,
-        ]);
-    }
-
-    let item_columns: Vec<ColumnRead> = ITEM_COLUMNS
-        .iter()
-        .map(|(name, kind)| ColumnRead::scalar(*name, *kind))
-        .collect();
-    let items = ArenaShape::of(&item_columns, count);
-    let mut arenas = vec![lay_out(&item_cells, item_columns)?.arena];
-
-    let mut params_shapes = Vec::with_capacity(params.len());
-    for (registration_index, group) in params {
-        let schema = &group[0].schema;
-        let columns: Vec<ColumnRead> = schema
-            .params
-            .iter()
-            .zip(&schema.kinds)
-            .map(|(param, kind)| ColumnRead::scalar(param.name.clone(), *kind))
-            .collect();
-        let mut cells = Vec::with_capacity(group.len() * columns.len());
-        for log_params in &group {
-            for index in 0..columns.len() {
-                cells.push(log_params.cell(index, &mut tapes));
-            }
+        for column in unset {
+            items.null(*column);
         }
-        params_shapes.push(ParamsShape {
-            registration_index,
-            shape: ArenaShape::of(&columns, group.len()),
-        });
-        arenas.push(lay_out(&cells, columns)?.arena);
+        items.end_row();
     }
 
-    let fuel = ArenaShape::of(&fuel_columns(), fuel_rows);
-    arenas.push(lay_out(&fuel_cells, fuel_columns())?.arena);
-    let svm = ArenaShape::of(&svm_columns(), svm_rows);
-    arenas.push(lay_out(&svm_cells, svm_columns())?.arena);
+    let (items, items_arena) = items.finish()?;
+    let mut arenas = vec![items_arena];
+    let mut params_shapes = Vec::new();
+    for (registration_index, group) in params.into_iter().enumerate() {
+        if let Some(group) = group {
+            let (shape, arena) = group.finish()?;
+            params_shapes.push(ParamsShape {
+                registration_index: registration_index as i64,
+                shape,
+            });
+            arenas.push(arena);
+        }
+    }
+    let (fuel, fuel_arena) = fuel.finish()?;
+    arenas.push(fuel_arena);
+    let (svm, svm_arena) = svm.finish()?;
+    arenas.push(svm_arena);
 
     let handle = NEXT_HANDLE.fetch_add(1, AtomicOrdering::Relaxed);
     RESULTS.lock().unwrap().insert(
