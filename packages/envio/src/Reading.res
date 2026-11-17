@@ -214,7 +214,8 @@ external bufferOver: (ArrayBuffer.t, int, int) => nodeBuffer = "from"
 
 // Builds the rows of one result shape. Compiled per set of column names so a
 // row is one object literal with every field in place: adding them one at a
-// time instead costs a hidden-class transition each, per row.
+// time instead costs a hidden-class transition each, per row. Compiled on
+// every read: V8 reuses the compiled code of a `Function` source it has seen.
 type builder = (array<array<unknown>>, int) => array<dict<unknown>>
 
 %%private(
@@ -230,21 +231,6 @@ type builder = (array<array<unknown>>, int) => array<dict<unknown>>
   )`)
 )
 
-%%private(let builders: Map.t<string, builder> = Map.make())
-
-%%private(
-  let builderFor = names => {
-    let key = names->(Utils.magic: array<string> => JSON.t)->JSON.stringify
-    switch builders->Map.get(key) {
-    | Some(builder) => builder
-    | None =>
-      let builder = compile(names)
-      builders->Map.set(key, builder)
-      builder
-    }
-  }
-)
-
 // One arena's columns as plain arrays. Several arenas lent together take
 // their buffers from the one list in turn, which `cursor` keeps the place in.
 let columns = (~buffers, ~cursor, ~kinds, ~elementKinds, ~rows as count) =>
@@ -253,7 +239,7 @@ let columns = (~buffers, ~cursor, ~kinds, ~elementKinds, ~rows as count) =>
   )
 
 // Columns as one object per row, keyed by `names`.
-let objects = (columns, ~names, ~rows as count) => builderFor(names)(columns, count)
+let objects = (columns, ~names, ~rows as count) => compile(names)(columns, count)
 
 // The result as the objects the entity schemas parse.
 let rows = (~buffers, ~names, ~kinds, ~elementKinds, ~rows as count) =>
