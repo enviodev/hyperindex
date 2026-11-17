@@ -58,11 +58,17 @@ type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
+// Chains are inserted in the order config.yaml lists them, so map positions are
+// the YAML item positions.
 fn insert_unique_chain(chains: &mut ChainMap, chain: Chain) -> Result<()> {
+    let item = chains.len() + 1;
     match chains.entry(chain.id) {
-        indexmap::map::Entry::Occupied(_) => Err(anyhow!(
-            "Chain {} is listed more than once in config.yaml.",
-            chain.id
+        indexmap::map::Entry::Occupied(first) => Err(anyhow!(
+            "Chain {id} appears twice under `chains` in config.yaml (items {first} and {item}). \
+             Each chain can be listed only once: keep one of the two items and move anything \
+             only the other one configures, such as its contracts, into it.",
+            id = chain.id,
+            first = first.index() + 1,
         )),
         indexmap::map::Entry::Vacant(entry) => {
             entry.insert(chain);

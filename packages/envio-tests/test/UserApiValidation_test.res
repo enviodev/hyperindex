@@ -1012,7 +1012,7 @@ chains:
   - id: 1
     start_block: 100
 `,
-      "Chain 1 is listed more than once in config.yaml.",
+      "Chain 1 appears twice under `chains` in config.yaml (items 1 and 2). Each chain can be listed only once: keep one of the two items and move anything only the other one configures, such as its contracts, into it.",
     ),
     (
       "rejects unsupported Fuel network ids without an explicit endpoint",
