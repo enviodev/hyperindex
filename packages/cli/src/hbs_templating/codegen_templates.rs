@@ -1900,8 +1900,8 @@ type testIndexer = {{
             .context("Failed generating enum template types")?;
 
         let chain_configs: Vec<NetworkConfigTemplate> = cfg
-            .get_chains()
-            .iter()
+            .chains
+            .values()
             .map(|network| NetworkConfigTemplate::from_config_network(network, cfg))
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;

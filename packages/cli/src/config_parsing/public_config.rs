@@ -495,7 +495,7 @@ impl SystemConfig {
         // An array rather than a map keyed by name: JS iterates numeric keys
         // ascending, whatever order they were written in, and the run splits
         // chains across workers in config.yaml order.
-        let active_chains: Vec<_> = cfg.get_chains().into_iter().filter(|c| !c.skip).collect();
+        let active_chains: Vec<_> = cfg.chains.values().filter(|c| !c.skip).collect();
 
         if active_chains.is_empty() {
             return Err(anyhow!(

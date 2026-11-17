@@ -982,10 +982,6 @@ impl SystemConfig {
         self.schema.enums.keys().cloned().collect()
     }
 
-    pub fn get_chains(&self) -> Vec<&Chain> {
-        self.chains.values().collect()
-    }
-
     pub fn get_path_to_schema(&self) -> Result<PathBuf> {
         let schema_path = path_utils::get_config_path_relative_to_root(
             &self.parsed_project_paths,
@@ -2279,8 +2275,8 @@ impl Contract {
 
     pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
         system_config
-            .get_chains()
-            .iter()
+            .chains
+            .values()
             .filter_map(|network| {
                 if network.contracts.iter().any(|c| c.name == self.name) {
                     Some(network.id)
@@ -4706,7 +4702,7 @@ type Foo {
 
             // Chain data carries the program_id on the contract-side address,
             // and the HyperSync URL flows through to the source config.
-            let chains = config.get_chains();
+            let chains: Vec<_> = config.chains.values().collect();
             assert_eq!(chains.len(), 1);
             let chain = chains[0];
             assert_eq!(chain.contracts.len(), 1);

@@ -937,7 +937,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     }
   }
 
-  // Build chains from JSON config (no more codegenChains)
   let chains = publicChainsConfig->Array.map(publicChainConfig => {
     let chainName = publicChainConfig["name"]
     let chainId = publicChainConfig["id"]
