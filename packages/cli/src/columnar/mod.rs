@@ -44,6 +44,8 @@
 
 pub mod js;
 
+use std::ops::Range;
+
 use anyhow::{bail, Context, Result};
 
 /// How a column's values are laid out. The ordinals are part of the interface:
@@ -204,6 +206,12 @@ impl Column {
             Storage::Variable { ends, .. } => ends.len(),
             Storage::List { row_ends, .. } => row_ends.len(),
         }
+    }
+
+    /// Whether the row was marked null, sealed or not.
+    #[inline]
+    pub fn is_marked_null(&self, row: usize) -> bool {
+        self.nulls[row] != 0
     }
 
     /// Only meaningful once the arena is sealed: `any_null` is what sealing
@@ -546,6 +554,60 @@ impl Column {
         }
     }
 
+    /// Appends `rows` of `other`, a column of the same shape, rebasing their
+    /// offsets onto where this column's own rows end.
+    fn extend_from(&mut self, other: &Column, rows: Range<usize>) {
+        self.nulls.extend_from_slice(&other.nulls[rows.clone()]);
+        let span = |ends: &[u32]| {
+            let start = if rows.start == 0 {
+                0
+            } else {
+                ends[rows.start - 1]
+            };
+            let end = if rows.is_empty() {
+                start
+            } else {
+                ends[rows.end - 1]
+            };
+            (start, end)
+        };
+        match (&mut self.storage, &other.storage) {
+            (Storage::Fixed(words), Storage::Fixed(from)) => words.extend_from_slice(&from[rows]),
+            (
+                Storage::Variable { data, ends },
+                Storage::Variable {
+                    data: from_data,
+                    ends: from_ends,
+                },
+            ) => {
+                let base = ends.last().copied().unwrap_or(0);
+                let (start, end) = span(from_ends);
+                let new_end = (base + end - start) as usize;
+                if new_end > data.len() {
+                    data.resize(new_end.next_power_of_two(), 0);
+                }
+                data[base as usize..new_end]
+                    .copy_from_slice(&from_data[start as usize..end as usize]);
+                ends.extend(from_ends[rows].iter().map(|&end| end - start + base));
+            }
+            (
+                Storage::List { elements, row_ends },
+                Storage::List {
+                    elements: from_elements,
+                    row_ends: from_ends,
+                },
+            ) => {
+                // Past the last row's end when the elements were sized ahead,
+                // which leaves elements no row points at, not a wrong offset.
+                let base = elements.len() as u32;
+                let (start, end) = span(from_ends);
+                elements.extend_from(from_elements, start as usize..end as usize);
+                row_ends.extend(from_ends[rows].iter().map(|&end| end - start + base));
+            }
+            _ => panic!("appending a column of another shape"),
+        }
+    }
+
     fn elements_mut(&mut self) -> &mut Column {
         match &mut self.storage {
             Storage::List { elements, .. } => elements,
@@ -587,6 +649,30 @@ impl Arena {
 
     /// Closes a list row at `elements` written so far, which is where the next
     /// row's own elements begin.
+    /// An arena of `other`'s shape holding no rows yet.
+    pub fn empty_like(other: &Arena) -> Self {
+        Self {
+            rows: 0,
+            columns: other
+                .columns
+                .iter()
+                .map(|column| match &column.storage {
+                    Storage::List { elements, .. } => Column::new_list(elements.kind, 0, 0),
+                    _ => Column::new(column.kind, 0),
+                })
+                .collect(),
+            phase: Phase::Detached,
+        }
+    }
+
+    /// Appends `rows` of `other`, an arena of the same shape.
+    pub fn extend_from(&mut self, other: &Arena, rows: Range<usize>) {
+        for (column, from) in self.columns.iter_mut().zip(&other.columns) {
+            column.extend_from(from, rows.clone());
+        }
+        self.rows += rows.len();
+    }
+
     pub fn end_list_row(&mut self, column: usize, row: usize, elements: usize) {
         match &mut self.columns[column].storage {
             Storage::List { row_ends, .. } => row_ends[row] = elements as u32,

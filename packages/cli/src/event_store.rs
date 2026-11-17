@@ -10,6 +10,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
+use std::ops::Range;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::{LazyLock, Mutex};
 
@@ -176,13 +177,11 @@ const COALESCE_BELOW: usize = 1024;
 /// Rows in processing order, deduplicated, as sorted chunks that don't
 /// overlap. A page whose rows all come after the stored ones, which is what a
 /// response at the fetch frontier brings, is kept whole as one more chunk, so
-/// merging it moves no row. A page that fills a gap merges only into the
+/// merging it copies nothing. A page that fills a gap merges only into the
 /// chunks it overlaps.
 #[derive(Default)]
 pub(crate) struct Rows {
-    // A chunk is itself a deque, so a batch taking the front of one moves only
-    // the rows it takes.
-    chunks: VecDeque<VecDeque<Row>>,
+    chunks: VecDeque<Chunk>,
     len: usize,
 }
 
@@ -194,7 +193,7 @@ impl Rows {
         rows.sort_by(Row::compare);
         rows.dedup_by(|later, kept| kept.compare(later) == Ordering::Equal);
         let mut sorted = Rows::default();
-        sorted.append(rows);
+        sorted.append(Chunk::from_sorted_rows(&rows));
         sorted
     }
 
@@ -202,14 +201,16 @@ impl Rows {
         self.len
     }
 
-    fn iter(&self) -> impl Iterator<Item = &Row> {
-        self.chunks.iter().flatten()
+    fn keys(&self) -> impl Iterator<Item = u128> + '_ {
+        self.chunks
+            .iter()
+            .flat_map(|chunk| chunk.keys[chunk.start..].iter().copied())
     }
 
-    fn get(&self, mut index: usize) -> Option<&Row> {
+    fn block_number_at(&self, mut index: usize) -> Option<i64> {
         for chunk in &self.chunks {
             if index < chunk.len() {
-                return chunk.get(index);
+                return Some(chunk.block_number_at(chunk.start + index));
             }
             index -= chunk.len();
         }
@@ -219,45 +220,48 @@ impl Rows {
     fn count_at_or_below(&self, block_number: i64) -> usize {
         let mut count = 0;
         for chunk in &self.chunks {
-            match chunk.back() {
-                Some(last) if last.block_number <= block_number => count += chunk.len(),
-                _ => return count + chunk.partition_point(|row| row.block_number <= block_number),
+            match chunk.len() {
+                0 => {}
+                len if chunk.block_number_at(chunk.keys.len() - 1) <= block_number => count += len,
+                _ => return count + chunk.count_at_or_below(block_number),
             }
         }
         count
     }
 
-    /// Adds sorted rows that all come after the stored ones.
-    fn append(&mut self, rows: Vec<Row>) {
-        let rows = VecDeque::from(rows);
-        if rows.is_empty() {
+    /// Adds a chunk whose rows all come after the stored ones.
+    fn append(&mut self, chunk: Chunk) {
+        if chunk.len() == 0 {
             return;
         }
-        self.len += rows.len();
+        self.len += chunk.len();
         match self.chunks.back_mut() {
-            Some(last) if last.len() < COALESCE_BELOW || rows.len() < COALESCE_BELOW => {
-                last.extend(rows)
+            Some(last) if last.len() < COALESCE_BELOW || chunk.len() < COALESCE_BELOW => {
+                last.extend_from(&chunk, chunk.start..chunk.keys.len())
             }
-            _ => self.chunks.push_back(rows),
+            _ => self.chunks.push_back(chunk),
         }
     }
 
     /// Merges `other`'s rows in. On a tie the row already stored is kept.
     fn merge(&mut self, other: Rows) {
-        let incoming: Vec<Row> = match other.chunks.len() {
-            0 => return,
-            1 => other.chunks.into_iter().next().unwrap().into(),
-            _ => other.chunks.into_iter().flatten().collect(),
-        };
-        let first = &incoming[0];
-        let last = &incoming[incoming.len() - 1];
+        for chunk in other.chunks {
+            self.merge_chunk(chunk);
+        }
+    }
+
+    fn merge_chunk(&mut self, incoming: Chunk) {
+        if incoming.len() == 0 {
+            return;
+        }
+        let first = incoming.start;
+        let last = incoming.keys.len() - 1;
         // The chunks the page overlaps: from the first whose last row isn't
         // before the page's first, to the last whose first row isn't after the
         // page's last.
         let Some(start) = self.chunks.iter().position(|chunk| {
-            chunk
-                .back()
-                .is_some_and(|stored| stored.compare(first) != Ordering::Less)
+            chunk.len() > 0
+                && chunk.compare(chunk.keys.len() - 1, &incoming, first) != Ordering::Less
         }) else {
             return self.append(incoming);
         };
@@ -267,32 +271,45 @@ impl Rows {
                 .iter()
                 .skip(start)
                 .take_while(|chunk| {
-                    chunk
-                        .front()
-                        .is_some_and(|stored| stored.compare(last) != Ordering::Greater)
+                    chunk.len() > 0
+                        && chunk.compare(chunk.start, &incoming, last) != Ordering::Greater
                 })
                 .count();
-        let overlapped: Vec<VecDeque<Row>> = self.chunks.drain(start..end).collect();
-        let stored_len: usize = overlapped.iter().map(VecDeque::len).sum();
-        let merged = merge_sorted(overlapped.into_iter().flatten(), incoming);
+        let overlapped: Vec<Chunk> = self.chunks.drain(start..end).collect();
+        let stored_len: usize = overlapped.iter().map(Chunk::len).sum();
+        let merged = merge_sorted(&overlapped, &incoming);
         self.len = self.len - stored_len + merged.len();
-        self.chunks.insert(start, merged.into());
+        self.chunks.insert(start, merged);
     }
 
-    /// Removes and returns the first `count` rows.
-    fn take(&mut self, count: usize) -> Vec<Row> {
-        let mut taken = Vec::with_capacity(count.min(self.len));
-        while taken.len() < count {
-            let Some(chunk) = self.chunks.front_mut() else {
+    /// Removes the first `count` rows. A chunk taken whole from its first row
+    /// on is handed over as it is.
+    fn take(&mut self, count: usize) -> Chunk {
+        let mut taken: Option<Chunk> = None;
+        let mut remaining = count;
+        while remaining > 0 {
+            let Some(front) = self.chunks.front_mut() else {
                 break;
             };
-            let wanted = count - taken.len();
-            if chunk.len() > wanted {
-                taken.extend(chunk.drain(..wanted));
+            let len = front.len();
+            if len > remaining {
+                taken
+                    .get_or_insert_with(Chunk::empty)
+                    .extend_from(front, front.start..front.start + remaining);
+                front.start += remaining;
+                remaining = 0;
             } else {
-                taken.extend(self.chunks.pop_front().unwrap());
+                let front = self.chunks.pop_front().unwrap();
+                remaining -= len;
+                match &mut taken {
+                    None if front.start == 0 => taken = Some(front),
+                    _ => taken
+                        .get_or_insert_with(Chunk::empty)
+                        .extend_from(&front, front.start..front.keys.len()),
+                }
             }
         }
+        let taken = taken.unwrap_or_else(Chunk::empty);
         self.len -= taken.len();
         taken
     }
@@ -300,46 +317,609 @@ impl Rows {
     /// Drops every row above `block_number`.
     fn rollback(&mut self, block_number: i64) {
         while let Some(chunk) = self.chunks.back_mut() {
-            let kept = chunk.partition_point(|row| row.block_number <= block_number);
+            let kept = chunk.count_at_or_below(block_number);
             self.len -= chunk.len() - kept;
             if kept == 0 {
                 self.chunks.pop_back();
             } else {
-                chunk.truncate(kept);
+                if kept < chunk.len() {
+                    let mut truncated = Chunk::empty();
+                    truncated.extend_from(chunk, chunk.start..chunk.start + kept);
+                    *chunk = truncated;
+                }
                 break;
+            }
+        }
+    }
+
+    /// The rows `keep` accepts, in order, copied out.
+    fn select(&self, keep: impl Fn(&Chunk, usize) -> bool) -> Chunk {
+        let mut selected = Chunk::empty();
+        for chunk in &self.chunks {
+            let mut row = chunk.start;
+            while row < chunk.keys.len() {
+                let run_start = row;
+                while row < chunk.keys.len() && keep(chunk, row) {
+                    row += 1;
+                }
+                selected.extend_from(chunk, run_start..row);
+                row += 1;
+            }
+        }
+        selected
+    }
+}
+
+/// Merges the sorted, deduplicated rows of `stored`, chunks that follow each
+/// other, with `incoming`'s. On a tie the stored row is kept. Each side is
+/// copied a run at a time.
+fn merge_sorted(stored: &[Chunk], incoming: &Chunk) -> Chunk {
+    let mut merged = Chunk::empty();
+    let mut next = incoming.start;
+    let incoming_end = incoming.keys.len();
+    for chunk in stored {
+        let mut row = chunk.start;
+        let end = chunk.keys.len();
+        while row < end {
+            if next == incoming_end {
+                merged.extend_from(chunk, row..end);
+                break;
+            }
+            match chunk.compare(row, incoming, next) {
+                Ordering::Less => {
+                    let run_start = row;
+                    while row < end && chunk.compare(row, incoming, next) == Ordering::Less {
+                        row += 1;
+                    }
+                    merged.extend_from(chunk, run_start..row);
+                }
+                Ordering::Equal => {
+                    merged.extend_from(chunk, row..row + 1);
+                    row += 1;
+                    next += 1;
+                }
+                Ordering::Greater => {
+                    let run_start = next;
+                    while next < incoming_end
+                        && incoming.compare(next, chunk, row) == Ordering::Less
+                    {
+                        next += 1;
+                    }
+                    merged.extend_from(incoming, run_start..next);
+                }
+            }
+        }
+    }
+    merged.extend_from(incoming, next..incoming_end);
+    merged
+}
+
+/// A row's place in processing order but for an SVM path and the
+/// registration: `block << 64 | kind << 63 | within-block index`.
+fn sort_key(block_number: i64, kind: ItemKind, log_index: i64) -> u128 {
+    ((block_number as u128) << 64) | ((kind as u128) << 63) | log_index as u128
+}
+
+const KIND_BIT: u128 = 1 << 63;
+
+/// One params column per param of a registration's events.
+struct Params {
+    columns: Vec<ColumnRead>,
+    arena: Arena,
+}
+
+/// Sorted, deduplicated rows as columns: the sort key, which every positional
+/// query and merge reads alone, and the arenas a batch hands JavaScript,
+/// laid out once when the page is decoded, off the JS thread. Rows before
+/// `start` were taken already.
+struct Chunk {
+    start: usize,
+    keys: Vec<u128>,
+    registrations: Vec<i64>,
+    /// SVM's position in the transaction's CPI tree, parent before child:
+    /// `path_ends[row]` is where the row's steps stop. Empty for other rows.
+    path_ends: Vec<u32>,
+    path_steps: Vec<i64>,
+    /// One row per row of the chunk, `ITEM_COLUMNS`. A row's `detailRow`
+    /// points into its format's own arena, and every tape cell into `tapes`.
+    items: Arena,
+    /// By registration index.
+    params: Vec<Option<Params>>,
+    fuel: Arena,
+    svm: Arena,
+    tapes: Vec<JsTape>,
+}
+
+fn item_columns() -> Vec<ColumnRead> {
+    ITEM_COLUMNS
+        .iter()
+        .map(|(name, kind)| ColumnRead::scalar(*name, *kind))
+        .collect()
+}
+
+/// `elements` gives a list column's element count across all rows, which its
+/// element column is sized to once.
+fn sized_arena(columns: &[ColumnRead], rows: usize, elements: &[usize]) -> Arena {
+    let specs: Vec<ColumnSpec> = columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| match column.element {
+            Some(element) => ColumnSpec::List {
+                element: element.slot(),
+                elements: elements.get(index).copied().unwrap_or(0),
+            },
+            None => ColumnSpec::Scalar(column.kind.slot()),
+        })
+        .collect();
+    Arena::new_filled(rows, &specs)
+}
+
+fn tape_columns(columns: &[ColumnRead]) -> impl Iterator<Item = usize> + '_ {
+    columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| column.kind == ReadKind::Tape)
+        .map(|(index, _)| index)
+}
+
+/// Gives `rows` of `arena`'s tape `column`, copied from another chunk, their
+/// tapes: each copied onto `tapes` and the cell pointed at the copy.
+fn copy_tapes(
+    arena: &mut Arena,
+    column: usize,
+    rows: Range<usize>,
+    from: &[JsTape],
+    tapes: &mut Vec<JsTape>,
+) {
+    for row in rows {
+        if !arena.columns()[column].is_marked_null(row) {
+            let position = arena.columns()[column].f64_at(row) as usize;
+            tapes.push(from[position].clone());
+            arena.set_f64(column, row, (tapes.len() - 1) as f64);
+        }
+    }
+}
+
+/// Where a format's own arena rows, behind a run of items, start in the chunk
+/// they come from and in the one they are copied to, and how many there are.
+#[derive(Clone, Copy)]
+struct DetailRun {
+    from: usize,
+    to: usize,
+    rows: usize,
+}
+
+impl DetailRun {
+    fn note(run: &mut Option<DetailRun>, detail_row: usize) {
+        match run {
+            Some(run) => run.rows += 1,
+            None => {
+                *run = Some(DetailRun {
+                    from: detail_row,
+                    to: 0,
+                    rows: 1,
+                })
             }
         }
     }
 }
 
-/// Merges two sorted, deduplicated runs. On a tie the row of `stored` is kept.
-fn merge_sorted(stored: impl Iterator<Item = Row>, incoming: Vec<Row>) -> Vec<Row> {
-    let mut merged: Vec<Row> = Vec::with_capacity(incoming.len());
-    let mut push = |row: Row| {
-        if merged
-            .last()
-            .is_none_or(|last| last.compare(&row) != Ordering::Equal)
-        {
-            merged.push(row);
-        }
-    };
-    let mut stored = stored.peekable();
-    let mut incoming = incoming.into_iter().peekable();
-    loop {
-        match (stored.peek(), incoming.peek()) {
-            (Some(a), Some(b)) => {
-                if a.compare(b) != Ordering::Greater {
-                    push(stored.next().unwrap());
-                } else {
-                    push(incoming.next().unwrap());
-                }
-            }
-            (Some(_), None) => push(stored.next().unwrap()),
-            (None, Some(_)) => push(incoming.next().unwrap()),
-            (None, None) => break,
+impl Chunk {
+    fn empty() -> Self {
+        Chunk {
+            start: 0,
+            keys: Vec::new(),
+            registrations: Vec::new(),
+            path_ends: Vec::new(),
+            path_steps: Vec::new(),
+            items: sized_arena(&item_columns(), 0, &[]),
+            params: Vec::new(),
+            fuel: sized_arena(&fuel_columns(), 0, &[]),
+            svm: sized_arena(&svm_columns(), 0, &[]),
+            tapes: Vec::new(),
         }
     }
-    merged
+
+    fn len(&self) -> usize {
+        self.keys.len() - self.start
+    }
+
+    fn block_number_at(&self, row: usize) -> i64 {
+        (self.keys[row] >> 64) as i64
+    }
+
+    /// Rows from `start` on at or below `block_number`.
+    fn count_at_or_below(&self, block_number: i64) -> usize {
+        let bound = sort_key(block_number + 1, ItemKind::Event, 0);
+        self.keys[self.start..].partition_point(|key| *key < bound)
+    }
+
+    fn path(&self, row: usize) -> &[i64] {
+        let start = if row == 0 {
+            0
+        } else {
+            self.path_ends[row - 1] as usize
+        };
+        &self.path_steps[start..self.path_ends[row] as usize]
+    }
+
+    /// Total order on rows. `Equal` means a true duplicate: the same log routed
+    /// to the same registration, which an overlapping re-fetch delivers again.
+    fn compare(&self, row: usize, other: &Chunk, other_row: usize) -> Ordering {
+        self.keys[row]
+            .cmp(&other.keys[other_row])
+            .then_with(|| {
+                match (self.path(row), other.path(other_row)) {
+                    // Lexicographic, so a parent instruction `[1]` precedes
+                    // its child `[1, 0]`.
+                    (a, b) if !a.is_empty() && !b.is_empty() => a.cmp(b),
+                    _ => Ordering::Equal,
+                }
+            })
+            .then(self.registrations[row].cmp(&other.registrations[other_row]))
+    }
+
+    fn format_at(&self, row: usize) -> u8 {
+        self.items.columns()[item_column::FORMAT].f64_at(row) as u8
+    }
+
+    fn detail_row_at(&self, row: usize) -> usize {
+        self.items.columns()[item_column::DETAIL_ROW].f64_at(row) as usize
+    }
+
+    /// Lays sorted rows out.
+    fn from_sorted_rows(rows: &[Row]) -> Self {
+        // Every arena is sized before it is written, so one pass counts each
+        // format's rows and the SVM lists' elements first.
+        let (mut fuel_rows, mut svm_rows, mut svm_steps, mut svm_accounts) = (0, 0, 0, 0);
+        // By registration index: the schema of its EVM logs' params, and how
+        // many.
+        let mut params_of: Vec<Option<(&ParamSchema, usize)>> = Vec::new();
+        for row in rows {
+            match &row.data {
+                RowData::EvmLog { params, .. } => {
+                    let index = row.registration_index as usize;
+                    if params_of.len() <= index {
+                        params_of.resize(index + 1, None);
+                    }
+                    params_of[index].get_or_insert((&params.schema, 0)).1 += 1;
+                }
+                RowData::FuelReceipt { .. } => fuel_rows += 1,
+                RowData::SvmInstruction { accounts, .. } => {
+                    svm_rows += 1;
+                    svm_steps += row.order_path.as_ref().map_or(0, Vec::len);
+                    svm_accounts += accounts.len();
+                }
+                RowData::Block { .. } | RowData::JsItem(_) => {}
+            }
+        }
+
+        let mut tapes = Vec::new();
+        let mut items = ArenaWriter::new(sized_arena(&item_columns(), rows.len(), &[]));
+        let mut params: Vec<Option<(Vec<ColumnRead>, ArenaWriter)>> = params_of
+            .iter()
+            .map(|group| {
+                group.map(|(schema, logs)| {
+                    let columns: Vec<ColumnRead> = schema
+                        .params
+                        .iter()
+                        .zip(&schema.kinds)
+                        .map(|(param, kind)| ColumnRead::scalar(param.name.clone(), *kind))
+                        .collect();
+                    let arena = sized_arena(&columns, logs, &[]);
+                    (columns, ArenaWriter::new(arena))
+                })
+            })
+            .collect();
+        let mut fuel = ArenaWriter::new(sized_arena(&fuel_columns(), fuel_rows, &[]));
+        let mut svm = ArenaWriter::new(sized_arena(
+            &svm_columns(),
+            svm_rows,
+            &[0, 0, 0, svm_steps, 0, svm_accounts],
+        ));
+        let mut keys = Vec::with_capacity(rows.len());
+        let mut registrations = Vec::with_capacity(rows.len());
+        let mut path_ends = Vec::with_capacity(rows.len());
+        let mut path_steps = Vec::new();
+
+        for row in rows {
+            keys.push(sort_key(row.block_number, row.kind, row.log_index));
+            registrations.push(row.registration_index);
+            path_steps.extend_from_slice(row.order_path.as_deref().unwrap_or_default());
+            path_ends.push(path_steps.len() as u32);
+
+            let registration = row.registration_index as f64;
+            items.num(item_column::FORMAT, row.data.format() as u8 as f64);
+            items.num(item_column::BLOCK_NUMBER, row.block_number as f64);
+            items.num(item_column::LOG_INDEX, row.log_index as f64);
+            items.num(item_column::REGISTRATION_INDEX, registration);
+            let unset: &[usize] = match &row.data {
+                RowData::EvmLog {
+                    src_address,
+                    transaction_index,
+                    params: log_params,
+                } => {
+                    let (_, group) = params[row.registration_index as usize]
+                        .as_mut()
+                        .expect("counted in the first pass");
+                    for (column, cell) in log_params.cells.iter().enumerate() {
+                        match cell {
+                            ParamCell::Bool(value) => group.bool(column, *value),
+                            ParamCell::Text(value) | ParamCell::BigInt(value) => {
+                                group.bytes(column, value.as_bytes())
+                            }
+                            ParamCell::Tape(tape) => group.tape(column, &mut tapes, tape),
+                        }
+                    }
+                    items.num(item_column::TRANSACTION_INDEX, *transaction_index as f64);
+                    items.bytes(item_column::SRC_ADDRESS, src_address.as_bytes());
+                    items.num(item_column::DETAIL_ROW, group.row as f64);
+                    group.end_row();
+                    &[item_column::SKIPPED, item_column::TAPE]
+                }
+                RowData::FuelReceipt {
+                    tx_id,
+                    src_address,
+                    params,
+                } => {
+                    fuel.num(0, registration);
+                    fuel.num(1, row.log_index as f64);
+                    fuel.bytes(2, tx_id.as_bytes());
+                    fuel.num(3, row.block_number as f64);
+                    fuel.bytes(4, src_address.as_bytes());
+                    fuel.tape(5, &mut tapes, params);
+                    items.num(item_column::DETAIL_ROW, fuel.row as f64);
+                    fuel.end_row();
+                    &[
+                        item_column::TRANSACTION_INDEX,
+                        item_column::SRC_ADDRESS,
+                        item_column::SKIPPED,
+                        item_column::TAPE,
+                    ]
+                }
+                RowData::SvmInstruction {
+                    program_id,
+                    accounts,
+                    data,
+                    is_inner,
+                    args,
+                    logs,
+                } => {
+                    svm.num(0, registration);
+                    svm.num(1, row.block_number as f64);
+                    svm.num(2, row.log_index as f64);
+                    svm.num_list(3, row.order_path.as_deref().unwrap_or_default());
+                    svm.bytes(4, program_id.as_bytes());
+                    svm.text_list(5, accounts);
+                    svm.bytes(6, data);
+                    svm.bool(7, *is_inner);
+                    svm.optional_tape(8, &mut tapes, args);
+                    svm.optional_tape(9, &mut tapes, logs);
+                    items.num(item_column::DETAIL_ROW, svm.row as f64);
+                    svm.end_row();
+                    &[
+                        item_column::TRANSACTION_INDEX,
+                        item_column::SRC_ADDRESS,
+                        item_column::SKIPPED,
+                        item_column::TAPE,
+                    ]
+                }
+                RowData::Block { skipped } => {
+                    items.bool(item_column::SKIPPED, *skipped);
+                    &[
+                        item_column::TRANSACTION_INDEX,
+                        item_column::SRC_ADDRESS,
+                        item_column::DETAIL_ROW,
+                        item_column::TAPE,
+                    ]
+                }
+                RowData::JsItem(item) => {
+                    items.tape(item_column::TAPE, &mut tapes, item);
+                    &[
+                        item_column::TRANSACTION_INDEX,
+                        item_column::SRC_ADDRESS,
+                        item_column::SKIPPED,
+                        item_column::DETAIL_ROW,
+                    ]
+                }
+            };
+            for column in unset {
+                items.null(*column);
+            }
+            items.end_row();
+        }
+
+        Chunk {
+            start: 0,
+            keys,
+            registrations,
+            path_ends,
+            path_steps,
+            items: items.arena,
+            params: params
+                .into_iter()
+                .map(|group| {
+                    group.map(|(columns, writer)| Params {
+                        columns,
+                        arena: writer.arena,
+                    })
+                })
+                .collect(),
+            fuel: fuel.arena,
+            svm: svm.arena,
+            tapes,
+        }
+    }
+
+    /// Appends `rows` of `other`, every column a range at a time, then points
+    /// the copied items at where their format's rows and their tapes landed.
+    fn extend_from(&mut self, other: &Chunk, rows: Range<usize>) {
+        if rows.is_empty() {
+            return;
+        }
+        self.keys.extend_from_slice(&other.keys[rows.clone()]);
+        self.registrations
+            .extend_from_slice(&other.registrations[rows.clone()]);
+        let steps_start = if rows.start == 0 {
+            0
+        } else {
+            other.path_ends[rows.start - 1]
+        };
+        let steps_end = other.path_ends[rows.end - 1];
+        let steps_base = self.path_steps.len() as u32;
+        self.path_steps
+            .extend_from_slice(&other.path_steps[steps_start as usize..steps_end as usize]);
+        self.path_ends.extend(
+            other.path_ends[rows.clone()]
+                .iter()
+                .map(|end| end - steps_start + steps_base),
+        );
+
+        // A format's arena rows behind a run of items are themselves one run,
+        // in the same order.
+        let mut params_runs: Vec<Option<DetailRun>> = vec![None; other.params.len()];
+        let (mut fuel_run, mut svm_run) = (None, None);
+        for row in rows.clone() {
+            let detail_row = other.detail_row_at(row);
+            match other.format_at(row) {
+                format if format == RowFormat::EvmLog as u8 => DetailRun::note(
+                    &mut params_runs[other.registrations[row] as usize],
+                    detail_row,
+                ),
+                format if format == RowFormat::FuelReceipt as u8 => {
+                    DetailRun::note(&mut fuel_run, detail_row)
+                }
+                format if format == RowFormat::SvmInstruction as u8 => {
+                    DetailRun::note(&mut svm_run, detail_row)
+                }
+                _ => {}
+            }
+        }
+        if self.params.len() < other.params.len() {
+            self.params.resize_with(other.params.len(), || None);
+        }
+        for (registration, run) in params_runs.iter_mut().enumerate() {
+            let Some(run) = run else { continue };
+            let from = other.params[registration]
+                .as_ref()
+                .expect("a log's registration has params");
+            let to = self.params[registration].get_or_insert_with(|| Params {
+                columns: from.columns.clone(),
+                arena: Arena::empty_like(&from.arena),
+            });
+            run.to = to.arena.rows();
+            to.arena
+                .extend_from(&from.arena, run.from..run.from + run.rows);
+            for column in tape_columns(&from.columns) {
+                copy_tapes(
+                    &mut to.arena,
+                    column,
+                    run.to..run.to + run.rows,
+                    &other.tapes,
+                    &mut self.tapes,
+                );
+            }
+        }
+        if let Some(run) = &mut fuel_run {
+            run.to = self.fuel.rows();
+            self.fuel
+                .extend_from(&other.fuel, run.from..run.from + run.rows);
+            copy_tapes(
+                &mut self.fuel,
+                5,
+                run.to..run.to + run.rows,
+                &other.tapes,
+                &mut self.tapes,
+            );
+        }
+        if let Some(run) = &mut svm_run {
+            run.to = self.svm.rows();
+            self.svm
+                .extend_from(&other.svm, run.from..run.from + run.rows);
+            for column in [8, 9] {
+                copy_tapes(
+                    &mut self.svm,
+                    column,
+                    run.to..run.to + run.rows,
+                    &other.tapes,
+                    &mut self.tapes,
+                );
+            }
+        }
+
+        let first = self.items.rows();
+        self.items.extend_from(&other.items, rows.clone());
+        for (offset, row) in rows.enumerate() {
+            let run = match other.format_at(row) {
+                format if format == RowFormat::EvmLog as u8 => {
+                    params_runs[other.registrations[row] as usize]
+                }
+                format if format == RowFormat::FuelReceipt as u8 => fuel_run,
+                format if format == RowFormat::SvmInstruction as u8 => svm_run,
+                _ => None,
+            };
+            if let Some(run) = run {
+                let detail_row = run.to + other.detail_row_at(row) - run.from;
+                self.items
+                    .set_f64(item_column::DETAIL_ROW, first + offset, detail_row as f64);
+            }
+        }
+        let copied = first..self.items.rows();
+        copy_tapes(
+            &mut self.items,
+            item_column::TAPE,
+            copied,
+            &other.tapes,
+            &mut self.tapes,
+        );
+    }
+
+    /// Hands the arenas to JavaScript to read.
+    fn lay_out(mut self) -> Result<StoredRows> {
+        if self.start > 0 {
+            let mut rest = Chunk::empty();
+            rest.extend_from(&self, self.start..self.keys.len());
+            self = rest;
+        }
+        let seal = |columns: &[ColumnRead], arena: &mut Arena| -> Result<ArenaShape> {
+            let shape = ArenaShape::of(columns, arena.rows());
+            arena.seal(&shape.names)?;
+            Ok(shape)
+        };
+        let items = seal(&item_columns(), &mut self.items)?;
+        let mut arenas = vec![self.items];
+        let mut params = Vec::new();
+        for (registration_index, group) in self.params.into_iter().enumerate() {
+            if let Some(mut group) = group {
+                params.push(ParamsShape {
+                    registration_index: registration_index as i64,
+                    shape: seal(&group.columns, &mut group.arena)?,
+                });
+                arenas.push(group.arena);
+            }
+        }
+        let fuel = seal(&fuel_columns(), &mut self.fuel)?;
+        arenas.push(self.fuel);
+        let svm = seal(&svm_columns(), &mut self.svm)?;
+        arenas.push(self.svm);
+
+        let handle = NEXT_HANDLE.fetch_add(1, AtomicOrdering::Relaxed);
+        RESULTS.lock().unwrap().insert(
+            handle,
+            Lent {
+                arenas,
+                buffer_counts: Vec::new(),
+            },
+        );
+        Ok(StoredRows {
+            handle,
+            items,
+            params,
+            fuel,
+            svm,
+            tapes: self.tapes,
+        })
+    }
 }
 
 /// The columns of an arena result, which JavaScript builds its views from.
@@ -455,11 +1035,9 @@ fn svm_columns() -> Vec<ColumnRead> {
     ]
 }
 
-/// One arena written straight from the stored rows: each column once per row,
-/// rows in order, which is how a variable-width or list column finds where its
-/// row starts.
+/// An arena written row by row: each column once per row, rows in order,
+/// which is how a variable-width or list column finds where its row starts.
 struct ArenaWriter {
-    columns: Vec<ColumnRead>,
     arena: Arena,
     row: usize,
     /// List elements written so far, per column.
@@ -467,24 +1045,10 @@ struct ArenaWriter {
 }
 
 impl ArenaWriter {
-    /// `elements` gives a list column's element count across all rows, which
-    /// its element column is sized to once.
-    fn new(columns: Vec<ColumnRead>, rows: usize, elements: &[usize]) -> Self {
-        let specs: Vec<ColumnSpec> = columns
-            .iter()
-            .enumerate()
-            .map(|(index, column)| match column.element {
-                Some(element) => ColumnSpec::List {
-                    element: element.slot(),
-                    elements: elements[index],
-                },
-                None => ColumnSpec::Scalar(column.kind.slot()),
-            })
-            .collect();
+    fn new(arena: Arena) -> Self {
         ArenaWriter {
-            arena: Arena::new_filled(rows, &specs),
-            elements: vec![0; columns.len()],
-            columns,
+            elements: vec![0; arena.columns().len()],
+            arena,
             row: 0,
         }
     }
@@ -505,7 +1069,7 @@ impl ArenaWriter {
         self.arena.mark_null(column, self.row);
     }
 
-    /// A tape's position among the result's tapes.
+    /// A tape's position among the chunk's tapes.
     fn tape(&mut self, column: usize, tapes: &mut Vec<JsTape>, tape: &JsTape) {
         tapes.push(tape.clone());
         self.num(column, (tapes.len() - 1) as f64);
@@ -541,209 +1105,6 @@ impl ArenaWriter {
     fn end_row(&mut self) {
         self.row += 1;
     }
-
-    fn finish(mut self) -> Result<(ArenaShape, Arena)> {
-        let shape = ArenaShape::of(&self.columns, self.row);
-        self.arena.seal(&shape.names)?;
-        Ok((shape, self.arena))
-    }
-}
-
-/// Lays rows out as the arenas `StoredRows` describes, and keeps them until
-/// JavaScript has read them.
-fn lay_out_rows<'a>(rows: impl IntoIterator<Item = &'a Row>) -> Result<StoredRows> {
-    let rows: Vec<&Row> = rows.into_iter().collect();
-
-    // Every arena is sized before it is written, so one pass counts each
-    // format's rows and the SVM lists' elements first.
-    let (mut fuel_rows, mut svm_rows, mut svm_steps, mut svm_accounts) = (0, 0, 0, 0);
-    // By registration index: the schema of its EVM logs' params, and how many.
-    let mut params_of: Vec<Option<(&ParamSchema, usize)>> = Vec::new();
-    for row in &rows {
-        match &row.data {
-            RowData::EvmLog { params, .. } => {
-                let index = row.registration_index as usize;
-                if params_of.len() <= index {
-                    params_of.resize(index + 1, None);
-                }
-                params_of[index].get_or_insert((&params.schema, 0)).1 += 1;
-            }
-            RowData::FuelReceipt { .. } => fuel_rows += 1,
-            RowData::SvmInstruction { accounts, .. } => {
-                svm_rows += 1;
-                svm_steps += row.order_path.as_ref().map_or(0, Vec::len);
-                svm_accounts += accounts.len();
-            }
-            RowData::Block { .. } | RowData::JsItem(_) => {}
-        }
-    }
-
-    let mut tapes = Vec::new();
-    let mut items = ArenaWriter::new(
-        ITEM_COLUMNS
-            .iter()
-            .map(|(name, kind)| ColumnRead::scalar(*name, *kind))
-            .collect(),
-        rows.len(),
-        &[],
-    );
-    let mut params: Vec<Option<ArenaWriter>> = params_of
-        .iter()
-        .map(|group| {
-            group.map(|(schema, logs)| {
-                let columns = schema
-                    .params
-                    .iter()
-                    .zip(&schema.kinds)
-                    .map(|(param, kind)| ColumnRead::scalar(param.name.clone(), *kind))
-                    .collect();
-                ArenaWriter::new(columns, logs, &[])
-            })
-        })
-        .collect();
-    let mut fuel = ArenaWriter::new(fuel_columns(), fuel_rows, &[]);
-    let mut svm = ArenaWriter::new(
-        svm_columns(),
-        svm_rows,
-        &[0, 0, 0, svm_steps, 0, svm_accounts, 0, 0, 0, 0],
-    );
-
-    for row in &rows {
-        let registration = row.registration_index as f64;
-        items.num(item_column::FORMAT, row.data.format() as u8 as f64);
-        items.num(item_column::BLOCK_NUMBER, row.block_number as f64);
-        items.num(item_column::LOG_INDEX, row.log_index as f64);
-        items.num(item_column::REGISTRATION_INDEX, registration);
-        let unset: &[usize] = match &row.data {
-            RowData::EvmLog {
-                src_address,
-                transaction_index,
-                params: log_params,
-            } => {
-                let group = params[row.registration_index as usize]
-                    .as_mut()
-                    .expect("counted in the first pass");
-                for (column, cell) in log_params.cells.iter().enumerate() {
-                    match cell {
-                        ParamCell::Bool(value) => group.bool(column, *value),
-                        ParamCell::Text(value) | ParamCell::BigInt(value) => {
-                            group.bytes(column, value.as_bytes())
-                        }
-                        ParamCell::Tape(tape) => group.tape(column, &mut tapes, tape),
-                    }
-                }
-                items.num(item_column::TRANSACTION_INDEX, *transaction_index as f64);
-                items.bytes(item_column::SRC_ADDRESS, src_address.as_bytes());
-                items.num(item_column::DETAIL_ROW, group.row as f64);
-                group.end_row();
-                &[item_column::SKIPPED, item_column::TAPE]
-            }
-            RowData::FuelReceipt {
-                tx_id,
-                src_address,
-                params,
-            } => {
-                fuel.num(0, registration);
-                fuel.num(1, row.log_index as f64);
-                fuel.bytes(2, tx_id.as_bytes());
-                fuel.num(3, row.block_number as f64);
-                fuel.bytes(4, src_address.as_bytes());
-                fuel.tape(5, &mut tapes, params);
-                items.num(item_column::DETAIL_ROW, fuel.row as f64);
-                fuel.end_row();
-                &[
-                    item_column::TRANSACTION_INDEX,
-                    item_column::SRC_ADDRESS,
-                    item_column::SKIPPED,
-                    item_column::TAPE,
-                ]
-            }
-            RowData::SvmInstruction {
-                program_id,
-                accounts,
-                data,
-                is_inner,
-                args,
-                logs,
-            } => {
-                svm.num(0, registration);
-                svm.num(1, row.block_number as f64);
-                svm.num(2, row.log_index as f64);
-                svm.num_list(3, row.order_path.as_deref().unwrap_or_default());
-                svm.bytes(4, program_id.as_bytes());
-                svm.text_list(5, accounts);
-                svm.bytes(6, data);
-                svm.bool(7, *is_inner);
-                svm.optional_tape(8, &mut tapes, args);
-                svm.optional_tape(9, &mut tapes, logs);
-                items.num(item_column::DETAIL_ROW, svm.row as f64);
-                svm.end_row();
-                &[
-                    item_column::TRANSACTION_INDEX,
-                    item_column::SRC_ADDRESS,
-                    item_column::SKIPPED,
-                    item_column::TAPE,
-                ]
-            }
-            RowData::Block { skipped } => {
-                items.bool(item_column::SKIPPED, *skipped);
-                &[
-                    item_column::TRANSACTION_INDEX,
-                    item_column::SRC_ADDRESS,
-                    item_column::DETAIL_ROW,
-                    item_column::TAPE,
-                ]
-            }
-            RowData::JsItem(item) => {
-                items.tape(item_column::TAPE, &mut tapes, item);
-                &[
-                    item_column::TRANSACTION_INDEX,
-                    item_column::SRC_ADDRESS,
-                    item_column::SKIPPED,
-                    item_column::DETAIL_ROW,
-                ]
-            }
-        };
-        for column in unset {
-            items.null(*column);
-        }
-        items.end_row();
-    }
-
-    let (items, items_arena) = items.finish()?;
-    let mut arenas = vec![items_arena];
-    let mut params_shapes = Vec::new();
-    for (registration_index, group) in params.into_iter().enumerate() {
-        if let Some(group) = group {
-            let (shape, arena) = group.finish()?;
-            params_shapes.push(ParamsShape {
-                registration_index: registration_index as i64,
-                shape,
-            });
-            arenas.push(arena);
-        }
-    }
-    let (fuel, fuel_arena) = fuel.finish()?;
-    arenas.push(fuel_arena);
-    let (svm, svm_arena) = svm.finish()?;
-    arenas.push(svm_arena);
-
-    let handle = NEXT_HANDLE.fetch_add(1, AtomicOrdering::Relaxed);
-    RESULTS.lock().unwrap().insert(
-        handle,
-        Lent {
-            arenas,
-            buffer_counts: Vec::new(),
-        },
-    );
-    Ok(StoredRows {
-        handle,
-        items,
-        params: params_shapes,
-        fuel,
-        svm,
-        tapes,
-    })
 }
 
 fn to_napi(err: anyhow::Error) -> napi::Error {
@@ -847,15 +1208,15 @@ impl EventStore {
 
     #[napi]
     pub fn block_number_at(&self, index: u32) -> Option<i64> {
-        self.rows().get(index as usize).map(|row| row.block_number)
+        self.rows().block_number_at(index as usize)
     }
 
     #[napi]
     pub fn first_event_block_number(&self) -> Option<i64> {
         self.rows()
-            .iter()
-            .find(|row| row.kind == ItemKind::Event)
-            .map(|row| row.block_number)
+            .keys()
+            .find(|key| key & KIND_BIT == 0)
+            .map(|key| (key >> 64) as i64)
     }
 
     /// How many rows are at or below `block_number`.
@@ -872,13 +1233,14 @@ impl EventStore {
         let rows = self.rows();
         let mut ready_block_number = frontier;
         let mut count = 0u32;
-        for row in rows.iter().skip(from_index as usize) {
-            if row.block_number > ready_block_number {
+        for key in rows.keys().skip(from_index as usize) {
+            let block_number = (key >> 64) as i64;
+            if block_number > ready_block_number {
                 break;
             }
             count += 1;
             if count == target_size {
-                ready_block_number = row.block_number;
+                ready_block_number = block_number;
             }
         }
         count
@@ -888,7 +1250,7 @@ impl EventStore {
     #[napi]
     pub fn take(&self, count: u32) -> napi::Result<StoredRows> {
         let taken = self.rows().take(count as usize);
-        lay_out_rows(&taken).map_err(to_napi)
+        taken.lay_out().map_err(to_napi)
     }
 
     /// The event rows routed to any of `registration_indexes`, in order, laid
@@ -898,17 +1260,18 @@ impl EventStore {
         &self,
         registration_indexes: Vec<i64>,
     ) -> napi::Result<StoredRows> {
-        let rows = self.rows();
-        lay_out_rows(rows.iter().filter(|row| {
-            row.kind == ItemKind::Event && registration_indexes.contains(&row.registration_index)
-        }))
-        .map_err(to_napi)
+        let selected = self.rows().select(|chunk, row| {
+            chunk.keys[row] & KIND_BIT == 0
+                && registration_indexes.contains(&chunk.registrations[row])
+        });
+        selected.lay_out().map_err(to_napi)
     }
 
     /// Every row, in order, laid out for JS. The rows stay.
     #[napi]
     pub fn all_items(&self) -> napi::Result<StoredRows> {
-        lay_out_rows(self.rows().iter()).map_err(to_napi)
+        let all = self.rows().select(|_, _| true);
+        all.lay_out().map_err(to_napi)
     }
 
     /// Drops every row above `target_block_number`.
@@ -1051,6 +1414,155 @@ mod tests {
                 JsValue::str("child"),
                 JsValue::str("sibling")
             ]
+        );
+    }
+
+    fn tagged(tag: &str) -> JsTape {
+        let mut tape = JsTape::new();
+        tape.str(tag);
+        tape
+    }
+
+    fn evm(block_number: i64, registration_index: i64, value: &str) -> Row {
+        use crate::evm_hypersync_source::types::{ParamMeta, ParamSchema};
+        let meta = |name: &str, abi_type: &str| ParamMeta {
+            name: name.into(),
+            abi_type: abi_type.into(),
+            indexed: false,
+            components: None,
+        };
+        let schema = std::sync::Arc::new(ParamSchema::new(
+            vec![meta("value", "uint256"), meta("list", "uint256[]")],
+            false,
+        ));
+        Row::evm_log(
+            block_number,
+            0,
+            0,
+            "0xsrc".into(),
+            registration_index,
+            EvmParams {
+                cells: vec![
+                    ParamCell::BigInt(value.into()),
+                    ParamCell::Tape(tagged(&format!("{value} list"))),
+                ],
+                schema,
+            },
+        )
+    }
+
+    /// Each row as its format's arena row says it, followed through
+    /// `detailRow` and its tape cells. Frees the result.
+    fn describe(rows: StoredRows) -> Vec<String> {
+        let lent = RESULTS.lock().unwrap().remove(&rows.handle).unwrap();
+        let items = lent.arenas[0].columns();
+        let fuel = lent.arenas[1 + rows.params.len()].columns();
+        let svm = lent.arenas[2 + rows.params.len()].columns();
+        let tape = |position: f64| format!("{:?}", JsValue::of(&rows.tapes[position as usize]));
+        let text =
+            |column: &crate::columnar::Column, row: usize| column.str_at(row).unwrap().to_string();
+        (0..rows.items.rows as usize)
+            .map(|row| {
+                let block = items[item_column::BLOCK_NUMBER].f64_at(row);
+                let detail = items[item_column::DETAIL_ROW].f64_at(row) as usize;
+                let registration = items[item_column::REGISTRATION_INDEX].f64_at(row) as i64;
+                match items[item_column::FORMAT].f64_at(row) as u8 {
+                    format if format == RowFormat::EvmLog as u8 => {
+                        let group = rows
+                            .params
+                            .iter()
+                            .position(|group| group.registration_index == registration)
+                            .unwrap();
+                        let params = lent.arenas[1 + group].columns();
+                        format!(
+                            "evm {block} r{registration} {} {}",
+                            text(&params[0], detail),
+                            tape(params[1].f64_at(detail))
+                        )
+                    }
+                    format if format == RowFormat::FuelReceipt as u8 => format!(
+                        "fuel {block} {} {}",
+                        text(&fuel[2], detail),
+                        tape(fuel[5].f64_at(detail))
+                    ),
+                    _ => {
+                        let (steps, ends) = svm[3].list().unwrap();
+                        let start = if detail == 0 {
+                            0
+                        } else {
+                            ends[detail - 1] as usize
+                        };
+                        let path: Vec<f64> = (start..ends[detail] as usize)
+                            .map(|step| steps.f64_at(step))
+                            .collect();
+                        format!(
+                            "svm {block} {path:?} {} {}",
+                            text(&svm[4], detail),
+                            tape(svm[8].f64_at(detail))
+                        )
+                    }
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn merges_and_partial_takes_carry_each_format_s_details_and_tapes() {
+        let svm_row = |block_number: i64, path: &[i64], program: &str| {
+            Row::event(
+                block_number,
+                5,
+                Some(path.to_vec()),
+                2,
+                RowData::SvmInstruction {
+                    program_id: program.into(),
+                    accounts: vec!["acc".into()],
+                    data: vec![1],
+                    is_inner: false,
+                    args: Some(tagged(&format!("{program} args"))),
+                    logs: None,
+                },
+            )
+        };
+        let store = EventStore::from_rows(vec![
+            evm(1, 0, "1"),
+            evm(3, 1, "3"),
+            Row::event(
+                3,
+                1,
+                None,
+                3,
+                RowData::FuelReceipt {
+                    tx_id: "tx".into(),
+                    src_address: "0xfuel".into(),
+                    params: tagged("fuel params"),
+                },
+            ),
+            svm_row(3, &[0, 1], "child"),
+            svm_row(3, &[0], "parent"),
+        ]);
+        store.merge(&EventStore::from_rows(vec![
+            evm(2, 1, "2"),
+            evm(2, 0, "2"),
+            evm(3, 1, "3 refetched"),
+        ]));
+        let first = describe(store.take(2).unwrap());
+        let rest = describe(store.take(u32::MAX).unwrap());
+        assert_eq!(
+            (first, rest),
+            (
+                vec![
+                    "evm 1 r0 1 Str(\"1 list\")".to_string(),
+                    "evm 2 r0 2 Str(\"2 list\")".to_string(),
+                ],
+                vec![
+                    "evm 2 r1 2 Str(\"2 list\")".to_string(),
+                    "evm 3 r1 3 Str(\"3 list\")".to_string(),
+                    "fuel 3 tx Str(\"fuel params\")".to_string(),
+                    "svm 3 [0.0] parent Str(\"parent args\")".to_string(),
+                    "svm 3 [0.0, 1.0] child Str(\"child args\")".to_string(),
+                ]
+            )
         );
     }
 
