@@ -168,28 +168,162 @@ impl Row {
     }
 }
 
-/// Merges `incoming` into the sorted, deduplicated `rows`. On a tie the row
-/// already stored is kept.
-fn merge_rows(mut rows: VecDeque<Row>, mut incoming: Vec<Row>) -> VecDeque<Row> {
-    // Stable, so of two equal incoming rows the first is the one kept.
-    incoming.sort_by(Row::compare);
-    let Some(first) = incoming.first() else {
-        return rows;
-    };
-    // Stored rows up to the page's first row stay where they are, so a page at
-    // the fetch frontier only appends, and a gap-filling page only moves the
-    // rows after its own start.
-    let start = rows.partition_point(|row| row.compare(first) != Ordering::Greater);
-    let tail = rows.split_off(start);
+/// A chunk this short takes the next appended rows into itself rather than
+/// staying beside them, so generated block items and small pages don't pile
+/// up chunks that the positional queries would walk.
+const COALESCE_BELOW: usize = 1024;
+
+/// Rows in processing order, deduplicated, as sorted chunks that don't
+/// overlap. A page whose rows all come after the stored ones, which is what a
+/// response at the fetch frontier brings, is kept whole as one more chunk, so
+/// merging it moves no row. A page that fills a gap merges only into the
+/// chunks it overlaps.
+#[derive(Default)]
+pub(crate) struct Rows {
+    // A chunk is itself a deque, so a batch taking the front of one moves only
+    // the rows it takes.
+    chunks: VecDeque<VecDeque<Row>>,
+    len: usize,
+}
+
+impl Rows {
+    /// Sorts and deduplicates `rows` into one chunk. Of two equal rows the
+    /// first is kept.
+    fn from_unsorted(mut rows: Vec<Row>) -> Self {
+        // Stable, so of two equal rows the first stays first.
+        rows.sort_by(Row::compare);
+        rows.dedup_by(|later, kept| kept.compare(later) == Ordering::Equal);
+        let mut sorted = Rows::default();
+        sorted.append(rows);
+        sorted
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Row> {
+        self.chunks.iter().flatten()
+    }
+
+    fn get(&self, mut index: usize) -> Option<&Row> {
+        for chunk in &self.chunks {
+            if index < chunk.len() {
+                return chunk.get(index);
+            }
+            index -= chunk.len();
+        }
+        None
+    }
+
+    fn count_at_or_below(&self, block_number: i64) -> usize {
+        let mut count = 0;
+        for chunk in &self.chunks {
+            match chunk.back() {
+                Some(last) if last.block_number <= block_number => count += chunk.len(),
+                _ => return count + chunk.partition_point(|row| row.block_number <= block_number),
+            }
+        }
+        count
+    }
+
+    /// Adds sorted rows that all come after the stored ones.
+    fn append(&mut self, rows: Vec<Row>) {
+        let rows = VecDeque::from(rows);
+        if rows.is_empty() {
+            return;
+        }
+        self.len += rows.len();
+        match self.chunks.back_mut() {
+            Some(last) if last.len() < COALESCE_BELOW || rows.len() < COALESCE_BELOW => {
+                last.extend(rows)
+            }
+            _ => self.chunks.push_back(rows),
+        }
+    }
+
+    /// Merges `other`'s rows in. On a tie the row already stored is kept.
+    fn merge(&mut self, other: Rows) {
+        let incoming: Vec<Row> = match other.chunks.len() {
+            0 => return,
+            1 => other.chunks.into_iter().next().unwrap().into(),
+            _ => other.chunks.into_iter().flatten().collect(),
+        };
+        let first = &incoming[0];
+        let last = &incoming[incoming.len() - 1];
+        // The chunks the page overlaps: from the first whose last row isn't
+        // before the page's first, to the last whose first row isn't after the
+        // page's last.
+        let Some(start) = self.chunks.iter().position(|chunk| {
+            chunk
+                .back()
+                .is_some_and(|stored| stored.compare(first) != Ordering::Less)
+        }) else {
+            return self.append(incoming);
+        };
+        let end = start
+            + self
+                .chunks
+                .iter()
+                .skip(start)
+                .take_while(|chunk| {
+                    chunk
+                        .front()
+                        .is_some_and(|stored| stored.compare(last) != Ordering::Greater)
+                })
+                .count();
+        let overlapped: Vec<VecDeque<Row>> = self.chunks.drain(start..end).collect();
+        let stored_len: usize = overlapped.iter().map(VecDeque::len).sum();
+        let merged = merge_sorted(overlapped.into_iter().flatten(), incoming);
+        self.len = self.len - stored_len + merged.len();
+        self.chunks.insert(start, merged.into());
+    }
+
+    /// Removes and returns the first `count` rows.
+    fn take(&mut self, count: usize) -> Vec<Row> {
+        let mut taken = Vec::with_capacity(count.min(self.len));
+        while taken.len() < count {
+            let Some(chunk) = self.chunks.front_mut() else {
+                break;
+            };
+            let wanted = count - taken.len();
+            if chunk.len() > wanted {
+                taken.extend(chunk.drain(..wanted));
+            } else {
+                taken.extend(self.chunks.pop_front().unwrap());
+            }
+        }
+        self.len -= taken.len();
+        taken
+    }
+
+    /// Drops every row above `block_number`.
+    fn rollback(&mut self, block_number: i64) {
+        while let Some(chunk) = self.chunks.back_mut() {
+            let kept = chunk.partition_point(|row| row.block_number <= block_number);
+            self.len -= chunk.len() - kept;
+            if kept == 0 {
+                self.chunks.pop_back();
+            } else {
+                chunk.truncate(kept);
+                break;
+            }
+        }
+    }
+}
+
+/// Merges two sorted, deduplicated runs. On a tie the row of `stored` is kept.
+fn merge_sorted(stored: impl Iterator<Item = Row>, incoming: Vec<Row>) -> Vec<Row> {
+    let mut merged: Vec<Row> = Vec::with_capacity(incoming.len());
     let mut push = |row: Row| {
-        if rows
-            .back()
+        if merged
+            .last()
             .is_none_or(|last| last.compare(&row) != Ordering::Equal)
         {
-            rows.push_back(row);
+            merged.push(row);
         }
     };
-    let mut stored = tail.into_iter().peekable();
+    let mut stored = stored.peekable();
     let mut incoming = incoming.into_iter().peekable();
     loop {
         match (stored.peek(), incoming.peek()) {
@@ -205,7 +339,7 @@ fn merge_rows(mut rows: VecDeque<Row>, mut incoming: Vec<Row>) -> VecDeque<Row> 
             (None, None) => break,
         }
     }
-    rows
+    merged
 }
 
 /// The columns of an arena result, which JavaScript builds its views from.
@@ -512,24 +646,22 @@ pub struct JsItemInput {
 
 #[napi]
 pub struct EventStore {
-    rows: Mutex<VecDeque<Row>>,
+    rows: Mutex<Rows>,
 }
 
 impl EventStore {
     pub(crate) fn from_rows(rows: Vec<Row>) -> Self {
         EventStore {
-            rows: Mutex::new(merge_rows(VecDeque::new(), rows)),
+            rows: Mutex::new(Rows::from_unsorted(rows)),
         }
     }
 
-    fn rows(&self) -> std::sync::MutexGuard<'_, VecDeque<Row>> {
+    fn rows(&self) -> std::sync::MutexGuard<'_, Rows> {
         self.rows.lock().unwrap()
     }
 
     fn insert(&self, incoming: Vec<Row>) {
-        let mut rows = self.rows();
-        let stored = std::mem::take(&mut *rows);
-        *rows = merge_rows(stored, incoming);
+        self.rows().merge(Rows::from_unsorted(incoming));
     }
 }
 
@@ -570,8 +702,10 @@ impl EventStore {
     /// Moves `page`'s rows in, leaving it empty.
     #[napi]
     pub fn merge(&self, page: &EventStore) {
+        // Each lock alone: a page merged into itself would otherwise wait on
+        // its own lock.
         let incoming = std::mem::take(&mut *page.rows());
-        self.insert(incoming.into());
+        self.rows().merge(incoming);
     }
 
     /// Block handler items generated locally, one per `(blockNumber,
@@ -609,8 +743,7 @@ impl EventStore {
     /// How many rows are at or below `block_number`.
     #[napi]
     pub fn count_at_or_below(&self, block_number: i64) -> u32 {
-        self.rows()
-            .partition_point(|row| row.block_number <= block_number) as u32
+        self.rows().count_at_or_below(block_number) as u32
     }
 
     /// How many rows from `from_index` on a batch takes: those at or below
@@ -636,9 +769,7 @@ impl EventStore {
     /// Removes the first `count` rows and lays them out for JS.
     #[napi]
     pub fn take(&self, count: u32) -> napi::Result<StoredRows> {
-        let mut rows = self.rows();
-        let count = (count as usize).min(rows.len());
-        let taken: Vec<Row> = rows.drain(..count).collect();
+        let taken = self.rows().take(count as usize);
         lay_out_rows(&taken).map_err(to_napi)
     }
 
@@ -665,8 +796,7 @@ impl EventStore {
     /// Drops every row above `target_block_number`.
     #[napi]
     pub fn rollback(&self, target_block_number: i64) {
-        self.rows()
-            .retain(|row| row.block_number <= target_block_number);
+        self.rows().rollback(target_block_number);
     }
 
     /// Every buffer of a laid-out result's arenas, in order: the items, then
@@ -837,6 +967,92 @@ mod tests {
             take_all(&store),
             vec![JsValue::str("b1"), JsValue::str("b2"), JsValue::str("b3")]
         );
+    }
+
+    /// Rows in blocks `blocks`, one per block, each its own big-enough page so
+    /// it stays a chunk of its own.
+    fn chunked(pages: &[std::ops::Range<i64>]) -> EventStore {
+        let store = EventStore::empty();
+        for page in pages {
+            let rows = page
+                .clone()
+                .flat_map(|block| {
+                    (0..COALESCE_BELOW as i64)
+                        .map(move |log| event(block, log, 0, &format!("{block}-{log}")))
+                })
+                .collect();
+            store.merge(&EventStore::from_rows(rows));
+        }
+        store
+    }
+
+    fn blocks_of(rows: Vec<JsValue>) -> Vec<i64> {
+        let mut blocks: Vec<i64> = rows
+            .iter()
+            .map(|row| match row {
+                JsValue::Str(tag) => tag.split('-').next().unwrap().parse().unwrap(),
+                other => panic!("not a tagged row: {other:?}"),
+            })
+            .collect();
+        blocks.dedup();
+        blocks
+    }
+
+    #[test]
+    fn appending_pages_keeps_each_whole_and_a_gap_fill_merges_only_what_it_overlaps() {
+        let store = chunked(&[1..3, 5..7, 9..11]);
+        let chunks_before = store.rows().chunks.len();
+        // Fills block 3 and 4 and repeats a row of block 5, which stays.
+        store.merge(&EventStore::from_rows(vec![
+            event(3, 0, 0, "3-0"),
+            event(4, 0, 0, "4-0"),
+            event(5, 0, 0, "5-0 refetched"),
+        ]));
+        let chunks_after = store.rows().chunks.len();
+        let len = store.len();
+        let at = (
+            store.block_number_at(2 * COALESCE_BELOW as u32),
+            store.count_at_or_below(4),
+        );
+        assert_eq!(
+            (
+                chunks_before,
+                chunks_after,
+                len,
+                at,
+                blocks_of(take_all(&store))
+            ),
+            (
+                3,
+                3,
+                6 * COALESCE_BELOW as u32 + 2,
+                (Some(3), 2 * COALESCE_BELOW as u32 + 2),
+                vec![1, 2, 3, 4, 5, 6, 9, 10]
+            )
+        );
+    }
+
+    #[test]
+    fn take_and_rollback_cut_through_chunks() {
+        let store = chunked(&[1..3, 3..5, 5..7]);
+        let taken = blocks_of(read(store.take(COALESCE_BELOW as u32 + 1).unwrap()));
+        store.rollback(4);
+        let chunks = store.rows().chunks.len();
+        assert_eq!(
+            (taken, store.len(), chunks, blocks_of(take_all(&store))),
+            (vec![1, 2], 3 * COALESCE_BELOW as u32 - 1, 2, vec![2, 3, 4])
+        );
+    }
+
+    #[test]
+    fn small_pages_join_the_last_chunk() {
+        let store = EventStore::empty();
+        for block in 1..=5 {
+            store.merge(&EventStore::from_rows(vec![event(block, 0, 0, "small")]));
+        }
+        store.insert_block_items(vec![6, 7], vec![0, 0]);
+        let chunks = store.rows().chunks.len();
+        assert_eq!((chunks, store.len()), (1, 7));
     }
 
     #[test]
