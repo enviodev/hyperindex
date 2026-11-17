@@ -5,6 +5,7 @@
 //! locally (`LogMatcher`).
 
 use alloy_primitives::hex;
+use std::collections::HashSet;
 
 use super::super::evm_hypersync_source::selection::{BuiltLogSelection, Emitters};
 
@@ -100,14 +101,15 @@ pub(super) fn plan_range_reads(selections: &[BuiltLogSelection]) -> Vec<RangeRea
 /// those shared values are equal across the members, so the merged filter is a
 /// superset of every member's filter and drops no constraint.
 pub(super) fn merge_selections_for_range(selections: &[&BuiltLogSelection]) -> BuiltLogSelection {
+    // The union keeps the first spelling of each address, so a set tracks
+    // membership while the vector keeps the request order.
     let mut addresses: Vec<String> = Vec::new();
-    let mut seen: Vec<Vec<u8>> = Vec::new();
+    let mut seen: HashSet<Vec<u8>> = HashSet::new();
     for selection in selections {
         for address in selection.addresses() {
             match hex::decode(address) {
                 Ok(bytes) => {
-                    if !seen.contains(&bytes) {
-                        seen.push(bytes);
+                    if seen.insert(bytes) {
                         addresses.push(address.clone());
                     }
                 }
