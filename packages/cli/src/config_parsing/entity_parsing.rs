@@ -499,7 +499,7 @@ impl<'a> ColumnResolver<'a> {
                         directive,
                         &format!("`{written_as}` is listed twice"),
                         &format!(
-                            "List each column once — repeating it adds nothing to the {builds}."
+                            "List each column once: repeating it adds nothing to the {builds}."
                         ),
                     ));
                 }
@@ -636,7 +636,7 @@ fn check_worth_indexing(entity: &str, only: &ResolvedColumn) -> anyhow::Result<(
                 INDEX_DIRECTIVE,
                 &format!("`{name}` is already marked `@index` on the field"),
                 &format!(
-                    "Keep one of them — the `@index` on the field, or `@index(fields: \
+                    "Keep one of them: the `@index` on the field, or `@index(fields: \
                      [\"{name}\"])` on the entity."
                 ),
             ))

@@ -40,7 +40,7 @@ describe("Test indexer get on a per-chain id present on several chains", () => {
     ]);
 
     const message =
-      "Entity \`Account\` with id \`shared\` exists on multiple chains (1, 10) — use getWhere({chainId: {_eq: ...}}) to pick one.";
+      "Entity \`Account\` with id \`shared\` exists on multiple chains (1, 10). Use getWhere({chainId: {_eq: ...}}) to pick one.";
     t.expect(
       results.map((result) => result.status === "rejected" ? result.reason.message : result),
     ).toEqual([message, message]);

@@ -83,7 +83,7 @@ describe("Fuel onEvent where", () => {
         ),
       ),
     ).toBe(
-      'Invalid where configuration for Greeter. \\\`block\\\` filter is invalid: RescriptSchemaError: Failed parsing at ["block"]. Reason: Encountered disallowed excess key "number" on an object. Only \\\`_gte\\\` is supported on event filters — use \\\`indexer.onBlock\\\` for \\\`_lte\\\` or \\\`_every\\\`.',
+      'Invalid where configuration for Greeter. \\\`block\\\` filter is invalid: RescriptSchemaError: Failed parsing at ["block"]. Reason: Encountered disallowed excess key "number" on an object. Only \\\`_gte\\\` is supported on event filters. Use \\\`indexer.onBlock\\\` for \\\`_lte\\\` or \\\`_every\\\`.',
     );
   });
 

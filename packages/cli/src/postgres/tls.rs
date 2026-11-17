@@ -341,6 +341,7 @@ mod tests {
             application_name: None,
             extra_ca_file: extra_ca_file.map(Path::to_path_buf),
             connect_timeout: std::time::Duration::from_secs(5),
+            keepalive: crate::postgres::client::Keepalive::default(),
         })
         .unwrap();
         match client.query("SELECT 1", &[]).await {

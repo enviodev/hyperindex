@@ -16,7 +16,7 @@ use super::schema::{effect_cache_fields, raw_event_fields, Encoding, Field, Sche
 use super::types::{
     Addresses, Bounds, ChainConfig, ChainMeta, Checkpoints, DiffCheckpoint, Frontier, Progress,
 };
-use super::{AddChain, Holding, Initialize, Store};
+use super::{AddChain, Holding, Initialize, Store, WriteError};
 use crate::clickhouse;
 use crate::clickhouse::client::{Connection, Tuning};
 use crate::columnar::{self, Arena, ColumnKind};
@@ -25,7 +25,7 @@ use crate::entity_filter::Condition;
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::postgres;
 use crate::postgres::client::{self, PgConnectionOptions, SslSetting};
-use crate::postgres::error::to_napi;
+use crate::postgres::error::{message_of, to_napi};
 use crate::postgres::indexes::IndexEvent;
 use crate::postgres::param::Param;
 
@@ -279,6 +279,25 @@ pub struct WriteTiming {
     pub seconds: f64,
 }
 
+#[napi(object)]
+pub struct WriteOutcome {
+    pub timings: Vec<WriteTiming>,
+    /// Set, with no timings, when the connection went before anything of the
+    /// batch committed: what failed, for the caller to log before writing the
+    /// same batch again.
+    pub unwritten: Option<String>,
+    /// Set, with no timings, when the connection went while the COMMIT was on
+    /// its way: what failed. Whether the batch landed is for `readFrontier` to
+    /// say once the database answers.
+    pub uncertain: Option<String>,
+}
+
+#[napi(object)]
+pub struct FrontierRead {
+    pub chain_ids: Vec<i64>,
+    pub checkpoint_ids: Vec<BigInt>,
+}
+
 #[napi(js_name = "Storage")]
 pub struct JsStorage {
     inner: super::Storage,
@@ -323,6 +342,7 @@ impl JsStorage {
             application_name: Some(pg.application_name),
             extra_ca_file: std::env::var_os("NODE_EXTRA_CA_CERTS").map(Into::into),
             connect_timeout: std::time::Duration::from_secs(30),
+            keepalive: client::Keepalive::default(),
         })
         .map_err(to_napi)?;
         let postgres = Arc::new(
@@ -661,6 +681,15 @@ impl JsStorage {
     }
 
     #[napi]
+    pub async fn read_frontier(&self) -> napi::Result<FrontierRead> {
+        let frontier = self.inner.read_frontier().await.map_err(to_napi)?;
+        Ok(FrontierRead {
+            chain_ids: frontier.keys().copied().collect(),
+            checkpoint_ids: frontier.values().map(|&id| BigInt::from(id)).collect(),
+        })
+    }
+
+    #[napi]
     pub async fn set_chain_meta(&self, chains: Vec<ChainMeta>) -> napi::Result<()> {
         self.inner.set_chain_meta(&chains).await.map_err(to_napi)
     }
@@ -821,20 +850,39 @@ impl JsStorage {
 
     /// Writes a batch to every store, answering how long each one took. A
     /// failed write rejects with what it was doing as the message, and the
-    /// store's own error as the `cause`.
+    /// store's own error as the `cause`; one the connection cut off resolves
+    /// as `unwritten` or `uncertain` instead.
     #[napi]
-    pub async fn write_batch(&self, batch: BatchInput) -> napi::Result<Vec<WriteTiming>> {
+    pub async fn write_batch(&self, batch: BatchInput) -> napi::Result<WriteOutcome> {
         let batch = self.to_batch(batch)?;
+        let describe = |failure: &super::Failure| {
+            format!("{}: {}", failure.context, message_of(&failure.error))
+        };
         match self.inner.write_batch(batch).await {
-            Ok(timings) => Ok(timings
-                .into_iter()
-                .map(|(store, seconds)| WriteTiming { store, seconds })
-                .collect()),
-            Err(failure) => {
+            Ok(timings) => Ok(WriteOutcome {
+                timings: timings
+                    .into_iter()
+                    .map(|(store, seconds)| WriteTiming { store, seconds })
+                    .collect(),
+                unwritten: None,
+                uncertain: None,
+            }),
+            Err(WriteError::Unwritten(failure)) => Ok(WriteOutcome {
+                timings: Vec::new(),
+                unwritten: Some(describe(&failure)),
+                uncertain: None,
+            }),
+            Err(WriteError::Uncertain(failure)) => Ok(WriteOutcome {
+                timings: Vec::new(),
+                unwritten: None,
+                uncertain: Some(describe(&failure)),
+            }),
+            Err(WriteError::Failed(failure)) => {
                 let mut failed = napi::Error::from_reason(failure.context);
                 failed.set_cause(to_napi(failure.error));
                 Err(failed)
             }
+            Err(WriteError::Gated) => unreachable!("the storage reports a gated store as failed"),
         }
     }
 
