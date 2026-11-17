@@ -1012,7 +1012,7 @@ chains:
   - id: 1
     start_block: 100
 `,
-      "Failed inserting chain at chains map: 1 already exists, cannot have duplicates",
+      "Chain 1 is listed more than once in config.yaml.",
     ),
     (
       "rejects unsupported Fuel network ids without an explicit endpoint",
