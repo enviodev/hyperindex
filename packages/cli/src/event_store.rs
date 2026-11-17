@@ -1049,13 +1049,18 @@ impl Chunk {
             }
         }
         for (run, to, from, columns) in [
-            (&mut runs.fuel, &mut self.fuel, &other.fuel, fuel_columns()),
-            (&mut runs.svm, &mut self.svm, &other.svm, svm_columns()),
+            (
+                &mut runs.fuel,
+                &mut self.fuel,
+                &other.fuel,
+                fuel_columns as fn() -> Vec<ColumnRead>,
+            ),
+            (&mut runs.svm, &mut self.svm, &other.svm, svm_columns),
         ] {
             let Some(run) = run else { continue };
             run.to = to.rows();
             to.extend_from(from, run.from..run.from + run.rows);
-            for column in tape_columns(&columns) {
+            for column in tape_columns(&columns()) {
                 copy_tapes(
                     to,
                     column,
