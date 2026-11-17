@@ -28,10 +28,21 @@ type arenaShape = {
 // One registration's EVM log params, a row per log.
 type paramsShape = {registrationIndex: int, shape: arenaShape}
 
+// A batch's transactions or blocks read from the chain's stores: an arena with
+// a row each and a column per selected field, and the nested fields, which
+// have no column shape, beside it.
+type fieldRows = {
+  shape: arenaShape,
+  accessList?: array<Nullable.t<unknown>>,
+  authorizationList?: array<Nullable.t<unknown>>,
+  accountActivities?: array<Nullable.t<unknown>>,
+}
+
 // Items on their way to JS: the arenas behind `handle` hold `items`, a row per
 // item in processing order, then each registration's `params`, then `fuel` and
-// `svm`. `tapes` holds what has no column shape. `read` lends the arenas and
-// takes them back.
+// `svm`; for a joined result, then `links`, each item's row in `transactions`
+// and in `blocks`, and those two. `tapes` holds what has no column shape.
+// `read` lends the arenas and takes them back.
 type storedRows = {
   handle: int,
   items: arenaShape,
@@ -39,7 +50,20 @@ type storedRows = {
   // The whole item record of each Fuel receipt and SVM instruction row.
   fuel: arenaShape,
   svm: arenaShape,
+  links?: arenaShape,
+  transactions?: fieldRows,
+  blocks?: fieldRows,
   tapes: array<unknown>,
+}
+
+// The field-code masks of what each registration selects of its items'
+// transaction and block: by event registration index, then by block
+// registration index, null where a block handler reads only the number.
+type joinedFields = {
+  transactionMasks: array<float>,
+  eventBlockMasks: array<float>,
+  blockHandlerMasks: array<Null.t<float>>,
+  shouldChecksum: bool,
 }
 
 @send external lendRowsRaw: (Core.eventStoreCtor, int) => array<ArrayBuffer.t> = "lendRows"
@@ -70,6 +94,10 @@ type jsItemInput = {
   orderPath?: array<int>,
   registrationIndex: int,
   item: dict<unknown>,
+  // Its transaction's key in the chain's store, when the item doesn't carry
+  // the transaction itself.
+  transactionIndex?: int,
+  blockFromStore: bool,
 }
 
 @send external fromJsItemsRaw: (Core.eventStoreCtor, array<jsItemInput>) => t = "fromJsItems"
@@ -81,7 +109,14 @@ let fromJsItems = (items: array<Internal.item>): t =>
     items->Array.map(item => {
       let data = item->(Utils.magic: Internal.item => dict<unknown>)->Dict.copy
       switch item {
-      | Event({onEventRegistration, blockNumber, logIndex, ?orderPath}) =>
+      | Event({
+          onEventRegistration,
+          blockNumber,
+          logIndex,
+          ?orderPath,
+          transactionIndex,
+          payload,
+        }) =>
         data->Dict.delete("onEventRegistration")
         {
           kind: 0,
@@ -90,8 +125,13 @@ let fromJsItems = (items: array<Internal.item>): t =>
           ?orderPath,
           registrationIndex: onEventRegistration.index,
           item: data,
+          transactionIndex: ?switch payload->Internal.getPayloadTransaction->Nullable.toOption {
+          | Some(_) => None
+          | None => Some(transactionIndex)
+          },
+          blockFromStore: payload->Internal.getPayloadBlock->Nullable.toOption->Option.isNone,
         }
-      | Block({onBlockRegistration, blockNumber}) =>
+      | Block({onBlockRegistration, blockNumber, ?block, ?skipped}) =>
         data->Dict.delete("onBlockRegistration")
         {
           kind: 1,
@@ -99,6 +139,7 @@ let fromJsItems = (items: array<Internal.item>): t =>
           logIndex: 0,
           registrationIndex: onBlockRegistration.index,
           item: data,
+          blockFromStore: block->Option.isNone && skipped !== Some(true),
         }
       }
     }),
@@ -132,9 +173,22 @@ external readyCount: (t, ~frontier: int, ~targetSize: int, ~fromIndex: int) => i
 // Removes and returns the first rows.
 @send external takeRaw: (t, int) => storedRows = "take"
 
-// Copies of the event rows routed to the given registrations, in order.
+// Removes and returns the first rows, with their transactions and blocks read
+// from the chain's stores.
 @send
-external eventsOfRegistrationsRaw: (t, array<int>) => storedRows = "eventsOfRegistrations"
+external takeJoinedRaw: (t, int, TransactionStore.t, BlockStore.t, joinedFields) => storedRows =
+  "takeJoined"
+
+// Copies of the event rows routed to the given registrations, in order, with
+// their transactions and blocks read from the chain's stores.
+@send
+external eventsOfRegistrationsRaw: (
+  t,
+  array<int>,
+  TransactionStore.t,
+  BlockStore.t,
+  joinedFields,
+) => storedRows = "eventsOfRegistrations"
 
 // Copies of every row, in order.
 @send external allItemsRaw: t => storedRows = "allItems"

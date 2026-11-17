@@ -61,6 +61,8 @@ let blockStore: t => BlockStore.t
 let transactionStore: t => TransactionStore.t
 // The chain's registrations by the index stored rows carry.
 let itemContext: t => StoredItems.context
+// Where a batch's items read their transactions and blocks from.
+let itemFields: t => StoredItems.fields
 let shouldChecksum: t => bool
 let entities: t => EntityTables.t
 let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
@@ -149,13 +151,6 @@ let handleQueryResult: (
   ~latestFetchedBlock: int,
   ~knownHeight: int,
 ) => unit
-let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
-let materializePageItems: (
-  ~items: array<Internal.item>,
-  ~transactionStore: TransactionStore.t,
-  ~blockStore: BlockStore.t,
-  ~shouldChecksum: bool,
-) => promise<unit>
 // Merges the page's blocks into the chain's store as it checks them: the check
 // is the merge's own conflict report, so a page that passes is already applied.
 // Its transactions are a separate page, merged by the caller once this returns

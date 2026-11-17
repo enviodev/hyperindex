@@ -92,6 +92,26 @@ let responseItems = (response: Source.blockRangeFetchResponse) =>
     },
   )
 
+// A response's items with their transactions and blocks, read from the given
+// stores the way a batch's take reads the chain's.
+let joinedItems = (
+  response: Source.blockRangeFetchResponse,
+  ~transactionStore,
+  ~blockStore,
+  ~shouldChecksum,
+) =>
+  response.items->StoredItems.take(
+    response.items->EventStore.length,
+    ~context={
+      chainId: 1->ChainId.fromInt,
+      onEventRegistrations: onEventRegistrations()->(
+        Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
+      ),
+      onBlockRegistrations: [],
+    },
+    ~fields={transactionStore, blockStore, shouldChecksum},
+  )
+
 let makeSource = (~url, ~lowercaseAddresses=true) => {
   let addressStore = TestAddresses.storeOf(
     ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
@@ -303,13 +323,8 @@ describe("HyperSync source contract", () => {
         | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
         | None => ()
         }
-        let items = page->responseItems
-        await ChainState.materializePageItems(
-          ~items,
-          ~transactionStore,
-          ~blockStore=page.blockStore,
-          ~shouldChecksum=false,
-        )
+        let items =
+          page->joinedItems(~transactionStore, ~blockStore=page.blockStore, ~shouldChecksum=false)
         items
       },
     )
@@ -708,13 +723,12 @@ describe("HyperSync source responses", () => {
         | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
         | None => ()
         }
-        let items = response->responseItems
-        await ChainState.materializePageItems(
-          ~items,
-          ~transactionStore,
-          ~blockStore=response.blockStore,
-          ~shouldChecksum=true,
-        )
+        let items =
+          response->joinedItems(
+            ~transactionStore,
+            ~blockStore=response.blockStore,
+            ~shouldChecksum=true,
+          )
         let summary = items->Array.map(eventSummary)->Array.getUnsafe(0)
         {
           "param": summary["params"].to->Option.getOrThrow->Address.toString,

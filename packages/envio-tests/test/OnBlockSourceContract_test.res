@@ -83,6 +83,24 @@ let responseItems = (response: Source.blockRangeFetchResponse) =>
     },
   )
 
+// A response's items with their transactions and blocks, read from the given
+// stores the way a batch's take reads the chain's.
+let joinedItems = (
+  response: Source.blockRangeFetchResponse,
+  ~transactionStore,
+  ~blockStore,
+  ~shouldChecksum,
+) =>
+  response.items->StoredItems.take(
+    response.items->EventStore.length,
+    ~context={
+      chainId: 1->ChainId.fromInt,
+      onEventRegistrations: [],
+      onBlockRegistrations: onBlockRegistrations(),
+    },
+    ~fields={transactionStore, blockStore, shouldChecksum},
+  )
+
 let makeHyperSyncSource = (~url) => {
   let addressStore = TestAddresses.storeOf(~contracts=[], ~addresses=[])
   let source = EvmHyperSyncSource.make({
@@ -138,15 +156,14 @@ let header = number =>
 
 type blockView = {number: int, timestamp?: int, miner?: Address.t}
 
-// What a block handler runs with, once the page's blocks are materialised.
+// What a block handler runs with, once the page's blocks are joined in.
 let materializedBlocks = async (page: Source.blockRangeFetchResponse) => {
-  let items = page->responseItems
-  await ChainState.materializePageItems(
-    ~items,
-    ~transactionStore=TransactionStore.make(~ecosystem=Evm),
-    ~blockStore=page.blockStore,
-    ~shouldChecksum=false,
-  )
+  let items =
+    page->joinedItems(
+      ~transactionStore=TransactionStore.make(~ecosystem=Evm),
+      ~blockStore=page.blockStore,
+      ~shouldChecksum=false,
+    )
   items->Array.map(item =>
     switch item {
     | Internal.Block({onBlockRegistration, blockNumber, ?block}) => (

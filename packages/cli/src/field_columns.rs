@@ -12,7 +12,7 @@ use napi::sys;
 use napi_derive::napi;
 
 use crate::columnar::{Arena, ColumnSpec};
-use crate::event_store::{hold, ArenaShape};
+use crate::event_store::ArenaShape;
 use crate::evm_hypersync_source::types::{
     AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
@@ -179,13 +179,12 @@ impl ToNapiValue for Columns {
     }
 }
 
-/// Materialised rows on their way to JavaScript. The arena behind `handle`
-/// holds a row per requested key and a column per selected field `Reading`
-/// reads; a cell with no value is null there. The nested fields, which have no
+/// A batch's blocks or transactions on their way to JavaScript: an arena with
+/// a row per block or transaction and a column per selected field `Reading`
+/// reads, null where a row has no value. The nested fields, which have no
 /// column shape, come as values beside it, `None` where absent.
 #[napi(object, object_from_js = false)]
-pub struct MaterializedRows {
-    pub handle: u32,
+pub struct FieldRows {
     pub shape: ArenaShape,
     pub access_list: Option<Vec<Option<Vec<AccessListItem>>>>,
     pub authorization_list: Option<Vec<Option<Vec<AuthorizationItem>>>>,
@@ -223,13 +222,12 @@ fn write_cells<T>(
 }
 
 impl Columns {
-    /// Lays the flat columns out as an arena and holds it for JavaScript to
-    /// read; the nested ones travel beside it.
-    pub fn lay_out(self) -> Result<MaterializedRows> {
+    /// Lays the flat columns out as a sealed arena; the nested ones travel
+    /// beside it.
+    pub fn into_arena(self) -> Result<(Arena, FieldRows)> {
         let mut reads = Vec::new();
         let mut flat = Vec::new();
-        let mut rows = MaterializedRows {
-            handle: 0,
+        let mut rows = FieldRows {
             shape: ArenaShape::of(&[], self.len),
             access_list: None,
             authorization_list: None,
@@ -340,8 +338,7 @@ impl Columns {
         }
         rows.shape = ArenaShape::of(&reads, self.len);
         arena.seal(&rows.shape.names)?;
-        rows.handle = hold(vec![arena]);
-        Ok(rows)
+        Ok((arena, rows))
     }
 }
 
@@ -431,8 +428,7 @@ mod tests {
                 ),
             ],
         };
-        let rows = columns.lay_out().unwrap();
-        let arena = crate::event_store::release_held(rows.handle).remove(0);
+        let (arena, rows) = columns.into_arena().unwrap();
         let columns = arena.columns();
         let (elements, ends) = columns[3].list().unwrap();
         let nested: Vec<Option<usize>> = rows

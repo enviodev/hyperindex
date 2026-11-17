@@ -91,9 +91,10 @@ let makeStores = () => (
 )
 
 // Resolve a page's items the way the indexer does: both of its stores merge
-// into the chain's, and materialisation reads those. Production splits the two
-// merges across `registerReorgGuard` and `ChainFetching`, so keeping them in one
-// place here is what stops a test drifting from that order.
+// into the chain's, and the take reads its items' transactions and blocks from
+// those. Production splits the two merges across `registerReorgGuard` and
+// `ChainFetching`, so keeping them in one place here is what stops a test
+// drifting from that order.
 let applyPage = async (
   response: Source.blockRangeFetchResponse,
   ~blockStore: BlockStore.t,
@@ -106,12 +107,12 @@ let applyPage = async (
   | Some(page) => transactionStore->TransactionStore.merge(page)
   | None => ()
   }
-  let items =
-    response.items->TestEventStore.itemsOf(
-      ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
-    )
-  await ChainState.materializePageItems(~items, ~transactionStore, ~blockStore, ~shouldChecksum)
-  items
+  await Promise.resolve()
+  response.items->StoredItems.take(
+    response.items->EventStore.length,
+    ~context={chainId: 1->ChainId.fromInt, onEventRegistrations, onBlockRegistrations: []},
+    ~fields={transactionStore, blockStore, shouldChecksum},
+  )
 }
 
 // The page's own stores back `block` and `transaction`, so the pin resolves

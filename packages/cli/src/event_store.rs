@@ -18,10 +18,13 @@ use napi::bindgen_prelude::ArrayBuffer;
 use napi::Env;
 use napi_derive::napi;
 
+use crate::block_store::BlockStore;
 use crate::columnar::{js as columnar_js, Arena, ColumnSpec};
 use crate::evm_hypersync_source::types::{EvmParams, ParamCell, ParamSchema};
+use crate::field_columns::FieldRows;
 use crate::js_value::JsTape;
 use crate::storage::rows::{ColumnRead, ReadKind};
+use crate::transaction_store::TransactionStore;
 
 /// Which JS conversion a row goes through, chosen by what produced it.
 #[napi]
@@ -72,17 +75,57 @@ pub(crate) enum RowData {
         skipped: bool,
     },
     /// An item built in JS (simulate input), without its registration.
-    JsItem(JsTape),
+    JsItem {
+        item: JsTape,
+        /// The key of its transaction in the chain's store, when the item
+        /// doesn't carry the transaction itself.
+        transaction_index: Option<i64>,
+        /// Whether its block comes from the chain's store rather than the item.
+        block_from_store: bool,
+    },
 }
 
+const READS_TRANSACTION: u8 = 1;
+const READS_BLOCK: u8 = 2;
+
 impl RowData {
+    /// Which of the chain's stores the item's transaction and block come from.
+    /// Fuel carries its transaction, a skipped block item reads no block, and
+    /// a JS-built item says what it carries.
+    fn reads(&self) -> u8 {
+        match self {
+            RowData::EvmLog { .. } | RowData::SvmInstruction { .. } => {
+                READS_TRANSACTION | READS_BLOCK
+            }
+            RowData::FuelReceipt { .. } => READS_BLOCK,
+            RowData::Block { skipped } => {
+                if *skipped {
+                    0
+                } else {
+                    READS_BLOCK
+                }
+            }
+            RowData::JsItem {
+                transaction_index,
+                block_from_store,
+                ..
+            } => {
+                (if transaction_index.is_some() {
+                    READS_TRANSACTION
+                } else {
+                    0
+                }) | if *block_from_store { READS_BLOCK } else { 0 }
+            }
+        }
+    }
+
     fn format(&self) -> RowFormat {
         match self {
             RowData::EvmLog { .. } => RowFormat::EvmLog,
             RowData::FuelReceipt { .. } => RowFormat::FuelReceipt,
             RowData::SvmInstruction { .. } => RowFormat::SvmInstruction,
             RowData::Block { .. } => RowFormat::Block,
-            RowData::JsItem(_) => RowFormat::JsItem,
+            RowData::JsItem { .. } => RowFormat::JsItem,
         }
     }
 }
@@ -419,6 +462,9 @@ struct Chunk {
     start: usize,
     keys: Vec<u128>,
     registrations: Vec<i64>,
+    /// Which of the chain's stores a row's transaction and block come from:
+    /// `READS_TRANSACTION` and `READS_BLOCK`.
+    reads: Vec<u8>,
     /// SVM's position in the transaction's CPI tree, parent before child:
     /// `path_ends[row]` is where the row's steps stop. Empty for other rows.
     path_ends: Vec<u32>,
@@ -513,6 +559,7 @@ impl Chunk {
             start: 0,
             keys: Vec::new(),
             registrations: Vec::new(),
+            reads: Vec::new(),
             path_ends: Vec::new(),
             path_steps: Vec::new(),
             items: sized_arena(&item_columns(), 0, &[]),
@@ -532,6 +579,7 @@ impl Chunk {
     fn shrink_to_fit(&mut self) {
         self.keys.shrink_to_fit();
         self.registrations.shrink_to_fit();
+        self.reads.shrink_to_fit();
         self.path_ends.shrink_to_fit();
         self.path_steps.shrink_to_fit();
         self.items.shrink_to_fit();
@@ -613,7 +661,7 @@ impl Chunk {
                     svm_steps += row.order_path.as_ref().map_or(0, Vec::len);
                     svm_accounts += accounts.len();
                 }
-                RowData::Block { .. } | RowData::JsItem(_) => {}
+                RowData::Block { .. } | RowData::JsItem { .. } => {}
             }
         }
 
@@ -642,12 +690,14 @@ impl Chunk {
         ));
         let mut keys = Vec::with_capacity(rows.len());
         let mut registrations = Vec::with_capacity(rows.len());
+        let mut reads = Vec::with_capacity(rows.len());
         let mut path_ends = Vec::with_capacity(rows.len());
         let mut path_steps = Vec::new();
 
         for row in rows {
             keys.push(sort_key(row.block_number, row.kind, row.log_index));
             registrations.push(row.registration_index);
+            reads.push(row.data.reads());
             path_steps.extend_from_slice(row.order_path.as_deref().unwrap_or_default());
             path_ends.push(path_steps.len() as u32);
 
@@ -719,9 +769,11 @@ impl Chunk {
                     svm.optional_tape(8, &mut tapes, args);
                     svm.optional_tape(9, &mut tapes, logs);
                     items.num(item_column::DETAIL, pack_detail(format, svm.row));
+                    // A slot's transaction is keyed by its index, the row's
+                    // within-block order.
+                    items.num(item_column::TRANSACTION_INDEX, row.log_index as f64);
                     svm.end_row();
                     &[
-                        item_column::TRANSACTION_INDEX,
                         item_column::SRC_ADDRESS,
                         item_column::SKIPPED,
                         item_column::TAPE,
@@ -736,14 +788,24 @@ impl Chunk {
                         item_column::TAPE,
                     ]
                 }
-                RowData::JsItem(item) => {
+                RowData::JsItem {
+                    item,
+                    transaction_index,
+                    ..
+                } => {
                     items.tape(item_column::TAPE, &mut tapes, item);
                     items.num(item_column::DETAIL, pack_detail(format, 0));
-                    &[
-                        item_column::TRANSACTION_INDEX,
-                        item_column::SRC_ADDRESS,
-                        item_column::SKIPPED,
-                    ]
+                    match transaction_index {
+                        Some(index) => {
+                            items.num(item_column::TRANSACTION_INDEX, *index as f64);
+                            &[item_column::SRC_ADDRESS, item_column::SKIPPED]
+                        }
+                        None => &[
+                            item_column::TRANSACTION_INDEX,
+                            item_column::SRC_ADDRESS,
+                            item_column::SKIPPED,
+                        ],
+                    }
                 }
             };
             for column in unset {
@@ -756,6 +818,7 @@ impl Chunk {
             start: 0,
             keys,
             registrations,
+            reads,
             path_ends,
             path_steps,
             items: items.arena,
@@ -783,6 +846,7 @@ impl Chunk {
         self.keys.extend_from_slice(&other.keys[rows.clone()]);
         self.registrations
             .extend_from_slice(&other.registrations[rows.clone()]);
+        self.reads.extend_from_slice(&other.reads[rows.clone()]);
         let steps_start = if rows.start == 0 {
             0
         } else {
@@ -898,8 +962,119 @@ impl Chunk {
         );
     }
 
-    /// Hands the arenas to JavaScript to read.
-    fn lay_out(mut self) -> Result<StoredRows> {
+    /// Which store row each item's transaction and block are, and those rows'
+    /// selected fields, read from the chain's stores. Consecutive items of one
+    /// transaction or block share its row, selecting the union of their
+    /// fields; the rows are sorted, so they are consecutive.
+    fn join(
+        &self,
+        transactions: &TransactionStore,
+        blocks: &BlockStore,
+        fields: &JoinedFields,
+    ) -> Result<Joined> {
+        let rows = self.start..self.keys.len();
+        let mut links = sized_arena(&link_columns(), rows.len(), &[]);
+        let (mut transaction_blocks, mut transaction_indexes, mut transaction_masks) =
+            (Vec::new(), Vec::<u32>::new(), Vec::<u64>::new());
+        let (mut block_numbers, mut block_masks) = (Vec::new(), Vec::<u64>::new());
+        let mask_of = |masks: &[f64], registration: i64| {
+            masks.get(registration as usize).copied().unwrap_or(0.0) as u64
+        };
+        let mut any_transaction_field = false;
+        for (out, row) in rows.enumerate() {
+            let event = self.keys[row] & KIND_BIT == 0;
+            let registration = self.registrations[row];
+            let block_number = self.block_number_at(row);
+            if self.reads[row] & READS_TRANSACTION != 0 {
+                let mask = if event {
+                    mask_of(&fields.transaction_masks, registration)
+                } else {
+                    0
+                };
+                any_transaction_field |= mask != 0;
+                let index = self.items.columns()[item_column::TRANSACTION_INDEX].f64_at(row) as u32;
+                if transaction_blocks.last() == Some(&block_number)
+                    && transaction_indexes.last() == Some(&index)
+                {
+                    *transaction_masks.last_mut().unwrap() |= mask;
+                } else {
+                    transaction_blocks.push(block_number);
+                    transaction_indexes.push(index);
+                    transaction_masks.push(mask);
+                }
+                links.set_f64(
+                    link_column::TRANSACTION,
+                    out,
+                    (transaction_blocks.len() - 1) as f64,
+                );
+            } else {
+                links.mark_null(link_column::TRANSACTION, out);
+            }
+            let block_mask = if self.reads[row] & READS_BLOCK == 0 {
+                None
+            } else if event {
+                Some(mask_of(&fields.event_block_masks, registration))
+            } else {
+                fields
+                    .block_handler_masks
+                    .get(registration as usize)
+                    .copied()
+                    .flatten()
+                    .map(|mask| mask as u64)
+            };
+            match block_mask {
+                Some(mask) => {
+                    if block_numbers.last() == Some(&block_number) {
+                        *block_masks.last_mut().unwrap() |= mask;
+                    } else {
+                        block_numbers.push(block_number);
+                        block_masks.push(mask);
+                    }
+                    links.set_f64(link_column::BLOCK, out, (block_numbers.len() - 1) as f64);
+                }
+                None => links.mark_null(link_column::BLOCK, out),
+            }
+        }
+        // With no transaction field selected anywhere in the batch, each item
+        // still gets a transaction: an empty object of its own.
+        let transactions = if any_transaction_field {
+            Some(
+                transactions
+                    .columns(
+                        &transaction_blocks,
+                        &transaction_indexes,
+                        &transaction_masks,
+                        fields.should_checksum,
+                    )?
+                    .into_arena()?,
+            )
+        } else {
+            for out in 0..links.rows() {
+                if !links.columns()[link_column::TRANSACTION].is_marked_null(out) {
+                    links.set_f64(link_column::TRANSACTION, out, EMPTY_TRANSACTION);
+                }
+            }
+            None
+        };
+        let blocks = if block_numbers.is_empty() {
+            None
+        } else {
+            Some(
+                blocks
+                    .columns(&block_numbers, &block_masks, fields.should_checksum)?
+                    .into_arena()?,
+            )
+        };
+        Ok(Joined {
+            links,
+            transactions,
+            blocks,
+        })
+    }
+
+    /// Hands the arenas to JavaScript to read, with the transactions and blocks
+    /// `joined` read for them.
+    fn lay_out(mut self, joined: Option<Joined>) -> Result<StoredRows> {
         if self.start > 0 {
             let mut rest = Chunk::empty();
             rest.extend_from(&self, self.start..self.keys.len());
@@ -926,6 +1101,19 @@ impl Chunk {
         arenas.push(self.fuel);
         let svm = seal(&svm_columns(), &mut self.svm)?;
         arenas.push(self.svm);
+        let (mut links, mut transactions, mut blocks) = (None, None, None);
+        if let Some(mut joined) = joined {
+            links = Some(seal(&link_columns(), &mut joined.links)?);
+            arenas.push(joined.links);
+            if let Some((arena, rows)) = joined.transactions {
+                arenas.push(arena);
+                transactions = Some(rows);
+            }
+            if let Some((arena, rows)) = joined.blocks {
+                arenas.push(arena);
+                blocks = Some(rows);
+            }
+        }
 
         let handle = hold(arenas);
         Ok(StoredRows {
@@ -934,6 +1122,9 @@ impl Chunk {
             params,
             fuel,
             svm,
+            links,
+            transactions,
+            blocks,
             tapes: self.tapes,
         })
     }
@@ -982,7 +1173,48 @@ pub struct StoredRows {
     pub params: Vec<ParamsShape>,
     pub fuel: ArenaShape,
     pub svm: ArenaShape,
+    /// For a joined result, each item's row in `transactions` and in `blocks`,
+    /// null when it reads neither from the store; `EMPTY_TRANSACTION` gives
+    /// it an empty transaction object of its own.
+    pub links: Option<ArenaShape>,
+    pub transactions: Option<FieldRows>,
+    pub blocks: Option<FieldRows>,
     pub tapes: Vec<JsTape>,
+}
+
+/// Which fields each registration selects of its items' transaction and
+/// block, as the field-code masks its field selection compiled to.
+#[napi(object)]
+pub struct JoinedFields {
+    /// By event registration index.
+    pub transaction_masks: Vec<f64>,
+    /// By event registration index.
+    pub event_block_masks: Vec<f64>,
+    /// By block registration index; `None` where the handler reads no block
+    /// field beyond its number.
+    pub block_handler_masks: Vec<Option<f64>>,
+    pub should_checksum: bool,
+}
+
+struct Joined {
+    links: Arena,
+    transactions: Option<(Arena, FieldRows)>,
+    blocks: Option<(Arena, FieldRows)>,
+}
+
+const EMPTY_TRANSACTION: f64 = -1.0;
+
+fn link_columns() -> Vec<ColumnRead> {
+    vec![
+        ColumnRead::scalar("transactionRow", ReadKind::Float),
+        ColumnRead::scalar("blockRow", ReadKind::Float),
+    ]
+}
+
+/// Positions in `link_columns`.
+mod link_column {
+    pub(super) const TRANSACTION: usize = 0;
+    pub(super) const BLOCK: usize = 1;
 }
 
 /// The arenas of the results JavaScript has yet to read, by handle.
@@ -1044,12 +1276,6 @@ pub(crate) fn hold(arenas: Vec<Arena>) -> u32 {
         arenas,
         buffer_counts: Vec::new(),
     })
-}
-
-/// The arenas `hold` kept under `handle`, freed from the registry.
-#[cfg(test)]
-pub(crate) fn release_held(handle: u32) -> Vec<Arena> {
-    RESULTS.lock().unwrap().remove(handle).unwrap().arenas
 }
 
 const ITEM_COLUMNS: [(&str, ReadKind); 8] = [
@@ -1201,6 +1427,11 @@ pub struct JsItemInput {
     pub order_path: Option<Vec<i64>>,
     pub registration_index: i64,
     pub item: JsTape,
+    /// The key of the item's transaction in the chain's store, when the item
+    /// doesn't carry the transaction itself.
+    pub transaction_index: Option<i64>,
+    /// Whether the item's block comes from the chain's store.
+    pub block_from_store: bool,
 }
 
 #[napi]
@@ -1251,7 +1482,11 @@ impl EventStore {
                     log_index: item.log_index,
                     order_path: item.order_path,
                     registration_index: item.registration_index,
-                    data: RowData::JsItem(item.item),
+                    data: RowData::JsItem {
+                        item: item.item,
+                        transaction_index: item.transaction_index,
+                        block_from_store: item.block_from_store,
+                    },
                 })
             })
             .collect::<napi::Result<Vec<_>>>()?;
@@ -1330,7 +1565,22 @@ impl EventStore {
     #[napi]
     pub fn take(&self, count: u32) -> napi::Result<StoredRows> {
         let taken = self.rows().take(count as usize);
-        taken.lay_out().map_err(to_napi)
+        taken.lay_out(None).map_err(to_napi)
+    }
+
+    /// `take`, with each item's transaction and block fields read from the
+    /// chain's stores.
+    #[napi]
+    pub fn take_joined(
+        &self,
+        count: u32,
+        transactions: &TransactionStore,
+        blocks: &BlockStore,
+        fields: JoinedFields,
+    ) -> napi::Result<StoredRows> {
+        let taken = self.rows().take(count as usize);
+        let joined = taken.join(transactions, blocks, &fields).map_err(to_napi)?;
+        taken.lay_out(Some(joined)).map_err(to_napi)
     }
 
     /// The event rows routed to any of `registration_indexes`, in order, laid
@@ -1339,19 +1589,25 @@ impl EventStore {
     pub fn events_of_registrations(
         &self,
         registration_indexes: Vec<i64>,
+        transactions: &TransactionStore,
+        blocks: &BlockStore,
+        fields: JoinedFields,
     ) -> napi::Result<StoredRows> {
         let selected = self.rows().select(|chunk, row| {
             chunk.keys[row] & KIND_BIT == 0
                 && registration_indexes.contains(&chunk.registrations[row])
         });
-        selected.lay_out().map_err(to_napi)
+        let joined = selected
+            .join(transactions, blocks, &fields)
+            .map_err(to_napi)?;
+        selected.lay_out(Some(joined)).map_err(to_napi)
     }
 
     /// Every row, in order, laid out for JS. The rows stay.
     #[napi]
     pub fn all_items(&self) -> napi::Result<StoredRows> {
         let all = self.rows().select(|_, _| true);
-        all.lay_out().map_err(to_napi)
+        all.lay_out(None).map_err(to_napi)
     }
 
     /// Drops every row above `target_block_number`.
@@ -1417,7 +1673,11 @@ mod tests {
             log_index,
             None,
             registration_index,
-            RowData::JsItem(data),
+            RowData::JsItem {
+                item: data,
+                transaction_index: None,
+                block_from_store: false,
+            },
         )
     }
 
@@ -1429,7 +1689,11 @@ mod tests {
             transaction_index,
             Some(path.to_vec()),
             0,
-            RowData::JsItem(data),
+            RowData::JsItem {
+                item: data,
+                transaction_index: None,
+                block_from_store: false,
+            },
         )
     }
 
@@ -1649,6 +1913,145 @@ mod tests {
         );
     }
 
+    fn no_fields() -> JoinedFields {
+        JoinedFields {
+            transaction_masks: Vec::new(),
+            event_block_masks: Vec::new(),
+            block_handler_masks: Vec::new(),
+            should_checksum: false,
+        }
+    }
+
+    fn evm_at(block_number: i64, log_index: i64, transaction: i64, registration: i64) -> Row {
+        let mut row = evm(
+            block_number,
+            registration,
+            &format!("{block_number}-{log_index}"),
+        );
+        row.log_index = log_index;
+        if let RowData::EvmLog {
+            transaction_index, ..
+        } = &mut row.data
+        {
+            *transaction_index = transaction;
+        }
+        row
+    }
+
+    /// Each item's link into the joined transactions and blocks, `None` where
+    /// it reads neither, and the joined arenas' row counts. Frees the result.
+    type Links = Vec<(Option<f64>, Option<f64>)>;
+
+    fn links_of(rows: StoredRows) -> (Links, Option<u32>, Option<u32>) {
+        let mut lent = RESULTS.lock().unwrap().remove(rows.handle).unwrap();
+        let links = lent.arenas.remove(3 + rows.params.len());
+        let cell = |column: usize, row: usize| {
+            let column = &links.columns()[column];
+            (!column.is_null(row)).then(|| column.f64_at(row))
+        };
+        (
+            (0..links.rows())
+                .map(|row| {
+                    (
+                        cell(link_column::TRANSACTION, row),
+                        cell(link_column::BLOCK, row),
+                    )
+                })
+                .collect(),
+            rows.transactions.map(|rows| rows.shape.rows),
+            rows.blocks.map(|rows| rows.shape.rows),
+        )
+    }
+
+    #[test]
+    fn a_joined_take_links_each_item_to_its_transaction_and_block_rows() {
+        use crate::block_store::EvmBlockField;
+        use crate::transaction_store::EvmTxField;
+        use hypersync_client::simple_types;
+        let transactions = TransactionStore::new_evm();
+        transactions.insert_evm_txs(
+            [(1u64, 0u64), (1, 1), (2, 0)]
+                .into_iter()
+                .map(|(block, index)| simple_types::Transaction {
+                    block_number: Some(block.into()),
+                    transaction_index: Some(index.into()),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let blocks = BlockStore::new_evm();
+        blocks.insert_evm_blocks(
+            [1u64, 2]
+                .into_iter()
+                .map(|number| simple_types::Block {
+                    number: Some(number),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let rows = || {
+            EventStore::from_rows(vec![
+                evm_at(1, 0, 0, 0),
+                evm_at(1, 1, 0, 1),
+                evm_at(1, 2, 1, 0),
+                evm_at(2, 0, 0, 0),
+                Row::block(2, 0, false),
+                Row::block(2, 1, true),
+            ])
+        };
+        let fields = |transaction_mask: u64| JoinedFields {
+            transaction_masks: vec![transaction_mask as f64, 0.0],
+            event_block_masks: vec![(1u64 << EvmBlockField::Number as u32) as f64, 0.0],
+            block_handler_masks: vec![Some((1u64 << EvmBlockField::Number as u32) as f64), None],
+            should_checksum: false,
+        };
+        let selected = links_of(
+            rows()
+                .take_joined(
+                    u32::MAX,
+                    &transactions,
+                    &blocks,
+                    fields(1 << EvmTxField::TransactionIndex as u32),
+                )
+                .unwrap(),
+        );
+        let none_selected = links_of(
+            rows()
+                .take_joined(u32::MAX, &transactions, &blocks, fields(0))
+                .unwrap(),
+        );
+        assert_eq!(
+            (
+                selected,
+                none_selected.0.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
+                none_selected.1
+            ),
+            (
+                (
+                    vec![
+                        (Some(0.0), Some(0.0)),
+                        (Some(0.0), Some(0.0)),
+                        (Some(1.0), Some(0.0)),
+                        (Some(2.0), Some(1.0)),
+                        (None, Some(1.0)),
+                        (None, None),
+                    ],
+                    Some(3),
+                    Some(2)
+                ),
+                vec![
+                    Some(EMPTY_TRANSACTION),
+                    Some(EMPTY_TRANSACTION),
+                    Some(EMPTY_TRANSACTION),
+                    Some(EMPTY_TRANSACTION),
+                    None,
+                    None
+                ],
+                None
+            )
+        );
+    }
+
     #[test]
     fn a_released_handle_finds_nothing_once_its_slot_holds_another_result() {
         let lent = || Lent {
@@ -1818,7 +2221,16 @@ mod tests {
             event(4, 0, 4, "dropped by rollback"),
         ]);
         store.rollback(3);
-        let contract_registers = read(store.events_of_registrations(vec![4]).unwrap());
+        let contract_registers = read(
+            store
+                .events_of_registrations(
+                    vec![4],
+                    &TransactionStore::new_evm(),
+                    &BlockStore::new_evm(),
+                    no_fields(),
+                )
+                .unwrap(),
+        );
         let first_event = store.first_event_block_number();
         let second = store.block_number_at(1);
         let taken = read(store.take(1).unwrap());

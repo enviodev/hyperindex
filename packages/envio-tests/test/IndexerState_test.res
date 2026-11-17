@@ -72,9 +72,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           onEventRegistration: {"index": 0}->(
             Utils.magic: {"index": int} => Internal.onEventRegistration
           ),
-          payload: `mock event (chainId)${id->ChainId.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`->(
-            Utils.magic: string => Internal.eventPayload
-          ),
+          // Carries its transaction and block, as a simulate item does, so
+          // the take reads neither from the chain's stores.
+          payload: {
+            "description": `mock event (chainId)${id->ChainId.toString} - (blockNumber)${currentBlockNumber.contents->Int.toString} - (logIndex)${logIndex->Int.toString} - (timestamp)${currentTime.contents->Int.toString}`,
+            "transaction": Dict.make(),
+            "block": Dict.make(),
+          }->(Utils.magic: {..} => Internal.eventPayload),
         })
         allEvents->Array.push(batchItem)->ignore
 

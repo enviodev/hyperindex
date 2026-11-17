@@ -31,6 +31,7 @@ type chainBeforeBatch = {
   // The chain's own store, which the batch takes its rows from.
   eventStore: EventStore.t,
   itemContext: StoredItems.context,
+  itemFields: StoredItems.fields,
   // Adds the time spent building the chain's items to its metric.
   recordMaterialize: float => unit,
   scannedHashes: reorgHashSnapshot,
@@ -272,7 +273,11 @@ let make = (
     if chainBatchSize > 0 {
       let startedAt = Performance.now()
       let chainItems =
-        eventStore->StoredItems.take(chainBatchSize, ~context=chainBeforeBatch.itemContext)
+        eventStore->StoredItems.take(
+          chainBatchSize,
+          ~context=chainBeforeBatch.itemContext,
+          ~fields=chainBeforeBatch.itemFields,
+        )
       chainBeforeBatch.recordMaterialize(Performance.now() -. startedAt)
       for idx in 0 to chainBatchSize - 1 {
         let item = chainItems->Array.getUnsafe(idx)

@@ -17,9 +17,7 @@ use strum::VariantArray;
 
 use crate::evm_hypersync_source::map_err;
 use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
-use crate::field_columns::{
-    build_columns, bytes, field_names, Column, Columns, Ecosystem, MaterializedRows,
-};
+use crate::field_columns::{build_columns, bytes, field_names, Column, Columns, Ecosystem};
 use crate::field_table::{
     bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
     i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Coverage, Table,
@@ -810,68 +808,37 @@ impl BlockStore {
             .collect()
     }
 
-    /// `materialize_columns`, laid out for JavaScript to read.
-    #[napi]
-    pub async fn materialize(
+    /// The selected fields of the blocks at `block_numbers`, a row per key,
+    /// each decoding only the fields set in its own `masks[i]`. A missing key
+    /// gives a row with no values. `should_checksum` is the caller's: rows are
+    /// stored as raw bytes, so the only place an address spelling is decided
+    /// is here.
+    pub(crate) fn columns(
         &self,
-        block_numbers: Vec<i64>,
-        masks: Vec<f64>,
+        block_numbers: &[i64],
+        masks: &[u64],
         should_checksum: bool,
-    ) -> napi::Result<MaterializedRows> {
-        let columns = self
-            .materialize_columns(block_numbers, masks, should_checksum)
-            .await?;
-        tokio::task::block_in_place(|| columns.lay_out()).map_err(map_err)
+    ) -> Result<Columns> {
+        let scratch = self.gather(block_numbers, masks);
+        match self.ecosystem {
+            Ecosystem::Evm => {
+                decode_evm_block_columns(&scratch, block_numbers, masks, should_checksum)
+            }
+            Ecosystem::Svm => decode_svm_block_columns(&scratch, block_numbers, masks),
+            Ecosystem::Fuel => decode_fuel_block_columns(&scratch, block_numbers, masks),
+        }
     }
 
-    /// Bulk-materialise blocks in columnar form, one row per `block_numbers[i]`
-    /// key, decoding only the fields whose bit is set in that row's own
-    /// `masks[i]`. Each mask is a JS number (`f64`) carrying a selection bitmask
-    /// over field codes. The lock is held only to gather the requested cells;
-    /// decoding runs after it is released, off the JS thread via
-    /// `block_in_place`. Missing keys yield an empty object. Result is aligned
-    /// with input. `should_checksum` is the caller's: rows are stored as raw
-    /// bytes, so the only place an address spelling is decided is here.
+    #[cfg(test)]
     pub(crate) async fn materialize_columns(
         &self,
         block_numbers: Vec<i64>,
         masks: Vec<f64>,
         should_checksum: bool,
     ) -> napi::Result<Columns> {
-        // The two columns are zipped row-wise; a length mismatch would silently
-        // truncate and misalign the result with the caller's items.
-        if block_numbers.len() != masks.len() {
-            return Err(napi::Error::from_reason(format!(
-                "materialize column length mismatch: block_numbers={}, masks={}",
-                block_numbers.len(),
-                masks.len()
-            )));
-        }
         let masks: Vec<u64> = masks.iter().map(|&m| m as u64).collect();
-
-        match self.ecosystem {
-            Ecosystem::Evm => {
-                let scratch = self.gather(&block_numbers, &masks);
-                tokio::task::block_in_place(|| {
-                    decode_evm_block_columns(&scratch, &block_numbers, &masks, should_checksum)
-                })
-                .map_err(map_err)
-            }
-            Ecosystem::Svm => {
-                let scratch = self.gather(&block_numbers, &masks);
-                tokio::task::block_in_place(|| {
-                    decode_svm_block_columns(&scratch, &block_numbers, &masks)
-                })
-                .map_err(map_err)
-            }
-            Ecosystem::Fuel => {
-                let scratch = self.gather(&block_numbers, &masks);
-                tokio::task::block_in_place(|| {
-                    decode_fuel_block_columns(&scratch, &block_numbers, &masks)
-                })
-                .map_err(map_err)
-            }
-        }
+        self.columns(&block_numbers, &masks, should_checksum)
+            .map_err(map_err)
     }
 
     /// Drop blocks at or below `up_to_block` (already processed), except that
