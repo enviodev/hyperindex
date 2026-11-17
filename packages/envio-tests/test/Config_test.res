@@ -229,8 +229,35 @@ describe("EventConfigBuilder", () => {
   })
 
   it("abiTypeToSchema throws on unsupported types", t => {
-    t->toThrowErrorEqual(() => EventConfigBuilder.abiTypeToSchema("function"), 
+    t->toThrowErrorEqual(
+      () => EventConfigBuilder.abiTypeToSchema("function"),
       "Unsupported ABI type: function",
+    )
+  })
+})
+
+describe("Config chains", () => {
+  it("Rejects a chain listed twice in config.yaml, naming it", t => {
+    t->toThrowErrorEqual(
+      () =>
+        Core.fromUserApi(
+          ~schema="type Counter { id: ID! }",
+          `
+name: duplicated-chain
+contracts:
+  - name: Counters
+    events:
+      - event: Bumped(uint256 amount)
+chains:
+  - id: 137
+    start_block: 0
+  - id: 1
+    start_block: 0
+  - id: 137
+    start_block: 0
+`,
+        ),
+      "Chain 137 is listed more than once in config.yaml.",
     )
   })
 })

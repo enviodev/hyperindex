@@ -59,15 +59,16 @@ pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
 fn insert_unique_chain(chains: &mut ChainMap, chain: Chain) -> Result<()> {
-    if chains.contains_key(&chain.id) {
-        return Err(anyhow!(
-            "{} already exists, cannot have duplicates",
+    match chains.entry(chain.id) {
+        indexmap::map::Entry::Occupied(_) => Err(anyhow!(
+            "Chain {} is listed more than once in config.yaml.",
             chain.id
-        ))
-        .context("Failed inserting chain at chains map");
+        )),
+        indexmap::map::Entry::Vacant(entry) => {
+            entry.insert(chain);
+            Ok(())
+        }
     }
-    chains.insert(chain.id, chain);
-    Ok(())
 }
 
 #[derive(Debug, PartialEq)]
