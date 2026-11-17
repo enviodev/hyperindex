@@ -9,9 +9,8 @@
 //! result, and read there with the same `Reading` code.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::ops::Range;
-use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::Result;
@@ -559,12 +558,16 @@ impl Chunk {
             .then(self.registrations[row].cmp(&other.registrations[other_row]))
     }
 
+    fn detail_at(&self, row: usize) -> usize {
+        self.items.columns()[item_column::DETAIL].f64_at(row) as usize
+    }
+
     fn format_at(&self, row: usize) -> u8 {
-        self.items.columns()[item_column::FORMAT].f64_at(row) as u8
+        (self.detail_at(row) & ((1 << FORMAT_BITS) - 1)) as u8
     }
 
     fn detail_row_at(&self, row: usize) -> usize {
-        self.items.columns()[item_column::DETAIL_ROW].f64_at(row) as usize
+        self.detail_at(row) >> FORMAT_BITS
     }
 
     /// Lays sorted rows out.
@@ -629,7 +632,7 @@ impl Chunk {
             path_ends.push(path_steps.len() as u32);
 
             let registration = row.registration_index as f64;
-            items.num(item_column::FORMAT, row.data.format() as u8 as f64);
+            let format = row.data.format();
             items.num(item_column::BLOCK_NUMBER, row.block_number as f64);
             items.num(item_column::LOG_INDEX, row.log_index as f64);
             items.num(item_column::REGISTRATION_INDEX, registration);
@@ -653,7 +656,7 @@ impl Chunk {
                     }
                     items.num(item_column::TRANSACTION_INDEX, *transaction_index as f64);
                     items.bytes(item_column::SRC_ADDRESS, src_address.as_bytes());
-                    items.num(item_column::DETAIL_ROW, group.row as f64);
+                    items.num(item_column::DETAIL, pack_detail(format, group.row));
                     group.end_row();
                     &[item_column::SKIPPED, item_column::TAPE]
                 }
@@ -668,7 +671,7 @@ impl Chunk {
                     fuel.num(3, row.block_number as f64);
                     fuel.bytes(4, src_address.as_bytes());
                     fuel.tape(5, &mut tapes, params);
-                    items.num(item_column::DETAIL_ROW, fuel.row as f64);
+                    items.num(item_column::DETAIL, pack_detail(format, fuel.row));
                     fuel.end_row();
                     &[
                         item_column::TRANSACTION_INDEX,
@@ -695,7 +698,7 @@ impl Chunk {
                     svm.bool(7, *is_inner);
                     svm.optional_tape(8, &mut tapes, args);
                     svm.optional_tape(9, &mut tapes, logs);
-                    items.num(item_column::DETAIL_ROW, svm.row as f64);
+                    items.num(item_column::DETAIL, pack_detail(format, svm.row));
                     svm.end_row();
                     &[
                         item_column::TRANSACTION_INDEX,
@@ -706,20 +709,20 @@ impl Chunk {
                 }
                 RowData::Block { skipped } => {
                     items.bool(item_column::SKIPPED, *skipped);
+                    items.num(item_column::DETAIL, pack_detail(format, 0));
                     &[
                         item_column::TRANSACTION_INDEX,
                         item_column::SRC_ADDRESS,
-                        item_column::DETAIL_ROW,
                         item_column::TAPE,
                     ]
                 }
                 RowData::JsItem(item) => {
                     items.tape(item_column::TAPE, &mut tapes, item);
+                    items.num(item_column::DETAIL, pack_detail(format, 0));
                     &[
                         item_column::TRANSACTION_INDEX,
                         item_column::SRC_ADDRESS,
                         item_column::SKIPPED,
-                        item_column::DETAIL_ROW,
                     ]
                 }
             };
@@ -860,8 +863,9 @@ impl Chunk {
             };
             if let Some(run) = run {
                 let detail_row = run.to + other.detail_row_at(row) - run.from;
+                let detail = (detail_row << FORMAT_BITS) | other.format_at(row) as usize;
                 self.items
-                    .set_f64(item_column::DETAIL_ROW, first + offset, detail_row as f64);
+                    .set_f64(item_column::DETAIL, first + offset, detail as f64);
             }
         }
         let copied = first..self.items.rows();
@@ -903,14 +907,10 @@ impl Chunk {
         let svm = seal(&svm_columns(), &mut self.svm)?;
         arenas.push(self.svm);
 
-        let handle = NEXT_HANDLE.fetch_add(1, AtomicOrdering::Relaxed);
-        RESULTS.lock().unwrap().insert(
-            handle,
-            Lent {
-                arenas,
-                buffer_counts: Vec::new(),
-            },
-        );
+        let handle = RESULTS.lock().unwrap().insert(Lent {
+            arenas,
+            buffer_counts: Vec::new(),
+        });
         Ok(StoredRows {
             handle,
             items,
@@ -975,35 +975,83 @@ struct Lent {
     buffer_counts: Vec<usize>,
 }
 
-static RESULTS: LazyLock<Mutex<HashMap<u32, Lent>>> = LazyLock::new(Default::default);
-static NEXT_HANDLE: AtomicU32 = AtomicU32::new(1);
+/// The results JavaScript has yet to read, in reused slots. A handle is its
+/// slot in the low `SLOT_BITS` and the slot's generation above them, so a
+/// handle released twice finds nothing once its slot holds another result.
+#[derive(Default)]
+struct Results {
+    slots: Vec<(u32, Option<Lent>)>,
+    free: Vec<u32>,
+}
 
-const ITEM_COLUMNS: [(&str, ReadKind); 9] = [
-    ("format", ReadKind::Float),
+const SLOT_BITS: u32 = 16;
+
+impl Results {
+    fn insert(&mut self, lent: Lent) -> u32 {
+        let slot = self.free.pop().unwrap_or_else(|| {
+            self.slots.push((0, None));
+            (self.slots.len() - 1) as u32
+        });
+        let (generation, entry) = &mut self.slots[slot as usize];
+        // Never zero, so no handle is 0.
+        *generation = (*generation % ((1 << (32 - SLOT_BITS)) - 1)) + 1;
+        *entry = Some(lent);
+        (*generation << SLOT_BITS) | slot
+    }
+
+    fn entry(&mut self, handle: u32) -> Option<&mut Option<Lent>> {
+        let slot = (handle & ((1 << SLOT_BITS) - 1)) as usize;
+        self.slots
+            .get_mut(slot)
+            .filter(|(generation, _)| *generation == handle >> SLOT_BITS)
+            .map(|(_, entry)| entry)
+    }
+
+    fn get_mut(&mut self, handle: u32) -> Option<&mut Lent> {
+        self.entry(handle)?.as_mut()
+    }
+
+    fn remove(&mut self, handle: u32) -> Option<Lent> {
+        let lent = self.entry(handle)?.take()?;
+        self.free.push(handle & ((1 << SLOT_BITS) - 1));
+        Some(lent)
+    }
+}
+
+static RESULTS: LazyLock<Mutex<Results>> = LazyLock::new(Default::default);
+
+const ITEM_COLUMNS: [(&str, ReadKind); 8] = [
+    // The row's `RowFormat` in the low `FORMAT_BITS`, and above them its place
+    // in its format's own arena: an EVM log's in its registration's params, a
+    // Fuel receipt's or SVM instruction's in theirs.
+    ("detail", ReadKind::Float),
     ("blockNumber", ReadKind::Float),
     ("logIndex", ReadKind::Float),
     ("transactionIndex", ReadKind::Float),
     ("registrationIndex", ReadKind::Float),
     ("srcAddress", ReadKind::Text),
     ("skipped", ReadKind::Bool),
-    // The row's place in its format's own arena: an EVM log's in its
-    // registration's params, a Fuel receipt's or SVM instruction's in theirs.
-    ("detailRow", ReadKind::Float),
     // A JS-built row's item.
     ("tape", ReadKind::Float),
 ];
 
 /// Positions in `ITEM_COLUMNS`.
 mod item_column {
-    pub(super) const FORMAT: usize = 0;
+    pub(super) const DETAIL: usize = 0;
     pub(super) const BLOCK_NUMBER: usize = 1;
     pub(super) const LOG_INDEX: usize = 2;
     pub(super) const TRANSACTION_INDEX: usize = 3;
     pub(super) const REGISTRATION_INDEX: usize = 4;
     pub(super) const SRC_ADDRESS: usize = 5;
     pub(super) const SKIPPED: usize = 6;
-    pub(super) const DETAIL_ROW: usize = 7;
-    pub(super) const TAPE: usize = 8;
+    pub(super) const TAPE: usize = 7;
+}
+
+const FORMAT_BITS: u32 = 3;
+
+/// A row's `detail` cell: its format, and its row in that format's arena.
+fn pack_detail(format: RowFormat, detail_row: usize) -> f64 {
+    ((detail_row << FORMAT_BITS) | format as usize) as f64
 }
 
 /// Named as `FuelHyperSyncClient.EventItems.item`'s fields, so a row reads as
@@ -1286,7 +1334,7 @@ impl EventStore {
     pub fn lend_rows<'env>(env: &'env Env, handle: u32) -> napi::Result<Vec<ArrayBuffer<'env>>> {
         let mut results = RESULTS.lock().unwrap();
         let lent = results
-            .get_mut(&handle)
+            .get_mut(handle)
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown rows {handle}")))?;
         let mut buffers = Vec::new();
         for arena in lent.arenas.iter_mut() {
@@ -1303,7 +1351,7 @@ impl EventStore {
     #[napi]
     pub fn release_rows(handle: u32, buffers: Vec<ArrayBuffer>) -> napi::Result<()> {
         let mut results = RESULTS.lock().unwrap();
-        let Some(mut lent) = results.remove(&handle) else {
+        let Some(mut lent) = results.remove(handle) else {
             return Ok(());
         };
         let mut buffers = buffers.into_iter();
@@ -1356,12 +1404,14 @@ mod tests {
     /// What each laid-out row reads as: a tape row its tape, a block row its
     /// block and registration. Frees the result.
     fn read(rows: StoredRows) -> Vec<JsValue> {
-        let lent = RESULTS.lock().unwrap().remove(&rows.handle).unwrap();
+        let lent = RESULTS.lock().unwrap().remove(rows.handle).unwrap();
         let columns = lent.arenas[0].columns();
         let column = |name: &str| ITEM_COLUMNS.iter().position(|(n, _)| *n == name).unwrap();
         (0..rows.items.rows as usize)
             .map(|row| {
-                if columns[column("format")].f64_at(row) == RowFormat::Block as u8 as f64 {
+                let format =
+                    columns[column("detail")].f64_at(row) as usize & ((1 << FORMAT_BITS) - 1);
+                if format == RowFormat::Block as usize {
                     JsValue::str(&format!(
                         "block {} r{}",
                         columns[column("blockNumber")].f64_at(row),
@@ -1454,7 +1504,7 @@ mod tests {
     /// Each row as its format's arena row says it, followed through
     /// `detailRow` and its tape cells. Frees the result.
     fn describe(rows: StoredRows) -> Vec<String> {
-        let lent = RESULTS.lock().unwrap().remove(&rows.handle).unwrap();
+        let lent = RESULTS.lock().unwrap().remove(rows.handle).unwrap();
         let items = lent.arenas[0].columns();
         let fuel = lent.arenas[1 + rows.params.len()].columns();
         let svm = lent.arenas[2 + rows.params.len()].columns();
@@ -1464,9 +1514,10 @@ mod tests {
         (0..rows.items.rows as usize)
             .map(|row| {
                 let block = items[item_column::BLOCK_NUMBER].f64_at(row);
-                let detail = items[item_column::DETAIL_ROW].f64_at(row) as usize;
+                let packed = items[item_column::DETAIL].f64_at(row) as usize;
+                let detail = packed >> FORMAT_BITS;
                 let registration = items[item_column::REGISTRATION_INDEX].f64_at(row) as i64;
-                match items[item_column::FORMAT].f64_at(row) as u8 {
+                match (packed & ((1 << FORMAT_BITS) - 1)) as u8 {
                     format if format == RowFormat::EvmLog as u8 => {
                         let group = rows
                             .params
@@ -1563,6 +1614,27 @@ mod tests {
                     "svm 3 [0.0, 1.0] child Str(\"child args\")".to_string(),
                 ]
             )
+        );
+    }
+
+    #[test]
+    fn a_released_handle_finds_nothing_once_its_slot_holds_another_result() {
+        let lent = || Lent {
+            arenas: Vec::new(),
+            buffer_counts: Vec::new(),
+        };
+        let mut results = Results::default();
+        let first = results.insert(lent());
+        results.remove(first);
+        let second = results.insert(lent());
+        assert_eq!(
+            (
+                first & ((1 << SLOT_BITS) - 1) == second & ((1 << SLOT_BITS) - 1),
+                first != second,
+                results.remove(first).is_some(),
+                results.get_mut(second).is_some(),
+            ),
+            (true, true, false, true)
         );
     }
 

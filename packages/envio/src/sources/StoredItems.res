@@ -62,15 +62,14 @@ let build = (
     )
     // In the order `ITEM_COLUMNS` in `event_store.rs` lays them out.
     let column = Array.getUnsafe(columns, ...)
-    let formats = column(0)
+    let details = column(0)
     let blockNumbers = column(1)
     let logIndexes = column(2)
     let transactionIndexes = column(3)
     let registrationIndexes = column(4)
     let srcAddresses = column(5)
     let skipped = column(6)
-    let detailRows = column(7)
-    let tapePositions = column(8)
+    let tapePositions = column(7)
     let params = []
     rows.params->Array.forEach(({registrationIndex, shape}) =>
       params->Array.setUnsafe(
@@ -80,11 +79,16 @@ let build = (
     )
     let fuel = rows.fuel->objectsOf(~tapes=rows.tapes, ~buffers, ~cursor)
     let svm = rows.svm->objectsOf(~tapes=rows.tapes, ~buffers, ~cursor)
-    let detailRow = row => detailRows->numberAt(row)->Float.toInt
+    // `FORMAT_BITS` in `event_store.rs`: the format below, the row above.
+    let detailRow = row => details->numberAt(row)->Float.toInt->Int.shiftRightUnsigned(3)
     let tapeAt = row => rows.tapes->Array.getUnsafe(tapePositions->numberAt(row)->Float.toInt)
     Array.fromInitializer(~length=rows.items.rows, row => {
       let registrationIndex = registrationIndexes->numberAt(row)->Float.toInt
-      switch formats->numberAt(row)->Float.toInt->(Utils.magic: int => EventStore.format) {
+      switch details
+      ->numberAt(row)
+      ->Float.toInt
+      ->Int.bitwiseAnd(7)
+      ->(Utils.magic: int => EventStore.format) {
       | EvmLog =>
         let item: EvmEventItem.t = {
           logIndex: logIndexes->numberAt(row)->Float.toInt,
