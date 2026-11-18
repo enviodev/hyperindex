@@ -84,7 +84,6 @@ pub(crate) struct EvmRegistration {
     contract: u32,
     is_wildcard: bool,
     start_block: Option<i64>,
-    pub(crate) has_contract_register: bool,
 }
 
 impl EvmRegistration {
@@ -187,13 +186,14 @@ pub(crate) struct EvmMatcher {
     /// In registration index order.
     registrations: Vec<EvmRegistration>,
     topic0: Topic0Index,
+    pub(crate) contract_registers: ContractRegisters,
     store: Arc<RwLock<StoreInner>>,
 }
 
 impl EvmMatcher {
     pub(crate) fn new(
         inputs: &[OnEventRegistrationInput],
-        contract_register_indexes: &[i64],
+        contract_registers: ContractRegisters,
         address_store: &AddressStore,
     ) -> Result<Self> {
         let store = address_store.handle();
@@ -201,7 +201,7 @@ impl EvmMatcher {
             let inner = store.read().unwrap();
             inputs
                 .iter()
-                .map(|input| compile(input, contract_register_indexes, &inner))
+                .map(|input| compile(input, &inner))
                 .collect::<Result<Vec<_>>>()?
         };
         registrations.sort_unstable_by_key(|registration| registration.index);
@@ -213,6 +213,7 @@ impl EvmMatcher {
         );
         Ok(EvmMatcher {
             topic0: Topic0Index::build(&registrations),
+            contract_registers,
             registrations,
             store,
         })
@@ -267,9 +268,32 @@ impl EvmMatcher {
         let mut found = RowMatch::default();
         self.for_each_match(log, store, |registration| {
             found.kept = true;
-            found.registers |= registration.has_contract_register;
+            found.registers |= self.contract_registers.has(registration.index);
         });
         found
+    }
+}
+
+/// Which registrations run a contractRegister, by registration index: one
+/// table a chain's buffer and every matcher share.
+#[derive(Clone, Default)]
+pub(crate) struct ContractRegisters(Arc<[bool]>);
+
+impl ContractRegisters {
+    pub(crate) fn from_indexes(indexes: &[i64]) -> Result<Self> {
+        let mut registers = Vec::new();
+        for &index in indexes {
+            let index = usize::try_from(index).context("registration index is negative")?;
+            if registers.len() <= index {
+                registers.resize(index + 1, false);
+            }
+            registers[index] = true;
+        }
+        Ok(ContractRegisters(registers.into()))
+    }
+
+    pub(crate) fn has(&self, registration: u32) -> bool {
+        self.0.get(registration as usize).copied().unwrap_or(false)
     }
 }
 
@@ -279,11 +303,7 @@ pub(crate) struct RowMatch {
     pub(crate) registers: bool,
 }
 
-fn compile(
-    input: &OnEventRegistrationInput,
-    contract_register_indexes: &[i64],
-    store: &StoreInner,
-) -> Result<EvmRegistration> {
+fn compile(input: &OnEventRegistrationInput, store: &StoreInner) -> Result<EvmRegistration> {
     let topic_count = usize::try_from(input.topic_count).context("topic_count is negative")?;
     anyhow::ensure!(
         (1..=4).contains(&topic_count),
@@ -318,7 +338,6 @@ fn compile(
         contract,
         is_wildcard: input.is_wildcard,
         start_block: input.start_block,
-        has_contract_register: contract_register_indexes.contains(&input.index),
     })
 }
 
@@ -431,7 +450,7 @@ mod tests {
     fn matches_on_topics_start_block_and_the_store_alone() {
         let store = evm_store(&[("Token", &[TOKEN]), ("Wild", &[])]);
         let inputs = registrations();
-        let matcher = EvmMatcher::new(&inputs, &[], &store).unwrap();
+        let matcher = EvmMatcher::new(&inputs, ContractRegisters::default(), &store).unwrap();
         let decoder = EvmDecoder::new(&inputs, false).unwrap();
 
         let logs = [

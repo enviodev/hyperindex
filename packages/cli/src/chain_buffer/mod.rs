@@ -155,7 +155,7 @@ pub(crate) struct Shared {
     /// By event registration index.
     transaction_masks: Vec<u64>,
     event_block_masks: Vec<u64>,
-    contract_register: Vec<bool>,
+    contract_registers: matching::ContractRegisters,
 }
 
 impl Shared {
@@ -187,10 +187,7 @@ impl Shared {
     }
 
     pub(crate) fn has_contract_register(&self, registration: u32) -> bool {
-        self.contract_register
-            .get(registration as usize)
-            .copied()
-            .unwrap_or(false)
+        self.contract_registers.has(registration)
     }
 
     pub(crate) fn transaction_mask(&self, registration: u32) -> u64 {
@@ -377,11 +374,14 @@ impl ChainBuffer {
     #[napi(factory)]
     pub fn make(config: ChainBufferConfig, address_store: &AddressStore) -> napi::Result<Self> {
         let ecosystem = Ecosystem::parse(&config.ecosystem).map_err(to_napi)?;
+        let contract_registers =
+            matching::ContractRegisters::from_indexes(&config.contract_register_indexes)
+                .map_err(to_napi)?;
         let svm = match config.svm_registrations {
             Some(programs) => Some(SvmRegistrations {
                 matcher: matching_svm::SvmMatcher::new(
                     &programs,
-                    &config.contract_register_indexes,
+                    contract_registers.clone(),
                     address_store,
                 )
                 .map_err(to_napi)?,
@@ -393,7 +393,7 @@ impl ChainBuffer {
             Some(inputs) => Some(EvmRegistrations {
                 matcher: matching::EvmMatcher::new(
                     &inputs,
-                    &config.contract_register_indexes,
+                    contract_registers.clone(),
                     address_store,
                 )
                 .map_err(to_napi)?,
@@ -407,7 +407,7 @@ impl ChainBuffer {
             Some(inputs) => Some(FuelRegistrations {
                 matcher: matching_fuel::FuelMatcher::new(
                     &inputs,
-                    &config.contract_register_indexes,
+                    contract_registers.clone(),
                     address_store,
                 )
                 .map_err(to_napi)?,
@@ -415,15 +415,6 @@ impl ChainBuffer {
             }),
             None => None,
         };
-        let mut contract_register = Vec::new();
-        for index in &config.contract_register_indexes {
-            let index = usize::try_from(*index)
-                .map_err(|_| napi::Error::from_reason("registration index can't be negative"))?;
-            if contract_register.len() <= index {
-                contract_register.resize(index + 1, false);
-            }
-            contract_register[index] = true;
-        }
         let [events, transactions, blocks] = ecosystem.schemas();
         Ok(ChainBuffer {
             shared: Arc::new(Shared {
@@ -437,7 +428,7 @@ impl ChainBuffer {
                 block_handlers: config.block_handlers,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),
-                contract_register,
+                contract_registers,
             }),
             tables: Mutex::new(Tables {
                 events: Table::new(events),

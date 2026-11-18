@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use anyhow::Result;
 
-use super::matching::RowMatch;
+use super::matching::{ContractRegisters, RowMatch};
 use super::svm::InstructionView;
 use crate::address_store::{AddressStore, StoreInner};
 use crate::svm_hypersync_source::selection::{
@@ -16,14 +16,14 @@ use crate::svm_hypersync_source::selection::{
 pub(crate) struct SvmMatcher {
     /// Every config instruction with all of its registrations.
     instructions: Vec<SelectedInstruction>,
-    contract_register_indexes: Vec<i64>,
+    pub(crate) contract_registers: ContractRegisters,
     store: Arc<RwLock<StoreInner>>,
 }
 
 impl SvmMatcher {
     pub(crate) fn new(
         programs: &[SvmProgramInput],
-        contract_register_indexes: &[i64],
+        contract_registers: ContractRegisters,
         address_store: &AddressStore,
     ) -> Result<Self> {
         let store = address_store.handle();
@@ -34,17 +34,13 @@ impl SvmMatcher {
         };
         Ok(SvmMatcher {
             instructions,
-            contract_register_indexes: contract_register_indexes.to_vec(),
+            contract_registers,
             store,
         })
     }
 
     pub(crate) fn read_store(&self) -> RwLockReadGuard<'_, StoreInner> {
         self.store.read().unwrap()
-    }
-
-    pub(crate) fn has_contract_register(&self, registration: &Registration) -> bool {
-        self.contract_register_indexes.contains(&registration.index)
     }
 
     /// Every (instruction, registration) the call belongs to, in registration
@@ -78,7 +74,7 @@ impl SvmMatcher {
         let mut found = RowMatch::default();
         for (_, registration) in self.matches(call, store) {
             found.kept = true;
-            found.registers |= self.has_contract_register(registration);
+            found.registers |= self.contract_registers.has(registration.index as u32);
         }
         found
     }

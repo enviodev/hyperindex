@@ -1075,7 +1075,7 @@ impl EvmRpcClient {
                 let (mut registrations, mut registers) = (Vec::new(), false);
                 matcher.for_each_match(&log.view(), &store, |registration| {
                     registrations.push(registration.index);
-                    registers |= registration.has_contract_register;
+                    registers |= chain.has_contract_register(registration.index);
                 });
                 log.registrations = registrations;
                 log.registers = registers;

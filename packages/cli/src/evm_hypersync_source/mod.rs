@@ -710,12 +710,13 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::evm_store;
     use crate::chain_buffer::evm::{EvmBlockField, EvmTxField};
+    use crate::chain_buffer::matching::ContractRegisters;
     use crate::chain_buffer::schedule::BlockHandlerInput;
     use crate::chain_buffer::table::make_key;
     use hypersync_client::simple_types;
 
     fn empty_matcher() -> EvmMatcher {
-        EvmMatcher::new(&[], &[], &evm_store(&[])).unwrap()
+        EvmMatcher::new(&[], ContractRegisters::default(), &evm_store(&[])).unwrap()
     }
 
     // Matches `full_log` (zero topic0, one topic, empty data) to a wildcard
@@ -746,7 +747,7 @@ mod tests {
                     params: vec![],
                 },
             ],
-            &[],
+            ContractRegisters::default(),
             &evm_store(&[("Zero", &[])]),
         )
         .unwrap()

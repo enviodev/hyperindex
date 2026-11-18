@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 use anyhow::Result;
 
 use super::fuel::ReceiptView;
+use super::matching::ContractRegisters;
 use crate::address_store::{AddressStore, StoreInner};
 use crate::fuel_hypersync_source::selection::{
     parse_registrations, FuelOnEventRegistrationInput, Registration,
@@ -13,7 +14,6 @@ use crate::fuel_hypersync_source::selection::{
 
 pub(crate) struct FuelRegistration {
     pub(crate) registration: Registration,
-    pub(crate) has_contract_register: bool,
 }
 
 impl FuelRegistration {
@@ -25,13 +25,14 @@ impl FuelRegistration {
 pub(crate) struct FuelMatcher {
     /// In registration index order.
     registrations: Vec<FuelRegistration>,
+    pub(crate) contract_registers: ContractRegisters,
     store: Arc<RwLock<StoreInner>>,
 }
 
 impl FuelMatcher {
     pub(crate) fn new(
         inputs: &[FuelOnEventRegistrationInput],
-        contract_register_indexes: &[i64],
+        contract_registers: ContractRegisters,
         address_store: &AddressStore,
     ) -> Result<Self> {
         let store = address_store.handle();
@@ -40,10 +41,7 @@ impl FuelMatcher {
             parse_registrations(inputs, &inner)?
         }
         .into_iter()
-        .map(|registration| FuelRegistration {
-            has_contract_register: contract_register_indexes.contains(&registration.index),
-            registration,
-        })
+        .map(|registration| FuelRegistration { registration })
         .collect();
         anyhow::ensure!(
             registrations
@@ -54,6 +52,7 @@ impl FuelMatcher {
         registrations.sort_unstable_by_key(|registration| registration.registration.index);
         Ok(FuelMatcher {
             registrations,
+            contract_registers,
             store,
         })
     }

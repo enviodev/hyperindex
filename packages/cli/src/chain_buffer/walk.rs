@@ -301,7 +301,8 @@ impl Walker<'_> {
             &call,
             &matched,
             |registration| {
-                !contract_register_only || svm.matcher.has_contract_register(registration)
+                !contract_register_only
+                    || self.shared.has_contract_register(registration.index as u32)
             },
             &mut self.items,
         );
@@ -317,7 +318,7 @@ impl Walker<'_> {
         let store = fuel.read_store();
         let mut identity = None;
         fuel.for_each_match(&receipt, &store, |registration| {
-            if contract_register_only && !registration.has_contract_register {
+            if contract_register_only && !self.shared.has_contract_register(registration.index()) {
                 return;
             }
             let Some(params) = decode::fuel::params(&registration.registration.kind, &receipt)
@@ -348,7 +349,7 @@ impl Walker<'_> {
         let store = evm.matcher.read_store();
         let mut src_address = None;
         evm.matcher.for_each_match(&log, &store, |registration| {
-            if contract_register_only && !registration.has_contract_register {
+            if contract_register_only && !self.shared.has_contract_register(registration.index) {
                 return;
             }
             let Some(params) = evm.decoder.decode(registration.index, &log.topics, data) else {

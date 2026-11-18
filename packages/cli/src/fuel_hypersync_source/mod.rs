@@ -266,7 +266,7 @@ fn build_page(
         let mut registers = false;
         matcher.for_each_match(&view, store, |registration| {
             kept = true;
-            registers |= registration.has_contract_register;
+            registers |= matcher.contract_registers.has(registration.index());
             check_required(&registration.registration.kind, receipt, &mut missing);
         });
         if !kept {
@@ -342,6 +342,7 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::fuel_store;
     use crate::address_store::AddressStore;
+    use crate::chain_buffer::matching::ContractRegisters;
     use crate::js_value::test_value::JsValue;
     use selection::FuelOnEventRegistrationInput;
 
@@ -410,7 +411,12 @@ mod tests {
         addresses: &[(&str, &[&str])],
     ) -> (AddressStore, FuelMatcher) {
         let store = fuel_store(addresses);
-        let matcher = FuelMatcher::new(registrations, &[0], &store).unwrap();
+        let matcher = FuelMatcher::new(
+            registrations,
+            ContractRegisters::from_indexes(&[0]).unwrap(),
+            &store,
+        )
+        .unwrap();
         (store, matcher)
     }
 

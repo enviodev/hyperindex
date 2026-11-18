@@ -289,7 +289,7 @@ impl StoreInner {
     }
 
     fn sorted_ids(&self, mut ids: Vec<Id>) -> Vec<Id> {
-        ids.sort_unstable_by(|&a, &b| self.sort_key(a).cmp(&self.sort_key(b)));
+        ids.sort_by_cached_key(|&id| self.sort_key(id));
         ids
     }
 
@@ -1101,15 +1101,20 @@ impl AddressSet {
     }
 
     /// Every address the store holds for `contract_names`, each contract on
-    /// its own, in set order, as sets of at most `max_addresses` each. A chunk
-    /// holding one contract becomes one request rather than one per contract.
+    /// its own, in registration order, as sets of at most `max_addresses`
+    /// each, for a query's address filter. A chunk holding one contract
+    /// becomes one request rather than one per contract.
     pub fn contract_chunks(&self, contract_names: &[String], max_addresses: usize) -> Vec<Self> {
         let store = self.store.read().unwrap();
         let ids_by_contract: Vec<Vec<Id>> = contract_names
             .iter()
             .filter_map(|name| store.contract_idx(name))
             .map(|contract_idx| {
-                store.sorted_live_ids(0, |entry| entry.contract_idx == contract_idx)
+                (0..store.entries.len() as Id)
+                    .filter(|&id| {
+                        !store.entries.is_dead(id) && store.entries.contract_idx(id) == contract_idx
+                    })
+                    .collect()
             })
             .collect();
         drop(store);
@@ -1126,9 +1131,11 @@ impl AddressSet {
         let mut by_contract: HashMap<String, ContractAddresses> = HashMap::new();
         for &id in self.ids.iter() {
             let entry = store.entry(id);
-            let rendered = by_contract
-                .entry(store.contract_name(entry.contract_idx).to_string())
-                .or_default();
+            let name = store.contract_name(entry.contract_idx);
+            if !by_contract.contains_key(name) {
+                by_contract.insert(name.to_string(), ContractAddresses::default());
+            }
+            let rendered = by_contract.get_mut(name).expect("inserted above");
             rendered
                 .addresses
                 .push(address_string(store.ecosystem, entry.key));

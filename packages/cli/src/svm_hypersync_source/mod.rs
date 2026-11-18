@@ -589,6 +589,7 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::svm_store;
     use crate::address_store::AddressStore;
+    use crate::chain_buffer::matching::ContractRegisters;
     use crate::chain_buffer::svm::{block_columns, transaction_columns, SvmTxField};
     use crate::chain_buffer::table::make_key;
     use crate::chain_buffer::walk::Item;
@@ -793,7 +794,7 @@ mod tests {
         let builder =
             SelectionBuilder::from_programs(programs, &store.handle().read().unwrap()).unwrap();
         let built = builder.build(&builder.registration_indexes()).unwrap();
-        let matcher = SvmMatcher::new(programs, &[], store).unwrap();
+        let matcher = SvmMatcher::new(programs, ContractRegisters::default(), store).unwrap();
         build_page(response, &built, &matcher, &[], None).unwrap()
     }
 
