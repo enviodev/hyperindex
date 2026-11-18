@@ -120,38 +120,6 @@ let pendingQueries = (sourceMock: MockSource.t) =>
 
 let upTo = (~items=[], block) => MockSource.Respond({items, latestFetchedBlockNumber: block})
 
-// Answers every query starting at or below `block`, each up to its own toBlock
-// and never past `block`, with the `items` its range covers, until the indexer
-// goes idle with no such query left. A real source delivers an event to every
-// query whose range and selection cover it, so overlapping ranges see it twice.
-let fetchUpTo = async (
-  sourceMock: MockSource.t,
-  ~indexer: IndexerRunner.t,
-  block,
-  ~items: array<MockSource.itemMock>,
-) => {
-  let rec wave = async () => {
-    await indexer.waitUntilIdle()
-    let due = sourceMock.pendingItemsQueries->Array.filter(query => query.fromBlock <= block)
-    if due->Utils.Array.notEmpty {
-      due->Array.forEach(query => {
-        let latest = switch query.toBlock {
-        | Bounded(toBlock) => Math.Int.min(toBlock, block)
-        | Unbounded => block
-        }
-        (query->MockSource.control).respond({
-          items: items->Array.filter(item =>
-            item.blockNumber >= query.fromBlock && item.blockNumber <= latest
-          ),
-          latestFetchedBlockNumber: latest,
-        })
-      })
-      await wave()
-    }
-  }
-  await wave()
-}
-
 // Partition 0 registers two dynamic Gravatar addresses at block 3, so with a
 // threshold of 1 Gravatar's three addresses switch it to client-side
 // filtering: partition 2 fetches it address-free from block 1, and partition 0
@@ -515,7 +483,7 @@ describe("FetchState client-side address filtering", () => {
         {partitionId: "3", reply: LeavePending},
         {partitionId: "4", reply: LeavePending},
       ])
-      await sourceMock->fetchUpTo(~indexer, 1000, ~items=[handled->eventAt(950)])
+      await sourceMock.respondUpTo(1000, ~items=[handled->eventAt(950)])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -570,11 +538,7 @@ describe("FetchState client-side address filtering", () => {
           ),
         },
       ])
-      await sourceMock->fetchUpTo(
-        ~indexer,
-        1000,
-        ~items=[handled->eventAt(12), handled->eventAt(70)],
-      )
+      await sourceMock.respondUpTo(1000, ~items=[handled->eventAt(12), handled->eventAt(70)])
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -640,7 +604,7 @@ describe("FetchState client-side address filtering", () => {
       ])
       let afterCollapse =
         sourceMock->pendingQueries->Array.filter(query => query.partitionId !== "0")
-      await sourceMock->fetchUpTo(~indexer, 1000, ~items=[handled->eventAt(2), handled->eventAt(9)])
+      await sourceMock.respondUpTo(1000, ~items=[handled->eventAt(2), handled->eventAt(9)])
       await indexer.getBatchWritePromise()
 
       t.expect(

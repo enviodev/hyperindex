@@ -351,12 +351,17 @@ type t = {
   // The queries the last `expectItemsQueries` replied to, in entry order, for an
   // assert on what the indexer asked.
   repliedItemsQueries: array<pendingItemsQuery>,
-  // Lets the chain fetch empty ranges up to `blockNumber`: waits for each wave of
-  // queries and answers every one up to its own toBlock, never past
-  // `blockNumber`, until every partition it answers gets there. A query starting
-  // past `blockNumber` fails it as unlisted, like any query no entry names. For
-  // a test that just needs the chain somewhere.
+  // Lets the chain fetch up to `blockNumber`: waits for the indexer to settle,
+  // answers every query starting at or below `blockNumber` up to its own
+  // toBlock, never past `blockNumber`, with the `items` its range covers, and
+  // repeats until a settled indexer has no such query left. A query starting
+  // past `blockNumber` stays pending. Only inside a scenario, which hands the
+  // mock its indexer to wait for.
+  respondUpTo: (int, ~items: array<itemMock>=?) => promise<unit>,
+  // `respondUpTo` without items, for a test that just needs the chain somewhere.
   respondEmptyUpTo: int => promise<unit>,
+  // Helpers only: how `respondUpTo` waits for the indexer to settle.
+  setWaitUntilIdle: (unit => promise<unit>) => unit,
   // Empty-responds every pending query, up to its own toBlock unless
   // `~latestFetchedBlockNumber` says otherwise. Never waits, and throws with none.
   drainPendingItemsQueries: (~latestFetchedBlockNumber: int=?) => unit,
@@ -900,6 +905,39 @@ let make = (
     }
   }
 
+  let waitUntilIdle = ref(async () =>
+    JsError.throwWithMessage(
+      "respondUpTo needs the indexer to wait for, which only a scenario hands the mock",
+    )
+  )
+  let respondUpTo = async (blockNumber, ~items: array<itemMock>=[]) => {
+    let rec wave = async (~count) => {
+      if count > 1000 {
+        JsError.throwWithMessage(
+          `respondUpTo(${blockNumber->Int.toString}) still had queries to answer after 1000 waves`,
+        )
+      }
+      await waitUntilIdle.contents()
+      let due = pendingItemsQueries->Array.filter(query => query.fromBlock <= blockNumber)
+      if due->Utils.Array.notEmpty {
+        due->Array.forEach(query => {
+          let latest = switch query.toBlock {
+          | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
+          | Unbounded => blockNumber
+          }
+          (query->control).respond({
+            items: items->Array.filter(item =>
+              item.blockNumber >= query.fromBlock && item.blockNumber <= latest
+            ),
+            latestFetchedBlockNumber: latest,
+          })
+        })
+        await wave(~count=count + 1)
+      }
+    }
+    await wave(~count=0)
+  }
+
   let expectItemsQueries = async (expected, ~within=2000.) => {
     repliedItemsQueries->Utils.Array.clearInPlace
     let deadline = Date.now() +. within
@@ -1028,42 +1066,9 @@ let make = (
     pendingItemsQueries,
     expectItemsQueries,
     repliedItemsQueries,
-    respondEmptyUpTo: async blockNumber => {
-      let rec wave = async (~count) => {
-        if count > 1000 {
-          JsError.throwWithMessage(
-            `respondEmptyUpTo(${blockNumber->Int.toString}) didn't get there in 1000 waves`,
-          )
-        }
-        await expectItemsQueries([
-          {where: query => query.fromBlock <= blockNumber, reply: LeavePending},
-        ])
-        // Every partition answered in this wave has to get there, not just one:
-        // a partition behind the others asks again from where it was left. A
-        // chunked partition gets there through its last chunk, so it is judged
-        // by the furthest of its queries, not by each one.
-        let furthestByPartition = Dict.make()
-        pendingItemsQueries
-        ->Array.copy
-        ->Array.forEach(query =>
-          if query.fromBlock <= blockNumber {
-            let latest = switch query.toBlock {
-            | Bounded(toBlock) => Math.Int.min(toBlock, blockNumber)
-            | Unbounded => blockNumber
-            }
-            (query->control).respond({items: [], latestFetchedBlockNumber: latest})
-            let furthest = furthestByPartition->Dict.get(query.partitionId)->Option.getOr(0)
-            furthestByPartition->Dict.set(query.partitionId, Math.Int.max(furthest, latest))
-          }
-        )
-        let allReached =
-          furthestByPartition->Dict.valuesToArray->Array.every(latest => latest === blockNumber)
-        if !allReached {
-          await wave(~count=count + 1)
-        }
-      }
-      await wave(~count=0)
-    },
+    respondUpTo,
+    respondEmptyUpTo: blockNumber => respondUpTo(blockNumber),
+    setWaitUntilIdle: wait => waitUntilIdle := wait,
     drainPendingItemsQueries: (~latestFetchedBlockNumber=?) =>
       ledger
       ->Ledger.drainItemsQueries(latestFetchedBlockNumber->Null.fromOption)

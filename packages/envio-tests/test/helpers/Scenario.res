@@ -327,6 +327,7 @@ let run = async (
     ~chains?,
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
+      mocks->Array.forEach(((_, mock)) => mock.setWaitUntilIdle(indexer.waitUntilIdle))
       switch {
         await body(~indexer, ~source)
         // Only after the body passed: a failing body has its own error to
