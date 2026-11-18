@@ -30,8 +30,14 @@ type chainBeforeBatch = {
   fetchState: FetchState.t,
   // The chain's own buffer, which the batch builds its items from.
   buffer: ChainBuffer.t,
-  itemContext: StoredItems.context,
-  // Adds the time spent building the chain's items to its metric.
+  // Builds the chain's items of `[fromBlock, maxBlock]`, up to about
+  // `targetItems`, with the last block they cover.
+  buildItems: (
+    ~fromBlock: int,
+    ~maxBlock: int,
+    ~targetItems: int,
+  ) => promise<(array<Internal.item>, option<int>)>,
+  // Adds the time spent waiting for the chain's items to its metric.
   recordParse: float => unit,
   scannedHashes: reorgHashSnapshot,
   // The progress block isn't known until the build computes it, so its
@@ -245,14 +251,13 @@ let make = async (
       ([], maxBlock)
     } else {
       let startedAt = Performance.now()
-      let built = await buffer->ChainBuffer.buildHandlerItems(
+      let (chainItems, lastBlock) = await chainBeforeBatch.buildItems(
         ~fromBlock,
         ~maxBlock,
         ~targetItems=batchSizeTarget - totalBatchSize.contents,
       )
-      let chainItems = built->StoredItems.read(~context=chainBeforeBatch.itemContext)
       chainBeforeBatch.recordParse(Performance.now() -. startedAt)
-      (chainItems, built.lastBlock->Option.getOr(maxBlock))
+      (chainItems, lastBlock->Option.getOr(maxBlock))
     }
     let chainBatchSize = chainItems->Array.length
 

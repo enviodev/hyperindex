@@ -2,6 +2,17 @@
 // the type is opaque in the interface so callers can read fields but can only
 // change them through the sanctioned mutators.
 
+// What a build of `[fromBlock, maxBlock]` for `targetItems` returns: the items
+// and the last block they cover.
+type builtItems = (array<Internal.item>, option<int>)
+
+type prebuiltItems = {
+  fromBlock: int,
+  maxBlock: int,
+  targetItems: int,
+  items: promise<builtItems>,
+}
+
 type t = {
   logger: Logger.t,
   mutable fetchState: FetchState.t,
@@ -51,6 +62,8 @@ type t = {
   // the backlog even if the run covered them, since it didn't read the new
   // events.
   mutable contractRegisterRun: option<Utils.Set.t<int>>,
+  // Items built ahead for the next batch while the current one runs.
+  mutable prebuilt: option<prebuiltItems>,
   // How this chain spells addresses, from `lowercaseAddresses`.
   shouldChecksum: bool,
   reorgThresholdReadyTolerance: int,
@@ -173,6 +186,7 @@ let make = (
     maxReorgDepth,
     isInReorgThreshold,
     contractRegisterRun: None,
+    prebuilt: None,
     shouldChecksum,
     reorgThresholdReadyTolerance,
     blockRangeFetchSeconds: 0.,
@@ -1099,6 +1113,49 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
 // in-threshold block hashes are copied up front because the build reuses the
 // whole set; the block time comes as a lookup instead, since the key it needs -
 // the batch's own progress block - isn't known until the build computes it.
+let buildItemsNow = (cs: t, ~fromBlock, ~maxBlock, ~targetItems): promise<builtItems> =>
+  cs.chainBuffer
+  ->ChainBuffer.buildHandlerItems(~fromBlock, ~maxBlock, ~targetItems)
+  ->Promise.thenResolve(built => (
+    built->StoredItems.read(~context=cs.itemContext),
+    built.lastBlock,
+  ))
+
+// The items built ahead when they answer this build: the same start and
+// target, read no further than `maxBlock`. Fewer blocks than the range allows
+// still make a whole batch, which ends where its items end.
+let buildItems = (cs: t, ~fromBlock, ~maxBlock, ~targetItems): promise<builtItems> => {
+  let prebuilt = cs.prebuilt
+  cs.prebuilt = None
+  switch prebuilt {
+  | Some(prebuilt)
+    if prebuilt.fromBlock === fromBlock &&
+    prebuilt.maxBlock <= maxBlock &&
+    prebuilt.targetItems === targetItems =>
+    prebuilt.items
+  | _ => cs->buildItemsNow(~fromBlock, ~maxBlock, ~targetItems)
+  }
+}
+
+// Starts building the next batch's items from the read position, for
+// `buildItems` to take up.
+let prebuildItems = (cs: t, ~targetItems) => {
+  let fromBlock = cs.processingBlockNumber + 1
+  let maxBlock = cs.fetchState->FetchState.bufferBlockNumber
+  cs.prebuilt = if (
+    maxBlock >= fromBlock &&
+      cs.chainBuffer->ChainBuffer.countItemsInBlockRange(~fromBlock, ~toBlock=maxBlock) > 0
+  ) {
+    let items = cs->buildItemsNow(~fromBlock, ~maxBlock, ~targetItems)
+    // A build nobody takes up must not surface as an unhandled rejection; one
+    // that is taken up rejects for its taker.
+    items->Promise.catch(_ => Promise.resolve(([], None)))->ignore
+    Some({fromBlock, maxBlock, targetItems, items})
+  } else {
+    None
+  }
+}
+
 let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
   let {blockNumbers, hashes} =
     cs.chainBuffer->ChainBuffer.getBlockHashes(
@@ -1112,7 +1169,8 @@ let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
   {
     fetchState: cs.fetchState,
     buffer: cs.chainBuffer,
-    itemContext: cs.itemContext,
+    buildItems: (~fromBlock, ~maxBlock, ~targetItems) =>
+      cs->buildItems(~fromBlock, ~maxBlock, ~targetItems),
     recordParse: milliseconds => cs->recordParse(~milliseconds),
     progressBlockNumber: cs.processingBlockNumber,
     totalEventsProcessed: cs.numEventsProcessed,
@@ -1318,6 +1376,7 @@ type rolledBackTo =
 // chain — the store is what decides which ones died, so the two halves of a
 // rollback can't disagree.
 let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
+  cs.prebuilt = None
   let rollbackTo = targetBlockNumber => {
     let {fetchState, rolledBackAddresses} =
       cs.fetchState->FetchState.rollback(

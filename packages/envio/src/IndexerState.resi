@@ -70,6 +70,7 @@ let endProcessing: t => unit
 let markProcessingStalledOnFetch: t => unit
 let recordProcessedBatch: t => unit
 let createBatch: (t, ~batchSizeTarget: int) => promise<Batch.t>
+let prebuildNextBatch: t => unit
 let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Accessors.

@@ -174,6 +174,8 @@ let isInReorgThreshold: t => bool
 let reorgableFrom: (t, ~isRealtime: bool) => option<int>
 let shouldSaveHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
+// Starts building the next batch's items while the current batch runs.
+let prebuildItems: (t, ~targetItems: int) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit
 // What a rollback's progress diff says about one chain: the block its surviving

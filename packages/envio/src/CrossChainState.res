@@ -160,6 +160,22 @@ let createBatch = (
   )
 }
 
+// Builds ahead the items of the chain the next batch starts with, for the
+// whole target, while the current batch runs.
+let prebuildNextBatch = (crossChainState: t, ~batchSizeTarget) =>
+  switch crossChainState.chainStates
+  ->Dict.valuesToArray
+  ->FetchState.sortForBatch(
+    ~fetchStateOf=ChainState.fetchStateOf,
+    ~bufferOf=ChainState.chainBuffer,
+    ~processingBlockNumberOf=ChainState.processingBlockNumber,
+    ~batchSizeTarget,
+  )
+  ->Array.get(0) {
+  | Some(chainState) => chainState->ChainState.prebuildItems(~targetItems=batchSizeTarget)
+  | None => ()
+  }
+
 // Enter the reorg threshold: shrink each chain's buffer by its configured
 // blockLag and flip the flag.
 // Whether every chain this process drives has buffered close enough to the head

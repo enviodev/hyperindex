@@ -34,6 +34,7 @@ let releaseRealtime: t => unit
 let isHoldingRealtime: t => bool
 let hasArrivedAtHead: t => bool
 let isReadyToEnterReorgThreshold: (t, ~batch: Batch.t) => bool
+let prebuildNextBatch: (t, ~batchSizeTarget: int) => unit
 let createBatch: (
   t,
   ~config: Config.t,

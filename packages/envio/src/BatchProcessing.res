@@ -161,6 +161,8 @@ and processBuiltBatch = async (
     ->Utils.Dict.forEach(cs =>
       cs->ChainState.advanceAfterBatch(~batch, ~enteringReorgThreshold=shouldEnterReorgThreshold)
     )
+    // The next batch's items build while this one's handlers run.
+    state->IndexerState.prebuildNextBatch
     // Kick the next fetch round before awaiting the batch. A response that
     // lands mid-batch commits only fetch-frontier fields (buffer, knownHeight),
     // while applyBatchProgress below commits only progress fields, so the two

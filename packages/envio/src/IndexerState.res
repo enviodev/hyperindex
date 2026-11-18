@@ -420,6 +420,9 @@ let createBatch = (state: t, ~batchSizeTarget: int): promise<Batch.t> =>
     ~batchSizeTarget,
   )
 
+let prebuildNextBatch = (state: t) =>
+  state.crossChainState->CrossChainState.prebuildNextBatch(~batchSizeTarget=state.config.batchSize)
+
 let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.enterReorgThreshold
 
 // Begin a reorg rollback. Invalidates in-flight fetches and enters the
