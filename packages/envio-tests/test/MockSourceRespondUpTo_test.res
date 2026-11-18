@@ -114,7 +114,7 @@ describe("MockSource.respondUpTo", () => {
             query.toBlock,
           ),
         )
-      await mock.respondEmptyUpTo(300)
+      await mock.respondUpTo(300)
       t.expect((
         backfill,
         (await indexer.metric("envio_progress_block"))->Array.map(
@@ -144,7 +144,7 @@ describe("MockSource.respondUpTo", () => {
       let mock = source(1)
       await Scenario.resolveInitialHeight(~source=mock, ~head=200)
       t.expect(
-        switch await mock.respondEmptyUpTo(300) {
+        switch await mock.respondUpTo(300) {
         | () => None
         | exception JsExn(error) => error->JsExn.message
         },
