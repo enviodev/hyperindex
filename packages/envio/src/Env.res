@@ -200,6 +200,8 @@ module Configurable = {
     let accelerationAdditive =
       envSafe->EnvSafe.get("ENVIO_RPC_ACCELERATION_ADDITIVE", S.option(S.int))
     let intervalCeiling = envSafe->EnvSafe.get("ENVIO_RPC_INTERVAL_CEILING", S.option(S.int))
+    let mergedLogReads =
+      envSafe->EnvSafe.get("ENVIO_RPC_MERGED_LOG_READS", S.bool, ~fallback=true)
   }
 }
 

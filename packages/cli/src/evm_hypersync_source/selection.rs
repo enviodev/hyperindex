@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use alloy_primitives::hex;
 use anyhow::{Context, Result};
 
 use crate::address_store::AddressSet;
@@ -40,6 +41,87 @@ impl BuiltLogSelection {
         match &self.emitters {
             Emitters::Listed(addresses) => addresses,
             Emitters::Any(_) => &[],
+        }
+    }
+}
+
+/// A selection's address and topic constraints with their hex decoded one time,
+/// so picking its logs out of an unfiltered block read does not decode the same
+/// strings for every log. It reproduces the provider's `eth_getLogs` filter;
+/// registration and address-ownership gating stay in routing.
+pub(crate) struct LogMatcher {
+    /// `None` for an emitters-any selection, which matches any address.
+    addresses: Option<Vec<Vec<u8>>>,
+    /// Per topic position: `None` where the position matches anything, `Some`
+    /// with its decoded values otherwise.
+    topics: Vec<Option<Vec<Vec<u8>>>>,
+}
+
+impl LogMatcher {
+    pub(crate) fn new(selection: &BuiltLogSelection) -> Self {
+        let decoded = |values: &[String]| -> Vec<Vec<u8>> {
+            values
+                .iter()
+                .filter_map(|value| hex::decode(value).ok())
+                .collect()
+        };
+        LogMatcher {
+            addresses: match &selection.emitters {
+                Emitters::Any(_) => None,
+                // An empty list carries no address key, the same as any address.
+                Emitters::Listed(addresses) if addresses.is_empty() => None,
+                Emitters::Listed(addresses) => Some(decoded(addresses)),
+            },
+            topics: selection
+                .topics
+                .iter()
+                .map(|values| (!values.is_empty()).then(|| decoded(values)))
+                .collect(),
+        }
+    }
+
+    /// Whether a raw log's `address` and `topics` satisfy the selection.
+    pub(crate) fn matches(&self, address: &str, topics: &[String]) -> bool {
+        self.matches_log(&DecodedLog::new(address, topics))
+    }
+
+    /// The same, for a log decoded once and tested against several selections.
+    pub(crate) fn matches_log(&self, log: &DecodedLog) -> bool {
+        let address_ok = match (&self.addresses, log.address.as_deref()) {
+            (None, _) => true,
+            // A provider may case the address differently from the string the
+            // query was built with, so the two are compared as bytes.
+            (Some(_), None) => false,
+            (Some(addresses), Some(log_address)) => {
+                addresses.iter().any(|candidate| candidate == log_address)
+            }
+        };
+        let topics_ok = self.topics.iter().enumerate().all(|(position, values)| {
+            let Some(values) = values else {
+                return true;
+            };
+            match log.topics.get(position) {
+                Some(Some(topic)) => values.iter().any(|value| value == topic),
+                _ => false,
+            }
+        });
+        address_ok && topics_ok
+    }
+}
+
+/// A raw log's address and topics, decoded once, for a page that tests one log
+/// against several selections. A value that will not decode is `None`, the way
+/// `LogMatcher::matches` reads it.
+pub(crate) struct DecodedLog {
+    address: Option<Vec<u8>>,
+    topics: Vec<Option<Vec<u8>>>,
+}
+
+impl DecodedLog {
+    pub(crate) fn new(address: &str, topics: &[String]) -> Self {
+        DecodedLog {
+            address: hex::decode(address).ok(),
+            topics: topics.iter().map(|topic| hex::decode(topic).ok()).collect(),
         }
     }
 }
@@ -847,5 +929,62 @@ mod tests {
             .err()
             .unwrap();
         assert!(format!("{err:#}").contains("Unknown registration index 7"));
+    }
+
+    #[test]
+    fn a_listed_selection_matches_a_log_by_address_and_constrained_topics() {
+        const OTHER: &str = "0x9999999999999999999999999999999999999999";
+        let selection = BuiltLogSelection {
+            emitters: listed(&[ADDR]),
+            topics: vec![
+                vec![SIGHASH_A.to_string()],
+                vec![ADDR_TOPIC.to_string()],
+                vec![],
+                vec![],
+            ],
+        };
+        let matcher = LogMatcher::new(&selection);
+        let matches = |address: &str, topics: &[&str]| {
+            let topics: Vec<String> = topics.iter().map(|topic| topic.to_string()).collect();
+            matcher.matches(address, &topics)
+        };
+        // The provider's own casing of the hex digits, the `0x` prefix aside.
+        let upper = format!("0x{}", ADDR[2..].to_uppercase());
+        assert_eq!(
+            (
+                // The address and both constrained positions.
+                matches(ADDR, &[SIGHASH_A, ADDR_TOPIC]),
+                // Uppercase digits are the same address.
+                matches(&upper, &[SIGHASH_A, ADDR_TOPIC]),
+                // Another emitter.
+                matches(OTHER, &[SIGHASH_A, ADDR_TOPIC]),
+                // A constrained position the log does not carry.
+                matches(ADDR, &[SIGHASH_A]),
+                // The wrong value at a constrained position.
+                matches(ADDR, &[SIGHASH_B, ADDR_TOPIC]),
+                // Positions past the constraint are unconstrained.
+                matches(ADDR, &[SIGHASH_A, ADDR_TOPIC, ADDR_TOPIC]),
+                // An address that is not hex cannot match a listed one.
+                matches("token", &[SIGHASH_A, ADDR_TOPIC]),
+            ),
+            (true, true, false, false, false, true, false),
+        );
+    }
+
+    #[test]
+    fn an_address_free_selection_matches_any_emitter() {
+        let selection = BuiltLogSelection {
+            emitters: any(&[], &[]),
+            topics: vec![vec![SIGHASH_A.to_string()], vec![], vec![], vec![]],
+        };
+        let matcher = LogMatcher::new(&selection);
+        let matches = |topics: &[&str]| {
+            let topics: Vec<String> = topics.iter().map(|topic| topic.to_string()).collect();
+            matcher.matches("0xdeadbeef", &topics)
+        };
+        assert_eq!(
+            (matches(&[SIGHASH_A]), matches(&[SIGHASH_B])),
+            (true, false)
+        );
     }
 }

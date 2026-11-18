@@ -61,14 +61,15 @@ impl LogBlocks<'_> {
 
 /// The `eth_getLogs` filter: `null` matches any value at a topic position,
 /// trailing match-any positions are trimmed, and no addresses means any
-/// emitter.
+/// emitter. An all-match-any filter carries neither key, which is the
+/// unfiltered read of a whole block.
 fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -> Value {
-    let mut topics: Vec<Option<&Vec<String>>> = topics
+    let mut trimmed: Vec<Option<&Vec<String>>> = topics
         .iter()
         .map(|values| (!values.is_empty()).then_some(values))
         .collect();
-    while matches!(topics.last(), Some(None)) {
-        topics.pop();
+    while matches!(trimmed.last(), Some(None)) {
+        trimmed.pop();
     }
     let mut filter = match blocks {
         LogBlocks::Range { .. } | LogBlocks::RecheckByNumber { .. } => {
@@ -76,14 +77,15 @@ fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -
             json!({
                 "fromBlock": format!("0x{from_block:x}"),
                 "toBlock": format!("0x{to_block:x}"),
-                "topics": topics,
             })
         }
         LogBlocks::Hash { hash, .. } => json!({
             "blockHash": hash,
-            "topics": topics,
         }),
     };
+    if !trimmed.is_empty() {
+        filter["topics"] = json!(trimmed);
+    }
     if !addresses.is_empty() {
         filter["address"] = json!(addresses);
     }
@@ -93,7 +95,7 @@ fn log_filter(blocks: LogBlocks, topics: &[Vec<String>], addresses: &[String]) -
 /// Whether an address-free request failed for the size of what it asked for,
 /// which the same logs asked for by address can avoid. Throttling and an
 /// unreachable provider aren't: more requests would only make them worse.
-fn is_answer_too_large(error: &RpcError) -> bool {
+pub(super) fn is_answer_too_large(error: &RpcError) -> bool {
     match error {
         RpcError::JsonRpc { message, .. } => is_result_cap_message(message),
         RpcError::Timeout(_) | RpcError::MalformedResponse(_) => true,
@@ -131,6 +133,33 @@ async fn request(
             blocks.stat_method(),
             "eth_getLogs",
             json!([log_filter(blocks, &selection.topics, selection.addresses())]),
+        )
+        .await
+}
+
+/// Reads `blocks` with a filter already merged from several selections. The
+/// answer covers each of their own filters as a superset; the caller picks each
+/// selection's own logs out of it locally.
+pub(super) async fn request_range_logs(
+    client: &JsonRpcClient,
+    blocks: LogBlocks<'_>,
+    filter: &BuiltLogSelection,
+) -> Result<Vec<RawLog>, RpcError> {
+    request(client, blocks, filter).await
+}
+
+/// Reads every log of `blocks` unfiltered, for a head block whose logs must be
+/// checked against several selections at once. The caller picks each
+/// selection's logs out of what comes back.
+pub(super) async fn request_block_logs(
+    client: &JsonRpcClient,
+    blocks: LogBlocks<'_>,
+) -> Result<Vec<RawLog>, RpcError> {
+    client
+        .request_recorded_as(
+            blocks.stat_method(),
+            "eth_getLogs",
+            json!([log_filter(blocks, &[], &[])]),
         )
         .await
 }
@@ -188,6 +217,41 @@ pub(super) async fn request_selection_logs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evm_hypersync_source::selection::LogMatcher;
+    use alloy_primitives::hex;
+
+    /// Whether the filter a request carries would return a log, the way the
+    /// provider applies it. The local pick must agree with it case for case.
+    fn filter_returns(filter: &Value, address: &str, topics: &[String]) -> bool {
+        let decoded = |value: &Value| value.as_str().and_then(|value| hex::decode(value).ok());
+        let address_ok = filter.get("address").is_none_or(|addresses| {
+            addresses.as_array().is_none_or(|addresses| {
+                hex::decode(address).is_ok_and(|log_address| {
+                    addresses
+                        .iter()
+                        .any(|candidate| decoded(candidate) == Some(log_address.clone()))
+                })
+            })
+        });
+        let topics_ok = filter.get("topics").is_none_or(|filter_topics| {
+            filter_topics.as_array().is_none_or(|filter_topics| {
+                filter_topics.iter().enumerate().all(
+                    |(position, filter_topic)| match filter_topic {
+                        Value::Null => true,
+                        value => topics.get(position).is_some_and(|topic| {
+                            hex::decode(topic).is_ok_and(|topic| match value {
+                                Value::Array(values) => values
+                                    .iter()
+                                    .any(|candidate| decoded(candidate) == Some(topic.clone())),
+                                single => decoded(single) == Some(topic.clone()),
+                            })
+                        }),
+                    },
+                )
+            })
+        });
+        address_ok && topics_ok
+    }
 
     #[test]
     fn filter_trims_trailing_match_any_topics_and_omits_absent_addresses() {
@@ -237,6 +301,27 @@ mod tests {
     }
 
     #[test]
+    fn an_unfiltered_block_read_carries_neither_addresses_nor_topics() {
+        assert_eq!(
+            (
+                log_filter(
+                    LogBlocks::Hash {
+                        block_number: 16,
+                        hash: "0xbb"
+                    },
+                    &[],
+                    &[]
+                ),
+                log_filter(LogBlocks::RecheckByNumber { block_number: 16 }, &[], &[]),
+            ),
+            (
+                json!({"blockHash": "0xbb"}),
+                json!({"fromBlock": "0x10", "toBlock": "0x10"}),
+            )
+        );
+    }
+
+    #[test]
     fn only_answers_too_large_to_get_call_for_addresses() {
         let errors = [
             RpcError::JsonRpc {
@@ -254,6 +339,191 @@ mod tests {
         assert_eq!(
             errors.each_ref().map(is_answer_too_large),
             [true, false, true, true, false]
+        );
+    }
+
+    #[test]
+    fn a_merged_filter_returns_each_log_a_member_filter_returns() {
+        use crate::evm_rpc_source::range_reads;
+        const TOKEN: &str = "0x1000000000000000000000000000000000000001";
+        const OTHER: &str = "0x2000000000000000000000000000000000000002";
+        const STRANGER: &str = "0x9000000000000000000000000000000000000009";
+        const TRANSFER: &str =
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+        const APPROVAL: &str =
+            "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+        let selection = |addresses: &[&str]| BuiltLogSelection {
+            emitters: Emitters::Listed(addresses.iter().map(|a| a.to_string()).collect()),
+            topics: vec![vec![TRANSFER.to_string()]],
+        };
+        let members = [selection(&[TOKEN]), selection(&[TOKEN, OTHER])];
+        let refs: Vec<&BuiltLogSelection> = members.iter().collect();
+        let merged = range_reads::merge_selections_for_range(&refs);
+        let merged_filter = log_filter(
+            LogBlocks::Hash {
+                block_number: 16,
+                hash: "0xbb",
+            },
+            &merged.topics,
+            merged.addresses(),
+        );
+        let upper = format!("0x{}", TOKEN[2..].to_uppercase());
+        let logs: [(&str, &[&str]); 5] = [
+            (TOKEN, &[TRANSFER]),
+            (OTHER, &[TRANSFER]),
+            (STRANGER, &[TRANSFER]),
+            (TOKEN, &[APPROVAL]),
+            (&upper, &[TRANSFER]),
+        ];
+        // For each member and each log: what the local pick says, what that
+        // member's own filter returns, and what the merged filter returns. The
+        // merged answer must never lose a log its member's own read would
+        // return.
+        let mut cases: Vec<(bool, bool, bool)> = Vec::new();
+        for member in &members {
+            let own_filter = log_filter(
+                LogBlocks::Hash {
+                    block_number: 16,
+                    hash: "0xbb",
+                },
+                &member.topics,
+                member.addresses(),
+            );
+            let matcher = LogMatcher::new(member);
+            for (address, log_topics) in logs {
+                let log_topics: Vec<String> =
+                    log_topics.iter().map(|topic| topic.to_string()).collect();
+                cases.push((
+                    matcher.matches(address, &log_topics),
+                    filter_returns(&own_filter, address, &log_topics),
+                    filter_returns(&merged_filter, address, &log_topics),
+                ));
+            }
+        }
+        assert_eq!(
+            cases,
+            [
+                // The first member's own filter, log by log.
+                (true, true, true),
+                (false, false, true),
+                (false, false, false),
+                (false, false, false),
+                (true, true, true),
+                // The wider member's own filter, log by log.
+                (true, true, true),
+                (true, true, true),
+                (false, false, false),
+                (false, false, false),
+                (true, true, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_local_pick_agrees_with_the_filter_a_request_carries() {
+        const TOKEN: &str = "0x1000000000000000000000000000000000000001";
+        const OTHER: &str = "0x2000000000000000000000000000000000000002";
+        const TRANSFER: &str = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+        const APPROVAL: &str = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+        let listed = |addresses: &[&str]| {
+            Emitters::Listed(
+                addresses
+                    .iter()
+                    .map(|address| address.to_string())
+                    .collect(),
+            )
+        };
+        let any = || Emitters::Any(AddressFreeOrigin::default());
+        // A selection and a candidate log, answered both ways: what the local
+        // pick says, and what the filter the request carries would return.
+        let agrees = |emitters, topics: &[&[&str]], address: &str, log_topics: &[&str]| {
+            let selection = BuiltLogSelection {
+                emitters,
+                topics: topics
+                    .iter()
+                    .map(|values| values.iter().map(|value| value.to_string()).collect())
+                    .collect(),
+            };
+            let filter = log_filter(
+                LogBlocks::Hash {
+                    block_number: 16,
+                    hash: "0xbb",
+                },
+                &selection.topics,
+                selection.addresses(),
+            );
+            let log_topics: Vec<String> =
+                log_topics.iter().map(|topic| topic.to_string()).collect();
+            (
+                LogMatcher::new(&selection).matches(address, &log_topics),
+                filter_returns(&filter, address, &log_topics),
+            )
+        };
+        let upper = format!("0x{}", TOKEN[2..].to_uppercase());
+        assert_eq!(
+            [
+                // The address and the topic both match.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], TOKEN, &[TRANSFER]),
+                // The provider's own casing of the address.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], &upper, &[TRANSFER]),
+                // Another emitter.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                // One of several listed addresses.
+                agrees(listed(&[TOKEN, OTHER]), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                // An address-free selection takes any emitter, as an empty
+                // listed one does.
+                agrees(any(), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                agrees(listed(&[]), &[&[TRANSFER]], OTHER, &[TRANSFER]),
+                // A constrained position the log does not carry.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER], &[APPROVAL]],
+                    TOKEN,
+                    &[TRANSFER],
+                ),
+                // A position past the constraints is unconstrained.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER]],
+                    TOKEN,
+                    &[TRANSFER, APPROVAL],
+                ),
+                // One of several values at a position.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER, APPROVAL]],
+                    TOKEN,
+                    &[APPROVAL],
+                ),
+                // An unconstrained position between two constrained ones.
+                agrees(
+                    listed(&[TOKEN]),
+                    &[&[TRANSFER], &[], &[APPROVAL]],
+                    TOKEN,
+                    &[TRANSFER, TRANSFER, APPROVAL],
+                ),
+                // No constraints at all.
+                agrees(any(), &[], OTHER, &[TRANSFER]),
+                // A value that is not hex can match nothing.
+                agrees(listed(&[TOKEN]), &[&["token"]], TOKEN, &[TRANSFER]),
+                // An address that is not hex can match nothing.
+                agrees(listed(&[TOKEN]), &[&[TRANSFER]], "token", &[TRANSFER]),
+            ],
+            [
+                (true, true),
+                (true, true),
+                (false, false),
+                (true, true),
+                (true, true),
+                (true, true),
+                (false, false),
+                (true, true),
+                (true, true),
+                (true, true),
+                (true, true),
+                (false, false),
+                (false, false),
+            ],
         );
     }
 }

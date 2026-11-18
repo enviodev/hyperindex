@@ -2,7 +2,7 @@ use anyhow::Context;
 use napi_derive::napi;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -14,6 +14,7 @@ mod head_checks;
 mod inflight;
 mod interval;
 mod logs;
+mod range_reads;
 mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
@@ -24,7 +25,9 @@ use crate::block_store::BlockStore;
 use crate::event_store::EventStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::query::BlockField;
-use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
+use crate::evm_hypersync_source::selection::{
+    BuiltLogSelection, DecodedLog, LogMatcher, SelectionBuilder,
+};
 use crate::evm_hypersync_source::types::{
     encode_address, EvmParams, Log as DecoderLog, OnEventRegistrationInput,
 };
@@ -33,8 +36,8 @@ use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 use classify::{
-    is_rate_limited_message, is_response_too_large_message, is_unsupported_request,
-    suggested_block_interval_from_message,
+    is_filter_size_refusal_message, is_rate_limited_message, is_result_cap_message,
+    is_response_too_large_message, is_unsupported_request, suggested_block_interval_from_message,
 };
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use enrich::{BlockRead, EnrichError, EnrichRequest, Fetches, PageRefs, SelectedFields};
@@ -58,11 +61,14 @@ pub struct EvmRpcClientConfig {
     /// How many addresses one `eth_getLogs` may carry when an address-free read
     /// is asked again by address.
     pub max_addresses_per_request: i64,
+    /// Whether a page reads the listed selections that share a filter with one
+    /// merged `eth_getLogs` instead of one read for each selection.
+    pub merged_log_reads: bool,
 }
 
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
 /// 0x-prefixed hex quantities that decoding later converts.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct RawLog {
     address: String,
@@ -228,6 +234,63 @@ impl From<EnrichError> for PageError {
     }
 }
 
+/// One head block's recheck: the block, the reason it is asked for again, and
+/// the selections it is asked for. One selection means its own filtered read;
+/// several mean one unfiltered read matched locally.
+struct RecheckTask {
+    selections: Vec<usize>,
+    block: u64,
+    reason: head_checks::RecheckReason,
+    filtered: bool,
+}
+
+/// What one recheck found, kept apart from the task so the caller can apply
+/// each selection's logs once every recheck has settled.
+struct RecheckResult {
+    selections: Vec<usize>,
+    found: Vec<RawLog>,
+}
+
+/// What a refused read by hash means: the block is asked again by number, or
+/// the page is failed. The one place the policy lives, so the per-selection and
+/// unfiltered rechecks cannot drift apart.
+enum HashReadRefusal {
+    /// Ask the same block again by number, carrying the provider's own words.
+    ByNumber(String),
+    Failed(EnrichError),
+}
+
+fn hash_read_refusal(
+    error: RpcError,
+    block: u64,
+    answered_block_hash_read: bool,
+    retry: i64,
+) -> HashReadRefusal {
+    match error {
+        RpcError::JsonRpc { code, message }
+            if is_unsupported_request(code, &message)
+                && !answered_block_hash_read
+                && retry >= RETRIES_BEFORE_RECHECKING_BY_NUMBER =>
+        {
+            HashReadRefusal::ByNumber(message)
+        }
+        // A throttled read says nothing about the block, and retrying it at the
+        // pace a node behind the head gets would only throttle more.
+        RpcError::JsonRpc { code, message } if is_rate_limited_message(&message) => {
+            HashReadRefusal::Failed(EnrichError::Rpc(Arc::new(RpcError::JsonRpc {
+                code,
+                message,
+            })))
+        }
+        RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_) => {
+            HashReadRefusal::Failed(EnrichError::BehindHead {
+                block_number: block,
+            })
+        }
+        other => HashReadRefusal::Failed(EnrichError::Rpc(Arc::new(other))),
+    }
+}
+
 impl NextPageResult {
     /// The shape every outcome shares: no items, nothing to say, nothing to
     /// retry. Each arm fills in what its own kind means.
@@ -310,12 +373,45 @@ pub struct EvmRpcClient {
     /// Whether the provider has ever answered a read by block hash, which
     /// makes any later refusal one of a hash it doesn't know yet.
     answered_block_hash_read: AtomicBool,
+    /// What the source's all-zero `logsBloom` values have been shown to mean:
+    /// `ZERO_BLOOM_UNKNOWN` until a checked block says the chain fills blooms,
+    /// `ZERO_BLOOM_TRUSTED` once one does, and `ZERO_BLOOM_DISTRUSTED` (sticky)
+    /// once a block that holds logs comes back with a zero bloom. A fallback
+    /// provider is its own client, so it is calibrated on its own answers.
+    zero_bloom_trust: AtomicU8,
+    /// Whether a page merges the listed selections that share a filter into one
+    /// `eth_getLogs`. Copied from the client config.
+    merged_log_reads: bool,
+    /// Whether merged range reads are still sent, and once they are refused,
+    /// that the provider refuses them (sticky). When REFUSED, every selection
+    /// is read on its own.
+    merged_range_reads: AtomicU8,
+    /// How many merged range reads an unknown refusal has driven to a fallback
+    /// that then succeeded, up to `MERGED_READ_REFUSALS_BEFORE_OWN_READS`.
+    merged_range_read_refusals: AtomicU8,
 }
 
 /// How many times a page is retried, a node behind the head taking about a
 /// second over them, before a refusal of reads by hash is taken to mean the
 /// provider doesn't serve them.
 const RETRIES_BEFORE_RECHECKING_BY_NUMBER: i64 = 3;
+
+/// A source's calibration for a chain whose empty blocks come back with an
+/// all-zero `logsBloom`: unknown until a checked block holding one of the
+/// selection's logs says which way.
+const ZERO_BLOOM_UNKNOWN: u8 = 0;
+const ZERO_BLOOM_TRUSTED: u8 = 1;
+const ZERO_BLOOM_DISTRUSTED: u8 = 2;
+
+/// Merged range reads are still sent, or the provider has been seen refusing
+/// them and every selection is read on its own (sticky).
+const MERGED_READS_ALLOWED: u8 = 0;
+const MERGED_READS_REFUSED: u8 = 1;
+
+/// How many merged range reads an unknown refusal (a one-block range) may drive
+/// to a fallback that then succeeds, before the provider is taken to refuse
+/// them for good and every selection is read on its own.
+const MERGED_READ_REFUSALS_BEFORE_OWN_READS: u8 = 3;
 
 /// How many blocks a page reads for its block handlers at most: each costs an
 /// `eth_getBlockByNumber`, which the log range's size says nothing about.
@@ -446,6 +542,10 @@ impl EvmRpcClient {
             block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
             warned_block_hash_refusal: AtomicBool::new(false),
             answered_block_hash_read: AtomicBool::new(false),
+            zero_bloom_trust: AtomicU8::new(ZERO_BLOOM_UNKNOWN),
+            merged_log_reads: cfg.merged_log_reads,
+            merged_range_reads: AtomicU8::new(MERGED_READS_ALLOWED),
+            merged_range_read_refusals: AtomicU8::new(0),
         })
     }
 
@@ -931,10 +1031,13 @@ impl EvmRpcClient {
         .await
     }
 
-    /// Reads every selection concurrently, each selection's logs kept apart in
-    /// the order of `query.selections`. Every selection is awaited even once
-    /// one has failed, so each request is made and billed; the first failure
-    /// then decides the page.
+    /// Reads every selection's logs for the page. When merged reads are on and
+    /// the provider has not refused them, the listed selections that share a
+    /// filter are read with one `eth_getLogs` and each member's own logs are
+    /// picked out of the answer; every other selection keeps its own read. Each
+    /// selection's logs are kept apart in the order of `query.selections`.
+    /// Every read is awaited even once one has failed, so each request is made
+    /// and billed; the first failure then decides the page.
     async fn fetch_selection_logs(
         &self,
         query: &PageQuery<'_>,
@@ -943,22 +1046,216 @@ impl EvmRpcClient {
             from_block: query.from_block,
             to_block: query.to_block,
         };
-        futures_util::future::join_all(
-            query
-                .selections
-                .iter()
-                .map(|selection| self.request_logs(query, blocks, selection)),
-        )
-        .await
-        .into_iter()
-        .collect()
+        if !self.merged_log_reads
+            || self.merged_range_reads.load(Ordering::Relaxed) == MERGED_READS_REFUSED
+        {
+            return futures_util::future::join_all(
+                query
+                    .selections
+                    .iter()
+                    .map(|selection| self.request_logs(query, blocks, selection)),
+            )
+            .await
+            .into_iter()
+            .collect();
+        }
+        let plan = range_reads::plan_range_reads(query.selections);
+        let results = futures_util::future::join_all(plan.iter().map(|read| async move {
+            match read {
+                range_reads::RangeRead::Own(index) => self
+                    .request_logs(query, blocks, &query.selections[*index])
+                    .await
+                    .map(|logs| vec![(*index, logs)]),
+                range_reads::RangeRead::Merged { selections, filter } => {
+                    self.read_merged_range(query, blocks, selections, filter)
+                        .await
+                }
+            }
+        }))
+        .await;
+        let mut by_selection: Vec<Vec<RawLog>> =
+            (0..query.selections.len()).map(|_| Vec::new()).collect();
+        for result in results {
+            for (index, logs) in result? {
+                by_selection[index] = logs;
+            }
+        }
+        Ok(by_selection)
+    }
+
+    /// Reads one range with the merged filter of a group and returns each
+    /// member's own logs, in the group's order. A filter-size refusal falls
+    /// back to the members' own reads at any range. A result cap, another
+    /// refusal, or a timeout or malformed answer falls back only at a single
+    /// block, where the retry cannot narrow the range. Throttling and an
+    /// unreachable provider are returned unchanged at any range, so the page's
+    /// retry shrinks the range and backs off.
+    async fn read_merged_range(
+        &self,
+        query: &PageQuery<'_>,
+        blocks: logs::LogBlocks<'_>,
+        selections: &[usize],
+        filter: &BuiltLogSelection,
+    ) -> Result<Vec<(usize, Vec<RawLog>)>, RpcError> {
+        match logs::request_range_logs(&self.inner, blocks, filter).await {
+            Ok(logs) => {
+                // Each log is decoded once and tested against every member,
+                // instead of once for each member. A log can match two members
+                // and goes to both; a log that matches none is the overfetch of
+                // the unions.
+                let decoded: Vec<DecodedLog> = logs
+                    .iter()
+                    .map(|log| DecodedLog::new(&log.address, &log.topics))
+                    .collect();
+                let picked: Vec<Vec<RawLog>> = selections
+                    .iter()
+                    .map(|&index| {
+                        let matcher = LogMatcher::new(&query.selections[index]);
+                        logs.iter()
+                            .zip(decoded.iter())
+                            .filter(|&(_, decoded)| matcher.matches_log(decoded))
+                            .map(|(log, _)| log.clone())
+                            .collect()
+                    })
+                    .collect();
+                self.logger.log(
+                    Level::TRACE,
+                    "One merged eth_getLogs covered several log selections; each selection's own logs were picked out of its answer.",
+                    &serde_json::json!({
+                        "fromBlock": query.from_block,
+                        "toBlock": query.to_block,
+                        "selections": selections.len(),
+                        "addresses": filter.addresses().len(),
+                        "returnedLogs": logs.len(),
+                        "pickedLogs": picked.iter().map(Vec::len).sum::<usize>(),
+                    }),
+                );
+                Ok(selections.iter().copied().zip(picked).collect())
+            }
+            Err(error) => {
+                enum Refusal {
+                    FilterSize,
+                    Other { counted: bool },
+                }
+                let provider_message = match &error {
+                    RpcError::JsonRpc { message, .. } if !is_rate_limited_message(message) => {
+                        message.clone()
+                    }
+                    // A merged answer can exceed the timeout, or lose its body,
+                    // where each member's own answer fits. At one block the
+                    // retry cannot narrow the range, so the members are read on
+                    // their own. Over several blocks the error goes back to the
+                    // caller, whose retry narrows the range first.
+                    RpcError::Timeout(_) | RpcError::MalformedResponse(_)
+                        if query.from_block == query.to_block =>
+                    {
+                        return self.merged_fallback(query, blocks, selections).await;
+                    }
+                    // Throttling and an unreachable provider are returned
+                    // unchanged: more requests only make them worse.
+                    _ => return Err(error),
+                };
+                let refusal = if is_filter_size_refusal_message(&provider_message) {
+                    Refusal::FilterSize
+                } else {
+                    // A result cap or another refusal at more than one block
+                    // goes back to the caller, whose retry shrinks the range
+                    // with no wait; only one block falls back.
+                    if query.from_block != query.to_block {
+                        return Err(error);
+                    }
+                    Refusal::Other {
+                        counted: !is_result_cap_message(&provider_message),
+                    }
+                };
+                // A failed fallback decides the page with its own error and
+                // changes no state.
+                let fallback = self.merged_fallback(query, blocks, selections).await?;
+                match refusal {
+                    Refusal::FilterSize => self.refuse_merged_reads(
+                        &provider_message,
+                        selections.len(),
+                        filter.addresses().len(),
+                    ),
+                    Refusal::Other { counted: true } => self.count_merged_read_refusal(
+                        &provider_message,
+                        selections.len(),
+                        filter.addresses().len(),
+                    ),
+                    Refusal::Other { counted: false } => {}
+                }
+                Ok(fallback)
+            }
+        }
+    }
+
+    /// The own reads of each member of a group, all awaited, first failure
+    /// decides — the same shape as `fetch_selection_logs`.
+    async fn merged_fallback(
+        &self,
+        query: &PageQuery<'_>,
+        blocks: logs::LogBlocks<'_>,
+        selections: &[usize],
+    ) -> Result<Vec<(usize, Vec<RawLog>)>, RpcError> {
+        let results = futures_util::future::join_all(selections.iter().map(|&index| async move {
+            self.request_logs(query, blocks, &query.selections[index])
+                .await
+                .map(|logs| (index, logs))
+        }))
+        .await;
+        let mut logs = Vec::with_capacity(selections.len());
+        for result in results {
+            logs.push(result?);
+        }
+        Ok(logs)
+    }
+
+    /// Reads every selection on its own from now on, and says so once per
+    /// source. Sticky: the provider has been seen refusing a merged filter.
+    fn refuse_merged_reads(&self, provider_message: &str, selections: usize, addresses: usize) {
+        if self
+            .merged_range_reads
+            .swap(MERGED_READS_REFUSED, Ordering::Relaxed)
+            != MERGED_READS_REFUSED
+        {
+            self.logger.log(
+                Level::WARN,
+                "The RPC provider refused one eth_getLogs for several log selections, so each selection is read on its own.",
+                &serde_json::json!({
+                    "providerMessage": provider_message,
+                    "selections": selections,
+                    "addresses": addresses,
+                }),
+            );
+        }
+    }
+
+    /// Counts a merged read an unknown refusal drove to a successful fallback,
+    /// and switches to own reads for good once the provider has done it enough
+    /// times to be taken at its word.
+    fn count_merged_read_refusal(
+        &self,
+        provider_message: &str,
+        selections: usize,
+        addresses: usize,
+    ) {
+        let refusals = self
+            .merged_range_read_refusals
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        if refusals >= MERGED_READ_REFUSALS_BEFORE_OWN_READS {
+            self.refuse_merged_reads(provider_message, selections, addresses);
+        }
     }
 
     /// Asks again, by hash, for every checked block a selection's answer held
     /// none of its logs for while the block's header can't rule them out, and
-    /// adds what comes back to that selection's logs. A node that doesn't have
-    /// the block yet must refuse a hash it doesn't know, so a refusal is the
-    /// node being behind it, which the source manager retries and fails over.
+    /// adds what comes back to that selection's logs. A block more than one
+    /// selection wants is read once unfiltered and each selection's logs picked
+    /// out of it locally, which is one request instead of one per selection. A
+    /// node that doesn't have the block yet must refuse a hash it doesn't know,
+    /// so a refusal is the node being behind it, which the source manager
+    /// retries and fails over.
     async fn recheck_head_blocks(
         &self,
         query: &PageQuery<'_>,
@@ -973,12 +1270,20 @@ impl EvmRpcClient {
             .iter()
             .map(|(&block, header)| (block, head_checks::CheckedHeader::read(header)))
             .collect();
-        let rechecks: Vec<(usize, u64, head_checks::RecheckReason)> = query
+        // What the range answer holds logs for is what can prove or disprove the
+        // source's all-zero blooms, before any recheck is asked for.
+        let blocks_with_logs: HashSet<u64> = logs
+            .iter()
+            .flatten()
+            .filter_map(|log| parse_hex_u64(&log.block_number).ok())
+            .collect();
+        self.record_zero_bloom_evidence(checked_blocks, &blocks_with_logs, &checked_headers);
+        let trust_zero_bloom = self.zero_bloom_trust.load(Ordering::Relaxed) == ZERO_BLOOM_TRUSTED;
+        let per_selection: Vec<Vec<(u64, head_checks::RecheckReason)>> = query
             .selections
             .iter()
             .zip(logs.iter())
-            .enumerate()
-            .flat_map(|(index, (selection, selection_logs))| {
+            .map(|(selection, selection_logs)| {
                 let answered: HashSet<u64> = selection_logs
                     .iter()
                     .filter_map(|log| parse_hex_u64(&log.block_number).ok())
@@ -987,44 +1292,160 @@ impl EvmRpcClient {
                     checked_blocks,
                     &answered,
                     &checked_headers,
+                    trust_zero_bloom,
                     selection,
                 )
-                .into_iter()
-                .map(move |(block, reason)| (index, block, reason))
             })
             .collect();
+        let plan = head_checks::plan_rechecks(per_selection);
 
-        let results =
-            futures_util::future::join_all(rechecks.iter().map(|&(index, block, reason)| {
-                let hash = checked_headers
-                    .get(&block)
-                    .and_then(|header| header.hash.as_deref());
-                async move {
-                    let hash = hash.ok_or_else(|| {
-                        EnrichError::Transient(format!(
-                            "The RPC returned the header of block {block} without its hash."
-                        ))
-                    })?;
-                    let found = self
-                        .recheck_block(query, &query.selections[index], block, hash)
-                        .await?;
-                    self.logger.log(
-                        Level::TRACE,
-                        "Asked the RPC again for a head block its range answer held none of the selection's logs for.",
-                        &serde_json::json!({
-                            "blockNumber": block,
-                            "reason": reason.as_str(),
-                            "logs": found.len(),
-                        }),
+        let results = futures_util::future::join_all(
+            plan.filtered
+                .iter()
+                .map(|&(selection, block, reason)| RecheckTask {
+                    selections: vec![selection],
+                    block,
+                    reason,
+                    filtered: true,
+                })
+                .chain(plan.unfiltered.iter().map(|(block, selections, reason)| RecheckTask {
+                    selections: selections.clone(),
+                    block: *block,
+                    reason: *reason,
+                    filtered: false,
+                }))
+                .map(|task| {
+                    let hash = checked_headers
+                        .get(&task.block)
+                        .and_then(|header| header.hash.clone());
+                    async move {
+                        let hash = hash.ok_or_else(|| {
+                            EnrichError::Transient(format!(
+                                "The RPC returned the header of block {} without its hash.",
+                                task.block
+                            ))
+                        })?;
+                        let found = if task.filtered {
+                            self.recheck_block(
+                                query,
+                                &query.selections[task.selections[0]],
+                                task.block,
+                                &hash,
+                            )
+                            .await?
+                        } else {
+                            self.recheck_block_unfiltered(query, task.block, &hash, &task.selections)
+                                .await?
+                        };
+                        self.logger.log(
+                            Level::TRACE,
+                            "Asked the RPC again for a head block its range answer held none of the selection's logs for.",
+                            &serde_json::json!({
+                                "blockNumber": task.block,
+                                "reason": task.reason.as_str(),
+                                "logs": found.len(),
+                                "selections": task.selections.len(),
+                                "mode": if task.filtered { "filtered" } else { "unfiltered" },
+                            }),
+                        );
+                        Ok(RecheckResult {
+                            selections: task.selections,
+                            found,
+                        })
+                    }
+                }),
+        )
+        .await;
+        let found = enrich::collect_worst(results)?;
+        // A recheck that came back with logs at a zero-bloom block disproves the
+        // source the same way a range answer would.
+        let rechecked_blocks: HashSet<u64> = found
+            .iter()
+            .flat_map(|result| result.found.iter())
+            .filter_map(|log| parse_hex_u64(&log.block_number).ok())
+            .collect();
+        for result in found {
+            if let [selection] = result.selections[..] {
+                logs[selection].extend(result.found);
+            } else {
+                for &selection in &result.selections {
+                    let matcher = LogMatcher::new(&query.selections[selection]);
+                    logs[selection].extend(
+                        result
+                            .found
+                            .iter()
+                            .filter(|log| matcher.matches(&log.address, &log.topics))
+                            .cloned(),
                     );
-                    Ok((index, found))
                 }
-            }))
-            .await;
-        for (index, found) in enrich::collect_worst(results)? {
-            logs[index].extend(found);
+            }
+        }
+        if !rechecked_blocks.is_empty() {
+            let mut with_rechecks = blocks_with_logs.clone();
+            with_rechecks.extend(rechecked_blocks);
+            self.disprove_zero_bloom(checked_blocks, &with_rechecks, &checked_headers);
         }
         Ok(())
+    }
+
+    /// Records what a checked block with a log says about the source's all-zero
+    /// `logsBloom` values, before the page decides which blocks to recheck: a
+    /// filled bloom earns trust, a zero bloom for a block that holds logs
+    /// refuses it and says so once.
+    fn record_zero_bloom_evidence(
+        &self,
+        checked: &[u64],
+        blocks_with_logs: &HashSet<u64>,
+        checked_headers: &HashMap<u64, head_checks::CheckedHeader>,
+    ) {
+        match head_checks::zero_bloom_evidence(checked, blocks_with_logs, checked_headers) {
+            Some(head_checks::ZeroBloomEvidence::Proof) => {
+                // Never overrides a source already seen serving a zero bloom
+                // for a block that holds logs.
+                let _ = self.zero_bloom_trust.compare_exchange(
+                    ZERO_BLOOM_UNKNOWN,
+                    ZERO_BLOOM_TRUSTED,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                );
+            }
+            Some(head_checks::ZeroBloomEvidence::Disproof { block }) => {
+                self.distrust_zero_bloom(block)
+            }
+            None => {}
+        }
+    }
+
+    /// Refuses to trust the source's zero blooms when a recheck found a log at
+    /// a zero-bloom block, which a range answer would have disproved the same
+    /// way.
+    fn disprove_zero_bloom(
+        &self,
+        checked: &[u64],
+        blocks_with_logs: &HashSet<u64>,
+        checked_headers: &HashMap<u64, head_checks::CheckedHeader>,
+    ) {
+        if let Some(head_checks::ZeroBloomEvidence::Disproof { block }) =
+            head_checks::zero_bloom_evidence(checked, blocks_with_logs, checked_headers)
+        {
+            self.distrust_zero_bloom(block);
+        }
+    }
+
+    /// Sticks the source to serving an all-zero bloom for a block that holds
+    /// logs, and says so once.
+    fn distrust_zero_bloom(&self, block: u64) {
+        if self
+            .zero_bloom_trust
+            .swap(ZERO_BLOOM_DISTRUSTED, Ordering::Relaxed)
+            != ZERO_BLOOM_DISTRUSTED
+        {
+            self.logger.log(
+                Level::WARN,
+                "RPC serves an all-zero logsBloom for a block with logs; empty head blocks are asked again",
+                &serde_json::json!({ "blockNumber": block }),
+            );
+        }
     }
 
     /// Asks for one checked block again by its hash. A provider that refuses
@@ -1044,43 +1465,33 @@ impl EvmRpcClient {
         block: u64,
         hash: &str,
     ) -> Result<Vec<RawLog>, EnrichError> {
-        let by_hash = logs::LogBlocks::Hash {
-            block_number: block,
-            hash,
-        };
-        let refusal = match self.request_logs(query, by_hash, selection).await {
+        let read = self
+            .request_logs(
+                query,
+                logs::LogBlocks::Hash {
+                    block_number: block,
+                    hash,
+                },
+                selection,
+            )
+            .await;
+        let refusal = match read {
             Ok(found) => {
                 self.answered_block_hash_read.store(true, Ordering::Relaxed);
                 return Ok(found);
             }
-            Err(RpcError::JsonRpc { code, message })
-                if is_unsupported_request(code, &message)
-                    && !self.answered_block_hash_read.load(Ordering::Relaxed)
-                    && query.retry >= RETRIES_BEFORE_RECHECKING_BY_NUMBER =>
-            {
-                message
-            }
-            // A throttled read says nothing about the block, and retrying it
-            // at the pace a node behind the head gets would only throttle more.
-            Err(RpcError::JsonRpc { code, message }) if is_rate_limited_message(&message) => {
-                return Err(EnrichError::Rpc(Arc::new(RpcError::JsonRpc {
-                    code,
-                    message,
-                })))
-            }
-            Err(RpcError::JsonRpc { .. } | RpcError::MalformedResponse(_)) => {
-                return Err(EnrichError::BehindHead {
-                    block_number: block,
-                })
-            }
-            Err(error) => return Err(EnrichError::Rpc(Arc::new(error))),
+            Err(error) => hash_read_refusal(
+                error,
+                block,
+                self.answered_block_hash_read.load(Ordering::Relaxed),
+                query.retry,
+            ),
         };
-        if !self.warned_block_hash_refusal.swap(true, Ordering::Relaxed) {
-            self.logger.log(
-                Level::WARN,
-                "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
-                &serde_json::json!({ "providerMessage": refusal }),
-            );
+        match refusal {
+            HashReadRefusal::Failed(error) => return Err(error),
+            HashReadRefusal::ByNumber(provider_message) => {
+                self.warn_block_hash_refusal(&provider_message)
+            }
         }
         self.request_logs(
             query,
@@ -1091,6 +1502,101 @@ impl EvmRpcClient {
         )
         .await
         .map_err(|error| EnrichError::Rpc(Arc::new(error)))
+    }
+
+    /// Asks for one checked block again by its hash, unfiltered, and returns
+    /// every log the block holds. The caller picks each selection's own logs
+    /// out of the answer. A block too large to answer unfiltered falls back to
+    /// the selections' own filtered reads.
+    async fn recheck_block_unfiltered(
+        &self,
+        query: &PageQuery<'_>,
+        block: u64,
+        hash: &str,
+        selections: &[usize],
+    ) -> Result<Vec<RawLog>, EnrichError> {
+        let read = logs::request_block_logs(
+            &self.inner,
+            logs::LogBlocks::Hash {
+                block_number: block,
+                hash,
+            },
+        )
+        .await;
+        let refusal = match read {
+            Ok(found) => {
+                self.answered_block_hash_read.store(true, Ordering::Relaxed);
+                return Ok(found);
+            }
+            Err(error) => {
+                if logs::is_answer_too_large(&error) {
+                    return self
+                        .recheck_selections_filtered(query, block, hash, selections)
+                        .await;
+                }
+                hash_read_refusal(
+                    error,
+                    block,
+                    self.answered_block_hash_read.load(Ordering::Relaxed),
+                    query.retry,
+                )
+            }
+        };
+        match refusal {
+            HashReadRefusal::Failed(error) => return Err(error),
+            HashReadRefusal::ByNumber(provider_message) => {
+                self.warn_block_hash_refusal(&provider_message)
+            }
+        }
+        let by_number = logs::request_block_logs(
+            &self.inner,
+            logs::LogBlocks::RecheckByNumber {
+                block_number: block,
+            },
+        )
+        .await;
+        match by_number {
+            Ok(found) => Ok(found),
+            // A provider that refuses the by-number read for its size is read
+            // per selection instead, as for the by-hash read above.
+            Err(error) if logs::is_answer_too_large(&error) => {
+                self.recheck_selections_filtered(query, block, hash, selections)
+                    .await
+            }
+            Err(error) => Err(EnrichError::Rpc(Arc::new(error))),
+        }
+    }
+
+    /// Reads each of `selections` over `block` by hash with its own filter,
+    /// joining what comes back. The fallback for an unfiltered read a provider
+    /// refuses for its size.
+    async fn recheck_selections_filtered(
+        &self,
+        query: &PageQuery<'_>,
+        block: u64,
+        hash: &str,
+        selections: &[usize],
+    ) -> Result<Vec<RawLog>, EnrichError> {
+        let results = futures_util::future::join_all(selections.iter().map(|&selection| {
+            self.recheck_block(query, &query.selections[selection], block, hash)
+        }))
+        .await;
+        Ok(enrich::collect_worst(results)?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    /// Says once per source that a provider refuses reads by hash and blocks
+    /// near the head are read by number instead.
+    fn warn_block_hash_refusal(&self, provider_message: &str) {
+        if !self.warned_block_hash_refusal.swap(true, Ordering::Relaxed) {
+            self.logger.log(
+                Level::WARN,
+                "The RPC provider refused to read logs by block hash, so a block near the head it answered with none of our logs is asked again by number instead. That still catches a range that left a block out, but a node lagging on every answer can drop events unnoticed. A provider that serves eth_getLogs by blockHash (EIP-234) gets the full check.",
+                &serde_json::json!({ "providerMessage": provider_message }),
+            );
+        }
     }
 
     async fn route_logs(
