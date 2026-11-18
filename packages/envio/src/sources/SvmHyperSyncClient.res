@@ -143,8 +143,8 @@ module Items = {
     message: Nullable.t<string>,
   }
 
-  // One matched instruction; its `block` and `transaction` are read from the
-  // per-chain stores when a batch takes it.
+  // One matched instruction; its `block` and `transaction` are joined by the
+  // build that delivers it.
   type item = {
     slot: int,
     transactionIndex: int,

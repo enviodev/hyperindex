@@ -5,7 +5,6 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chainId: ChainId.t,
-  lowercaseAddresses: bool,
   // The chain's compiled registrations, read by the client while matching and
   // planning, to fetch only what it lacks; the pages it returns are separate,
   // and the caller merges them.
@@ -24,7 +23,6 @@ let make = (
     syncConfig,
     url,
     chainId,
-    lowercaseAddresses: _,
     chainBuffer,
     ?ws,
     ?headers,

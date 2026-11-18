@@ -80,10 +80,13 @@ let makeSource = (
     chainId,
     sourceFor: Sync,
     syncConfig,
-    lowercaseAddresses,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
-    chainBuffer: TestChainBuffer.forChain(~onEventRegistrations=[registration], ~addressStore),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[registration],
+      ~addressStore,
+      ~shouldChecksum=!lowercaseAddresses,
+    ),
   }
   (RpcSource.make(options), addressStore)
 }
@@ -593,7 +596,6 @@ describe("RPC source public contract", () => {
           chainId,
           sourceFor: Sync,
           syncConfig: defaultSyncConfig,
-          lowercaseAddresses: true,
           maxAddressesPerRequest: Env.maxAddrInPartition,
           logger: Logger.makeInMemory(),
           chainBuffer: TestChainBuffer.forChain(
@@ -857,7 +859,6 @@ describe("RPC source public contract", () => {
           chainId,
           sourceFor: Sync,
           syncConfig,
-          lowercaseAddresses: true,
           maxAddressesPerRequest: Env.maxAddrInPartition,
           logger: Logger.makeInMemory(),
           chainBuffer: TestChainBuffer.forChain(
@@ -968,7 +969,6 @@ describe("RPC source public contract", () => {
             chainId,
             sourceFor: Sync,
             syncConfig,
-            lowercaseAddresses: true,
             maxAddressesPerRequest: Env.maxAddrInPartition,
             logger: Logger.makeInMemory(),
             chainBuffer: TestChainBuffer.forChain(

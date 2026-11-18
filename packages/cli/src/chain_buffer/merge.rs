@@ -4,7 +4,7 @@
 use napi_derive::napi;
 
 use super::page::PageData;
-use super::table::{make_key, Table, POSITION_BITS};
+use super::table::{make_key, Table, LAST_BLOCK};
 use super::{Ecosystem, Shared, Tables};
 
 /// The lowest block whose received hash differs from the stored one.
@@ -26,7 +26,7 @@ pub(crate) fn first_hash_mismatch(
 ) -> Option<HashMismatch> {
     let column = ecosystem.hash_column();
     incoming
-        .rows_in_block_range(from_block, u64::MAX >> POSITION_BITS)
+        .rows_in_block_range(from_block, LAST_BLOCK)
         .find_map(|row| {
             let received = row.bytes_at(column)?;
             let stored = stored.find(make_key(row.block_number(), 0), 0)?;
@@ -44,7 +44,7 @@ pub(crate) fn first_hash_mismatch(
 fn blocks_with_other_hash(stored: &Table, incoming: &Table, ecosystem: Ecosystem) -> Vec<u64> {
     let column = ecosystem.hash_column();
     incoming
-        .rows_in_block_range(0, u64::MAX >> POSITION_BITS)
+        .rows_in_block_range(0, LAST_BLOCK)
         .filter(|row| {
             let Some(received) = row.bytes_at(column) else {
                 return false;

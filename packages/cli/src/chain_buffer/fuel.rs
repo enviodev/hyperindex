@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use strum::VariantArray;
 
-use super::deliver::{build_columns, cells, hex_full, utf8, Column, Columns};
+use super::deliver::{build_columns, cells, utf8, Column, Columns};
 use super::table::{make_key, ChunkBuilder, ColumnKind, RowRef, Schema, MAX_POSITION};
 
 pub(crate) mod receipt_column {
@@ -123,7 +123,7 @@ impl<'a> ReceiptView<'a> {
     }
 
     pub(crate) fn src_address(&self) -> String {
-        hex_full(self.root_contract_id)
+        crate::hex::to_hex(self.root_contract_id)
     }
 
     pub(crate) fn tx_id(&self) -> String {
@@ -203,7 +203,7 @@ fn block_column(
                 .collect(),
         ),
         FuelBlockField::Id => Column::Str(cells(rows, masks, bit, |row| {
-            Ok(row.bytes_at(column).map(hex_full))
+            Ok(row.bytes_at(column).map(crate::hex::to_hex))
         })?),
         FuelBlockField::Time => Column::I64(cells(rows, masks, bit, |row| {
             Ok(row.u64_at(column).map(|time| time as i64))

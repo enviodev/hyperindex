@@ -85,8 +85,6 @@ let fromItems = (items: array<Internal.item>, ~blocks, ~ecosystem: Ecosystem.nam
     ),
   )
 
-// Event rows: logs, instructions or receipts, and decoded events.
-@send external rowCount: t => int = "rowCount"
 @send external firstRowBlockNumber: t => Null.t<int> = "firstRowBlockNumber"
 
 // Moves another page's rows into this one.

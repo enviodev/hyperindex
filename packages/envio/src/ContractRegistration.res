@@ -7,12 +7,6 @@
 // Items one run builds at most; a run ends at the first block boundary past it.
 let targetItems = 5_000
 
-let hasContractRegister = (item: Internal.item) =>
-  switch item {
-  | Event({onEventRegistration: {contractRegister: Some(_)}}) => true
-  | _ => false
-  }
-
 let invokeContractRegister = (runtime: HandlerRuntime.t, item: Internal.item) => {
   let contractRegister = switch (item->Internal.castUnsafeEventItem).onEventRegistration {
   | {contractRegister: Some(contractRegister)} => contractRegister
@@ -64,10 +58,7 @@ let runChain = async (state: IndexerState.t, ~chainId, ~runtime, ~stateId) => {
   let built = await chainState
   ->ChainState.chainBuffer
   ->ChainBuffer.buildContractRegisterItems(~blockNumbers, ~targetItems)
-  let items =
-    built
-    ->StoredItems.read(~context=chainState->ChainState.itemContext)
-    ->Array.filter(hasContractRegister)
+  let items = built->StoredItems.read(~context=chainState->ChainState.itemContext)
   let lastBlock = built.lastBlock
   let registrations = await runOrThrow(items, ~runtime, ~chainState)
   chainState

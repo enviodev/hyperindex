@@ -73,7 +73,6 @@ pub(crate) struct Built {
     pub(crate) links: Vec<ItemLinks>,
     pub(crate) transactions: Option<Columns>,
     pub(crate) blocks: Option<Columns>,
-    pub(crate) rows_read: usize,
     pub(crate) last_block: Option<u64>,
 }
 
@@ -105,7 +104,6 @@ pub(crate) fn build(
         shared,
         snapshots,
         items: Vec::new(),
-        rows_read: 0,
         decoded_at: 0,
     };
     let last_block = match range {
@@ -115,16 +113,13 @@ pub(crate) fn build(
         } => walker.walk_range(from_block, max_block, target_items),
         Range::ContractRegister { blocks } => walker.walk_blocks(&blocks, target_items),
     };
-    let Walker {
-        items, rows_read, ..
-    } = walker;
+    let Walker { items, .. } = walker;
     let (links, transactions, blocks) = join(shared, snapshots, &items)?;
     Ok(Built {
         items,
         links,
         transactions,
         blocks,
-        rows_read,
         last_block,
     })
 }
@@ -133,7 +128,6 @@ struct Walker<'a> {
     shared: &'a Shared,
     snapshots: &'a Snapshots,
     items: Vec<Item>,
-    rows_read: usize,
     /// The first decoded event not walked yet.
     decoded_at: usize,
 }
@@ -218,14 +212,12 @@ impl Walker<'_> {
     }
 
     fn walk_block(&mut self, block_number: u64, rows: &[RowRef], contract_register_only: bool) {
-        self.rows_read += rows.len();
         let decoded = &self.snapshots.decoded;
         let decoded_end = self.decoded_at
             + decoded[self.decoded_at..]
                 .partition_point(|event| event.block_number <= block_number);
         let block_decoded = &decoded[self.decoded_at..decoded_end];
         self.decoded_at = decoded_end;
-        self.rows_read += block_decoded.len();
 
         let mut decoded_events = block_decoded
             .iter()
@@ -363,9 +355,7 @@ impl Walker<'_> {
                 return;
             };
             let src_address = src_address
-                .get_or_insert_with(|| {
-                    evm::address_key_text(log.address, self.shared.should_checksum)
-                })
+                .get_or_insert_with(|| evm::address_text(log.address, self.shared.should_checksum))
                 .clone();
             self.items.push(Item::EvmLog {
                 block_number: log.block_number,

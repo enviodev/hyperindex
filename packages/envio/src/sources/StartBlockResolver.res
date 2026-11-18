@@ -20,7 +20,6 @@ let makeProbeSources = (chainConfig: Config.chain, ~logger, ~lowercaseAddresses)
   ChainSources.make(
     ~chainConfig,
     ~addressStore,
-    ~lowercaseAddresses,
     ~chainBuffer=ChainBuffer.makeForChain(
       ~ecosystem=chainConfig.ecosystem,
       ~onEventRegistrations=[],

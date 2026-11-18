@@ -4,7 +4,6 @@
 let make = (
   ~chainConfig: Config.chain,
   ~addressStore: AddressStore.t,
-  ~lowercaseAddresses: bool,
   ~chainBuffer: ChainBuffer.t,
   ~logger: Logger.t,
   ~maxAddressesPerRequest: int,
@@ -28,7 +27,6 @@ let make = (
       ~chainId,
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
-      ~lowercaseAddresses,
       ~chainBuffer,
       ~logger,
       ~maxAddressesPerRequest,

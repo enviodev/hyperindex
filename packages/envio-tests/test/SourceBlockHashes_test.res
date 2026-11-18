@@ -101,7 +101,6 @@ let makeHyperSyncSource = () =>
     endpointUrl: "https://eth.hypersync.xyz",
     apiToken: Some(testApiToken),
     clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-    lowercaseAddresses: true,
     serializationFormat: Env.hypersyncClientSerializationFormat,
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
@@ -118,7 +117,6 @@ let makeRpcSource = () =>
     chainId,
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
-    lowercaseAddresses: true,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
     chainBuffer: TestChainBuffer.forChain(
@@ -162,15 +160,14 @@ type responseBlocks = {
 }
 
 let readResponse = (response: Source.blockRangeFetchResponse) => {
-  let rows = response.page->BufferPage.rowCount
   let buffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
-  let _ = buffer->ChainBuffer.mergePage(response.page, ~reorgThreshold=0, ~reportOnly=true)
+  let {rowsKept} = buffer->ChainBuffer.mergePage(response.page, ~reorgThreshold=0, ~reportOnly=true)
   {
-    rows,
+    rows: rowsKept,
     blockNumbers: (
       buffer->ChainBuffer.getBlockHashes(~fromBlock=0, ~belowBlock=2147483647)
     ).blockNumbers,
-    hashOf: blockNumber => buffer->ChainBuffer.getBlockHash(blockNumber),
+    hashOf: blockNumber => buffer->TestChainBuffer.blockHashAt(blockNumber),
   }
 }
 

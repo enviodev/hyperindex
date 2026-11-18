@@ -11,6 +11,8 @@ use std::sync::Arc;
 /// is a u32, and a block number fits the 32 bits left above it.
 pub(crate) const POSITION_BITS: u32 = 32;
 pub(crate) const MAX_POSITION: u64 = (1 << POSITION_BITS) - 1;
+/// The highest block number a key holds.
+pub(crate) const LAST_BLOCK: u64 = u64::MAX >> POSITION_BITS;
 
 pub(crate) fn make_key(block_number: u64, position: u64) -> u64 {
     debug_assert!(position <= MAX_POSITION);
@@ -31,7 +33,7 @@ fn first_key_of_block(block_number: u64) -> u64 {
 
 /// The first key past every row of `block_number`.
 fn key_after_block(block_number: u64) -> u64 {
-    if block_number >= u64::MAX >> POSITION_BITS {
+    if block_number >= LAST_BLOCK {
         u64::MAX
     } else {
         first_key_of_block(block_number + 1)
@@ -899,7 +901,7 @@ mod tests {
 
     fn describe(table: &Table) -> Vec<Described> {
         table
-            .rows_in_block_range(0, u64::MAX >> POSITION_BITS)
+            .rows_in_block_range(0, LAST_BLOCK)
             .map(|row| {
                 (
                     row.block_number(),

@@ -136,7 +136,6 @@ let makeSource = (~url, ~chainBuffer) =>
       backoffMillis: 1,
       queryTimeoutMillis: 5_000,
     }),
-    lowercaseAddresses: true,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
     chainBuffer,

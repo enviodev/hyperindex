@@ -28,14 +28,17 @@ let makeSource = (
   ~addressStore=TestAddresses.makeStore(),
   ~syncConfig=EvmChain.getSyncConfig({}),
   ~lowercaseAddresses=false,
-  ~chainBuffer=TestChainBuffer.forChain(~onEventRegistrations, ~addressStore),
+  ~chainBuffer=TestChainBuffer.forChain(
+    ~onEventRegistrations,
+    ~addressStore,
+    ~shouldChecksum=!lowercaseAddresses,
+  ),
 ) => {
   RpcSource.make({
     url,
     chainId,
     sourceFor: Sync,
     syncConfig,
-    lowercaseAddresses,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
     chainBuffer,
@@ -1012,11 +1015,11 @@ describe("RpcSource - builds partition log selections end to end", () => {
         `address=null;topics=[["${sighash4}"],["${addressTopic}"]]`,
       ]->Array.toSorted(String.compare)
 
-    t.expect((filters, page.page->BufferPage.rowCount, page.latestFetchedBlockNumber)).toEqual((
-      expectedFilters,
-      0,
-      100,
-    ))
+    t.expect((
+      filters,
+      page.page->TestChainBuffer.pageRowCount,
+      page.latestFetchedBlockNumber,
+    )).toEqual((expectedFilters, 0, 100))
   })
 })
 
@@ -1027,7 +1030,6 @@ describe("RpcSource - height subscription", () => {
       chainId,
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({pollingInterval: pollingInterval}),
-      lowercaseAddresses: false,
       ?ws,
       maxAddressesPerRequest: Env.maxAddrInPartition,
       logger: Logger.makeInMemory(),

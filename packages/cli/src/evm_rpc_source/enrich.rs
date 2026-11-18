@@ -60,7 +60,7 @@ type Fetched = std::result::Result<Arc<Json>, Arc<RpcError>>;
 
 pub(crate) type Fetches = Inflight<FetchKey, Fetched>;
 
-/// A transaction's place in its block, which is how both stores key it.
+/// A transaction's place in its block, which is how the transactions table keys it.
 pub(crate) type TxKey = (u64, u32);
 
 /// One outstanding JSON-RPC read, as the deduplication map keys it. A hash is
@@ -190,7 +190,7 @@ pub(crate) fn collect_worst<T>(
     }
 }
 
-/// Block and transaction fields as store masks: what one registration selects,
+/// Block and transaction fields as table field masks: what one registration selects,
 /// unioned per referenced key into what a page wants, and over the whole chain
 /// into what a response is read for.
 #[derive(Clone, Copy, Default)]
@@ -488,7 +488,7 @@ fn fill_block_page(
 
 /// What a page's blocks are decoded for: the chain's registrations, widened by
 /// the block handlers the page runs. One response carries the whole header, so
-/// every block of the page reads the same fields and merges into the store in a
+/// every block of the page reads the same fields and merges into the chain buffer in a
 /// single batch.
 pub(crate) struct BlockRead {
     pub covering: u64,
@@ -531,7 +531,7 @@ struct TxReadPlan {
 }
 
 /// Which blocks to read: every checked block, and each other referenced block
-/// the store was not already asked for everything this page needs of. The
+/// the chain buffer does not already hold everything this page needs of. The
 /// range's own boundaries get no read of their own: the checked blocks reach
 /// at least as deep as the reorg window, and nothing below it is compared.
 /// `checked` is ascending.

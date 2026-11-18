@@ -6,6 +6,8 @@ use std::sync::Mutex;
 
 use napi_derive::napi;
 
+use super::to_napi;
+
 use super::decoded::{DecodedEvent, DecodedEventInput, DecodedEvents};
 use super::merge::{first_hash_mismatch, HashMismatch};
 use super::table::{block_of_key, Chunk, Table};
@@ -118,14 +120,10 @@ impl PageData {
         }
     }
 
-    pub(crate) fn row_count(&self) -> usize {
-        self.events.len() + self.decoded.len()
-    }
-
     pub(crate) fn first_row_block_number(&self) -> Option<u64> {
         let event = self
             .events
-            .rows_in_block_range(0, u64::MAX >> super::table::POSITION_BITS)
+            .rows_in_block_range(0, super::table::LAST_BLOCK)
             .next()
             .map(|row| block_of_key(row.key()));
         [event, self.decoded.first_block()]
@@ -166,10 +164,6 @@ impl Page {
         let ecosystem = data.ecosystem;
         std::mem::replace(&mut *data, PageData::new(ecosystem))
     }
-}
-
-fn to_napi(error: anyhow::Error) -> napi::Error {
-    napi::Error::from_reason(format!("{error:#}"))
 }
 
 #[napi]
@@ -239,13 +233,6 @@ impl Page {
             data.add_transactions(rows.finish());
         }
         Ok(page)
-    }
-
-    /// Event rows: the logs, instructions or receipts the page keeps, and its
-    /// decoded events.
-    #[napi]
-    pub fn row_count(&self) -> u32 {
-        self.data.lock().unwrap().row_count() as u32
     }
 
     #[napi]

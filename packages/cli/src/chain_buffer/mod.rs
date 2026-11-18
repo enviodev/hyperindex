@@ -35,7 +35,7 @@ use deliver::{BuiltItems, Columns};
 use merge::HashMismatch;
 use page::Page;
 use schedule::{BlockHandlerInput, Schedule};
-use table::{make_key, ChunkBuilder, RowRef, Schema, Table, POSITION_BITS};
+use table::{make_key, ChunkBuilder, RowRef, Schema, Table, LAST_BLOCK};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Ecosystem {
@@ -288,15 +288,13 @@ pub struct ChainBuffer {
     tables: Mutex<Tables>,
 }
 
-fn to_napi(error: anyhow::Error) -> napi::Error {
+pub(crate) fn to_napi(error: anyhow::Error) -> napi::Error {
     napi::Error::from_reason(format!("{error:#}"))
 }
 
 fn block(number: i64) -> u64 {
     u64::try_from(number).unwrap_or(0)
 }
-
-const LAST_BLOCK: u64 = u64::MAX >> POSITION_BITS;
 
 impl ChainBuffer {
     /// The chain's compiled registrations, for a source querying the chain.
@@ -523,55 +521,54 @@ impl ChainBuffer {
 
     /// Removes transactions and everything inside them in blocks
     /// `[from_block, to_block]`: logs, instructions, receipts and decoded
-    /// events. Returns the event rows removed.
+    /// events.
     #[napi]
-    pub fn remove_transaction_data_in_block_range(&self, from_block: i64, to_block: i64) -> u32 {
+    pub fn remove_transaction_data_in_block_range(&self, from_block: i64, to_block: i64) {
         let (from, to) = (block(from_block), block(to_block).min(LAST_BLOCK));
         let mut tables = self.tables();
         tables.transactions.remove_block_range(from, to);
-        (tables.events.remove_block_range(from, to) + tables.decoded.remove_block_range(from, to))
-            as u32
+        tables.events.remove_block_range(from, to);
+        tables.decoded.remove_block_range(from, to);
     }
 
     /// Removes block rows of `[from_block, to_block]`, hashes included.
     #[napi]
-    pub fn remove_blocks_in_block_range(&self, from_block: i64, to_block: i64) -> u32 {
+    pub fn remove_blocks_in_block_range(&self, from_block: i64, to_block: i64) {
         let (from, to) = (block(from_block), block(to_block).min(LAST_BLOCK));
-        self.tables().blocks.remove_block_range(from, to) as u32
+        self.tables().blocks.remove_block_range(from, to);
     }
 
-    /// Event rows of blocks `[from_block, to_block]`.
+    /// Rows and block handler runs of blocks `[from_block, to_block]`: what a
+    /// build of the range produces at most.
     #[napi]
-    pub fn count_rows_in_block_range(&self, from_block: i64, to_block: i64) -> u32 {
+    pub fn count_items_in_block_range(&self, from_block: i64, to_block: i64) -> u32 {
         if to_block < from_block {
             return 0;
         }
         let (from, to) = (block(from_block), block(to_block).min(LAST_BLOCK));
         let tables = self.tables();
-        (tables.events.count_in_block_range(from, to) + tables.decoded.count_range(from, to)) as u32
+        let rows =
+            tables.events.count_in_block_range(from, to) + tables.decoded.count_range(from, to);
+        rows as u32 + self.shared.schedule.count_runs(from, to, |_| true) as u32
     }
 
-    /// Block handler runs on blocks `[from_block, to_block]`, of the handlers
-    /// `registration_indexes` names or, without it, of every handler.
+    /// Runs of the block handlers `registration_indexes` names on blocks
+    /// `[from_block, to_block]`.
     #[napi]
     pub fn count_block_handler_runs_in_block_range(
         &self,
         from_block: i64,
         to_block: i64,
-        registration_indexes: Option<Vec<u32>>,
-    ) -> f64 {
+        registration_indexes: Vec<u32>,
+    ) -> u32 {
         if to_block < from_block {
-            return 0.0;
+            return 0;
         }
         self.shared.schedule.count_runs(
             block(from_block),
             block(to_block).min(LAST_BLOCK),
-            |index| {
-                registration_indexes
-                    .as_ref()
-                    .is_none_or(|indexes| indexes.contains(&index))
-            },
-        ) as f64
+            |index| registration_indexes.contains(&index),
+        ) as u32
     }
 
     /// The block of the event row `row_offset` rows past the first one at or
@@ -621,17 +618,6 @@ impl ChainBuffer {
     pub fn row_count(&self) -> u32 {
         let tables = self.tables();
         (tables.events.len() + tables.decoded.len()) as u32
-    }
-
-    #[napi]
-    pub fn get_block_hash(&self, block_number: i64) -> Option<String> {
-        let tables = self.tables();
-        let ecosystem = self.shared.ecosystem;
-        tables
-            .blocks
-            .find(make_key(u64::try_from(block_number).ok()?, 0), 0)?
-            .bytes_at(ecosystem.hash_column())
-            .map(|hash| ecosystem.hash_text(hash))
     }
 
     /// Every stored hash of blocks `[from_block, below_block)`, ascending.

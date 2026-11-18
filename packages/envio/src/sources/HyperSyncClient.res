@@ -22,7 +22,6 @@ type cfg = {
   /** Ceiling time for request backoff. Default: 5000. */
   retryCeilingMs?: int,
   /** Enable checksum addresses in responses. */
-  enableChecksumAddresses?: bool,
   /** Query serialization format to use for HTTP requests. Default: Json. */
   serializationFormat?: serializationFormat,
   /** Whether to use query caching when using CapnProto serialization format. */
@@ -322,7 +321,6 @@ let make = (
   ~apiToken,
   ~httpReqTimeoutMillis,
   ~chainBuffer,
-  ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
   ~retryBaseMs=?,
@@ -334,7 +332,6 @@ let make = (
   Core.getAddon().evmHyperSyncClient->classNew(
     {
       url,
-      enableChecksumAddresses,
       apiToken,
       httpReqTimeoutMillis,
       ?serializationFormat,

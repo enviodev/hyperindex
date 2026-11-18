@@ -26,7 +26,7 @@ pub(crate) mod types;
 use config::ClientConfig;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{map_i64, Block, RollbackGuard};
+use types::{map_i64, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -53,7 +53,6 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 #[napi]
 pub struct EvmHyperSyncClient {
     inner: hypersync_client::Client,
-    enable_checksum_addresses: bool,
     chain: Arc<Shared>,
     selection_builder: SelectionBuilder,
     block_registrations: BlockRegistrations,
@@ -89,7 +88,6 @@ impl EvmHyperSyncClient {
         let chain = buffer.shared();
         let block_registrations =
             BlockRegistrations::new(&chain.fetched_block_handlers()).map_err(map_err)?;
-        let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
         let selection_builder =
             SelectionBuilder::from_registrations(&chain.evm().map_err(map_err)?.inputs)
                 .context("build selection builder")
@@ -101,7 +99,6 @@ impl EvmHyperSyncClient {
 
         Ok(EvmHyperSyncClient {
             inner,
-            enable_checksum_addresses,
             chain,
             selection_builder,
             block_registrations,
@@ -119,13 +116,6 @@ impl EvmHyperSyncClient {
             napi::Error::from_reason(format!("Failed to get HyperSync height: {summary}"))
         })?;
         height.try_into().context("convert height").map_err(map_err)
-    }
-
-    #[napi]
-    pub async fn get(&self, query: Query) -> napi::Result<QueryResponse> {
-        convert_response(self.get_raw(query).await?, self.enable_checksum_addresses)
-            .context("convert response")
-            .map_err(map_err)
     }
 
     /// Fetch the complete inclusive range spanning `block_numbers` into one
@@ -279,19 +269,7 @@ impl EvmHyperSyncClient {
             ..Default::default()
         };
 
-        let query = query.try_into().context("parse query").map_err(map_err)?;
-        let res = self
-            .inner
-            .get_with_rate_limit(&query)
-            .await
-            .context("run inner query")
-            .map_err(map_err)?;
-
-        let response = match res {
-            RateLimitResponse::Success { response, .. } => response,
-            RateLimitResponse::RateLimited(info) => return Err(make_rate_limit_err(&info)),
-        };
-
+        let response = self.get_raw(query).await?;
         let response_blocks = response.data.blocks.iter().map(Vec::len).sum::<usize>() as i64;
 
         let next_block: i64 = response
@@ -383,22 +361,6 @@ fn log_selection_from_built(
     })
 }
 
-// Generic query DTO retained for direct native-addon callers. HyperIndex's
-// event and block-hash paths use their dedicated lean methods instead.
-#[napi(object)]
-pub struct QueryResponseData {
-    pub blocks: Vec<Block>,
-}
-
-#[napi(object)]
-pub struct QueryResponse {
-    pub archive_height: Option<i64>,
-    pub next_block: i64,
-    pub total_execution_time: i64,
-    pub data: QueryResponseData,
-    pub rollback_guard: Option<RollbackGuard>,
-}
-
 /// What a page covered. Its rows are in the `Page` returned beside it.
 #[napi(object, object_from_js = false)]
 pub struct ItemsResponse {
@@ -408,39 +370,6 @@ pub struct ItemsResponse {
     /// ones no kept log joins to. The server returns one block per number, so this is a
     /// distinct count.
     pub response_blocks: i64,
-}
-
-fn convert_response(
-    res: hypersync_client::QueryResponse,
-    should_checksum: bool,
-) -> Result<QueryResponse> {
-    let blocks = res
-        .data
-        .blocks
-        .into_iter()
-        .flatten()
-        .map(|b| Block::from_simple(&b, should_checksum))
-        .collect::<Result<Vec<_>>>()
-        .context("mapping blocks")?;
-
-    Ok(QueryResponse {
-        archive_height: res
-            .archive_height
-            .map(|h| h.try_into())
-            .transpose()
-            .context("convert height")?,
-        next_block: res.next_block.try_into().context("convert next_block")?,
-        total_execution_time: res
-            .total_execution_time
-            .try_into()
-            .context("convert total_execution_time")?,
-        data: QueryResponseData { blocks },
-        rollback_guard: res
-            .rollback_guard
-            .map(RollbackGuard::try_from)
-            .transpose()
-            .context("convert rollback guard")?,
-    })
 }
 
 /// Convert only the two values needed by the block-hash paginator. Raw blocks
@@ -551,10 +480,7 @@ fn process_response(
 
     let referenced_transactions = sorted_set(referenced_transactions);
     if !requested_transaction_fields.is_empty() {
-        let fetched = requested_transaction_fields
-            .iter()
-            .filter_map(|field| evm_rpc_source::fields::tx_field_column(*field))
-            .fold(0u64, |mask, field| mask | 1 << field as u32);
+        let fetched = evm_rpc_source::fields::tx_mask(requested_transaction_fields);
         let mut kept = Vec::new();
         let mut rows = page.transactions.builder();
         for tx in transactions.iter().flatten() {

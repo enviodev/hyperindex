@@ -75,7 +75,6 @@ let makeSource = (~url) => {
     endpointUrl: url,
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
-    lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,

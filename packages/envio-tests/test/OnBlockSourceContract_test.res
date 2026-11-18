@@ -104,7 +104,6 @@ let makeHyperSyncSource = (~url) => {
     endpointUrl: url,
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
-    lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
@@ -181,7 +180,6 @@ let makeRpcSource = (~url) => {
       backoffMillis: 1,
       queryTimeoutMillis: 1_000,
     }),
-    lowercaseAddresses: true,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
     chainBuffer: TestChainBuffer.forChain(

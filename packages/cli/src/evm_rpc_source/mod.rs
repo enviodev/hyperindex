@@ -296,14 +296,14 @@ pub struct EvmRpcClient {
     /// including across the partitions of one chain, which scan the same blocks
     /// at the head.
     fetches: Fetches,
-    /// The fields each registration selected, as store masks. An item's block
+    /// The fields each registration selected, as table field masks. An item's block
     /// and transaction are fetched for the union of the masks of the items that
     /// reference them, so an event selecting nothing costs no request.
     registration_fields: HashMap<i64, SelectedFields>,
     /// What every block and transaction is decoded for: the union of the
     /// selections above, not just the ones of the page that fetched the
     /// response, so a later page with a different selection is served from the
-    /// stores rather than refetched.
+    /// chain buffer rather than refetched.
     block_read: BlockRead,
     chain_tx_mask: u64,
     block_registrations: BlockRegistrations,
@@ -325,7 +325,7 @@ const RETRIES_BEFORE_RECHECKING_BY_NUMBER: i64 = 3;
 const MAX_HANDLER_BLOCKS_PER_PAGE: usize = 100;
 
 /// Everything one page read works from: the range it covers, the queries to run
-/// over it, the stores whose contents decide what still has to be fetched, and
+/// over it, the chain buffer whose contents decide what still has to be fetched, and
 /// what a retry decision about it would need.
 struct PageQuery<'a> {
     partition_id: &'a str,
@@ -448,7 +448,7 @@ impl EvmRpcClient {
     /// Forget every in-flight block, transaction and receipt read. After a
     /// reorg an in-flight response may describe the orphaned fork, so a read
     /// issued afterwards must observe the chain again rather than join one.
-    /// The stores are rolled back separately, which is what retires the data
+    /// The chain buffer is rolled back separately, which is what retires the data
     /// already merged from that fork.
     #[napi]
     pub fn on_reorg(&self) {
@@ -457,7 +457,7 @@ impl EvmRpcClient {
 
     /// Re-read the given blocks and return them as a page of hash-only
     /// observations, for the rollback-depth search. Never served from the
-    /// store: the whole question being asked is whether the stored hashes still
+    /// chain buffer: the whole question being asked is whether the stored hashes still
     /// match the chain.
     #[napi]
     pub async fn get_block_hashes(
@@ -480,7 +480,7 @@ impl EvmRpcClient {
                 Page::from_data(blocks),
             )),
             // The page is empty on failure and the caller reads `message`
-            // instead; a store is cheap enough not to be worth an optional.
+            // instead; an empty page is cheap enough not to be worth an optional.
             Err(err) => Ok((
                 BlockHashResult {
                     message: Some(err.to_string()),
@@ -521,8 +521,8 @@ impl EvmRpcClient {
     /// items selected. On success, grows the partition's interval when the full
     /// suggested range was applied. Everything a caller is expected to handle
     /// — a narrower range to retry, a backoff, a selection the provider cannot
-    /// serve — comes back as a value; the stores returned alongside a non-"ok"
-    /// result are empty.
+    /// serve — comes back as a value; the page returned alongside a non-"ok"
+    /// result is empty.
     #[napi]
     pub async fn get_next_page(
         &self,
@@ -618,8 +618,8 @@ impl EvmRpcClient {
         let outcome = self.read_page(&query).await;
         let request_stats = self.inner.take_stats();
 
-        // Only a page that was read has stores; every other outcome returns
-        // empty ones, so the match decides the result and the stores follow.
+        // Only a page that was read has rows; every other outcome returns an
+        // empty one, so the match decides the result and the page follows.
         let (result, page) = match outcome {
             Ok(page) => {
                 let executed_interval = to_block - from_block + 1;

@@ -365,7 +365,6 @@ let makeInternal = (
   let sources = ChainSources.make(
     ~chainConfig,
     ~addressStore,
-    ~lowercaseAddresses,
     ~chainBuffer,
     ~logger,
     ~maxAddressesPerRequest=config.maxAddrInPartition,
@@ -879,13 +878,11 @@ let handleQueryResult = (
   let blockHandlerRuns = switch query.selection.onBlockRegistrations {
   | [] => 0
   | onBlockRegistrations =>
-    cs.chainBuffer
-    ->ChainBuffer.countBlockHandlerRunsInBlockRange(
+    cs.chainBuffer->ChainBuffer.countBlockHandlerRunsInBlockRange(
       ~fromBlock=query.fromBlock,
       ~toBlock=latestFetchedBlock,
       ~registrationIndexes=onBlockRegistrations->Array.map(registration => registration.index),
     )
-    ->Float.toInt
   }
   cs.fetchState =
     cs.fetchState
@@ -1109,10 +1106,6 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   rateLimitResetInMs: cs.sourceManager->SourceManager.getRateLimitResetInMs,
 }
 
-// Snapshot the inputs a batch build needs from this chain. The scanned
-// in-threshold block hashes are copied up front because the build reuses the
-// whole set; the block time comes as a lookup instead, since the key it needs -
-// the batch's own progress block - isn't known until the build computes it.
 let buildItemsNow = (cs: t, ~fromBlock, ~maxBlock, ~targetItems): promise<builtItems> =>
   cs.chainBuffer
   ->ChainBuffer.buildHandlerItems(~fromBlock, ~maxBlock, ~targetItems)
@@ -1143,8 +1136,7 @@ let prebuildItems = (cs: t, ~targetItems) => {
   let fromBlock = cs.processingBlockNumber + 1
   let maxBlock = cs.fetchState->FetchState.bufferBlockNumber
   cs.prebuilt = if (
-    maxBlock >= fromBlock &&
-      cs.chainBuffer->ChainBuffer.countItemsInBlockRange(~fromBlock, ~toBlock=maxBlock) > 0
+    cs.chainBuffer->ChainBuffer.countItemsInBlockRange(~fromBlock, ~toBlock=maxBlock) > 0
   ) {
     let items = cs->buildItemsNow(~fromBlock, ~maxBlock, ~targetItems)
     // A build nobody takes up must not surface as an unhandled rejection; one
@@ -1156,6 +1148,10 @@ let prebuildItems = (cs: t, ~targetItems) => {
   }
 }
 
+// Snapshot the inputs a batch build needs from this chain. The scanned
+// in-threshold block hashes are copied up front because the build reuses the
+// whole set; the block time comes as a lookup instead, since the key it needs -
+// the batch's own progress block - isn't known until the build computes it.
 let toChainBeforeBatch = (cs: t, ~isRealtime): Batch.chainBeforeBatch => {
   let {blockNumbers, hashes} =
     cs.chainBuffer->ChainBuffer.getBlockHashes(
@@ -1302,21 +1298,17 @@ let applyBatchProgress = (cs: t, ~batch: Batch.t, ~blockTimestampName: string) =
       cs.numEventsProcessed = chainAfterBatch.totalEventsProcessed
       // Processed blocks' rows are no longer needed. Their blocks stay while
       // inside the reorg window, whose hashes reorg detection compares.
-      cs.chainBuffer
-      ->ChainBuffer.removeTransactionDataInBlockRange(
+      cs.chainBuffer->ChainBuffer.removeTransactionDataInBlockRange(
         ~fromBlock=0,
         ~toBlock=chainAfterBatch.progressBlockNumber,
       )
-      ->ignore
-      cs.chainBuffer
-      ->ChainBuffer.removeBlocksInBlockRange(
+      cs.chainBuffer->ChainBuffer.removeBlocksInBlockRange(
         ~fromBlock=0,
         ~toBlock=Pervasives.min(
           chainAfterBatch.progressBlockNumber,
           cs.fetchState.knownHeight - cs.maxReorgDepth - 1,
         ),
       )
-      ->ignore
       cs.isProgressAtHead = cs.isProgressAtHead || chainAfterBatch.isProgressAtHeadWhenBatchCreated
       switch cs.safeCheckpointTracking {
       | Some(safeCheckpointTracking) =>
@@ -1386,18 +1378,14 @@ let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
     cs.fetchState = fetchState
     // Everything above the target is refetched. Keeping any block hash of it
     // would compare the refetch against a fork the rollback already disproved.
-    cs.chainBuffer
-    ->ChainBuffer.removeTransactionDataInBlockRange(
+    cs.chainBuffer->ChainBuffer.removeTransactionDataInBlockRange(
       ~fromBlock=targetBlockNumber + 1,
       ~toBlock=Int.Constants.maxValue,
     )
-    ->ignore
-    cs.chainBuffer
-    ->ChainBuffer.removeBlocksInBlockRange(
+    cs.chainBuffer->ChainBuffer.removeBlocksInBlockRange(
       ~fromBlock=targetBlockNumber + 1,
       ~toBlock=Int.Constants.maxValue,
     )
-    ->ignore
     rolledBackAddresses->Array.map(({address, contractId}): AddressRows.key => {
       chainId: cs.chainConfig.id,
       address,

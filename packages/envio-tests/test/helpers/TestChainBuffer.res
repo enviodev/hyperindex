@@ -159,3 +159,20 @@ let forInputs = (~evmRegistrations, ~addressStore) =>
     },
     addressStore,
   )
+
+// The stored hash of one block.
+let blockHashAt = (buffer, blockNumber) =>
+  switch buffer->ChainBuffer.getBlockHashes(~fromBlock=blockNumber, ~belowBlock=blockNumber + 1) {
+  | {hashes: [hash]} => Null.Value(hash)
+  | _ => Null.Null
+  }
+
+// The rows a page carries, counted the way a merge keeps them.
+let pageRowCount = (page, ~ecosystem=Ecosystem.Evm) =>
+  (
+    decodedBuffer(~onEventRegistrations=[], ~ecosystem)->ChainBuffer.mergePage(
+      page,
+      ~reorgThreshold=0,
+      ~reportOnly=true,
+    )
+  ).rowsKept

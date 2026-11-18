@@ -7,7 +7,7 @@ use hypersync_client::format;
 use hypersync_client::simple_types;
 use strum::VariantArray;
 
-use super::deliver::{build_columns, cells, hex_full, hex_quantity, Column, Columns};
+use super::deliver::{build_columns, cells, hex_quantity, Column, Columns};
 use super::table::{make_key, ChunkBuilder, ColumnKind, RowRef, Schema, MAX_POSITION};
 use crate::evm_hypersync_source::types::{
     encode_address, map_i64, AccessList as AccessListItem, Authorization as AuthorizationItem,
@@ -398,7 +398,7 @@ fn block_column(
         | WithdrawalsRoot
         | SendRoot
         | MixHash => Column::Str(cells(rows, masks, bit, |row| {
-            Ok(row.bytes_at(column).map(hex_full))
+            Ok(row.bytes_at(column).map(crate::hex::to_hex))
         })?),
         Nonce | Difficulty | TotalDifficulty | Size | GasLimit | GasUsed | BaseFeePerGas
         | BlobGasUsed | ExcessBlobGas => Column::Big(cells(rows, masks, bit, |row| {
@@ -412,7 +412,7 @@ fn block_column(
         Uncles => Column::StrVec(cells(rows, masks, bit, |row| {
             Ok(row
                 .bytes_at(column)
-                .map(|b| b.chunks(32).map(hex_full).collect()))
+                .map(|b| b.chunks(32).map(crate::hex::to_hex).collect()))
         })?),
         L1BlockNumber => Column::I64(cells(rows, masks, bit, |row| {
             row.u64_at(column)
@@ -425,7 +425,7 @@ fn block_column(
     })
 }
 
-fn address_text(bytes: &[u8], should_checksum: bool) -> String {
+pub(crate) fn address_text(bytes: &[u8], should_checksum: bool) -> String {
     let address = <[u8; 20]>::try_from(bytes).expect("an address cell is 20 bytes");
     encode_address(&address.into(), should_checksum)
 }
@@ -682,7 +682,7 @@ fn transaction_column(
                 .collect(),
         ),
         Hash | Input | LogsBloom | Root => Column::Str(cells(rows, masks, bit, |row| {
-            Ok(row.bytes_at(column).map(hex_full))
+            Ok(row.bytes_at(column).map(crate::hex::to_hex))
         })?),
         From | To | ContractAddress => Column::Str(cells(rows, masks, bit, |row| {
             Ok(row
@@ -703,7 +703,7 @@ fn transaction_column(
         BlobVersionedHashes => Column::StrVec(cells(rows, masks, bit, |row| {
             Ok(row
                 .bytes_at(column)
-                .map(|b| b.chunks(32).map(hex_full).collect()))
+                .map(|b| b.chunks(32).map(crate::hex::to_hex).collect()))
         })?),
         L1FeeScalar => Column::F64(cells(rows, masks, bit, |row| {
             Ok(row.u64_at(column).map(f64::from_bits))
@@ -749,7 +749,7 @@ pub(crate) fn transaction_columns(
 
 /// A hash as JS spells it.
 pub(crate) fn hash_text(bytes: &[u8]) -> String {
-    hex_full(bytes)
+    crate::hex::to_hex(bytes)
 }
 
 /// A JS hash back to its bytes: exactly 32, or the comparison against a
@@ -762,10 +762,6 @@ pub(crate) fn hash_bytes(text: &str) -> Result<Vec<u8>> {
         bytes.len()
     );
     Ok(bytes)
-}
-
-pub(crate) fn address_key_text(bytes: &[u8], should_checksum: bool) -> String {
-    address_text(bytes, should_checksum)
 }
 
 #[cfg(test)]

@@ -88,25 +88,13 @@ fn address_topic(key: &[u8]) -> String {
     format!("0x{}", faster_hex::hex_string(&topic))
 }
 
-#[cfg_attr(test, allow(dead_code))]
-fn ecosystem_by_name(name: &str) -> napi::Result<Ecosystem> {
-    match name {
-        "evm" => Ok(Ecosystem::Evm),
-        "fuel" => Ok(Ecosystem::Fuel),
-        "svm" => Ok(Ecosystem::Svm),
-        _ => Err(napi::Error::from_reason(format!(
-            "Unknown ecosystem \"{name}\"."
-        ))),
-    }
-}
-
 /// Encodes address strings to their store keys, one buffer per address. The one
 /// encoder: config addresses reach storage through here, so the bytes a row
 /// holds and the bytes a store keys on can't fork.
 #[cfg_attr(test, allow(dead_code))]
 #[napi]
 pub fn encode_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Vec<Buffer>> {
-    let ecosystem = ecosystem_by_name(&ecosystem)?;
+    let ecosystem = Ecosystem::parse(&ecosystem).map_err(crate::chain_buffer::to_napi)?;
     addresses
         .iter()
         .map(|address| {
@@ -173,7 +161,7 @@ pub fn render_addresses(
     bytes: Buffer,
     lengths: Vec<u32>,
 ) -> napi::Result<Vec<String>> {
-    let ecosystem = ecosystem_by_name(&ecosystem)?;
+    let ecosystem = Ecosystem::parse(&ecosystem).map_err(crate::chain_buffer::to_napi)?;
     Ok(key_slices(ecosystem, &bytes, &lengths)?
         .into_iter()
         .map(|key| shown_address_string(ecosystem, should_checksum, key))
@@ -193,7 +181,7 @@ pub fn render_contract_addresses(
     contract_ids: Vec<u32>,
     contract_id: u32,
 ) -> napi::Result<Vec<String>> {
-    let ecosystem = ecosystem_by_name(&ecosystem)?;
+    let ecosystem = Ecosystem::parse(&ecosystem).map_err(crate::chain_buffer::to_napi)?;
     let keys = key_slices(ecosystem, &bytes, &lengths)?;
     if keys.len() != contract_ids.len() {
         return Err(napi::Error::from_reason(format!(

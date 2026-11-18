@@ -118,7 +118,6 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
     endpointUrl: url,
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
-    lowercaseAddresses,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
@@ -126,6 +125,7 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
     chainBuffer: TestChainBuffer.forChain(
       ~onEventRegistrations=onEventRegistrations(),
       ~addressStore,
+      ~shouldChecksum=!lowercaseAddresses,
     ),
   })
   (source, addressStore->AddressStore.makeSet(~contractName="Token"))
@@ -623,7 +623,7 @@ describe("HyperSync source responses", () => {
         {
           "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
           "knownHeight": response.knownHeight,
-          "rows": response.page->BufferPage.rowCount,
+          "rows": response.page->TestChainBuffer.pageRowCount,
         }
       },
     )
@@ -689,7 +689,7 @@ describe("HyperSync source responses", () => {
           ],
         })
         let response = await source->fetch(~addressSet)
-        response.page->BufferPage.rowCount
+        response.page->TestChainBuffer.pageRowCount
       },
     )
     t.expect(counts).toBe(0)

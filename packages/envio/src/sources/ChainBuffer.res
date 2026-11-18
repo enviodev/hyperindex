@@ -76,8 +76,6 @@ type builtItems = {
   transactions: option<fieldRows>,
   blocks: option<fieldRows>,
   tapes: array<unknown>,
-  itemCount: int,
-  rowsRead: int,
   // The last block the items cover whole.
   lastBlock: option<int>,
 }
@@ -102,37 +100,29 @@ external buildContractRegisterItems: (
 ) => promise<builtItems> = "buildContractRegisterItems"
 
 // Removes transactions and everything inside them: logs, instructions,
-// receipts and decoded events. Returns the event rows removed.
+// receipts and decoded events.
 @send
-external removeTransactionDataInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => int =
+external removeTransactionDataInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => unit =
   "removeTransactionDataInBlockRange"
 
 // Removes block rows, hashes included.
 @send
-external removeBlocksInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => int =
+external removeBlocksInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => unit =
   "removeBlocksInBlockRange"
 
+// Rows and block handler runs of blocks `[fromBlock, toBlock]`: what a build
+// of the range produces at most.
 @send
-external countRowsInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => int = "countRowsInBlockRange"
+external countItemsInBlockRange: (t, ~fromBlock: int, ~toBlock: int) => int =
+  "countItemsInBlockRange"
 
-// Of the handlers `registrationIndexes` names, or of every handler.
 @send
 external countBlockHandlerRunsInBlockRange: (
   t,
   ~fromBlock: int,
   ~toBlock: int,
-  ~registrationIndexes: array<int>=?,
-) => float = "countBlockHandlerRunsInBlockRange"
-
-// Rows and block handler runs of blocks `[fromBlock, toBlock]`: what a build
-// of the range produces at most.
-let countItemsInBlockRange = (buffer, ~fromBlock, ~toBlock) =>
-  if toBlock < fromBlock {
-    0
-  } else {
-    buffer->countRowsInBlockRange(~fromBlock, ~toBlock) +
-      buffer->countBlockHandlerRunsInBlockRange(~fromBlock, ~toBlock)->Float.toInt
-  }
+  ~registrationIndexes: array<int>,
+) => int = "countBlockHandlerRunsInBlockRange"
 
 // The block of the row `rowOffset` rows past the first one at or above
 // `fromBlock`.
@@ -145,8 +135,6 @@ external getBlockNumberOfRowAt: (t, ~fromBlock: int, ~rowOffset: int) => Null.t<
 
 // The bytes the buffer's tables hold.
 @send external heapBytes: t => float = "heapBytes"
-
-@send external getBlockHash: (t, int) => Null.t<string> = "getBlockHash"
 
 type hashedBlocks = {blockNumbers: array<int>, hashes: array<string>}
 

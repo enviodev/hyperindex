@@ -105,9 +105,6 @@ pub struct BuiltItems {
     pub transactions: Option<FieldRows>,
     pub blocks: Option<FieldRows>,
     pub tapes: Vec<JsTape>,
-    pub item_count: u32,
-    /// Rows the build walked: the buffer's own count of what it covered.
-    pub rows_read: u32,
     /// The last block the items cover whole.
     pub last_block: Option<i64>,
 }
@@ -294,7 +291,6 @@ pub(crate) fn lay_out(built: Built) -> Result<BuiltItems> {
         links,
         transactions,
         blocks,
-        rows_read,
         last_block,
     } = built;
     let mut tapes: Vec<JsTape> = Vec::new();
@@ -504,7 +500,6 @@ pub(crate) fn lay_out(built: Built) -> Result<BuiltItems> {
         }
     }
 
-    let item_count = items.len() as u32;
     let mut items_arena = writer.arena;
     let items_shape = seal(&item_columns(), &mut items_arena)?;
     let mut arenas = vec![items_arena];
@@ -552,8 +547,6 @@ pub(crate) fn lay_out(built: Built) -> Result<BuiltItems> {
         transactions,
         blocks,
         tapes,
-        item_count,
-        rows_read: rows_read as u32,
         last_block: last_block.map(|block| block as i64),
     })
 }
@@ -719,14 +712,6 @@ pub fn build_columns<F: Copy>(
         columns.push((field_name, column));
     }
     Ok(Columns { len, columns })
-}
-
-/// Full-bytes hex ("0x" when empty).
-pub(crate) fn hex_full(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return "0x".into();
-    }
-    format!("0x{}", faster_hex::hex_string(bytes))
 }
 
 /// Quantity hex: leading zeros trimmed, zero itself "0x0".
