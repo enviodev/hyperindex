@@ -39,7 +39,8 @@ type row = {
   chain_id: int,
   contract_name: string,
   block_number: int,
-  log_index: int,
+  // A BIGINT, which Postgres hands back as its digits.
+  log_index: string,
 }
 
 let read = async (sql, ~pgSchema) => {
@@ -60,7 +61,7 @@ let row = (~block, ~logIndex) => {
   chain_id: 1,
   contract_name: "Gravatar",
   block_number: block,
-  log_index: logIndex,
+  log_index: logIndex->Int.toString,
 }
 
 describe("Raw events", () => {
@@ -112,6 +113,50 @@ describe("Raw events", () => {
               row(~block=200, ~logIndex=1),
             ],
           ))
+        },
+      )
+    },
+  )
+
+  // Some RPC providers number synthetic logs from the top of the 32-bit range,
+  // such as 0xffffffe2. A row keeps such an index whole, and an index past
+  // 16 bits doesn't give an event the id of one in the next block.
+  scenario->Scenario.it(
+    "keep log indexes up to the 32-bit maximum, each under an id of its own",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      let largeLogIndex = 4294967266.->(Utils.magic: float => int)
+      let source = source(1)
+      source.resolveGetHeightOrThrow(300)
+      await source.expectItemsQueries([
+        {
+          fromBlock: 1,
+          reply: Respond({
+            items: [
+              event(~block=4, ~logIndex=65536),
+              event(~block=5, ~logIndex=0),
+              event(~block=5, ~logIndex=largeLogIndex),
+            ],
+            latestFetchedBlockNumber: 100,
+          }),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+
+      await indexer.usePostgresSql(
+        async sql => {
+          let rows: array<JSON.t> = await sql->Sql.queryForTests(
+            `SELECT "event_id"::text AS "event_id", "block_number", "log_index"
+               FROM "${indexer.pgSchema}"."raw_events" ORDER BY "serial";`,
+          )
+
+          t.expect(rows).toEqual([
+            JSON.parseOrThrow(`{"event_id": "17179934720", "block_number": 4, "log_index": "65536"}`),
+            JSON.parseOrThrow(`{"event_id": "21474836480", "block_number": 5, "log_index": "0"}`),
+            JSON.parseOrThrow(
+              `{"event_id": "25769803746", "block_number": 5, "log_index": "4294967266"}`,
+            ),
+          ])
         },
       )
     },
@@ -171,7 +216,7 @@ describe("Raw events", () => {
           "event_name": "MockEvent",
           "contract_name": "Gravatar",
           "block_number": 5,
-          "log_index": 3,
+          "log_index": "3",
           "src_address": "0x0000000000000000000000000000000000000000",
           "block_hash": "0xblockhash",
           "block_timestamp": 9999,
