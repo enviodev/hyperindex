@@ -18,7 +18,7 @@ pub(crate) mod svm;
 pub(crate) mod table;
 pub(crate) mod walk;
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use anyhow::Result;
 use napi::bindgen_prelude::ArrayBuffer;
@@ -26,8 +26,9 @@ use napi::Env;
 use napi_derive::napi;
 use strum::VariantArray;
 
-use crate::address_store::AddressStore;
+use crate::address_store::{AddressStore, StoreInner};
 use crate::evm_hypersync_source::types::OnEventRegistrationInput;
+use crate::fuel_hypersync_source::selection::FuelOnEventRegistrationInput;
 use crate::svm_hypersync_source::selection::SvmProgramInput;
 use decoded::DecodedEvents;
 use deliver::{BuiltItems, Columns};
@@ -123,21 +124,33 @@ impl Ecosystem {
 }
 
 pub(crate) struct EvmRegistrations {
+    pub(crate) inputs: Vec<OnEventRegistrationInput>,
     pub(crate) matcher: matching::EvmMatcher,
     pub(crate) decoder: decode::evm::EvmDecoder,
 }
 
 pub(crate) struct SvmRegistrations {
+    pub(crate) programs: Vec<SvmProgramInput>,
     pub(crate) matcher: matching_svm::SvmMatcher,
 }
 
-/// What a build needs beside the rows, fixed when the buffer is made.
+pub(crate) struct FuelRegistrations {
+    pub(crate) inputs: Vec<FuelOnEventRegistrationInput>,
+    pub(crate) matcher: matching_fuel::FuelMatcher,
+}
+
+/// A chain's registrations compiled once, for its buffer's builds and for
+/// every source querying the chain.
 pub(crate) struct Shared {
     pub(crate) ecosystem: Ecosystem,
     pub(crate) should_checksum: bool,
+    pub(crate) store: Arc<RwLock<StoreInner>>,
     pub(crate) evm: Option<EvmRegistrations>,
     pub(crate) svm: Option<SvmRegistrations>,
-    pub(crate) fuel: Option<matching_fuel::FuelMatcher>,
+    pub(crate) fuel: Option<FuelRegistrations>,
+    /// Every block handler; the ones selecting fields are what sources fetch
+    /// blocks for.
+    pub(crate) block_handlers: Vec<BlockHandlerInput>,
     pub(crate) schedule: Schedule,
     /// By event registration index.
     transaction_masks: Vec<u64>,
@@ -146,6 +159,33 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
+    /// The block handlers selecting fields, whose blocks sources fetch.
+    pub(crate) fn fetched_block_handlers(&self) -> Vec<BlockHandlerInput> {
+        self.block_handlers
+            .iter()
+            .filter(|handler| handler.block_field_mask.is_some())
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn evm(&self) -> Result<&EvmRegistrations> {
+        self.evm
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("the chain buffer holds no EVM registrations"))
+    }
+
+    pub(crate) fn svm(&self) -> Result<&SvmRegistrations> {
+        self.svm
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("the chain buffer holds no SVM registrations"))
+    }
+
+    pub(crate) fn fuel(&self) -> Result<&FuelRegistrations> {
+        self.fuel
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("the chain buffer holds no Fuel registrations"))
+    }
+
     pub(crate) fn has_contract_register(&self, registration: u32) -> bool {
         self.contract_register
             .get(registration as usize)
@@ -217,8 +257,7 @@ pub struct ChainBufferConfig {
     /// The SVM programs with their instructions and registrations, as the
     /// SVM HyperSync client takes them.
     pub svm_registrations: Option<Vec<SvmProgramInput>>,
-    pub fuel_registrations:
-        Option<Vec<crate::fuel_hypersync_source::selection::FuelOnEventRegistrationInput>>,
+    pub fuel_registrations: Option<Vec<FuelOnEventRegistrationInput>>,
     pub contract_register_indexes: Vec<i64>,
     pub block_handlers: Vec<BlockHandlerInput>,
     /// By event registration index: the transaction fields each selects.
@@ -260,6 +299,11 @@ fn block(number: i64) -> u64 {
 const LAST_BLOCK: u64 = u64::MAX >> POSITION_BITS;
 
 impl ChainBuffer {
+    /// The chain's compiled registrations, for a source querying the chain.
+    pub(crate) fn shared(&self) -> Arc<Shared> {
+        self.shared.clone()
+    }
+
     pub(crate) fn tables(&self) -> MutexGuard<'_, Tables> {
         self.tables.lock().unwrap()
     }
@@ -335,39 +379,42 @@ impl ChainBuffer {
     #[napi(factory)]
     pub fn make(config: ChainBufferConfig, address_store: &AddressStore) -> napi::Result<Self> {
         let ecosystem = Ecosystem::parse(&config.ecosystem).map_err(to_napi)?;
-        let svm = match &config.svm_registrations {
+        let svm = match config.svm_registrations {
             Some(programs) => Some(SvmRegistrations {
                 matcher: matching_svm::SvmMatcher::new(
-                    programs,
+                    &programs,
                     &config.contract_register_indexes,
                     address_store,
                 )
                 .map_err(to_napi)?,
+                programs,
             }),
             None => None,
         };
-        let evm = match &config.evm_registrations {
-            Some(registrations) => Some(EvmRegistrations {
+        let evm = match config.evm_registrations {
+            Some(inputs) => Some(EvmRegistrations {
                 matcher: matching::EvmMatcher::new(
-                    registrations,
+                    &inputs,
                     &config.contract_register_indexes,
                     address_store,
                 )
                 .map_err(to_napi)?,
-                decoder: decode::evm::EvmDecoder::new(registrations, config.should_checksum)
+                decoder: decode::evm::EvmDecoder::new(&inputs, config.should_checksum)
                     .map_err(to_napi)?,
+                inputs,
             }),
             None => None,
         };
-        let fuel = match &config.fuel_registrations {
-            Some(registrations) => Some(
-                matching_fuel::FuelMatcher::new(
-                    registrations,
+        let fuel = match config.fuel_registrations {
+            Some(inputs) => Some(FuelRegistrations {
+                matcher: matching_fuel::FuelMatcher::new(
+                    &inputs,
                     &config.contract_register_indexes,
                     address_store,
                 )
                 .map_err(to_napi)?,
-            ),
+                inputs,
+            }),
             None => None,
         };
         let mut contract_register = Vec::new();
@@ -384,10 +431,12 @@ impl ChainBuffer {
             shared: Arc::new(Shared {
                 ecosystem,
                 should_checksum: config.should_checksum,
+                store: address_store.handle(),
                 evm,
                 svm,
                 fuel,
                 schedule: Schedule::new(&config.block_handlers).map_err(to_napi)?,
+                block_handlers: config.block_handlers,
                 transaction_masks: config.transaction_masks.iter().map(|m| *m as u64).collect(),
                 event_block_masks: config.event_block_masks.iter().map(|m| *m as u64).collect(),
                 contract_register,

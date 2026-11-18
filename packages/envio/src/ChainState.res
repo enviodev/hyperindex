@@ -352,7 +352,7 @@ let makeInternal = (
     }
   })
 
-  // Before the sources: the RPC source reads it to fetch only what it lacks.
+  // Before the sources, which take their compiled registrations from it.
   let chainBuffer = ChainBuffer.makeForChain(
     ~ecosystem=config.ecosystem.name,
     ~onEventRegistrations,
@@ -364,8 +364,6 @@ let makeInternal = (
   // Create sources lazily here - this is where API token validation happens
   let sources = ChainSources.make(
     ~chainConfig,
-    ~onEventRegistrations,
-    ~onBlockRegistrations,
     ~addressStore,
     ~lowercaseAddresses,
     ~chainBuffer,

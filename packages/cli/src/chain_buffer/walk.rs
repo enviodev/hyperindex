@@ -11,7 +11,7 @@ use super::evm::{self, log_column, LogView};
 use super::fuel::ReceiptView;
 use super::svm::InstructionView;
 use super::table::{make_key, RowRef, Snapshot};
-use super::{decode, Ecosystem, Shared};
+use super::{decode, Ecosystem, FuelRegistrations, Shared};
 use crate::evm_hypersync_source::types::EvmParams;
 use crate::js_value::JsTape;
 
@@ -316,7 +316,7 @@ impl Walker<'_> {
     }
 
     fn push_receipt(&mut self, row: &RowRef, contract_register_only: bool) {
-        let Some(fuel) = &self.shared.fuel else {
+        let Some(FuelRegistrations { matcher: fuel, .. }) = &self.shared.fuel else {
             return;
         };
         let Some(receipt) = ReceiptView::of_row(row) else {

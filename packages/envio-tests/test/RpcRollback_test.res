@@ -128,7 +128,6 @@ let makeSource = (~url, ~chainBuffer) =>
   RpcSource.make({
     url,
     chainId,
-    onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({
       initialBlockInterval: 10,
@@ -138,10 +137,9 @@ let makeSource = (~url, ~chainBuffer) =>
       queryTimeoutMillis: 5_000,
     }),
     lowercaseAddresses: true,
-    addressStore: sourceAddressStore,
-    chainBuffer,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer,
   })
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
@@ -210,7 +208,10 @@ describe("Rollback against a real RPC server", () => {
   Async.it("detects a reorg from fetched hashes and finds the rollback depth", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let chainBuffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
+    let chainBuffer = TestChainBuffer.forChain(
+      ~onEventRegistrations=[registration],
+      ~addressStore=sourceAddressStore,
+    )
     let source = makeSource(~url=mock.url, ~chainBuffer)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~chainBuffer)
 
@@ -262,7 +263,10 @@ describe("Rollback against a real RPC server", () => {
   Async.it("searches past the blocks whose stored hashes the fork invalidated", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let chainBuffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
+    let chainBuffer = TestChainBuffer.forChain(
+      ~onEventRegistrations=[registration],
+      ~addressStore=sourceAddressStore,
+    )
     let source = makeSource(~url=mock.url, ~chainBuffer)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~chainBuffer)
 
@@ -294,7 +298,10 @@ describe("Rollback against a real RPC server", () => {
   Async.it("detects a reorg on a block it served from the store", async t => {
     let state = {height: 110, forkFrom: 999}
     let mock = await startServer(state)
-    let chainBuffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
+    let chainBuffer = TestChainBuffer.forChain(
+      ~onEventRegistrations=[registration],
+      ~addressStore=sourceAddressStore,
+    )
     let source = makeSource(~url=mock.url, ~chainBuffer)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~chainBuffer)
 

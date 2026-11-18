@@ -78,14 +78,12 @@ let makeSource = (
   let options: RpcSource.options = {
     url,
     chainId,
-    onEventRegistrations: [registration],
     sourceFor: Sync,
     syncConfig,
     lowercaseAddresses,
-    addressStore,
-    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(~onEventRegistrations=[registration], ~addressStore),
   }
   (RpcSource.make(options), addressStore)
 }
@@ -593,14 +591,15 @@ describe("RPC source public contract", () => {
         let options: RpcSource.options = {
           url: mock.url,
           chainId,
-          onEventRegistrations: [registration],
           sourceFor: Sync,
           syncConfig: defaultSyncConfig,
           lowercaseAddresses: true,
-          addressStore,
-          chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
           maxAddressesPerRequest: Env.maxAddrInPartition,
           logger: Logger.makeInMemory(),
+          chainBuffer: TestChainBuffer.forChain(
+            ~onEventRegistrations=[registration],
+            ~addressStore,
+          ),
         }
         let source = RpcSource.make(options)
         let call = () =>
@@ -856,14 +855,15 @@ describe("RPC source public contract", () => {
         let options: RpcSource.options = {
           url: mock.url,
           chainId,
-          onEventRegistrations: [eventA, eventB],
           sourceFor: Sync,
           syncConfig,
           lowercaseAddresses: true,
-          addressStore,
-          chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
           maxAddressesPerRequest: Env.maxAddrInPartition,
           logger: Logger.makeInMemory(),
+          chainBuffer: TestChainBuffer.forChain(
+            ~onEventRegistrations=[eventA, eventB],
+            ~addressStore,
+          ),
         }
         let source = RpcSource.make(options)
         switch await RpcSourcePins.capture(
@@ -966,14 +966,15 @@ describe("RPC source public contract", () => {
           let source = RpcSource.make({
             url: mock.url,
             chainId,
-            onEventRegistrations: [clientFiltered, wildcard],
             sourceFor: Sync,
             syncConfig,
             lowercaseAddresses: true,
-            addressStore,
-            chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
             maxAddressesPerRequest: Env.maxAddrInPartition,
             logger: Logger.makeInMemory(),
+            chainBuffer: TestChainBuffer.forChain(
+              ~onEventRegistrations=[clientFiltered, wildcard],
+              ~addressStore,
+            ),
           })
           await RpcSourcePins.capture(
             () =>

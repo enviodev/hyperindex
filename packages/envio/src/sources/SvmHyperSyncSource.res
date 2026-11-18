@@ -4,42 +4,21 @@ type options = {
   chainId: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
-  onEventRegistrations: array<Internal.svmOnEventRegistration>,
-  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   clientTimeoutMillis: int,
-  // The chain's address index; the client reads it while matching.
-  addressStore: AddressStore.t,
+  // The chain's compiled registrations, read by the client while matching.
+  chainBuffer: ChainBuffer.t,
 }
 
-let make = (
-  {
-    chainId,
-    endpointUrl,
-    apiToken,
-    onEventRegistrations,
-    ?onBlockRegistrations,
-    clientTimeoutMillis,
-    addressStore,
-  }: options,
-): t => {
+let make = ({chainId, endpointUrl, apiToken, clientTimeoutMillis, chainBuffer}: options): t => {
   let name = "SvmHyperSync"
-  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   let apiToken = apiToken->HyperSync.requireApiToken
 
-  // The whole per-(instruction, chain) registration set crosses the boundary
-  // once at construction; the client derives instruction selections, field
-  // selections, Borsh decoders, and the matching index from it.
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
-    ~onBlockRegistrations,
-    ~contractRegisterIndexes=onEventRegistrations
-    ->(Utils.magic: array<Internal.svmOnEventRegistration> => array<Internal.onEventRegistration>)
-    ->ChainBuffer.contractRegisterIndexesOf,
-    ~addressStore,
+    ~chainBuffer,
   )
 
   let getItemsOrThrow = async (

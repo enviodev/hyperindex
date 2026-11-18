@@ -25,21 +25,19 @@ use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
 use hypersync_solana_net_types::query::SolanaQuery;
 
-use crate::address_store::AddressStore;
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::BlockRegistrations;
 use crate::chain_buffer::matching_svm::SvmMatcher;
 use crate::chain_buffer::page::{Page, PageData};
-use crate::chain_buffer::schedule::BlockHandlerInput;
 use crate::chain_buffer::svm::{
     push_block, push_instruction, push_transaction, InstructionRow, InstructionView, SvmBlockField,
     SvmTransactionCounts,
 };
-use crate::chain_buffer::Ecosystem;
+use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared};
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use config::SvmClientConfig;
 use query::SvmQuery;
-use selection::{SelectionBuilder, SvmProgramInput};
+use selection::SelectionBuilder;
 
 /// The marker the client leaves in the error chain on a 429. It exposes no
 /// typed variant for a rate limit — the 429 is folded into an `anyhow` context
@@ -120,7 +118,7 @@ pub struct SvmHyperSyncClient {
     selection_builder: SelectionBuilder,
     /// The chain's registrations, matched against what a query returns so a
     /// page keeps only the instructions some registration takes.
-    matcher: SvmMatcher,
+    chain: Arc<Shared>,
     block_registrations: BlockRegistrations,
 }
 
@@ -130,29 +128,24 @@ impl SvmHyperSyncClient {
     pub fn from_config(
         cfg: SvmClientConfig,
         user_agent: String,
-        programs: Vec<SvmProgramInput>,
-        block_registrations: Vec<BlockHandlerInput>,
-        contract_register_indexes: Vec<i64>,
-        address_store: &AddressStore,
+        buffer: &ChainBuffer,
     ) -> napi::Result<SvmHyperSyncClient> {
-        let selection_builder = {
-            let handle = address_store.handle();
-            let store = handle.read().unwrap();
-            SelectionBuilder::from_programs(&programs, &store)
-                .context("build selection builder")
-                .map_err(map_err)?
-        };
-        let matcher = SvmMatcher::new(&programs, &contract_register_indexes, address_store)
-            .context("build matcher")
-            .map_err(map_err)?;
+        let chain = buffer.shared();
+        let selection_builder = SelectionBuilder::from_programs(
+            &chain.svm().map_err(map_err)?.programs,
+            &chain.store.read().unwrap(),
+        )
+        .context("build selection builder")
+        .map_err(map_err)?;
         let inner = hypersync_client_solana::Client::new_with_agent(cfg.into(), user_agent)
             .context("build solana client")
             .map_err(map_err)?;
         Ok(SvmHyperSyncClient {
             inner: Arc::new(inner),
             selection_builder,
-            matcher,
-            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
+            block_registrations: BlockRegistrations::new(&chain.fetched_block_handlers())
+                .map_err(map_err)?,
+            chain,
         })
     }
 
@@ -329,11 +322,12 @@ impl SvmHyperSyncClient {
         }
 
         let handler_slots = block_selection.blocks_run_on(from_slot..resp.next_slot);
+        let matcher = &self.chain.svm().map_err(map_err)?.matcher;
         let page = tokio::task::block_in_place(|| {
             build_page(
                 &mut resp,
                 &built,
-                &self.matcher,
+                matcher,
                 &handler_slots,
                 transaction_counts.as_ref(),
             )
@@ -594,12 +588,14 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 mod tests {
     use super::*;
     use crate::address_store::test_support::svm_store;
+    use crate::address_store::AddressStore;
     use crate::chain_buffer::svm::{block_columns, transaction_columns, SvmTxField};
     use crate::chain_buffer::table::make_key;
     use crate::chain_buffer::walk::Item;
     use crate::chain_buffer::{ChainBuffer, ChainBufferConfig};
     use crate::js_value::test_value::JsValue;
     use query::InstructionSelection;
+    use selection::SvmProgramInput;
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
@@ -614,10 +610,21 @@ mod tests {
                 ..Default::default()
             },
             "hyperindex-test".into(),
-            vec![],
-            vec![],
-            vec![],
-            &svm_store(&[]),
+            &ChainBuffer::make(
+                crate::chain_buffer::ChainBufferConfig {
+                    ecosystem: "svm".into(),
+                    should_checksum: false,
+                    evm_registrations: None,
+                    svm_registrations: Some(vec![]),
+                    fuel_registrations: None,
+                    contract_register_indexes: vec![],
+                    block_handlers: vec![],
+                    transaction_masks: vec![],
+                    event_block_masks: vec![],
+                },
+                &svm_store(&[]),
+            )
+            .expect("build buffer"),
         )
         .expect("build client");
 

@@ -301,11 +301,8 @@ external classNew: (
   Core.evmHyperSyncClientCtor,
   cfg,
   string,
-  array<Registration.input>,
-  array<BlockItem.blockHandlerInput>,
-  // The registrations with a contractRegister, whose events a page reports.
-  array<int>,
-  AddressStore.t,
+  // The chain's compiled registrations, block handlers and addresses.
+  BufferPage.buffer,
 ) => t = "new"
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
@@ -324,8 +321,7 @@ let make = (
   ~url,
   ~apiToken,
   ~httpReqTimeoutMillis,
-  ~eventRegistrations,
-  ~onBlockRegistrations=[],
+  ~chainBuffer,
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
@@ -333,8 +329,6 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
   ~logLevel=#info,
-  ~contractRegisterIndexes=[],
-  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().evmHyperSyncClient->classNew(
@@ -351,9 +345,6 @@ let make = (
       logLevel: logLevelToString(logLevel),
     },
     `hyperindex/${envioVersion}`,
-    eventRegistrations,
-    onBlockRegistrations->BlockItem.toFetchedBlockHandlerInputs,
-    contractRegisterIndexes,
-    addressStore,
+    chainBuffer,
   )
 }

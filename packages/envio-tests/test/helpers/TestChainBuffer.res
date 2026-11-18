@@ -125,3 +125,37 @@ let decodedBuffer = (
     },
     TestAddresses.storeOf(~contracts=[], ~addresses=[]),
   )
+
+// A chain's buffer over these registrations and addresses, built the way
+// `ChainState` builds it: what a source reads its registrations from.
+let forChain = (
+  ~ecosystem=Ecosystem.Evm,
+  ~onEventRegistrations: array<'registration>,
+  ~onBlockRegistrations=[],
+  ~addressStore,
+  ~shouldChecksum=false,
+) =>
+  ChainBuffer.makeForChain(
+    ~ecosystem,
+    ~onEventRegistrations=onEventRegistrations->(
+      Utils.magic: array<'registration> => array<Internal.onEventRegistration>
+    ),
+    ~onBlockRegistrations,
+    ~shouldChecksum,
+    ~addressStore,
+  )
+
+// A buffer over registrations already in the client's input shape.
+let forInputs = (~evmRegistrations, ~addressStore) =>
+  Core.getAddon().chainBuffer->ChainBuffer.make(
+    {
+      ecosystem: "evm",
+      shouldChecksum: false,
+      evmRegistrations,
+      contractRegisterIndexes: [],
+      blockHandlers: [],
+      transactionMasks: [],
+      eventBlockMasks: [],
+    },
+    addressStore,
+  )

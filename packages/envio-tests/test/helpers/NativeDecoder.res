@@ -71,10 +71,8 @@ let decodeLogs = async (
       }
       let client = EvmRpcClient.make(
         ~url=mock.url,
-        ~contractRegisterIndexes=[],
         ~syncConfig=EvmChain.getSyncConfig({}),
-        ~eventRegistrations,
-        ~addressStore,
+        ~chainBuffer=TestChainBuffer.forInputs(~evmRegistrations=eventRegistrations, ~addressStore),
         ~maxAddressesPerRequest=Env.maxAddrInPartition,
         ~logger=Logger.makeInMemory(),
       )

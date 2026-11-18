@@ -1,19 +1,18 @@
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
-use crate::address_store::{AddressSet, AddressStore};
+use crate::address_store::AddressSet;
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_selection::BlockRegistrations;
-use crate::chain_buffer::schedule::BlockHandlerInput;
 use crate::chain_buffer::{
     self,
     evm::LogView,
     matching::EvmMatcher,
     page::{Page, PageData},
-    ChainBuffer, Ecosystem,
+    ChainBuffer, Ecosystem, Shared,
 };
 use crate::evm_rpc_source;
 use crate::request_stats::{rate_limited_err, RequestStat};
@@ -27,7 +26,7 @@ pub(crate) mod types;
 use config::ClientConfig;
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
-use types::{map_i64, Block, OnEventRegistrationInput, RollbackGuard};
+use types::{map_i64, Block, RollbackGuard};
 
 static LOGGER_INIT: Once = Once::new();
 
@@ -55,7 +54,7 @@ fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
 pub struct EvmHyperSyncClient {
     inner: hypersync_client::Client,
     enable_checksum_addresses: bool,
-    matcher: EvmMatcher,
+    chain: Arc<Shared>,
     selection_builder: SelectionBuilder,
     block_registrations: BlockRegistrations,
 }
@@ -84,27 +83,17 @@ impl EvmHyperSyncClient {
     pub fn new(
         cfg: ClientConfig,
         user_agent: String,
-        event_registrations: Vec<OnEventRegistrationInput>,
-        block_registrations: Vec<BlockHandlerInput>,
-        contract_register_indexes: Vec<i64>,
-        address_store: &AddressStore,
+        buffer: &ChainBuffer,
     ) -> napi::Result<EvmHyperSyncClient> {
         init_logger(cfg.log_level.as_deref());
-        let block_registrations = BlockRegistrations::new(&block_registrations).map_err(map_err)?;
-
+        let chain = buffer.shared();
+        let block_registrations =
+            BlockRegistrations::new(&chain.fetched_block_handlers()).map_err(map_err)?;
         let enable_checksum_addresses = cfg.enable_checksum_addresses.unwrap_or_default();
-
-        let matcher = EvmMatcher::new(
-            &event_registrations,
-            &contract_register_indexes,
-            address_store,
-        )
-        .context("build matcher")
-        .map_err(map_err)?;
-
-        let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
-            .context("build selection builder")
-            .map_err(map_err)?;
+        let selection_builder =
+            SelectionBuilder::from_registrations(&chain.evm().map_err(map_err)?.inputs)
+                .context("build selection builder")
+                .map_err(map_err)?;
 
         let inner = hypersync_client::Client::new_with_agent(cfg.into(), user_agent)
             .context("build client")
@@ -113,7 +102,7 @@ impl EvmHyperSyncClient {
         Ok(EvmHyperSyncClient {
             inner,
             enable_checksum_addresses,
-            matcher,
+            chain,
             selection_builder,
             block_registrations,
         })
@@ -313,12 +302,13 @@ impl EvmHyperSyncClient {
         // The range the page covered: `include_all_blocks` leaves no gaps in it.
         let handler_blocks =
             block_selection.blocks_run_on(block_query.from_block..(next_block as u64));
+        let matcher = &self.chain.evm().map_err(map_err)?.matcher;
         let mut page = tokio::task::block_in_place(|| {
             process_response(
                 response.data.blocks,
                 response.data.transactions,
                 response.data.logs,
-                &self.matcher,
+                matcher,
                 &validated_block_fields,
                 &requested_transaction_fields,
                 &handler_blocks,
@@ -794,6 +784,7 @@ mod tests {
     use super::*;
     use crate::address_store::test_support::evm_store;
     use crate::chain_buffer::evm::{EvmBlockField, EvmTxField};
+    use crate::chain_buffer::schedule::BlockHandlerInput;
     use crate::chain_buffer::table::make_key;
     use hypersync_client::simple_types;
 
@@ -1275,20 +1266,6 @@ mod tests {
             interval: 10,
             block_field_mask: Some(hash_handler_mask() as f64),
         };
-        let client = EvmHyperSyncClient::new(
-            ClientConfig {
-                url: server.url(),
-                api_token: "00000000-0000-0000-0000-000000000000".to_string(),
-                serialization_format: Some(config::SerializationFormat::Json),
-                ..Default::default()
-            },
-            "test".to_string(),
-            vec![],
-            vec![handler],
-            vec![],
-            &store,
-        )
-        .unwrap();
         let buffer = ChainBuffer::make(
             chain_buffer::ChainBufferConfig {
                 ecosystem: "evm".to_string(),
@@ -1297,11 +1274,22 @@ mod tests {
                 svm_registrations: None,
                 fuel_registrations: None,
                 contract_register_indexes: vec![],
-                block_handlers: vec![],
+                block_handlers: vec![handler],
                 transaction_masks: vec![],
                 event_block_masks: vec![],
             },
             &store,
+        )
+        .unwrap();
+        let client = EvmHyperSyncClient::new(
+            ClientConfig {
+                url: server.url(),
+                api_token: "00000000-0000-0000-0000-000000000000".to_string(),
+                serialization_format: Some(config::SerializationFormat::Json),
+                ..Default::default()
+            },
+            "test".to_string(),
+            &buffer,
         )
         .unwrap();
         let mut fetched = PageData::new(Ecosystem::Evm);

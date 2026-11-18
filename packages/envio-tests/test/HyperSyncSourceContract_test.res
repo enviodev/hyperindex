@@ -116,16 +116,17 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
-    onEventRegistrations: onEventRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
     lowercaseAddresses,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
-    addressStore,
-    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=onEventRegistrations(),
+      ~addressStore,
+    ),
   })
   (source, addressStore->AddressStore.makeSet(~contractName="Token"))
 }

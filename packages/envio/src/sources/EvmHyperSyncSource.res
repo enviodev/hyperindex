@@ -3,18 +3,14 @@ open Source
 type options = {
   chainId: ChainId.t,
   endpointUrl: string,
-  // The chain's registrations, indexed by their sequential `index`.
-  onEventRegistrations: array<Internal.evmOnEventRegistration>,
-  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   apiToken: option<string>,
   clientTimeoutMillis: int,
   lowercaseAddresses: bool,
   serializationFormat: HyperSyncClient.serializationFormat,
   enableQueryCaching: bool,
   logLevel: HyperSyncClient.logLevel,
-  // The chain's address index; the client reads it while matching.
-  addressStore: AddressStore.t,
-  // Read by the client while planning, to fetch only blocks it lacks.
+  // The chain's compiled registrations, read by the client while matching and
+  // planning, to fetch only blocks it lacks.
   chainBuffer: ChainBuffer.t,
   logger: Logger.t,
 }
@@ -23,21 +19,17 @@ let make = (
   {
     chainId,
     endpointUrl,
-    onEventRegistrations,
-    ?onBlockRegistrations,
     apiToken,
     clientTimeoutMillis,
     lowercaseAddresses,
     serializationFormat,
     enableQueryCaching,
     logLevel,
-    addressStore,
     chainBuffer,
     logger,
   }: options,
 ): t => {
   let name = "HyperSync"
-  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   // Per source, so one rejected token is reported once rather than on every
   // height retry for the life of the process.
@@ -49,16 +41,11 @@ let make = (
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
-    ~onBlockRegistrations,
+    ~chainBuffer,
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
     ~logLevel,
-    ~contractRegisterIndexes=onEventRegistrations
-    ->(Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>)
-    ->ChainBuffer.contractRegisterIndexesOf,
-    ~addressStore,
   ) {
   | client => client
   | exception exn =>

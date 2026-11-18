@@ -30,8 +30,3 @@ let toBlockHandlerInputs = (onBlockRegistrations: array<Internal.onBlockRegistra
     interval,
     blockFieldMask,
   })
-
-// The chain's block handlers a source fetches blocks for: those selecting
-// fields, the rest being generated without one.
-let toFetchedBlockHandlerInputs = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
-  onBlockRegistrations->Array.filter(isFetched)->toBlockHandlerInputs

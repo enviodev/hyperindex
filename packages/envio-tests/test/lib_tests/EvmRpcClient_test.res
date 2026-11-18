@@ -12,15 +12,16 @@ let makeClient = (
 ) =>
   EvmRpcClient.make(
     ~url,
-    ~contractRegisterIndexes=[],
     ~syncConfig=switch queryTimeoutMillis {
     | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
     | None => syncConfig
     },
     ~headers?,
     ~maxConcurrentRequests?,
-    ~eventRegistrations?,
-    ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
+    ~chainBuffer=TestChainBuffer.forInputs(
+      ~evmRegistrations=eventRegistrations->Option.getOr([]),
+      ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
+    ),
     ~maxAddressesPerRequest=Env.maxAddrInPartition,
     ~logger=Logger.makeInMemory(),
   )

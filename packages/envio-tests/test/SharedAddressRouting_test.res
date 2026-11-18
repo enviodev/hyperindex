@@ -73,18 +73,19 @@ let makeSource = (~url) => {
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
-    onEventRegistrations: onEventRegistrations()->(
-      Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-    ),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
     lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
-    addressStore,
-    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=onEventRegistrations()->(
+        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
+      ),
+      ~addressStore,
+    ),
   })
   let addressSet =
     addressStore

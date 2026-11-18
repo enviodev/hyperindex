@@ -179,11 +179,8 @@ external classFromConfig: (
   Core.svmHyperSyncClientCtor,
   cfg,
   string,
-  array<Registration.program>,
-  array<BlockItem.blockHandlerInput>,
-  // The registrations with a contractRegister, whose events a page reports.
-  array<int>,
-  AddressStore.t,
+  // The chain's compiled registrations, block handlers and addresses.
+  BufferPage.buffer,
 ) => t = "fromConfig"
 
 let make = (
@@ -192,10 +189,7 @@ let make = (
   ~httpReqTimeoutMillis=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
-  ~programs=[],
-  ~onBlockRegistrations,
-  ~contractRegisterIndexes,
-  ~addressStore,
+  ~chainBuffer,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
@@ -207,9 +201,6 @@ let make = (
       ?retryCeilingMs,
     },
     `hyperindex/${envioVersion}`,
-    programs,
-    onBlockRegistrations->BlockItem.toFetchedBlockHandlerInputs,
-    contractRegisterIndexes,
-    addressStore,
+    chainBuffer,
   )
 }

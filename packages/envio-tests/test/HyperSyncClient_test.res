@@ -54,9 +54,8 @@ let makeClient = (~eventRegistrations) =>
     ~url="https://eth.hypersync.xyz",
     ~apiToken=testApiToken,
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
-    ~eventRegistrations,
+    ~chainBuffer=TestChainBuffer.forInputs(~evmRegistrations=eventRegistrations, ~addressStore),
     ~enableChecksumAddresses=false,
-    ~addressStore,
   )
 
 let fromBlock = 23_500_000
@@ -178,9 +177,11 @@ describe("HyperSync client with corrupted token", () => {
       ~url="https://eth.hypersync.xyz",
       ~apiToken="this-is-a-corrupted-token",
       ~httpReqTimeoutMillis=5000,
-      ~eventRegistrations=[transferEventRegistration],
+      ~chainBuffer=TestChainBuffer.forInputs(
+        ~evmRegistrations=[transferEventRegistration],
+        ~addressStore,
+      ),
       ~enableChecksumAddresses=false,
-      ~addressStore,
     )
 
   Async.it("getHeight doesn't validate the token", async t => {

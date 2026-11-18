@@ -85,20 +85,16 @@ external classNew: (
   Core.fuelHyperSyncClientCtor,
   cfg,
   ~userAgent: string,
-  array<Registration.input>,
-  // The registrations with a contractRegister, whose events a page reports.
-  array<int>,
-  AddressStore.t,
+  // The chain's compiled registrations and addresses.
+  BufferPage.buffer,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations, ~contractRegisterIndexes, ~addressStore) => {
+let make = (cfg: cfg, ~chainBuffer) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
-    eventRegistrations,
-    contractRegisterIndexes,
-    addressStore,
+    chainBuffer,
   )
 }
 

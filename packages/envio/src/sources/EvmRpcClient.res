@@ -74,23 +74,18 @@ type t = {
 external classNew: (
   Core.evmRpcClientCtor,
   cfg,
-  array<HyperSyncClient.Registration.input>,
-  array<BlockItem.blockHandlerInput>,
-  ~contractRegisterIndexes: array<int>,
-  ~addressStore: AddressStore.t,
+  // The chain's compiled registrations, block handlers and addresses.
+  BufferPage.buffer,
   Logger.native,
   array<string>,
 ) => t = "new"
 
 let make = (
   ~url,
-  ~contractRegisterIndexes,
   ~syncConfig: Config.sourceSync,
   ~maxConcurrentRequests=?,
   ~headers=?,
-  ~eventRegistrations=[],
-  ~onBlockRegistrations=[],
-  ~addressStore,
+  ~chainBuffer,
   ~maxAddressesPerRequest,
   ~logger: Logger.t,
 ) =>
@@ -107,10 +102,7 @@ let make = (
       queryTimeoutMillis: syncConfig.queryTimeoutMillis,
       maxAddressesPerRequest,
     },
-    eventRegistrations,
-    onBlockRegistrations->BlockItem.toFetchedBlockHandlerInputs,
-    ~contractRegisterIndexes,
-    ~addressStore,
+    chainBuffer,
     logger.output.native,
     logger.boundFieldsJson,
   )

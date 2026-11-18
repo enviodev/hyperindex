@@ -102,17 +102,18 @@ let makeHyperSyncSource = (~url) => {
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
-    onEventRegistrations: [],
-    onBlockRegistrations: onBlockRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
     lowercaseAddresses: true,
     serializationFormat: Json,
     enableQueryCaching: false,
     logLevel: #error,
-    addressStore,
-    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[],
+      ~onBlockRegistrations=onBlockRegistrations(),
+      ~addressStore,
+    ),
   })
   (source, addressStore->AddressStore.emptySet)
 }
@@ -173,8 +174,6 @@ let makeRpcSource = (~url) => {
   let source = RpcSource.make({
     url,
     chainId: 1->ChainId.fromInt,
-    onEventRegistrations: [],
-    onBlockRegistrations: onBlockRegistrations(),
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({
       initialBlockInterval: 100,
@@ -183,10 +182,13 @@ let makeRpcSource = (~url) => {
       queryTimeoutMillis: 1_000,
     }),
     lowercaseAddresses: true,
-    addressStore,
-    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[],
+      ~onBlockRegistrations=onBlockRegistrations(),
+      ~addressStore,
+    ),
   })
   (source, addressStore->AddressStore.emptySet)
 }

@@ -3,8 +3,6 @@
 // sources without a dependency cycle.
 let make = (
   ~chainConfig: Config.chain,
-  ~onEventRegistrations: array<Internal.onEventRegistration>,
-  ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
   ~addressStore: AddressStore.t,
   ~lowercaseAddresses: bool,
   ~chainBuffer: ChainBuffer.t,
@@ -28,14 +26,9 @@ let make = (
     })
     EvmChain.makeSources(
       ~chainId,
-      ~onEventRegistrations=onEventRegistrations->(
-        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-      ),
-      ~onBlockRegistrations,
       ~hyperSync=hypersync,
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
-      ~addressStore,
       ~chainBuffer,
       ~logger,
       ~maxAddressesPerRequest,
@@ -45,8 +38,7 @@ let make = (
         chainId,
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
-        onEventRegistrations,
-        addressStore,
+        chainBuffer,
         logger,
       }),
     ]
@@ -55,12 +47,8 @@ let make = (
         chainId,
         endpointUrl: hypersync,
         apiToken: Env.envioApiToken,
-        onEventRegistrations: onEventRegistrations->(
-          Utils.magic: array<Internal.onEventRegistration> => array<Internal.svmOnEventRegistration>
-        ),
-        onBlockRegistrations,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-        addressStore,
+        chainBuffer,
       }),
     ]
   | Config.SimulateSourceConfig({items, getBlock, endBlock, ?page}) => [

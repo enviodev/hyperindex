@@ -5,14 +5,10 @@ type options = {
   syncConfig: Config.sourceSync,
   url: string,
   chainId: ChainId.t,
-  // The chain's registrations, indexed by their sequential `index`.
-  onEventRegistrations: array<Internal.evmOnEventRegistration>,
-  onBlockRegistrations?: array<Internal.onBlockRegistration>,
   lowercaseAddresses: bool,
-  // The chain's address index; the client reads it while matching.
-  addressStore: AddressStore.t,
-  // Read by the client while planning, to fetch only what it lacks; the pages
-  // it returns are separate, and the caller merges them.
+  // The chain's compiled registrations, read by the client while matching and
+  // planning, to fetch only what it lacks; the pages it returns are separate,
+  // and the caller merges them.
   chainBuffer: ChainBuffer.t,
   ws?: string,
   headers?: dict<string>,
@@ -28,10 +24,7 @@ let make = (
     syncConfig,
     url,
     chainId,
-    onEventRegistrations,
-    ?onBlockRegistrations,
     lowercaseAddresses: _,
-    addressStore,
     chainBuffer,
     ?ws,
     ?headers,
@@ -47,18 +40,12 @@ let make = (
   | Some(host) => host
   }
   let name = `RPC (${urlHost})`
-  let onBlockRegistrations = onBlockRegistrations->Option.getOr([])
 
   let rpcClient = EvmRpcClient.make(
     ~url,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
-    ~onBlockRegistrations,
-    ~contractRegisterIndexes=onEventRegistrations
-    ->(Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>)
-    ->ChainBuffer.contractRegisterIndexesOf,
     ~syncConfig,
     ~headers?,
-    ~addressStore,
+    ~chainBuffer,
     ~maxAddressesPerRequest,
     ~logger,
   )

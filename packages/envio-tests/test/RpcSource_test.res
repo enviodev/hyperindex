@@ -28,19 +28,17 @@ let makeSource = (
   ~addressStore=TestAddresses.makeStore(),
   ~syncConfig=EvmChain.getSyncConfig({}),
   ~lowercaseAddresses=false,
-  ~chainBuffer=TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
+  ~chainBuffer=TestChainBuffer.forChain(~onEventRegistrations, ~addressStore),
 ) => {
   RpcSource.make({
     url,
     chainId,
-    onEventRegistrations,
     sourceFor: Sync,
     syncConfig,
     lowercaseAddresses,
-    addressStore,
-    chainBuffer,
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer,
   })
 }
 
@@ -1027,15 +1025,16 @@ describe("RpcSource - height subscription", () => {
     RpcSource.make({
       url,
       chainId,
-      onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({pollingInterval: pollingInterval}),
       lowercaseAddresses: false,
-      addressStore: TestAddresses.makeStore(),
-      chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
       ?ws,
       maxAddressesPerRequest: Env.maxAddrInPartition,
       logger: Logger.makeInMemory(),
+      chainBuffer: TestChainBuffer.forChain(
+        ~onEventRegistrations=[],
+        ~addressStore=TestAddresses.makeStore(),
+      ),
     })
   }
 

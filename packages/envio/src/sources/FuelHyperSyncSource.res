@@ -4,16 +4,12 @@ type options = {
   chainId: ChainId.t,
   endpointUrl: string,
   apiToken: option<string>,
-  // The chain's registrations, indexed by their sequential `index`.
-  onEventRegistrations: array<Internal.onEventRegistration>,
-  // The chain's address index; the client reads it while matching.
-  addressStore: AddressStore.t,
+  // The chain's compiled registrations, read by the client while matching.
+  chainBuffer: ChainBuffer.t,
   logger: Logger.t,
 }
 
-let make = (
-  {chainId, endpointUrl, apiToken, onEventRegistrations, addressStore, logger}: options,
-): t => {
+let make = ({chainId, endpointUrl, apiToken, chainBuffer, logger}: options): t => {
   let name = "HyperFuel"
 
   // Per source, so one rejected token is reported once rather than on every
@@ -21,14 +17,7 @@ let make = (
   let unauthorizedWarned = ref(false)
   let apiToken = apiToken->HyperSync.requireApiToken
 
-  let client = switch FuelHyperSyncClient.make(
-    {url: endpointUrl, apiToken},
-    ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
-    ~contractRegisterIndexes=onEventRegistrations->ChainBuffer.contractRegisterIndexesOf,
-    ~addressStore,
-  ) {
+  let client = switch FuelHyperSyncClient.make({url: endpointUrl, apiToken}, ~chainBuffer) {
   | client => client
   | exception exn =>
     exn->ErrorHandling.mkLogAndRaise(~logger, ~msg="Failed to instantiate the HyperFuel client")

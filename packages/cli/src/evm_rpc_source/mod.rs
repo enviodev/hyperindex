@@ -16,17 +16,14 @@ mod interval;
 mod logs;
 mod responses;
 
-use crate::address_store::{AddressSet, AddressStore};
+use crate::address_store::AddressSet;
 use crate::block_selection::{BlockRegistrations, BlockSelection};
 use crate::chain_buffer::evm::{log_column, LogView};
-use crate::chain_buffer::matching::EvmMatcher;
 use crate::chain_buffer::page::{Page, PageData};
-use crate::chain_buffer::schedule::BlockHandlerInput;
 use crate::chain_buffer::table::make_key;
-use crate::chain_buffer::{ChainBuffer, Ecosystem};
+use crate::chain_buffer::{ChainBuffer, Ecosystem, Shared};
 use crate::evm_hypersync_source::query::BlockField;
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
-use crate::evm_hypersync_source::types::OnEventRegistrationInput;
 use crate::logger::{BoundLogger, Level, Logger};
 use crate::request_stats::RequestStat;
 use classify::{
@@ -289,7 +286,7 @@ pub struct BlockHashResult {
 #[napi]
 pub struct EvmRpcClient {
     inner: Arc<JsonRpcClient>,
-    matcher: Arc<EvmMatcher>,
+    chain: Arc<Shared>,
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     max_addresses_per_request: usize,
@@ -349,10 +346,7 @@ impl EvmRpcClient {
     #[napi(factory)]
     pub fn new(
         cfg: EvmRpcClientConfig,
-        event_registrations: Vec<OnEventRegistrationInput>,
-        block_registrations: Vec<BlockHandlerInput>,
-        contract_register_indexes: Vec<i64>,
-        address_store: &AddressStore,
+        buffer: &ChainBuffer,
         logger: &Logger,
         bound_fields_json: Vec<String>,
     ) -> napi::Result<EvmRpcClient> {
@@ -384,14 +378,9 @@ impl EvmRpcClient {
             cfg.headers,
         )
         .map_err(map_err)?;
-        let matcher = EvmMatcher::new(
-            &event_registrations,
-            &contract_register_indexes,
-            address_store,
-        )
-        .context("build matcher")
-        .map_err(map_err)?;
-        let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
+        let chain = buffer.shared();
+        let event_registrations = &chain.evm().map_err(map_err)?.inputs;
+        let selection_builder = SelectionBuilder::from_registrations(event_registrations)
             .context("build selection builder")
             .map_err(map_err)?;
         // 0.0 would collapse every shrink to the floor of 1 block and 1.0 would
@@ -439,7 +428,9 @@ impl EvmRpcClient {
                 });
         Ok(EvmRpcClient {
             inner: Arc::new(inner),
-            matcher: Arc::new(matcher),
+            block_registrations: BlockRegistrations::new(&chain.fetched_block_handlers())
+                .map_err(map_err)?,
+            chain,
             selection_builder,
             sync_config,
             max_addresses_per_request,
@@ -449,7 +440,6 @@ impl EvmRpcClient {
             registration_fields,
             block_read: BlockRead::for_chain(chain_fields.block_mask),
             chain_tx_mask: chain_fields.tx_mask,
-            block_registrations: BlockRegistrations::new(&block_registrations).map_err(map_err)?,
             warned_block_hash_refusal: AtomicBool::new(false),
             answered_block_hash_read: AtomicBool::new(false),
         })
@@ -732,7 +722,7 @@ impl EvmRpcClient {
         let headers = headers?;
         self.recheck_head_blocks(query, &checked_blocks, &headers, &mut logs)
             .await?;
-        let matched = Self::match_logs(logs.into_iter().flatten().collect(), self.matcher.clone())
+        let matched = Self::match_logs(logs.into_iter().flatten().collect(), self.chain.clone())
             .await
             .map_err(PageError::Logs)?;
 
@@ -1073,10 +1063,11 @@ impl EvmRpcClient {
 
     async fn match_logs(
         raw_logs: Vec<RawLog>,
-        matcher: Arc<EvmMatcher>,
+        chain: Arc<Shared>,
     ) -> Result<Vec<MatchedLog>, RpcError> {
         // Many logs, each a few compares; keep them off the libuv thread.
         tokio::task::spawn_blocking(move || {
+            let matcher = &chain.evm()?.matcher;
             let store = matcher.read_store();
             let mut matched = Vec::new();
             for raw in raw_logs {

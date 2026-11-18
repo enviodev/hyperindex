@@ -99,30 +99,32 @@ let makeHyperSyncSource = () =>
   EvmHyperSyncSource.make({
     chainId,
     endpointUrl: "https://eth.hypersync.xyz",
-    onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
     clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
     lowercaseAddresses: true,
     serializationFormat: Env.hypersyncClientSerializationFormat,
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
-    addressStore,
-    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[pairCreatedRegistration],
+      ~addressStore,
+    ),
   })
 
 let makeRpcSource = () =>
   RpcSource.make({
     url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
     chainId,
-    onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
     lowercaseAddresses: true,
-    addressStore,
-    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
+    chainBuffer: TestChainBuffer.forChain(
+      ~onEventRegistrations=[pairCreatedRegistration],
+      ~addressStore,
+    ),
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {

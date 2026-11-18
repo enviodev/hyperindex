@@ -19,7 +19,6 @@ let makeProbeSources = (chainConfig: Config.chain, ~logger, ~lowercaseAddresses)
   let addressStore = AddressStore.make(~ecosystem=chainConfig.ecosystem, ~contracts=[])
   ChainSources.make(
     ~chainConfig,
-    ~onEventRegistrations=[],
     ~addressStore,
     ~lowercaseAddresses,
     ~chainBuffer=ChainBuffer.makeForChain(
