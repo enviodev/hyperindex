@@ -74,6 +74,9 @@ type rec t = {
   getBatchWritePromise: unit => promise<unit>,
   getRollbackReadyPromise: unit => promise<unit>,
   waitUntilIdle: unit => promise<unit>,
+  // A contractRegister run is in flight: its handlers run off the clock, and
+  // the registrations it makes reach fetching only once it ends.
+  isRegisteringContracts: unit => bool,
   // Moves a virtual-time run's clock forward, firing every source timer due
   // on the way. Only a run on virtual time has a clock to move.
   advanceTime: int => promise<unit>,
@@ -613,6 +616,7 @@ let run = async (
     // wait below adds what else it needs settled.
     let isQuiet = () =>
       !(state->IndexerState.isProcessing) &&
+      !(state->IndexerState.isRegisteringContracts) &&
       state->IndexerState.writeFiber->Option.isNone &&
       storageCallsInFlight.contents === 0
 
@@ -686,6 +690,7 @@ let run = async (
         })
       },
       waitUntilIdle,
+      isRegisteringContracts: () => state->IndexerState.isRegisteringContracts,
       advanceTime: millis =>
         switch clock {
         | Some(clock) =>

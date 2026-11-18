@@ -71,7 +71,7 @@ let mockItem: SvmHyperSyncClient.Items.item = {
 
 // The real Rust client returns its routed items as a page; the mock's is empty,
 // and this test only checks the source hands it on untouched.
-let mockPage = EventStore.make()
+let mockPage = BufferPage.empty(~ecosystem=Svm)
 
 let capturedQueries: array<SvmHyperSyncClient.Items.query> = []
 let capturedPrograms: array<array<SvmHyperSyncClient.Registration.program>> = []
@@ -96,15 +96,10 @@ let makeMockClient = (): SvmHyperSyncClient.t => {
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
   getItems: (~query, ~addressSet as _) => {
     capturedQueries->Array.push(query)
-    // The real Rust client builds the stores from raw transactions/blocks; the
-    // mock returns empty pages (materialisation is covered by the Rust unit
+    // The real Rust client builds the page from raw transactions/blocks; the
+    // mock returns an empty one (materialisation is covered by the Rust unit
     // tests).
-    Promise.resolve((
-      {SvmHyperSyncClient.Items.nextSlot: slot + 1},
-      TransactionStore.make(~ecosystem=Ecosystem.Svm),
-      BlockStore.make(~ecosystem=Ecosystem.Svm),
-      mockPage,
-    ))
+    Promise.resolve(({SvmHyperSyncClient.Items.nextSlot: slot + 1}, mockPage))
   },
 }
 
@@ -209,7 +204,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
 
     t.expect({
       "item": item,
-      "forwardsClientPage": response.items === mockPage,
+      "forwardsClientPage": response.page === mockPage,
       "query": capturedQueries->Array.getUnsafe(0),
     }).toEqual({
       "forwardsClientPage": true,

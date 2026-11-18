@@ -180,36 +180,7 @@ describe("ChainState chain density seed (on resume)", () => {
 })
 
 describe("ChainState chain density EMA (per batch)", () => {
-  // applyBatchProgress doesn't read chainAfterBatch.fetchState, so any valid
-  // value works here — a fresh, minimal one, independent of the chain state
-  // under test.
-  let dummyFetchState = () =>
-    TestFetchState.make(
-      ~onNotice=ignore,
-      ~onEventRegistrations=[],
-      ~addressStore=TestAddresses.makeStore(),
-      ~addressRows=AddressRows.emptySeedRows(),
-      ~startBlock=0,
-      ~endBlock=None,
-      ~maxAddrInPartition=1,
-      ~maxOnBlockBufferSize=10,
-      ~chainId,
-      ~knownHeight=0,
-      ~onBlockRegistrations=[
-        {
-          Internal.index: 0,
-          name: "dummy",
-          chainId,
-          startBlock: None,
-          endBlock: None,
-          interval: 1,
-          blockFieldMask: None,
-          handler: "mock"->(Utils.magic: string => Internal.onBlockArgs => promise<unit>),
-        },
-      ],
-    )
-
-  let makeBatch = (~progressBlockNumber, ~totalEventsProcessed, ~fetchState): Batch.t => {
+  let makeBatch = (~progressBlockNumber, ~totalEventsProcessed): Batch.t => {
     totalBatchSize: 0,
     items: [],
     progressedChainsById: {
@@ -218,12 +189,12 @@ describe("ChainState chain density EMA (per batch)", () => {
         chainId,
         (
           {
+            chainId,
             batchSize: 0,
             progressBlockNumber,
             progressBlockTime: None,
             sourceBlockNumber: 1000,
             totalEventsProcessed,
-            fetchState,
             isProgressAtHeadWhenBatchCreated: false,
           }: Batch.chainAfterBatch
         ),
@@ -238,7 +209,6 @@ describe("ChainState chain density EMA (per batch)", () => {
     checkpointItemsCount: [],
     checkpointEventsProcessed: [],
     registeredAddresses: [],
-    fieldReads: [],
   }
 
   it("seeds density from the first batch's own events/block (no prior density to blend)", t => {
@@ -249,9 +219,8 @@ describe("ChainState chain density EMA (per batch)", () => {
         ~firstEventBlockNumber=None,
       ),
     )
-    let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(
-      ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=100., ~fetchState),
+      ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=100.),
       ~blockTimestampName="timestamp",
     )
     // (100 - 0) events over (10 - 0) blocks = 10 events/block
@@ -266,10 +235,9 @@ describe("ChainState chain density EMA (per batch)", () => {
         ~firstEventBlockNumber=None,
       ),
     )
-    let fetchState = dummyFetchState()
     // Progressed 10 blocks but processed 0 events — must not seed a 0 density.
     cs->ChainState.applyBatchProgress(
-      ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=0., ~fetchState),
+      ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=0.),
       ~blockTimestampName="timestamp",
     )
     t.expect(cs->ChainState.chainDensity).toEqual(None)
@@ -283,9 +251,8 @@ describe("ChainState chain density EMA (per batch)", () => {
         ~firstEventBlockNumber=None,
       ),
     )
-    let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(
-      ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=100., ~fetchState),
+      ~batch=makeBatch(~progressBlockNumber=10, ~totalEventsProcessed=100.),
       ~blockTimestampName="timestamp",
     )
     t.expect(cs->ChainState.chainDensity, ~message="seeded at 10 events/block").toEqual(Some(10.))
@@ -293,7 +260,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     // Second batch: 1_000 events over 50 blocks = 20 events/block. Half a
     // densityBlendWindow -> alpha 0.5: 10 * 0.5 + 20 * 0.5 = 15.
     cs->ChainState.applyBatchProgress(
-      ~batch=makeBatch(~progressBlockNumber=60, ~totalEventsProcessed=1_100., ~fetchState),
+      ~batch=makeBatch(~progressBlockNumber=60, ~totalEventsProcessed=1_100.),
       ~blockTimestampName="timestamp",
     )
     t.expect(cs->ChainState.chainDensity, ~message="half-window batch blends 50/50").toEqual(
@@ -303,7 +270,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     // Third batch: 2_500 events over 100 blocks = 25 events/block. A full
     // densityBlendWindow -> alpha 1: replaces the old density entirely.
     cs->ChainState.applyBatchProgress(
-      ~batch=makeBatch(~progressBlockNumber=160, ~totalEventsProcessed=3_600., ~fetchState),
+      ~batch=makeBatch(~progressBlockNumber=160, ~totalEventsProcessed=3_600.),
       ~blockTimestampName="timestamp",
     )
     t.expect(cs->ChainState.chainDensity, ~message="full-window batch replaces").toEqual(Some(25.))

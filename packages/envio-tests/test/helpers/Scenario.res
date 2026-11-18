@@ -328,7 +328,10 @@ let run = async (
     ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
     async indexer => {
       mocks->Array.forEach(((chain, mock)) =>
-        mock.attachIndexer(~waitUntilIdle=indexer.waitUntilIdle, ~progressBlock=async () =>
+        mock.attachIndexer(
+          ~waitUntilIdle=indexer.waitUntilIdle,
+          ~isRegisteringContracts=indexer.isRegisteringContracts,
+          ~progressBlock=async () =>
           (await indexer.metric("envio_progress_block"))
           ->Array.find(({labels}) => labels->Dict.get("chainId") === Some(chain->Int.toString))
           ->Option.flatMap(({value}) => value->Int.fromString)
@@ -564,7 +567,7 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo, ~head=301, ~refetc
       source.resolveGetBlockHashes(
         requested
         ->Array.flat
-        ->Array.map((blockNumber): BlockStore.inputBlock => {
+        ->Array.map((blockNumber): BufferPage.observedBlock => {
           blockNumber,
           // Past `validUpTo` the chain is orphaned, so the hash the source
           // reports differs from the one the store recorded.

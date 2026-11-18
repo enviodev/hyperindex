@@ -284,13 +284,12 @@ module Items = {
 type t = {
   // Block-hash query construction and pagination live in Rust; only the
   // aggregate response store crosses the boundary.
-  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
-  // Returns the response plus page stores owning this page's raw transactions,
-  // blocks and items.
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BufferPage.t, array<RequestStat.t>)>,
+  // Returns the response plus the page of rows some registration matches.
   getItems: (
     ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(Items.response, TransactionStore.t, BlockStore.t, EventStore.t)>,
+  ) => promise<(Items.response, BufferPage.t)>,
   getHeight: unit => promise<int>,
 }
 
@@ -301,6 +300,8 @@ external classNew: (
   string,
   array<Registration.input>,
   array<BlockItem.registrationInput>,
+  // The registrations with a contractRegister, whose events a page reports.
+  array<int>,
   AddressStore.t,
 ) => t = "new"
 
@@ -329,6 +330,7 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
   ~logLevel=#info,
+  ~contractRegisterIndexes=[],
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
@@ -348,6 +350,7 @@ let make = (
     `hyperindex/${envioVersion}`,
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
+    contractRegisterIndexes,
     addressStore,
   )
 }

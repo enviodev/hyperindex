@@ -47,8 +47,7 @@ type sourceConfig =
       // simulated chain has one there.
       getBlock: int => option<Internal.eventBlock>,
       endBlock: int,
-      transactionStore?: TransactionStore.t,
-      blockStore?: BlockStore.t,
+      page?: BufferPage.t,
     })
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)

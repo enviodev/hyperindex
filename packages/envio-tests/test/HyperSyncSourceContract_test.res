@@ -81,42 +81,8 @@ let onEventRegistrations = () => {
   )
 }
 
-let responseItems = (response: Source.blockRangeFetchResponse) =>
-  response.items->TestEventStore.takeAll(
-    ~context={
-      chainId: 1->ChainId.fromInt,
-      onEventRegistrations: onEventRegistrations()->(
-        Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
-      ),
-      onBlockRegistrations: [],
-    },
-  )
-
-// A response's items with their transactions and blocks, read from the given
-// stores the way a batch's take reads the chain's.
-let joinedItems = async (
-  response: Source.blockRangeFetchResponse,
-  ~transactionStore,
-  ~blockStore,
-  ~shouldChecksum,
-) => {
-  let (items, readFields) = response.items->StoredItems.takeWithFields(
-    response.items->EventStore.length,
-    ~context={
-      chainId: 1->ChainId.fromInt,
-      onEventRegistrations: onEventRegistrations()->(
-        Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
-      ),
-      onBlockRegistrations: [],
-    },
-    ~fields={transactionStore, blockStore, shouldChecksum},
-  )
-  await readFields()
-  items
-}
-
-let makeSource = (~url, ~lowercaseAddresses=true) => {
-  let addressStore = TestAddresses.storeOf(
+let makeAddressStore = () =>
+  TestAddresses.storeOf(
     ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
     ~addresses=[
       {
@@ -126,6 +92,28 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
       },
     ],
   )
+
+// A response's items with their transactions and blocks, built from a chain
+// buffer the page merged into, the way a batch builds them.
+let joinedItems = async (response: Source.blockRangeFetchResponse, ~shouldChecksum=false) =>
+  await response.page->TestChainBuffer.itemsOf(
+    ~onEventRegistrations=onEventRegistrations()->(
+      Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
+    ),
+    ~addressStore=makeAddressStore(),
+    ~shouldChecksum,
+  )
+
+
+// A buffer holding only the page, for reading back the blocks it carried.
+let bufferOf = (page: BufferPage.t) => {
+  let buffer = TestChainBuffer.decodedBuffer(~onEventRegistrations=[])
+  let _ = buffer->ChainBuffer.mergePage(page, ~reorgThreshold=0, ~reportOnly=true)
+  buffer
+}
+
+let makeSource = (~url, ~lowercaseAddresses=true) => {
+  let addressStore = makeAddressStore()
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
@@ -319,19 +307,7 @@ describe("HyperSync source contract", () => {
         let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
         let page = await source->fetch(~addressSet)
-        // The chain's stores are what materialisation reads; a response's pages
-        // reach them by merging, as the indexer does once the reorg guard passes.
-        let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm)
-        switch page.transactionStore {
-        | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
-        | None => ()
-        }
-        let items = await page->joinedItems(
-          ~transactionStore,
-          ~blockStore=page.blockStore,
-          ~shouldChecksum=false,
-        )
-        items
+        await page->joinedItems
       },
     )
 
@@ -422,8 +398,9 @@ describe("HyperSync source contract", () => {
         let page = await source->fetch(~addressSet, ~toBlock=Some(12), ~reorgableFrom=Some(10))
         [10, 12]->Array.map(
           blockNumber =>
-            page.blockStore
-            ->BlockStore.getTimestamp(blockNumber, ~allowSkippedSlot=false)
+            page.page
+            ->bufferOf
+            ->ChainBuffer.getBlockTimestamp(blockNumber, ~allowSkippedSlot=false)
             ->Null.toOption,
         )
       },
@@ -463,7 +440,7 @@ describe("HyperSync source contract", () => {
         let page = await source->fetch(~addressSet)
         // The guard's head block and the parent of the range's first block are
         // reorg-detection inputs, so they come back hashed alongside the range.
-        page.blockStore->BlockStore.missingHashes([9, 10, 20, 21])
+        page.page->BufferPage.missingHashes([9, 10, 20, 21])
       },
     )
 
@@ -644,7 +621,7 @@ describe("HyperSync source responses", () => {
         {
           "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
           "knownHeight": response.knownHeight,
-          "items": response.items->EventStore.length,
+          "items": response.page->BufferPage.rowCount,
         }
       },
     )
@@ -708,7 +685,7 @@ describe("HyperSync source responses", () => {
           ],
         })
         let response = await source->fetch(~addressSet)
-        response.items->EventStore.length
+        response.page->BufferPage.rowCount
       },
     )
     t.expect(counts).toBe(0)
@@ -724,16 +701,7 @@ describe("HyperSync source responses", () => {
         )
         server->MockHyperSyncServer.pushResponse(page)
         let response = await source->fetch(~addressSet)
-        let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm)
-        switch response.transactionStore {
-        | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
-        | None => ()
-        }
-        let items = await response->joinedItems(
-          ~transactionStore,
-          ~blockStore=response.blockStore,
-          ~shouldChecksum=true,
-        )
+        let items = await response->joinedItems(~shouldChecksum=true)
         let summary = items->Array.map(eventSummary)->Array.getUnsafe(0)
         {
           "param": summary["params"].to->Option.getOrThrow->Address.toString,
@@ -776,7 +744,7 @@ describe("HyperSync source responses", () => {
         )
         let missing = switch result {
         | Ok(store) =>
-          store->BlockStore.missingHashes([10, 11, 12, 13])->Array.map(n => n->Int.toString)
+          store->BufferPage.missingHashes([10, 11, 12, 13])->Array.map(n => n->Int.toString)
         | Error(exn) => [failureTag(exn)]
         }
         (server->MockHyperSyncServer.takeQueries, missing)

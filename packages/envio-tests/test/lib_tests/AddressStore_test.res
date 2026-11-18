@@ -331,7 +331,6 @@ describe("AddressStore", () => {
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=10,
-      ~maxOnBlockBufferSize=10,
       ~chainId=1->ChainId.fromInt,
       ~knownHeight=100,
     )

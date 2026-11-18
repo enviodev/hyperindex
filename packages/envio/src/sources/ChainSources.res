@@ -7,8 +7,7 @@ let make = (
   ~onBlockRegistrations: array<Internal.onBlockRegistration>=[],
   ~addressStore: AddressStore.t,
   ~lowercaseAddresses: bool,
-  ~blockStore: BlockStore.t,
-  ~transactionStore: TransactionStore.t,
+  ~chainBuffer: ChainBuffer.t,
   ~logger: Logger.t,
   ~maxAddressesPerRequest: int,
 ): array<Source.t> => {
@@ -37,8 +36,7 @@ let make = (
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
       ~addressStore,
-      ~blockStore,
-      ~transactionStore,
+      ~chainBuffer,
       ~logger,
       ~maxAddressesPerRequest,
     )
@@ -65,7 +63,7 @@ let make = (
         addressStore,
       }),
     ]
-  | Config.SimulateSourceConfig({items, getBlock, endBlock, ?transactionStore, ?blockStore}) => [
+  | Config.SimulateSourceConfig({items, getBlock, endBlock, ?page}) => [
       SimulateSource.make(
         ~items,
         ~getBlock,
@@ -73,8 +71,7 @@ let make = (
         ~chainId,
         ~addressStore,
         ~ecosystem=chainConfig.ecosystem,
-        ~transactionStore,
-        ~blockStore,
+        ~page,
       ),
     ]
   // For tests: use ready-to-use sources directly

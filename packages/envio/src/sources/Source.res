@@ -74,17 +74,11 @@ Thes response returned from a block range fetch
 */
 type blockRangeFetchResponse = {
   knownHeight: int,
-  // The response's items, kept in Rust; merged into the chain's store on apply.
-  items: EventStore.t,
-  // Page of transactions for this response's items, keyed by (blockNumber,
-  // transactionIndex); merged into the chain's store on apply. `None` for
-  // sources that keep the transaction inline on the payload (Fuel/Simulate).
-  transactionStore: option<TransactionStore.t>,
-  // Page of blocks observed while fetching this range, keyed by block number;
-  // merged into the chain's store on apply, where its hashes drive reorg
-  // detection. A source that keeps the block inline on the payload (Simulate)
-  // contributes hash-only rows built from the block hashes it saw.
-  blockStore: BlockStore.t,
+  // The response's rows, kept in Rust: what some registration matches, the
+  // transactions and blocks they belong to, and the blocks seen while fetching
+  // the range, whose hashes drive reorg detection. Merged into the chain's
+  // buffer on apply.
+  page: BufferPage.t,
   latestFetchedBlockNumber: int,
   stats: blockRangeFetchStats,
   requestStats: array<requestStat>,
@@ -93,7 +87,7 @@ type blockRangeFetchResponse = {
 type getHeightResponse = {height: int, requestStats: array<requestStat>}
 
 type getBlockHashesResponse = {
-  result: result<BlockStore.t, exn>,
+  result: result<BufferPage.t, exn>,
   requestStats: array<requestStat>,
 }
 

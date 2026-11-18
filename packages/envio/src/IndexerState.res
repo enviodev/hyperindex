@@ -413,7 +413,7 @@ let getSafeCheckpointIdByChain = (state: t) =>
     ~committedFrontier=state.committedFrontier,
   )
 
-let createBatch = (state: t, ~batchSizeTarget: int): Batch.t =>
+let createBatch = (state: t, ~batchSizeTarget: int): promise<Batch.t> =>
   state.crossChainState->CrossChainState.createBatch(
     ~config=state.config,
     ~frontier=state.processedFrontier,
@@ -469,6 +469,12 @@ let applyBatchProgress = (state: t, ~batch: Batch.t) =>
 // Processing-loop mutex. Guards ProcessEventBatch re-entry so only one
 // processing loop runs at a time.
 let isProcessing = (state: t) => state.isProcessing
+// Whether some chain is running its contractRegister handlers.
+let isRegisteringContracts = (state: t) =>
+  state.crossChainState
+  ->CrossChainState.chainStates
+  ->Dict.valuesToArray
+  ->Array.some(ChainState.isRegisteringContracts)
 let beginProcessing = (state: t) => {
   state->settleStalledOnFetch
   state.isProcessing = true
@@ -918,7 +924,6 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointEventsProcessed,
     registeredAddresses,
     // Read already: a run is drained from batches that were processed.
-    fieldReads: [],
   }
 }
 

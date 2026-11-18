@@ -8,9 +8,8 @@ type evmHyperSyncClientCtor
 type evmRpcClientCtor
 type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
-type transactionStoreCtor
-type blockStoreCtor
-type eventStoreCtor
+type chainBufferCtor
+type pageCtor
 type storageCtor
 type addressStoreCtor
 type tuiCtor
@@ -52,12 +51,10 @@ type addon = {
   svmHyperSyncClient: svmHyperSyncClientCtor,
   @as("FuelHyperSyncClient")
   fuelHyperSyncClient: fuelHyperSyncClientCtor,
-  @as("TransactionStore")
-  transactionStore: transactionStoreCtor,
-  @as("BlockStore")
-  blockStore: blockStoreCtor,
-  @as("EventStore")
-  eventStore: eventStoreCtor,
+  @as("ChainBuffer")
+  chainBuffer: chainBufferCtor,
+  @as("Page")
+  page: pageCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
   @as("Storage")

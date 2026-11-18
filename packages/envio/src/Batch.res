@@ -2,6 +2,7 @@
 open Utils.UnsafeIntOperators
 
 type chainAfterBatch = {
+  chainId: ChainId.t,
   batchSize: int,
   progressBlockNumber: int,
   // Timestamp of `progressBlockNumber` itself, never of a lower block, so it
@@ -12,7 +13,6 @@ type chainAfterBatch = {
   progressBlockTime: option<int>,
   sourceBlockNumber: int,
   totalEventsProcessed: float,
-  fetchState: FetchState.t,
   isProgressAtHeadWhenBatchCreated: bool,
 }
 
@@ -28,16 +28,15 @@ type reorgHashSnapshot = {
 
 type chainBeforeBatch = {
   fetchState: FetchState.t,
-  // The chain's own store, which the batch takes its rows from.
-  eventStore: EventStore.t,
+  // The chain's own buffer, which the batch builds its items from.
+  buffer: ChainBuffer.t,
   itemContext: StoredItems.context,
-  itemFields: StoredItems.fields,
   // Adds the time spent building the chain's items to its metric.
   recordParse: float => unit,
   scannedHashes: reorgHashSnapshot,
   // The progress block isn't known until the build computes it, so its
-  // timestamp can't be snapshotted with the rest. Reads the chain's store,
-  // which the synchronous build can't see mutate.
+  // timestamp can't be snapshotted with the rest. Reads the chain's buffer,
+  // which keeps the block until the batch commits.
   blockTimeAt: int => option<int>,
   shouldRollbackOnReorg: bool,
   progressBlockNumber: int,
@@ -64,12 +63,9 @@ type t = {
   // event, however many items it made.
   checkpointEventsProcessed: array<int>,
   registeredAddresses: array<AddressRows.staged>,
-  // Per chain taken from, the read that gives its items their transactions
-  // and blocks; processing awaits them before any handler runs.
-  fieldReads: array<unit => promise<unit>>,
 }
 
-// What a chain contributed to the batch: items taken off its buffer, and the
+// What a chain contributed to the batch: items built from its buffer, and the
 // logs behind them.
 type chainBatchCounts = {size: int, eventsProcessed: int}
 
@@ -77,7 +73,6 @@ let getProgressedChainsById = {
   let getChainAfterBatchIfProgressed = (
     ~chainBeforeBatch: chainBeforeBatch,
     ~progressBlockNumberAfterBatch,
-    ~fetchStateAfterBatch,
     ~counts: chainBatchCounts,
   ) => {
     // The check is sufficient, since we guarantee to include a full block in a batch
@@ -87,13 +82,13 @@ let getProgressedChainsById = {
       Some(
         (
           {
+            chainId: chainBeforeBatch.fetchState.chainId,
             batchSize: counts.size,
             progressBlockNumber: progressBlockNumberAfterBatch,
             progressBlockTime: chainBeforeBatch.blockTimeAt(progressBlockNumberAfterBatch),
             sourceBlockNumber: chainBeforeBatch.sourceBlockNumber,
             totalEventsProcessed: chainBeforeBatch.totalEventsProcessed +.
             counts.eventsProcessed->Int.toFloat,
-            fetchState: fetchStateAfterBatch,
             isProgressAtHeadWhenBatchCreated: progressBlockNumberAfterBatch >=
             chainBeforeBatch.sourceBlockNumber - chainBeforeBatch.chainConfig.blockLag,
           }: chainAfterBatch
@@ -111,10 +106,6 @@ let getProgressedChainsById = {
   ) => {
     let progressedChainsById = Dict.make()
 
-    // Needed to:
-    // - Recalculate the computed queue sizes
-    // - Accumulate registered dynamic contracts to store in the db
-    // - Trigger onBlock pointer update
     chainsBeforeBatch
     ->Dict.valuesToArray
     ->Array.forEach(chainBeforeBatch => {
@@ -127,29 +118,13 @@ let getProgressedChainsById = {
       | None => chainBeforeBatch.progressBlockNumber
       }
 
-      switch switch countsPerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->ChainId.toString,
+      switch getChainAfterBatchIfProgressed(
+        ~chainBeforeBatch,
+        ~counts=countsPerChain
+        ->Utils.Dict.dangerouslyGetNonOption(fetchState.chainId->ChainId.toString)
+        ->Option.getOr({size: 0, eventsProcessed: 0}),
+        ~progressBlockNumberAfterBatch,
       ) {
-      | Some(counts) =>
-        // The batch already took its items from the store; this tops the
-        // block handler items back up.
-        getChainAfterBatchIfProgressed(
-          ~chainBeforeBatch,
-          ~counts,
-          ~fetchStateAfterBatch=fetchState->FetchState.updateInternal(
-            ~eventStore=chainBeforeBatch.eventStore,
-          ),
-          ~progressBlockNumberAfterBatch,
-        )
-      // Skip not affected chains
-      | None =>
-        getChainAfterBatchIfProgressed(
-          ~chainBeforeBatch,
-          ~counts={size: 0, eventsProcessed: 0},
-          ~fetchStateAfterBatch=chainBeforeBatch.fetchState,
-          ~progressBlockNumberAfterBatch,
-        )
-      } {
       | Some(progressedChain) =>
         progressedChainsById->ChainId.Dict.set(chainBeforeBatch.fetchState.chainId, progressedChain)
       | None => ()
@@ -222,7 +197,7 @@ let addReorgCheckpoints = (
 // deleting the chain's ids above its target before any higher one is allocated.
 // Every rollback deletes by `id > target`, which is only the stale suffix while
 // ids and blocks agree on order within each chain.
-let make = (
+let make = async (
   ~sequence: CheckpointSequence.t,
   ~frontier: Frontier.t,
   ~chainsBeforeBatch: dict<chainBeforeBatch>,
@@ -234,7 +209,8 @@ let make = (
     ->Dict.valuesToArray
     ->FetchState.sortForBatch(
       ~fetchStateOf=chain => chain.fetchState,
-      ~eventStoreOf=chain => chain.eventStore,
+      ~bufferOf=chain => chain.buffer,
+      ~processingBlockNumberOf=chain => chain.progressBlockNumber,
       ~batchSizeTarget,
     )
 
@@ -247,7 +223,6 @@ let make = (
   let mutProgressBlockNumberPerChain = Dict.make()
 
   let items = []
-  let fieldReads = []
   let checkpointIds = []
   let checkpointChainIds = []
   let checkpointBlockNumbers = []
@@ -255,43 +230,40 @@ let make = (
   let checkpointItemsCount = []
   let checkpointEventsProcessed = []
 
-  // Accumulate items for all actively indexing chains
-  // the way to group as many items from a single chain as possible
-  // This way the loaders optimisations will hit more often
+  // Chain by chain, each built for what is left of the target, so the loaders
+  // see as many items of one chain together as possible.
   while totalBatchSize.contents < batchSizeTarget && chainIdx.contents < preparedNumber {
     let chainBeforeBatch = preparedChains->Array.getUnsafe(chainIdx.contents)
-    let {fetchState, eventStore} = chainBeforeBatch
-    let chainBatchSize =
-      fetchState->FetchState.getReadyItemsCount(
-        ~eventStore,
-        ~targetSize=batchSizeTarget - totalBatchSize.contents,
-      )
+    let {fetchState, buffer} = chainBeforeBatch
+    let fromBlock = chainBeforeBatch.progressBlockNumber + 1
+    let maxBlock = fetchState->FetchState.bufferBlockNumber
 
-    // Read past the batch's last item, so before the batch takes its items.
-    let progressBlockNumberAfterBatch =
-      fetchState->FetchState.getProgressBlockNumberAt(~eventStore, ~index=chainBatchSize)
+    let (chainItems, progressBlockNumberAfterBatch) = if maxBlock < fromBlock {
+      ([], chainBeforeBatch.progressBlockNumber)
+    } else if buffer->ChainBuffer.countItemsInBlockRange(~fromBlock, ~toBlock=maxBlock) === 0 {
+      // Nothing to build: the whole ready range is processed as it stands.
+      ([], maxBlock)
+    } else {
+      let startedAt = Performance.now()
+      let built = await buffer->ChainBuffer.buildHandlerItems(
+        ~fromBlock,
+        ~maxBlock,
+        ~targetItems=batchSizeTarget - totalBatchSize.contents,
+      )
+      let chainItems = built->StoredItems.read(~context=chainBeforeBatch.itemContext)
+      chainBeforeBatch.recordParse(Performance.now() -. startedAt)
+      (chainItems, built.lastBlock->Option.getOr(maxBlock))
+    }
+    let chainBatchSize = chainItems->Array.length
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     let chainEventsProcessed = ref(0)
     if chainBatchSize > 0 {
-      let startedAt = Performance.now()
-      let (chainItems, readFields) =
-        eventStore->StoredItems.takeWithFields(
-          chainBatchSize,
-          ~context=chainBeforeBatch.itemContext,
-          ~fields=chainBeforeBatch.itemFields,
-        )
-      chainBeforeBatch.recordParse(Performance.now() -. startedAt)
-      fieldReads->Array.push(async () => {
-        let startedAt = Performance.now()
-        await readFields()
-        chainBeforeBatch.recordParse(Performance.now() -. startedAt)
-      })
       for idx in 0 to chainBatchSize - 1 {
         let item = chainItems->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
-        // The store is sorted, so a log's items are consecutive: the first of
-        // them is the only one that counts as an event.
+        // Items are built in order, so a log's items are consecutive: the first
+        // of them is the only one that counts as an event.
         let isNewEvent =
           idx === 0 || !(chainItems->Array.getUnsafe(idx - 1)->FetchState.isSameLog(item))
         if isNewEvent {
@@ -395,7 +367,6 @@ let make = (
     checkpointItemsCount,
     checkpointEventsProcessed,
     registeredAddresses: [],
-    fieldReads,
   }
 }
 

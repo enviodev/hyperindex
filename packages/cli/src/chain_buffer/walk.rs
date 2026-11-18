@@ -169,7 +169,23 @@ impl Walker<'_> {
             }
             self.walk_block(next, &block_rows, false);
             if self.items.len() >= target_items {
-                return Some(next);
+                // The blocks up to the next one holding anything are done too.
+                let following = [
+                    rows.peek().map(RowRef::block_number),
+                    snapshots
+                        .decoded
+                        .get(self.decoded_at)
+                        .map(|event| event.block_number),
+                    next.checked_add(1)
+                        .and_then(|after| self.shared.schedule.first_from(after)),
+                ]
+                .into_iter()
+                .flatten()
+                .min();
+                return Some(match following {
+                    Some(following) if following <= max_block => following - 1,
+                    _ => max_block,
+                });
             }
             if next == max_block {
                 return Some(max_block);
@@ -230,6 +246,14 @@ impl Walker<'_> {
             self.push_decoded(event, false);
         }
         for handler in self.shared.schedule.handlers_on(block_number) {
+            // A simulated block item stands in for the scheduled one, carrying
+            // the block the test gave it.
+            if block_decoded
+                .iter()
+                .any(|event| event.is_block && event.registration == handler.index)
+            {
+                continue;
+            }
             self.items.push(Item::Block {
                 block_number,
                 registration: handler.index,

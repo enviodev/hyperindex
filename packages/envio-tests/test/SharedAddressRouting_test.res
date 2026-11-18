@@ -89,7 +89,7 @@ let makeSource = (~url) => {
     addressStore
     ->AddressStore.makeSet(~contractName="Token")
     ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="Vault"))
-  (source, addressSet)
+  (source, addressSet, addressStore)
 }
 
 let fetch = (source: Source.t, ~addressSet) =>
@@ -148,7 +148,7 @@ describe("An address indexed by two contracts", () => {
     let queries = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressSet, _) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
         let _ = await source->fetch(~addressSet)
         server->MockHyperSyncServer.takeQueries
@@ -184,15 +184,12 @@ describe("An address indexed by two contracts", () => {
     let items = await MockHyperSyncServer.withServer(
       ~height=100,
       async server => {
-        let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+        let (source, addressSet, addressStore) = makeSource(~url=server->MockHyperSyncServer.url)
         server->MockHyperSyncServer.pushResponse(page)
-        let page = await source->fetch(~addressSet)
-        page.items->TestEventStore.takeAll(
-          ~context={
-            chainId: 1->ChainId.fromInt,
-            onEventRegistrations: onEventRegistrations(),
-            onBlockRegistrations: [],
-          },
+        let response = await source->fetch(~addressSet)
+        await response.page->TestChainBuffer.itemsOf(
+          ~onEventRegistrations=onEventRegistrations(),
+          ~addressStore,
         )
       },
     )

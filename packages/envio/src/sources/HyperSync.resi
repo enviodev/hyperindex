@@ -1,10 +1,8 @@
 type itemsPage = {
-  items: EventStore.t,
+  page: BufferPage.t,
   nextBlock: int,
   archiveHeight: int,
   responseBlocks: int,
-  transactionStore: TransactionStore.t,
-  blockStore: BlockStore.t,
 }
 
 // How often a HyperSync source is asked for the height while nothing is pushing
@@ -37,7 +35,7 @@ let reraiseIfRecoverable: exn => unit
 // Wrap a native client's paginated block-hash query as a `Source.getBlockHashes`,
 // keeping the request timings whether it succeeds or fails.
 let makeGetBlockHashes: (
-  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+  ~query: (~blockNumbers: array<int>) => promise<(BufferPage.t, array<Source.requestStat>)>,
 ) => (~blockNumbers: array<int>, ~logger: Logger.t) => promise<Source.getBlockHashesResponse>
 
 module GetItems: {

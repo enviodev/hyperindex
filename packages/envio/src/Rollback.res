@@ -25,12 +25,12 @@ let getLastKnownValidBlock = async (
   switch scannedBlockNumbers {
   | [] => chainState->ChainState.getHighestBlockBelowThreshold
   | _ => {
-      let blockStore = await chainState
+      let page = await chainState
       ->ChainState.sourceManager
       ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime)
 
       switch chainState->ChainState.getLatestValidScannedBlock(
-        ~blockStore,
+        ~page,
         ~blockNumbers=scannedBlockNumbers,
       ) {
       | Some(blockNumber) => blockNumber

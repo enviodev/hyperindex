@@ -83,8 +83,7 @@ let makeSource = (
     syncConfig,
     lowercaseAddresses,
     addressStore,
-    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
-    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+    chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     maxAddressesPerRequest: Env.maxAddrInPartition,
     logger: Logger.makeInMemory(),
   }
@@ -231,6 +230,7 @@ describe("RPC source public contract", () => {
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
         switch await RpcSourcePins.capture(
           () => source->invoke(~registration, ~addressStore),
+          ~addressStore,
           ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
         ) {
         | Ok(page) => page
@@ -348,7 +348,11 @@ describe("RPC source public contract", () => {
         )
         switch await RpcSourcePins.capture(
           () => source->invoke(~registration, ~addressStore),
+          ~addressStore,
           ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+          // The chain's spelling, which the buffer applies where it builds
+          // items.
+          ~shouldChecksum=true,
         ) {
         | Ok(page) => page.events->Array.map(event => event.srcAddress)
         | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
@@ -419,6 +423,7 @@ describe("RPC source public contract", () => {
         let call = async (~retry) =>
           switch await RpcSourcePins.capture(
             () => source->invoke(~registration, ~addressStore, ~retry),
+            ~addressStore,
             ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
           ) {
           | Error(error) => error
@@ -499,6 +504,7 @@ describe("RPC source public contract", () => {
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
         switch await RpcSourcePins.capture(
           () => source->invoke(~registration, ~addressStore),
+          ~addressStore,
           ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
         ) {
         | Error(error) => error
@@ -547,6 +553,7 @@ describe("RPC source public contract", () => {
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
         switch await RpcSourcePins.capture(
           () => source->invoke(~registration, ~addressStore),
+          ~addressStore,
           ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
         ) {
         | Error(error) => error
@@ -591,8 +598,7 @@ describe("RPC source public contract", () => {
           syncConfig: defaultSyncConfig,
           lowercaseAddresses: true,
           addressStore,
-          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
-          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+          chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
           maxAddressesPerRequest: Env.maxAddrInPartition,
           logger: Logger.makeInMemory(),
         }
@@ -618,6 +624,7 @@ describe("RPC source public contract", () => {
                 ~retry=0,
                 ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC interval pin"}),
               ),
+            ~addressStore,
             ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
           )
         (await call(), await call())
@@ -697,6 +704,7 @@ describe("RPC source public contract", () => {
         let (source, addressStore) = makeSource(~url=mock.url, ~registration)
         switch await RpcSourcePins.capture(
           () => source->invoke(~registration, ~addressStore),
+          ~addressStore,
           ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
         ) {
         | Ok(page) => page
@@ -747,6 +755,7 @@ describe("RPC source public contract", () => {
               ~retry=0,
               ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC skip-all pin"}),
             ),
+          ~addressStore,
           ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
         ) {
         | Ok(page) => page
@@ -852,8 +861,7 @@ describe("RPC source public contract", () => {
           syncConfig,
           lowercaseAddresses: true,
           addressStore,
-          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
-          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+          chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
           maxAddressesPerRequest: Env.maxAddrInPartition,
           logger: Logger.makeInMemory(),
         }
@@ -883,6 +891,7 @@ describe("RPC source public contract", () => {
                 "test": "RPC contract scoping pin",
               }),
             ),
+          ~addressStore,
           ~onEventRegistrations=[
             (eventA :> Internal.onEventRegistration),
             (eventB :> Internal.onEventRegistration),
@@ -962,8 +971,7 @@ describe("RPC source public contract", () => {
             syncConfig,
             lowercaseAddresses: true,
             addressStore,
-            blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm),
-            transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm),
+            chainBuffer: TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
             maxAddressesPerRequest: Env.maxAddrInPartition,
             logger: Logger.makeInMemory(),
           })
@@ -991,6 +999,7 @@ describe("RPC source public contract", () => {
                 ~retry=0,
                 ~logger=Logger.makeInMemory()->Logger.withFields({"test": "RPC address fallback"}),
               ),
+            ~addressStore,
             ~onEventRegistrations=[
               (clientFiltered :> Internal.onEventRegistration),
               (wildcard :> Internal.onEventRegistration),

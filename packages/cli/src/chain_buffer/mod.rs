@@ -267,8 +267,8 @@ impl ChainBuffer {
 
 #[napi]
 impl ChainBuffer {
-    #[napi(constructor)]
-    pub fn new(config: ChainBufferConfig, address_store: &AddressStore) -> napi::Result<Self> {
+    #[napi(factory)]
+    pub fn make(config: ChainBufferConfig, address_store: &AddressStore) -> napi::Result<Self> {
         let ecosystem = Ecosystem::parse(&config.ecosystem).map_err(to_napi)?;
         let evm = match &config.evm_registrations {
             Some(registrations) => Some(EvmRegistrations {

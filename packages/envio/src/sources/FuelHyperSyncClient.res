@@ -85,19 +85,9 @@ module EventItems = {
 
   // The page's first LogData receipt a contract-bound registration's ABI
   // rejected, with how many it rejected. The receipts themselves are dropped.
-  type rejectedLogData = {
-    onEventRegistrationIndex: int,
-    blockHeight: int,
-    receiptIndex: int,
-    txId: string,
-    dataLength: int,
-    count: int,
-  }
-
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    rejectedLogData: array<rejectedLogData>,
   }
 }
 
@@ -107,27 +97,30 @@ external classNew: (
   cfg,
   ~userAgent: string,
   array<Registration.input>,
+  // The registrations with a contractRegister, whose events a page reports.
+  array<int>,
   AddressStore.t,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
+let make = (cfg: cfg, ~eventRegistrations, ~contractRegisterIndexes, ~addressStore) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
     eventRegistrations,
+    contractRegisterIndexes,
     addressStore,
   )
 }
 
-// Returns what the page covered, its block store (Fuel blocks keyed by
-// height, whose ids drive reorg detection on merge) and its routed items.
+// Returns what the page covered and its page: the receipts some registration
+// matches and the blocks, whose ids drive reorg detection on merge.
 @send
 external getEventItems: (
   t,
   EventItems.query,
   AddressSet.t,
-) => promise<(EventItems.response, BlockStore.t, EventStore.t)> = "getEventItems"
+) => promise<(EventItems.response, BufferPage.t)> = "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

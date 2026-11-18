@@ -148,7 +148,7 @@ let createBatch = (
   ~config: Config.t,
   ~frontier,
   ~batchSizeTarget: int,
-): Batch.t => {
+): promise<Batch.t> => {
   Batch.make(
     ~sequence=config.checkpointSequence,
     ~history=config->HistoryPolicy.decide(~shouldSaveHistory=crossChainState->shouldSaveHistory),

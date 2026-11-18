@@ -81,9 +81,37 @@ and processNextBatch = async (state: IndexerState.t, ~runtime, ~scheduleFetch): 
   let isInReorgThresholdBeforeUpdate = state->IndexerState.isInReorgThreshold
   let isRealtimeBeforeUpdate = state->IndexerState.isRealtime
 
-  let batch =
-    state->IndexerState.createBatch(~batchSizeTarget=(state->IndexerState.config).batchSize)
+  let stateId = state->IndexerState.epoch
+  let batch = await state->IndexerState.createBatch(
+    ~batchSizeTarget=(state->IndexerState.config).batchSize,
+  )
 
+  // A rollback that started while the items were built has removed or replaced
+  // what they were built from, so the batch is dropped; the loop exit hands off
+  // to the rollback, or the next round builds again from the rolled-back
+  // position.
+  if !(state->IndexerState.isStale(~stateId)) {
+    await processBuiltBatch(
+      state,
+      ~batch,
+      ~runtime,
+      ~scheduleFetch,
+      ~isInReorgThresholdBeforeUpdate,
+      ~isRealtimeBeforeUpdate,
+    )
+  } else if !(state->IndexerState.isStopped) && !(state->IndexerState.isResolvingReorg) {
+    await processNextBatch(state, ~runtime, ~scheduleFetch)
+  }
+}
+
+and processBuiltBatch = async (
+  state: IndexerState.t,
+  ~batch: Batch.t,
+  ~runtime,
+  ~scheduleFetch,
+  ~isInReorgThresholdBeforeUpdate,
+  ~isRealtimeBeforeUpdate,
+) => {
   let progressedChainsById = batch.progressedChainsById
 
   let isBelowReorgThreshold =

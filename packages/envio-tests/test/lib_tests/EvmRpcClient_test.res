@@ -12,7 +12,7 @@ let makeClient = (
 ) =>
   EvmRpcClient.make(
     ~url,
-    ~checksumAddresses=false,
+    ~contractRegisterIndexes=[],
     ~syncConfig=switch queryTimeoutMillis {
     | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
     | None => syncConfig
@@ -250,15 +250,18 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       `{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x${block}","transactionHash":"${hash}","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}`
     })->Array.join(",")
 
-  // The page's result, its logs as the client routed them, and its block store.
+  // The page's result, and its logs as a buffer matches and decodes them
+  // against the registrations the client was made with.
   let callNextPage = async (
     client: EvmRpcClient.t,
+    ~eventRegistrations,
+    ~addressStore,
     ~fromBlock,
     ~toBlockCeiling,
     ~indexes,
     ~addressSet,
   ) => {
-    let (result, blockStore, _, items) = await client.getNextPage(
+    let (result, page) = await client.getNextPage(
       {
         fromBlock,
         toBlockCeiling,
@@ -271,10 +274,12 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         knownHeight: toBlockCeiling + 1_000,
       },
       addressSet,
-      BlockStore.make(~ecosystem=Ecosystem.Evm),
-      TransactionStore.make(~ecosystem=Ecosystem.Evm),
+      TestChainBuffer.decodedBuffer(~onEventRegistrations=[]),
     )
-    (result, items->TestEventStore.evmLogsOf(~registrationIndexes=indexes), blockStore)
+    (
+      result,
+      await page->TestChainBuffer.evmLogsOf(~registrations=eventRegistrations, ~addressStore),
+    )
   }
 
   // The chain's address index, holding the one ERC20 address these logs are
@@ -315,7 +320,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let (result, eventItems, _) = await client->callNextPage(
+        let (result, eventItems) = await client->callNextPage(
+          ~eventRegistrations=[makeRegistration()],
+          ~addressStore,
           ~fromBlock=100,
           ~toBlockCeiling=100,
           ~indexes=[3],
@@ -392,7 +399,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let (_, items, _) = await client->callNextPage(
+        let (_, items) = await client->callNextPage(
+          ~eventRegistrations=[makeRegistration()],
+          ~addressStore,
           ~fromBlock=1,
           ~toBlockCeiling=1,
           ~indexes=[3],
@@ -437,7 +446,17 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ],
           ~addressStore,
         )
-        let (result, _, _) = await client->callNextPage(
+        let (result, _) = await client->callNextPage(
+          ~eventRegistrations=[
+            makeRegistration(
+              ~index=0,
+              ~topicCount=1,
+              ~isWildcard=true,
+              ~dependsOnAddresses=false,
+              ~params=[],
+            ),
+          ],
+          ~addressStore,
           ~fromBlock=0,
           ~toBlockCeiling=5000,
           ~indexes=[0],
@@ -495,7 +514,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~queryTimeoutMillis,
         )
 
-        let (result, eventItems, _) = await client->callNextPage(
+        let (result, eventItems) = await client->callNextPage(
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
           ~fromBlock=firstBlock,
           ~toBlockCeiling=firstBlock + blockCount - 1,
           ~indexes=[3],
@@ -535,7 +556,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~queryTimeoutMillis,
         )
 
-        let (result, _, _) = await client->callNextPage(
+        let (result, _) = await client->callNextPage(
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
           ~fromBlock=firstBlock,
           ~toBlockCeiling=firstBlock,
           ~indexes=[3],
@@ -595,14 +618,16 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         )
         let page = () =>
           client->callNextPage(
+            ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+            ~addressStore,
             ~fromBlock=firstBlock,
             ~toBlockCeiling=lastBlock,
             ~indexes=[3],
             ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
           )
 
-        let (failed, _, _) = await page()
-        let (retried, _, _) = await page()
+        let (failed, _) = await page()
+        let (retried, _) = await page()
         (
           (failed.kind, failed.backoffMillis, failed.providerMessage),
           (retried.kind, retried.toBlock),
@@ -679,7 +704,9 @@ describe("EvmRpcClient - getNextPage via napi", () => {
             ~maxConcurrentRequests,
           )
 
-          let (result, eventItems, _) = await client->callNextPage(
+          let (result, eventItems) = await client->callNextPage(
+            ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+            ~addressStore,
             ~fromBlock=firstBlock,
             ~toBlockCeiling=firstBlock + blockCount - 1,
             ~indexes=[3],

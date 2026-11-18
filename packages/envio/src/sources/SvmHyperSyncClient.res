@@ -172,14 +172,13 @@ type t = {
   getHeight: unit => promise<int>,
   // Block-hash query construction, pagination, and cursor-backed skipped-slot
   // coverage live in Rust.
-  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
-  // Returns pages of raw transactions and blocks (kept in Rust), keyed by
-  // (slot, transactionIndex) / slot, and of routed items, all materialised at
-  // batch prep.
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BufferPage.t, array<RequestStat.t>)>,
+  // Returns the page of raw instructions some registration matches, with the
+  // transactions and slots they read.
   getItems: (
     ~query: Items.query,
     ~addressSet: AddressSet.t,
-  ) => promise<(Items.response, TransactionStore.t, BlockStore.t, EventStore.t)>,
+  ) => promise<(Items.response, BufferPage.t)>,
 }
 
 @send
@@ -189,6 +188,8 @@ external classFromConfig: (
   string,
   array<Registration.program>,
   array<BlockItem.registrationInput>,
+  // The registrations with a contractRegister, whose events a page reports.
+  array<int>,
   AddressStore.t,
 ) => t = "fromConfig"
 
@@ -200,6 +201,7 @@ let make = (
   ~retryCeilingMs=?,
   ~programs=[],
   ~onBlockRegistrations,
+  ~contractRegisterIndexes,
   ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
@@ -214,6 +216,7 @@ let make = (
     `hyperindex/${envioVersion}`,
     programs,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
+    contractRegisterIndexes,
     addressStore,
   )
 }

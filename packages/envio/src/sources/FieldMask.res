@@ -1,6 +1,6 @@
-// Selection-bitmask helpers shared by the per-chain field stores
-// (`TransactionStore`, `BlockStore`). A field's bit index is its position in the
-// ecosystem's ordered field-name array — the same code the Rust store uses.
+// Selection-bitmask helpers for the transaction and block fields an event
+// selects. A field's bit index is its position in the ecosystem's ordered
+// field-name array: the same code the buffer's columns use.
 
 // Field-name → bit-index map from an ordered field-name array.
 let fieldCodes = (fields: array<string>): dict<int> => {

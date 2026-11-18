@@ -62,8 +62,13 @@ let makeClient = (~eventRegistrations) =>
 let fromBlock = 23_500_000
 let toBlock = 23_500_004
 
-let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => {
-  let (res, _txStore, _blockStore, items) = await client.getItems(
+// The client keeps the logs some registration matches; a buffer decodes them.
+let runQuery = async (
+  ~client: HyperSyncClient.t,
+  ~registrationIndexes=[42],
+  ~eventRegistrations=[transferEventRegistration],
+) => {
+  let (res, page) = await client.getItems(
     ~query={
       fromBlock,
       toBlock: Some(toBlock),
@@ -74,7 +79,7 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
     },
     ~addressSet=usdcSet,
   )
-  (res, items->TestEventStore.evmLogsOf(~registrationIndexes))
+  (res, await page->TestChainBuffer.evmLogsOf(~registrations=eventRegistrations, ~addressStore))
 }
 
 describe("HyperSync client getItems (live)", () => {
@@ -155,7 +160,11 @@ describe("HyperSync client getItems (live)", () => {
         transactionFields: [],
       }
       let client = makeClient(~eventRegistrations=[unrelatedEventRegistration])
-      let (_, eventItems) = await runQuery(~client, ~registrationIndexes=[0])
+      let (_, eventItems) = await runQuery(
+        ~client,
+        ~registrationIndexes=[0],
+        ~eventRegistrations=[unrelatedEventRegistration],
+      )
 
       t.expect(eventItems->Array.length).toEqual(0)
     },

@@ -96,7 +96,9 @@ let sumOfValues = (metrics: array<IndexerRunner.metric>) =>
 let batchSizes = (indexer: IndexerRunner.t) =>
   indexer.allLogsAsJson()->Array.filterMap(line =>
     switch (line->Dict.get("msg"), line->Dict.get("batchSize")) {
-    | (Some(JSON.String("Started processing")), Some(JSON.Number(size))) => Some(size->Float.toInt)
+    // A batch that only moves progress carries no items.
+    | (Some(JSON.String("Started processing")), Some(JSON.Number(size))) if size > 0. =>
+      Some(size->Float.toInt)
     | _ => None
     }
   )

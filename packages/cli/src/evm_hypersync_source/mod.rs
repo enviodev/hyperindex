@@ -786,3 +786,466 @@ const REQUIRED_BLOCK_FIELDS: &[BlockField] =
 pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
     napi::Error::from_reason(format!("{:?}", e))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::address_store::test_support::evm_store;
+    use crate::chain_buffer::evm::{EvmBlockField, EvmTxField};
+    use crate::chain_buffer::table::make_key;
+    use hypersync_client::simple_types;
+
+    fn empty_matcher() -> EvmMatcher {
+        EvmMatcher::new(&[], &[], &evm_store(&[])).unwrap()
+    }
+
+    // Matches `full_log` (zero topic0, one topic, empty data) to a wildcard
+    // registration, so success-path tests keep a log: an unmatched one is
+    // dropped.
+    fn zero_event_matcher() -> EvmMatcher {
+        EvmMatcher::new(
+            &[
+                crate::evm_hypersync_source::types::OnEventRegistrationInput {
+                    index: 0,
+                    sighash: Some(format!("0x{}", "00".repeat(32))),
+                    topic_count: 1,
+                    event_name: "Zero".to_string(),
+                    contract_name: "Zero".to_string(),
+                    is_wildcard: true,
+                    depends_on_addresses: false,
+                    start_block: None,
+                    topic_filters: vec![
+                        crate::evm_hypersync_source::topic_filter::TopicFilterInput {
+                            topic0: Some(vec![format!("0x{}", "00".repeat(32))]),
+                            topic1: Some(vec![]),
+                            topic2: Some(vec![]),
+                            topic3: Some(vec![]),
+                        },
+                    ],
+                    block_fields: vec![],
+                    transaction_fields: vec![],
+                    params: vec![],
+                },
+            ],
+            &[],
+            &evm_store(&[("Zero", &[])]),
+        )
+        .unwrap()
+    }
+
+    fn logged_blocks(page: &PageData) -> Vec<u64> {
+        page.events
+            .rows_in_block_range(0, 1 << 30)
+            .map(|row| row.block_number())
+            .collect()
+    }
+
+    fn full_log(block_number: u64) -> simple_types::Log {
+        simple_types::Log {
+            log_index: Some(0.into()),
+            block_number: Some(block_number.into()),
+            transaction_index: Some(0u64.into()),
+            address: Some(Default::default()),
+            data: Some(Default::default()),
+            topics: std::iter::once(Some(Default::default())).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Same shape as `full_log`, but on a topic0 no fixture registration pins —
+    /// so it routes nowhere.
+    fn unrouted_log(block_number: u64) -> simple_types::Log {
+        let mut topic0 = [0u8; 32];
+        topic0[31] = 1;
+        let topic0 = hypersync_client::format::LogArgument::from(topic0);
+        simple_types::Log {
+            topics: std::iter::once(Some(topic0)).collect(),
+            ..full_log(block_number)
+        }
+    }
+
+    #[test]
+    fn missing_block_field_returns_typed_error() {
+        // The server returned no block for the log but the user asked for
+        // block.number/hash/timestamp.
+        let err = process_response(
+            vec![],
+            vec![],
+            vec![vec![full_log(1)]],
+            &zero_event_matcher(),
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[],
+            &[],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => assert_eq!(fields, vec!["block".to_string()]),
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_block_field_named_path() {
+        // block is present but timestamp is not.
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            ..Default::default()
+        };
+        let err = process_response(
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
+            &empty_matcher(),
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[],
+            &[],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => {
+                assert_eq!(fields, vec!["block.timestamp".to_string()])
+            }
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn forced_block_fields_validated_even_when_user_requested_none() {
+        // get_items force-adds REQUIRED_BLOCK_FIELDS and validates that
+        // forced set, so number/timestamp/hash are guaranteed present even when
+        // the user's config selected no block fields. Here the user requested
+        // nothing yet a missing timestamp is still reported.
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            ..Default::default()
+        };
+        let err = process_response(
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
+            &empty_matcher(),
+            REQUIRED_BLOCK_FIELDS,
+            &[],
+            &[],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => {
+                assert_eq!(fields, vec!["block.timestamp".to_string()])
+            }
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn nullable_block_field_not_reported() {
+        // BaseFeePerGas is inherently nullable — server omitting it must not
+        // trigger MissingFields, regardless of whether the user requested it.
+        // base_fee_per_gas left None
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
+        let page = process_response(
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
+            &zero_event_matcher(),
+            &[
+                BlockField::Number,
+                BlockField::Hash,
+                BlockField::Timestamp,
+                BlockField::BaseFeePerGas,
+            ],
+            &[],
+            &[],
+        )
+        .expect("expected success when only nullable fields are absent");
+        assert_eq!(page.events.len(), 1);
+    }
+
+    #[test]
+    fn missing_transaction_field_with_transaction_present() {
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
+        // The transaction is keyed to the log by (blockNumber, txIndex) but is
+        // missing the requested hash, so transaction.hash is reported missing.
+        let tx = simple_types::Transaction {
+            block_number: Some(1u64.into()),
+            transaction_index: Some(0u64.into()),
+            ..Default::default()
+        };
+        let err = process_response(
+            vec![vec![block]],
+            vec![vec![tx]],
+            vec![vec![full_log(1)]],
+            &zero_event_matcher(),
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[TransactionField::Hash],
+            &[],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => {
+                assert_eq!(fields, vec!["transaction.hash".to_string()])
+            }
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_transaction_when_not_returned() {
+        // Transaction fields requested but the source returned no transaction for
+        // the log's (blockNumber, txIndex).
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
+        let err = process_response(
+            vec![vec![block]],
+            vec![],
+            vec![vec![full_log(1)]],
+            &zero_event_matcher(),
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[TransactionField::Hash],
+            &[],
+        )
+        .err()
+        .expect("expected MissingFields error");
+
+        match err {
+            ConvertError::MissingFields(fields) => {
+                assert_eq!(fields, vec!["transaction".to_string()])
+            }
+            ConvertError::Other(e) => panic!("unexpected ConvertError::Other: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn full_join_matches_block_and_transaction() {
+        // Block and transaction live in separate response arrays; the log is
+        // matched to its block by number and the transaction lands in the store
+        // keyed by (blockNumber, txIndex). The page carries one deduplicated block.
+        let block = simple_types::Block {
+            number: Some(7),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
+
+        let tx = simple_types::Transaction {
+            block_number: Some(7u64.into()),
+            transaction_index: Some(0u64.into()),
+            ..Default::default()
+        };
+
+        let page = process_response(
+            vec![vec![block]],
+            vec![vec![tx]],
+            vec![vec![full_log(7)]],
+            &zero_event_matcher(),
+            &[BlockField::Number, BlockField::Hash, BlockField::Timestamp],
+            &[TransactionField::BlockNumber],
+            &[],
+        )
+        .expect("expected success when block and transaction join");
+
+        assert_eq!(logged_blocks(&page), vec![7]);
+    }
+
+    #[test]
+    fn unrouted_logs_keep_a_hash_only_block_and_no_transaction() {
+        // Block 1's log matches; block 2's doesn't. Both blocks and both
+        // transactions come back from the server. Block 1 is kept in full and
+        // its transaction kept; block 2's transaction is dropped, but the block
+        // keeps a hash-only row so a fork on it can still be detected.
+        let block = |number: u64| simple_types::Block {
+            number: Some(number),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
+        let tx = |block_number: u64| simple_types::Transaction {
+            block_number: Some(block_number.into()),
+            transaction_index: Some(0u64.into()),
+            hash: Some(Default::default()),
+            ..Default::default()
+        };
+
+        let page = process_response(
+            vec![vec![block(1), block(2)]],
+            vec![vec![tx(1), tx(2)]],
+            vec![vec![full_log(1), unrouted_log(2)]],
+            &zero_event_matcher(),
+            REQUIRED_BLOCK_FIELDS,
+            &[TransactionField::Hash],
+            &[],
+        )
+        .expect("expected success");
+
+        let transaction_hash = |block_number: u64| {
+            page.transactions
+                .find(make_key(block_number, 0), 0)
+                .and_then(|row| row.bytes_at(EvmTxField::Hash as usize).map(<[u8]>::len))
+        };
+        let block_hash = |block_number: u64| {
+            page.blocks
+                .find(make_key(block_number, 0), 0)
+                .and_then(|row| row.bytes_at(EvmBlockField::Hash as usize).map(<[u8]>::len))
+        };
+        assert_eq!(
+            (
+                logged_blocks(&page),
+                [transaction_hash(1), transaction_hash(2)],
+                [block_hash(1), block_hash(2)],
+            ),
+            (
+                vec![1],
+                // Block 2's transaction is dropped (never read)...
+                [Some(32), None],
+                // ...but its block keeps a hash-only row for reorg detection.
+                [Some(32), Some(32)],
+            )
+        );
+    }
+
+    #[test]
+    fn unrouted_logs_do_not_demand_their_block_and_transaction() {
+        // The mirror of `missing_transaction_when_not_returned`: the source
+        // returned neither the block nor the transaction for this log, but it
+        // routes nowhere, so nothing will ever read them and the page stands.
+        // Without this, filtering the stores would silently diverge from what
+        // the coverage check still insists the source deliver.
+        let page = process_response(
+            vec![],
+            vec![],
+            vec![vec![unrouted_log(1)]],
+            &zero_event_matcher(),
+            REQUIRED_BLOCK_FIELDS,
+            &[TransactionField::Hash],
+            &[],
+        )
+        .expect("an unrouted log's absent block and transaction are not missing fields");
+
+        assert_eq!(page.events.len(), 0);
+    }
+
+    #[test]
+    fn unreferenced_block_is_judged_only_on_its_required_fields() {
+        // Block 2 backs no item, so its absent `gasUsed` can't fail the page —
+        // nothing can read it. The required trio is still demanded of every
+        // returned block, referenced or not.
+        let block = |number: u64| simple_types::Block {
+            number: Some(number),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            gas_used: (number == 1).then(Default::default),
+            ..Default::default()
+        };
+        let page = process_response(
+            vec![vec![block(1), block(2)]],
+            vec![],
+            vec![vec![full_log(1), unrouted_log(2)]],
+            &zero_event_matcher(),
+            &[
+                BlockField::Number,
+                BlockField::Hash,
+                BlockField::Timestamp,
+                BlockField::GasUsed,
+            ],
+            &[],
+            &[],
+        )
+        .expect("an unreferenced block's absent selected field is not a missing field");
+
+        assert_eq!(page.events.len(), 1);
+    }
+
+    #[test]
+    fn keyless_transaction_is_dropped_unjudged() {
+        // The source returned a transaction with no (blockNumber, txIndex), so
+        // it joins to nothing; its absent `hash` must not fail a page whose
+        // routed item got the transaction it asked for.
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
+
+        let keyless = simple_types::Transaction {
+            hash: None,
+            ..Default::default()
+        };
+
+        let page = process_response(
+            vec![vec![block]],
+            vec![vec![
+                simple_types::Transaction {
+                    block_number: Some(1u64.into()),
+                    transaction_index: Some(0u64.into()),
+                    hash: Some(Default::default()),
+                    ..Default::default()
+                },
+                keyless,
+            ]],
+            vec![vec![full_log(1)]],
+            &zero_event_matcher(),
+            REQUIRED_BLOCK_FIELDS,
+            &[TransactionField::Hash],
+            &[],
+        )
+        .expect("a keyless transaction's absent field is not a missing field");
+
+        assert_eq!(page.events.len(), 1);
+    }
+
+    #[test]
+    fn convert_error_serializes_as_expected_json() {
+        let err = ConvertError::MissingFields(vec![
+            "block.timestamp".to_string(),
+            "transaction.hash".to_string(),
+        ]);
+        let napi_err = convert_error_to_napi(err);
+        // The reason field carries the JSON payload that the ReScript side
+        // parses with JSON.parse.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&napi_err.reason.to_string()).expect("payload must be JSON");
+        assert_eq!(parsed["kind"], "MissingFields");
+        assert_eq!(parsed["fields"][0], "block.timestamp");
+        assert_eq!(parsed["fields"][1], "transaction.hash");
+    }
+
+    #[test]
+    fn a_dropped_access_or_authorization_list_is_still_reported_missing() {
+        // HyperSync serves both lists as columns, an empty one for a
+        // transaction that has none, so a null here is the response dropping a
+        // selected field rather than the transaction's shape.
+        let tx = simple_types::Transaction::default();
+        assert_eq!(
+            (
+                transaction_field_missing(&tx, TransactionField::AccessList),
+                transaction_field_missing(&tx, TransactionField::AuthorizationList),
+            ),
+            (Some("accessList"), Some("authorizationList"))
+        );
+    }
+}

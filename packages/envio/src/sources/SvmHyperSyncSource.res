@@ -36,6 +36,9 @@ let make = (
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~onBlockRegistrations,
+    ~contractRegisterIndexes=onEventRegistrations
+    ->(Utils.magic: array<Internal.svmOnEventRegistration> => array<Internal.onEventRegistration>)
+    ->ChainBuffer.contractRegisterIndexesOf,
     ~addressStore,
   )
 
@@ -66,10 +69,7 @@ let make = (
       ?reorgableFrom,
     }
 
-    let (resp, transactionStore, blockStore, items) = try await client.getItems(
-      ~query,
-      ~addressSet,
-    ) catch {
+    let (resp, page) = try await client.getItems(~query, ~addressSet) catch {
     | exn =>
       // A rate limit or a replica behind the head is recoverable and has its own
       // backoff and failover, so it must not be buried in a generic retry.
@@ -99,12 +99,8 @@ let make = (
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
-      items,
-      // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
-      transactionStore: Some(transactionStore),
-      // Raw blocks kept in Rust; materialised onto the payload at batch prep.
-      // Their (slot, blockhash) pairs also drive reorg detection on merge.
-      blockStore,
+      // Its slots' (slot, blockhash) pairs also drive reorg detection on merge.
+      page,
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, pageFetchTime},
       knownHeight,

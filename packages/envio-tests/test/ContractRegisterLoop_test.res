@@ -110,11 +110,8 @@ describe("contractRegister loop", () => {
         },
       ])
       await sourceMock.expectBlockHashLookup({
-        blockNumbers: [499, 620],
-        reply: [
-          {blockNumber: 499, blockHash: "0x499", blockTimestamp: 499},
-          {blockNumber: 620, blockHash: "0x620a", blockTimestamp: 620},
-        ],
+        blockNumbers: [620],
+        reply: [{blockNumber: 620, blockHash: "0x620a", blockTimestamp: 620}],
       })
       await indexer.getRollbackReadyPromise()
       gate.release()

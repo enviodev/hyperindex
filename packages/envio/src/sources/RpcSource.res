@@ -11,10 +11,9 @@ type options = {
   lowercaseAddresses: bool,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
-  // Read by the client while planning; the pages it returns are separate, and
-  // the caller merges them.
-  blockStore: BlockStore.t,
-  transactionStore: TransactionStore.t,
+  // Read by the client while planning, to fetch only what it lacks; the pages
+  // it returns are separate, and the caller merges them.
+  chainBuffer: ChainBuffer.t,
   ws?: string,
   headers?: dict<string>,
   // How many addresses one `eth_getLogs` may carry when an address-free query
@@ -31,10 +30,9 @@ let make = (
     chainId,
     onEventRegistrations,
     ?onBlockRegistrations,
-    lowercaseAddresses,
+    lowercaseAddresses: _,
     addressStore,
-    blockStore,
-    transactionStore,
+    chainBuffer,
     ?ws,
     ?headers,
     maxAddressesPerRequest,
@@ -55,7 +53,9 @@ let make = (
     ~url,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~onBlockRegistrations,
-    ~checksumAddresses=!lowercaseAddresses,
+    ~contractRegisterIndexes=onEventRegistrations
+    ->(Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>)
+    ->ChainBuffer.contractRegisterIndexesOf,
     ~syncConfig,
     ~headers?,
     ~addressStore,
@@ -97,7 +97,7 @@ let make = (
     }
 
     let pageFetchTimeRef = Performance.now()
-    let (result, pageBlockStore, pageTransactionStore, items) = await rpcClient.getNextPage(
+    let (result, page) = await rpcClient.getNextPage(
       {
         fromBlock,
         toBlockCeiling: toBlock,
@@ -110,8 +110,7 @@ let make = (
         knownHeight,
       },
       addressSet,
-      blockStore,
-      transactionStore,
+      chainBuffer,
     )
     let pageFetchTime = pageFetchTimeRef->Performance.secondsSince
 
@@ -192,9 +191,7 @@ let make = (
     }
 
     {
-      items,
-      transactionStore: Some(pageTransactionStore),
-      blockStore: pageBlockStore,
+      page,
       latestFetchedBlockNumber: result.toBlock,
       stats: {
         totalTimeElapsed: totalTimeRef->Performance.secondsSince,
@@ -206,10 +203,10 @@ let make = (
   }
 
   let getBlockHashes = async (~blockNumbers, ~logger as _) => {
-    let (result, pageBlockStore) = await rpcClient.getBlockHashes(blockNumbers)
+    let (result, page) = await rpcClient.getBlockHashes(blockNumbers)
     {
       Source.result: switch (result.message, result.behindHeadBlock) {
-      | (None, _) => Ok(pageBlockStore)
+      | (None, _) => Ok(page)
       | (Some(_), Some(blockNumber)) =>
         Error(Source.SourceBehindHead({blockNumber, requestStats: result.requestStats}))
       | (Some(message), None) => Error(JsError.make(message)->JsExn.anyToExnInternal)

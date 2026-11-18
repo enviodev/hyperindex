@@ -59,14 +59,14 @@ type blockHashResult = {
 
 type t = {
   getHeight: unit => promise<(int, array<Source.requestStat>)>,
-  // The stores it returns are this page's own, for the caller to merge.
+  // Reads the chain's buffer to leave out what it already holds; the page it
+  // returns is this read's own, for the caller to merge.
   getNextPage: (
     nextPageParams,
     AddressSet.t,
-    BlockStore.t,
-    TransactionStore.t,
-  ) => promise<(nextPageResult, BlockStore.t, TransactionStore.t, EventStore.t)>,
-  getBlockHashes: array<int> => promise<(blockHashResult, BlockStore.t)>,
+    ChainBuffer.t,
+  ) => promise<(nextPageResult, BufferPage.t)>,
+  getBlockHashes: array<int> => promise<(blockHashResult, BufferPage.t)>,
   onReorg: unit => unit,
 }
 
@@ -76,7 +76,7 @@ external classNew: (
   cfg,
   array<HyperSyncClient.Registration.input>,
   array<BlockItem.registrationInput>,
-  ~checksumAddresses: bool,
+  ~contractRegisterIndexes: array<int>,
   ~addressStore: AddressStore.t,
   Logger.native,
   array<string>,
@@ -84,7 +84,7 @@ external classNew: (
 
 let make = (
   ~url,
-  ~checksumAddresses,
+  ~contractRegisterIndexes,
   ~syncConfig: Config.sourceSync,
   ~maxConcurrentRequests=?,
   ~headers=?,
@@ -109,7 +109,7 @@ let make = (
     },
     eventRegistrations,
     onBlockRegistrations->BlockItem.toRegistrationInputs,
-    ~checksumAddresses,
+    ~contractRegisterIndexes,
     ~addressStore,
     logger.output.native,
     logger.boundFieldsJson,

@@ -372,6 +372,36 @@ Helper to check if a value exists in an array
     | _ => true
     }
 
+  // Both ascending and unique; so is the result.
+  let mergeSortedUnique = (a: array<int>, b: array<int>) => {
+    let merged = []
+    let i = ref(0)
+    let j = ref(0)
+    while i.contents < a->Array.length || j.contents < b->Array.length {
+      let next = switch (a->Array.get(i.contents), b->Array.get(j.contents)) {
+      | (Some(x), Some(y)) if x < y =>
+        i := i.contents + 1
+        x
+      | (Some(x), Some(y)) if x > y =>
+        j := j.contents + 1
+        y
+      | (Some(x), Some(_)) =>
+        i := i.contents + 1
+        j := j.contents + 1
+        x
+      | (Some(x), None) =>
+        i := i.contents + 1
+        x
+      | (None, Some(y)) =>
+        j := j.contents + 1
+        y
+      | (None, None) => JsError.throwWithMessage("unreachable")
+      }
+      merged->Array.push(next)
+    }
+    merged
+  }
+
   let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     for i in 0 to arr->Array.length - 1 {
       let item = arr->Array.getUnsafe(i)

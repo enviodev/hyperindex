@@ -64,11 +64,12 @@ let clearRollback: t => unit
 let invalidateInflight: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t) => unit
 let isProcessing: t => bool
+let isRegisteringContracts: t => bool
 let beginProcessing: t => unit
 let endProcessing: t => unit
 let markProcessingStalledOnFetch: t => unit
 let recordProcessedBatch: t => unit
-let createBatch: (t, ~batchSizeTarget: int) => Batch.t
+let createBatch: (t, ~batchSizeTarget: int) => promise<Batch.t>
 let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Accessors.

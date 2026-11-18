@@ -33,3 +33,22 @@ let toRegistrationInputs = (onBlockRegistrations: array<Internal.onBlockRegistra
       blockFieldMask,
     })
   )
+
+// Every block handler of a chain, as the buffer schedules their items.
+type blockHandlerInput = {
+  index: int,
+  startBlock: int,
+  endBlock: option<int>,
+  interval: int,
+  blockFieldMask: option<float>,
+}
+
+let toBlockHandlerInputs = (onBlockRegistrations: array<Internal.onBlockRegistration>) =>
+  onBlockRegistrations->Array.map(({index, startBlock, endBlock, interval, blockFieldMask}) => {
+    index,
+    // Resolved to the chain's start block by `ChainState` when absent.
+    startBlock: startBlock->Option.getOr(0),
+    endBlock,
+    interval,
+    blockFieldMask,
+  })

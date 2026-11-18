@@ -52,6 +52,9 @@ let make = (
     ~serializationFormat,
     ~enableQueryCaching,
     ~logLevel,
+    ~contractRegisterIndexes=onEventRegistrations
+    ->(Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>)
+    ->ChainBuffer.contractRegisterIndexesOf,
     ~addressStore,
   ) {
   | client => client
@@ -151,11 +154,9 @@ let make = (
     }
 
     {
-      items: pageUnsafe.items,
-      transactionStore: Some(pageUnsafe.transactionStore),
-      // The page store also carries the rollbackGuard's blocks (head block and
-      // parent of the range's first block), inserted on the Rust side.
-      blockStore: pageUnsafe.blockStore,
+      // Also carries the rollbackGuard's blocks (head block and parent of the
+      // range's first block), added on the Rust side.
+      page: pageUnsafe.page,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,

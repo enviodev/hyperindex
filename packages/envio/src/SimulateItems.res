@@ -246,8 +246,7 @@ let deriveSrcAddress = (
 type parseResult = {
   items: array<Internal.item>,
   getBlock: int => option<Internal.eventBlock>,
-  transactionStore: option<TransactionStore.t>,
-  blockStore: option<BlockStore.t>,
+  page: option<BufferPage.t>,
 }
 
 type svmSimActivity = {
@@ -337,9 +336,9 @@ let parse = (
       blocks->Dict.set(key, block)
     }
   }
-  let svmTxs: array<TransactionStore.svmTxInput> = []
-  let svmActivities: array<TransactionStore.svmActivityInput> = []
-  let svmBlocks: array<BlockStore.inputBlock> = []
+  let svmTxs: array<BufferPage.svmTxInput> = []
+  let svmActivities: array<BufferPage.svmActivityInput> = []
+  let svmBlocks: array<BufferPage.observedBlock> = []
   // Coordinate "block:logIndex" -> the index of the first item that claimed it,
   // used to reject two items resolving to the same (block, logIndex).
   let seenCoordinates = Dict.make()
@@ -477,7 +476,7 @@ let parse = (
         rows->Array.forEach(activity =>
           svmActivities
           ->Array.push({
-            TransactionStore.slot,
+            BufferPage.slot,
             transactionIndex,
             account: activity.address,
             accountIndex: ?activity.transactionAccountIndex,
@@ -720,14 +719,12 @@ let parse = (
   | Svm => {
       items,
       getBlock,
-      transactionStore: Some(TransactionStore.fromSvmJs(svmTxs, svmActivities)),
-      blockStore: Some(BlockStore.fromJs(svmBlocks, ~ecosystem=Svm)),
+      page: Some(BufferPage.fromSvmJs(svmTxs, svmActivities, svmBlocks)),
     }
   | _ => {
       items,
       getBlock,
-      transactionStore: None,
-      blockStore: None,
+      page: None,
     }
   }
 }
@@ -768,7 +765,7 @@ let patchConfig = (
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
           let chainConfig = {...chainConfig, startBlock: Config.Block(startBlock), endBlock}
-          let {items, getBlock, transactionStore, blockStore} = parse(
+          let {items, getBlock, page} = parse(
             ~simulateItems,
             ~config,
             ~chainConfig,
@@ -780,8 +777,7 @@ let patchConfig = (
               items,
               getBlock,
               endBlock,
-              ?transactionStore,
-              ?blockStore,
+              ?page,
             }),
           }
         | None => chainConfig

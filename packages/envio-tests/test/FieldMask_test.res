@@ -35,7 +35,7 @@ describe("field-code mask ceiling", () => {
   )
 })
 
-describe("TransactionStore field-code contract", () => {
+describe("Transaction field-code contract", () => {
   // The selection mask is built in ReScript from these arrays' order and decoded
   // in Rust by EvmTxField/SvmTxField ordinal, so a drift silently materialises
   // the wrong field. `Evm.transactionFields`/`Svm.transactionFields` derive from
@@ -57,7 +57,7 @@ describe("TransactionStore field-code contract", () => {
   })
 
   it("fieldCodes maps each field name to its bit index", t => {
-    t.expect(TransactionStore.fieldCodes(["transactionIndex", "hash", "from"])).toEqual(
+    t.expect(FieldMask.fieldCodes(["transactionIndex", "hash", "from"])).toEqual(
       dict{"transactionIndex": 0, "hash": 1, "from": 2},
     )
   })
@@ -67,10 +67,10 @@ describe("TransactionStore field-code contract", () => {
     // JS `|` renders that bit negative; orMask's `>>> 0` recovers the unsigned
     // value. These pin both the disjoint/overlapping cases and the bit-31 edge.
     t.expect({
-      "disjoint": TransactionStore.orMask(1., 2.),
-      "overlapping": TransactionStore.orMask(3., 6.),
-      "bit31WithLowBit": TransactionStore.orMask(2147483648., 1.),
-      "allBits": TransactionStore.orMask(4294967295., 2147483648.),
+      "disjoint": FieldMask.orMask(1., 2.),
+      "overlapping": FieldMask.orMask(3., 6.),
+      "bit31WithLowBit": FieldMask.orMask(2147483648., 1.),
+      "allBits": FieldMask.orMask(4294967295., 2147483648.),
     }).toEqual({
       "disjoint": 3.,
       "overlapping": 7.,
