@@ -352,10 +352,6 @@ mod tests {
     const SIGHASH_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SIGHASH_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const ADDR: &str = "0x1234567890abcdef1234567890abcdef12345678";
-    const ADDR_BYTES: [u8; 20] = [
-        0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd,
-        0xef, 0x12, 0x34, 0x56, 0x78,
-    ];
     const ADDR_TOPIC: &str = "0x0000000000000000000000001234567890abcdef1234567890abcdef12345678";
 
     fn reg(
@@ -433,19 +429,16 @@ mod tests {
         let (_store, set) = addresses(&[("C", &[ADDR])]);
         let built = builder.build(&[0, 1], &set, &Default::default()).unwrap();
         assert_eq!(
-            (built.log_selections, set.cache().owns(&ADDR_BYTES, 0),),
-            (
-                vec![BuiltLogSelection {
-                    emitters: listed(&[ADDR]),
-                    topics: vec![
-                        vec![SIGHASH_A.to_string(), SIGHASH_B.to_string()],
-                        vec![],
-                        vec![],
-                        vec![],
-                    ],
-                }],
-                true,
-            )
+            built.log_selections,
+            vec![BuiltLogSelection {
+                emitters: listed(&[ADDR]),
+                topics: vec![
+                    vec![SIGHASH_A.to_string(), SIGHASH_B.to_string()],
+                    vec![],
+                    vec![],
+                    vec![],
+                ],
+            }]
         );
     }
 

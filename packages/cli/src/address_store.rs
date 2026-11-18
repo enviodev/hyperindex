@@ -1007,78 +1007,13 @@ pub struct ContractSlice {
     pub topics: Vec<String>,
 }
 
-/// Everything derived from a set's ids, built once on first use. A partition
-/// makes many queries from one set, and both the query builder and the router
-/// read this — so the padded topics and the owner index are computed once per
+/// Everything derived from a set's ids, built once on first use: a partition
+/// makes many queries from one set, so the padded topics are computed once per
 /// set rather than once per query.
 pub struct SetCache {
     contracts: Vec<ContractSlice>,
     index_by_name: HashMap<String, usize>,
-    /// The owning contracts of each address in the set. The first owner sits
-    /// inline so the common single-owner case allocates nothing per address —
-    /// only an address several contracts index grows the tail.
-    owners_by_key: HashMap<Key, (u32, Vec<u32>)>,
     len: usize,
-}
-
-/// The contracts a set holds one address for, as routing reads them: at most a
-/// handful, scanned rather than hashed.
-#[derive(Clone, Copy, Default)]
-pub struct Owners<'a> {
-    first: Option<u32>,
-    rest: &'a [u32],
-}
-
-impl Owners<'static> {
-    /// A set holding the address for exactly one contract — the shape every
-    /// single-owner routing test builds by hand.
-    #[cfg(test)]
-    pub(crate) fn single(contract_idx: u32) -> Self {
-        Self {
-            first: Some(contract_idx),
-            rest: &[],
-        }
-    }
-}
-
-impl Owners<'_> {
-    pub fn contains(&self, contract_idx: u32) -> bool {
-        self.first == Some(contract_idx) || self.rest.contains(&contract_idx)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.first.is_none()
-    }
-}
-
-/// The emitter facts every ecosystem's address gate reads off an item: its
-/// store key, the contracts this partition's set says own that key (empty when
-/// the partition doesn't hold it), and the block the item fired at.
-pub struct Emitter<'a> {
-    pub key: &'a [u8],
-    pub owners: Owners<'a>,
-    pub block: i64,
-}
-
-impl Emitter<'_> {
-    /// Whether one registration accepts this emitter: the registration has
-    /// started, and — unless it is wildcard — this partition's set owns the
-    /// emitter for the registration's contract (or, when the contract is
-    /// client-filtered, the store alone vouches for it) and the store has it
-    /// indexed at the item's block.
-    pub fn matches_registration(
-        &self,
-        store: &StoreInner,
-        contract_idx: u32,
-        is_wildcard: bool,
-        start_block: Option<i64>,
-        force_wildcard: bool,
-    ) -> bool {
-        crate::registration_start_block::has_started(start_block, self.block)
-            && (is_wildcard
-                || ((force_wildcard || self.owners.contains(contract_idx))
-                    && store.is_indexed_at(self.key, contract_idx, self.block)))
-    }
 }
 
 impl SetCache {
@@ -1086,24 +1021,6 @@ impl SetCache {
         self.index_by_name
             .get(contract_name)
             .map(|&idx| &self.contracts[idx])
-    }
-
-    /// The contracts owning an address, by the raw bytes the source handed back
-    /// (EVM/Fuel address bytes, an SVM `programId`'s base58 bytes). Empty means
-    /// the address isn't in this partition — the log routes to wildcards only.
-    pub fn owners_of(&self, key: &[u8]) -> Owners<'_> {
-        match self.owners_by_key.get(key) {
-            Some((first, rest)) => Owners {
-                first: Some(*first),
-                rest,
-            },
-            None => Owners::default(),
-        }
-    }
-
-    /// Whether this set holds the address for the given contract.
-    pub fn owns(&self, key: &[u8], contract_idx: u32) -> bool {
-        self.owners_of(key).contains(contract_idx)
     }
 
     pub fn len(&self) -> usize {
@@ -1152,9 +1069,11 @@ impl AddressSet {
         ) else {
             return false;
         };
-        let indexed = store.is_indexed_at(&key, contract_idx, block_number);
-        drop(store);
-        indexed && self.cache().owns(&key, contract_idx)
+        store.is_indexed_at(&key, contract_idx, block_number)
+            && self.ids.iter().any(|&id| {
+                let entry = store.entry(id);
+                entry.contract_idx == contract_idx && entry.key == key
+            })
     }
 
     /// How many of one contract's addresses this set holds.
@@ -1313,8 +1232,6 @@ impl AddressSet {
             let store = self.store.read().unwrap();
             let mut contracts: Vec<ContractSlice> = Vec::new();
             let mut index_by_contract_idx: HashMap<u32, usize> = HashMap::new();
-            let mut owners_by_key: HashMap<Key, (u32, Vec<u32>)> =
-                HashMap::with_capacity(self.ids.len());
             for &id in self.ids.iter() {
                 let entry = store.entry(id);
                 let slot = *index_by_contract_idx
@@ -1334,14 +1251,6 @@ impl AddressSet {
                 if matches!(store.ecosystem, Ecosystem::Evm) {
                     contracts[slot].topics.push(address_topic(&entry.key));
                 }
-                match owners_by_key.entry(entry.key.clone()) {
-                    std::collections::hash_map::Entry::Vacant(vacant) => {
-                        vacant.insert((entry.contract_idx, Vec::new()));
-                    }
-                    std::collections::hash_map::Entry::Occupied(occupied) => {
-                        occupied.into_mut().1.push(entry.contract_idx);
-                    }
-                }
             }
             let index_by_name = contracts
                 .iter()
@@ -1351,7 +1260,6 @@ impl AddressSet {
             Arc::new(SetCache {
                 contracts,
                 index_by_name,
-                owners_by_key,
                 len: self.ids.len(),
             })
         })
@@ -2324,7 +2232,7 @@ mod tests {
     }
 
     #[test]
-    fn set_cache_indexes_owners_and_padded_topics() {
+    fn set_cache_slices_addresses_with_padded_topics() {
         let store = store();
         // A is shared by both contracts; C (the address) only by "D".
         store.register_seed(vec![reg(A, "C", 100), reg(A, "D", 100), reg(C, "D", 200)]);
@@ -2332,25 +2240,13 @@ mod tests {
             .make_set("C".to_string(), None)
             .merge(&store.make_set("D".to_string(), None));
         let cache = set.cache();
-        let key_of = |address| address_key(Ecosystem::Evm, address).unwrap();
-        let a_key = key_of(A);
         assert_eq!(
             (
-                cache.owns(&a_key, 0),
-                cache.owns(&a_key, 1),
-                cache.owns(&key_of(C), 0),
-                cache.owns(&key_of(B), 0),
-                cache.owners_of(&key_of(B)).is_empty(),
                 cache.slice("C").map(|s| s.topics.clone()),
                 cache.slice("Missing").is_none(),
                 cache.len(),
             ),
             (
-                true,
-                true,
-                false,
-                false,
-                true,
                 Some(vec![
                     "0x00000000000000000000000000000000000000000000000000000000000000aa"
                         .to_string()

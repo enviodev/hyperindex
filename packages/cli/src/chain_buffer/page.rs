@@ -230,8 +230,12 @@ impl Page {
         {
             let mut data = page.data.lock().unwrap();
             let mut rows = data.transactions.builder();
-            crate::chain_buffer::svm::push_simulated_transactions(&mut rows, transactions, activities)
-                .map_err(to_napi)?;
+            crate::chain_buffer::svm::push_simulated_transactions(
+                &mut rows,
+                transactions,
+                activities,
+            )
+            .map_err(to_napi)?;
             data.add_transactions(rows.finish());
         }
         Ok(page)

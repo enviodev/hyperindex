@@ -737,7 +737,10 @@ where
         .transpose()
 }
 
-fn base58_list<T: std::str::FromStr>(values: Option<&[String]>, field: &str) -> Result<Option<Vec<T>>>
+fn base58_list<T: std::str::FromStr>(
+    values: Option<&[String]>,
+    field: &str,
+) -> Result<Option<Vec<T>>>
 where
     T::Err: std::fmt::Display,
 {
@@ -807,7 +810,10 @@ pub(crate) fn push_simulated_transactions(
             success: t.success,
             err: t.err,
             fee: simulated_u64(t.fee, "fee")?,
-            compute_units_consumed: simulated_u64(t.compute_units_consumed, "computeUnitsConsumed")?,
+            compute_units_consumed: simulated_u64(
+                t.compute_units_consumed,
+                "computeUnitsConsumed",
+            )?,
             account_keys: base58_list(t.account_keys.as_deref(), "accountKeys")?,
             recent_blockhash: base58(t.recent_blockhash.as_deref(), "recentBlockhash")?,
             version: t.version,

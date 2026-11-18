@@ -8,6 +8,7 @@ use anyhow::Result;
 use super::decoded::DecodedEvent;
 use super::deliver::{Columns, EMPTY_LINK};
 use super::evm::{self, log_column, LogView};
+use super::fuel::ReceiptView;
 use super::svm::InstructionView;
 use super::table::{make_key, RowRef, Snapshot};
 use super::{decode, Ecosystem, Shared};
@@ -293,7 +294,7 @@ impl Walker<'_> {
         match self.shared.ecosystem {
             Ecosystem::Evm => self.push_log(row, contract_register_only),
             Ecosystem::Svm => self.push_instruction(row, contract_register_only),
-            Ecosystem::Fuel => {}
+            Ecosystem::Fuel => self.push_receipt(row, contract_register_only),
         }
     }
 
@@ -312,6 +313,37 @@ impl Walker<'_> {
             },
             &mut self.items,
         );
+    }
+
+    fn push_receipt(&mut self, row: &RowRef, contract_register_only: bool) {
+        let Some(fuel) = &self.shared.fuel else {
+            return;
+        };
+        let Some(receipt) = ReceiptView::of_row(row) else {
+            return;
+        };
+        let store = fuel.read_store();
+        let mut identity = None;
+        fuel.for_each_match(&receipt, &store, |registration| {
+            if contract_register_only && !registration.has_contract_register {
+                return;
+            }
+            let Some(params) = decode::fuel::params(&registration.registration.kind, &receipt)
+            else {
+                return;
+            };
+            let (tx_id, src_address) = identity
+                .get_or_insert_with(|| (receipt.tx_id(), receipt.src_address()))
+                .clone();
+            self.items.push(Item::Fuel {
+                block_number: receipt.block_height,
+                receipt_index: receipt.receipt_index,
+                registration: registration.index(),
+                tx_id,
+                src_address,
+                params,
+            });
+        });
     }
 
     fn push_log(&mut self, row: &RowRef, contract_register_only: bool) {

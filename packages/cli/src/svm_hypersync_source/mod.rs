@@ -801,11 +801,12 @@ mod tests {
             ..Default::default()
         };
         let page = page_of(&store, programs, &mut response);
-        let buffer = ChainBuffer::new(
+        let buffer = ChainBuffer::make(
             ChainBufferConfig {
                 ecosystem: "svm".into(),
                 should_checksum: false,
                 evm_registrations: None,
+                fuel_registrations: None,
                 svm_registrations: Some(programs.to_vec()),
                 contract_register_indexes: vec![],
                 block_handlers: vec![],
@@ -1322,11 +1323,12 @@ mod tests {
     #[test]
     fn a_slot_handler_runs_without_a_block_on_a_slot_the_chain_skipped() {
         let store = svm_store(&[]);
-        let buffer = ChainBuffer::new(
+        let buffer = ChainBuffer::make(
             ChainBufferConfig {
                 ecosystem: "svm".into(),
                 should_checksum: false,
                 evm_registrations: None,
+                fuel_registrations: None,
                 svm_registrations: Some(vec![]),
                 contract_register_indexes: vec![],
                 block_handlers: vec![crate::chain_buffer::schedule::BlockHandlerInput {
@@ -1357,7 +1359,7 @@ mod tests {
                     block_number,
                     skipped,
                     ..
-                } => (*block_number, *skipped),
+                } => (block_number.to_owned(), skipped.to_owned()),
                 _ => panic!("expected a block item"),
             })
             .collect();
